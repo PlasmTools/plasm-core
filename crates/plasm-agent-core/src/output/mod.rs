@@ -3,7 +3,7 @@ use plasm_core::{
     AgentPresentation, EntityName, FieldType, TypedFieldValue, Value, ValueTableCellBudget, CGS,
     PLASM_ATTACHMENT_KEY,
 };
-use plasm_runtime::{CachedEntity, ExecutionResult};
+use plasm_runtime::{CachedEntity, ExecutionResult, OperationAck};
 use std::collections::BTreeSet;
 
 mod in_band_fidelity;
@@ -116,10 +116,63 @@ fn typed_field_value_at_dotted_path(
     Some(TypedFieldValue::from(cur))
 }
 
-/// JSON value for HTTP `POST /execute/...` bodies: entity rows only (no duration, count, or cache stats).
+/// Empty row body. Operations are a sibling field — never substituted here.
+pub(crate) fn format_empty_result_body(_result: &ExecutionResult) -> String {
+    "(no results)".into()
+}
+
+/// HTTP-2 wire object: `rows` plus `operations`. Never a bare entity array.
 pub fn http_execute_results_value(result: &ExecutionResult) -> serde_json::Value {
-    let entities: Vec<serde_json::Value> = result.entities.iter().map(entity_to_json).collect();
-    serde_json::Value::Array(entities)
+    let rows: Vec<serde_json::Value> = result.entities.iter().map(entity_to_json).collect();
+    let operations: Vec<serde_json::Value> = result
+        .operations
+        .entries()
+        .iter()
+        .map(operation_ack_to_json)
+        .collect();
+    serde_json::json!({
+        "rows": rows,
+        "operations": operations,
+    })
+}
+
+fn operation_ack_to_json(ack: &OperationAck) -> serde_json::Value {
+    serde_json::json!({
+        "entry_id": ack.entry_id,
+        "capability": ack.capability,
+        "entity": ack.entity,
+        "logical_invocations": ack.logical_invocations,
+        "completed": ack.completed,
+        "failed": ack.failed,
+        "source": ack.source.as_wire_str(),
+        "description": ack.description,
+    })
+}
+
+/// Derived presentation for nonempty ledgers. Does not say "applied".
+pub(crate) fn format_operations_block(result: &ExecutionResult) -> String {
+    if result.operations.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("\noperations:\n");
+    let mut any_failed = false;
+    for ack in result.operations.entries() {
+        any_failed |= ack.failed > 0;
+        out.push_str(&format!(
+            "- capability=`{}` entity=`{}` completed={} failed={} invocations={} source={} — {}\n",
+            ack.capability,
+            ack.entity,
+            ack.completed,
+            ack.failed,
+            ack.logical_invocations,
+            ack.source.as_wire_str(),
+            ack.description,
+        ));
+    }
+    if any_failed {
+        out.push_str("Completed operations are recorded; this result does not imply rollback.\n");
+    }
+    out
 }
 
 pub(crate) const REFERENCE_ONLY_PLACEHOLDER: &str = "(in artifact)";
@@ -188,9 +241,15 @@ pub(crate) fn union_entity_table_columns(
     let mut emitted: BTreeSet<String> = BTreeSet::new();
 
     for entity in entities {
+        let ent_def = cgs.and_then(|g| g.get_entity(entity.reference.entity_type.as_str()));
         for key in entity.fields.keys() {
             if emitted.contains(key.as_str()) {
                 continue;
+            }
+            if let Some(ent) = ent_def {
+                if !ent.fields.contains_key(key.as_str()) {
+                    continue;
+                }
             }
             let any_blob = entities
                 .iter()
@@ -209,6 +268,11 @@ pub(crate) fn union_entity_table_columns(
             }
         }
         for rel in entity.relations.keys() {
+            if let Some(ent) = ent_def {
+                if !ent.relations.contains_key(rel.as_str()) {
+                    continue;
+                }
+            }
             if emitted.insert(rel.clone()) {
                 columns.push(rel.clone());
             }
@@ -583,7 +647,9 @@ pub(crate) fn format_table_inner(
     report: &mut InBandSummaryReport,
 ) -> String {
     if result.entities.is_empty() {
-        return "(no results)".into();
+        let mut body = format_empty_result_body(result);
+        body.push_str(&format_operations_block(result));
+        return body;
     }
 
     let columns = union_entity_table_columns(result, cgs, max_entity_rows);
@@ -639,6 +705,7 @@ pub(crate) fn format_table_inner(
         out.push('\n');
     }
 
+    out.push_str(&format_operations_block(result));
     out
 }
 
@@ -873,9 +940,80 @@ mod tests {
                 ..Default::default()
             },
             request_fingerprints: vec![],
+            operations: plasm_runtime::OperationLedger::empty(),
         };
         let lossy = lossy_summary_field_names(&result, Some(&cgs));
         assert_eq!(lossy.as_slice(), &["desc".to_string()]);
+    }
+
+    #[test]
+    fn result_tsv_and_column_schema_cannot_name_untaught_field() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/return_projection_teaching");
+        let cgs = plasm_core::loader::load_schema_dir(&dir).expect("return_projection_teaching");
+        let taught =
+            CGS::default_ordered_entity_field_names(cgs.get_entity("Notice").expect("Notice"));
+        let r = Ref {
+            entity_type: "Notice".into(),
+            key: plasm_core::EntityKey::Simple("n1".into()),
+        };
+        let mut fields = IndexMap::new();
+        for name in &taught {
+            fields.insert(name.clone(), Value::String(format!("v-{name}")));
+        }
+        fields.insert("shadow_col".into(), Value::String("rogue".into()));
+        let entity = CachedEntity::from_decoded(
+            r,
+            fields,
+            IndexMap::<String, DecodedRelation>::new(),
+            0,
+            plasm_runtime::EntityCompleteness::Complete,
+        );
+        let result = ExecutionResult {
+            entities: vec![entity],
+            count: 1,
+            has_more: false,
+            pagination_resume: None,
+            paging_handle: None,
+            source: ExecutionSource::Live,
+            stats: ExecutionStats {
+                duration_ms: 0,
+                network_requests: 0,
+                cache_hits: 0,
+                cache_misses: 0,
+                ..Default::default()
+            },
+            request_fingerprints: vec![],
+            operations: plasm_runtime::OperationLedger::empty(),
+        };
+        let cols = union_entity_table_columns(&result, Some(&cgs), None);
+        assert!(
+            !cols.iter().any(|c| c == "shadow_col"),
+            "dump must not name a field the card omitted: {cols:?}"
+        );
+        for name in &taught {
+            assert!(
+                cols.iter().any(|c| c == name),
+                "dump must include taught field {name}: {cols:?}"
+            );
+        }
+        let (tsv, _, _) = format_result_tsv_with_cgs(&result, Some(&cgs), None);
+        assert!(
+            !tsv.split('\n').next().unwrap_or("").contains("shadow_col"),
+            "TSV header must not name shadow_col:\n{tsv}"
+        );
+        let schema = crate::run_ui_column_schema::build_run_step_column_schema(
+            &result,
+            Some(&cgs),
+            Some("default"),
+            Some("Notice"),
+        )
+        .expect("column schema");
+        assert!(
+            schema.columns.iter().all(|c| c["name"] != "shadow_col"),
+            "binding column_schema must not name shadow_col: {:?}",
+            schema.columns
+        );
     }
 
     #[test]
@@ -909,6 +1047,7 @@ mod tests {
                 ..Default::default()
             },
             request_fingerprints: vec![],
+            operations: plasm_runtime::OperationLedger::empty(),
         };
         let (s, omitted, _) = format_result_with_cgs(&result, OutputFormat::Table, Some(&cgs));
         assert!(s.contains(REFERENCE_ONLY_PLACEHOLDER), "{}", s);
@@ -1044,6 +1183,7 @@ mod tests {
                 ..Default::default()
             },
             request_fingerprints: vec![],
+            operations: plasm_runtime::OperationLedger::empty(),
         };
         let (s, omitted, _) = format_result_with_cgs(&result, OutputFormat::Table, Some(&cgs));
         let lines: Vec<&str> = s.lines().collect();
@@ -1101,6 +1241,7 @@ mod tests {
                 ..Default::default()
             },
             request_fingerprints: vec![],
+            operations: plasm_runtime::OperationLedger::empty(),
         };
         let (s, omitted, report) = format_result_with_cgs(&result, OutputFormat::Table, None);
         assert!(s.contains("plasm://execute/ph/s1/run/r1"), "{}", s);
@@ -1143,6 +1284,7 @@ mod tests {
                 ..Default::default()
             },
             request_fingerprints: vec![],
+            operations: plasm_runtime::OperationLedger::empty(),
         };
         let (tsv, omitted, report) = format_result_tsv_with_cgs(&result, None, None);
         assert!(omitted.is_empty(), "{omitted:?}");
@@ -1190,6 +1332,7 @@ mod tests {
                 ..Default::default()
             },
             request_fingerprints: vec![],
+            operations: plasm_runtime::OperationLedger::empty(),
         };
         let (tsv, omitted, report) = format_result_tsv_with_cgs(&result, None, None);
         assert!(omitted.iter().any(|c| c == "desc"), "{omitted:?}");
@@ -1230,9 +1373,156 @@ mod tests {
                 ..Default::default()
             },
             request_fingerprints: vec![],
+            operations: plasm_runtime::OperationLedger::empty(),
         };
         let (table, omitted, _) = format_result_with_cgs(&result, OutputFormat::Table, None);
         assert!(omitted.iter().any(|c| c == "body"), "{omitted:?}");
         assert!(table.contains("(in artifact)"), "{table}");
+    }
+
+    fn ack(
+        capability: &str,
+        completed: usize,
+        failed: usize,
+        source: ExecutionSource,
+    ) -> plasm_runtime::OperationAck {
+        plasm_runtime::OperationAck {
+            entry_id: "langmatrix".into(),
+            capability: capability.into(),
+            entity: "LangItem".into(),
+            logical_invocations: completed.saturating_add(failed),
+            completed,
+            failed,
+            source,
+            description: "Records a ping against the item (matrix conformance).".into(),
+        }
+    }
+
+    fn result_with_operations(
+        operations: plasm_runtime::OperationLedger,
+        source: ExecutionSource,
+    ) -> ExecutionResult {
+        ExecutionResult {
+            entities: vec![],
+            count: 0,
+            has_more: false,
+            pagination_resume: None,
+            paging_handle: None,
+            source,
+            stats: ExecutionStats::default(),
+            request_fingerprints: vec![],
+            operations,
+        }
+    }
+
+    #[test]
+    fn http_wire_is_rows_and_operations_object() {
+        let wire = http_execute_results_value(&result_with_operations(
+            plasm_runtime::OperationLedger::empty(),
+            ExecutionSource::Cache,
+        ));
+        assert!(wire.is_object(), "HTTP-2 forbids a bare row array: {wire}");
+        assert_eq!(wire["rows"], serde_json::json!([]));
+        assert_eq!(wire["operations"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn empty_query_has_no_operations_block() {
+        let result = result_with_operations(
+            plasm_runtime::OperationLedger::empty(),
+            ExecutionSource::Live,
+        );
+        let body = format_table_inner(
+            &result,
+            None,
+            None,
+            &mut BTreeSet::new(),
+            &mut InBandSummaryReport::default(),
+        );
+        assert_eq!(body, "(no results)");
+        assert!(!body.contains("operations:"));
+        let wire = http_execute_results_value(&result);
+        assert_eq!(wire["rows"], serde_json::json!([]));
+        assert_eq!(wire["operations"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn empty_iteration_and_no_row_success_are_distinct() {
+        let empty_loop = result_with_operations(
+            plasm_runtime::OperationLedger::from_ack(plasm_runtime::OperationAck::empty_iteration(
+                "langmatrix",
+                "LangItem",
+                "langitem_ping",
+                "Records a ping against the item (matrix conformance).",
+                ExecutionSource::Cache,
+            )),
+            ExecutionSource::Cache,
+        );
+        let completed = result_with_operations(
+            plasm_runtime::OperationLedger::from_ack(ack(
+                "langitem_ping",
+                1,
+                0,
+                ExecutionSource::Live,
+            )),
+            ExecutionSource::Live,
+        );
+        let empty_md = format_operations_block(&empty_loop);
+        let done_md = format_operations_block(&completed);
+        assert!(empty_md.contains("invocations=0"), "{empty_md}");
+        assert!(empty_md.contains("completed=0"), "{empty_md}");
+        assert!(done_md.contains("completed=1"), "{done_md}");
+        assert!(!done_md.contains("applied"), "{done_md}");
+        assert_eq!(
+            http_execute_results_value(&empty_loop)["operations"][0]["logical_invocations"],
+            0
+        );
+        assert_eq!(
+            http_execute_results_value(&completed)["operations"][0]["completed"],
+            1
+        );
+    }
+
+    #[test]
+    fn partial_failure_wire_keeps_completed_and_forbids_rollback_claim() {
+        let mut ledger = plasm_runtime::OperationLedger::from_ack(ack(
+            "langitem_delete",
+            2,
+            0,
+            ExecutionSource::Live,
+        ));
+        ledger.merge_ack(ack("langitem_delete", 0, 1, ExecutionSource::Live));
+        ledger.merge_ack(ack("langitem_ping", 1, 0, ExecutionSource::Live));
+        let result = result_with_operations(ledger, ExecutionSource::Live);
+        let wire = http_execute_results_value(&result);
+        assert_eq!(wire["rows"], serde_json::json!([]));
+        assert_eq!(wire["operations"].as_array().map(|a| a.len()), Some(2));
+        let delete = wire["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["capability"] == "langitem_delete")
+            .expect("delete");
+        assert_eq!(delete["completed"], 2);
+        assert_eq!(delete["failed"], 1);
+        let md = format_operations_block(&result);
+        assert!(md.contains("does not imply rollback"), "{md}");
+        assert!(!md.contains("applied"), "{md}");
+    }
+
+    #[test]
+    fn replay_source_is_recorded_not_live() {
+        let result = result_with_operations(
+            plasm_runtime::OperationLedger::from_ack(ack(
+                "langitem_ping",
+                1,
+                0,
+                ExecutionSource::Replay,
+            )),
+            ExecutionSource::Replay,
+        );
+        let wire = http_execute_results_value(&result);
+        assert_eq!(wire["operations"][0]["source"], "replay");
+        assert!(format_operations_block(&result).contains("source=replay"));
     }
 }

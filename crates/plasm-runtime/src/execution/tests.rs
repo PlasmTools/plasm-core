@@ -573,6 +573,7 @@ fn test_execution_result_serialization() {
             ..Default::default()
         },
         request_fingerprints: Vec::new(),
+    operations: OperationLedger::empty(),
     };
 
     let json = serde_json::to_string(&result).unwrap();
@@ -598,6 +599,7 @@ fn test_execution_result_json_skips_host_pagination_fields() {
             ..Default::default()
         },
         request_fingerprints: Vec::new(),
+    operations: OperationLedger::empty(),
     };
     let json = serde_json::to_string(&result).unwrap();
     assert!(
@@ -869,7 +871,8 @@ fn block_range_without_upper_bound_stays_single_page_by_default() {
 
 #[tokio::test]
 async fn execute_http_respects_base_url_override() {
-    use crate::auth::ResolvedAuth;
+    use crate::execution::OperationLedger;
+use crate::auth::ResolvedAuth;
     use crate::http_transport::HttpTransport;
     use async_trait::async_trait;
     use plasm_compile::CompiledRequest;

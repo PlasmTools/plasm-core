@@ -15,7 +15,7 @@ use axum::http::Request;
 use axum::Router;
 use plasm_core::discovery::CgsRegistry;
 use plasm_core::loader::load_schema_dir;
-use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
+use plasm_runtime::{ OperationLedger,ExecutionConfig, ExecutionEngine, ExecutionMode};
 use std::path::Path;
 use tower::util::ServiceExt;
 
@@ -97,6 +97,7 @@ fn plasm_plan_publication_renders_named_output_owner() {
                     ..Default::default()
                 },
                 request_fingerprints: vec![],
+            operations: plasm_runtime::OperationLedger::empty(),
             }),
             artifact: None,
         }],
@@ -128,6 +129,7 @@ fn live_run_tool_meta_finalizes_run_explorer_ui() {
         http_path: artifact_http_path(&ph, &sid, &run),
         payload_len: 256,
         request_fingerprints: vec!["cafe".into()],
+    operations: plasm_runtime::OperationLedger::empty(),
     };
     let mut idx = PlasmMetaIndex::new();
     let meta = build_mcp_run_tool_meta(

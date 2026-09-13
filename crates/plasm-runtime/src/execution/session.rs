@@ -132,6 +132,7 @@ pub async fn collect_query_stream(
         },
         stats,
         request_fingerprints: Vec::new(),
+    operations: OperationLedger::empty(),
     })
 }
 

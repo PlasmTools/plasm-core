@@ -5,9 +5,9 @@ use super::super::row::MatrixRow;
 pub(crate) const ROWS: &[MatrixRow] = &[
     MatrixRow {
         id: "lang_ra4_apply_render_bind_cut",
-        program: r#"rows = LangItem("i1") | select id, title
-hdr = rows => <<RA4MDBIND
-# {{ rows | length }} row(s)
+        program: r#"items = LangItem("i1") | select id, title
+hdr = items => <<RA4MDBIND
+# {{ title }}
 RA4MDBIND
 hdr"#,
         surface_line: false,
@@ -20,7 +20,7 @@ hdr"#,
             "dry_live_parity",
         ],
         min_node_results: 2,
-        expect_markdown_substrings: &["row(s)", "```"],
+        expect_markdown_substrings: &["```tsv", "content", "#"],
         expect_live_error: None,
     },
     // RA-4 apply — for_each monolith vs bind-cut.
@@ -56,7 +56,7 @@ sync"#,
     MatrixRow {
         id: "lang_ra4_apply_derive_message_field",
         program: r#"LangItem | where owner="alice" | take 2 => { t: _.title, note: "_.message" }"#,
-        surface_line: false,
+        surface_line: true,
         federated: false,
         features: &["ra4_apply_factor", "derive_map", "pipe_where", "pipe_take", "dry_live_parity"],
         min_node_results: 1,
@@ -158,7 +158,7 @@ summary | select headline"#,
         federated: false,
         features: &["effect_action"],
         min_node_results: 1,
-        expect_markdown_substrings: &["```tsv", "i1"],
+        expect_markdown_substrings: &["```tsv", "i1", "operations:", "capability=`langitem_ping`"],
         expect_live_error: None,
     },
     MatrixRow {
@@ -168,7 +168,29 @@ summary | select headline"#,
         federated: false,
         features: &["effect_delete"],
         min_node_results: 1,
-        expect_markdown_substrings: &["(no results)"],
+        expect_markdown_substrings: &[
+            "(no results)",
+            "operations:",
+            "capability=`langitem_delete`",
+            "completed=1",
+        ],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_for_each_empty_ping",
+        program: r#"items = LangItem | where owner="no-such-matrix-owner"
+done = items => LangItem(_.id).ping()
+done"#,
+        surface_line: false,
+        federated: false,
+        features: &["for_each_effect", "effect_action", "pipe_where"],
+        min_node_results: 2,
+        expect_markdown_substrings: &[
+            "(no results)",
+            "operations:",
+            "capability=`langitem_ping`",
+            "invocations=0",
+        ],
         expect_live_error: None,
     },
     MatrixRow {
@@ -236,7 +258,13 @@ done"#,
             "dry_live_parity",
         ],
         min_node_results: 2,
-        expect_markdown_substrings: &["```tsv", "done"],
+        expect_markdown_substrings: &[
+            "```tsv",
+            "c1",
+            "phase",
+            "operations:",
+            "capability=`langcursor_tick`",
+        ],
         expect_live_error: None,
     },
     // PLP-8: until already true on seed — zero steps.
@@ -249,7 +277,7 @@ done"#,
         federated: false,
         features: &["iterate_until_zero_step", "entity_get", "dry_live_parity"],
         min_node_results: 2,
-        expect_markdown_substrings: &["```tsv", "done"],
+        expect_markdown_substrings: &["```tsv", "c_done", "phase"],
         expect_live_error: None,
     },
     // PLP-8: stuck cursor never reaches done — bound exhaustion is defined failure.
@@ -406,7 +434,7 @@ done"#,
             "bindings_assignment",
         ],
         min_node_results: 2,
-        expect_markdown_substrings: &["row(s)"],
+        expect_markdown_substrings: &["#"],
         expect_live_error: None,
     },
     MatrixRow {
@@ -423,7 +451,7 @@ done"#,
         id: "lang_utf8_minijinja_content_stitch",
         program: r#"one = LangItem | take 1 | select title
 type_md = one => <<UTF8_ROW_EOF
-# Pokémon — {{ rows[0].title }}
+# Pokémon — {{ title }}
 UTF8_ROW_EOF
 LangItem.create(title=<<UTF8_DOC_EOF
 Featured Pokémon

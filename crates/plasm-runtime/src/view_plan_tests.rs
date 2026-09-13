@@ -3,7 +3,9 @@
 use super::*;
 
 use crate::cache::{CachedEntity, EntityCompleteness};
-use crate::execution::{current_timestamp, ExecutionResult, ExecutionSource, ExecutionStats};
+use crate::execution::{
+    current_timestamp, ExecutionResult, ExecutionSource, ExecutionStats, OperationLedger,
+};
 use crate::view_dag_run::run_view_dag_sync;
 use crate::view_test_support::{lang_digest_scope, matrix_views_cgs};
 use plasm_compile::DecodedRelation;
@@ -97,6 +99,7 @@ fn stub_item_node_result(id: &str, title: &str) -> ExecutionResult {
         source: ExecutionSource::Cache,
         stats: ExecutionStats::default(),
         request_fingerprints: vec![],
+        operations: OperationLedger::empty(),
     }
 }
 
@@ -178,6 +181,7 @@ fn fixture_runner_node_single_row_cardinality_error() {
             source: ExecutionSource::Cache,
             stats: ExecutionStats::default(),
             request_fingerprints: vec![],
+            operations: OperationLedger::empty(),
         },
     );
     let runner = FixtureViewNodeRunner { results };
@@ -219,6 +223,7 @@ fn resolve_view_relation_maps_stamps_empty_many_relation_key() {
                 source: ExecutionSource::Cache,
                 stats: ExecutionStats::default(),
                 request_fingerprints: vec![],
+                operations: OperationLedger::empty(),
             },
         ),
         (
@@ -232,6 +237,7 @@ fn resolve_view_relation_maps_stamps_empty_many_relation_key() {
                 source: ExecutionSource::Cache,
                 stats: ExecutionStats::default(),
                 request_fingerprints: vec![],
+                operations: OperationLedger::empty(),
             },
         ),
     ]);

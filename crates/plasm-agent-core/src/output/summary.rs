@@ -97,7 +97,7 @@ fn format_tsv_inner(
     full_fidelity: bool,
 ) -> String {
     if result.entities.is_empty() {
-        return "(no results)".into();
+        return super::format_empty_result_body(result);
     }
 
     let columns = super::union_entity_table_columns(result, cgs, max_entity_rows);

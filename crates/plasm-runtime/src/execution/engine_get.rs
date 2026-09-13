@@ -43,6 +43,7 @@ impl ExecutionEngine {
                         ..Default::default()
                     },
                     request_fingerprints: Vec::new(),
+                operations: OperationLedger::empty(),
                 });
             }
         }
@@ -80,6 +81,7 @@ impl ExecutionEngine {
                 ..Default::default()
             },
             request_fingerprints: Vec::new(),
+        operations: OperationLedger::empty(),
         })
     }
 
@@ -108,6 +110,7 @@ impl ExecutionEngine {
                         ..Default::default()
                     },
                     request_fingerprints: Vec::new(),
+                operations: OperationLedger::empty(),
                 });
             }
         }
@@ -168,6 +171,7 @@ impl ExecutionEngine {
                 ..Default::default()
             },
             request_fingerprints: Vec::new(),
+        operations: OperationLedger::empty(),
         })
     }
 

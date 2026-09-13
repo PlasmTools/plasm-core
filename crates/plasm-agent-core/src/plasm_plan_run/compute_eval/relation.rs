@@ -165,6 +165,7 @@ pub(crate) async fn finalize_empty_relation_materialized_node(
                 source: ExecutionSource::Cache,
                 stats: ExecutionStats::default(),
                 request_fingerprints: vec![compute_fingerprint(node, &[])],
+                operations: plasm_runtime::OperationLedger::empty(),
             }),
             artifact: None,
         },
@@ -618,6 +619,7 @@ pub(crate) async fn finalize_embed_relation_materialized_node(
             node,
             fingerprint_rows.unwrap_or(&wire_rows),
         )],
+        operations: plasm_runtime::OperationLedger::empty(),
     };
     let parsed_preimage = crate::plasm_plan_run::evidence_plan::parsed_expr_for_plan_node(node);
     let artifact = archive_plasm_result_snapshot(

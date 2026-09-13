@@ -118,6 +118,7 @@ impl ExecutionEngine {
                                     ..Default::default()
                                 },
                                 request_fingerprints: Vec::new(),
+                                operations: OperationLedger::empty(),
                             });
                         }
 

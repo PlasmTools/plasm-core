@@ -239,6 +239,7 @@ async fn materialized_entities_use_walker_when_persistence_exists() {
         source: plasm_runtime::ExecutionSource::Live,
         stats: plasm_runtime::ExecutionStats::default(),
         request_fingerprints: Vec::new(),
+        operations: plasm_runtime::OperationLedger::empty(),
     };
     let direct =
         super::GraphSurfaceRehydrator::new(&fx.es, fx.host.st.as_ref(), SID, fx.cgs.as_ref())
@@ -322,6 +323,7 @@ async fn matrix_row_identity_upgrades_to_graph_parent() {
         source: ExecutionSource::Cache,
         stats: Default::default(),
         request_fingerprints: Vec::new(),
+        operations: plasm_runtime::OperationLedger::empty(),
     };
     let host = SpillHostFixture::new();
     let parents = super::GraphSurfaceRehydrator::new(
@@ -384,6 +386,7 @@ async fn row_identity_graph_miss_omits_thin_projected_fallback() {
         source: ExecutionSource::Cache,
         stats: Default::default(),
         request_fingerprints: Vec::new(),
+        operations: plasm_runtime::OperationLedger::empty(),
     };
     let host = SpillHostFixture::new();
     let parents = super::GraphSurfaceRehydrator::new(
@@ -410,7 +413,8 @@ async fn pokeapi_type_pokemon_plan_prefers_graph_parent() {
 
     use crate::test_support::graph_fixtures::test_execute_session;
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/pokeapi_mini");
     if !dir.is_dir() {
         return;
     }

@@ -147,6 +147,7 @@ fn workflow_matrix_identity_mismatch_detected_on_extra_field() {
         source: plasm_runtime::execution::ExecutionSource::Cache,
         stats: Default::default(),
         request_fingerprints: Vec::new(),
+        operations: plasm_runtime::OperationLedger::empty(),
     };
     let conflict = detect_identity_mismatch(cap, &input, &fetched).expect("mismatch");
     assert_eq!(conflict.kind, WorkflowConflictKind::IdentityMismatch);

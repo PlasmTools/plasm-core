@@ -6,10 +6,11 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::sync::OnceCell;
 
@@ -109,12 +110,71 @@ async fn reset_cursors(State(lab): State<CursorLab>) -> StatusCode {
     StatusCode::NO_CONTENT
 }
 
-fn cursor_lab_router(lab: CursorLab) -> Router {
+fn language_matrix_sidecar(lab: CursorLab) -> Router {
     Router::new()
         .route("/language/v1/cursors/_lab_reset", post(reset_cursors))
         .route("/language/v1/cursors/{id}", get(get_cursor))
         .route("/language/v1/cursors/{id}/tick", post(tick_cursor))
+        .route("/language/v1/vaults", get(list_vaults))
+        .route("/language/v1/vaults/{id}", get(get_vault))
+        .route("/language/v1/vaults/{id}/unlock", post(unlock_vault))
+        .route("/language/v1/lanes", get(list_lanes))
+        .route("/language/v1/lane_stocks", get(list_lane_stocks))
         .with_state(lab)
+}
+
+#[derive(Debug, Deserialize)]
+struct ShelfQuery {
+    shelf: Option<String>,
+}
+
+fn vault_row(id: &str, service: &str, password: &str) -> Value {
+    json!({ "id": id, "service": service, "password": password })
+}
+
+fn lane_row(id: &str, title: &str, shelf: &str) -> Value {
+    json!({ "id": id, "title": title, "shelf": shelf })
+}
+
+async fn get_vault(Path(id): Path<String>) -> Json<Value> {
+    Json(match id.as_str() {
+        "venmo" => vault_row("venmo", "venmo", "venmo-secret"),
+        "paypal" => vault_row("paypal", "paypal", "paypal-secret"),
+        _ => json!([]),
+    })
+}
+
+async fn list_vaults() -> Json<Value> {
+    Json(json!([
+        vault_row("venmo", "venmo", "venmo-secret"),
+        vault_row("paypal", "paypal", "paypal-secret"),
+    ]))
+}
+
+async fn unlock_vault() -> Json<Value> {
+    Json(json!({ "ok": true }))
+}
+
+async fn list_lanes(Query(q): Query<ShelfQuery>) -> Json<Value> {
+    Json(match q.shelf.as_deref() {
+        Some("alpha") => json!([
+            lane_row("l1", "alpha-one", "alpha"),
+            lane_row("l2", "alpha-two", "alpha"),
+        ]),
+        Some("empty") => json!([]),
+        _ => json!([]),
+    })
+}
+
+async fn list_lane_stocks(Query(q): Query<ShelfQuery>) -> Json<Value> {
+    Json(match q.shelf.as_deref() {
+        Some("mine") => json!([
+            lane_row("s1", "stock-one", "mine"),
+            lane_row("s2", "stock-two", "mine"),
+        ]),
+        Some("empty") => json!([]),
+        _ => json!([]),
+    })
 }
 
 async fn spawn_hermit_host_root(spec_path: &std::path::Path) -> String {
@@ -128,7 +188,7 @@ async fn spawn_hermit_host_root(spec_path: &std::path::Path) -> String {
         store: Arc::new(Mutex::new(HashMap::new())),
     };
     // Stateful cursor routes take precedence; unmatched paths fall through to Hermit.
-    let router = cursor_lab_router(lab).fallback_service(hermit_router);
+    let router = language_matrix_sidecar(lab).fallback_service(hermit_router);
 
     // Bind the listener on the *server* runtime. Creating it on the caller's runtime and then
     // dropping that runtime (e.g. views `block_on_views_live` harness) orphans the IO driver and

@@ -9,7 +9,7 @@ use crate::plasm_plan::{
     ValidatedPlanReturn, ValidatedRelationTraversalNode, ValidatedSurfaceNode,
 };
 use plasm_runtime::row_predicate::{JsonRowPredicate, JsonRowPredicateOp};
-use plasm_runtime::{CachedEntity, ExecutionResult, RowMatchBudget, TopKSpec};
+use plasm_runtime::{ OperationLedger,CachedEntity, ExecutionResult, RowMatchBudget, TopKSpec};
 
 /// Canonical host page size for unbounded list/page read roots: the first page is materialized
 /// in-band, with continuation via `page(...)`. The MCP inline row cap
@@ -129,6 +129,7 @@ pub fn cap_execution_result_page(
         offset: cap,
         page_size: cap,
         request_fingerprints: result.request_fingerprints.clone(),
+    operations: plasm_runtime::OperationLedger::empty(),
     };
     result.paging_handle =
         Some(sess.register_synthetic_paging_continuation(cursor, logical_session_ref));
@@ -755,6 +756,7 @@ mod tests {
             source: plasm_runtime::ExecutionSource::Cache,
             stats: Default::default(),
             request_fingerprints: vec![],
+        operations: plasm_runtime::OperationLedger::empty(),
         };
         cap_execution_result_page(&sess, &mut result, 2, "rows", "LangItem", Some("l_test"));
         assert_eq!(result.entities.len(), 2);

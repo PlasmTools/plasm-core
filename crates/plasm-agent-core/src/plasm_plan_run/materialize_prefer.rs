@@ -1,3 +1,4 @@
+use plasm_runtime::OperationLedger;
 //! PreferFromParentGet relation materialization (mixed embed + scoped GET fan-out).
 
 use super::*;
@@ -118,6 +119,7 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
                 ..Default::default()
             },
             request_fingerprints: vec![compute_fingerprint(node, source_rows)],
+        operations: OperationLedger::empty(),
         };
         let parsed_preimage = evidence_plan::parsed_expr_for_plan_node(node);
         let artifact = archive_plasm_result_snapshot(

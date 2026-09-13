@@ -15,7 +15,7 @@ use serde_json::Value as JsonValue;
 use crate::api_error_detail::workflow_conflict_from_http;
 use crate::execution::{
     compiled_conflict_rules, synthesized_get, CapabilityParamEnv, ExecutionEngine, ExecutionMode,
-    ExecutionResult, StreamConsumeOpts,
+    ExecutionResult, OperationLedger, StreamConsumeOpts,
 };
 use crate::materialization::SessionMaterialization;
 use crate::RuntimeError;
@@ -336,6 +336,7 @@ pub fn skipped_write_result(entity: &str) -> ExecutionResult {
         source: crate::execution::ExecutionSource::Cache,
         stats: Default::default(),
         request_fingerprints: Vec::new(),
+        operations: OperationLedger::empty(),
     }
 }
 
@@ -417,6 +418,7 @@ mod tests {
             source: crate::execution::ExecutionSource::Cache,
             stats: Default::default(),
             request_fingerprints: Vec::new(),
+            operations: OperationLedger::empty(),
         };
         let conflict = detect_identity_mismatch(&cap, &input, &fetched).expect("mismatch");
         assert_eq!(conflict.kind, WorkflowConflictKind::IdentityMismatch);

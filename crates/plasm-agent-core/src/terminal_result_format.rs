@@ -54,6 +54,7 @@ fn execution_result_from_artifact_doc(
         source: doc.source,
         stats: doc.stats.clone(),
         request_fingerprints: doc.request_fingerprints.clone(),
+        operations: doc.operations.clone(),
     })
 }
 
@@ -184,6 +185,7 @@ mod tests {
             entities: vec![],
             source: ExecutionSource::Live,
             stats: ExecutionStats::default(),
+            operations: plasm_runtime::OperationLedger::empty(),
         };
         let (out, _) = hydrate_plan_run_from_artifact_formatted(&doc, &es, doc.run_id.as_str())
             .expect("format");

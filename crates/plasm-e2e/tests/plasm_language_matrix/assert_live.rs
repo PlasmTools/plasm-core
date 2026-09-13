@@ -18,6 +18,38 @@ pub(crate) fn assert_comp_witness(dry: &DryPlasmPlanEvaluation) -> Result<(), St
 }
 
 pub(crate) fn assert_row(row: &MatrixRow, out: &PlasmPlanRunResult) -> Result<(), String> {
+    if matches!(
+        row.id,
+        "lang_take_one_field_bind"
+            | "lang_take_one_field_argument"
+            | "lang_take_one_field_bound_argument"
+    ) {
+        let [source, target] = out.return_steps.as_slice() else {
+            return Err("bounded extract witness requires source and result roots".into());
+        };
+        let source_row = source
+            .result
+            .entities
+            .first()
+            .ok_or("missing selected row")?;
+        let result_row = target
+            .result
+            .entities
+            .first()
+            .ok_or("missing extracted result")?;
+        let field = if row.id == "lang_take_one_field_bind" {
+            "value"
+        } else {
+            "title"
+        };
+        let selected_id = source_row.fields.get("id").ok_or("selected row lacks id")?;
+        if result_row.fields.get(field) != Some(selected_id) {
+            return Err(format!(
+                "bounded field extraction changed the selected value: {:?} vs {selected_id:?}",
+                result_row.fields
+            ));
+        }
+    }
     if out.node_results.len() < row.min_node_results {
         return Err(format!(
             "row {}: expected at least {} node_results, got {}",
@@ -119,6 +151,43 @@ pub(crate) fn assert_row(row: &MatrixRow, out: &PlasmPlanRunResult) -> Result<()
             return Err(format!(
                 "row {}: relation live run must not publish (no results)",
                 row.id
+            ));
+        }
+    }
+    if matches!(
+        row.id,
+        "lang_iterate_until_bound" | "lang_iterate_until_zero_step"
+    ) {
+        if md.contains("(no results)") {
+            return Err(format!(
+                "row {}: successful iterate must publish rematerialized seed rows, not (no results)",
+                row.id
+            ));
+        }
+        let done = out
+            .return_steps
+            .iter()
+            .find(|s| s.node_id.as_deref() == Some("done"))
+            .ok_or_else(|| format!("row {}: missing done return step", row.id))?;
+        if done.result.entities.is_empty() || done.result.count != done.result.entities.len() {
+            return Err(format!(
+                "row {}: iterate done advertised count={} entities={} (HTTP-2)",
+                row.id,
+                done.result.count,
+                done.result.entities.len()
+            ));
+        }
+        if row.id == "lang_iterate_until_bound" && done.result.operations.is_empty() {
+            return Err(format!(
+                "row {}: iterate steps ran but operations ledger is empty",
+                row.id
+            ));
+        }
+        if row.id == "lang_iterate_until_zero_step" && !done.result.operations.is_empty() {
+            return Err(format!(
+                "row {}: zero-step iterate must not mint step acks (got {:?})",
+                row.id,
+                done.result.operations.entries()
             ));
         }
     }

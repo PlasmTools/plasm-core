@@ -76,6 +76,9 @@ pub struct ExecutionResult {
     /// Hex-encoded [`crate::RequestFingerprint`] for each successful outbound compiled op (live or replay), in order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub request_fingerprints: Vec<String>,
+    /// HTTP-2 operation acknowledgments (not telemetry). Empty on a pure read.
+    #[serde(default)]
+    pub operations: super::OperationLedger,
 }
 
 /// Source of execution result
@@ -85,6 +88,16 @@ pub enum ExecutionSource {
     Live,
     Replay,
     Cache,
+}
+
+impl ExecutionSource {
+    pub fn as_wire_str(self) -> &'static str {
+        match self {
+            Self::Live => "live",
+            Self::Replay => "replay",
+            Self::Cache => "cache",
+        }
+    }
 }
 
 /// Execution statistics
@@ -188,6 +201,9 @@ pub struct PageResult {
     #[serde(skip)]
     pub pagination_resume: Option<QueryPaginationResumeData>,
     pub stats: ExecutionStats,
+    /// HTTP-2 ledger for this page (writes); empty on a pure read page.
+    #[serde(default)]
+    pub operations: super::OperationLedger,
 }
 
 pub type QueryStream<'a> =

@@ -34,5 +34,6 @@ pub(crate) fn query_result_merge_cache(
         source,
         stats,
         request_fingerprints: Vec::new(),
+        operations: OperationLedger::empty(),
     })
 }

@@ -98,7 +98,7 @@ pub(crate) fn publish_with_shared_meta_index(
 
 #[cfg(test)]
 mod tests {
-    use plasm_runtime::{ExecutionResult, ExecutionSource, ExecutionStats};
+    use plasm_runtime::{ OperationLedger,ExecutionResult, ExecutionSource, ExecutionStats};
 
     use super::*;
     use crate::http_execute::PublishedResultStep;
@@ -119,6 +119,7 @@ mod tests {
             http_path: crate::run_artifacts::artifact_http_path("ph", "sid", &run_id),
             payload_len: 0,
             request_fingerprints: vec!["fp".into()],
+        operations: plasm_runtime::OperationLedger::empty(),
         };
         let step = PublishedResultStep {
             name: None,
@@ -137,6 +138,7 @@ mod tests {
                 source: ExecutionSource::Live,
                 stats: ExecutionStats::default(),
                 request_fingerprints: vec![],
+            operations: plasm_runtime::OperationLedger::empty(),
             }),
             artifact: Some(handle),
         };
@@ -165,6 +167,7 @@ mod tests {
             http_path: crate::run_artifacts::artifact_http_path("ph", "sid", &run_id),
             payload_len: 0,
             request_fingerprints: vec!["fp".into()],
+        operations: plasm_runtime::OperationLedger::empty(),
         };
         let step = synthetic_published_result_step(3, Some(handle));
         let out = publish_plasm_result_steps(None, None, std::slice::from_ref(&step));
@@ -198,6 +201,7 @@ mod tests {
             http_path: crate::run_artifacts::artifact_http_path("ph", "sid", &run_id),
             payload_len: 0,
             request_fingerprints: vec!["fp".into()],
+        operations: plasm_runtime::OperationLedger::empty(),
         };
         let paging = PagingHandle::parse("l_AAAAAAAAQACAAAAAAAAAAQ_pg1").expect("paging handle");
         let step =
@@ -272,6 +276,7 @@ mod tests {
             http_path: crate::run_artifacts::artifact_http_path("ph", "sid", &run_id),
             payload_len: 0,
             request_fingerprints: vec!["fp".into()],
+        operations: plasm_runtime::OperationLedger::empty(),
         };
         let step = synthetic_published_result_step(937, Some(handle.clone()));
         let out = publish_plasm_result_steps(None, None, std::slice::from_ref(&step));

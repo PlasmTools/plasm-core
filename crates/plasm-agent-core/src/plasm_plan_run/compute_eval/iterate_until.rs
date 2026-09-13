@@ -34,9 +34,40 @@ pub(crate) async fn materialize_iterate_until_node(
     let wire_coercion_by_alias = wire_coercion_by_alias_from_inputs(es, &mut input_rows)?;
     let scoped_es = entry_scoped_execute_session(es, Some(&it.effect_template.qualified_entity))?;
 
+    let seed_qe = materialized
+        .get(&it.source)
+        .ok_or_else(|| {
+            format!(
+                "iterate_until source {} has not been materialized",
+                it.source.as_str()
+            )
+        })?
+        .qualified_entity
+        .clone();
+
     if row_satisfies_until(&current_rows[0], &it.until_predicates) {
-        return Ok(final_iterate_node(it, current_rows));
+        return super::super::materialize::archive_materialize_iterate_until(
+            st,
+            es,
+            session_id,
+            &scoped_es,
+            it,
+            seed_qe,
+            current_rows,
+            plasm_runtime::OperationLedger::empty(),
+            Vec::new(),
+            ExecutionStats::default(),
+            ExecutionSource::Cache,
+            0,
+            trace,
+        )
+        .await;
     }
+
+    let mut operations = plasm_runtime::OperationLedger::empty();
+    let mut request_fingerprints = Vec::new();
+    let mut stats = ExecutionStats::default();
+    let mut source = ExecutionSource::Cache;
 
     for step_idx in 1..=it.take {
         let row = current_rows
@@ -55,7 +86,7 @@ pub(crate) async fn materialize_iterate_until_node(
             expr_label,
             parsed,
         );
-        let _fold = super::super::plan_fanout_parallel::execute_row_fanout(
+        let fold = super::super::plan_fanout_parallel::execute_row_fanout(
             st,
             &scoped_es,
             session_id,
@@ -67,19 +98,51 @@ pub(crate) async fn materialize_iterate_until_node(
         )
         .await
         .map_err(|e| format!("iterate_until step {step_idx}: {e}"))?;
+        operations.merge(&fold.operations);
+        request_fingerprints.extend(fold.request_fingerprints);
+        super::super::plan_fanout_parallel::merge_execution_stats(
+            &mut stats,
+            &fold.stats,
+            super::super::plan_fanout_parallel::ExecutionStatsFold::Telemetry,
+        );
+        source = super::super::plan_fanout_parallel::combine_execution_source(source, fold.source);
 
         // Always re-Get the seed after the step. Mutator echoes (even with `provides`) are not a
         // substitute for primary_read / composed views — e.g. Player.previous may echo song_id while
         // `is_liked` lives only on player_current. LangCursor.tick remains correct because re-Get
         // reads the updated cursor row.
-        current_rows = reobserve_seed(st, es, session_id, it, plan_shared.as_ref(), trace).await?;
+        current_rows = reobserve_seed(
+            st,
+            es,
+            session_id,
+            it,
+            materialized,
+            plan_shared.as_ref(),
+            trace,
+        )
+        .await?;
         if current_rows.is_empty() {
             return Err(format!(
                 "iterate_until re-observe after step {step_idx} produced no rows"
             ));
         }
         if row_satisfies_until(&current_rows[0], &it.until_predicates) {
-            return Ok(final_iterate_node(it, current_rows));
+            return super::super::materialize::archive_materialize_iterate_until(
+                st,
+                es,
+                session_id,
+                &scoped_es,
+                it,
+                seed_qe,
+                current_rows,
+                operations,
+                request_fingerprints,
+                stats,
+                source,
+                step_idx,
+                trace,
+            )
+            .await;
         }
     }
 
@@ -89,18 +152,23 @@ pub(crate) async fn materialize_iterate_until_node(
     ))
 }
 
-fn final_iterate_node(
-    it: &ValidatedIterateUntilNode,
-    rows: Vec<serde_json::Value>,
-) -> MaterializedNode {
-    let identities = rows.iter().map(|_| None).collect::<Vec<_>>();
-    MaterializedNode::inline_cache(
-        it.effect_template.qualified_entity.clone(),
-        rows,
-        identities,
-        String::new(),
-        None,
-    )
+fn seed_replay_uses(expr: &plasm_core::Expr) -> Vec<crate::plasm_plan::PlanResultUse> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut uses = Vec::new();
+    for reference in plasm_core::operand_binding::input_references(expr) {
+        let plasm_core::PlasmInputRef::NodeInput { node, .. } = reference else {
+            continue;
+        };
+        if !seen.insert(node.clone()) {
+            continue;
+        }
+        uses.push(crate::plasm_plan::PlanResultUse {
+            node: node.clone(),
+            r#as: node,
+            qualified_entity: None,
+        });
+    }
+    uses
 }
 
 async fn reobserve_seed(
@@ -108,6 +176,7 @@ async fn reobserve_seed(
     es: &ExecuteSession,
     session_id: &str,
     it: &ValidatedIterateUntilNode,
+    materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
     plan_shared: Option<&Arc<crate::plan_execute_shared::PlanLineExecuteShared>>,
     trace: Option<&PlasmTraceContext>,
 ) -> Result<Vec<serde_json::Value>, String> {
@@ -121,6 +190,14 @@ async fn reobserve_seed(
         field_dot_extract: None,
     };
     let scoped_es = entry_scoped_execute_session(es, Some(&it.effect_template.qualified_entity))?;
+    // Bound identity stays template + binding until live re-observe: instantiate holes
+    // (`@tok`) before CML/HTTP so bearer never sees a plan-time Binding marker.
+    let parsed = super::eval::instantiate_parsed_expr_plan_inputs(
+        parsed,
+        scoped_es.cgs.as_ref(),
+        &seed_replay_uses(&seed_ir.expr),
+        materialized,
+    )?;
     let expr_label = seed_ir.display_expr.as_deref().unwrap_or("<iterate-seed>");
     let (_parsed, result, _artifact) = execute_plasm_parsed_expr(
         st,

@@ -57,6 +57,7 @@ mod http_exec;
 mod hydrate;
 mod identity;
 mod mutators;
+mod operation_outcome;
 mod pagination_driver;
 mod pagination_state;
 mod predicates;
@@ -95,6 +96,7 @@ pub(crate) use pagination_state::PaginationLoopState;
 pub(crate) use pagination_state::{merge_pagination_into_body, pagination_context_map};
 pub(crate) use plasm_core::json_value_to_plasm_value as json_to_plasm_value;
 
+pub use operation_outcome::{OperationAck, OperationIdentity, OperationLedger};
 pub use types::{
     ExecutionConfig, ExecutionMode, ExecutionResult, ExecutionSource, ExecutionStats, PageResult,
     QueryPaginationResumeData, QueryPaginationState, QueryStream, RowMatchBudget, RowsProgressFn,

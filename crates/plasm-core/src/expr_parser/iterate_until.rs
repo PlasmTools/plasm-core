@@ -1,4 +1,5 @@
-//! State iterator surface: `iterate seed step mut until pred take N` (PLP-8).
+//! State iterator surface: Get-identity seed (literal or bound) then
+//! `iterate cur step mut until pred take N` (PLP-8).
 
 use super::applicator::method_call_at_depth_zero;
 use super::program_surface::is_valid_program_label;
@@ -6,7 +7,7 @@ use super::program_surface::is_valid_program_label;
 /// Parsed `iterate … step … until … take N` (hard bound required).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IterateUntilExpr {
-    /// Seed observe surface (Get / singleton binding / proven singleton primary).
+    /// Seed observe surface: catalog Get identity, or a binding of one.
     pub seed: String,
     /// Write/side-effect invoke surface; `_` is the current cursor row.
     pub step: String,
@@ -36,7 +37,7 @@ pub fn try_parse_iterate_until(raw: &str) -> Result<Option<IterateUntilExpr>, St
     let rest = after_kw.trim_start();
     if rest.is_empty() {
         return Err(iterate_usage_err(
-            "missing seed after `iterate` (expected `iterate seed step … until … take N`)",
+            "missing seed after `iterate` (expected a Get identity: `cur = e#(\"id\")` / `cur = e#(tok)` / `cur = e#{id_field=tok}` then `iterate cur step … until … take N`)",
         ));
     }
 
@@ -50,6 +51,11 @@ pub fn try_parse_iterate_until(raw: &str) -> Result<Option<IterateUntilExpr>, St
     let step = step.trim();
     if step.is_empty() {
         return Err(iterate_usage_err("step expression is empty"));
+    }
+    if step.starts_with('=') {
+        return Err(iterate_usage_err(
+            "step is a keyword followed by an invoke (`iterate cur step Entity.m#(…)`), not a binder",
+        ));
     }
     if !method_call_at_depth_zero(step) {
         return Err(iterate_usage_err(
@@ -107,9 +113,20 @@ fn normalize_until_pred(raw: &str) -> String {
     }
 }
 
+/// Taught Get-identity seed family (literal or bound). Re-observe replays `seed_ir`.
+pub const ITERATE_SEED_GET_FAMILY: &str =
+    "`cur = e#(\"id\")` / `cur = e#(tok)` / `cur = e#{id_field=tok}` then `iterate cur step …`";
+
+/// Taught repair when iterate seed is not a catalog Get identity (PLP-8).
+pub fn iterate_seed_must_be_get_identity(seed: &str) -> String {
+    format!(
+        "iterate seed `{seed}` must be a catalog Get identity ({ITERATE_SEED_GET_FAMILY}) so the seed can be re-observed"
+    )
+}
+
 fn iterate_usage_err(detail: &str) -> String {
     format!(
-        "invalid state iterate: {detail}; lawful form: `iterate seed step Entity.m#(…) until field = value take N` (PLP-8; `take N` mandatory)"
+        "invalid state iterate: {detail}; lawful form: `cur = e#(\"id\")` / `cur = e#(tok)` / `cur = e#{{id_field=tok}}` then `iterate cur step Entity.m#(…) until field = value take N` (PLP-8; `take N` mandatory)"
     )
 }
 
@@ -235,5 +252,27 @@ mod tests {
     fn rejects_while() {
         let err = try_parse_iterate_until("while true").expect_err("while");
         assert!(err.contains("while") && err.contains("iterate"), "{err}");
+    }
+
+    #[test]
+    fn seed_get_identity_diagnostic_names_taught_form() {
+        let err = iterate_seed_must_be_get_identity("cur");
+        assert!(err.contains("cur = e#(\"id\")"), "{err}");
+        assert!(err.contains("e#(tok)"), "{err}");
+        assert!(err.contains("e#{id_field=tok}"), "{err}");
+        assert!(err.contains("iterate cur step"), "{err}");
+        assert!(!err.contains("carry ir"), "{err}");
+    }
+
+    #[test]
+    fn rejects_step_equals_as_binder() {
+        let err = try_parse_iterate_until(
+            r#"iterate cur step = LangCursor(_.id).tick() until phase = "done" take 4"#,
+        )
+        .expect_err("step is a keyword; `step = invoke` is not lawful");
+        assert!(
+            err.contains("not a binder") && err.contains("iterate cur step Entity.m#(…)"),
+            "diagnostic must name the executable invoke-after-step form, got: {err}"
+        );
     }
 }

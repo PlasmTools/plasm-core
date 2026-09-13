@@ -126,6 +126,7 @@ fn synthetic_page_result(
             ..Default::default()
         },
         request_fingerprints,
+        operations: plasm_runtime::OperationLedger::empty(),
     }
 }
 

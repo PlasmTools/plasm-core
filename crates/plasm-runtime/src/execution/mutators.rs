@@ -115,6 +115,16 @@ impl ExecutionEngine {
                     })
                     .collect();
                 let count = entities.len();
+                let stats = ExecutionStats {
+                    duration_ms: 0,
+                    network_requests: usize::from(!matches!(
+                        compiled,
+                        CompiledOperation::CredentialBind(_)
+                    )),
+                    cache_hits: 0,
+                    cache_misses: count,
+                    ..Default::default()
+                };
 
                 Ok(ExecutionResult {
                     entities,
@@ -123,17 +133,16 @@ impl ExecutionEngine {
                     pagination_resume: None,
                     paging_handle: None,
                     source: ExecutionSource::Live,
-                    stats: ExecutionStats {
-                        duration_ms: 0,
-                        network_requests: usize::from(!matches!(
-                            compiled,
-                            CompiledOperation::CredentialBind(_)
-                        )),
-                        cache_hits: 0,
-                        cache_misses: count,
-                        ..Default::default()
-                    },
+                    stats,
                     request_fingerprints: Vec::new(),
+                    operations: write_operations(
+                        create.catalog_entry_id.as_deref(),
+                        create.entity.as_str(),
+                        capability,
+                        ExecutionSource::Live,
+                        1,
+                        0,
+                    ),
                 })
             }
             _ => Err(RuntimeError::UnsupportedExecutionMode {
@@ -209,6 +218,17 @@ impl ExecutionEngine {
                 mat.remove(&delete.target);
                 mat.poison_read_caches_after_mutation();
 
+                let stats = ExecutionStats {
+                    duration_ms: 0,
+                    network_requests: usize::from(!matches!(
+                        compiled,
+                        CompiledOperation::CredentialBind(_)
+                    )),
+                    cache_hits: 0,
+                    cache_misses: 0,
+                    ..Default::default()
+                };
+
                 Ok(ExecutionResult {
                     entities: vec![],
                     count: 0,
@@ -216,17 +236,16 @@ impl ExecutionEngine {
                     pagination_resume: None,
                     paging_handle: None,
                     source: ExecutionSource::Live,
-                    stats: ExecutionStats {
-                        duration_ms: 0,
-                        network_requests: usize::from(!matches!(
-                            compiled,
-                            CompiledOperation::CredentialBind(_)
-                        )),
-                        cache_hits: 0,
-                        cache_misses: 0,
-                        ..Default::default()
-                    },
+                    stats,
                     request_fingerprints: Vec::new(),
+                    operations: write_operations(
+                        delete.catalog_entry_id.as_deref(),
+                        delete.target.entity_type.as_str(),
+                        capability,
+                        ExecutionSource::Live,
+                        1,
+                        0,
+                    ),
                 })
             }
             _ => Err(RuntimeError::UnsupportedExecutionMode {
@@ -393,11 +412,44 @@ impl ExecutionEngine {
                 // yields zero rows — so composed primary_read re-fetches live.
                 if count > 0 && !capability.provides.is_empty() {
                     mat.merge(entities.clone())?;
+                    let mut overlay = IndexMap::new();
+                    for entity in &entities {
+                        for name in &capability.provides {
+                            if let Some(field) = entity.get_field(name) {
+                                overlay.insert(name.clone(), field.to_value());
+                            }
+                        }
+                    }
+                    if let Some(plasm_core::Value::String(token)) = overlay.get("access_token") {
+                        if let Some(material) =
+                            super::session::try_current_execute_session_material()
+                        {
+                            material.note_login_access_token(token);
+                        }
+                    }
+                    mat.stamp_provided_session_params(
+                        SessionMaterialization::provide_catalog_key(
+                            cgs,
+                            invoke.catalog_entry_id.as_deref(),
+                        ),
+                        overlay,
+                    );
                 }
                 if count > 0 || !capability.invalidates_entities.is_empty() {
                     mat.apply_post_mutation_cache_effects(capability, cgs)?;
                     mat.poison_read_caches_after_mutation();
                 }
+
+                let stats = ExecutionStats {
+                    duration_ms: 0,
+                    network_requests: usize::from(!matches!(
+                        compiled,
+                        CompiledOperation::CredentialBind(_)
+                    )),
+                    cache_hits: 0,
+                    cache_misses: count,
+                    ..Default::default()
+                };
 
                 Ok(ExecutionResult {
                     entities,
@@ -406,17 +458,16 @@ impl ExecutionEngine {
                     pagination_resume: None,
                     paging_handle: None,
                     source: ExecutionSource::Live,
-                    stats: ExecutionStats {
-                        duration_ms: 0,
-                        network_requests: usize::from(!matches!(
-                            compiled,
-                            CompiledOperation::CredentialBind(_)
-                        )),
-                        cache_hits: 0,
-                        cache_misses: count,
-                        ..Default::default()
-                    },
+                    stats,
                     request_fingerprints: Vec::new(),
+                    operations: write_operations(
+                        invoke.catalog_entry_id.as_deref(),
+                        invoke.target.entity_type.as_str(),
+                        capability,
+                        ExecutionSource::Live,
+                        1,
+                        0,
+                    ),
                 })
             }
             _ => Err(RuntimeError::UnsupportedExecutionMode {
@@ -424,4 +475,22 @@ impl ExecutionEngine {
             }),
         }
     }
+}
+
+fn write_operations(
+    entry_id: Option<&str>,
+    entity: &str,
+    capability: &plasm_core::CapabilitySchema,
+    source: ExecutionSource,
+    completed: usize,
+    failed: usize,
+) -> super::OperationLedger {
+    super::OperationLedger::from_ack(super::OperationAck::from_capability(
+        entry_id.unwrap_or(""),
+        entity,
+        capability,
+        source,
+        completed,
+        failed,
+    ))
 }

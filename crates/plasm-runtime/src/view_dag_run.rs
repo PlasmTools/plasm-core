@@ -6,7 +6,9 @@ use plasm_core::schema::{EntityDef, ViewDefinition, ViewNodeSpec, ViewOutputBind
 use plasm_core::{Ref, WriteOutcome, CGS};
 
 use crate::cache::{CachedEntity, EntityCompleteness};
-use crate::execution::{current_timestamp, ExecutionResult, ExecutionSource, ExecutionStats};
+use crate::execution::{
+    current_timestamp, ExecutionResult, ExecutionSource, ExecutionStats, OperationLedger,
+};
 use crate::view_plan::{
     build_view_row_reference, load_view_dag, node_fields_for_row, prepare_view_node,
     resolve_output_binding, resolve_view_relation_maps, view_node_should_run, PreparedViewNode,
@@ -89,6 +91,7 @@ fn execution_result_from_view_row(
         },
         stats,
         request_fingerprints: fingerprints,
+        operations: OperationLedger::empty(),
     }
 }
 
@@ -279,6 +282,7 @@ impl ViewDagWalkState {
                 source: ExecutionSource::Cache,
                 stats: ExecutionStats::default(),
                 request_fingerprints: Vec::new(),
+                operations: OperationLedger::empty(),
             },
         );
     }

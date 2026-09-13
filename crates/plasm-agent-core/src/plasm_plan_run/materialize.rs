@@ -45,6 +45,7 @@ pub(crate) async fn materialize_synthetic_node(
             ..Default::default()
         },
         request_fingerprints: request_fingerprints.clone(),
+        operations: plasm_runtime::OperationLedger::empty(),
     };
     let parsed_preimage = evidence_plan::parsed_expr_for_plan_node(node);
     let artifact = archive_plasm_result_snapshot(
@@ -100,6 +101,7 @@ pub(crate) async fn materialize_synthetic_node(
             source: ExecutionSource::Cache,
             stats: full_result.stats,
             request_fingerprints,
+            operations: full_result.operations,
         }),
         artifact: Some(artifact),
     })
@@ -507,6 +509,7 @@ pub(crate) fn execution_result_from_fanout_fold(
         source: fold.source,
         stats: fold.stats,
         request_fingerprints: fold.request_fingerprints,
+        operations: fold.operations,
     }
 }
 
@@ -516,6 +519,7 @@ pub(crate) fn execution_result_from_relation_entities(
     source: ExecutionSource,
     stats: ExecutionStats,
     request_fingerprints: Vec<String>,
+    operations: plasm_runtime::OperationLedger,
 ) -> ExecutionResult {
     let count = entities.len();
     ExecutionResult {
@@ -527,6 +531,7 @@ pub(crate) fn execution_result_from_relation_entities(
         source,
         stats,
         request_fingerprints,
+        operations,
     }
 }
 
@@ -714,7 +719,8 @@ pub(crate) async fn archive_materialize_for_each_fanout(
     snapshot_expressions: Vec<String>,
     trace: Option<&PlasmTraceContext>,
 ) -> Result<MaterializedNode, String> {
-    let result = execution_result_from_fanout_fold(fold.clone());
+    let mut result = execution_result_from_fanout_fold(fold.clone());
+    stamp_for_each_operations(&mut result, scoped_es.cgs.as_ref(), for_each);
     let for_each_node = ValidatedPlanNode::ForEach(for_each.clone());
     let parsed_preimage = evidence_plan::parsed_expr_for_plan_node(&for_each_node);
     let display = if fold.displays.len() == 1 {
@@ -758,4 +764,111 @@ pub(crate) async fn archive_materialize_for_each_fanout(
         display,
         projection: Some(for_each.projection.clone()).filter(|p| !p.is_empty()),
     })
+}
+
+/// Archive snapshot + build an iterate/until `MaterializedNode`.
+///
+/// HTTP-2: rematerialized seed rows live on `result.entities` with `count == entities.len()`.
+/// Step acks are the merged fanout ledger on `result.operations`. Zero-step keeps that
+/// ledger empty. This constructor does not mint acks and does not use `inline_cache`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn archive_materialize_iterate_until(
+    st: &PlasmHostState,
+    es: &ExecuteSession,
+    session_id: &str,
+    scoped_es: &ExecuteSession,
+    it: &crate::plasm_plan::ValidatedIterateUntilNode,
+    seed_qe: crate::plasm_plan::QualifiedEntityKey,
+    rows: Vec<serde_json::Value>,
+    operations: plasm_runtime::OperationLedger,
+    request_fingerprints: Vec<String>,
+    stats: ExecutionStats,
+    source: ExecutionSource,
+    steps_taken: u32,
+    trace: Option<&PlasmTraceContext>,
+) -> Result<MaterializedNode, String> {
+    if steps_taken > 0 && operations.is_empty() {
+        return Err(
+            "iterate_until steps completed but fold operations ledger is empty (HTTP-2)".into(),
+        );
+    }
+    let entities = json_rows_to_entities_with_refs(
+        seed_qe.entity.as_str(),
+        &rows,
+        Some(scoped_es.cgs.as_ref()),
+    );
+    let result = ExecutionResult {
+        count: entities.len(),
+        entities,
+        has_more: false,
+        pagination_resume: None,
+        paging_handle: None,
+        source,
+        stats,
+        request_fingerprints,
+        operations,
+    };
+    let iterate_node = ValidatedPlanNode::IterateUntil(it.clone());
+    let parsed_preimage = evidence_plan::parsed_expr_for_plan_node(&iterate_node);
+    let display = format!("iterate_until {} take {}", it.id.as_str(), it.take);
+    let artifact = archive_plasm_result_snapshot(
+        st,
+        es,
+        session_id,
+        Some(seed_qe.entry_id.as_str()),
+        vec![display.clone()],
+        &parsed_preimage,
+        &result,
+        trace,
+    )
+    .await?;
+    let row_identities =
+        row_identities_from_entities(scoped_es, seed_qe.entity.as_str(), &result.entities);
+    Ok(MaterializedNode {
+        qualified_entity: seed_qe,
+        row_source: inline_row_source_owned(rows),
+        row_identities,
+        result: Arc::new(result),
+        artifact: Some(artifact),
+        display,
+        projection: Some(it.effect_template.projection.clone()).filter(|p| !p.is_empty()),
+    })
+}
+
+fn stamp_for_each_operations(
+    result: &mut ExecutionResult,
+    cgs: &CGS,
+    for_each: &ValidatedForEachNode,
+) {
+    if !result.operations.is_empty() {
+        return;
+    }
+    let template = &for_each.effect_template;
+    let is_operation = matches!(
+        template.result_shape,
+        crate::plasm_plan::ResultShape::SideEffectAck
+    ) || matches!(
+        template.effect_class,
+        EffectClass::SideEffect | EffectClass::Write
+    );
+    if !is_operation {
+        return;
+    }
+    let Some(ack) = plasm_runtime::OperationAck::try_from_mutating_expr(
+        &template.ir_template.expr,
+        Some(cgs),
+        result.source,
+        0,
+        0,
+    ) else {
+        return;
+    };
+    result.operations =
+        plasm_runtime::OperationLedger::from_ack(plasm_runtime::OperationAck::empty_iteration(
+            ack.entry_id,
+            ack.entity,
+            ack.capability,
+            ack.description,
+            result.source,
+        ));
 }

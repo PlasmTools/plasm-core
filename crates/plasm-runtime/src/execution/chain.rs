@@ -39,6 +39,7 @@ impl ExecutionEngine {
                 source: source_result.source,
                 stats: source_result.stats,
                 request_fingerprints: source_result.request_fingerprints.clone(),
+            operations: OperationLedger::empty(),
             });
         }
 
@@ -295,6 +296,7 @@ impl ExecutionEngine {
                     ..Default::default()
                 },
                 request_fingerprints: Vec::new(),
+            operations: OperationLedger::empty(),
             });
         }
 
@@ -418,6 +420,7 @@ impl ExecutionEngine {
                 ..Default::default()
             },
             request_fingerprints: Vec::new(),
+        operations: OperationLedger::empty(),
         })
     }
 
@@ -506,6 +509,7 @@ impl ExecutionEngine {
             },
             stats: merged_stats,
             request_fingerprints: Vec::new(),
+        operations: OperationLedger::empty(),
         })
     }
 
@@ -558,6 +562,7 @@ impl ExecutionEngine {
                 source: source_result.source,
                 stats: source_result.stats.clone(),
                 request_fingerprints: source_result.request_fingerprints.clone(),
+            operations: OperationLedger::empty(),
             });
         }
 
@@ -632,6 +637,7 @@ impl ExecutionEngine {
                 source: source_result.source,
                 stats: source_result.stats.clone(),
                 request_fingerprints: source_result.request_fingerprints.clone(),
+            operations: OperationLedger::empty(),
             });
         }
 
@@ -699,6 +705,7 @@ impl ExecutionEngine {
                 source: source_result.source,
                 stats: source_result.stats.clone(),
                 request_fingerprints: source_result.request_fingerprints.clone(),
+            operations: OperationLedger::empty(),
             });
         }
 
@@ -818,6 +825,7 @@ impl ExecutionEngine {
                 source: source_result.source,
                 stats: source_result.stats.clone(),
                 request_fingerprints: source_result.request_fingerprints.clone(),
+            operations: OperationLedger::empty(),
             });
         }
 
@@ -883,6 +891,7 @@ impl ExecutionEngine {
                 ..Default::default()
             },
             request_fingerprints: Vec::new(),
+        operations: OperationLedger::empty(),
         })
     }
 
@@ -931,6 +940,7 @@ impl ExecutionEngine {
                 source: source_result.source,
                 stats: source_result.stats.clone(),
                 request_fingerprints: source_result.request_fingerprints.clone(),
+            operations: OperationLedger::empty(),
             });
         }
 
@@ -978,6 +988,7 @@ impl ExecutionEngine {
                     ..Default::default()
                 },
                 request_fingerprints: Vec::new(),
+            operations: OperationLedger::empty(),
             });
         }
 
@@ -1084,6 +1095,7 @@ impl ExecutionEngine {
                 ..Default::default()
             },
             request_fingerprints: Vec::new(),
+        operations: OperationLedger::empty(),
         })
     }
 }

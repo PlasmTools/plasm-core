@@ -583,6 +583,7 @@ fn empty_graph_result(count: usize) -> plasm_runtime::ExecutionResult {
         source: plasm_runtime::ExecutionSource::Live,
         stats: plasm_runtime::ExecutionStats::default(),
         request_fingerprints: Vec::new(),
+        operations: plasm_runtime::OperationLedger::empty(),
     }
 }
 

@@ -275,6 +275,7 @@ pub(crate) async fn finalize_typed_relation_materialized_node(
         source: mat.result.source,
         stats: mat.result.stats.clone(),
         request_fingerprints: mat.result.request_fingerprints.clone(),
+        operations: mat.result.operations.clone(),
     });
     mat.row_source = super::inline_row_source(&rows);
     mat.row_identities =

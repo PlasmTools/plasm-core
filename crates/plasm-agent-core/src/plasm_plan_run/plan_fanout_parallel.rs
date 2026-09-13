@@ -7,9 +7,11 @@ use std::sync::Arc;
 
 use plasm_core::expr_parser::ParsedExpr;
 use plasm_core::PreflightToken;
-use plasm_runtime::{CachedEntity, ExecutionResult, ExecutionSource, ExecutionStats};
+use plasm_runtime::{
+    CachedEntity, ExecutionResult, ExecutionSource, ExecutionStats, OperationAck, OperationLedger,
+};
 
-use super::plan_bounded_parallel::{bounded_parallel_map, BoundedParallelConfig};
+use super::plan_bounded_parallel::{bounded_parallel_map_partition, BoundedParallelConfig};
 use crate::execute_session::ExecuteSession;
 use crate::http_execute::{run_parsed_plasm_line, trace_record_plasm_line};
 use crate::plan_execute_shared::PlanLineExecuteShared;
@@ -58,6 +60,16 @@ pub(crate) struct PlanLineJobResult {
     pub result: ExecutionResult,
 }
 
+pub(crate) struct PlanLineJobFailure {
+    pub parsed: ParsedExpr,
+    pub message: String,
+}
+
+pub(crate) struct FanoutJobBatch {
+    pub completed: Vec<PlanLineJobResult>,
+    pub failures: Vec<PlanLineJobFailure>,
+}
+
 #[derive(Clone)]
 pub(crate) struct PlanLineExecutionFold {
     pub entities: Vec<CachedEntity>,
@@ -65,6 +77,7 @@ pub(crate) struct PlanLineExecutionFold {
     pub stats: ExecutionStats,
     pub source: ExecutionSource,
     pub displays: Vec<String>,
+    pub operations: OperationLedger,
 }
 
 #[derive(Clone, Copy)]
@@ -105,10 +118,12 @@ pub(crate) fn fold_plan_line_results(
     let mut displays = Vec::new();
     let mut request_fingerprints = Vec::new();
     let mut out_stats = ExecutionStats::default();
+    let mut operations = OperationLedger::empty();
     let mut source = ExecutionSource::Cache;
     for r in results {
         source = combine_execution_source(source, r.result.source);
         merge_execution_stats(&mut out_stats, &r.result.stats, stats);
+        operations.merge(&r.result.operations);
         request_fingerprints.extend(r.result.request_fingerprints.clone());
         entities.extend(r.result.entities.clone());
         if collect_displays {
@@ -122,6 +137,7 @@ pub(crate) fn fold_plan_line_results(
         stats: out_stats,
         source,
         displays,
+        operations,
     }
 }
 
@@ -177,6 +193,7 @@ pub(crate) fn empty_execution_fold() -> PlanLineExecutionFold {
         stats: ExecutionStats::default(),
         source: ExecutionSource::Cache,
         displays: Vec::new(),
+        operations: OperationLedger::empty(),
     }
 }
 
@@ -232,7 +249,7 @@ pub(crate) async fn execute_row_fanout(
     if jobs.is_empty() {
         return Ok(empty_execution_fold());
     }
-    let results = run_plan_line_jobs_parallel(
+    let batch = run_plan_line_jobs_parallel(
         st,
         scoped_es,
         session_id,
@@ -244,18 +261,63 @@ pub(crate) async fn execute_row_fanout(
         policy.concurrency,
     )
     .await?;
-    Ok(fold_plan_line_results(
-        &results,
+    let mut fold = fold_plan_line_results(
+        &batch.completed,
         policy.read_cap,
         policy.stats,
         policy.collect_displays,
-    ))
+    );
+    merge_failed_job_operations(&mut fold.operations, scoped_es, &batch.failures);
+    if batch.failures.is_empty() {
+        return Ok(fold);
+    }
+    let message = batch
+        .failures
+        .iter()
+        .map(|f| f.message.as_str())
+        .collect::<Vec<_>>()
+        .join("; ");
+    let wire = crate::output::http_execute_results_value(&fold_to_execution_result(&fold));
+    Err(format!("{message}\n{wire}"))
+}
+
+fn fold_to_execution_result(fold: &PlanLineExecutionFold) -> ExecutionResult {
+    ExecutionResult {
+        count: fold.entities.len(),
+        entities: fold.entities.clone(),
+        has_more: false,
+        pagination_resume: None,
+        paging_handle: None,
+        source: fold.source,
+        stats: fold.stats.clone(),
+        request_fingerprints: fold.request_fingerprints.clone(),
+        operations: fold.operations.clone(),
+    }
+}
+
+fn merge_failed_job_operations(
+    operations: &mut OperationLedger,
+    scoped_es: &ExecuteSession,
+    failures: &[PlanLineJobFailure],
+) {
+    for failure in failures {
+        if let Some(ack) = OperationAck::try_from_mutating_expr(
+            &failure.parsed.expr,
+            Some(scoped_es.cgs.as_ref()),
+            ExecutionSource::Live,
+            0,
+            1,
+        ) {
+            operations.merge_ack(ack);
+        }
+    }
 }
 
 pub(crate) fn merge_fanout_job_results(
     source: &mut ExecutionSource,
     stats: &mut ExecutionStats,
     request_fingerprints: &mut Vec<String>,
+    operations: &mut OperationLedger,
     per_row: &mut [Vec<CachedEntity>],
     results: &[PlanLineJobResult],
     stats_fold: ExecutionStatsFold,
@@ -263,6 +325,7 @@ pub(crate) fn merge_fanout_job_results(
     for r in results {
         *source = combine_execution_source(*source, r.result.source);
         merge_execution_stats(stats, &r.result.stats, stats_fold);
+        operations.merge(&r.result.operations);
         request_fingerprints.extend(r.result.request_fingerprints.clone());
         if r.index < per_row.len() {
             per_row[r.index].extend(r.result.entities.clone());
@@ -290,34 +353,12 @@ pub(crate) async fn run_plan_line_jobs_parallel(
     plan_shared: Option<Arc<PlanLineExecuteShared>>,
     preflight: PlanLinePreflight,
     concurrency_override: Option<usize>,
-) -> Result<Vec<PlanLineJobResult>, String> {
+) -> Result<FanoutJobBatch, String> {
     if jobs.is_empty() {
-        return Ok(Vec::new());
-    }
-    if jobs.len() == 1 {
-        let job = jobs.into_iter().next().expect("one job");
-        let out = run_plan_line_job(
-            st,
-            scoped_es,
-            session_id,
-            plan_shared.clone(),
-            preflight,
-            job,
-            trace,
-        )
-        .await?;
-        if let Some(sink) = sink {
-            trace_record_plasm_line(
-                sink,
-                out.trace_line_index,
-                out.expr_label.as_str(),
-                &out.parsed,
-                &out.result,
-                scoped_es,
-            )
-            .await;
-        }
-        return Ok(vec![out]);
+        return Ok(FanoutJobBatch {
+            completed: Vec::new(),
+            failures: Vec::new(),
+        });
     }
 
     let st = st.clone();
@@ -328,14 +369,15 @@ pub(crate) async fn run_plan_line_jobs_parallel(
     let plan_shared = plan_shared.clone();
     let cfg = BoundedParallelConfig::for_plan_http(concurrency_override);
     let preflight_mode = preflight;
-    let mut results = bounded_parallel_map(jobs, cfg, move |job| {
+    let (mut completed, failures) = bounded_parallel_map_partition(jobs, cfg, move |job| {
         let st = st.clone();
         let scoped_es = scoped_es.clone();
         let session_id = session_id.clone();
         let trace_ctx = trace_ctx.clone();
         let plan_shared = plan_shared.clone();
         async move {
-            run_plan_line_job(
+            let parsed = job.parsed.clone();
+            match run_plan_line_job(
                 &st,
                 &scoped_es,
                 &session_id,
@@ -345,12 +387,16 @@ pub(crate) async fn run_plan_line_jobs_parallel(
                 trace_ctx.as_ref(),
             )
             .await
+            {
+                Ok(result) => Ok(result),
+                Err(message) => Err(PlanLineJobFailure { parsed, message }),
+            }
         }
     })
     .await?;
-    sort_plan_line_job_results_by_index(&mut results);
+    sort_plan_line_job_results_by_index(&mut completed);
     if let Some(sink) = sink {
-        for r in &results {
+        for r in &completed {
             trace_record_plasm_line(
                 sink,
                 r.trace_line_index,
@@ -362,7 +408,10 @@ pub(crate) async fn run_plan_line_jobs_parallel(
             .await;
         }
     }
-    Ok(results)
+    Ok(FanoutJobBatch {
+        completed,
+        failures,
+    })
 }
 
 async fn run_plan_line_job(
@@ -456,6 +505,7 @@ mod tests {
                 source: ExecutionSource::Live,
                 stats: ExecutionStats::default(),
                 request_fingerprints: vec![format!("fp-{id}")],
+                operations: OperationLedger::empty(),
             },
         }
     }
@@ -514,6 +564,7 @@ mod tests {
                     source: ExecutionSource::Live,
                     stats: ExecutionStats::default(),
                     request_fingerprints: vec!["fp-0".into()],
+                    operations: OperationLedger::empty(),
                 },
             },
             PlanLineJobResult {
@@ -540,6 +591,7 @@ mod tests {
                     source: ExecutionSource::Live,
                     stats: ExecutionStats::default(),
                     request_fingerprints: vec!["fp-1".into(), "fp-2".into(), "fp-3".into()],
+                    operations: OperationLedger::empty(),
                 },
             },
         ];
@@ -561,6 +613,135 @@ mod tests {
     fn empty_execution_fold_is_cache_sourced() {
         let fold = empty_execution_fold();
         assert!(fold.entities.is_empty());
+        assert!(fold.operations.is_empty());
         assert_eq!(fold.source, ExecutionSource::Cache);
+    }
+
+    fn write_result(
+        capability: &str,
+        completed: usize,
+        failed: usize,
+        source: ExecutionSource,
+    ) -> ExecutionResult {
+        ExecutionResult {
+            count: 0,
+            entities: vec![],
+            has_more: false,
+            pagination_resume: None,
+            paging_handle: None,
+            source,
+            stats: ExecutionStats::default(),
+            request_fingerprints: vec![],
+            operations: OperationLedger::from_ack(OperationAck {
+                entry_id: "langmatrix".into(),
+                capability: capability.into(),
+                entity: "LangItem".into(),
+                logical_invocations: completed.saturating_add(failed),
+                completed,
+                failed,
+                source,
+                description: format!("desc-{capability}"),
+            }),
+        }
+    }
+
+    fn mutating_job(index: usize, capability: &str, result: ExecutionResult) -> PlanLineJobResult {
+        let mut invoke =
+            plasm_core::InvokeExpr::new(capability, "LangItem", format!("i{index}"), None);
+        invoke.catalog_entry_id = plasm_core::CatalogEntryStamp::from_opt_str(Some("langmatrix"));
+        PlanLineJobResult {
+            index,
+            expr_label: capability.into(),
+            trace_line_index: index,
+            parsed: ParsedExpr::from_expr(plasm_core::Expr::invoke(invoke)),
+            result,
+        }
+    }
+
+    #[test]
+    fn fold_preserves_distinct_capability_identity() {
+        let results = vec![
+            mutating_job(
+                0,
+                "langitem_delete",
+                write_result("langitem_delete", 1, 0, ExecutionSource::Live),
+            ),
+            mutating_job(
+                1,
+                "langitem_ping",
+                write_result("langitem_ping", 1, 0, ExecutionSource::Live),
+            ),
+            mutating_job(
+                2,
+                "langitem_delete",
+                write_result("langitem_delete", 1, 0, ExecutionSource::Live),
+            ),
+        ];
+        let fold = fold_plan_line_results(&results, None, ExecutionStatsFold::Telemetry, false);
+        assert_eq!(fold.operations.entries().len(), 2);
+        let delete = fold
+            .operations
+            .entries()
+            .iter()
+            .find(|e| e.capability == "langitem_delete")
+            .expect("delete");
+        assert_eq!(delete.completed, 2);
+        let ping = fold
+            .operations
+            .entries()
+            .iter()
+            .find(|e| e.capability == "langitem_ping")
+            .expect("ping");
+        assert_eq!(ping.completed, 1);
+    }
+
+    #[test]
+    fn fold_keeps_completed_evidence_when_later_job_failed() {
+        let completed = vec![
+            mutating_job(
+                0,
+                "langitem_delete",
+                write_result("langitem_delete", 1, 0, ExecutionSource::Live),
+            ),
+            mutating_job(
+                1,
+                "langitem_delete",
+                write_result("langitem_delete", 1, 0, ExecutionSource::Live),
+            ),
+        ];
+        let mut fold =
+            fold_plan_line_results(&completed, None, ExecutionStatsFold::Telemetry, false);
+        fold.operations.merge_ack(OperationAck {
+            entry_id: "langmatrix".into(),
+            capability: "langitem_delete".into(),
+            entity: "LangItem".into(),
+            logical_invocations: 1,
+            completed: 0,
+            failed: 1,
+            source: ExecutionSource::Live,
+            description: "desc-langitem_delete".into(),
+        });
+        let delete = &fold.operations.entries()[0];
+        assert_eq!(delete.completed, 2);
+        assert_eq!(delete.failed, 1);
+        assert_eq!(delete.logical_invocations, 3);
+        let wire = crate::output::http_execute_results_value(&fold_to_execution_result(&fold));
+        assert_eq!(wire["rows"], serde_json::json!([]));
+        assert_eq!(wire["operations"][0]["completed"], 2);
+        assert_eq!(wire["operations"][0]["failed"], 1);
+        assert!(!wire.to_string().contains("rollback undone"));
+    }
+
+    #[test]
+    fn fold_replay_source_is_not_live() {
+        let results = vec![mutating_job(
+            0,
+            "langitem_ping",
+            write_result("langitem_ping", 1, 0, ExecutionSource::Replay),
+        )];
+        let fold = fold_plan_line_results(&results, None, ExecutionStatsFold::Telemetry, false);
+        assert_eq!(fold.operations.entries()[0].source, ExecutionSource::Replay);
+        let wire = crate::output::http_execute_results_value(&fold_to_execution_result(&fold));
+        assert_eq!(wire["operations"][0]["source"], "replay");
     }
 }

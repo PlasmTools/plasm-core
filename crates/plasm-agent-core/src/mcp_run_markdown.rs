@@ -424,6 +424,7 @@ mod tests {
             http_path: artifact_http_path("a", "b", &run_id),
             payload_len: 1,
             request_fingerprints: vec![],
+        operations: plasm_runtime::OperationLedger::empty(),
         }
     }
 
@@ -457,6 +458,7 @@ mod tests {
             http_path: artifact_http_path("ph", "sess", &run_id),
             payload_len: 100,
             request_fingerprints: vec!["abc".into()],
+        operations: plasm_runtime::OperationLedger::empty(),
         };
         let omitted = OmittedReferenceOnlyFields::default();
         let out = mcp_prepend_artifact_followup_markdown("## Result\n".into(), true, &[], &omitted);
@@ -483,6 +485,7 @@ mod tests {
             http_path: artifact_http_path("ph", "sess", &run_id),
             payload_len: 100,
             request_fingerprints: vec![],
+        operations: plasm_runtime::OperationLedger::empty(),
         };
         let omitted = OmittedReferenceOnlyFields::from_vec_sorted_dedup(vec!["body".into()]);
         let out =
@@ -507,7 +510,7 @@ mod tests {
         use indexmap::IndexMap;
         use plasm_compile::DecodedRelation;
         use plasm_core::{EntityKey, Ref, Value};
-        use plasm_runtime::{
+        use plasm_runtime::{ OperationLedger,
             CachedEntity, EntityCompleteness, ExecutionResult, ExecutionSource, ExecutionStats,
         };
 
@@ -540,6 +543,7 @@ mod tests {
                 ..Default::default()
             },
             request_fingerprints: vec![],
+        operations: plasm_runtime::OperationLedger::empty(),
         };
         let formatted = mcp_format_execute_result_table_or_tsv(&result, None, None);
         let body = &formatted.tsv_body;

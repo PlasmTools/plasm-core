@@ -28,6 +28,7 @@ fn materialized_result_use_preserves_scalar_data_binding_value() {
                     ..Default::default()
                 },
                 request_fingerprints: vec![],
+                operations: plasm_runtime::OperationLedger::empty(),
             }),
             row_source: MaterializedRowSource::Inline(vec![row.clone()]),
             row_identities: vec![None],
@@ -194,6 +195,7 @@ fn for_each_cross_uses_materialization_wires_upstream_singleton() {
                     ..Default::default()
                 },
                 request_fingerprints: vec![],
+                operations: plasm_runtime::OperationLedger::empty(),
             }),
             row_source: MaterializedRowSource::Inline(vec![
                 serde_json::json!({"content": "STATS"}),
@@ -231,8 +233,8 @@ fn materialized_result_use_allows_plural_rows_for_column_node_input_holes() {
         node.clone(),
         MaterializedNode {
             qualified_entity: crate::plasm_plan::QualifiedEntityKey {
-                entry_id: "github".to_string(),
-                entity: "Label".to_string(),
+                entry_id: "langmatrix".to_string(),
+                entity: "LangTag".to_string(),
             },
             result: Arc::new(ExecutionResult {
                 count: rows.len(),
@@ -243,6 +245,7 @@ fn materialized_result_use_allows_plural_rows_for_column_node_input_holes() {
                 source: ExecutionSource::Cache,
                 stats: ExecutionStats::default(),
                 request_fingerprints: vec![],
+                operations: plasm_runtime::OperationLedger::empty(),
             }),
             row_source: MaterializedRowSource::Inline(rows.clone()),
             row_identities: vec![None; rows.len()],
