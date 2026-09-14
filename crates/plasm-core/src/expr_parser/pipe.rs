@@ -190,9 +190,30 @@ fn parse_stage(raw: &str) -> Result<PipeStage, String> {
             rhs: parse_closed_rowset_ref(body, "union")?,
         });
     }
-    Err(format!(
+    Err(unknown_pipe_stage_diagnostic(raw))
+}
+
+fn pipe_stage_head_token(raw: &str) -> &str {
+    let raw = raw.trim();
+    let end = raw
+        .find(|c: char| c == '(' || c.is_ascii_whitespace())
+        .unwrap_or(raw.len());
+    &raw[..end]
+}
+
+fn unknown_pipe_stage_diagnostic(raw: &str) -> String {
+    let ident = pipe_stage_head_token(raw);
+    if crate::is_shared_minijinja_filter(ident) {
+        let mut msg = String::from("unknown pipe stage `");
+        msg.push_str(raw);
+        msg.push_str(
+            "` is a Minijinja filter, not row algebra; write the filter inside `{{ }}` or per-row `=> <<TAG`",
+        );
+        return msg;
+    }
+    format!(
         "unknown pipe stage `{raw}`; use `where`, `select`, `summarize`, `order by`, `take`, `distinct`, or `union`"
-    ))
+    )
 }
 
 fn parse_select(body: &str) -> Result<PipeStage, String> {
@@ -442,6 +463,33 @@ mod tests {
         ] {
             let err = parse_pipe_expr(src).expect_err(src);
             assert!(err.contains("unknown pipe stage"), "src={src} err={err}");
+            assert!(
+                !err.contains("Minijinja"),
+                "non-filter token must not claim the filter lane: src={src} err={err}"
+            );
+        }
+    }
+
+    #[test]
+    fn taught_minijinja_filter_stage_names_render_lane() {
+        for src in [
+            r#"items | split_part(id, "-", 0)"#,
+            "items | urlencode",
+            r#"items | split("/", 1)"#,
+            "items | strip_trailing_slash",
+        ] {
+            let err = parse_pipe_expr(src).expect_err(src);
+            assert!(
+                err.contains("unknown pipe stage")
+                    && err.contains("Minijinja")
+                    && err.contains("{{")
+                    && err.contains("=> <<TAG"),
+                "taught filter stage must name the render lane: src={src} err={err}"
+            );
+            assert!(
+                parse_pipe_expr(src).is_err(),
+                "must not legalize `| filter` as row algebra: {src}"
+            );
         }
     }
 

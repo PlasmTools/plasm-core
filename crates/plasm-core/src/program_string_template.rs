@@ -14,6 +14,15 @@ use crate::value::Value;
 
 pub const DEFAULT_MAX_INTERPOLATED_LEN: usize = 512 * 1024;
 
+/// Keep in lockstep with [`register_shared_minijinja_filters`].
+pub const SHARED_MINIJINJA_FILTERS: &[&str] =
+    &["urlencode", "strip_trailing_slash", "split", "split_part"];
+
+#[must_use]
+pub fn is_shared_minijinja_filter(name: &str) -> bool {
+    SHARED_MINIJINJA_FILTERS.contains(&name)
+}
+
 const DOLLAR_HARD_ERROR: &str = "abolished `${…}` / `$$` string interpolation; use Minijinja `{{ path }}` (filters: `| split_part`) or a bare wire `param=binding.content`";
 
 #[derive(Debug, Error, PartialEq, Eq)]

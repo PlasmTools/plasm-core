@@ -304,3 +304,54 @@ fn lang_wait_cancel_operation_parse() {
         other => panic!("expected Cancel, got {other:?}"),
     }
 }
+
+/// PLP-7 / PLP-12: a taught Minijinja filter as a `|` stage is a parse reject.
+/// The diagnostic must name the render/filter lane — not only list row-algebra stages.
+#[test]
+fn lang_minijinja_filter_pipe_stage_names_render_lane() {
+    let cgs = language_matrix::load_language_matrix_cgs();
+    let es = language_matrix::matrix_execute_session(cgs);
+    let assert_lane = |id: &str, program: &str, token: &str| {
+        let err = compile_plasm_program(&PromptPipelineConfig::default(), None, &es, id, program)
+            .expect_err(id);
+        let err = err.to_string();
+        assert!(
+            err.contains("unknown pipe stage")
+                && err.contains(token)
+                && err.contains("Minijinja")
+                && err.contains("{{")
+                && err.contains("=> <<TAG"),
+            "{id} must name the Minijinja filter lane, got: {err}"
+        );
+        assert!(
+            !err.contains("dirname") && !err.contains("__"),
+            "{id} must stay domain-general: {err}"
+        );
+    };
+    assert_lane(
+        "lang_minijinja_filter_stage_split_part",
+        r#"items = LangItem
+out = items | select id | distinct | select dest = id | split_part(id, "-", 0)
+out"#,
+        "split_part",
+    );
+    assert_lane(
+        "lang_minijinja_filter_stage_urlencode",
+        r#"items = LangItem
+out = items | urlencode
+out"#,
+        "urlencode",
+    );
+    compile_plasm_program(
+        &PromptPipelineConfig::default(),
+        None,
+        &es,
+        "lang_render_split_part_still_lawful",
+        r#"items = LangItem("i1") | select id
+hdr = items => <<MD
+split_part_ok={{ id | split_part('1', 0) }}
+MD
+hdr"#,
+    )
+    .expect("lawful per-row `=> <<TAG` split_part must remain executable");
+}

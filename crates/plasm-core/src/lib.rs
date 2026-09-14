@@ -327,9 +327,9 @@ pub use money::{
 pub use program_string_template::{
     contains_dollar_interpolation, contains_minijinja_markers,
     find_dollar_interpolation_in_minijinja_body, for_each_interpolation_path, interpolation_paths,
-    interpolation_roots, register_shared_minijinja_filters, reject_dollar_interpolation,
-    render_program_string, validate_interpolation_syntax, ProgramStringError,
-    DEFAULT_MAX_INTERPOLATED_LEN,
+    interpolation_roots, is_shared_minijinja_filter, register_shared_minijinja_filters,
+    reject_dollar_interpolation, render_program_string, validate_interpolation_syntax,
+    ProgramStringError, DEFAULT_MAX_INTERPOLATED_LEN, SHARED_MINIJINJA_FILTERS,
 };
 pub use relation_materialize::{
     extract_from_parent_get_value, flatten_from_parent_get_source_rows,
