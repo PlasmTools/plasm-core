@@ -24,6 +24,8 @@ mod homograph_matrix;
 
 mod tau3_cli_chain;
 
+mod iterate_seed_identity;
+
 mod projected_alias_grain;
 
 fn test_session() -> ExecuteSession {
