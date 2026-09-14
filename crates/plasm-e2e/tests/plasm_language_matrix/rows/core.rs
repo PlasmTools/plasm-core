@@ -433,6 +433,46 @@ drop"#,
         expect_live_error: None,
     },
     MatrixRow {
+        id: "lang_where_not_in_universe_left",
+        program: r#"left = LangLane {shelf="alpha"}
+right = LangLaneStock
+kept = left | where title not in (right | select title)
+kept"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "pipe_where_not_in_universe",
+            "pipe_where_not_in_rowset",
+            "pipe_where",
+            "pipe_select",
+            "bindings_assignment",
+            "dry_live_parity",
+        ],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "alpha-two"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_where_not_in_universe_right",
+        program: r#"left = LangLaneStock
+right = LangLane {shelf="alpha"}
+kept = left | where title not in (right | select title)
+kept"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "pipe_where_not_in_universe",
+            "pipe_where_not_in_rowset",
+            "pipe_where",
+            "pipe_select",
+            "bindings_assignment",
+            "dry_live_parity",
+        ],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "stock-one"],
+        expect_live_error: None,
+    },
+    MatrixRow {
         id: "lang_where_in_rowset_paren",
         program: r#"kept = LangItem | where owner in (LangItem | where owner = "alice" | select owner)
 kept"#,

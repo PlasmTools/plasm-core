@@ -457,6 +457,28 @@ pub(crate) fn assert_planning_query_pipe(
                 ));
             }
         }
+        "lang_where_not_in_universe_left" | "lang_where_not_in_universe_right" => {
+            let Some(ComputeOp::Filter { predicates }) =
+                computes.iter().map(|c| &c.op).find(|op| {
+                    matches!(
+                        op,
+                        ComputeOp::Filter { predicates } if predicates
+                            .iter()
+                            .any(|p| format!("{p:?}").contains("NotIn"))
+                    )
+                })
+            else {
+                return Err(format!(
+                    "RA-13 universe: expected `| where title not in …` Filter, got {computes:?}"
+                ));
+            };
+            let dbg = format!("{predicates:?}");
+            if !dbg.contains("title") {
+                return Err(format!(
+                    "RA-13 universe: anti-join Filter must bind `title`, got {dbg}"
+                ));
+            }
+        }
         "lang_quoted_binding_literal" => {
             let Some(ComputeOp::Filter { predicates }) = computes
                 .iter()

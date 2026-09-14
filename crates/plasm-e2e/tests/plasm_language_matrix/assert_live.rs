@@ -156,6 +156,12 @@ pub(crate) fn assert_row(row: &MatrixRow, out: &PlasmPlanRunResult) -> Result<()
     }
     if matches!(
         row.id,
+        "lang_where_not_in_universe_left" | "lang_where_not_in_universe_right"
+    ) {
+        assert_ra13_membership_universe(row.id, out)?;
+    }
+    if matches!(
+        row.id,
         "lang_iterate_until_bound" | "lang_iterate_until_zero_step"
     ) {
         if md.contains("(no results)") {
@@ -190,6 +196,73 @@ pub(crate) fn assert_row(row: &MatrixRow, out: &PlasmPlanRunResult) -> Result<()
                 done.result.operations.entries()
             ));
         }
+    }
+    Ok(())
+}
+
+fn assert_ra13_membership_universe(row_id: &str, out: &PlasmPlanRunResult) -> Result<(), String> {
+    let titles: Vec<String> = out
+        .return_steps
+        .iter()
+        .flat_map(|s| s.result.entities.iter())
+        .filter_map(|e| {
+            e.fields
+                .get("title")
+                .and_then(|v| v.to_value().as_string_or_phrase().map(str::to_string))
+        })
+        .collect();
+    let entities: Vec<String> = out
+        .return_steps
+        .iter()
+        .filter_map(|s| s.entity.clone())
+        .collect();
+    let has = |t: &str| titles.iter().any(|x| x == t);
+    match row_id {
+        "lang_where_not_in_universe_left" => {
+            if !entities.iter().any(|e| e == "LangLane") {
+                return Err(format!(
+                    "RA-13 universe: pipe-left must stay LangLane, got {entities:?}"
+                ));
+            }
+            if entities.iter().any(|e| e == "LangLaneStock") {
+                return Err(format!(
+                    "RA-13 universe: left polarity must not return LangLaneStock, got {entities:?}"
+                ));
+            }
+            if !has("alpha-two") {
+                return Err(format!(
+                    "RA-13 universe: A minus B must keep A-only title alpha-two, got {titles:?}"
+                ));
+            }
+            if has("alpha-one") || has("stock-one") || has("stock-two") {
+                return Err(format!(
+                    "RA-13 universe: A minus B must drop shared/B titles, got {titles:?}"
+                ));
+            }
+        }
+        "lang_where_not_in_universe_right" => {
+            if !entities.iter().any(|e| e == "LangLaneStock") {
+                return Err(format!(
+                    "RA-13 universe: pipe-left must stay LangLaneStock, got {entities:?}"
+                ));
+            }
+            if entities.iter().any(|e| e == "LangLane") {
+                return Err(format!(
+                    "RA-13 universe: right polarity must not return LangLane, got {entities:?}"
+                ));
+            }
+            if !has("stock-one") || !has("stock-two") {
+                return Err(format!(
+                    "RA-13 universe: B minus A must keep B-only titles, got {titles:?}"
+                ));
+            }
+            if has("alpha-one") || has("alpha-two") {
+                return Err(format!(
+                    "RA-13 universe: B minus A must drop shared/A titles, got {titles:?}"
+                ));
+            }
+        }
+        _ => {}
     }
     Ok(())
 }
