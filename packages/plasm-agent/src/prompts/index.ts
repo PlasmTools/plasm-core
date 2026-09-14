@@ -32,14 +32,48 @@ export function loadPromptAsset(name: PromptAssetName): string {
   return readFileSync(file, "utf8").trim();
 }
 
+export type SystemLiturgyOptions = {
+  /**
+   * Same gate as `createHarnessTools({ includeEvalTerminals })`.
+   * When those tools are registered, teach Voice B completion
+   * (`complete_task` / `submit_answer`) — never “Stop with no tool call.”
+   */
+  includeEvalTerminals?: boolean;
+};
+
+/**
+ * Opening paragraph when eval terminal tools are registered (T214120).
+ * Voice B: end through `complete_task` (no reportable value) or
+ * `submit_answer` (reportable value). T144504 those tasks used `complete_task`.
+ * T214120 31dc/325 followed Voice A prose-stop after `plasm_run`.
+ */
+const EVAL_TERMINAL_OPENING =
+  "Plan from the current requirement, taught symbols and observed results. " +
+  "After observations establish every requested effect, end through complete_task " +
+  "when the instruction asked for no reportable value, or submit_answer with that " +
+  "value when it did. Intermediate results alone are not completion.";
+
+function withEvalTerminalCompletion(workflow: string): string {
+  const lines = workflow.split("\n");
+  const title = lines[0] ?? "";
+  let i = 1;
+  while (i < lines.length && lines[i] === "") i += 1;
+  while (i < lines.length && lines[i] !== "") i += 1;
+  return [title, "", EVAL_TERMINAL_OPENING, ...lines.slice(i)].join("\n");
+}
+
 /**
  * Framework system liturgy for every PlasmAgent turn.
  * Plan→Act→Observe cycle + language law + tool-only resource rite —
- * not product/AppWorld overlays.
+ * not product/AppWorld overlays. Eval-terminal completion is gated:
+ * without `includeEvalTerminals`, do not invent `complete_task` / `submit_answer`.
  */
-export function buildDefaultSystemLiturgy(): string {
+export function buildDefaultSystemLiturgy(options: SystemLiturgyOptions = {}): string {
+  const workflow = options.includeEvalTerminals
+    ? withEvalTerminalCompletion(loadPromptAsset("initialize_workflow.txt"))
+    : loadPromptAsset("initialize_workflow.txt");
   return [
-    loadPromptAsset("initialize_workflow.txt"),
+    workflow,
     "",
     "## Resource handling (tool-only host)",
     loadPromptAsset("plasm_run_tool_artifact_tool.txt"),

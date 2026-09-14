@@ -66,3 +66,6 @@ export function writeCountFromSummary(summary: string): number {
   const m = summary.match(/\b(\d+)w\b/);
   return m ? Number(m[1]) : 0;
 }
+
+export const COMPLETE_TASK_TOOL_NAME = "complete_task";
+export const SUBMIT_ANSWER_TOOL_NAME = "submit_answer";

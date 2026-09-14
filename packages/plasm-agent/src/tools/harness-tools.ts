@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import type { SkillDefinition } from "../authoring/define-skill.js";
 import type { SubagentRegistry } from "../authoring/subagent-loader.js";
+import { COMPLETE_TASK_TOOL_NAME, SUBMIT_ANSWER_TOOL_NAME } from "./format.js";
 import { toolInput } from "./tool-input.js";
 
 const readSkillInputSchema = z.object({
@@ -35,6 +36,56 @@ Forbidden: fetch/network, child_process, absolute paths outside workspace, AppWo
 
 Return free-form stdout / returned value. Not a Plasm language feature.`;
 
+const completeTaskInputSchema = z.object({});
+
+const submitAnswerInputSchema = z.object({
+  answer: z.string().min(1).describe("Reportable value."),
+});
+
+/** Domain-general AppWorld complete_task — successful call grades explicit null. */
+export const COMPLETE_TASK_TOOL_DESCRIPTION =
+  "End the task when the instruction asked for no reportable value. " +
+  "Call this after the work is done and nothing must be reported " +
+  "(no number, name, amount, or other asked-for value). " +
+  "A successful call grades explicit null. Do not pass an answer field. " +
+  "Do not call this when the instruction asked you to report a value.";
+
+/** Domain-general AppWorld submit_answer — verbatim asked-for value, then terminate. */
+export const SUBMIT_ANSWER_TOOL_DESCRIPTION =
+  "End the task when the instruction asked for a reportable value. " +
+  "`answer` is that value exactly as requested — a number, name, or other exact string. " +
+  "Pass it verbatim. When the answer is a monetary value, submit only the numeric part — no currency symbols or comma groupings. " +
+  "Not a done-summary, not a table, not surrounding prose. " +
+  "Do not call this when the instruction asked for no value (use complete_task instead). " +
+  "An empty or missing answer is invalid and does not finish the task.";
+
+export function createCompleteTaskTool(): ToolSet {
+  return {
+    [COMPLETE_TASK_TOOL_NAME]: tool({
+      description: COMPLETE_TASK_TOOL_DESCRIPTION,
+      inputSchema: toolInput(completeTaskInputSchema),
+      execute: async () => "Task marked complete.",
+    }),
+  };
+}
+
+export function createSubmitAnswerTool(): ToolSet {
+  return {
+    [SUBMIT_ANSWER_TOOL_NAME]: tool({
+      description: SUBMIT_ANSWER_TOOL_DESCRIPTION,
+      inputSchema: toolInput(submitAnswerInputSchema),
+      execute: async () => "Answer submitted.",
+    }),
+  };
+}
+
+export function createEvalTerminalTools(): ToolSet {
+  return {
+    ...createCompleteTaskTool(),
+    ...createSubmitAnswerTool(),
+  };
+}
+
 export function createArtefactTransformTool(workspaceRoot: string): ToolSet {
   return {
     plasm_artefact_transform: tool({
@@ -63,6 +114,11 @@ export function createHarnessTools(options: {
   /** When set, always register plasm_artefact_transform against this workspace. */
   artefactWorkspaceRoot?: string;
   includeArtefactTransform?: boolean;
+  /**
+   * Register `complete_task` / `submit_answer`. Same gate as
+   * `buildDefaultSystemLiturgy({ includeEvalTerminals })`.
+   */
+  includeEvalTerminals?: boolean;
 }): ToolSet {
   const tools: ToolSet = {};
   const skillByName = new Map((options.skills ?? []).map((s) => [s.name, s]));
@@ -108,6 +164,10 @@ export function createHarnessTools(options: {
     options.includeArtefactTransform ?? Boolean(options.artefactWorkspaceRoot);
   if (includeTransform && options.artefactWorkspaceRoot) {
     Object.assign(tools, createArtefactTransformTool(options.artefactWorkspaceRoot));
+  }
+
+  if (options.includeEvalTerminals) {
+    Object.assign(tools, createEvalTerminalTools());
   }
 
   return tools;

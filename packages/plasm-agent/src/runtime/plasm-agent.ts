@@ -42,6 +42,12 @@ export interface PlasmAgentConfig extends AgentRuntimeConfig {
   hookRunner?: HookRunner;
   subagentRegistry?: SubagentRegistry;
   getAuthoringContext?: () => AuthoringContext;
+  /**
+   * Register eval terminals (`complete_task` / `submit_answer`) and teach
+   * Voice B completion. Same gate as `createHarnessTools` /
+   * `buildDefaultSystemLiturgy`. Product hosts must leave this unset.
+   */
+  includeEvalTerminals?: boolean;
 }
 
 export interface AgentGenerateOptions {
@@ -92,6 +98,7 @@ export class PlasmAgent {
   private readonly hookRunner?: HookRunner;
   private readonly subagentRegistry?: SubagentRegistry;
   private readonly getAuthoringContext?: () => AuthoringContext;
+  private readonly includeEvalTerminals: boolean;
   private readonly agentName: string;
   private conversation: ModelMessage[] = [];
 
@@ -120,6 +127,7 @@ export class PlasmAgent {
     this.hookRunner = config.hookRunner;
     this.subagentRegistry = config.subagentRegistry;
     this.getAuthoringContext = config.getAuthoringContext;
+    this.includeEvalTerminals = config.includeEvalTerminals === true;
   }
 
   async bootstrap(): Promise<void> {
@@ -128,7 +136,9 @@ export class PlasmAgent {
 
   async loadInstructions(): Promise<string> {
     // Framework core: language law + resource rites (same bytes as MCP tool cards).
-    const core = buildDefaultSystemLiturgy();
+    const core = buildDefaultSystemLiturgy({
+      includeEvalTerminals: this.includeEvalTerminals,
+    });
     let project = "";
     try {
       project = (await readFile(this.instructionsPath, "utf8")).trim();
@@ -172,6 +182,7 @@ export class PlasmAgent {
       subagents: this.subagentRegistry,
       artefactWorkspaceRoot: this.runtime.artefactWorkspaceRoot,
       includeArtefactTransform: true,
+      includeEvalTerminals: this.includeEvalTerminals,
     });
     let tools = {
       ...plasmTools,
