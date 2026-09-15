@@ -1,4 +1,4 @@
-version: 17
+version: 18
 entry_id: splitwise
 auth:
   scheme: none
@@ -80,12 +80,14 @@ entities:
           capability: payment_query
           param: group_id
       balances:
-        target: Balance
-        cardinality: many
+        description: Debt position within this group.
+        target: GroupBalance
+        cardinality: one
         materialize:
-          kind: query_scoped
-          capability: balance_query
-          param: group_id
+          kind: get_scoped_bindings
+          capability: group_balance_get
+          bindings:
+            group_id: group_id
   GroupMember:
     abstract: true
     id_field: email
@@ -285,39 +287,39 @@ entities:
         required: true
         value_ref: nv_datetime
   Balance:
-    id_field: you_owe_others
-    primary_query: balance_query
-    description: Debt position for a person or group.
+    id_field: access_token
+    implicit_request_identity: true
+    primary_read: balance_get
+    description: Account debt totals with the full breakdown by group.
     discovery:
-      names:
-      - balance
-      - owing
-      - debt
+      names: [balance, group balances, owing, debt]
     fields:
+      access_token:
+        required: true
+        value_ref: nv_access_token
       you_owe_others:
         required: false
         value_ref: nv_number
       others_owe_you:
         required: false
         value_ref: nv_number
-      email:
+      breakdown:
         required: false
-        value_ref: nv_email
-      name:
-        required: false
-        value_ref: nv_str
+        value_ref: nv_balance_breakdown
+  GroupBalance:
+    id_field: group_id
+    implicit_request_identity: true
+    primary_read: group_balance_get
+    description: Debt position within the group used as the read key, including every participant and counterparty.
+    discovery:
+      names: [group balance, group debt, group owing]
+    fields:
       group_id:
+        required: true
+        value_ref: nv_group_id
+      participants:
         required: false
-        value_ref: nv_group_ref
-      group_name:
-        required: false
-        value_ref: nv_str
-      direction:
-        required: false
-        value_ref: nv_balance_direction
-      amount:
-        required: false
-        value_ref: nv_number
+        value_ref: nv_group_balance_participants
   User:
     id_field: email
     description: Splitwise person with optional balance direction toward the authenticated user.
@@ -368,32 +370,16 @@ entities:
         required: false
         value_ref: nv_datetime
   PeerBalance:
-    id_field: you_owe_others
+    id_field: email
     primary_query: peer_balance_query
-    description: Interpersonal balances with all counterparties.
+    description: One counterparty's interpersonal debt position.
     discovery:
-      names:
-      - balance
-      - owing
-      - debt
-      - people
+      names: [peer balance, counterparty balance, owing, debt]
     fields:
-      you_owe_others:
-        required: false
-        value_ref: nv_number
-      others_owe_you:
-        required: false
-        value_ref: nv_number
       email:
-        required: false
+        required: true
         value_ref: nv_email
       name:
-        required: false
-        value_ref: nv_str
-      group_id:
-        required: false
-        value_ref: nv_group_ref
-      group_name:
         required: false
         value_ref: nv_str
       direction:
@@ -404,37 +390,24 @@ entities:
         value_ref: nv_number
   PersonBalance:
     id_field: email
-    primary_query: person_balance_query
-    description: Interpersonal balance with one counterparty, broken down by group.
+    implicit_request_identity: true
+    primary_read: person_balance_get
+    description: Debt position with the person used as the read key, including the group breakdown.
     discovery:
-      names:
-      - person balance
-      - counterparty balance
+      names: [person balance, counterparty balance]
     fields:
       email:
         required: true
         value_ref: nv_email
-      you_owe_others:
-        required: false
-        value_ref: nv_number
-      others_owe_you:
-        required: false
-        value_ref: nv_number
-      name:
-        required: false
-        value_ref: nv_str
-      group_id:
-        required: false
-        value_ref: nv_group_ref
-      group_name:
-        required: false
-        value_ref: nv_str
       direction:
         required: false
-        value_ref: nv_balance_direction
-      amount:
+        value_ref: nv_person_balance_direction
+      total:
         required: false
         value_ref: nv_number
+      breakdown:
+        required: false
+        value_ref: nv_balance_breakdown
 capabilities:
   login:
     description: Login to Splitwise; returns access_token for Bearer auth.
@@ -1330,72 +1303,66 @@ capabilities:
       target_terms:
       - user
       - member
-  balance_query:
-    description: List group balances by shelf — group | groups.
-    kind: query
+  balance_get:
+    description: Show account debt totals and the full group breakdown.
+    kind: get
     entity: Balance
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides: [access_token, you_owe_others, others_owe_you, breakdown]
+  group_balance_get:
+    description: Show debt positions for every participant in the group used as the read key.
+    kind: get
+    entity: GroupBalance
     scope:
     - name: group_id
-      value_ref: nv_group_ref
-      required: false
-    selection:
-    - name: access_token
-      value_ref: nv_access_token
+      value_ref: nv_group_id
       required: true
-    - name: shelf
-      value_ref: nv_balance_shelf
-      required: true
-      description: group | groups
-    - name: email
-      value_ref: nv_email
-      required: false
-    provides:
-    - amount
-    - direction
-    - email
-    - group_id
-    - group_name
-    - name
-    - others_owe_you
-    - you_owe_others
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides: [group_id, participants]
   peer_balance_query:
-    description: List interpersonal balances with all counterparties.
+    description: List each counterparty's interpersonal debt direction and amount.
     kind: query
     entity: PeerBalance
     selection:
     - name: access_token
       value_ref: nv_access_token
       required: true
-    provides:
-    - amount
-    - direction
-    - email
-    - group_id
-    - group_name
-    - name
-    - others_owe_you
-    - you_owe_others
-  person_balance_query:
-    description: Show interpersonal balance with one person by email.
-    kind: query
+    provides: [email, name, direction, amount]
+  person_balance_get:
+    description: Show the debt direction, total and group breakdown for the person used as the read key.
+    kind: get
     entity: PersonBalance
-    selection:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: email
-      value_ref: nv_email
-      required: true
-    provides:
-    - amount
-    - direction
-    - email
-    - group_id
-    - group_name
-    - name
-    - others_owe_you
-    - you_owe_others
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides: [email, direction, total, breakdown]
 values:
+  nv_person_balance_direction:
+    type: enum
+    enum: [you_owe_them, they_owe_you, no_balance]
+    description: Direction of the net balance with one person.
+  nv_balance_breakdown:
+    type: json
+    description: Full balance entries with their group context, directions and amounts.
+  nv_group_balance_participants:
+    type: json
+    description: Group participants with their outgoing and incoming debt breakdowns.
   nv_str:
     type: string
     description: Free-form string.
@@ -2025,12 +1992,12 @@ prerequisites:
           path:
           - access_token
         output: token
-    balance_query:
+    balance_get:
     - id: session
       contract: appworld.session
       bindings:
       - input:
-          lane: selection
+          lane: arguments
           path:
           - access_token
         output: token
@@ -2043,12 +2010,20 @@ prerequisites:
           path:
           - access_token
         output: token
-    person_balance_query:
+    person_balance_get:
     - id: session
       contract: appworld.session
       bindings:
       - input:
-          lane: selection
+          lane: arguments
           path:
           - access_token
+        output: token
+    group_balance_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path: [access_token]
         output: token

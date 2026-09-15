@@ -1064,6 +1064,7 @@ notification_mark_all:
         name: read
 profile_get:
   method: GET
+  response: single
   path:
   - type: literal
     value: splitwise
@@ -1106,95 +1107,46 @@ user_search:
           type: const
           value: null
   pagination: *appworld_page_index_limit
-balance_query:
+balance_get:
   method: GET
   path:
-  - type: literal
-    value: splitwise
-  - type: literal
-    value: balance
-  - type: if
-    condition:
-      type: equals
-      left:
-        type: var
-        name: shelf
-      right:
-        type: const
-        value: group
-    then_expr:
-      type: const
-      value: group
-    else_expr:
-      type: const
-      value: groups
-  headers: &id002
-    type: object
-    fields:
-    - - Authorization
-      - type: format
-        template: Bearer {token}
-        vars:
-          token:
-            type: var
-            name: access_token
+  - {type: literal, value: splitwise}
+  - {type: literal, value: balance}
+  - {type: literal, value: groups}
+  auth: *request_auth
+
+group_balance_get:
+  method: GET
+  path:
+  - {type: literal, value: splitwise}
+  - {type: literal, value: balance}
+  - {type: literal, value: group}
+  auth: *request_auth
   query:
     type: object
     fields:
-    - - group_id
-      - type: if
-        condition:
-          type: exists
-          var: group_id
-        then_expr:
-          type: var
-          name: group_id
-        else_expr:
-          type: const
-          value: null
-    - - email
-      - type: if
-        condition:
-          type: exists
-          var: email
-        then_expr:
-          type: var
-          name: email
-        else_expr:
-          type: const
-          value: null
-  # Vendor `GroupsBalanceResponse` is `{ you_owe_others, others_owe_you, breakdown }`.
-  # `GET /balance/group` is a root array; items_path wrap-key keeps that shelf a list.
+    - [group_id, {type: var, name: group_id}]
   response:
-    items_path:
-    - breakdown
+    response_preprocess:
+      kind: object_projection
+      fields:
+        participants: []
+
 peer_balance_query:
   method: GET
   path:
-  - type: literal
-    value: splitwise
-  - type: literal
-    value: balance
-  - type: literal
-    value: people
-  headers: *id002
-  # Vendor `PeopleBalanceResponse` is an object with `breakdown`.
+  - {type: literal, value: splitwise}
+  - {type: literal, value: balance}
+  - {type: literal, value: people}
+  auth: *request_auth
   response:
-    items_path:
-    - breakdown
-person_balance_query:
+    items_path: [breakdown]
+
+person_balance_get:
   method: GET
   path:
-  - type: literal
-    value: splitwise
-  - type: literal
-    value: balance
-  - type: literal
-    value: person
-  - type: var
-    name: email
-  headers: *id002
-  # Vendor `PersonBalanceResponse` is an object with `breakdown`.
-  response:
-    items_path:
-    - breakdown
+  - {type: literal, value: splitwise}
+  - {type: literal, value: balance}
+  - {type: literal, value: person}
+  - {type: var, name: email}
+  auth: *request_auth

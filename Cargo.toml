@@ -111,7 +111,7 @@ proptest = "1.7"
 insta = { version = "1.43" }
 genco = { version = "0.19" }
 serial_test = "3"
-beavuck-hermit = "1.4"
+beavuck-hermit = { path = "vendor/hermit", version = "1.4.27" }
 
 # Auth / tokens / OAuth
 jsonwebtoken = "9"

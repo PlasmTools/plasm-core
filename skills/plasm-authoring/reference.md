@@ -8,6 +8,18 @@ This is the canonical OSS reference for authoring Plasm API catalogs. The compil
 
 **After** the YAML is written, **validation and compilation** are deterministic: schema checks, CML parse/compile, and runtime request shaping are mechanical consequences of what you authored.
 
+## Response conformance before agent evaluation
+
+Use `plasm-cgs validate <catalog> --spec <openapi>` before agent evaluation.
+Hermit serves OpenAPI-generated responses without synthesizing properties from requests.
+The independently sourced spec is the contract; do not maintain agent-authored replay manifests.
+Verify returned identity, actual `provides` fields and domain relations separately.
+Request compilation is insufficient. CML `response.response_preprocess.kind:
+object_projection` maps operation-specific response keys to semantic fields;
+missing fields stay absent. Review omitted arrays and quantities as well as
+decoder errors: an undeclared album track relation or product weight can remove
+information an otherwise valid agent needs.
+
 ## Task-oriented catalogs (mandatory)
 
 Plasm catalogs model **user tasks and domain entities**, not vendor wire surfaces. CGS exists to compress APIs into a relational graph for agents — not to mirror every REST path or GraphQL operation.

@@ -15,14 +15,14 @@ use std::path::Path;
 /// Result of validating a single capability.
 #[derive(Debug)]
 pub enum CheckResult {
-    /// CML compiled, HTTP request made, response decoded — fully verified
+    /// Execution succeeded and declared provides were checked for decoded rows.
     Pass(String),
-    /// CML compiled, HTTP request made, response reached server but decode had issues
+    /// Execution returned no decoded entities; conformance remains unverified.
     Warn {
         check: String,
         note: String,
     },
-    /// CML is broken — this mapping cannot produce a valid HTTP request
+    /// Execution or declared response conformance failed.
     Fail {
         check: String,
         error: String,
@@ -80,14 +80,15 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
         let mut results: Vec<CheckResult> = Vec::new();
 
         // 1. Get by ID — every entity with a Get capability
-        if cgs
-            .find_capability(entity_name.as_str(), CapabilityKind::Get)
-            .is_some()
-        {
+        if let Some(cap) = cgs.find_capability(entity_name.as_str(), CapabilityKind::Get) {
+            let get = GetExpr::new(entity_name, "test-1").with_capability(cap.name.clone());
+            if let Value::Object(params) = build_fake_input(cap, &cgs) {
+                mat.stamp_capability_params(&get.reference, params);
+            }
             results.push(
                 check_execution(
-                    &format!("get {} by ID", entity_name),
-                    Expr::Get(GetExpr::new(entity_name, "test-1")),
+                    &format!("get {entity_name} by ID"),
+                    Expr::Get(get),
                     &cgs,
                     &engine,
                     &mut mat,
@@ -187,10 +188,12 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
 
         // 4. Delete
         if let Some(cap) = cgs.find_capability(entity_name.as_str(), CapabilityKind::Delete) {
+            let mut delete = DeleteExpr::new(&cap.name, entity_name, "test-1");
+            delete.input = Some(build_fake_input(cap, &cgs).into());
             results.push(
                 check_execution(
                     &format!("delete {entity_name}"),
-                    Expr::Delete(DeleteExpr::new(&cap.name, entity_name, "test-1")),
+                    Expr::Delete(delete),
                     &cgs,
                     &engine,
                     &mut mat,
@@ -219,7 +222,11 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
                     Expr::Invoke(InvokeExpr::new(
                         cap_name,
                         entity_name,
-                        "test-1",
+                        if cap.requires_receiver() {
+                            "test-1"
+                        } else {
+                            ""
+                        },
                         Some(input),
                     )),
                     &cgs,
@@ -352,21 +359,13 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
         total_pass, total_warn, total_fail, total_skip
     );
 
-    if total_warn > 0 {
-        println!("\nWarnings indicate the HTTP mapping compiled and reached the server,");
-        println!("but the response shape didn't decode as expected. Check:");
-        println!("  - Does the API response use a wrapper envelope (e.g. {{\"tasks\": [...]}})?");
-        println!("  - Are relation targets correctly defined in domain.yaml?");
-        println!("  - Is the capability kind correct (query vs action)?");
+    if total_fail > 0 || total_warn > 0 {
+        return Err(format!(
+            "Hermit conformance incomplete: {total_fail} failures, {total_warn} warnings"
+        )
+        .into());
     }
-
-    if total_fail > 0 {
-        println!("\n{} check(s) FAILED — CML mapping is broken.", total_fail);
-        println!("The capability cannot produce a valid HTTP request. Fix mappings.yaml.");
-        return Err(format!("{} failures", total_fail).into());
-    } else if total_warn == 0 {
-        println!("\nAll checks passed.");
-    }
+    println!("\nAll exercised checks passed; {total_skip} skipped checks remain unverified.");
 
     Ok(())
 }
@@ -393,6 +392,43 @@ async fn check_execution(
         .await
     {
         Ok(result) => {
+            let capability = match &expr {
+                Expr::Create(create) => cgs.capabilities.get(create.capability.as_str()),
+                Expr::Invoke(invoke) => cgs.capabilities.get(invoke.capability.as_str()),
+                Expr::Get(get) => get
+                    .capability_name
+                    .as_ref()
+                    .and_then(|name| cgs.capabilities.get(name.as_str()))
+                    .or_else(|| {
+                        cgs.find_capability(get.reference.entity_type.as_str(), CapabilityKind::Get)
+                    }),
+                Expr::Query(query) => query
+                    .capability_name
+                    .as_ref()
+                    .and_then(|name| cgs.capabilities.get(name.as_str()))
+                    .or_else(|| cgs.find_capability(query.entity.as_str(), CapabilityKind::Query)),
+                _ => None,
+            };
+            if let Some(capability) = capability {
+                let missing: Vec<_> = cgs
+                    .effective_provides(capability)
+                    .into_iter()
+                    .filter(|field| {
+                        result
+                            .entities
+                            .iter()
+                            .any(|row| !row.fields.contains_key(field.as_str()))
+                    })
+                    .collect();
+                if !missing.is_empty() {
+                    return CheckResult::Fail {
+                        check: label.to_owned(),
+                        error: format!(
+                            "Declared provides absent from OpenAPI response: {missing:?}"
+                        ),
+                    };
+                }
+            }
             if result.count == 0 && !matches!(expr, Expr::Delete(_)) {
                 // Request succeeded but returned no entities — could be mock returning
                 // empty/wrong shape, or the capability is action-typed but returns nothing
@@ -412,89 +448,9 @@ async fn check_execution(
 }
 
 fn categorize_error(label: &str, msg: &str) -> CheckResult {
-    // ── Hard failures: CML is structurally broken ─────────────────────────
-    if msg.contains("VariableNotFound") {
-        return CheckResult::Fail {
-            check: label.to_string(),
-            error: format!(
-                "CML variable not in env — check path/query var names in mappings.yaml: {}",
-                extract_var(msg)
-            ),
-        };
-    }
-    if msg.contains("ConfigurationError") {
-        return CheckResult::Fail {
-            check: label.to_string(),
-            error: format!(
-                "CML template is invalid JSON — check mappings.yaml syntax: {}",
-                trim_error(msg)
-            ),
-        };
-    }
-    if msg.contains("CmlError") {
-        return CheckResult::Fail {
-            check: label.to_string(),
-            error: format!("CML compilation failed: {}", trim_error(msg)),
-        };
-    }
-
-    // ── Soft warnings: request reached server, but decode/response issue ──
-    if msg.contains("DecodeError") || msg.contains("TypeMismatch") {
-        return CheckResult::Warn {
-            check: label.to_string(),
-            note: format!(
-                "Response shape mismatch — API may wrap response in an envelope: {}",
-                trim_error(msg)
-            ),
-        };
-    }
-    if msg.contains("PathNotFound") {
-        return CheckResult::Warn {
-            check: label.to_string(),
-            note: format!(
-                "Decoder path not found in response — check entity field names in domain.yaml: {}",
-                trim_error(msg)
-            ),
-        };
-    }
-    if msg.contains("status: 404") || msg.contains("404") {
-        return CheckResult::Warn {
-            check: label.to_string(),
-            note: "Mock returned 404 — check path template in mappings.yaml matches spec".into(),
-        };
-    }
-    if msg.contains("status: 4") {
-        return CheckResult::Warn {
-            check: label.to_string(),
-            note: format!(
-                "Mock returned 4xx — check required params and body structure: {}",
-                trim_error(msg)
-            ),
-        };
-    }
-    if msg.contains("status: 5") {
-        return CheckResult::Warn {
-            check: label.to_string(),
-            note: format!(
-                "Mock returned 5xx — hermit internal error, likely unsupported spec pattern: {}",
-                trim_error(msg)
-            ),
-        };
-    }
-    if msg.contains("RequestError") || msg.contains("Connection") || msg.contains("connect") {
-        return CheckResult::Fail {
-            check: label.to_string(),
-            error: format!(
-                "Cannot reach mock server — is hermit running? {}",
-                trim_error(msg)
-            ),
-        };
-    }
-
-    // ── Unknown: surface the full error for diagnosis ─────────────────────
-    CheckResult::Warn {
-        check: label.to_string(),
-        note: format!("Unexpected error (investigate): {}", trim_error(msg)),
+    CheckResult::Fail {
+        check: label.to_owned(),
+        error: trim_error(msg),
     }
 }
 
@@ -502,27 +458,19 @@ fn trim_error(msg: &str) -> String {
     // Keep the first 120 chars of the error message
     let s = msg.trim();
     if s.len() > 120 {
-        format!("{}...", &s[..120])
+        format!("{}...", s.chars().take(120).collect::<String>())
     } else {
         s.to_string()
     }
-}
-
-fn extract_var(msg: &str) -> String {
-    // Extract the variable name from "VariableNotFound { name: \"foo\" }"
-    if let Some(start) = msg.find("name: \"") {
-        let rest = &msg[start + 7..];
-        if let Some(end) = rest.find('"') {
-            return format!("\"{}\"", &rest[..end]);
-        }
-    }
-    trim_error(msg)
 }
 
 fn fake_value_for_input_field(f: &InputFieldSchema, cgs: &CGS) -> Option<Value> {
     match &f.wire {
         InputFieldWire::Registry(_) => {
             let nv = f.named_value(cgs).ok()?;
+            if nv.domain.profile == Some(plasm_core::value_domain::ProfileId::Email) {
+                return Some(Value::String("contract@example.com".into()));
+            }
             Some(fake_value_for_type(
                 &nv.field_type,
                 nv.allowed_values.as_deref(),
@@ -614,6 +562,7 @@ fn fake_value_for_type(
         }
     }
     match ft {
+        FieldType::DigitId => Value::String("1234".into()),
         FieldType::Integer => Value::Integer(1),
         FieldType::Number => Value::Float(1.0),
         FieldType::Money => {
@@ -645,7 +594,7 @@ async fn start_hermit(
 ) -> Result<(String, tokio::task::JoinHandle<()>), Box<dyn std::error::Error>> {
     let spec = beavuck_hermit::spec_loader::load(spec_path);
     let routes = beavuck_hermit::spec_parser::extract_routes(&spec);
-    let router = beavuck_hermit::router::build_with_bounds(routes, 1, 5);
+    let router = beavuck_hermit::router::build_spec_responses(routes);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();

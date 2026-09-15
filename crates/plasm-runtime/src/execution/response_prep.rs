@@ -62,10 +62,20 @@ pub(crate) fn response_bare_array_wrap_key(cml: &CmlRequest) -> String {
 pub(crate) fn narrow_http_graphql_response_for_entity_decode(
     template: &CapabilityTemplate,
     response: serde_json::Value,
+    env: &CmlEnv,
 ) -> Result<serde_json::Value, RuntimeError> {
     match template {
         CapabilityTemplate::CredentialBind(_) => Ok(response),
         CapabilityTemplate::Http(cml) | CapabilityTemplate::GraphQl(cml) => {
+            preflight_command_envelope_for_single_entity_narrow(&response, cml)?;
+            let response = match cml
+                .response
+                .as_ref()
+                .and_then(|r| r.response_preprocess.as_ref())
+            {
+                Some(p) => apply_response_preprocess(response, cml, p, env),
+                None => response,
+            };
             extract_single_entity_payload_from_response(response, cml)
         }
         CapabilityTemplate::View(_) => Err(RuntimeError::ConfigurationError {
@@ -425,6 +435,14 @@ pub(crate) fn apply_response_preprocess(
 ) -> serde_json::Value {
     let key = cml.response_items_key().to_string();
     match p {
+        ResponsePreprocess::ObjectProjection { fields } => serde_json::Value::Object(
+            fields
+                .iter()
+                .filter_map(|(name, path)| {
+                    walk_json_path(&response, path).map(|value| (name.clone(), value.clone()))
+                })
+                .collect(),
+        ),
         ResponsePreprocess::ArrayFindPluck {
             path,
             id_field,
@@ -519,5 +537,26 @@ pub(crate) fn normalize_collection_response(
         serde_json::json!({ items_field: response })
     } else {
         response
+    }
+}
+
+#[cfg(test)]
+mod projection_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn object_projection_preserves_wire_values(value in ".*") {
+            let cml = CmlRequest::new(plasm_compile::HttpMethod::Post, vec![]);
+            let projection = ResponsePreprocess::ObjectProjection {
+                fields: [("path".into(), vec!["ack".into(), "file_path".into()]),
+                         ("nullable".into(), vec!["nullable".into()]),
+                         ("missing".into(), vec!["absent".into()])].into(),
+            };
+            let body = serde_json::json!({"ack":{"file_path":value},"nullable":null,"unrelated":"ignored"});
+            let projected = apply_response_preprocess(body, &cml, &projection, &CmlEnv::new());
+            prop_assert_eq!(projected, serde_json::json!({"path":value,"nullable":null}));
+        }
     }
 }

@@ -328,7 +328,7 @@ impl ExecutionEngine {
             )
             .await?;
         let response =
-            narrow_http_graphql_response_for_entity_decode(capability_template, response)?;
+            narrow_http_graphql_response_for_entity_decode(capability_template, response, &env)?;
         let rid = cgs.get_entity(&get.reference.entity_type).and_then(|ent| {
             if ent.implicit_request_identity || ent.id_field == "url" {
                 get.reference.simple_id().map(|id| id.as_str())

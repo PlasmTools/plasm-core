@@ -1,0 +1,604 @@
+{
+  "openapi": "3.2.0",
+  "info": {
+    "title": "Dog Café API",
+    "version": "1.0.0",
+    "description": "A café that welcomes dogs. Used alongside taskflow.openapi.yml to demonstrate multi-spec loading.\n"
+  },
+  "servers": [
+    {
+      "url": "/api/dog-cafe"
+    }
+  ],
+  "paths": {
+    "/dogs": {
+      "get": {
+        "tags": [
+          "Dogs"
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Dog"
+                  }
+                }
+              }
+            },
+            "description": "List of registered dogs"
+          }
+        },
+        "operationId": "listDogs",
+        "summary": "List all registered dogs"
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DogCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "tags": [
+          "Dogs"
+        ],
+        "responses": {
+          "201": {
+            "headers": {
+              "Location": {
+                "schema": {
+                  "format": "uri",
+                  "type": "string",
+                  "example": "/dogs/a1b2c3d4-e5f6-0011-2233-445566778899"
+                },
+                "description": "URL of the registered dog"
+              }
+            },
+            "description": "Registered dog"
+          }
+        },
+        "operationId": "registerDog",
+        "summary": "Register a dog"
+      }
+    },
+    "/dogs/{dogId}": {
+      "get": {
+        "tags": [
+          "Dogs"
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Dog"
+                }
+              }
+            },
+            "description": "A dog"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "operationId": "getDog",
+        "summary": "Get a dog by ID"
+      },
+      "put": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DogBase"
+              }
+            }
+          },
+          "required": true
+        },
+        "tags": [
+          "Dogs"
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Dog"
+                }
+              }
+            },
+            "description": "Updated dog"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "operationId": "updateDog",
+        "summary": "Replace a dog record"
+      },
+      "delete": {
+        "tags": [
+          "Dogs"
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "operationId": "deregisterDog",
+        "summary": "Deregister a dog"
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/DogIdParam"
+        }
+      ]
+    },
+    "/menu": {
+      "get": {
+        "tags": [
+          "Menu"
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MenuItem"
+                  }
+                }
+              }
+            },
+            "description": "List of menu items"
+          }
+        },
+        "operationId": "listMenuItems",
+        "summary": "List all menu items"
+      }
+    },
+    "/menu/{menuItemId}": {
+      "get": {
+        "tags": [
+          "Menu"
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MenuItem"
+                }
+              }
+            },
+            "description": "A menu item"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "operationId": "getMenuItem",
+        "summary": "Get a menu item by ID"
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/MenuItemIdParam"
+        }
+      ]
+    },
+    "/orders": {
+      "get": {
+        "tags": [
+          "Orders"
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Order"
+                  }
+                }
+              }
+            },
+            "description": "List of orders"
+          }
+        },
+        "operationId": "listOrders",
+        "summary": "List all orders"
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "tags": [
+          "Orders"
+        ],
+        "responses": {
+          "201": {
+            "headers": {
+              "Location": {
+                "schema": {
+                  "format": "uri",
+                  "type": "string",
+                  "example": "/orders/c3d4e5f6-a7b8-2233-4455-667788990011"
+                },
+                "description": "URL of the created order"
+              }
+            },
+            "description": "Created order"
+          }
+        },
+        "operationId": "createOrder",
+        "summary": "Place an order"
+      }
+    },
+    "/orders/{orderId}": {
+      "get": {
+        "tags": [
+          "Orders"
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Order"
+                }
+              }
+            },
+            "description": "An order"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "operationId": "getOrder",
+        "summary": "Get an order by ID"
+      },
+      "delete": {
+        "tags": [
+          "Orders"
+        ],
+        "responses": {
+          "204": {
+            "description": "Cancelled"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "operationId": "cancelOrder",
+        "summary": "Cancel an order"
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/OrderIdParam"
+        }
+      ]
+    }
+  },
+  "components": {
+    "schemas": {
+      "Entity": {
+        "required": [
+          "id",
+          "createdAt",
+          "updatedAt"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        }
+      },
+      "DogSize": {
+        "enum": [
+          "small",
+          "medium",
+          "large",
+          "giant"
+        ],
+        "type": "string",
+        "example": "medium"
+      },
+      "DogBase": {
+        "required": [
+          "name",
+          "breed",
+          "size"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "example": "Pretzel"
+          },
+          "breed": {
+            "type": "string",
+            "example": "Dachshund"
+          },
+          "size": {
+            "$ref": "#/components/schemas/DogSize"
+          },
+          "vaccinated": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
+      "DogCreate": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/DogBase"
+          }
+        ]
+      },
+      "Dog": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Entity"
+          },
+          {
+            "$ref": "#/components/schemas/DogBase"
+          }
+        ]
+      },
+      "MenuItemCategory": {
+        "enum": [
+          "treat",
+          "meal",
+          "drink",
+          "toy"
+        ],
+        "type": "string",
+        "example": "treat"
+      },
+      "MenuItem": {
+        "required": [
+          "id",
+          "name",
+          "price",
+          "category"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "example": "Peanut Butter Biscuit"
+          },
+          "price": {
+            "type": "number",
+            "example": 3
+          },
+          "category": {
+            "$ref": "#/components/schemas/MenuItemCategory"
+          },
+          "description": {
+            "nullable": true,
+            "type": "string",
+            "example": "Homemade biscuit with a peanut butter filling"
+          }
+        }
+      },
+      "OrderStatus": {
+        "enum": [
+          "pending",
+          "preparing",
+          "ready",
+          "completed",
+          "cancelled"
+        ],
+        "type": "string",
+        "example": "pending"
+      },
+      "OrderBase": {
+        "required": [
+          "dogId"
+        ],
+        "type": "object",
+        "properties": {
+          "dogId": {
+            "format": "uuid",
+            "type": "string",
+            "example": "a1b2c3d4-e5f6-0011-2233-445566778899"
+          },
+          "status": {
+            "$ref": "#/components/schemas/OrderStatus"
+          },
+          "notes": {
+            "nullable": true,
+            "type": "string",
+            "example": "No chicken treats please"
+          }
+        }
+      },
+      "DineInOrder": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/OrderBase"
+          },
+          {
+            "required": [
+              "type",
+              "tableNumber"
+            ],
+            "type": "object",
+            "properties": {
+              "type": {
+                "enum": [
+                  "dine_in"
+                ],
+                "type": "string",
+                "example": "dine_in"
+              },
+              "tableNumber": {
+                "type": "integer",
+                "example": 5
+              }
+            }
+          }
+        ]
+      },
+      "TakeawayOrder": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/OrderBase"
+          },
+          {
+            "required": [
+              "type",
+              "pickupAt"
+            ],
+            "type": "object",
+            "properties": {
+              "type": {
+                "enum": [
+                  "takeaway"
+                ],
+                "type": "string",
+                "example": "takeaway"
+              },
+              "pickupAt": {
+                "format": "date-time",
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "OrderCreate": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/DineInOrder"
+          },
+          {
+            "$ref": "#/components/schemas/TakeawayOrder"
+          }
+        ],
+        "discriminator": {
+          "propertyName": "type",
+          "mapping": {
+            "dine_in": "#/components/schemas/DineInOrder",
+            "takeaway": "#/components/schemas/TakeawayOrder"
+          }
+        }
+      },
+      "Order": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Entity"
+          },
+          {
+            "$ref": "#/components/schemas/OrderCreate"
+          }
+        ]
+      },
+      "ApiError": {
+        "required": [
+          "code",
+          "message"
+        ],
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "example": "NOT_FOUND"
+          },
+          "message": {
+            "type": "string",
+            "example": "The requested resource does not exist"
+          }
+        }
+      }
+    },
+    "responses": {
+      "NotFound": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        },
+        "description": "Resource not found"
+      }
+    },
+    "parameters": {
+      "DogIdParam": {
+        "name": "dogId",
+        "schema": {
+          "format": "uuid",
+          "type": "string",
+          "example": "a1b2c3d4-e5f6-0011-2233-445566778899"
+        },
+        "in": "path",
+        "required": true
+      },
+      "MenuItemIdParam": {
+        "name": "menuItemId",
+        "schema": {
+          "format": "uuid",
+          "type": "string",
+          "example": "b2c3d4e5-f6a7-1122-3344-556677889900"
+        },
+        "in": "path",
+        "required": true
+      },
+      "OrderIdParam": {
+        "name": "orderId",
+        "schema": {
+          "format": "uuid",
+          "type": "string",
+          "example": "c3d4e5f6-a7b8-2233-4455-667788990011"
+        },
+        "in": "path",
+        "required": true
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Dogs"
+    },
+    {
+      "name": "Menu"
+    },
+    {
+      "name": "Orders"
+    }
+  ]
+}

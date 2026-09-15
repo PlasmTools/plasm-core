@@ -1,4 +1,4 @@
-version: 22
+version: 23
 entry_id: venmo
 data_classes:
   untrusted:
@@ -732,7 +732,7 @@ capabilities:
     - transfer_type
     - amount
     - payment_card_digits
-      - created_at
+    - created_at
   bank_transfer_receipt_download:
     receiver: {kind: entity, entity: BankTransfer}
     description: Download a card-to-balance or balance-to-card transfer receipt to a file-system path.

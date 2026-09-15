@@ -179,6 +179,11 @@ task_create:
         condition: { type: exists, var: priority }
         then_expr: { type: var, name: priority }
         else_expr: { type: const, value: null }
+    - - duration
+      - type: if
+        condition: { type: exists, var: duration }
+        then_expr: { type: var, name: duration }
+        else_expr: { type: const, value: null }
     - - duration_unit
       - type: if
         condition: { type: exists, var: duration_unit }
@@ -219,6 +224,11 @@ task_update:
       - type: if
         condition: { type: exists, var: priority }
         then_expr: { type: var, name: priority }
+        else_expr: { type: const, value: null }
+    - - duration
+      - type: if
+        condition: { type: exists, var: duration }
+        then_expr: { type: var, name: duration }
         else_expr: { type: const, value: null }
     - - duration_unit
       - type: if
@@ -499,6 +509,7 @@ user_query:
 
 profile_get:
   method: GET
+  response: single
   path:
   - { type: literal, value: todoist }
   - { type: literal, value: profile }

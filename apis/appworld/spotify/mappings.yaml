@@ -267,6 +267,14 @@ playlist_unlike:
 
 player_current_wire:
   method: GET
+  response:
+    response_preprocess:
+      kind: object_projection
+      fields:
+        song_id: [song_id]
+        title: [title]
+        position: [played_seconds]
+        is_playing: [is_playing]
   path:
   - { type: literal, value: spotify }
   - { type: literal, value: music_player }
@@ -910,6 +918,7 @@ premium_subscription_receipt:
 
 profile_get:
   method: GET
+  response: single
   path:
   - { type: literal, value: spotify }
   - { type: literal, value: profile }

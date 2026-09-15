@@ -1,4 +1,4 @@
-version: 12
+version: 14
 entry_id: file_system
 auth:
   scheme: none
@@ -365,7 +365,6 @@ capabilities:
           value_ref: nv_bool
           required: false
     provides:
-    - file_id
     - path
   file_update:
     description: Update file content at the entity path (id).
@@ -491,6 +490,7 @@ capabilities:
     - first_name
     - last_name
     - email
+    - registered_at
     - registered_at
 values:
   nv_str:

@@ -1,0 +1,834 @@
+openapi: 3.2.0
+info:
+  title: Taskflow API
+  version: 1.0.0
+  description: >
+    A project and task management API. Demonstrates schema inheritance, polymorphic task types, nullable
+    fields, enums, $ref chains, and varied parameter locations.
+paths:
+  /projects:
+    get:
+      tags:
+        - Projects
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - name: status
+          schema:
+            $ref: '#/components/schemas/ProjectStatus'
+          in: query
+        - name: X-Workspace-Id
+          schema:
+            format: uuid
+            type: string
+            example: e3d6f8a2-1c4b-4e9d-b7f0-2a5c8d3e6f91
+          in: header
+          required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectPage'
+          description: Paginated list of projects
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+      operationId: listProjects
+      summary: List all projects
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectCreate'
+        required: true
+      tags:
+        - Projects
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+          description: Created project
+        '422':
+          $ref: '#/components/responses/ValidationError'
+      operationId: createProject
+      summary: Create a project
+    options:
+      tags:
+        - Projects
+      responses:
+        '200':
+          description: Available methods
+      operationId: optionsProjects
+      summary: Available HTTP methods for /projects
+  /projects/{projectId}:
+    trace:
+      tags:
+        - Projects
+      responses:
+        '200':
+          description: Trace
+      operationId: traceProject
+      summary: Trace request to /projects/{projectId}
+    get:
+      tags:
+        - Projects
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+          description: A project
+        '404':
+          $ref: '#/components/responses/NotFound'
+      operationId: getProject
+      summary: Get a project by ID
+    put:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectBase'
+        required: true
+      tags:
+        - Projects
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+          description: Replaced project
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+      operationId: replaceProject
+      summary: Replace a project
+    delete:
+      tags:
+        - Projects
+      responses:
+        '204':
+          description: Deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+      operationId: deleteProject
+      summary: Delete a project
+    head:
+      tags:
+        - Projects
+      responses:
+        '200':
+          description: Project exists
+      operationId: checkProject
+      summary: Check a project exists
+    parameters:
+      - $ref: '#/components/parameters/ProjectIdParam'
+  /projects/{projectId}/tasks:
+    get:
+      tags:
+        - Tasks
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - name: type
+          schema:
+            $ref: '#/components/schemas/TaskType'
+          in: query
+        - name: assigneeId
+          schema:
+            format: uuid
+            type: string
+            example: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+          in: query
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskPage'
+          description: Paginated list of tasks
+        '404':
+          $ref: '#/components/responses/NotFound'
+      operationId: listTasks
+      summary: List tasks in a project
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskCreate'
+        required: true
+      tags:
+        - Tasks
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+          description: Created task
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+      operationId: createTask
+      summary: Create a task in a project
+    parameters:
+      - $ref: '#/components/parameters/ProjectIdParam'
+  /projects/{projectId}/tasks/{taskId}:
+    get:
+      tags:
+        - Tasks
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+          description: A task
+        '404':
+          $ref: '#/components/responses/NotFound'
+      operationId: getTask
+      summary: Get a task by ID
+    patch:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskPatch'
+        required: true
+      tags:
+        - Tasks
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+          description: Updated task
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+      operationId: updateTask
+      summary: Partially update a task
+    parameters:
+      - $ref: '#/components/parameters/ProjectIdParam'
+      - $ref: '#/components/parameters/TaskIdParam'
+  /projects/{projectId}/tasks/{taskId}/comments:
+    get:
+      tags:
+        - Comments
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Comment'
+          description: List of comments
+        '404':
+          $ref: '#/components/responses/NotFound'
+      operationId: listComments
+      summary: List comments on a task
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommentCreate'
+        required: true
+      tags:
+        - Comments
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+          description: Created comment
+        '404':
+          $ref: '#/components/responses/NotFound'
+      operationId: createComment
+      summary: Add a comment to a task
+    parameters:
+      - $ref: '#/components/parameters/ProjectIdParam'
+      - $ref: '#/components/parameters/TaskIdParam'
+  /labels:
+    get:
+      tags:
+        - Labels
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LabelPage'
+          description: Paginated list of labels
+      operationId: listLabels
+      summary: List all labels
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LabelCreate'
+        required: true
+      tags:
+        - Labels
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Label'
+          description: Created label
+        '422':
+          $ref: '#/components/responses/ValidationError'
+      operationId: createLabel
+      summary: Create a label
+  /labels/{labelId}:
+    get:
+      tags:
+        - Labels
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Label'
+          description: A label
+        '404':
+          $ref: '#/components/responses/NotFound'
+      operationId: getLabel
+      summary: Get a label by ID
+    put:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LabelBase'
+        required: true
+      tags:
+        - Labels
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Label'
+          description: Replaced label
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+      operationId: replaceLabel
+      summary: Replace a label
+    delete:
+      tags:
+        - Labels
+      responses:
+        '204':
+          description: Deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+      operationId: deleteLabel
+      summary: Delete a label
+    patch:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LabelPatch'
+        required: true
+      tags:
+        - Labels
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Label'
+          description: Updated label
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+      operationId: updateLabel
+      summary: Partially update a label
+    parameters:
+      - $ref: '#/components/parameters/LabelIdParam'
+components:
+  schemas:
+    ProjectStatus:
+      enum:
+        - active
+        - archived
+        - draft
+      type: string
+      example: active
+    TaskType:
+      enum:
+        - feature
+        - bug
+        - chore
+      type: string
+      example: feature
+    TaskStatus:
+      enum:
+        - backlog
+        - in_progress
+        - in_review
+        - done
+        - cancelled
+      type: string
+      example: in_progress
+    Priority:
+      enum:
+        - low
+        - medium
+        - high
+        - critical
+      type: string
+      example: high
+    Entity:
+      required:
+        - id
+        - createdAt
+        - updatedAt
+      type: object
+      properties:
+        id:
+          format: uuid
+          type: string
+        createdAt:
+          format: date-time
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+    UserRef:
+      required:
+        - id
+        - name
+      type: object
+      properties:
+        id:
+          format: uuid
+          type: string
+          example: b5c6d7e8-f9a0-1234-5678-90abcdef1234
+        name:
+          type: string
+          example: Alexis
+        avatarUrl:
+          nullable: true
+          format: uri
+          type: string
+          example: https://avatars.example.com/alexis.png
+    ProjectBase:
+      required:
+        - name
+      type: object
+      properties:
+        name:
+          maxLength: 120
+          minLength: 1
+          type: string
+          example: Taskflow API
+        description:
+          nullable: true
+          type: string
+          example: OpenAPI mock server written in Rust
+        status:
+          $ref: '#/components/schemas/ProjectStatus'
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          example:
+            team: platform
+            costCenter: eng-infra
+    ProjectCreate:
+      allOf:
+        - $ref: '#/components/schemas/ProjectBase'
+    Project:
+      allOf:
+        - $ref: '#/components/schemas/Entity'
+        - $ref: '#/components/schemas/ProjectBase'
+        - required:
+            - owner
+          type: object
+          properties:
+            owner:
+              $ref: '#/components/schemas/UserRef'
+            taskCount:
+              type: integer
+              example: 12
+    ProjectPage:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Project'
+    TaskBase:
+      required:
+        - title
+        - type
+      type: object
+      properties:
+        title:
+          maxLength: 255
+          minLength: 1
+          type: string
+          example: Implement schema-based response generation
+        description:
+          nullable: true
+          type: string
+          example: Support allOf, oneOf, anyOf resolution when generating mock responses
+        type:
+          $ref: '#/components/schemas/TaskType'
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        priority:
+          $ref: '#/components/schemas/Priority'
+        assignee:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/UserRef'
+        dueDate:
+          nullable: true
+          format: date
+          type: string
+          example: '2024-12-31'
+        labels:
+          type: array
+          items:
+            type: string
+          example:
+            - rust
+            - core
+            - parsing
+        coreRepo:
+          enum:
+            - API
+            - APP
+            - IAM
+          type: string
+          example: APP
+    FeatureTask:
+      allOf:
+        - $ref: '#/components/schemas/TaskBase'
+        - required:
+            - type
+          type: object
+          properties:
+            type:
+              enum:
+                - feature
+              type: string
+              example: feature
+            storyPoints:
+              nullable: true
+              type: integer
+              example: 5
+    BugTask:
+      allOf:
+        - $ref: '#/components/schemas/TaskBase'
+        - required:
+            - type
+            - severity
+          type: object
+          properties:
+            type:
+              enum:
+                - bug
+              type: string
+              example: bug
+            severity:
+              enum:
+                - low
+                - medium
+                - high
+                - critical
+              type: string
+              example: high
+            reproduceSteps:
+              nullable: true
+              type: string
+              example: |-
+                1. Send request with allOf schema
+                2. Observe panic
+    ChoreTask:
+      allOf:
+        - $ref: '#/components/schemas/TaskBase'
+        - required:
+            - type
+          type: object
+          properties:
+            type:
+              enum:
+                - chore
+              type: string
+              example: chore
+    TaskCreate:
+      oneOf:
+        - $ref: '#/components/schemas/FeatureTask'
+        - $ref: '#/components/schemas/BugTask'
+        - $ref: '#/components/schemas/ChoreTask'
+      discriminator:
+        propertyName: type
+        mapping:
+          feature: '#/components/schemas/FeatureTask'
+          bug: '#/components/schemas/BugTask'
+          chore: '#/components/schemas/ChoreTask'
+    Task:
+      allOf:
+        - $ref: '#/components/schemas/Entity'
+        - $ref: '#/components/schemas/TaskCreate'
+        - type: object
+          properties:
+            projectId:
+              format: uuid
+              type: string
+              example: c9d8e7f6-a5b4-3210-fedc-ba9876543210
+            commentCount:
+              type: integer
+              example: 3
+    TaskPatch:
+      type: object
+      properties:
+        title:
+          nullable: true
+          type: string
+          example: Implement allOf resolution
+        status:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/TaskStatus'
+        priority:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/Priority'
+        assigneeId:
+          nullable: true
+          format: uuid
+          type: string
+          example: b5c6d7e8-f9a0-1234-5678-90abcdef1234
+        dueDate:
+          nullable: true
+          format: date
+          type: string
+          example: '2024-12-31'
+        labels:
+          nullable: true
+          type: array
+          items:
+            type: string
+          example:
+            - rust
+            - parsing
+    TaskPage:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Task'
+    CommentCreate:
+      required:
+        - body
+      type: object
+      properties:
+        body:
+          minLength: 1
+          type: string
+          example: oneOf resolution is the tricky part, start there
+    Comment:
+      allOf:
+        - $ref: '#/components/schemas/Entity'
+        - $ref: '#/components/schemas/CommentCreate'
+        - required:
+            - author
+          type: object
+          properties:
+            author:
+              $ref: '#/components/schemas/UserRef'
+            editedAt:
+              nullable: true
+              format: date-time
+              type: string
+    Page:
+      required:
+        - total
+        - page
+        - limit
+      type: object
+      properties:
+        total:
+          type: integer
+          example: 42
+        page:
+          type: integer
+          example: 1
+        limit:
+          type: integer
+          example: 20
+    LabelBase:
+      required:
+        - name
+        - color
+      type: object
+      properties:
+        name:
+          maxLength: 50
+          minLength: 1
+          type: string
+        color:
+          description: Display color for the label
+          type: string
+        description:
+          nullable: true
+          type: string
+    LabelCreate:
+      allOf:
+        - $ref: '#/components/schemas/LabelBase'
+    Label:
+      allOf:
+        - $ref: '#/components/schemas/Entity'
+        - $ref: '#/components/schemas/LabelBase'
+    LabelPage:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Label'
+    LabelPatch:
+      type: object
+      properties:
+        name:
+          nullable: true
+          type: string
+        color:
+          nullable: true
+          type: string
+        description:
+          nullable: true
+          type: string
+    ApiError:
+      required:
+        - code
+        - message
+      type: object
+      properties:
+        code:
+          type: string
+          example: NOT_FOUND
+        message:
+          type: string
+          example: The requested resource does not exist
+    ValidationErrorBody:
+      allOf:
+        - $ref: '#/components/schemas/ApiError'
+        - type: object
+          properties:
+            fields:
+              type: object
+              additionalProperties:
+                type: string
+              example:
+                title: must not be blank
+                dueDate: must be a future date
+  responses:
+    Unauthorized:
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            code: UNAUTHORIZED
+            message: Invalid or missing API key
+      description: Missing or invalid authentication
+    NotFound:
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            code: NOT_FOUND
+            message: The requested resource does not exist
+      description: Resource not found
+    ValidationError:
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ValidationErrorBody'
+          example:
+            code: VALIDATION_ERROR
+            message: Request validation failed
+            fields:
+              title: must not be blank
+              dueDate: must be a future date
+      description: Request body failed validation
+  parameters:
+    ProjectIdParam:
+      name: projectId
+      schema:
+        format: uuid
+        type: string
+        example: c9d8e7f6-a5b4-3210-fedc-ba9876543210
+      in: path
+      required: true
+    TaskIdParam:
+      name: taskId
+      schema:
+        format: uuid
+        type: string
+        example: f1e2d3c4-b5a6-7890-1234-567890abcdef
+      in: path
+      required: true
+    LabelIdParam:
+      name: labelId
+      schema:
+        format: uuid
+        type: string
+      in: path
+      required: true
+    PageParam:
+      name: page
+      schema:
+        default: 1
+        minimum: 1
+        type: integer
+        example: 1
+      in: query
+    LimitParam:
+      name: limit
+      schema:
+        default: 20
+        maximum: 100
+        minimum: 1
+        type: integer
+        example: 20
+      in: query
+tags:
+  - name: Projects
+  - name: Tasks
+  - name: Comments
+  - name: Labels

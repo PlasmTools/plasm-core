@@ -1,6 +1,12 @@
 //! In-process Hermit mock servers for OpenAPI fixtures.
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::OnceLock,
+};
+
+// Shared servers must not belong to whichever test runtime initializes a URL first.
+static HERMIT_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 use tokio::sync::OnceCell;
 
 static PETSTORE_HERMIT: OnceCell<String> = OnceCell::const_new();
@@ -44,8 +50,25 @@ async fn spawn_hermit_with_base(
     let routes = beavuck_hermit::spec_parser::extract_routes(&spec);
     let router = beavuck_hermit::router::build_with_bounds(routes, min_items, max_items);
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
+    let runtime = HERMIT_RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("hermit-tests")
+            .enable_all()
+            .build()
+            .unwrap()
+    });
+    let addr = runtime
+        .spawn(async move {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            tokio::spawn(async move {
+                axum::serve(listener, router).await.unwrap();
+            });
+            addr
+        })
+        .await
+        .expect("start shared Hermit server");
     let base_url = if base_suffix.is_empty() {
         format!("http://127.0.0.1:{}", addr.port())
     } else {
@@ -56,11 +79,6 @@ async fn spawn_hermit_with_base(
         )
     };
 
-    tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
-    });
-
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     base_url
 }
 
@@ -89,7 +107,7 @@ pub async fn pokeapi_hermit_base_url() -> &'static String {
     POKEAPI_HERMIT
         .get_or_init(|| async {
             let spec_path = pokeapi_spec_path();
-            spawn_hermit_with_base(spec_path.as_path(), "", 1, 5).await
+            spawn_hermit_with_base(spec_path.as_path(), "", 40, 40).await
         })
         .await
 }

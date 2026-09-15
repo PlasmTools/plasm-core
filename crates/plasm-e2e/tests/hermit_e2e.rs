@@ -347,12 +347,11 @@ async fn pokeapi_berry_query_paginates_with_cml() {
 
     assert!(result.is_ok(), "{:?}", result.err());
     let r = result.unwrap();
-    // pokeapi_mini Hermit serves a multi-page berry list; after offset step=20 migration we
-    // require unique cardinality and multi-request progress rather than `count >= 1`.
-    assert!(
-        r.count >= 20,
-        "expected multi-page berry materialization, got {}",
-        r.count
+    // The fixture has exactly 40 rows; the spec and CML use 20-row pages.
+    assert_eq!(r.count, 40, "must consume both complete pages");
+    assert_eq!(
+        r.stats.network_requests, 2,
+        "must advance to the second page and stop"
     );
     let ids: std::collections::BTreeSet<_> = r
         .entities
@@ -516,4 +515,21 @@ async fn concurrent_cold_identical_reads_no_materialization_conflict() {
         guard.stats().total_entities >= 1,
         "session graph populated after concurrent reads"
     );
+}
+
+#[test]
+fn hermit_shared_server_survives_caller_runtime_shutdown() {
+    let first = tokio::runtime::Runtime::new().unwrap();
+    let url = first.block_on(async { pokeapi_hermit_base_url().await.clone() });
+    drop(first);
+    let second = tokio::runtime::Runtime::new().unwrap();
+    second.block_on(async {
+        let response = reqwest::Client::new()
+            .get(format!("{url}/api/v2/berry/?limit=20&offset=0"))
+            .timeout(std::time::Duration::from_secs(3))
+            .send()
+            .await
+            .expect("shared Hermit server must outlive the caller runtime");
+        assert!(response.status().is_success());
+    });
 }

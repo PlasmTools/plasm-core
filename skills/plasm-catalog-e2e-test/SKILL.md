@@ -64,17 +64,28 @@ cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/<api>
 
 Failure means the catalog is malformed; return control to [plasm-authoring](../plasm-authoring/SKILL.md). Do not attempt transport tests on a broken CGS.
 
-When an OpenAPI spec is available, also run the spec-driven mapping check (deterministic, no transport):
+When an OpenAPI spec is available, also run the spec-driven Hermit exercise (local mock transport):
 
 ```bash
 cargo run -p plasm-cli --bin plasm-cgs -- validate --spec path/to/openapi.json apis/<api>
 ```
 
-This catches missing capability mappings, body shape drift, and mismatched parameters against the spec — distinct from runtime checks.
+This compiles requests and exercises them against Hermit's spec-response mode.
+Execution errors, absent declared output fields, and empty-result warnings return
+nonzero. Inspect every skip: skipped checks remain unverified even after exit 0.
+The gate does not establish semantic completeness of the catalog or live-vendor behavior.
+
+### Response conformance gate
+
+Use the existing `plasm-cgs validate <catalog> --spec <openapi>` workflow.
+Hermit serves spec-generated response bodies without CRUD field or identity inference.
+Source OpenAPI independently from the catalog; a catalog-authored response manifest
+is not an independent acceptance contract. Do not add a parallel replay system.
 
 ## Tier 1: Hermit Mock
 
-Hermit is a zero-config mock server that synthesizes responses from an OpenAPI spec. Use it **first** for any catalog whose source is OpenAPI (or whose README references an OpenAPI file). Hermit gives deterministic, free, fast transport coverage.
+Hermit is a zero-config mock server that synthesizes responses from an OpenAPI spec. Use it **first** for any catalog whose source is OpenAPI (or whose README references an OpenAPI file). Hermit gives local, free, fast transport coverage; generated values are sampled.
+A pass covers exercised mappings, not semantic completeness of the catalog.
 
 ### When Hermit applies
 

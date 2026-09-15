@@ -188,6 +188,11 @@ file_get:
 
 file_create:
   method: POST
+  response:
+    response_preprocess:
+      kind: object_projection
+      fields:
+        path: [file_path]
   path:
   - { type: literal, value: file_system }
   - { type: literal, value: file }
@@ -293,6 +298,7 @@ file_decompress:
 
 profile_get:
   method: GET
+  response: single
   path:
   - { type: literal, value: file_system }
   - { type: literal, value: profile }

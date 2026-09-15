@@ -545,9 +545,3 @@ notification_mark_all:
     type: object
     fields:
     - [read, { type: var, name: read }]
-  method: GET
-  path:
-  - { type: literal, value: venmo }
-  - { type: literal, value: social_feed }
-  auth: *request_auth
-  pagination: *appworld_page_index_limit

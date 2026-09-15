@@ -126,28 +126,6 @@ email_thread_unarchive:
   - { type: literal, value: unarchived }
   auth: *request_auth
 
-email_thread_snooze:
-  method: POST
-  path:
-  - { type: literal, value: gmail }
-  - { type: literal, value: email_threads }
-  - { type: var, name: id }
-  - { type: literal, value: snooze }
-  auth: *request_auth
-  body:
-    type: object
-    fields:
-    - [snooze_until, { type: var, name: snooze_until }]
-
-email_thread_unsnooze:
-  method: POST
-  path:
-  - { type: literal, value: gmail }
-  - { type: literal, value: email_threads }
-  - { type: var, name: id }
-  - { type: literal, value: unsnooze }
-  auth: *request_auth
-
 email_get:
   method: GET
   path:
@@ -531,5 +509,5 @@ draft_attachment_remove:
   - { type: literal, value: drafts }
   - { type: var, name: draft_id }
   - { type: literal, value: attachments }
-  - { type: var, name: id }
+  - { type: var, name: attachment_file_name }
   auth: *request_auth

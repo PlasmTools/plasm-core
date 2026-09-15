@@ -474,7 +474,8 @@ fn matrix_fixture_ruleset_get_narrowing_decodes_inner_result_object() {
         "messages": []
     });
     let narrowed =
-        narrow_http_graphql_response_for_entity_decode(&capability_template, body).unwrap();
+        narrow_http_graphql_response_for_entity_decode(&capability_template, body, &CmlEnv::new())
+            .unwrap();
     let mut ambient = indexmap::IndexMap::new();
     ambient.insert("zone_id".into(), "00d2860b1edaed6074fd0f45a66e1a87".into());
     let decoder = create_entity_decoder("Ruleset", &cgs, None, None, Some(&ambient));
@@ -1684,8 +1685,9 @@ fn fibery_user_get_me_narrowing_decodes_first_result_row() {
         "/../../fixtures/schemas/fibery_schema_overlay/sample_user_get_me.json"
     )))
     .expect("sample user_get_me JSON");
-    let narrowed = narrow_http_graphql_response_for_entity_decode(&capability_template, body)
-        .expect("narrow user_get_me");
+    let narrowed =
+        narrow_http_graphql_response_for_entity_decode(&capability_template, body, &CmlEnv::new())
+            .expect("narrow user_get_me");
     let decoder =
         create_entity_decoder_for_capability("User", &cgs, Some("user_get_me"), None, None, None);
     let entities = decode_entities(&decoder, &narrowed).expect("decode User");
@@ -1723,8 +1725,9 @@ fn fibery_entity_create_narrowing_decodes_result_object() {
         "/../../fixtures/schemas/fibery_schema_overlay/sample_entity_create.json"
     )))
     .expect("sample entity_create JSON");
-    let narrowed = narrow_http_graphql_response_for_entity_decode(&capability_template, body)
-        .expect("narrow entity_create");
+    let narrowed =
+        narrow_http_graphql_response_for_entity_decode(&capability_template, body, &CmlEnv::new())
+            .expect("narrow entity_create");
     let mut env = CmlEnv::new();
     env.insert(
         "database".into(),
@@ -1953,8 +1956,9 @@ fn fibery_command_envelope_preflight_surfaces_success_false() {
             "message": "fibery/user database was not found."
         }
     });
-    let err = narrow_http_graphql_response_for_entity_decode(&capability_template, body)
-        .expect_err("success:false must fail before narrowing");
+    let err =
+        narrow_http_graphql_response_for_entity_decode(&capability_template, body, &CmlEnv::new())
+            .expect_err("success:false must fail before narrowing");
     let msg = format!("{err}");
     assert!(msg.contains("entity.error/schema-type-not-found"), "{msg}");
     assert!(msg.contains("fibery/user database was not found"), "{msg}");
@@ -1972,8 +1976,9 @@ fn fibery_command_envelope_preflight_surfaces_empty_result_array() {
         parse_capability_template(&cap.require_mapping().expect("cml mapping").template)
             .expect("parse template");
     let body = serde_json::json!({ "success": true, "result": [] });
-    let err = narrow_http_graphql_response_for_entity_decode(&capability_template, body)
-        .expect_err("empty result[] must fail with actionable message");
+    let err =
+        narrow_http_graphql_response_for_entity_decode(&capability_template, body, &CmlEnv::new())
+            .expect_err("empty result[] must fail with actionable message");
     let msg = format!("{err}");
     assert!(msg.contains("no rows"), "{msg}");
     assert!(msg.contains("$my-id"), "{msg}");
@@ -1981,24 +1986,18 @@ fn fibery_command_envelope_preflight_surfaces_empty_result_array() {
 
 #[test]
 fn graphql_get_null_entity_surfaces_request_error_not_config() {
-    use plasm_core::loader::load_schema_dir;
-
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/schemas/plasm_language_matrix");
-    if !dir.is_dir() {
-        return;
-    }
-    let cgs = load_schema_dir(&dir).expect("load linear catalog");
-    let cap = cgs.get_capability("issue_get").expect("issue_get");
-    let capability_template =
-        parse_capability_template(&cap.require_mapping().expect("cml mapping").template)
-            .expect("parse template");
+    let capability_template = parse_capability_template(&serde_json::json!({
+        "method":"POST", "path":[{"type":"literal","value":"graphql"}],
+        "response":{"single":true,"items_path":["data", "issue"]}
+    }))
+    .expect("abstract GraphQL envelope template");
     let body = serde_json::json!({
         "data": { "issue": null },
         "errors": [{ "message": "Entity not found: Issue" }]
     });
-    let err = narrow_http_graphql_response_for_entity_decode(&capability_template, body)
-        .expect_err("null issue must fail before items_path config error");
+    let err =
+        narrow_http_graphql_response_for_entity_decode(&capability_template, body, &CmlEnv::new())
+            .expect_err("null issue must fail before items_path config error");
     let msg = format!("{err}");
     assert!(
         matches!(err, RuntimeError::RequestError { .. }),
@@ -2013,20 +2012,17 @@ fn graphql_get_null_entity_surfaces_request_error_not_config() {
 
 #[test]
 fn graphql_mutation_success_false_surfaces_actionable_error() {
-    use plasm_core::loader::load_schema_dir;
-
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/schemas/plasm_language_matrix");
-    let cgs = load_schema_dir(&dir).expect("load linear catalog");
-    let cap = cgs.get_capability("issue_create").expect("issue_create");
-    let capability_template =
-        parse_capability_template(&cap.require_mapping().expect("cml mapping").template)
-            .expect("parse template");
+    let capability_template = parse_capability_template(&serde_json::json!({
+        "method":"POST", "path":[{"type":"literal","value":"graphql"}],
+        "response":{"single":true,"items_path":["data", "issueCreate", "issue"]}
+    }))
+    .expect("abstract GraphQL envelope template");
     let body = serde_json::json!({
         "data": { "issueCreate": { "success": false, "issue": null } }
     });
-    let err = narrow_http_graphql_response_for_entity_decode(&capability_template, body)
-        .expect_err("success:false mutation must fail before items_path narrowing");
+    let err =
+        narrow_http_graphql_response_for_entity_decode(&capability_template, body, &CmlEnv::new())
+            .expect_err("success:false mutation must fail before items_path narrowing");
     let msg = format!("{err}");
     assert!(msg.contains("success: false"), "{msg}");
     assert!(
@@ -2037,21 +2033,18 @@ fn graphql_mutation_success_false_surfaces_actionable_error() {
 
 #[test]
 fn graphql_mutation_success_false_prefers_graphql_errors() {
-    use plasm_core::loader::load_schema_dir;
-
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/schemas/plasm_language_matrix");
-    let cgs = load_schema_dir(&dir).expect("load linear catalog");
-    let cap = cgs.get_capability("issue_create").expect("issue_create");
-    let capability_template =
-        parse_capability_template(&cap.require_mapping().expect("cml mapping").template)
-            .expect("parse template");
+    let capability_template = parse_capability_template(&serde_json::json!({
+        "method":"POST", "path":[{"type":"literal","value":"graphql"}],
+        "response":{"single":true,"items_path":["data", "issueCreate", "issue"]}
+    }))
+    .expect("abstract GraphQL envelope template");
     let body = serde_json::json!({
         "data": { "issueCreate": { "success": false, "issue": null } },
         "errors": [{ "message": "Team not found: PLA" }]
     });
-    let err = narrow_http_graphql_response_for_entity_decode(&capability_template, body)
-        .expect_err("success:false mutation must fail");
+    let err =
+        narrow_http_graphql_response_for_entity_decode(&capability_template, body, &CmlEnv::new())
+            .expect_err("success:false mutation must fail");
     let msg = format!("{err}");
     assert!(msg.contains("Team not found: PLA"), "{msg}");
     assert!(!msg.contains("missing path segment"), "{msg}");
@@ -2059,20 +2052,17 @@ fn graphql_mutation_success_false_prefers_graphql_errors() {
 
 #[test]
 fn graphql_mutation_success_true_decodes_normally() {
-    use plasm_core::loader::load_schema_dir;
-
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/schemas/plasm_language_matrix");
-    let cgs = load_schema_dir(&dir).expect("load linear catalog");
-    let cap = cgs.get_capability("issue_create").expect("issue_create");
-    let capability_template =
-        parse_capability_template(&cap.require_mapping().expect("cml mapping").template)
-            .expect("parse template");
+    let capability_template = parse_capability_template(&serde_json::json!({
+        "method":"POST", "path":[{"type":"literal","value":"graphql"}],
+        "response":{"single":true,"items_path":["data", "issueCreate", "issue"]}
+    }))
+    .expect("abstract GraphQL envelope template");
     let body = serde_json::json!({
         "data": { "issueCreate": { "success": true, "issue": { "id": "abc", "identifier": "EVA-61", "title": "x" } } }
     });
-    let narrowed = narrow_http_graphql_response_for_entity_decode(&capability_template, body)
-        .expect("success:true mutation decodes to the entity object");
+    let narrowed =
+        narrow_http_graphql_response_for_entity_decode(&capability_template, body, &CmlEnv::new())
+            .expect("success:true mutation decodes to the entity object");
     assert_eq!(
         narrowed.get("identifier").and_then(|v| v.as_str()),
         Some("EVA-61")

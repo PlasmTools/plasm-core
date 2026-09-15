@@ -1,4 +1,4 @@
-version: 10
+version: 11
 entry_id: todoist
 auth:
   scheme: none
@@ -95,15 +95,18 @@ entities:
       priority:
         required: false
         value_ref: nv_task_priority
+      duration:
+        required: false
+        value_ref: nv_duration_amount
       duration_unit:
         required: false
         value_ref: nv_duration_unit
       is_completed:
         required: false
         value_ref: nv_bool
-      assignee_email:
+      assignee_id:
         required: false
-        value_ref: nv_email
+        value_ref: nv_assignee_id
     relations:
       comments:
         description: Comments on this task.
@@ -163,7 +166,14 @@ entities:
         data_class: untrusted
       attachment_file_name:
         required: false
-        value_ref: nv_str
+        value_ref: nv_attachment_file_name
+        description: Filename acknowledged by an attachment upload.
+      attachment_file_names:
+        required: false
+        value_ref: nv_attachment_file_names
+      created_at:
+        required: false
+        value_ref: nv_comment_created_at
   SubTask:
     id_field: sub_task_id
     description: Sub-task under a parent task.
@@ -388,6 +398,17 @@ capabilities:
     - name: priority
       value_ref: nv_task_priority
       required: false
+    # Project and section IDs are scope context, not fields of shortened list rows.
+    provides:
+    - task_id
+    - title
+    - description
+    - due_date
+    - priority
+    - duration
+    - duration_unit
+    - is_completed
+    - assignee_id
   task_get:
     description: Show one task.
     kind: get
@@ -425,6 +446,9 @@ capabilities:
         - name: priority
           value_ref: nv_task_priority
           required: false
+        - name: duration
+          value_ref: nv_duration_amount
+          required: false
         - name: duration_unit
           value_ref: nv_duration_unit
           required: false
@@ -453,6 +477,9 @@ capabilities:
           required: false
         - name: priority
           value_ref: nv_task_priority
+          required: false
+        - name: duration
+          value_ref: nv_duration_amount
           required: false
         - name: duration_unit
           value_ref: nv_duration_unit
@@ -612,6 +639,7 @@ capabilities:
     description: List comments on a task.
     kind: query
     entity: TaskComment
+    provides: [task_comment_id, task_id, content, attachment_file_names, created_at]
     scope:
     - name: task_id
       value_ref: nv_task_id
@@ -924,6 +952,23 @@ capabilities:
       type: side_effect
       description: Updates the read status of every notification.
 values:
+  nv_assignee_id:
+    type: integer
+    description: Identifier of the Todoist user assigned to a task.
+  nv_duration_amount:
+    type: number
+    description: Task duration quantity, interpreted with duration_unit.
+  nv_attachment_file_name:
+    type: string
+    description: Name of a file attached to a task comment.
+  nv_attachment_file_names:
+    type: array
+    items:
+      value_ref: nv_attachment_file_name
+    description: Names of files attached to a task comment.
+  nv_comment_created_at:
+    type: rfc3339
+    description: Time a task comment was posted.
   nv_str:
     type: string
     description: Free-form string.

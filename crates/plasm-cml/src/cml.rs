@@ -518,6 +518,12 @@ pub struct HttpResponseDecode {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ResponsePreprocess {
+    /// **Replace** the decode root with an object whose semantic keys select wire paths.
+    /// Missing paths remain absent; present null values remain null. Does not invent
+    /// identity from request input. Paths are relative to the original response root.
+    ObjectProjection {
+        fields: std::collections::BTreeMap<String, Vec<String>>,
+    },
     /// **Replace** the decode root: walk `path` to an array of objects, find the first where
     /// `id_field` matches the CML env `id_var`, then take `nested_array` (must be a JSON array)
     /// and re-wrap as `{ <items key>: that array }`. If `id_var` is missing, or `path` cannot

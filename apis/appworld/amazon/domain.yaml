@@ -1,4 +1,4 @@
-version: 14
+version: 15
 entry_id: amazon
 auth:
   scheme: none
@@ -97,6 +97,18 @@ entities:
       inventory_quantity:
         required: false
         value_ref: nv_int
+      weight:
+        required: false
+        value_ref: nv_product_weight_kg
+      length:
+        required: false
+        value_ref: nv_product_dimension_inches
+      width:
+        required: false
+        value_ref: nv_product_dimension_inches
+      height:
+        required: false
+        value_ref: nv_product_dimension_inches
       color:
         required: false
         value_ref: nv_str
@@ -138,6 +150,7 @@ entities:
         value_ref: nv_str
   ProductFeatureChoices:
     id_field: product_type
+    implicit_request_identity: true
     description: Filterable feature options for a product type.
     discovery:
       names:
@@ -146,7 +159,7 @@ entities:
       - colors sizes sellers
     fields:
       product_type:
-        required: false
+        required: true
         value_ref: nv_str
       colors:
         required: false
@@ -613,7 +626,8 @@ capabilities:
     - is_prime
   account_create:
     description: Sign up a new Amazon account.
-    kind: create
+    kind: action
+    receiver: {kind: none}
     entity: User
     payload:
       input_type:
@@ -781,6 +795,10 @@ capabilities:
     - price
     - delivery_days
     - inventory_quantity
+    - weight
+    - length
+    - width
+    - height
     - color
     - relative_size
     - rating
@@ -804,6 +822,10 @@ capabilities:
     - price
     - delivery_days
     - inventory_quantity
+    - weight
+    - length
+    - width
+    - height
     - color
     - relative_size
     - rating
@@ -879,18 +901,19 @@ capabilities:
       target_terms:
       - product type
       - category
-  product_feature_choices_query:
-    description: Show feature choices for a product type.
-    kind: query
+  product_feature_choices_get:
+    description: Show available colors, sizes and sellers for the product type used as the read key.
+    kind: get
     entity: ProductFeatureChoices
-    selection:
-    - name: access_token
-      value_ref: nv_access_token
-      required: true
-    - name: product_type
-      value_ref: nv_str
-      required: false
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
     provides:
+    - product_type
     - colors
     - relative_sizes
   cart_get:
@@ -1888,6 +1911,12 @@ capabilities:
           value_ref: nv_access_token
           required: true
 values:
+  nv_product_weight_kg:
+    type: number
+    description: Product weight in kilograms.
+  nv_product_dimension_inches:
+    type: number
+    description: Product length, width or height in inches.
   nv_str:
     type: string
     description: Free-form string.
@@ -2142,12 +2171,12 @@ prerequisites:
           path:
           - access_token
         output: token
-    product_feature_choices_query:
+    product_feature_choices_get:
     - id: session
       contract: appworld.session
       bindings:
       - input:
-          lane: selection
+          lane: arguments
           path:
           - access_token
         output: token

@@ -1,4 +1,4 @@
-version: 11
+version: 12
 entry_id: gmail
 auth:
   scheme: none
@@ -73,6 +73,21 @@ entities:
       updated_at:
         required: false
         value_ref: nv_datetime
+    relations:
+      emails:
+        description: Messages in this thread.
+        target: Email
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path: [{key: emails}, {wildcard: true}, {key: email_id}]
+      drafts:
+        description: Draft messages in this thread.
+        target: Draft
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path: [{key: drafts}, {wildcard: true}, {key: draft_id}]
   Email:
     id_field: email_id
     description: A single email message.
@@ -312,7 +327,6 @@ capabilities:
           required: true
     provides:
     - email_thread_id
-    - subject
     - label
     - read
     - starred
@@ -423,39 +437,6 @@ capabilities:
     output:
       type: side_effect
       description: Moves the thread out of archive.
-  email_thread_snooze:
-    receiver: {kind: entity, entity: EmailThread}
-    description: Snooze a thread until a future datetime.
-    kind: action
-    entity: EmailThread
-    payload:
-      input_type:
-        type: object
-        fields:
-        - name: access_token
-          value_ref: nv_access_token
-          required: true
-        - name: snooze_until
-          value_ref: nv_snooze_until
-          required: true
-    output:
-      type: side_effect
-      description: Hides the thread until snooze_until, then returns it unread.
-  email_thread_unsnooze:
-    receiver: {kind: entity, entity: EmailThread}
-    description: Cancel snooze on a thread.
-    kind: action
-    entity: EmailThread
-    payload:
-      input_type:
-        type: object
-        fields:
-        - name: access_token
-          value_ref: nv_access_token
-          required: true
-    output:
-      type: side_effect
-      description: Clears snooze so the thread is visible again.
   email_get:
     description: Show one email including body.
     kind: get
@@ -682,7 +663,8 @@ capabilities:
     - last_logged_in
   account_create:
     description: Sign up a new Gmail account.
-    kind: create
+    kind: action
+    receiver: {kind: none}
     entity: Account
     payload:
       input_type:
@@ -948,11 +930,8 @@ capabilities:
   draft_attachment_upload:
     description: Upload file-system paths as attachments on a draft.
     kind: action
-    entity: Attachment
-    scope:
-    - name: draft_id
-      value_ref: nv_draft_id
-      required: true
+    entity: Draft
+    receiver: { kind: entity, entity: Draft }
     payload:
       input_type:
         type: object
@@ -974,12 +953,9 @@ capabilities:
       description: Attaches the given file-system paths onto the draft.
   draft_attachment_remove:
     description: Remove an attachment from a draft.
-    kind: delete
-    entity: Attachment
-    scope:
-    - name: draft_id
-      value_ref: nv_draft_id
-      required: true
+    kind: action
+    entity: Draft
+    receiver: { kind: entity, entity: Draft }
     payload:
       input_type:
         type: object
@@ -987,6 +963,13 @@ capabilities:
         - name: access_token
           value_ref: nv_access_token
           required: true
+        - name: attachment_file_name
+          value_ref: nv_attachment_file_name
+          required: true
+    output:
+      type: side_effect
+      description: Removes the named attachment from the draft.
+
 values:
   nv_email_thread_mailbox:
     type: enum
@@ -1040,9 +1023,9 @@ values:
   nv_datetime:
     type: rfc3339
     description: ISO datetime string.
-  nv_snooze_until:
+  nv_attachment_file_name:
     type: string
-    description: Future datetime to unsnooze a thread, as YYYY-MM-DD|HH:MM:SS.
+    description: Filename of an attachment on a draft.
   nv_attachment_id:
     type: integer
     description: Attachment primary key.
@@ -1219,24 +1202,6 @@ prerequisites:
           - access_token
         output: token
     email_thread_unarchive:
-    - id: session
-      contract: appworld.session
-      bindings:
-      - input:
-          lane: payload
-          path:
-          - access_token
-        output: token
-    email_thread_snooze:
-    - id: session
-      contract: appworld.session
-      bindings:
-      - input:
-          lane: payload
-          path:
-          - access_token
-        output: token
-    email_thread_unsnooze:
     - id: session
       contract: appworld.session
       bindings:

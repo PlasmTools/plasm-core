@@ -89,8 +89,11 @@ impl ExecutionEngine {
                             .await;
                     }
                 };
-                let response =
-                    narrow_http_graphql_response_for_entity_decode(&capability_template, response)?;
+                let response = narrow_http_graphql_response_for_entity_decode(
+                    &capability_template,
+                    response,
+                    &env,
+                )?;
                 let identity_ambient = cml_env_to_identity_strings(&env);
                 let decoder = mutating_capability_response_decoder(
                     create.entity.as_str(),
@@ -365,8 +368,11 @@ impl ExecutionEngine {
                             .await;
                     }
                 };
-                let response =
-                    narrow_http_graphql_response_for_entity_decode(&capability_template, response)?;
+                let response = narrow_http_graphql_response_for_entity_decode(
+                    &capability_template,
+                    response,
+                    &env,
+                )?;
 
                 // Decode the response as the capability's declared entity type.
                 // When an action returns a projection of the same entity (e.g.

@@ -241,7 +241,7 @@ product_type_query:
   pagination: *appworld_page_index_limit
   response: bare_list
 
-product_feature_choices_query:
+product_feature_choices_get:
   method: GET
   path:
   - { type: literal, value: amazon }
@@ -690,6 +690,11 @@ product_review_query:
 
 product_review_create:
   method: POST
+  response:
+    response_preprocess:
+      kind: object_projection
+      fields:
+        review_id: [product_review_id]
   path:
   - { type: literal, value: amazon }
   - { type: literal, value: products }

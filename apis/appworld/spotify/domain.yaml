@@ -1,4 +1,4 @@
-version: 21
+version: 23
 entry_id: spotify
 auth:
   scheme: none
@@ -106,6 +106,21 @@ entities:
       genre:
         required: false
         value_ref: nv_genre
+      release_date:
+        required: false
+        value_ref: nv_str
+      play_count:
+        required: false
+        value_ref: nv_int
+      rating:
+        required: false
+        value_ref: nv_number
+      like_count:
+        required: false
+        value_ref: nv_like_count
+      shareable_link:
+        required: false
+        value_ref: nv_str
       liked_at:
         required: false
         value_ref: nv_datetime
@@ -148,6 +163,17 @@ entities:
       release_date:
         required: false
         value_ref: nv_str
+    relations:
+      songs:
+        description: Songs on this album.
+        target: Song
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: songs
+          - wildcard: true
+          - key: id
   LikedAlbum:
     id_field: album_id
     primary_query: liked_album_query
@@ -943,7 +969,6 @@ capabilities:
     - title
     - position
     - is_playing
-    - volume
   player_current:
     description: Show current playback including whether that song is on the liked shelf.
     kind: get
@@ -1262,14 +1287,13 @@ capabilities:
     - name: sort_by
       value_ref: nv_str
       required: false
-    # Shelf list omits genre on the wire; declare it for hydrate/plan (liked_song_get fills values).
+    # The list is a summary; genre and play statistics come from the detail read.
     provides:
     - song_id
     - title
     - album_id
     - album_title
     - duration
-    - genre
     - liked_at
   liked_song_get:
     description: Show one liked shelf entry as a catalog song detail (genre and play stats from GET /songs/{song_id}).
@@ -1289,7 +1313,6 @@ capabilities:
     - album_title
     - duration
     - genre
-    - liked_at
     - release_date
     - play_count
     - rating
@@ -1483,7 +1506,6 @@ capabilities:
     - rating
     - like_count
     - created_at
-    - shareable_link
   liked_playlist_query:
     description: List playlists the user has liked.
     kind: query
@@ -1918,6 +1940,12 @@ views:
         access_token:
           kind: scope
           param: access_token
+    - id: volume
+      capability: player_volume_get
+      bind:
+        access_token:
+          kind: scope
+          param: access_token
     - id: liked
       capability: liked_song_query
       bind:
@@ -1946,7 +1974,7 @@ views:
         field: is_playing
       volume:
         kind: node_field
-        node: wire
+        node: volume
         field: volume
       liked_by_song_id:
         kind: node_field_histogram_json
