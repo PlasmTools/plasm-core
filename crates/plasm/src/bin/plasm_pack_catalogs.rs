@@ -820,6 +820,18 @@ mod tests {
         let bindings: DeploymentBindings =
             serde_json::from_slice(&fs::read(root.join("deployment-bindings.json")).unwrap())
                 .unwrap();
+        // Validate the complete deployment, including capabilities that discovery
+        // may not select in the representative closure below.
+        let all_consumers: Vec<_> = catalogs
+            .iter()
+            .flat_map(|(catalog, cgs)| {
+                cgs.prerequisites.requirements.keys().map(move |capability| CapabilityRef {
+                    catalog: catalog.clone(),
+                    capability: capability.clone(),
+                })
+            })
+            .collect();
+        prerequisite_closure(&refs, &bindings, &all_consumers, &allowed).unwrap();
         let business: Vec<_> = catalogs
             .iter()
             .filter(|(id, _)| id.as_str() != "supervisor")

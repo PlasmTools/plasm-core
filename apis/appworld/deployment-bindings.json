@@ -183,7 +183,7 @@
     {
       "consumer": {
         "catalog": "amazon",
-        "capability": "product_feature_choices_query"
+        "capability": "product_feature_choices_get"
       },
       "requirement": "session",
       "provider_catalog": "amazon",
@@ -868,24 +868,6 @@
       "consumer": {
         "catalog": "gmail",
         "capability": "email_thread_unarchive"
-      },
-      "requirement": "session",
-      "provider_catalog": "gmail",
-      "provider": "session"
-    },
-    {
-      "consumer": {
-        "catalog": "gmail",
-        "capability": "email_thread_snooze"
-      },
-      "requirement": "session",
-      "provider_catalog": "gmail",
-      "provider": "session"
-    },
-    {
-      "consumer": {
-        "catalog": "gmail",
-        "capability": "email_thread_unsnooze"
       },
       "requirement": "session",
       "provider_catalog": "gmail",
@@ -1830,7 +1812,7 @@
     {
       "consumer": {
         "catalog": "splitwise",
-        "capability": "balance_query"
+        "capability": "balance_get"
       },
       "requirement": "session",
       "provider_catalog": "splitwise",
@@ -1848,7 +1830,7 @@
     {
       "consumer": {
         "catalog": "splitwise",
-        "capability": "person_balance_query"
+        "capability": "person_balance_get"
       },
       "requirement": "session",
       "provider_catalog": "splitwise",
@@ -3239,6 +3221,15 @@
       "requirement": "password",
       "provider_catalog": "supervisor",
       "provider": "password"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "group_balance_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
     }
   ]
 }
