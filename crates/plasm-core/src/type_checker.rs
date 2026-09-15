@@ -1,5 +1,5 @@
 use crate::capability_input::{
-    validate_capability_invocation_input_with_path_vars, validate_concrete_named_value,
+    validate_capability_invocation_input, validate_concrete_named_value,
 };
 use crate::cgs_federation::{FederationDispatch, FederationResolveError};
 use crate::scope_entity_ref_infer::{
@@ -426,13 +426,19 @@ pub fn type_check_query(query: &QueryExpr, cgs: &CGS) -> Result<(), TypeError> {
 
     // When a query capability is resolvable, enforce ResolvedRowset lane checks early.
     if crate::resolve_query_capability(query, cgs).is_ok() {
+        let hint = match query.predicate {
+            None => query.entity.to_string(),
+            Some(_) => format!("{}{{…}}", query.entity),
+        };
+        let mut for_defaults = query.clone();
+        crate::apply_required_selection_defaults(&mut for_defaults, cgs, &hint)?;
         let entry_id = query
             .catalog_entry_id
             .as_deref()
             .filter(|s| !s.is_empty())
             .or(cgs.entry_id.as_deref())
             .unwrap_or("");
-        crate::rowset::normalize_query_expr_to_rowset(query, cgs, entry_id)
+        crate::rowset::normalize_query_expr_to_rowset(&for_defaults, cgs, entry_id)
             .map_err(|message| TypeError::RowsetNormalize { message })?;
     }
 
@@ -504,11 +510,31 @@ pub fn type_check_create(create: &CreateExpr, cgs: &CGS) -> Result<(), TypeError
                 capability: create.capability.to_string(),
             })?;
 
-    let has_invocation_body = capability.primary_invocation_schema().is_some();
+    match (
+        capability.receiver_entity(),
+        create.dotted_receiver.as_deref(),
+    ) {
+        (Some(expected), Some(Expr::Get(get))) if &get.reference.entity_type == expected => {}
+        (Some(expected), _) => {
+            return Err(TypeError::RefKeyMismatch {
+                entity: create.entity.to_string(),
+                message: format!("operation requires a `{expected}` receiver"),
+            })
+        }
+        (None, Some(Expr::Get(_))) => {
+            return Err(TypeError::RefKeyMismatch {
+                entity: create.entity.to_string(),
+                message: "operation has no entity receiver; supply its declared inputs".into(),
+            })
+        }
+        _ => {}
+    }
+    let has_invocation_body =
+        capability.primary_invocation_schema().is_some() || !capability.scope_params().is_empty();
     if has_invocation_body {
         let raw = create.input.to_value();
         let effective = prepare_create_capability_input(capability, create, raw, cgs);
-        validate_capability_invocation_input_with_path_vars(capability, effective, cgs)?;
+        validate_capability_invocation_input(capability, &effective, cgs)?;
     }
 
     Ok(())
@@ -541,9 +567,28 @@ fn type_check_targeted_call(
                 capability: invoke.capability().to_string(),
             })?;
 
+    match capability.receiver_entity() {
+        Some(expected)
+            if expected != &invoke.target().entity_type
+                || invoke.target().is_pathless_nullary() =>
+        {
+            return Err(TypeError::RefKeyMismatch {
+                entity: invoke.target().entity_type.to_string(),
+                message: format!("operation requires a `{expected}` receiver"),
+            });
+        }
+        None if !invoke.target().is_pathless_nullary() => {
+            return Err(TypeError::RefKeyMismatch {
+                entity: invoke.target().entity_type.to_string(),
+                message: "operation has no entity receiver; supply its declared inputs".into(),
+            });
+        }
+        _ => {}
+    }
     // Validate against payload ∪ arguments object lanes (same field set as parse coerce).
     // Union constructors still require inputs.payload.
     let has_invocation_body = capability.primary_invocation_schema().is_some()
+        || !capability.scope_params().is_empty()
         || matches!(
             invoke.input(),
             Some(
@@ -557,7 +602,7 @@ fn type_check_targeted_call(
             .map(|i| i.to_value())
             .unwrap_or_else(|| Value::Object(indexmap::IndexMap::new()));
         let effective = prepare_targeted_capability_input(capability, invoke, raw, cgs);
-        validate_capability_invocation_input_with_path_vars(capability, effective, cgs)?;
+        validate_capability_invocation_input(capability, &effective, cgs)?;
     }
 
     Ok(())
@@ -781,7 +826,6 @@ fn type_check_relation(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::capability_input::validate_input_type;
     use crate::loader::load_schema_dir;
     use crate::schema::{registry_test_util, FieldValueKind, NamedValueSchema, ValueDomainKey};
     use crate::{
@@ -1850,100 +1894,6 @@ mod tests {
         assert_eq!(expr, parsed);
     }
 
-    fn proof_document_edit_v2_operations_element_type(cgs: &CGS) -> crate::InputType {
-        let cap = cgs.capabilities.get("document_edit_v2").expect("cap");
-        let crate::InputType::Object { fields, .. } = &cap
-            .inputs
-            .payload
-            .as_ref()
-            .expect("payload schema")
-            .input_type
-        else {
-            panic!("object input");
-        };
-        let ops = fields
-            .iter()
-            .find(|f| f.name == "operations")
-            .expect("operations");
-        let crate::InputFieldWire::Inline(ty) = &ops.wire else {
-            panic!("inline");
-        };
-        let crate::InputType::Array { element_type, .. } = ty.as_ref() else {
-            panic!("array");
-        };
-        element_type.as_ref().clone()
-    }
-
-    #[test]
-    fn proof_edit_v2_union_accepts_constructor_and_rejects_plain_shape_object() {
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/proof");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(&dir).expect("proof");
-        let el_ty = proof_document_edit_v2_operations_element_type(&cgs);
-        let ctor_ok = Value::UnionCtor {
-            ctor_label: "v101".into(),
-            ctor_fields: {
-                let mut m = IndexMap::new();
-                m.insert("ref".into(), Value::String("r".into()));
-                m.insert("markdown".into(), Value::String("md".into()));
-                m
-            },
-        };
-        validate_input_type(&ctor_ok, &el_ty, "operations[0]", &cgs).expect("union ctor");
-
-        let plain = Value::Object({
-            let mut m = IndexMap::new();
-            m.insert("ref".into(), Value::String("r".into()));
-            m.insert("markdown".into(), Value::String("md".into()));
-            m
-        });
-        assert!(
-            validate_input_type(&plain, &el_ty, "operations[0]", &cgs).is_err(),
-            "plain object must not silently match a union variant without ctor or discriminator"
-        );
-
-        assert!(
-            validate_input_type(
-                &Value::UnionCtor {
-                    ctor_label: "v199".into(),
-                    ctor_fields: IndexMap::new(),
-                },
-                &el_ty,
-                "operations[0]",
-                &cgs
-            )
-            .is_err(),
-            "unknown ctor label must fail"
-        );
-    }
-
-    #[test]
-    fn proof_edit_v2_union_accepts_wire_discriminated_object() {
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/proof");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(&dir).expect("proof");
-        let el_ty = proof_document_edit_v2_operations_element_type(&cgs);
-        let wire = Value::Object({
-            let mut m = IndexMap::new();
-            m.insert("op".into(), Value::String("replace_block".into()));
-            m.insert("ref".into(), Value::String("r".into()));
-            m.insert(
-                "block".into(),
-                Value::Object({
-                    let mut b = IndexMap::new();
-                    b.insert("markdown".into(), Value::String("md".into()));
-                    b
-                }),
-            );
-            m
-        });
-        validate_input_type(&wire, &el_ty, "operations[0]", &cgs).expect("wire object");
-    }
-
     #[test]
     fn federated_chain_target_resolves_in_source_catalog_not_primary() {
         let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -2015,52 +1965,48 @@ mod tests {
         }
     }
 
-    /// Real `apis/github` + `apis/linear`: `Issue.children` exists only on linear; chain TC must use source catalog stamp.
+    /// Federated stamps of `plasm_language_matrix`: `LangItem.children` chain TC must use source catalog stamp.
     #[test]
-    fn federated_chain_linear_children_resolves_in_source_catalog() {
+    fn federated_chain_langitem_children_resolves_in_source_catalog() {
         use crate::{CatalogEntryStamp, ChainExpr, Expr, GetExpr, RegistryEntryId};
 
         let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let github_dir = root.join("../../apis/github");
-        let linear_dir = root.join("../../apis/linear");
-        if !github_dir.is_dir() || !linear_dir.is_dir() {
-            return;
-        }
-        let mut cgs_github = load_schema_dir(&github_dir).expect("github");
-        cgs_github.bind_registry_entry_id("github");
-        let cgs_github = std::sync::Arc::new(cgs_github);
-        let mut cgs_linear = load_schema_dir(&linear_dir).expect("linear");
-        cgs_linear.bind_registry_entry_id("linear");
-        let cgs_linear = std::sync::Arc::new(cgs_linear);
+        let dir = root.join("../../fixtures/schemas/plasm_language_matrix");
+        let mut cgs_a = load_schema_dir(&dir).expect("plasm_language_matrix");
+        cgs_a.bind_registry_entry_id("langmatrix_a");
+        let cgs_a = std::sync::Arc::new(cgs_a);
+        let mut cgs_b = load_schema_dir(&dir).expect("plasm_language_matrix");
+        cgs_b.bind_registry_entry_id("langmatrix_b");
+        let cgs_b = std::sync::Arc::new(cgs_b);
         let mut by_entry = IndexMap::new();
         by_entry.insert(
-            "github".into(),
-            std::sync::Arc::new(crate::CgsContext::entry("github", cgs_github.clone())),
+            "langmatrix_a".into(),
+            std::sync::Arc::new(crate::CgsContext::entry("langmatrix_a", cgs_a.clone())),
         );
         by_entry.insert(
-            "linear".into(),
-            std::sync::Arc::new(crate::CgsContext::entry("linear", cgs_linear.clone())),
+            "langmatrix_b".into(),
+            std::sync::Arc::new(crate::CgsContext::entry("langmatrix_b", cgs_b.clone())),
         );
-        let layers: Vec<&CGS> = vec![cgs_github.as_ref(), cgs_linear.as_ref()];
+        let layers: Vec<&CGS> = vec![cgs_a.as_ref(), cgs_b.as_ref()];
         let mut exp = crate::symbol_tuning::TeachingExposureSession::new(
-            cgs_github.as_ref(),
-            "github",
-            &["Issue"],
+            cgs_a.as_ref(),
+            "langmatrix_a",
+            &["LangItem"],
         );
-        exp.expose_entities(&layers, cgs_linear.clone(), "linear", &["Issue"]);
+        exp.expose_entities(&layers, cgs_b.clone(), "langmatrix_b", &["LangItem"]);
         let fed = FederationDispatch::from_contexts_and_exposure(by_entry, &exp);
 
-        let mut get = GetExpr::new("Issue", "issue-id");
-        get.catalog_entry_id = CatalogEntryStamp::some(RegistryEntryId::from("linear"));
+        let mut get = GetExpr::new("LangItem", "item-id");
+        get.catalog_entry_id = CatalogEntryStamp::some(RegistryEntryId::from("langmatrix_b"));
         let chain = Expr::Chain(ChainExpr::auto_get(Expr::Get(get), "children".to_string()));
-        type_check_expr_federated(&chain, &fed, cgs_github.as_ref())
-            .expect("linear Issue.children chain typechecks in source catalog");
+        type_check_expr_federated(&chain, &fed, cgs_a.as_ref())
+            .expect("langmatrix_b LangItem.children chain typechecks in source catalog");
 
         let bare = Expr::Chain(ChainExpr::auto_get(
-            Expr::Get(GetExpr::new("Issue", "issue-id")),
+            Expr::Get(GetExpr::new("LangItem", "item-id")),
             "children".to_string(),
         ));
-        let err = type_check_expr_federated(&bare, &fed, cgs_github.as_ref()).unwrap_err();
+        let err = type_check_expr_federated(&bare, &fed, cgs_a.as_ref()).unwrap_err();
         match err {
             TypeError::EntityNotFound { entity } => {
                 assert!(
@@ -2070,7 +2016,7 @@ mod tests {
             }
             TypeError::FieldNotFound { field, entity } => {
                 assert_eq!(field, "children");
-                assert_eq!(entity, "Issue");
+                assert_eq!(entity, "LangItem");
             }
             other => panic!("expected ambiguous or FieldNotFound, got {other:?}"),
         }

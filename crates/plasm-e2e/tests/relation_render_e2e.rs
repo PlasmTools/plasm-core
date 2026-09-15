@@ -105,8 +105,8 @@ async fn relation_species_render_capture_rate_async() {
 
     let program = r#"specimen = Pokemon("pikachu")
 species = specimen.species
-line = species[capture_rate,name] <<PLASM_RELATION_RENDER_TEST
-{{ rows[0].name }} capture={{ rows[0].capture_rate }}
+line = species => <<PLASM_RELATION_RENDER_TEST
+{{ name }} capture={{ capture_rate }}
 PLASM_RELATION_RENDER_TEST
 line"#;
 
@@ -187,8 +187,8 @@ async fn render_unicode_markdown_survives_live_async() {
     let es = pokeapi_session(cgs.clone());
 
     let program = r#"specimen = Pokemon("pikachu")
-doc = specimen[name] <<PLASM_UNICODE_RENDER_TEST
-# Pokémon stats for {{ rows[0].name }}
+doc = specimen => <<PLASM_UNICODE_RENDER_TEST
+# Pokémon stats for {{ name }}
 step → capture next
 PLASM_UNICODE_RENDER_TEST
 doc"#;

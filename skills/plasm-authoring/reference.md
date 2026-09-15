@@ -78,7 +78,7 @@ The CGS is the semantic domain model. It declares what entities exist, how they 
 
 Split **`domain.yaml`** declares a catalog-local registry of **named semantic slots** under top-level **`values:`** (stable keys, usually `snake_case`). Each row carries the **wire** `type:` and gloss-related keys — the same vocabulary as the former inline `field_type` / param `type` — but the **key** is a semantic identity for this catalog, not "dedupe by primitive wire shape alone":
 
-- **`type:`** — a **kernel** name (`string`, `integer`, `number`, `boolean`, `array`, `json`, `entity_ref`, `blob`, `money`) or a **core profile** name (`markdown`, `document`, `html`, `json_text`, `uuid`, `email`, `url`, `http_url`, `hostname`, `e164`, `ipv4`, `ipv6`, `hex`, `base64`, `base64url`, `rfc3339`, `iso8601_date`, `unix_ms`, `unix_sec`, `enum`, `multi_enum`). See [Field Types](#field-types).
+- **`type:`** — a **kernel** name (`string`, `integer`, `number`, `boolean`, `array`, `json`, `entity_ref`, `blob`, `money`) or a **core profile** name (`markdown`, `document`, `html`, `json_text`, `uuid`, `digit_id`, `email`, `url`, `http_url`, `hostname`, `e164`, `ipv4`, `ipv6`, `hex`, `base64`, `base64url`, `rfc3339`, `iso8601_date`, `unix_ms`, `unix_sec`, `enum`, `multi_enum`). See [Field Types](#field-types).
 - Type-specific keys on the **value row**: `target` (`entity_ref`), **`enum:`** (`enum` / `multi_enum`; multi_enum must be non-empty), **`constraints:`** (length, pattern, min/max — see Field Types), `currency` (`money`), **`items: { value_ref: <key> }`** (`array` — element shape is another `values` row).
 
 **Entity `fields:`** and capability **lane** field lists (`selection` / `scope` / `controls` / …) declare **only** how that slot uses a shape:
@@ -165,7 +165,7 @@ Symbolic teaching table / TSV teaching attaches **`entities.<Name>.description`*
 
 | Surface | Write | Do **not** write |
 |---------|-------|-------------------|
-| **Entity `description`** | Role / intent only: what class of task or decision this entity grounds — no relation, field, or parameter names that teaching table already prints. When `primary_query` / `primary_search` is set, the banner **must match that primary list’s polarity** (e.g. received-only, inbox-only) — sibling list surfaces get their own capability `description`, not an “or” mash-up on the entity | Payload inventories, relation "next step" hints, lists of related entities, REST-ish tours, capability ids, step-by-step APIs, HTTP status codes, `transport:`, explicit MCP seed instructions, **other catalogs / `entry_id`s / foreign entity names**, **conflating sibling Query/Search surfaces** (“received or sent”, “inbox/outbox/spam…”) on one entity banner |
+| **Entity `description`** | Identity noun: what **one row** is (role / intent only) — no relation, field, or parameter names that teaching table already prints. The renderer attaches this banner to **Get Meaning** (`→ e# · …`) when a Get exists. Sibling Query/Search list polarity (received-only, inbox-only) belongs on those capabilities, not as an “or” mash-up on the entity | Payload inventories, relation "next step" hints, lists of related entities, REST-ish tours, capability ids, step-by-step APIs, HTTP status codes, `transport:`, explicit MCP seed instructions, **other catalogs / `entry_id`s / foreign entity names**, **collection / search / list banners** on a Get-bearing entity (Get Meaning would inherit the list lie), **create / send / record (or deposit / withdraw) verbs** on a Get-bearing entity (Get Meaning is identity, not the sibling mutator shelf), **credential-seat copy** (`access_token`, Bearer) on the entity noun, **conflating sibling Query/Search surfaces** (“received or sent”, “inbox/outbox/spam…”) on one entity banner |
 | **Capability `description`** | What this operation **does** or **when** to pick it, in user/domain terms (roles: account holder vs recipient, public vs private, …) | "Call `foo_query` first", URL paths, error-code trivia (use `discovery.target_terms` for NL hints), **cross-catalog playbooks** (“get X from catalog Y then call this”) |
 
 **Compositional catalogs — never cross-annotate:** CGS strings are **local** to this `entry_id`. Federation stitches catalogs at session time; authors must **not** hard-wire foreign catalog or entity names into `description` / value glosses / instructional discovery prose. Teach **semantic roles** this surface owns (“login username is the account holder’s email, never a payment counterparty”; “`account_name` is an app key, not a login id”). Product docs may describe multi-catalog rites; **`domain.yaml` must not**.
@@ -268,7 +268,7 @@ In split `domain.yaml`, the **`type:`** on a **`values:`** row is either a **ker
 | Category | YAML `type:` | Typical input | Notes |
 |----------|--------------|---------------|-------|
 | Presentation | `markdown`, `document`, `html`, `json_text` | string / heredoc | Multiline or structured text — not `blob` |
-| Canned string | `uuid`, `email`, `url`, `http_url`, `hostname`, `e164`, `ipv4`, `ipv6`, `hex`, `base64`, `base64url` | string | Validated string shapes |
+| Canned string | `uuid`, `digit_id`, `email`, `url`, `http_url`, `hostname`, `e164`, `ipv4`, `ipv6`, `hex`, `base64`, `base64url` | string | Validated string shapes. **`digit_id`** (RA-18): digit-string identity (PANs, similar wire keys) — exact ASCII digits, not a magnitude, not `integer` / IEEE float / JSON number. Taught literal is quoted digits (`"6419671322388907"`). Unquoted non-negative `i64` residual coerce is RA-8, not taught. |
 | Temporal | `rfc3339`, `iso8601_date`, `unix_ms`, `unix_sec` | string or integer per profile | Predicate inputs normalize to wire shape (UTC) |
 | Enum | `enum`, `multi_enum` | enum token(s) | Requires non-empty **`enum:`** list **or** token→gloss map |
 
@@ -417,7 +417,7 @@ Lanes are **structurally disjoint** (RA-1). Legacy flat `parameters:` / `role:` 
 
 | Lane | Semantics | Agent surface |
 |------|-----------|---------------|
-| `scope` | Parent-entity pivots (often `entity_ref`) | Relation parent / scoped query keys |
+| `scope` | Parent-entity pivots (often `entity_ref`) | Query `{wire=}` brace (required and optional). `required: false` is still a taught hole; `optional:` marks it omissible. Host `inject:` keys stay untaught |
 | `selection` | Backend pushdown WHERE / search predicates (and other required source scalars) | `e#{wire=…}` braces |
 | `controls` | Sort, page size, embed/shape — not predicates | Host/controls; not brace WHERE |
 | `arguments` | Named non-body args | Method / action args |
@@ -433,7 +433,7 @@ Transmission over HTTP is still controlled by CML `query:` / `path:` / body in `
 |---------|-----------|-------------------|
 | Twin queries `Song{access_token}` → `/library/songs` and `/recommendations` | Teach both lines; raise teaching-line caps; special-case brace-dedupe | One query with **selection discriminant** (e.g. `shelf: library\|recommendations`) + CML `path:` `type: if` branching |
 | Liked vs library shelves with different domain meaning | Force one query with a confusing flag | **Entity split** (`LikedSong` vs `Song`) — polarity is a different object |
-| Scoped list vs unscoped index (`team_id` required vs absent) | Declare two `kind: query` caps | **Illegal** — fold into **one** query with optional `scope` / selection + CML path branch; pair parent relation **`materialize`** with that single query |
+| Scoped list vs unscoped index (`team_id` required vs absent) | Declare two `kind: query` caps | **Illegal** — fold into **one** query with optional `scope` / selection + CML path branch; pair parent relation **`materialize`** with that single query. Teaching must emit the optional scope key as `{wire=}` (invoke may omit it) |
 | `kind: search` (required `q`) vs `kind: query` (field filters) | Merge into one | **Lawful two capabilities** — one query + one search |
 
 **Hard validate:** `CGS::validate` rejects entities with >1 `kind: query` or >1 `kind: search` (`TooManyQueryCapabilities` / `TooManySearchCapabilities`). Teaching renderers must **not** silently drop authored method/relation lines; fat surfaces emit **warnings** only.
@@ -446,7 +446,7 @@ Transmission over HTTP is still controlled by CML `query:` / `path:` / body in `
 
 ### Foreign key fields (`entity_ref`)
 
-Use `entity_ref` when a field stores another entity's primary key. Declare the referenced entity in `target`. The CGS validates that `target` names a defined entity.
+Use `entity_ref` when a field stores another entity's primary key. Declare the referenced entity in `target`. The CGS validates that `target` names a defined entity. Taught Query/Search `scope` holes and mutator arguments that take another entity's identity **must** be `entity_ref` — capability exposure then admits that entity's Query/Get/Search so the hole is bindable from a rowset. A scalar integer labeled "primary key" is not an identity type and leaves the hole unfilled.
 
 For `query` capabilities, if a parameter has the same name as an entity field and both are `entity_ref`, their `target` values must match. That ties the HTTP/query parameter to the domain FK and enables static reverse-traversal lookup: `CGS::find_reverse_traversal_caps("Pet")` returns every query capability whose parameters include `EntityRef(Pet)`.
 
@@ -493,6 +493,7 @@ capabilities:
 
 **When NOT to use `entity_ref`:**
 
+- **`id_field` / `key_vars` identity slots** — primary (and compound) keys must be scalar identity types (`integer`, `string`, `uuid`, `digit_id`, `email`, `enum`/`select`, `number`, `boolean`, temporal/`date`). `CGS::validate` rejects `entity_ref` (and other non-scalars) on those slots (`UnsupportedIdentityType`); the same law gates dry-plan / Get binding via `IdentityCodec`. Split PK vs FK: e.g. `nv_product_id: integer` for `Product.product_id`, `nv_product_ref: entity_ref → Product` for foreign keys and mutator args.
 - Quantities, counts, limits, page sizes — these are `integer`
 - IDs that reference entities outside the current CGS scope
 - IDs for which the target entity has no `get` capability — deep navigation often requires a `get`
@@ -552,7 +553,7 @@ Expose **next hops as relations** (`relation_outputs:` → decoded `Ref` edges o
   - **`description:`** — domain-only prose.
   - **`capability:`** — must equal one `capabilities:` id on `entity` (historically the `kind: query` symbol); additional `get` capabilities may reference the same `view:` key.
   - **`entity:`** — read-model entity whose `fields:` / `relations:` are the agent-facing projection.
-  - **`scope:`** — optional list of scope parameters: `name`, optional `value_ref:`, optional **`required: true`** (default false), and optional **`inject:`** (`session_ui_origin` or `session_transport_origin`) so the execute host fills tenant origin from the pinned session backend (agents omit duplicate host strings). Only keys marked required must appear on the outer view invocation; omit optional scope params when unused.
+  - **`scope:`** — optional list of scope parameters: `name`, optional `value_ref:`, optional **`required: true`** (default false), and optional **`inject:`** (`session_ui_origin` or `session_transport_origin`) so the execute host fills tenant origin from the pinned session backend (agents omit duplicate host strings). Only keys marked required must appear on the outer view invocation; omit optional scope params when unused. Teaching still emits non-`inject` optional scope as a `{wire=}` hole on the backing Query (same law as Query `scope:` `required: false`).
   - **`nodes:`** — ordered steps; each has `id`, `capability` (existing cap id), and `bind:` mapping that capability's parameter names to either:
     - `kind: scope` `param: <name>` — take from the outer view invocation's scope, or
     - `kind: literal` `value: <JSON>` — fixed predicate/env fragment, or
@@ -622,7 +623,7 @@ Built-in filters (view templates only):
 | `wire_time` | `{{ from \| wire_time('unix_ms') }}` | Pass through `now`, `now-1h`, and all-digit strings unchanged; otherwise normalize via core temporal rules for the named wire format (`unix_ms`, `rfc3339`, …) |
 | `wire_query_suffix` | `{{ query_params_json \| wire_query_suffix }}` | Parse a JSON object string; append `&k=v` pairs (empty string when absent/invalid) |
 
-**Temporal:** Predicate slots and `value_ref: temporal` still use `normalize_temporal_value` at plan/compile time. View scope params typed as plain strings (e.g. `nv_grafana_time_range`) should use **`wire_time`** in templates when the wire may be relative (`now-1h`) or already epoch milliseconds.
+**Temporal:** Predicate slots and `value_ref: temporal` still use `normalize_temporal_value` at plan/compile time. View scope params typed as plain strings (e.g. `nv_grafana_time_range`) should use **`wire_time`** in templates when the wire may be relative (`now-1h`) or already epoch milliseconds. Relative phrases resolve against the same evaluation clock the language card names as `evaluation_now` when temporal profiles are taught (PLP-9). Do not put that clock or harness dates into `values:` descriptions.
 
 **Authoring pitfalls:** Do not use `\| default('')` on JSON scope fields you pass to `wire_query_suffix` — use `{% if query_params_json %}…{% endif %}` instead. Choose scope `TAG` names that cannot appear as trimmed lines inside heredoc payloads when binding row templates elsewhere.
 
@@ -1693,3 +1694,17 @@ Plasm program / expression (parse + recover)
 ```
 
 Per compiled capability, the same CGS + CML + input yields the same primary HTTP request (fingerprint-based replay). Pagination and hydration add further requests whose count depends on result size, cache state, and execution options — each follow-up request is still compiled and replayed like any other GET.
+
+
+## Semantic operation receivers
+
+CGS owns invocation shape. CML path, query, header, and body variables never determine whether an operation takes a receiver.
+
+- `receiver: {kind: entity, entity: Item}` declares an Item instance as the receiver.
+- `receiver: {kind: none}` declares a receiver-free operation.
+- Omission follows domain-kind semantics: `get`, `update`, and `delete` receive their domain entity; `singleton`, `query`, `search`, `create`, and `action` do not.
+- An action operating on an existing entity must declare its receiver. A create may declare an existing parent entity as receiver. Otherwise parent/context inputs remain explicit typed scope or argument slots.
+- `item.m#(args)` uses the selected singleton's semantic identity; `rows => _.m#(args)` applies the same operation to every row. Row-preserving algebra retains identity even when visible columns are projected. Empty singleton use fails before the dependent mutation.
+- Receiver identity supplies matching CGS scope fields and same-entity EntityRef scope slots. Explicit payload fields remain distinct and are validated regardless of their eventual HTTP location.
+
+A mapping rewrite that moves the same identity from a path segment into a body must preserve the Plasm program and teaching. Test this through live requests, not merely matching compiler/card text. `semantic_receiver_transport_invariance_live` is the abstract fixture witness.

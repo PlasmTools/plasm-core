@@ -148,7 +148,8 @@ fn json_to_any(v: &serde_json::Value) -> AnyValue<'static> {
         | Value::Array(_)
         | Value::Object(_)
         | Value::UnionCtor { .. }
-        | Value::PlasmInputRef(_) => AnyValue::StringOwned(v.to_string().into()),
+        | Value::PlasmInputRef(_)
+        | Value::GetScalarExtract(_) => AnyValue::StringOwned(v.to_string().into()),
     }
 }
 

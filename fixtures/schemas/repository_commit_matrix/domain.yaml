@@ -1,0 +1,364 @@
+# Frozen compound identity, relation and projection fixture. No live API dependency.
+version: 1
+http_backend: http://127.0.0.1:9
+auth:
+  scheme: none
+entities:
+  Repository:
+    id_field: id
+    key_vars:
+    - owner
+    - repo
+    fields:
+      id:
+        required: true
+        value_ref: nv_wire_int
+      owner:
+        required: true
+        path: owner.login
+        value_ref: nv_github_account_login
+      repo:
+        required: true
+        path: name
+        value_ref: nv_github_repository_name
+      full_name:
+        required: true
+        value_ref: nv_github_repository_full_name
+      description:
+        required: false
+        value_ref: nv_wire_str_markdown
+      private:
+        required: true
+        value_ref: nv_wire_bool
+      fork:
+        required: true
+        value_ref: nv_wire_bool
+      language:
+        required: false
+        value_ref: nv_wire_str_short
+      stargazers_count:
+        required: false
+        value_ref: nv_wire_int
+      forks_count:
+        required: false
+        value_ref: nv_wire_int
+      open_issues_count:
+        required: false
+        value_ref: nv_wire_int
+      default_branch:
+        required: false
+        value_ref: nv_github_branch_name
+      archived:
+        required: false
+        value_ref: nv_wire_bool
+      visibility:
+        required: false
+        value_ref: nv_repository_visibility
+      created_at:
+        required: false
+        value_ref: nv_github_created_at
+      updated_at:
+        required: false
+        value_ref: nv_github_updated_at
+      pushed_at:
+        required: false
+        value_ref: nv_wire_date_rfc3339
+      html_url:
+        required: false
+        value_ref: nv_github_html_url
+    relations:
+      commits:
+        target: Commit
+        cardinality: many
+        materialize:
+          kind: query_scoped_bindings
+          capability: commit_query
+          bindings:
+            repository: full_name
+  Commit:
+    id_field: sha
+    key_vars:
+    - owner
+    - repo
+    - sha
+    fields:
+      owner:
+        derive:
+          type: segments_after_prefix
+          prefix: https://api.github.com/repos/
+          alternate_prefixes:
+          - http://api.github.com/repos/
+          part_index: 0
+        required: true
+        path: url
+        value_ref: nv_github_account_login
+      repo:
+        derive:
+          type: segments_after_prefix
+          prefix: https://api.github.com/repos/
+          alternate_prefixes:
+          - http://api.github.com/repos/
+          part_index: 1
+        required: true
+        path: url
+        value_ref: nv_github_repository_name
+      sha:
+        required: true
+        value_ref: nv_github_git_sha
+      message:
+        required: false
+        path: commit.message
+        value_ref: nv_wire_str_markdown
+      html_url:
+        required: false
+        value_ref: nv_github_html_url
+      url:
+        required: false
+        value_ref: nv_wire_str_short
+      authored_at:
+        required: false
+        path: commit.author.date
+        value_ref: nv_wire_date_rfc3339
+      committed_at:
+        required: false
+        path: commit.committer.date
+        value_ref: nv_wire_date_rfc3339
+      comment_count:
+        required: false
+        path: commit.comment_count
+        value_ref: nv_wire_int
+      stats_additions:
+        required: false
+        path: stats.additions
+        value_ref: nv_wire_int
+      stats_deletions:
+        required: false
+        path: stats.deletions
+        value_ref: nv_wire_int
+      total_changes:
+        required: false
+        path: stats.total
+        value_ref: nv_wire_int
+    relations:
+      author:
+        target: User
+        cardinality: one
+        description: Account credited as the commit author.
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: author
+      committer:
+        target: User
+        cardinality: one
+        description: Account that committed the change.
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: committer
+  User:
+    id_field: login
+    fields:
+      login:
+        required: true
+        value_ref: nv_github_account_login
+      id:
+        required: true
+        value_ref: nv_wire_int
+      name:
+        required: false
+        value_ref: nv_wire_str_short
+      company:
+        required: false
+        value_ref: nv_wire_str_short
+      blog:
+        required: false
+        value_ref: nv_wire_str_short
+      location:
+        required: false
+        value_ref: nv_wire_str_short
+      email:
+        required: false
+        value_ref: nv_wire_str_short
+      bio:
+        required: false
+        value_ref: nv_wire_str_markdown
+      public_repos:
+        required: false
+        value_ref: nv_wire_int
+      public_gists:
+        required: false
+        value_ref: nv_wire_int
+      hireable:
+        required: false
+        value_ref: nv_wire_bool
+      site_admin:
+        required: false
+        value_ref: nv_wire_bool
+      html_url:
+        required: false
+        value_ref: nv_github_html_url
+      avatar_url:
+        required: false
+        value_ref: nv_wire_str_short
+      created_at:
+        required: false
+        value_ref: nv_github_created_at
+    relations: {}
+capabilities:
+  repo_get:
+    description: Resolve one repository for follow-up work.
+    kind: get
+    entity: Repository
+    provides:
+    - id
+    - owner
+    - repo
+    - full_name
+    - description
+    - private
+    - fork
+    - language
+    - stargazers_count
+    - forks_count
+    - open_issues_count
+    - default_branch
+    - archived
+    - visibility
+    - created_at
+    - updated_at
+    - pushed_at
+    - html_url
+  commit_query:
+    description: List commits for a repository.
+    kind: query
+    entity: Commit
+    scope_aggregate_key_policy: omit_when_redundant
+    scope:
+    - name: repository
+      value_ref: nv_github_scope_repository
+      required: true
+    selection:
+    - name: sha
+      value_ref: nv_github_git_sha
+      required: false
+    - name: path
+      value_ref: nv_github_commit_path_filter
+      required: false
+    - name: by_author
+      value_ref: nv_github_commit_author_filter
+      required: false
+    - name: by_committer
+      value_ref: nv_github_commit_committer_filter
+      required: false
+    - name: until
+      value_ref: nv_wire_date_rfc3339
+      required: false
+    controls:
+    - name: since
+      value_ref: nv_wire_date_rfc3339
+      required: false
+    provides:
+    - owner
+    - repo
+    - sha
+    - message
+    - html_url
+    - url
+    - authored_at
+    - committed_at
+    - comment_count
+    - stats_additions
+    - stats_deletions
+    - total_changes
+  commit_get:
+    description: Resolve one commit for history, release, or branch decisions.
+    kind: get
+    entity: Commit
+    provides:
+    - owner
+    - repo
+    - sha
+    - message
+    - html_url
+    - url
+    - authored_at
+    - committed_at
+    - comment_count
+    - stats_additions
+    - stats_deletions
+    - total_changes
+  user_get:
+    description: Resolve one public user profile.
+    kind: get
+    entity: User
+    provides:
+    - login
+    - id
+    - name
+    - company
+    - blog
+    - location
+    - email
+    - bio
+    - public_repos
+    - public_gists
+    - hireable
+    - site_admin
+    - html_url
+    - avatar_url
+    - created_at
+values:
+  nv_github_account_login:
+    type: string
+    description: GitHub user or organization login.
+  nv_github_branch_name:
+    type: string
+    description: Git branch name or ref to read or write (e.g. main, feature/docs).
+  nv_github_commit_author_filter:
+    type: string
+    description: Filter commits by author login or email.
+  nv_github_commit_committer_filter:
+    type: string
+    description: Filter commits by committer login or email.
+  nv_github_commit_path_filter:
+    type: string
+    description: Limit commits to those touching this repository path.
+  nv_github_created_at:
+    type: rfc3339
+    description: Timestamp when a GitHub resource was created.
+  nv_github_git_sha:
+    type: string
+    description: Git object SHA, such as a commit, tree, or blob identifier.
+  nv_github_html_url:
+    type: string
+    description: Browser URL for a GitHub resource.
+  nv_github_repository_full_name:
+    type: string
+    description: Repository identifier in owner/name form.
+  nv_github_repository_name:
+    type: string
+    description: Repository name within a GitHub owner account.
+  nv_github_scope_repository:
+    type: entity_ref
+    target: Repository
+    description: Repository owner/name used as HTTP scope for repository-scoped capabilities.
+  nv_github_updated_at:
+    type: rfc3339
+    description: Timestamp when a GitHub resource was last updated.
+  nv_repository_visibility:
+    type: enum
+    enum:
+    - public
+    - private
+    - internal
+  nv_wire_bool:
+    type: boolean
+  nv_wire_date_rfc3339:
+    type: rfc3339
+  nv_wire_int:
+    type: integer
+  nv_wire_str_markdown:
+    type: markdown
+  nv_wire_str_short:
+    type: string

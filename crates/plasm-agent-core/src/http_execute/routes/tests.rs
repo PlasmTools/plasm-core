@@ -15,7 +15,7 @@ use axum::http::Request;
 use axum::Router;
 use plasm_core::discovery::CgsRegistry;
 use plasm_core::loader::load_schema_dir;
-use plasm_runtime::{ OperationLedger,ExecutionConfig, ExecutionEngine, ExecutionMode};
+use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode, ResultCoverage};
 use std::path::Path;
 use tower::util::ServiceExt;
 
@@ -86,6 +86,7 @@ fn plasm_plan_publication_renders_named_output_owner() {
                 count: 0,
                 entities: vec![],
                 has_more: false,
+                coverage: ResultCoverage::Unknown,
                 pagination_resume: None,
                 paging_handle: None,
                 source: ExecutionSource::Cache,
@@ -97,7 +98,7 @@ fn plasm_plan_publication_renders_named_output_owner() {
                     ..Default::default()
                 },
                 request_fingerprints: vec![],
-            operations: plasm_runtime::OperationLedger::empty(),
+                operations: plasm_runtime::OperationLedger::empty(),
             }),
             artifact: None,
         }],
@@ -129,7 +130,6 @@ fn live_run_tool_meta_finalizes_run_explorer_ui() {
         http_path: artifact_http_path(&ph, &sid, &run),
         payload_len: 256,
         request_fingerprints: vec!["cafe".into()],
-    operations: plasm_runtime::OperationLedger::empty(),
     };
     let mut idx = PlasmMetaIndex::new();
     let meta = build_mcp_run_tool_meta(
@@ -144,6 +144,7 @@ fn live_run_tool_meta_finalizes_run_explorer_ui() {
             artifact: Some(handle),
             lossy_summary_fields: LossySummaryFieldNames::default(),
             column_schema: None,
+            coverage: plasm_runtime::ResultCoverage::Unknown,
         }],
         &OmittedReferenceOnlyFields::default(),
         None,
@@ -210,18 +211,7 @@ fn test_state_with_registry() -> PlasmHostState {
     )]))
 }
 
-fn test_state_with_linear_registry() -> Option<PlasmHostState> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/linear");
-    if !dir.exists() {
-        return None;
-    }
-    let cgs = Arc::new(load_schema_dir(&dir).expect("linear"));
-    Some(test_host_state_from_registry(CgsRegistry::from_pairs(
-        vec![("linear".into(), "Linear".into(), vec!["linear".into()], cgs)],
-    )))
-}
-
-fn test_state_with_matrix_federated_registry() -> Option<PlasmHostState> {
+fn test_state_with_langmatrix_registry() -> Option<PlasmHostState> {
     let dir =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix");
     if !dir.exists() {
@@ -229,14 +219,39 @@ fn test_state_with_matrix_federated_registry() -> Option<PlasmHostState> {
     }
     let cgs = Arc::new(load_schema_dir(&dir).expect("plasm_language_matrix"));
     Some(test_host_state_from_registry(CgsRegistry::from_pairs(
+        vec![(
+            "langmatrix".into(),
+            "Langmatrix".into(),
+            vec!["langmatrix".into()],
+            cgs,
+        )],
+    )))
+}
+
+fn test_state_with_matrix_federated_registry() -> Option<PlasmHostState> {
+    let dir_a =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix");
+    let dir_b = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/plasm_language_matrix_views");
+    if !dir_a.exists() || !dir_b.exists() {
+        return None;
+    }
+    let cgs_a = Arc::new(load_schema_dir(&dir_a).expect("plasm_language_matrix"));
+    let cgs_b = Arc::new(load_schema_dir(&dir_b).expect("plasm_language_matrix_views"));
+    Some(test_host_state_from_registry(CgsRegistry::from_pairs(
         vec![
             (
-                "github".into(),
-                "Github".into(),
-                vec!["demo".into()],
-                cgs.clone(),
+                "langmatrix_a".into(),
+                "Langmatrix A".into(),
+                vec!["langmatrix_a".into()],
+                cgs_a,
             ),
-            ("linear".into(), "Linear".into(), vec!["demo".into()], cgs),
+            (
+                "langmatrix_b".into(),
+                "Langmatrix B".into(),
+                vec!["langmatrix_b".into()],
+                cgs_b,
+            ),
         ],
     )))
 }

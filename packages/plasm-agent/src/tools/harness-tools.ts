@@ -1,5 +1,5 @@
-import { runArtefactTransform } from "./artifact-process.js";
-export { runArtefactTransform } from "./artifact-process.js";
+import { pinnedArtifactImage, runArtefactTransform } from "./artifact-process.js";
+export { pinnedArtifactImage, runArtefactTransform } from "./artifact-process.js";
 
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
@@ -7,6 +7,7 @@ import { z } from "zod";
 import type { SkillDefinition } from "../authoring/define-skill.js";
 import type { SubagentRegistry } from "../authoring/subagent-loader.js";
 import { COMPLETE_TASK_TOOL_NAME, SUBMIT_ANSWER_TOOL_NAME } from "./format.js";
+import { createTaskLedgerTool, type TaskLedgerStore } from "./task-ledger.js";
 import { toolInput } from "./tool-input.js";
 
 const readSkillInputSchema = z.object({
@@ -25,17 +26,6 @@ const artefactTransformInputSchema = z.object({
   reasoning: z.string().optional().describe("Optional short note"),
 });
 
-export const PLASM_ARTEFACT_TRANSFORM_TOOL_DESCRIPTION = `Harness **artefact transform** (data manipulation only).
-
-Run sandboxed JavaScript against files under the task artefact workspace
-(\`PLASM_RUN_ARTIFACTS_DIR\` / agent artefact root). After \`plasm_read_run_artifact\`,
-snapshots land in \`artefacts/<run_id>.json\` and \`artefacts/latest.json\`.
-
-Allowed: read/write relative paths under the workspace; JSON/CSV/string compute.
-Forbidden: fetch/network, child_process, absolute paths outside workspace, AppWorld HTTP.
-
-Return free-form stdout / returned value. Not a Plasm language feature.`;
-
 const completeTaskInputSchema = z.object({});
 
 const submitAnswerInputSchema = z.object({
@@ -48,7 +38,8 @@ export const COMPLETE_TASK_TOOL_DESCRIPTION =
   "Call this after the work is done and nothing must be reported " +
   "(no number, name, amount, or other asked-for value). " +
   "A successful call grades explicit null. Do not pass an answer field. " +
-  "Do not call this when the instruction asked you to report a value.";
+  "Do not call this when the instruction asked you to report a value. " +
+  "Requires an initial plasm_context discovery for this workflow first.";
 
 /** Domain-general AppWorld submit_answer — verbatim asked-for value, then terminate. */
 export const SUBMIT_ANSWER_TOOL_DESCRIPTION =
@@ -57,34 +48,76 @@ export const SUBMIT_ANSWER_TOOL_DESCRIPTION =
   "Pass it verbatim. When the answer is a monetary value, submit only the numeric part — no currency symbols or comma groupings. " +
   "Not a done-summary, not a table, not surrounding prose. " +
   "Do not call this when the instruction asked for no value (use complete_task instead). " +
-  "An empty or missing answer is invalid and does not finish the task.";
+  "An empty or missing answer is invalid and does not finish the task. " +
+  "Requires an initial plasm_context discovery for this workflow first.";
 
-export function createCompleteTaskTool(): ToolSet {
+/** Structural gate: environment-action evals must discover before abandon / no-access claims. */
+export const EVAL_TERMINAL_REQUIRES_DISCOVERY =
+  "Initial discovery is required before ending an environment-action evaluation. " +
+  "Call plasm_context with session_mode new and the task intent first. " +
+  "Do not claim unsupported access or abandon before discovery.";
+
+export type EvalTerminalGate = {
+  /**
+   * Return true once initial `plasm_context` has opened a workflow session.
+   * When omitted, terminals are ungated (non-eval or tests that inject tools directly).
+   */
+  discoveryCompleted?: () => boolean;
+};
+
+/**
+ * Discovery refusal must take the tool-error path (throw), never ordinary
+ * success text — otherwise the loop grades a blocked terminal as completion.
+ */
+function assertDiscoveryCompleted(gate?: EvalTerminalGate): void {
+  if (!gate?.discoveryCompleted) return;
+  if (gate.discoveryCompleted()) return;
+  throw new Error(EVAL_TERMINAL_REQUIRES_DISCOVERY);
+}
+
+export function createCompleteTaskTool(gate?: EvalTerminalGate): ToolSet {
   return {
     [COMPLETE_TASK_TOOL_NAME]: tool({
       description: COMPLETE_TASK_TOOL_DESCRIPTION,
       inputSchema: toolInput(completeTaskInputSchema),
-      execute: async () => "Task marked complete.",
+      execute: async () => {
+        assertDiscoveryCompleted(gate);
+        return "Task marked complete.";
+      },
     }),
   };
 }
 
-export function createSubmitAnswerTool(): ToolSet {
+export function createSubmitAnswerTool(gate?: EvalTerminalGate): ToolSet {
   return {
     [SUBMIT_ANSWER_TOOL_NAME]: tool({
       description: SUBMIT_ANSWER_TOOL_DESCRIPTION,
       inputSchema: toolInput(submitAnswerInputSchema),
-      execute: async () => "Answer submitted.",
+      execute: async () => {
+        assertDiscoveryCompleted(gate);
+        return "Answer submitted.";
+      },
     }),
   };
 }
 
-export function createEvalTerminalTools(): ToolSet {
+export function createEvalTerminalTools(gate?: EvalTerminalGate): ToolSet {
   return {
-    ...createCompleteTaskTool(),
-    ...createSubmitAnswerTool(),
+    ...createCompleteTaskTool(gate),
+    ...createSubmitAnswerTool(gate),
   };
 }
+
+export const PLASM_ARTEFACT_TRANSFORM_TOOL_DESCRIPTION = `Harness **artefact transform** (data manipulation only).
+
+Run sandboxed JavaScript against files under the task artefact workspace
+(\`PLASM_RUN_ARTIFACTS_DIR\` / agent artefact root). After \`plasm_read_run_artifact\`,
+snapshots land in \`artefacts/<run_id>.json\` and \`artefacts/latest.json\`.
+
+Allowed: read/write relative paths under the workspace; JSON/CSV/string compute.
+Forbidden: fetch/network, child_process, absolute paths outside workspace, AppWorld HTTP.
+
+Return free-form stdout / returned value. Not a Plasm language feature.`;
 
 export function createArtefactTransformTool(workspaceRoot: string): ToolSet {
   return {
@@ -111,7 +144,7 @@ export function createArtefactTransformTool(workspaceRoot: string): ToolSet {
 export function createHarnessTools(options: {
   skills?: SkillDefinition[];
   subagents?: SubagentRegistry;
-  /** When set, always register plasm_artefact_transform against this workspace. */
+  /** When set, register plasm_artefact_transform only if the digest pin is valid. */
   artefactWorkspaceRoot?: string;
   includeArtefactTransform?: boolean;
   /**
@@ -119,6 +152,18 @@ export function createHarnessTools(options: {
    * `buildDefaultSystemLiturgy({ includeEvalTerminals })`.
    */
   includeEvalTerminals?: boolean;
+  /**
+   * When eval terminals are registered, require initial discovery before
+   * `complete_task` / `submit_answer` succeed. Pass `() => runtime.hasOpenWorkflow()`.
+   */
+  discoveryCompleted?: () => boolean;
+  /**
+   * Register `task_ledger`. Same gate as
+   * `buildDefaultSystemLiturgy({ includeTaskLedger })`.
+   * Requires `taskLedgerStore` — host persist only, no invented obligations.
+   */
+  includeTaskLedger?: boolean;
+  taskLedgerStore?: TaskLedgerStore;
 }): ToolSet {
   const tools: ToolSet = {};
   const skillByName = new Map((options.skills ?? []).map((s) => [s.name, s]));
@@ -161,13 +206,28 @@ export function createHarnessTools(options: {
   }
 
   const includeTransform =
-    options.includeArtefactTransform ?? Boolean(options.artefactWorkspaceRoot);
+    (options.includeArtefactTransform ?? Boolean(options.artefactWorkspaceRoot)) &&
+    pinnedArtifactImage() !== null;
   if (includeTransform && options.artefactWorkspaceRoot) {
     Object.assign(tools, createArtefactTransformTool(options.artefactWorkspaceRoot));
   }
 
   if (options.includeEvalTerminals) {
-    Object.assign(tools, createEvalTerminalTools());
+    Object.assign(
+      tools,
+      createEvalTerminalTools(
+        options.discoveryCompleted
+          ? { discoveryCompleted: options.discoveryCompleted }
+          : undefined,
+      ),
+    );
+  }
+
+  if (options.includeTaskLedger) {
+    if (!options.taskLedgerStore) {
+      throw new Error("includeTaskLedger requires taskLedgerStore");
+    }
+    Object.assign(tools, createTaskLedgerTool(options.taskLedgerStore));
   }
 
   return tools;

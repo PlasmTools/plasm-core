@@ -160,6 +160,7 @@ pub(crate) async fn finalize_empty_relation_materialized_node(
                 count: 0,
                 entities: vec![],
                 has_more: false,
+                coverage: plasm_runtime::ResultCoverage::Unknown,
                 pagination_resume: None,
                 paging_handle: None,
                 source: ExecutionSource::Cache,
@@ -555,6 +556,7 @@ pub(crate) fn json_rows_to_entities_with_refs(
                 last_updated: 0,
                 version: 1,
                 completeness: EntityCompleteness::Complete,
+                unavailable_fields: Default::default(),
             }
         })
         .collect()
@@ -605,6 +607,7 @@ pub(crate) async fn finalize_embed_relation_materialized_node(
         count,
         entities: entities.clone(),
         has_more: false,
+        coverage: plasm_runtime::ResultCoverage::Unknown,
         pagination_resume: None,
         paging_handle: None,
         source: ExecutionSource::Cache,

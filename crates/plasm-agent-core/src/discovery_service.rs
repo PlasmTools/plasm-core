@@ -7,14 +7,13 @@ use anyhow::{bail, Context, Result};
 use plasm_core::prerequisites::{prerequisite_closure, CapabilityRef, PrerequisiteClosure};
 use serde::{Deserialize, Serialize};
 
+use crate::discovery_selection::{self as selection, validate_selection};
 use crate::discovery_store::{
     DiscoveryAuthorization, DiscoverySessionPin, DiscoveryStore, RetrievalReceipt,
 };
 
-#[path = "discovery_selection.rs"]
-mod selection;
-use selection::validate_selection;
-pub use selection::{CapabilitySelection, SelectionStatus, UnsupportedWork};
+pub use crate::discovery_recovery::{CatalogAppDescription, DiscoveryRecovery, RECOVERY_GUIDANCE};
+pub use selection::{CapabilitySelection, RequirementCoverage, SelectionStatus, UnsupportedWork};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RoutingReceipt {
@@ -24,6 +23,9 @@ pub struct RoutingReceipt {
     pub retrieval: RetrievalReceipt,
     pub selection: CapabilitySelection,
     pub closure: Option<PrerequisiteClosure>,
+    /// Present when selection is insufficient: unresolved clauses + catalog descriptions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<DiscoveryRecovery>,
 }
 
 pub struct RouteTurn<'a> {
@@ -114,36 +116,58 @@ impl DiscoveryService {
             .await?;
         let input = serde_json::json!({"intent":intent,"already_exposed":exposed,"candidates":retrieval.candidates});
         let request_body = selector_contract::request(&self.model, intent, exposed, &retrieval)?;
-        let response = self
-            .client
-            .post("https://openrouter.ai/api/v1/chat/completions")
-            .bearer_auth(&self.api_key)
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .body(request_body.clone())
-            .send()
-            .await
-            .context("capability selector transport failed")?;
-        let status = response.status();
-        let raw = response
-            .text()
-            .await
-            .context("reading capability selector response")?;
+        let cache_key = selector_contract::request_cache_key(&request_body);
+        let (raw, status, from_cache) =
+            if let Some(envelope) = self.store.cached_selector_envelope(&cache_key).await? {
+                (
+                    selector_contract::wrap_cached_envelope(&envelope),
+                    reqwest::StatusCode::OK,
+                    true,
+                )
+            } else {
+                let response = self
+                    .client
+                    .post("https://openrouter.ai/api/v1/chat/completions")
+                    .bearer_auth(&self.api_key)
+                    .header(reqwest::header::CONTENT_TYPE, "application/json")
+                    .body(request_body.clone())
+                    .send()
+                    .await
+                    .context("capability selector transport failed")?;
+                let status = response.status();
+                let raw = response
+                    .text()
+                    .await
+                    .context("reading capability selector response")?;
+                (raw, status, false)
+            };
         let decoded = if status.is_success() {
-            selector_contract::decode(&raw, intent, &retrieval)
+            selector_contract::decode(&raw, &retrieval)
         } else {
             Err(anyhow::anyhow!("capability selector failed: HTTP {status}"))
         };
         let (selection, business) = match decoded {
-            Ok(valid) => valid,
+            Ok(valid) => {
+                if !from_cache {
+                    self.store
+                        .store_selector_envelope(
+                            &cache_key,
+                            &selector_contract::selection_envelope(&valid.0)?,
+                        )
+                        .await?;
+                }
+                valid
+            }
             Err(error) => {
                 if let Some(directory) = &self.rejection_dir {
                     let directory = directory.clone();
                     let record = serde_json::json!({
-                        "contract_version": 6, "model": self.model, "generation": generation,
+                        "contract_version": 8, "model": self.model, "generation": generation,
                         "request_body": request_body,
                         "input": input, "http_status": status.as_u16(),
-                        "instructions": selector_contract::INSTRUCTIONS, "schema": selector_contract::schema(),
-                        "temperature": 0, "retrieval": retrieval,
+                        "instructions": selector_contract::INSTRUCTIONS, "schema": selector_contract::schema(&retrieval),
+                        "temperature": 0, "seed": selector_contract::SELECTOR_SEED,
+                        "retrieval": retrieval,
                         "raw_response": raw, "error": format!("{error:#}")
                     });
                     let saved = tokio::task::spawn_blocking(move || {
@@ -172,9 +196,18 @@ impl DiscoveryService {
                 return Err(error);
             }
         };
+        let needs_catalogs = !business.is_empty()
+            || !exposed.is_empty()
+            || selection.status == SelectionStatus::Insufficient;
+        let loaded = if needs_catalogs {
+            Some(self.store.load_generation(generation).await?)
+        } else {
+            None
+        };
         let closure = if !business.is_empty() || !exposed.is_empty() {
-            let (catalogs, _compiled_catalogs, bindings) =
-                self.store.load_generation(generation).await?;
+            let (catalogs, _compiled_catalogs, bindings) = loaded
+                .as_ref()
+                .expect("catalogs required for prerequisite closure");
             let references = catalogs.iter().map(|(id, cgs)| (id.clone(), cgs)).collect();
             Some(
                 prerequisite_closure(&references, &bindings, &business, &allowed.catalogs)
@@ -184,6 +217,18 @@ impl DiscoveryService {
             None
         };
         validate_closure_authorization(closure.as_ref(), allowed)?;
+        let recovery = if selection.status == SelectionStatus::Insufficient {
+            let (catalogs, _, _) = loaded
+                .as_ref()
+                .expect("catalogs required for insufficient recovery");
+            Some(DiscoveryRecovery::from_insufficient(
+                &selection.requirement_coverage,
+                catalogs,
+                allowed.catalogs.iter(),
+            ))
+        } else {
+            None
+        };
         Ok(RoutingReceipt {
             authorization: allowed.clone(),
             intent: intent.to_owned(),
@@ -191,6 +236,7 @@ impl DiscoveryService {
             retrieval,
             selection,
             closure,
+            recovery,
         })
     }
 }
@@ -275,8 +321,110 @@ mod tests {
         let body = selector_contract::request("model", "intent", &[], &receipt()).unwrap();
         let value: serde_json::Value = serde_json::from_str(&body).unwrap();
         let schema = &value["response_format"]["json_schema"]["schema"];
-        assert_eq!(*schema, selector_contract::schema());
+        assert_eq!(*schema, selector_contract::schema(&receipt()));
         assert!(schema["properties"].get("requirements").is_none());
         assert_eq!(schema["properties"].as_object().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn selector_request_pins_temperature_and_seed() {
+        let body = selector_contract::request("model", "inspect records", &[], &receipt()).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(value["temperature"], 0);
+        assert_eq!(value["seed"], selector_contract::SELECTOR_SEED);
+        assert_eq!(value["provider"]["require_parameters"], true);
+    }
+
+    #[test]
+    fn selector_request_is_byte_identical_for_permuted_exposed() {
+        let exposed_a = [
+            CapabilityRef {
+                catalog: "zeta".into(),
+                capability: "write".into(),
+            },
+            CapabilityRef {
+                catalog: "alpha".into(),
+                capability: "read".into(),
+            },
+        ];
+        let mut exposed_b = exposed_a.clone();
+        exposed_b.reverse();
+        let left =
+            selector_contract::request("model", "inspect records", &exposed_a, &receipt()).unwrap();
+        let right =
+            selector_contract::request("model", "inspect records", &exposed_b, &receipt()).unwrap();
+        assert_eq!(left, right);
+        assert_eq!(
+            selector_contract::request_cache_key(&left),
+            selector_contract::request_cache_key(&right)
+        );
+        let user: serde_json::Value = serde_json::from_str(
+            serde_json::from_str::<serde_json::Value>(&left).unwrap()["messages"][1]["content"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            user["already_exposed"],
+            serde_json::json!([
+                {"catalog":"alpha","capability":"read"},
+                {"catalog":"zeta","capability":"write"}
+            ])
+        );
+    }
+
+    #[test]
+    fn selector_request_is_byte_identical_for_permuted_candidates() {
+        let receipt_a = receipt();
+        let mut receipt_b = receipt();
+        receipt_b.candidates.reverse();
+        assert_ne!(
+            receipt_a.candidates.first().map(|c| c.id.as_str()),
+            receipt_b.candidates.first().map(|c| c.id.as_str()),
+            "precondition: permutation must change retrieval order"
+        );
+        let left = selector_contract::request("model", "inspect records", &[], &receipt_a).unwrap();
+        let right =
+            selector_contract::request("model", "inspect records", &[], &receipt_b).unwrap();
+        assert_eq!(left, right);
+        assert_eq!(
+            selector_contract::request_cache_key(&left),
+            selector_contract::request_cache_key(&right)
+        );
+        let user: serde_json::Value = serde_json::from_str(
+            serde_json::from_str::<serde_json::Value>(&left).unwrap()["messages"][1]["content"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        let ids: Vec<&str> = user["candidates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, vec!["cap-0", "cap-1", "cap-2", "cap-3"]);
+    }
+
+    #[test]
+    fn cached_envelope_round_trips_the_same_selection() {
+        let receipt = receipt();
+        let envelope = selector_contract::selection_envelope(&CapabilitySelection {
+            status: SelectionStatus::Ready,
+            additional_capability_ids: vec!["cap-1".into(), "cap-0".into()],
+            requirement_coverage: vec![],
+        })
+        .unwrap();
+        let raw = selector_contract::wrap_cached_envelope(&envelope);
+        let (selection, business) = selector_contract::decode(&raw, &receipt).unwrap();
+        assert_eq!(
+            selection.additional_capability_ids,
+            vec!["cap-1".to_string(), "cap-0".to_string()]
+        );
+        assert_eq!(business.len(), 2);
+        assert_eq!(
+            selector_contract::request_cache_key("body-a"),
+            plasm_core::catalog_discovery::content_hash(b"body-a")
+        );
     }
 }

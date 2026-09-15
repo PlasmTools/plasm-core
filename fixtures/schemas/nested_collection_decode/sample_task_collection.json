@@ -1,0 +1,15 @@
+{
+  "project_id": 280,
+  "no_section_tasks": [
+    {"task_id": 1, "title": "Prepare Playlist"},
+    {"task_id": 2, "title": "Reserve Accommodation"}
+  ],
+  "sections": [
+    {
+      "section_id": 9,
+      "tasks": [
+        {"task_id": 3, "title": "Buy Travel Insurance"}
+      ]
+    }
+  ]
+}

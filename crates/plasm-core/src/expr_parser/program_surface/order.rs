@@ -2,13 +2,14 @@
 
 use std::collections::BTreeSet;
 
+use super::errors::program_invalid_binding_label_error;
 use super::errors::{
     program_binding_after_return_error, program_intermediate_return_error,
     program_intermediate_return_must_be_binding_error, program_multiple_return_lines_error,
 };
 use super::flatten::leading_identifier;
 use super::labels::is_valid_program_label;
-use super::split::split_assignment_for_binding;
+use super::split::{classify_top_level_assignment, TopLevelAssignment};
 
 /// ML `let` block: bindings first, one return last. Rejects multiple roots-only lines and bindings after return.
 pub fn validate_program_statement_order(statements: &[String]) -> Result<(), String> {
@@ -22,7 +23,13 @@ pub fn validate_program_statement_order(statements: &[String]) -> Result<(), Str
     let n = stmts.len();
     for (i, stmt) in stmts.iter().enumerate() {
         let is_last = i + 1 == n;
-        if let Some((label, _)) = split_assignment_for_binding(stmt) {
+        if let Some(assignment) = classify_top_level_assignment(stmt) {
+            let label = match assignment {
+                TopLevelAssignment::Binding { label, .. } => label,
+                TopLevelAssignment::InvalidLabel { label } => {
+                    return Err(program_invalid_binding_label_error(label));
+                }
+            };
             if saw_roots {
                 return Err(program_binding_after_return_error());
             }

@@ -7,6 +7,14 @@
 use super::{InputFieldSchema, InputSchema};
 use serde::{Deserialize, Serialize};
 
+/// Semantic receiver of an operation, independent of its transport mapping.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CapabilityReceiver {
+    None,
+    Entity { entity: crate::EntityName },
+}
+
 /// Parameters derived exclusively from a typed parent row.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -29,6 +37,10 @@ pub struct InvocationControlsSchema(pub Vec<InputFieldSchema>);
 /// on [`crate::loader::DomainCapability`]'s `deny_unknown_fields`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CapabilityInputs {
+    /// Omission follows operation-kind semantics: Get/Update/Delete use their
+    /// domain entity; Query/Search/Create/Action have no receiver.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receiver: Option<CapabilityReceiver>,
     #[serde(default, skip_serializing_if = "parent_scope_is_empty")]
     pub scope: ParentScopeSchema,
     #[serde(default, skip_serializing_if = "backend_selection_is_empty")]

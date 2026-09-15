@@ -416,6 +416,26 @@ impl DiscoveryStore {
             .await
     }
 
+    pub async fn cached_selector_envelope(&self, cache_key: &str) -> Result<Option<String>> {
+        sqlx::query_scalar("SELECT envelope FROM discovery_selector_cache WHERE cache_key=$1")
+            .bind(cache_key)
+            .fetch_optional(&self.pool)
+            .await
+            .context("read selector cache")
+    }
+
+    pub async fn store_selector_envelope(&self, cache_key: &str, envelope: &str) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO discovery_selector_cache (cache_key, envelope) VALUES ($1,$2) ON CONFLICT (cache_key) DO NOTHING",
+        )
+        .bind(cache_key)
+        .bind(envelope)
+        .execute(&self.pool)
+        .await
+        .context("write selector cache")?;
+        Ok(())
+    }
+
     /// Existing teaching is selectable evidence, resolved against the same authorized generation.
     pub async fn include_exposed(
         &self,

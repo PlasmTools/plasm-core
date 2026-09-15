@@ -178,6 +178,7 @@ capabilities:
           value_ref: nv_spreadsheet_create_sheets
           required: false
   spreadsheet_batch_update:
+    receiver: {kind: entity, entity: Spreadsheet}
     description: Apply structured updates (add sheet, update cells, charts, etc.) via BatchUpdateSpreadsheetRequest
       JSON body.
     kind: action
@@ -194,6 +195,7 @@ capabilities:
       type: side_effect
       description: Applies the batch update requests to the spreadsheet when the API call succeeds.
   spreadsheet_get_by_data_filter:
+    receiver: {kind: entity, entity: Spreadsheet}
     description: Load spreadsheet data selected by DataFilters.
     kind: action
     entity: Spreadsheet
@@ -201,6 +203,7 @@ capabilities:
       type: side_effect
       description: Returns the spreadsheet projection selected by the posted data filters.
   sheet_copy_to:
+    receiver: {kind: entity, entity: Sheet}
     description: Copy this sheet to another spreadsheet.
     kind: action
     entity: Sheet
@@ -236,6 +239,7 @@ capabilities:
     - range
     - majorDimension
   spreadsheet_values_batch_get:
+    receiver: {kind: entity, entity: Spreadsheet}
     description: Read values from multiple ranges.
     kind: action
     entity: Spreadsheet
@@ -263,6 +267,7 @@ capabilities:
     kind: update
     entity: ValueRange
   spreadsheet_values_batch_update:
+    receiver: {kind: entity, entity: Spreadsheet}
     description: Update values in multiple ranges.
     kind: action
     entity: Spreadsheet
@@ -270,6 +275,7 @@ capabilities:
       type: side_effect
       description: Writes all supplied value ranges when the API call succeeds.
   value_range_append:
+    receiver: {kind: entity, entity: Spreadsheet}
     description: Append rows after the logical table found within the specified range.
     kind: action
     entity: Spreadsheet
@@ -306,6 +312,7 @@ capabilities:
       type: side_effect
       description: Appends values after the detected table when the API call succeeds.
   value_range_clear:
+    receiver: {kind: entity, entity: ValueRange}
     description: Clear values in a range while preserving other cell properties.
     kind: action
     entity: ValueRange
@@ -313,6 +320,7 @@ capabilities:
       type: side_effect
       description: Clears values in the range when the API call succeeds.
   spreadsheet_values_batch_clear:
+    receiver: {kind: entity, entity: Spreadsheet}
     description: Clear values in multiple ranges.
     kind: action
     entity: Spreadsheet
@@ -320,6 +328,7 @@ capabilities:
       type: side_effect
       description: Clears all listed ranges when the API call succeeds.
   spreadsheet_values_batch_get_by_data_filter:
+    receiver: {kind: entity, entity: Spreadsheet}
     description: Read values from ranges matched by DataFilters.
     kind: action
     entity: Spreadsheet
@@ -327,6 +336,7 @@ capabilities:
       type: side_effect
       description: Returns values for ranges matching the posted data filters.
   spreadsheet_values_batch_update_by_data_filter:
+    receiver: {kind: entity, entity: Spreadsheet}
     description: Update values in ranges matched by DataFilters.
     kind: action
     entity: Spreadsheet
@@ -334,6 +344,7 @@ capabilities:
       type: side_effect
       description: Updates values for the matching ranges when the API call succeeds.
   spreadsheet_values_batch_clear_by_data_filter:
+    receiver: {kind: entity, entity: Spreadsheet}
     description: Clear values in ranges matched by DataFilters.
     kind: action
     entity: Spreadsheet
@@ -350,6 +361,7 @@ capabilities:
     - metadataValue
     - visibility
   developer_metadata_search:
+    receiver: {kind: entity, entity: Spreadsheet}
     description: Search developer metadata using DataFilters (POST SearchDeveloperMetadataRequest).
     kind: action
     entity: Spreadsheet

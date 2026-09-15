@@ -132,7 +132,10 @@ fn preflight_compile_get(
         capability,
         &get.reference,
         plasm_core::IdentityProjectionCtx::Entity(target_ent),
-        Some(&Value::Object(mat.capability_params_for(&get.reference))),
+        Some(&Value::Object(mat.capability_params_for_get(
+            &get.reference,
+            &SessionMaterialization::provide_catalog_key(cgs, get.catalog_entry_id.as_deref()),
+        ))),
     )?;
     normalize_cml_env_scope_entity_refs(&mut env, cgs, capability)?;
     plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {

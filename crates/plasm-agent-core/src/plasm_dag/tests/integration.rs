@@ -2,7 +2,7 @@
 //
 // Prefer `cargo test -p plasm-e2e --test plasm_language_matrix` for author-visible
 // “this program means X” semantics on the language-matrix fixture. Keep tests here for
-// compiler/plan invariants (splitting, diagnostics, federation quirks, GitHub-shaped
+// compiler/plan invariants (splitting, diagnostics, federation quirks, fixture-shaped
 // graphs). When a case overlaps the matrix, cite the matrix row id on the test (e.g.
 // `lang_domain_symbol_page_size`).
 use super::*;
@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 mod test_support;
-use test_support::github_issue_label_session;
+use test_support::langitem_tag_session;
 
 mod matrix_symbol_resolution;
 
@@ -26,7 +26,11 @@ mod tau3_cli_chain;
 
 mod iterate_seed_identity;
 
+mod ra12_select_taught_fields;
+
 mod projected_alias_grain;
+
+mod ra17_prerequisite_seats;
 
 fn test_session() -> ExecuteSession {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -71,7 +75,9 @@ fn search_group_by_rejects_fields_outside_capability_provides() {
 bad = rows | summarize by summary n=count()
 bad"#,
     )
-    .expect_err("search rows omit relation fields from provides");
+    .expect_err(
+        "relations are not row fields on a search binding (RA-12 teaches entity fields, not hops)",
+    );
     assert!(err.contains("not a row field"), "{err}");
     assert!(
         !err.contains("projected columns"),
@@ -165,6 +171,60 @@ fn singleton_field_dot_bind_lowers_to_scalar_derive() {
         }),
         "title must not be row Project compute: {nodes:?}"
     );
+}
+
+#[test]
+fn bounded_singleton_field_extract_bind_and_argument_compile() {
+    let session = test_session();
+    for stages in [
+        "take 1",
+        "where owner = \"alice\" | order by title | take 1",
+        "take 1 | where owner = \"alice\" | select title | distinct",
+    ] {
+        for argument in ["one.title", "title"] {
+            let program = format!(
+                "items = LangItem\none = items | {stages}\ntitle = one.title\nout = LangItem(\"i1\").update(title={argument}, score=1, owner=\"alice\")\nout"
+            );
+            let plan = compile_plasm_dag_to_plan(
+                &PromptPipelineConfig::default(),
+                None,
+                &session,
+                "bounded-singleton-field",
+                &program,
+            )
+            .expect("bounded field extraction must compile at both sites");
+            let title = plan["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|n| n["id"] == "title")
+                .unwrap();
+            assert_eq!(title["kind"], "derive");
+            assert_eq!(title["derive_template"]["source"], "one");
+            evaluate_plasm_plan_dry(&session, &plan)
+                .expect("synthetic dry rows cannot decide filtered query membership");
+        }
+    }
+}
+
+#[test]
+fn take_two_field_extract_remains_plural() {
+    let session = test_session();
+    for tail in [
+        "value = one.title\nvalue",
+        "out = LangItem(\"i1\").update(title=one.title, score=1, owner=\"alice\")\nout",
+    ] {
+        let program = format!("items = LangItem\none = items | take 2\n{tail}");
+        let error = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "plural-field",
+            &program,
+        )
+        .expect_err("take 2 does not prove scalar extraction");
+        assert!(error.contains("singleton"), "{error}");
+    }
 }
 
 #[test]
@@ -371,7 +431,7 @@ bad"#,
 }
 
 #[test]
-fn apply_lowers_all_four_applicator_kinds() {
+fn apply_lowers_row_constructors_reads_relations_and_operations() {
     let session = test_session();
     let map = symbol_map_for_plasm_surface_parse(&session, None);
     let opaque_lines = map.ident_sym_relation_for("langmatrix", "LangItem", "lines");
@@ -383,7 +443,7 @@ fn apply_lowers_all_four_applicator_kinds() {
             ),
             (
                 "render",
-                "rows = LangItem\nout = rows => <<MD\n{% for row in rows %}{{ row.title }}{% endfor %}\nMD\nout"
+                "rows = LangItem\nout = rows => <<MD\n{{ title }}\nMD\nout"
                     .to_string(),
                 "compute",
             ),
@@ -398,7 +458,17 @@ fn apply_lowers_all_four_applicator_kinds() {
                 "relation",
             ),
             (
-                "for-each",
+                "get-apply",
+                "rows = LangItem\nout = rows => LangItem(_.id)\nout".to_string(),
+                "for_each",
+            ),
+            (
+                "query-apply",
+                "rows = LangItem\nout = rows => LangItem{owner=_.owner}\nout".to_string(),
+                "for_each",
+            ),
+            (
+                "operation-apply",
                 "rows = LangItem\nout = rows => LangItem(\"i1\").update(title=_.title, score=1, owner=\"a\")\nout"
                     .to_string(),
                 "for_each",
@@ -698,7 +768,7 @@ bad"#,
     );
 }
 
-/// Primary session `entry_id` is `github`, but `LangLine` was exposed from `linear` in teaching table
+/// Primary session `entry_id` is `langmatrix_a`, but `LangLine` was exposed from `langmatrix_b`
 /// — plan `qualified_entity` must use the owning catalog, not the lexicographic primary.
 #[test]
 fn federated_surface_qualified_entity_matches_exposure_catalog() {
@@ -711,22 +781,22 @@ fn federated_surface_qualified_entity_matches_exposure_catalog() {
     );
     let mut ctxs = indexmap::IndexMap::new();
     ctxs.insert(
-        "github".into(),
-        Arc::new(CgsContext::entry("github", cgs.clone())),
+        "langmatrix_a".into(),
+        Arc::new(CgsContext::entry("langmatrix_a", cgs.clone())),
     );
     ctxs.insert(
-        "linear".into(),
-        Arc::new(CgsContext::entry("linear", cgs.clone())),
+        "langmatrix_b".into(),
+        Arc::new(CgsContext::entry("langmatrix_b", cgs.clone())),
     );
     let layers: Vec<&CGS> = vec![cgs.as_ref(), cgs.as_ref()];
-    let mut exp = TeachingExposureSession::new(cgs.as_ref(), "github", &["LangItem"]);
-    exp.expose_entities(&layers, cgs.clone(), "linear", &["LangLine"]);
+    let mut exp = TeachingExposureSession::new(cgs.as_ref(), "langmatrix_a", &["LangItem"]);
+    exp.expose_entities(&layers, cgs.clone(), "langmatrix_b", &["LangLine"]);
     let session = ExecuteSession::new(
         "ph".into(),
         "p".into(),
         cgs.clone(),
         ctxs,
-        "github".into(),
+        "langmatrix_a".into(),
         String::new(),
         String::new(),
         None,
@@ -741,17 +811,17 @@ fn federated_surface_qualified_entity_matches_exposure_catalog() {
         .as_ref()
         .expect("exposure")
         .symbol_map_arc();
-    let e_linear = map.entity_sym_for("linear", "LangLine");
+    let e_line = map.entity_sym_for("langmatrix_b", "LangLine");
     let plan = compile_surface_fixture_json(
         &PromptPipelineConfig::default(),
         None,
         &session,
         "t",
-        &format!(r#"{e_linear}("L1")"#),
+        &format!(r#"{e_line}("L1")"#),
     )
     .expect("compile");
     let qe = &plan["nodes"][0]["qualified_entity"];
-    assert_eq!(qe["entry_id"], "linear", "{plan}");
+    assert_eq!(qe["entry_id"], "langmatrix_b", "{plan}");
     assert_eq!(qe["entity"], "LangLine");
 }
 
@@ -767,22 +837,22 @@ fn federated_duplicate_entity_name_e_symbol_stamps_catalog_in_plan() {
     );
     let mut ctxs = indexmap::IndexMap::new();
     ctxs.insert(
-        "github".into(),
-        Arc::new(CgsContext::entry("github", cgs.clone())),
+        "langmatrix_a".into(),
+        Arc::new(CgsContext::entry("langmatrix_a", cgs.clone())),
     );
     ctxs.insert(
-        "linear".into(),
-        Arc::new(CgsContext::entry("linear", cgs.clone())),
+        "langmatrix_b".into(),
+        Arc::new(CgsContext::entry("langmatrix_b", cgs.clone())),
     );
     let layers: Vec<&CGS> = vec![cgs.as_ref(), cgs.as_ref()];
-    let mut exp = TeachingExposureSession::new(cgs.as_ref(), "github", &["LangItem"]);
-    exp.expose_entities(&layers, cgs.clone(), "linear", &["LangItem"]);
+    let mut exp = TeachingExposureSession::new(cgs.as_ref(), "langmatrix_a", &["LangItem"]);
+    exp.expose_entities(&layers, cgs.clone(), "langmatrix_b", &["LangItem"]);
     let session = ExecuteSession::new(
         "ph".into(),
         "p".into(),
         cgs.clone(),
         ctxs,
-        "github".into(),
+        "langmatrix_a".into(),
         String::new(),
         String::new(),
         None,
@@ -792,7 +862,7 @@ fn federated_duplicate_entity_name_e_symbol_stamps_catalog_in_plan() {
         cgs.catalog_cgs_hash_hex(),
         None,
     );
-    for (sym, entry_id) in [("e1", "github"), ("e2", "linear")] {
+    for (sym, entry_id) in [("e1", "langmatrix_a"), ("e2", "langmatrix_b")] {
         let plan = compile_surface_fixture_json(
             &PromptPipelineConfig::default(),
             None,
@@ -807,7 +877,7 @@ fn federated_duplicate_entity_name_e_symbol_stamps_catalog_in_plan() {
     }
 }
 
-/// Federated primary is `linear` but relation target `LangDetail` resolves via owning CGS pointer, not primary `entry_id`.
+/// Federated primary is `langmatrix_b` but relation target `LangDetail` resolves via owning CGS pointer, not primary `entry_id`.
 #[test]
 fn federated_relation_target_qe_from_owning_catalog() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -819,22 +889,27 @@ fn federated_relation_target_qe_from_owning_catalog() {
     );
     let mut ctxs = indexmap::IndexMap::new();
     ctxs.insert(
-        "linear".into(),
-        Arc::new(CgsContext::entry("linear", cgs_primary.clone())),
+        "langmatrix_b".into(),
+        Arc::new(CgsContext::entry("langmatrix_b", cgs_primary.clone())),
     );
     ctxs.insert(
-        "pokeapi".into(),
-        Arc::new(CgsContext::entry("pokeapi", cgs_secondary.clone())),
+        "langmatrix_a".into(),
+        Arc::new(CgsContext::entry("langmatrix_a", cgs_secondary.clone())),
     );
     let layers: Vec<&CGS> = vec![cgs_primary.as_ref(), cgs_secondary.as_ref()];
-    let mut exp = TeachingExposureSession::new(cgs_primary.as_ref(), "linear", &["LangLine"]);
-    exp.expose_entities(&layers, cgs_secondary.clone(), "pokeapi", &["LangItem"]);
+    let mut exp = TeachingExposureSession::new(cgs_primary.as_ref(), "langmatrix_b", &["LangLine"]);
+    exp.expose_entities(
+        &layers,
+        cgs_secondary.clone(),
+        "langmatrix_a",
+        &["LangItem"],
+    );
     let session = ExecuteSession::new(
         "ph".into(),
         "p".into(),
         cgs_primary.clone(),
         ctxs,
-        "linear".into(),
+        "langmatrix_b".into(),
         String::new(),
         String::new(),
         None,
@@ -849,7 +924,7 @@ fn federated_relation_target_qe_from_owning_catalog() {
         .as_ref()
         .expect("exposure")
         .symbol_map_arc();
-    let e_poke = map.entity_sym_for("pokeapi", "LangItem");
+    let e_poke = map.entity_sym_for("langmatrix_a", "LangItem");
     let source = format!(
         r#"item = {e_poke}("LI1")
 summary = item.summary
@@ -871,7 +946,7 @@ summary"#
         .expect("summary node");
     assert_eq!(summary["kind"], "relation");
     assert_eq!(
-        summary["relation"]["target"]["entry_id"], "pokeapi",
+        summary["relation"]["target"]["entry_id"], "langmatrix_a",
         "{summary}"
     );
     assert_eq!(summary["relation"]["target"]["entity"], "LangSummary");
@@ -885,7 +960,7 @@ summary"#
     evaluate_plasm_plan_dry(&session, &plan).expect("federated relation dry-run");
 }
 
-/// Same wire entity in github+linear: relation hop from `e2` binding must target linear catalog.
+/// Same wire entity in langmatrix_a+langmatrix_b: relation hop from `e2` binding must target langmatrix_b.
 #[test]
 fn federated_duplicate_entity_relation_hop_preserves_source_catalog() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -897,22 +972,22 @@ fn federated_duplicate_entity_relation_hop_preserves_source_catalog() {
     );
     let mut ctxs = indexmap::IndexMap::new();
     ctxs.insert(
-        "github".into(),
-        Arc::new(CgsContext::entry("github", cgs.clone())),
+        "langmatrix_a".into(),
+        Arc::new(CgsContext::entry("langmatrix_a", cgs.clone())),
     );
     ctxs.insert(
-        "linear".into(),
-        Arc::new(CgsContext::entry("linear", cgs.clone())),
+        "langmatrix_b".into(),
+        Arc::new(CgsContext::entry("langmatrix_b", cgs.clone())),
     );
     let layers: Vec<&CGS> = vec![cgs.as_ref(), cgs.as_ref()];
-    let mut exp = TeachingExposureSession::new(cgs.as_ref(), "github", &["LangItem"]);
-    exp.expose_entities(&layers, cgs.clone(), "linear", &["LangItem"]);
+    let mut exp = TeachingExposureSession::new(cgs.as_ref(), "langmatrix_a", &["LangItem"]);
+    exp.expose_entities(&layers, cgs.clone(), "langmatrix_b", &["LangItem"]);
     let session = ExecuteSession::new(
         "ph".into(),
         "p".into(),
         cgs.clone(),
         ctxs,
-        "github".into(),
+        "langmatrix_a".into(),
         String::new(),
         String::new(),
         None,
@@ -927,7 +1002,7 @@ fn federated_duplicate_entity_relation_hop_preserves_source_catalog() {
         .as_ref()
         .expect("exposure")
         .symbol_map_arc();
-    let e2 = map.entity_sym_for("linear", "LangItem");
+    let e2 = map.entity_sym_for("langmatrix_b", "LangItem");
     let source = format!(
         r#"parent = {e2}("LI1")
 kids = parent.children
@@ -948,7 +1023,10 @@ kids"#
         .find(|n| n["id"] == "kids")
         .expect("kids node");
     assert_eq!(kids["kind"], "relation");
-    assert_eq!(kids["relation"]["target"]["entry_id"], "linear", "{kids}");
+    assert_eq!(
+        kids["relation"]["target"]["entry_id"], "langmatrix_b",
+        "{kids}"
+    );
     assert_eq!(kids["relation"]["target"]["entity"], "LangItem");
     evaluate_plasm_plan_dry(&session, &plan).expect("dry-run");
 }
@@ -965,22 +1043,22 @@ fn federated_secondary_catalog_query_and_create_phrase_ident() {
     );
     let mut ctxs = indexmap::IndexMap::new();
     ctxs.insert(
-        "github".into(),
-        Arc::new(CgsContext::entry("github", cgs.clone())),
+        "langmatrix_a".into(),
+        Arc::new(CgsContext::entry("langmatrix_a", cgs.clone())),
     );
     ctxs.insert(
-        "linear".into(),
-        Arc::new(CgsContext::entry("linear", cgs.clone())),
+        "langmatrix_b".into(),
+        Arc::new(CgsContext::entry("langmatrix_b", cgs.clone())),
     );
     let layers: Vec<&CGS> = vec![cgs.as_ref(), cgs.as_ref()];
-    let mut exp = TeachingExposureSession::new(cgs.as_ref(), "github", &["LangItem"]);
-    exp.expose_entities(&layers, cgs.clone(), "linear", &["LangItem"]);
+    let mut exp = TeachingExposureSession::new(cgs.as_ref(), "langmatrix_a", &["LangItem"]);
+    exp.expose_entities(&layers, cgs.clone(), "langmatrix_b", &["LangItem"]);
     let session = ExecuteSession::new(
         "ph".into(),
         "p".into(),
         cgs.clone(),
         ctxs,
-        "github".into(),
+        "langmatrix_a".into(),
         String::new(),
         String::new(),
         None,
@@ -995,7 +1073,7 @@ fn federated_secondary_catalog_query_and_create_phrase_ident() {
         .as_ref()
         .expect("exposure")
         .symbol_map_arc();
-    let e2 = map.entity_sym_for("linear", "LangItem");
+    let e2 = map.entity_sym_for("langmatrix_b", "LangItem");
 
     let query_plan = compile_plasm_dag_to_plan(
         &PromptPipelineConfig::default(),
@@ -1013,11 +1091,11 @@ fn federated_secondary_catalog_query_and_create_phrase_ident() {
         .expect("return_1 query node");
     assert_eq!(query_node["kind"], "query");
     assert_eq!(
-        query_node["qualified_entity"]["entry_id"], "linear",
+        query_node["qualified_entity"]["entry_id"], "langmatrix_b",
         "{query_node}"
     );
 
-    let create_m = map.method_sym_for("linear", "LangItem", "langitem_create");
+    let create_m = map.method_sym_for("langmatrix_b", "LangItem", "langitem_create");
     let unbound = format!(
         r#"bad = {e2}.{create_m}(title=hello)
 bad"#
@@ -1060,48 +1138,44 @@ created"#
         .expect("created node");
     assert_eq!(created["kind"], "create");
     assert_eq!(
-        created["qualified_entity"]["entry_id"], "linear",
+        created["qualified_entity"]["entry_id"], "langmatrix_b",
         "{created}"
     );
     evaluate_plasm_plan_dry(&session, &create_plan).expect("dry-run");
 }
 
-/// Real github+linear catalogs: linear `Issue.children` hop from `e2` binding (not github `sub_issues`).
+/// Federated duplicate `LangItem`: children hop from `e2` must stamp the owning catalog.
 #[test]
-fn federated_github_linear_issue_children_relation_dry_run() {
+fn federated_langmatrix_item_children_relation_dry_run() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let github_dir = root.join("../../apis/github");
-    let linear_dir = root.join("../../apis/linear");
-    if !github_dir.is_dir() || !linear_dir.is_dir() {
-        return;
-    }
-    let cgs_github = Arc::new(plasm_core::loader::load_schema_dir(&github_dir).expect("github"));
-    let cgs_linear = Arc::new(plasm_core::loader::load_schema_dir(&linear_dir).expect("linear"));
+    let dir = root.join("../../fixtures/schemas/plasm_language_matrix");
+    let cgs_a = Arc::new(plasm_core::loader::load_schema_dir(&dir).expect("langmatrix_a"));
+    let cgs_b = Arc::new(plasm_core::loader::load_schema_dir(&dir).expect("langmatrix_b"));
     let mut ctxs = indexmap::IndexMap::new();
     ctxs.insert(
-        "github".into(),
-        Arc::new(CgsContext::entry("github", cgs_github.clone())),
+        "langmatrix_a".into(),
+        Arc::new(CgsContext::entry("langmatrix_a", cgs_a.clone())),
     );
     ctxs.insert(
-        "linear".into(),
-        Arc::new(CgsContext::entry("linear", cgs_linear.clone())),
+        "langmatrix_b".into(),
+        Arc::new(CgsContext::entry("langmatrix_b", cgs_b.clone())),
     );
-    let layers: Vec<&CGS> = vec![cgs_github.as_ref(), cgs_linear.as_ref()];
-    let mut exp = TeachingExposureSession::new(cgs_github.as_ref(), "github", &["Issue"]);
-    exp.expose_entities(&layers, cgs_linear.clone(), "linear", &["Issue"]);
+    let layers: Vec<&CGS> = vec![cgs_a.as_ref(), cgs_b.as_ref()];
+    let mut exp = TeachingExposureSession::new(cgs_a.as_ref(), "langmatrix_a", &["LangItem"]);
+    exp.expose_entities(&layers, cgs_b.clone(), "langmatrix_b", &["LangItem"]);
     let session = ExecuteSession::new(
         "ph".into(),
         "p".into(),
-        cgs_github.clone(),
+        cgs_a.clone(),
         ctxs,
-        "github".into(),
+        "langmatrix_a".into(),
         String::new(),
         String::new(),
         None,
-        vec!["Issue".into()],
+        vec!["LangItem".into()],
         Some(exp),
         None,
-        cgs_github.catalog_cgs_hash_hex(),
+        cgs_a.catalog_cgs_hash_hex(),
         None,
     );
     let map = session
@@ -1109,10 +1183,10 @@ fn federated_github_linear_issue_children_relation_dry_run() {
         .as_ref()
         .expect("exposure")
         .symbol_map_arc();
-    let e2 = map.entity_sym_for("linear", "Issue");
-    let r_sym = map.ident_sym_relation_for("linear", "Issue", "children");
+    let e2 = map.entity_sym_for("langmatrix_b", "LangItem");
+    let r_sym = map.ident_sym_relation_for("langmatrix_b", "LangItem", "children");
     let source = format!(
-        r#"parent = {e2}("issue-id")
+        r#"parent = {e2}("LI1")
 kids = parent.{r_sym}
 kids"#
     );
@@ -1120,73 +1194,44 @@ kids"#
         &PromptPipelineConfig::default(),
         None,
         &session,
-        "fed-linear-children-real",
+        "fed-langitem-children",
         &source,
     )
-    .expect("compile real github+linear children hop");
+    .expect("compile federated LangItem children hop");
     let kids = plan["nodes"]
         .as_array()
         .expect("nodes")
         .iter()
         .find(|n| n["id"] == "kids")
         .expect("kids node");
-    assert_eq!(kids["relation"]["target"]["entry_id"], "linear", "{kids}");
-    evaluate_plasm_plan_dry(&session, &plan).expect("dry-run real catalogs");
+    assert_eq!(
+        kids["relation"]["target"]["entry_id"], "langmatrix_b",
+        "{kids}"
+    );
+    evaluate_plasm_plan_dry(&session, &plan).expect("dry-run federated children");
 }
 
-/// Faithful repro of the live Linear failure: real `apis/linear`, multi-entity opaque session
-/// (Issue + Label + Comment), then `comments | take 3 | select id, body` with opaque symbols.
-/// Before the fix this surfaced `team_key` (a receiver Issue field) when validating the Comment
-/// projection after the limit compute.
+/// Limit + project after a relation hop must resolve fields on the target entity
+/// (LangLine), not receiver fields on LangItem.
 #[test]
-fn linear_issue_comments_limit_projection_opaque_resolves_target() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let linear_dir = root.join("../../apis/linear");
-    if !linear_dir.is_dir() {
-        return;
-    }
-    let cgs = Arc::new(plasm_core::loader::load_schema_dir(&linear_dir).expect("linear"));
-    let mut ctxs = indexmap::IndexMap::new();
-    ctxs.insert(
-        "linear".into(),
-        Arc::new(CgsContext::entry("linear", cgs.clone())),
-    );
-    let exp = TeachingExposureSession::new(cgs.as_ref(), "linear", &["Issue", "Label", "Comment"]);
-    let session = ExecuteSession::new(
-        "ph".into(),
-        "p".into(),
-        cgs.clone(),
-        ctxs,
-        "linear".into(),
-        String::new(),
-        String::new(),
-        None,
-        vec!["Issue".into(), "Label".into(), "Comment".into()],
-        Some(exp),
-        None,
-        cgs.catalog_cgs_hash_hex(),
-        None,
-    );
+fn langitem_lines_limit_projection_opaque_resolves_target() {
+    let session = test_session();
     let map = session
         .teaching_exposure
         .as_ref()
         .expect("exposure")
         .symbol_map_arc();
-    let e_issue = map.entity_sym_for("linear", "Issue");
-    let r_comments = map.ident_sym_relation_for("linear", "Issue", "comments");
-    let p_id = map.ident_sym_entity_field_for("linear", "Comment", "id");
-    let p_body = map.ident_sym_entity_field_for("linear", "Comment", "body");
+    let e_item = map.entity_sym_for("langmatrix", "LangItem");
+    let r_lines = map.ident_sym_relation_for("langmatrix", "LangItem", "lines");
+    let p_id = map.ident_sym_entity_field_for("langmatrix", "LangLine", "id");
+    let p_note = map.ident_sym_entity_field_for("langmatrix", "LangLine", "note");
     let source = format!(
-        r#"issue = {e_issue}("PLASM-1")
-all_comments = issue.{r_comments}
-comments = all_comments | take 3
-comments | select {p_id}, {p_body}"#
+        r#"item = {e_item}("LI1")
+all_lines = item.{r_lines}
+lines = all_lines | take 3
+lines | select {p_id}, {p_note}"#
     );
-    assert_relation_limit_projection_targets(
-        &session,
-        "linear Issue.comments (real catalog)",
-        &source,
-    );
+    assert_relation_limit_projection_targets(&session, "LangItem.lines limit+project", &source);
 }
 
 #[test]
@@ -1200,19 +1245,19 @@ fn lookup_relation_chain_meta_requires_qe_federated() {
     );
     let mut ctxs = indexmap::IndexMap::new();
     ctxs.insert(
-        "github".into(),
-        Arc::new(CgsContext::entry("github", cgs.clone())),
+        "langmatrix_a".into(),
+        Arc::new(CgsContext::entry("langmatrix_a", cgs.clone())),
     );
     ctxs.insert(
-        "linear".into(),
-        Arc::new(CgsContext::entry("linear", cgs.clone())),
+        "langmatrix_b".into(),
+        Arc::new(CgsContext::entry("langmatrix_b", cgs.clone())),
     );
     let session = ExecuteSession::new(
         "ph".into(),
         "p".into(),
         cgs.clone(),
         ctxs,
-        "github".into(),
+        "langmatrix_a".into(),
         String::new(),
         String::new(),
         None,
@@ -1235,7 +1280,7 @@ fn lookup_relation_chain_meta_requires_qe_federated() {
 
 #[test]
 fn typed_relation_continuation_ir_has_no_domain_placeholder() {
-    let session = github_repository_commit_session();
+    let session = repository_commit_session();
     let source = r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
 commits = repo.commits
 one = commits.singleton()
@@ -1328,58 +1373,24 @@ fn rejects_return_prefixed_final_roots_in_dag() {
     assert!(err.contains("Remove `return`"), "unexpected: {err}");
 }
 
-fn linear_test_session(cgs: Arc<CGS>) -> ExecuteSession {
-    let mut ctxs = indexmap::IndexMap::new();
-    ctxs.insert(
-        "linear".into(),
-        Arc::new(CgsContext::entry("linear", cgs.clone())),
-    );
-    let exp = TeachingExposureSession::new(
-        cgs.as_ref(),
-        "linear",
-        &["Issue", "IssueContext", "MyWorkSnapshot", "Team", "Comment"],
-    );
-    ExecuteSession::new(
-        "ph".into(),
-        "p".into(),
-        cgs.clone(),
-        ctxs,
-        "linear".into(),
-        String::new(),
-        String::new(),
-        None,
-        exp.entities.clone(),
-        Some(exp),
-        None,
-        cgs.catalog_cgs_hash_hex(),
-        None,
-    )
-}
-
-/// Linear `Issue{…}` brace filters must plan as `search` (same as live `issue_search` resolution).
+/// Tilde search must plan as `search` (not primary query).
 #[test]
-fn linear_issue_brace_filter_plans_as_search() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let dir = root.join("../../apis/linear");
-    if !dir.exists() {
-        return;
-    }
-    let cgs = Arc::new(plasm_core::loader::load_schema_dir(&dir).expect("linear"));
-    let session = linear_test_session(cgs);
+fn langitem_tilde_search_plans_as_search() {
+    let session = test_session();
     let plan = compile_surface_fixture_json(
         &PromptPipelineConfig::default(),
         None,
         &session,
         "t",
-        "Issue{team_key=\"ENG\", state_name=\"Todo\"}",
+        r#"LangItem~"matrix""#,
     )
     .expect("compile");
     assert_eq!(plan["nodes"][0]["kind"].as_str(), Some("search"), "{plan}");
 }
 
-/// Linear `issue_search` rows include `team_key` in provides so agents can `group_by` on filter dimensions.
+/// Matrix `langitem_search` rows include filter dimensions so agents can `group_by` on them.
 #[test]
-fn linear_issue_search_group_by_team_key_dry_run() {
+fn langitem_search_group_by_owner_dry_run() {
     fn plan_group_by_keys(plan: &serde_json::Value) -> Vec<String> {
         let mut out = Vec::new();
         let Some(nodes) = plan.get("nodes").and_then(|n| n.as_array()) else {
@@ -1411,20 +1422,14 @@ fn linear_issue_search_group_by_team_key_dry_run() {
         out
     }
 
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let dir = root.join("../../apis/linear");
-    if !dir.exists() {
-        return;
-    }
-    let cgs = Arc::new(plasm_core::loader::load_schema_dir(&dir).expect("linear"));
-    let session = linear_test_session(cgs);
+    let session = test_session();
     let plan = compile_plasm_dag_to_plan(
         &PromptPipelineConfig::default(),
         None,
         &session,
-        "linear-search-group-by-team",
-        r#"issues = Issue~"matrix"
-by_team = issues | summarize by team_key n=count()
+        "langitem-search-group-by-team",
+        r#"items = LangItem~"matrix"
+by_team = items | summarize by team_key n=count()
 by_team"#,
     )
     .expect("compile");
@@ -1619,21 +1624,24 @@ fn multiline_heredoc_binding_then_parallel_roots_compiles() {
     assert_eq!(plan["return"]["kind"], "parallel");
 }
 
-fn github_repository_commit_session() -> ExecuteSession {
+fn repository_commit_session() -> ExecuteSession {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let cgs = Arc::new(load_schema(&root.join("../../apis/github")).expect("load github"));
+    let cgs = Arc::new(
+        load_schema(&root.join("../../fixtures/schemas/repository_commit_matrix"))
+            .expect("load repository/commit matrix"),
+    );
     let mut ctxs = indexmap::IndexMap::new();
     ctxs.insert(
-        "github".into(),
-        Arc::new(CgsContext::entry("github", cgs.clone())),
+        "repocommit".into(),
+        Arc::new(CgsContext::entry("repocommit", cgs.clone())),
     );
-    let exp = TeachingExposureSession::new(cgs.as_ref(), "github", &["Repository", "Commit"]);
+    let exp = TeachingExposureSession::new(cgs.as_ref(), "repocommit", &["Repository", "Commit"]);
     ExecuteSession::new(
         "ph".into(),
         "p".into(),
         cgs.clone(),
         ctxs,
-        "github".into(),
+        "repocommit".into(),
         String::new(),
         String::new(),
         None,
@@ -1647,7 +1655,7 @@ fn github_repository_commit_session() -> ExecuteSession {
 
 #[test]
 fn compiles_two_hop_one_cardinality_relation_binding_chain() {
-    let session = github_repository_commit_session();
+    let session = repository_commit_session();
     let source = r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
 commits = repo.commits
 one = commits.singleton()
@@ -1657,7 +1665,7 @@ author"#;
         &PromptPipelineConfig::default(),
         None,
         &session,
-        "github-two-hop-one-rel",
+        "repocommit-two-hop-one-rel",
         source,
     )
     .expect("compile");
@@ -1687,7 +1695,7 @@ author"#;
 /// `repo.<relation>` continues the bound repository Plasm and compiles to a `kind: relation` plan node.
 #[test]
 fn compiles_bound_node_ref_relation_chain_dag_to_valid_plan() {
-    let session = github_repository_commit_session();
+    let session = repository_commit_session();
     let source = r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
 commits = repo.commits
 commits"#;
@@ -1695,7 +1703,7 @@ commits"#;
         &PromptPipelineConfig::default(),
         None,
         &session,
-        "github-node-ref-rel",
+        "repocommit-node-ref-rel",
         source,
     )
     .expect("compile");
@@ -1737,17 +1745,16 @@ out"#;
         bound,
     )
     .expect("bound compile");
-    let ir_explicit = &plan_explicit["nodes"].as_array().unwrap()[0]["ir"]["expr"];
-    let ir_bound = &plan_bound["nodes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|n| n["id"] == "out")
-        .expect("out node")["ir"]["expr"];
-    assert_eq!(
-        ir_explicit, ir_bound,
-        "bound method invoke must lower to same IR as explicit anchor"
-    );
+    let explicit = &plan_explicit["nodes"][0]["ir"]["expr"];
+    let bound = plan_bound["nodes"].as_array().unwrap().iter()
+        .find(|n| n["id"] == "out").expect("out node");
+    let template = &bound["ir_template"]["expr"];
+    assert_eq!(explicit["capability"], template["capability"]);
+    assert_eq!(explicit["input"], template["input"]);
+    assert_eq!(explicit["target"]["entity_type"], template["target"]["entity_type"]);
+    assert!(bound["uses_result"].as_array().unwrap().iter().any(|r| r["node"] == "item"));
+    evaluate_plasm_plan_dry(&session, &plan_bound).expect("typed receiver template");
+
 }
 
 #[test]
@@ -1780,19 +1787,19 @@ out"#;
         .as_array()
         .unwrap()
         .last()
-        .expect("surface node")["ir"]["expr"]
+        .expect("surface node")["ir_template"]["expr"]
         .clone();
     let ir_bound = plan_bound["nodes"]
         .as_array()
         .unwrap()
         .iter()
         .find(|n| n["id"] == "out")
-        .expect("out node")["ir"]["expr"]
+        .expect("out node")["ir_template"]["expr"]
         .clone();
-    assert_eq!(
-        ir_explicit, ir_bound,
-        "bound method invoke with field-ref args must lower to same IR as explicit anchor"
-    );
+    assert_eq!(ir_explicit["capability"], ir_bound["capability"]);
+    assert_eq!(ir_explicit["input"], ir_bound["input"]);
+    assert!(ir_bound["input"].is_object(), "compare actual templates, not missing IR");
+    evaluate_plasm_plan_dry(&session, &plan_bound).expect("receiver and argument dependencies");
 }
 
 #[test]
@@ -1815,21 +1822,31 @@ bad"#,
 }
 
 #[test]
-fn take_one_does_not_enable_method_dot_continuation() {
+fn take_one_enables_semantic_method_receiver() {
     let session = test_session();
-    let err = compile_plasm_dag_to_plan(
+    let plan = compile_plasm_dag_to_plan(
         &PromptPipelineConfig::default(),
         None,
         &session,
         "take-one-method-dot",
         r#"items = LangItem
 one = items | take 1
-bad = one.update(title="x", score=1, owner="a")
-bad"#,
+done = one.update(title="x", score=1, owner="a")
+done"#,
     )
-    .expect_err("bounded singleton must not prove StaticSingleton");
-    assert!(err.contains("statically singleton"), "{err}");
-    assert!(err.contains("=>"), "{err}");
+    .expect("bounded singleton provides an entity receiver");
+    let node = plan["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["id"] == "done")
+        .unwrap();
+    assert!(node["uses_result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["node"] == "one"));
+    evaluate_plasm_plan_dry(&session, &plan).expect("receiver identity survives dry staging");
 }
 
 #[test]
@@ -1853,26 +1870,27 @@ bad"#,
 }
 
 #[test]
-fn github_commit_query_path_filter_symbols_distinct_and_map_to_path_wire() {
+fn repository_commit_query_path_filter_symbols_distinct_and_map_to_path_wire() {
     use plasm_core::expr_parser::parse_with_cgs_layers;
 
-    let session = github_repository_commit_session();
+    let session = repository_commit_session();
     let map = symbol_map_for_plasm_surface_parse(&session, None);
-    let path_p = map.ident_sym_cap_param_for("github", "Commit", "commit_query", "path");
-    let author_p = map.ident_sym_cap_param_for("github", "Commit", "commit_query", "by_author");
+    let path_p = map.ident_sym_cap_param_for("repocommit", "Commit", "commit_query", "path");
+    let author_p = map.ident_sym_cap_param_for("repocommit", "Commit", "commit_query", "by_author");
     let committer_p =
-        map.ident_sym_cap_param_for("github", "Commit", "commit_query", "by_committer");
+        map.ident_sym_cap_param_for("repocommit", "Commit", "commit_query", "by_committer");
     assert_ne!(
         path_p, committer_p,
         "path and by_committer must not share p#"
     );
     assert_ne!(path_p, author_p, "path and by_author must not share p#");
 
-    let commit_e = map.entity_sym_for("github", "Commit");
-    let repo_e = map.entity_sym_for("github", "Repository");
-    let owner_f = map.ident_sym_entity_field_for("github", "Repository", "owner");
-    let repo_f = map.ident_sym_entity_field_for("github", "Repository", "repo");
-    let repo_param = map.ident_sym_cap_param_for("github", "Commit", "commit_query", "repository");
+    let commit_e = map.entity_sym_for("repocommit", "Commit");
+    let repo_e = map.entity_sym_for("repocommit", "Repository");
+    let owner_f = map.ident_sym_entity_field_for("repocommit", "Repository", "owner");
+    let repo_f = map.ident_sym_entity_field_for("repocommit", "Repository", "repo");
+    let repo_param =
+        map.ident_sym_cap_param_for("repocommit", "Commit", "commit_query", "repository");
     let expr = format!(
         r#"{commit_e}{{{repo_param}={repo_e}({owner_f}=octocat, {repo_f}=Hello-World), {path_p}="README.md"}}"#
     );
@@ -1926,35 +1944,29 @@ rows"#
 
 #[test]
 fn relation_uses_result_includes_scope_binding_aliases() {
-    let session = github_issue_label_session();
-    let source = r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
-issues = Issue{repository=repo.full_name}
-labels = issues.labels
-labels"#;
+    let session = langitem_tag_session();
+    let source = r#"item = LangItem("i1")
+tags = item.tags
+tags"#;
     let plan = compile_plasm_dag_to_plan(
         &PromptPipelineConfig::default(),
         None,
         &session,
-        "github-issue-label-scope",
+        "langitem-tag-scope",
         source,
     )
     .expect("compile");
-    let labels = plan["nodes"]
+    let tags = plan["nodes"]
         .as_array()
         .expect("nodes")
         .iter()
-        .find(|n| n["id"] == "labels")
-        .expect("labels relation node");
-    let uses = labels["uses_result"].as_array().expect("uses_result");
+        .find(|n| n["id"] == "tags")
+        .expect("tags relation node");
+    let uses = tags["uses_result"].as_array().expect("uses_result");
     assert!(
         uses.iter()
-            .any(|u| u["node"] == "repo" && u["as"] == "repo"),
-        "expected repo in uses_result: {uses:?}"
-    );
-    assert!(
-        uses.iter()
-            .any(|u| u["node"] == "issues" && u["as"] == "source"),
-        "expected issues source in uses_result: {uses:?}"
+            .any(|u| u["node"] == "item" && (u["as"] == "item" || u["as"] == "source")),
+        "expected item in uses_result: {uses:?}"
     );
     let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
     let facts = dry
@@ -1976,20 +1988,20 @@ labels"#;
 
 #[test]
 fn lhs_gated_relation_segment_ignores_wrong_token() {
-    let session = github_issue_label_session();
+    let session = langitem_tag_session();
     let qe = QualifiedEntityKey {
-        entry_id: "github".into(),
-        entity: "Issue".into(),
+        entry_id: "langmatrix".into(),
+        entity: "LangItem".into(),
     };
     let wire = resolve_relation_segment_for_continuation(
         &session,
         None,
         &qe,
         "p99",
-        Some(plasm_core::ProgramBindingLabel("labels")),
+        Some(plasm_core::ProgramBindingLabel("tags")),
     )
     .expect("binding label selects relation wire");
-    assert_eq!(wire, "labels");
+    assert_eq!(wire, "tags");
 }
 
 /// Shared filter/relation wire resolves as relation in nav; legacy `p#` rejected; DAG LHS binding forgives wrong token.
@@ -2000,49 +2012,45 @@ fn homograph_p_rejected_in_parse_forgiven_with_lhs_binding_label() {
         resolve_relation_segment, RelationSegmentContext, RelationSegmentOutcome,
     };
 
-    let session = github_issue_label_session();
+    let session = langitem_tag_session();
     let map = symbol_map_for_plasm_surface_parse(&session, None);
-    let labels_wire = map.ident_sym_cap_param_for("github", "Issue", "issue_query", "labels");
-    assert_eq!(
-        labels_wire, "labels",
-        "labels filter param teaches as catalog wire name"
-    );
-    let issue_e = map.entity_sym_for("github", "Issue");
+    let tags_wire = map.ident_sym_relation_for("langmatrix", "LangItem", "tags");
+    let item_e = map.entity_sym_for("langmatrix", "LangItem");
     let stack = crate::plasm_plan_run::session_cgs_layer_stack(&session);
-    let line = format!("{issue_e}.{labels_wire}");
+    let line = format!("{item_e}.{tags_wire}");
     parse_with_cgs_layers_program(&line, &stack, map.clone(), None, false)
-        .expect("shared labels wire resolves as relation in nav");
+        .expect("shared tags wire resolves as relation in nav");
 
-    let issue_ent = session.cgs.get_entity("Issue").expect("Issue");
+    let item_ent = session.cgs.get_entity("LangItem").expect("LangItem");
     let ctx = RelationSegmentContext {
         map: &map,
-        entity: "Issue",
-        relations: &issue_ent.relations,
+        entity: "LangItem",
+        relations: &item_ent.relations,
         binding_label: None,
         allow_lhs_coercion: false,
     };
     assert!(matches!(
-        resolve_relation_segment(&ctx, labels_wire.as_str()),
-        RelationSegmentOutcome::Wire(w) if w == "labels"
+        resolve_relation_segment(&ctx, tags_wire.as_str()),
+        RelationSegmentOutcome::Wire(w) if w == "tags"
     ));
 
-    let legacy = format!("{issue_e}.p1");
+    let legacy = format!("{item_e}.p1");
     parse_with_cgs_layers_program(&legacy, &stack, map.clone(), None, false)
         .expect_err("legacy opaque p# must not resolve in relation nav");
 
     let qe = QualifiedEntityKey {
-        entry_id: "github".into(),
-        entity: "Issue".into(),
+        entry_id: "langmatrix".into(),
+        entity: "LangItem".into(),
     };
     let wire = resolve_relation_segment_for_continuation(
         &session,
         None,
         &qe,
         "p99",
-        Some(plasm_core::ProgramBindingLabel("labels")),
+        Some(plasm_core::ProgramBindingLabel("tags")),
     )
     .expect("LHS binding label selects relation wire");
-    assert_eq!(wire, "labels");
+    assert_eq!(wire, "tags");
 }
 
 #[test]
@@ -2146,25 +2154,25 @@ fn relation_fanout_projection_accepts_entity_witness_p_symbols() {
 
 #[test]
 fn flattened_single_liner_lhs_gated_relation_primary_return() {
-    let session = github_issue_label_session();
-    let source = r#"repo = Repository(owner="octocat", repo="Hello-World") issues = Issue{repository=repo.full_name} labels = issues.labels labels"#;
+    let session = langitem_tag_session();
+    let source = r#"item = LangItem("i1") tags = item.tags tags"#;
     let plan = compile_plasm_dag_to_plan(
         &PromptPipelineConfig::default(),
         None,
         &session,
-        "github-flattened-labels",
+        "flattened-tags",
         source,
     )
     .expect("flattened single-liner");
-    assert_eq!(plan["return"]["node"], "repo");
-    assert_eq!(plan["metadata"]["coerced_default_return"], "repo");
-    let labels = plan["nodes"]
+    assert_eq!(plan["return"]["node"], "item");
+    assert_eq!(plan["metadata"]["coerced_default_return"], "item");
+    let tags = plan["nodes"]
         .as_array()
         .expect("nodes")
         .iter()
-        .find(|n| n["id"] == "labels")
-        .expect("labels node");
-    assert_eq!(labels["relation"]["relation"], "labels");
+        .find(|n| n["id"] == "tags")
+        .expect("tags node");
+    assert_eq!(tags["relation"]["relation"], "tags");
 }
 
 #[test]
@@ -2200,35 +2208,34 @@ fn surface_line_compile_matches_dag_for_flattened_single_liner() {
 
 #[test]
 fn relation_plural_opaque_p2_continuation() {
-    let session = github_issue_label_session();
+    let session = langitem_tag_session();
     let map = symbol_map_for_plasm_surface_parse(&session, None);
-    let sym = map.ident_sym_relation_for("langmatrix", "Issue", "labels");
+    let sym = map.ident_sym_relation_for("langmatrix", "LangItem", "tags");
     let source = format!(
-        r#"repo = Repository(owner="octocat", repo="Hello-World")
-issues = Issue{{repository=repo.full_name}}
-labels = issues => _.{sym}
-labels"#
+        r#"items = LangItem
+tags = items => _.{sym}
+tags"#
     );
     let plan = compile_plasm_dag_to_plan(
         &PromptPipelineConfig::default(),
         None,
         &session,
-        "github-issue-labels-opaque-p",
+        "langitem-tags-opaque-p",
         &source,
     )
     .expect("compile opaque plural relation continuation");
-    let labels = plan["nodes"]
+    let tags = plan["nodes"]
         .as_array()
         .expect("nodes")
         .iter()
-        .find(|n| n["id"] == "labels")
-        .expect("labels relation node");
-    assert_eq!(labels["relation"]["relation"], "labels");
+        .find(|n| n["id"] == "tags")
+        .expect("tags relation node");
+    assert_eq!(tags["relation"]["relation"], "tags");
     assert_eq!(
-        labels["relation"]["source_cardinality"].as_str(),
+        tags["relation"]["source_cardinality"].as_str(),
         Some("many")
     );
-    assert_eq!(labels["relation"]["source"], "issues");
+    assert_eq!(tags["relation"]["source"], "items");
     evaluate_plasm_plan_dry(&session, &plan).expect("dry");
 }
 
@@ -2292,7 +2299,7 @@ fn language_matrix_plural_opaque_relation_continuation() {
 
 #[test]
 fn compiles_node_ref_relation_limit_and_project() {
-    let session = github_repository_commit_session();
+    let session = repository_commit_session();
     let source = r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
 commits = repo.commits
 limited = commits | take 20
@@ -2302,7 +2309,7 @@ projected"#;
         &PromptPipelineConfig::default(),
         None,
         &session,
-        "github-chain-limit-project",
+        "repocommit-chain-limit-project",
         source,
     )
     .expect("compile");
@@ -2313,7 +2320,7 @@ projected"#;
 
 #[test]
 fn bare_label_singleton_lowers_to_limit_preserving_commit_entity() {
-    let session = github_repository_commit_session();
+    let session = repository_commit_session();
     let source = r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
 all_commits = repo.commits
 commits = all_commits | take 3
@@ -2363,9 +2370,62 @@ tags"#;
     assert_eq!(dry.node_results.len(), nodes.len());
 }
 
+/// RA-10: `| where` on a surface bind must keep LangItem so `=> _.tags` compiles (T153021 986 lie).
+#[test]
+fn filter_on_surface_bind_preserves_langitem_entity() {
+    let session = test_session();
+    let source = r#"root = LangItem{owner="alice"}
+filtered = root | where owner="alice"
+tags = filtered => _.tags
+tags"#;
+    let plan = compile_plasm_dag_to_plan(
+        &PromptPipelineConfig::default(),
+        None,
+        &session,
+        "filter-surface-bind",
+        source,
+    )
+    .expect("compile");
+    let nodes = plan["nodes"].as_array().expect("nodes");
+    let filtered = nodes
+        .iter()
+        .find(|n| n["id"] == "filtered")
+        .expect("filtered");
+    assert_eq!(filtered["kind"], "compute");
+    assert_eq!(filtered["compute"]["op"]["kind"], "filter");
+    assert_eq!(filtered["compute"]["schema"]["entity"], json!("LangItem"));
+    let tags = nodes.iter().find(|n| n["id"] == "tags").expect("tags");
+    assert_eq!(tags["relation"]["relation"], "tags");
+    let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
+    assert_eq!(dry.node_results.len(), nodes.len());
+}
+
+/// RA-10: `| where` then `| take 1` must keep catalog entry_id (T153021 986 P12).
+#[test]
+fn filter_then_take_preserves_langitem_for_relation() {
+    let session = test_session();
+    let source = r#"root = LangItem{owner="alice"}
+filtered = root | where owner="alice"
+one = filtered | take 1
+tags = one => _.tags
+tags"#;
+    let plan = compile_plasm_dag_to_plan(
+        &PromptPipelineConfig::default(),
+        None,
+        &session,
+        "filter-then-take-bind",
+        source,
+    )
+    .expect("compile");
+    let nodes = plan["nodes"].as_array().expect("nodes");
+    let tags = nodes.iter().find(|n| n["id"] == "tags").expect("tags");
+    assert_eq!(tags["relation"]["relation"], "tags");
+    evaluate_plasm_plan_dry(&session, &plan).expect("dry");
+}
+
 #[test]
 fn bare_label_page_size_lowers_to_identity_project() {
-    let session = github_repository_commit_session();
+    let session = repository_commit_session();
     let source = r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
 raw = repo.commits
 commits = raw | take 5
@@ -2389,9 +2449,9 @@ paged"#;
 
 #[test]
 fn bracket_render_accepts_bare_label_singleton_on_source() {
-    let session = github_repository_commit_session();
+    let session = repository_commit_session();
     let map = symbol_map_for_plasm_surface_parse(&session, None);
-    let p_sha = map.ident_sym_entity_field_for("langmatrix", "Commit", "sha");
+    let p_sha = map.ident_sym_entity_field_for("repocommit", "Commit", "sha");
     let source = format!(
             "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\nraw = repo.commits\ncommits = raw | take 2 | select {p_sha}\nmail = commits.singleton() => <<MD\nx\nMD\nmail"
         );
@@ -2419,9 +2479,9 @@ fn bracket_render_accepts_bare_label_singleton_on_source() {
 
 #[test]
 fn bracket_render_content_rejected_as_program_root_with_actionable_copy() {
-    let session = github_repository_commit_session();
+    let session = repository_commit_session();
     let map = symbol_map_for_plasm_surface_parse(&session, None);
-    let p_sha = map.ident_sym_entity_field_for("langmatrix", "Commit", "sha");
+    let p_sha = map.ident_sym_entity_field_for("repocommit", "Commit", "sha");
     let source = format!(
             "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\nraw = repo.commits\ncommits = raw | take 1 | select {p_sha}\nmail = commits => <<MD\nx\nMD\nmail.content"
         );
@@ -2441,9 +2501,9 @@ fn bracket_render_content_rejected_as_program_root_with_actionable_copy() {
 
 #[test]
 fn derive_accepts_render_content_as_binding_rhs() {
-    let session = github_repository_commit_session();
+    let session = repository_commit_session();
     let map = symbol_map_for_plasm_surface_parse(&session, None);
-    let p_sha = map.ident_sym_entity_field_for("langmatrix", "Commit", "sha");
+    let p_sha = map.ident_sym_entity_field_for("repocommit", "Commit", "sha");
     let source = format!(
             "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\nraw = repo.commits\ncommits = raw | take 1 | select {p_sha}\nmail = commits => <<MD\nx\nMD\nout = mail => {{ content: mail.content }}\nout"
         );
@@ -2464,10 +2524,10 @@ fn derive_accepts_render_content_as_binding_rhs() {
 /// survive as literal `p#` paths that dry-run would project as null).
 #[test]
 fn dag_postfix_projection_expands_domain_field_symbols_to_wire_paths() {
-    let session = github_repository_commit_session();
+    let session = repository_commit_session();
     let map = symbol_map_for_plasm_surface_parse(&session, None);
-    let p_sha = map.ident_sym_entity_field_for("langmatrix", "Commit", "sha");
-    let p_msg = map.ident_sym_entity_field_for("langmatrix", "Commit", "message");
+    let p_sha = map.ident_sym_entity_field_for("repocommit", "Commit", "sha");
+    let p_msg = map.ident_sym_entity_field_for("repocommit", "Commit", "message");
     let source = format!(
             "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\nraw = repo.commits\ncommits = raw | take 2\ncommits | select {p_sha}, {p_msg}"
         );
@@ -2475,7 +2535,7 @@ fn dag_postfix_projection_expands_domain_field_symbols_to_wire_paths() {
         &PromptPipelineConfig::default(),
         None,
         &session,
-        "github-domain-projection",
+        "repocommit-domain-projection",
         &source,
     )
     .expect("compile");
@@ -2499,9 +2559,9 @@ fn dag_postfix_projection_expands_domain_field_symbols_to_wire_paths() {
 
 #[test]
 fn dag_postfix_sort_expands_domain_field_symbol_in_sort_key() {
-    let session = github_repository_commit_session();
+    let session = repository_commit_session();
     let map = symbol_map_for_plasm_surface_parse(&session, None);
-    let p_msg = map.ident_sym_entity_field_for("langmatrix", "Commit", "message");
+    let p_msg = map.ident_sym_entity_field_for("repocommit", "Commit", "message");
     let source = format!(
             "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\nraw = repo.commits\ncommits = raw | take 3\nordered = commits | order by {p_msg} desc\nordered"
         );
@@ -2509,7 +2569,7 @@ fn dag_postfix_sort_expands_domain_field_symbol_in_sort_key() {
         &PromptPipelineConfig::default(),
         None,
         &session,
-        "github-domain-sort",
+        "repocommit-domain-sort",
         &source,
     )
     .expect("compile");
@@ -2526,9 +2586,9 @@ fn dag_postfix_sort_expands_domain_field_symbol_in_sort_key() {
 
 #[test]
 fn dag_postfix_sort_whitespace_direction_expands_domain_field_symbol() {
-    let session = github_repository_commit_session();
+    let session = repository_commit_session();
     let map = symbol_map_for_plasm_surface_parse(&session, None);
-    let p_msg = map.ident_sym_entity_field_for("langmatrix", "Commit", "message");
+    let p_msg = map.ident_sym_entity_field_for("repocommit", "Commit", "message");
     let source = format!(
             "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\nraw = repo.commits\ncommits = raw | take 3\nordered = commits | order by {p_msg} desc\nordered"
         );
@@ -2536,7 +2596,7 @@ fn dag_postfix_sort_whitespace_direction_expands_domain_field_symbol() {
         &PromptPipelineConfig::default(),
         None,
         &session,
-        "github-domain-sort-whitespace",
+        "repocommit-domain-sort-whitespace",
         &source,
     )
     .expect("compile");
@@ -2636,9 +2696,9 @@ fn sort_field_error_recommends_p_symbols_not_projected_columns() {
 
 #[test]
 fn dag_postfix_aggregate_expands_domain_field_symbol_in_sum() {
-    let session = github_repository_commit_session();
+    let session = repository_commit_session();
     let map = symbol_map_for_plasm_surface_parse(&session, None);
-    let p_add = map.ident_sym_entity_field_for("langmatrix", "Commit", "stats_additions");
+    let p_add = map.ident_sym_entity_field_for("repocommit", "Commit", "stats_additions");
     let source = format!(
             "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\nraw = repo.commits\ncommits = raw | take 5\ntot = commits | summarize t=sum({p_add})\ntot"
         );
@@ -2646,7 +2706,7 @@ fn dag_postfix_aggregate_expands_domain_field_symbol_in_sum() {
         &PromptPipelineConfig::default(),
         None,
         &session,
-        "github-domain-aggregate",
+        "repocommit-domain-aggregate",
         &source,
     )
     .expect("compile");
@@ -2665,18 +2725,18 @@ fn dag_postfix_aggregate_expands_domain_field_symbol_in_sum() {
 
 #[test]
 fn dag_render_field_list_expands_domain_field_symbols() {
-    let session = github_repository_commit_session();
+    let session = repository_commit_session();
     let map = symbol_map_for_plasm_surface_parse(&session, None);
-    let p_sha = map.ident_sym_entity_field_for("langmatrix", "Commit", "sha");
-    let p_msg = map.ident_sym_entity_field_for("langmatrix", "Commit", "message");
+    let p_sha = map.ident_sym_entity_field_for("repocommit", "Commit", "sha");
+    let p_msg = map.ident_sym_entity_field_for("repocommit", "Commit", "message");
     let source = format!(
-            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\nraw = repo.commits\ncommits = raw | take 1 | select {p_sha}, {p_msg}\nout = commits => <<MD\n{{{{ rows | length }}}}\nMD\nout"
+            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\nraw = repo.commits\ncommits = raw | take 1 | select {p_sha}, {p_msg}\nout = commits => <<MD\n{{{{ sha }}}}\nMD\nout"
         );
     let plan = compile_plasm_dag_to_plan(
         &PromptPipelineConfig::default(),
         None,
         &session,
-        "github-domain-render",
+        "repocommit-domain-render",
         &source,
     )
     .expect("compile");
@@ -2692,23 +2752,23 @@ fn dag_render_field_list_expands_domain_field_symbols() {
         .iter()
         .map(|v| v.as_str().unwrap_or_default())
         .collect();
-    assert_eq!(col_names, vec!["sha", "message"]);
+    assert_eq!(col_names, vec!["sha"]);
 }
 
 #[test]
 fn dag_render_infers_columns_from_projected_binding() {
-    let session = github_repository_commit_session();
+    let session = repository_commit_session();
     let map = symbol_map_for_plasm_surface_parse(&session, None);
-    let p_sha = map.ident_sym_entity_field_for("langmatrix", "Commit", "sha");
-    let p_msg = map.ident_sym_entity_field_for("langmatrix", "Commit", "message");
+    let p_sha = map.ident_sym_entity_field_for("repocommit", "Commit", "sha");
+    let p_msg = map.ident_sym_entity_field_for("repocommit", "Commit", "message");
     let source = format!(
-            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\nraw = repo.commits\ncommits = raw | take 2 | select {p_sha}, {p_msg}\nreport = commits => <<MD\n{{{{ rows | length }}}}\nMD\nreport"
+            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\nraw = repo.commits\ncommits = raw | take 2 | select {p_sha}, {p_msg}\nreport = commits => <<MD\n{{{{ sha }}}}\nMD\nreport"
         );
     let plan = compile_plasm_dag_to_plan(
         &PromptPipelineConfig::default(),
         None,
         &session,
-        "github-inferred-render-projection",
+        "repocommit-inferred-render-projection",
         &source,
     )
     .expect("compile");
@@ -2725,24 +2785,24 @@ fn dag_render_infers_columns_from_projected_binding() {
         .map(|v| v.as_str().unwrap_or_default())
         .collect();
     col_names.sort();
-    assert_eq!(col_names, vec!["message", "sha"]);
+    assert_eq!(col_names, vec!["sha"]);
 }
 
 #[test]
 fn dag_render_infers_entity_row_columns_after_limit_only() {
-    let session = github_repository_commit_session();
+    let session = repository_commit_session();
     let source = r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
 raw = repo.commits
 commits = raw | take 20
 report = commits => <<MD
-{{ rows | length }}
+{{ sha }}
 MD
 report"#;
     let plan = compile_plasm_dag_to_plan(
         &PromptPipelineConfig::default(),
         None,
         &session,
-        "github-inferred-render-limit",
+        "repocommit-inferred-render-limit",
         source,
     )
     .expect("compile");
@@ -2754,21 +2814,16 @@ report"#;
     let op = &render["compute"]["op"];
     assert_eq!(op["kind"], "render");
     let cols = op["columns"].as_array().expect("columns");
-    assert!(
-        cols.len() >= 2,
-        "expected entity-backed columns (got {cols:?})"
-    );
     let names: Vec<_> = cols.iter().filter_map(|v| v.as_str()).collect();
-    assert!(names.contains(&"sha"), "{names:?}");
-    assert!(names.contains(&"message"), "{names:?}");
+    assert_eq!(names, vec!["sha"], "{names:?}");
 }
 
 #[test]
 fn dag_render_node_ref_postfix_explicit_columns_before_heredoc() {
-    let session = github_repository_commit_session();
+    let session = repository_commit_session();
     let map = symbol_map_for_plasm_surface_parse(&session, None);
-    let p_sha = map.ident_sym_entity_field_for("langmatrix", "Commit", "sha");
-    let p_msg = map.ident_sym_entity_field_for("langmatrix", "Commit", "message");
+    let p_sha = map.ident_sym_entity_field_for("repocommit", "Commit", "sha");
+    let p_msg = map.ident_sym_entity_field_for("repocommit", "Commit", "message");
     let source = format!(
             "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\nraw = repo.commits\ncommits = raw | take 20 | select {p_sha}, {p_msg}\nreport = commits => <<MD\nx\nMD\nreport"
         );
@@ -2776,7 +2831,7 @@ fn dag_render_node_ref_postfix_explicit_columns_before_heredoc() {
         &PromptPipelineConfig::default(),
         None,
         &session,
-        "github-render-chain-binding",
+        "repocommit-render-chain-binding",
         &source,
     )
     .expect("compile");
@@ -2792,36 +2847,41 @@ fn dag_render_node_ref_postfix_explicit_columns_before_heredoc() {
         .iter()
         .map(|v| v.as_str().unwrap_or_default())
         .collect();
-    assert_eq!(col_names, vec!["sha", "message"]);
+    assert!(
+        col_names.is_empty(),
+        "marker-free per-row render projects no columns: {col_names:?}"
+    );
 }
 
 #[test]
 fn dag_render_rejects_inference_from_prior_render_output() {
-    let session = github_repository_commit_session();
+    let session = repository_commit_session();
     let map = symbol_map_for_plasm_surface_parse(&session, None);
-    let p_sha = map.ident_sym_entity_field_for("langmatrix", "Commit", "sha");
-    let p_msg = map.ident_sym_entity_field_for("langmatrix", "Commit", "message");
+    let p_sha = map.ident_sym_entity_field_for("repocommit", "Commit", "sha");
+    let p_msg = map.ident_sym_entity_field_for("repocommit", "Commit", "message");
     let source = format!(
-            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\nraw = repo.commits\ncommits = raw | take 1 | select {p_sha}, {p_msg}\nfirst = commits => <<MD\n{{{{ r.sha }}}}\nMD\nbad = first => <<MD\ny\nMD\nbad"
+            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\nraw = repo.commits\ncommits = raw | take 1 | select {p_sha}, {p_msg}\nfirst = commits => <<MD\n{{{{ sha }}}}\nMD\nbad = first => <<MD\n{{{{ sha }}}}\nMD\nbad"
         );
     let err = compile_plasm_dag_to_plan(
         &PromptPipelineConfig::default(),
         None,
         &session,
-        "github-render-on-render",
+        "repocommit-render-on-render",
         &source,
     )
     .expect_err("render from render");
     assert!(
-        err.contains("cannot infer template columns")
-            || err.contains("row-to-text template result"),
+        err.contains("cannot infer")
+            || err.contains("row-to-text template result")
+            || err.contains("not a current-row field")
+            || err.contains("PLP-12"),
         "unexpected: {err}"
     );
 }
 
 #[test]
 fn compiles_continuation_from_projection_anchor() {
-    let session = github_repository_commit_session();
+    let session = repository_commit_session();
     let source = r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
 trimmed = repo[id]
 commits = trimmed.commits
@@ -2851,7 +2911,7 @@ commits"#;
 
 #[test]
 fn rejects_continuation_from_aggregate_anchor() {
-    let session = github_repository_commit_session();
+    let session = repository_commit_session();
     let source = r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
 commits = repo.commits
 totals = commits | summarize n=count()
@@ -2875,7 +2935,7 @@ bad = totals.commits"#;
 /// Direct `from … | take` must compile with the same plan shape as a bind-first pipeline.
 #[test]
 fn direct_surface_limit_equivalent_to_bind_first_two_node_plan() {
-    let session = github_repository_commit_session();
+    let session = repository_commit_session();
     let bind_first = r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
 commits = repo.commits
 x = commits | take 2
@@ -3076,10 +3136,10 @@ fn sort_accepts_direction_aliases() {
 /// must fail at compile time instead of producing all-null columns at runtime.
 #[test]
 fn postfix_projection_rejects_foreign_entity_domain_symbols() {
-    let session = github_repository_commit_session();
+    let session = repository_commit_session();
     let map = symbol_map_for_plasm_surface_parse(&session, None);
-    let p_repo = map.ident_sym_entity_field_for("github", "Repository", "open_issues_count");
-    let p_sha = map.ident_sym_entity_field_for("langmatrix", "Commit", "sha");
+    let p_repo = map.ident_sym_entity_field_for("repocommit", "Repository", "open_issues_count");
+    let p_sha = map.ident_sym_entity_field_for("repocommit", "Commit", "sha");
     let source = format!(
         r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
 all_commits = repo.commits
@@ -3112,9 +3172,9 @@ mod projection_props {
     use proptest::prelude::*;
     use std::sync::OnceLock;
 
-    fn github_session_cached() -> &'static ExecuteSession {
+    fn repository_commit_session_cached() -> &'static ExecuteSession {
         static CELL: OnceLock<ExecuteSession> = OnceLock::new();
-        CELL.get_or_init(github_repository_commit_session)
+        CELL.get_or_init(repository_commit_session)
     }
 
     proptest! {
@@ -3130,7 +3190,7 @@ mod projection_props {
                 set.insert(fields[i % fields.len()]);
             }
             let proj = set.into_iter().collect::<Vec<_>>().join(",");
-            let session = github_session_cached();
+            let session = repository_commit_session_cached();
             let source = format!(
                 r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
 all_commits = repo.commits
@@ -3152,7 +3212,7 @@ commits"#
         fn repository_field_name_literal_in_commit_projection_fails(
             bad in "(open_issues_count|forks_count|stargazers_count)"
         ) {
-            let session = github_session_cached();
+            let session = repository_commit_session_cached();
             let source = format!(
                 r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
 all_commits = repo.commits
@@ -3278,7 +3338,7 @@ static body
 RPT
 items = LangItem | take 2
 created = items => LangItem.create(title=<<T
-{{ report.content }}
+{{ report }}
 T
 )
 created"#;
@@ -3310,7 +3370,7 @@ fn render_applicator_compiles_matrix_program() {
     let session = test_session();
     let source = r#"a = LangItem("i1") | select id, title
 report = a => <<MD
-Item: {{ a.id }}
+Item: {{ id }}
 MD
 report"#;
     let plan = compile_plasm_dag_to_plan(
@@ -3500,6 +3560,89 @@ ok"#,
         uses.iter().any(|u| u["node"] == "t"),
         "title=t must reference scalar binding: {uses:?}"
     );
+}
+
+/// PLP-1 form 3: `param=e#("id").wire` is the same checked scalar cell.
+#[test]
+fn invoke_accepts_inline_get_scalar_extract_into_string_param() {
+    let session = test_session();
+    let plan = compile_plasm_dag_to_plan(
+        &PromptPipelineConfig::default(),
+        None,
+        &session,
+        "lang_get_singleton_field_argument",
+        r#"ok = LangItem("i1").update(title=LangItem("i2").title, score=1, owner="a")
+ok"#,
+    )
+    .expect("inline Get scalar extract must fill string param");
+    let updated = plan["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .find(|n| n["id"] == "ok")
+        .expect("ok node");
+    let uses = updated["uses_result"].as_array().expect("uses_result");
+    assert!(
+        uses.iter()
+            .any(|u| u["node"].as_str().is_some_and(|n| n.contains("gse"))),
+        "title=LangItem(\"i2\").title must reference the expanded Get extract: {uses:?}"
+    );
+}
+
+/// RA-14 + RA-9: `| select dest = password` rematerializes policy; dest cannot fill a non-password slot.
+#[test]
+fn select_password_alias_preserves_ra9_policy() {
+    let session = test_session();
+    let err = compile_plasm_dag_to_plan(
+        &PromptPipelineConfig::default(),
+        None,
+        &session,
+        "lang_union_select_policy",
+        r#"v = LangVault("venmo")
+s = v | select leaked = password | take 1
+bad = LangItem("i1").update(title=s.leaked, score=1, owner="a")
+bad"#,
+    )
+    .expect_err("renamed password cell must still be RA-9");
+    assert!(
+        err.contains("RA-9") && err.contains("title"),
+        "select dest=password must rematerialize password policy, got: {err}"
+    );
+}
+
+/// RA-14: `| distinct` after `| select dest = src` keeps dest (matrix `lang_union_rowset_alias_distinct`).
+#[test]
+fn select_alias_survives_distinct() {
+    let session = test_session();
+    compile_plasm_dag_to_plan(
+        &PromptPipelineConfig::default(),
+        None,
+        &session,
+        "lang_union_rowset_alias_distinct",
+        r#"sent = LangItem | where owner = "alice" | select email = owner
+recv = LangItem | where owner = "bob" | select email = owner
+peers = sent | union recv | distinct
+kept = LangItem | where owner in (peers | select email)
+kept"#,
+    )
+    .expect("| distinct must keep RA-14 dest columns for later | select dest");
+}
+
+/// RA-9 success: rematerialized dest may fill the same password value_ref.
+#[test]
+fn select_password_alias_fills_matching_password_param() {
+    let session = test_session();
+    compile_plasm_dag_to_plan(
+        &PromptPipelineConfig::default(),
+        None,
+        &session,
+        "lang_select_password_same_value_ref",
+        r#"v = LangVault("venmo")
+s = v | select secret = password | take 1
+ok = v.unlock(secret=s.secret)
+ok"#,
+    )
+    .expect("select dest=password must fill the matching password param");
 }
 
 #[test]

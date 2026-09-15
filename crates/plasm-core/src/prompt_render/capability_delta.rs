@@ -400,49 +400,53 @@ mod tests {
     #[test]
     fn filtered_delta_includes_optional_legend_gloss_rows() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let cgs = load_schema_dir(&root.join("../../apis/github")).expect("github");
-        let entities = vec!["Repository".to_string(), "Issue".to_string()];
+        let cgs = load_schema_dir(&root.join("../../fixtures/schemas/plasm_language_matrix"))
+            .expect("plasm_language_matrix");
+        let entities = vec!["LangItem".to_string()];
         let delta = crate::capability_exposure::explicit_entity_capability_surface(
-            &cgs, "github", &entities,
+            &cgs,
+            "langmatrix",
+            &entities,
         )
         .expect("explicit fixture capability exposure");
         let exp = TeachingExposureSession::new_with_intent_delta(
             &cgs,
-            "github",
-            &["Repository", "Issue"],
+            "langmatrix",
+            &["LangItem"],
             delta,
         );
         let cap_key = ExposureCapabilityKey {
-            entry_id: "github".into(),
-            domain: crate::EntityName::from("Issue"),
-            capability: crate::CapabilityName::from("issue_create"),
+            entry_id: "langmatrix".into(),
+            domain: crate::EntityName::from("LangItem"),
+            capability: crate::CapabilityName::from("langitem_create"),
         };
         let new_caps = BTreeSet::from([cap_key.clone()]);
         let cfg = RenderConfig::for_eval(None);
         let map = exp.symbol_map_arc();
-        let labels_pair = capability_exposure_param_pairs(
+        let tags_pair = capability_exposure_param_pairs(
             &exp,
             map.as_ref(),
             &cap_key,
-            cgs.get_capability("issue_create").expect("issue_create"),
+            cgs.get_capability("langitem_create")
+                .expect("langitem_create"),
             CapabilityParamSurfaceFilter::AllOnSurface,
         )
         .into_iter()
-        .find(|(wire, _)| wire == "labels");
+        .find(|(wire, _)| wire == "tags");
         let tsv = render_teaching_new_capabilities_delta_tsv(&cgs, cfg, &exp, &new_caps);
-        if let Some((_, labels_sym)) = labels_pair {
+        if let Some((_, tags_sym)) = tags_pair {
             assert!(
-                tsv.contains(&format!("{labels_sym}\t")),
-                "delta must include labels p# gloss row when on surface: {tsv}"
+                tsv.contains(&format!("{tags_sym}\t")),
+                "delta must include tags p# gloss row when on surface: {tsv}"
             );
         }
         assert!(
-            tsv.contains("issue_create") || tsv.contains(".m"),
-            "delta must include invoke witness for issue_create: {tsv}"
+            tsv.contains("langitem_create") || tsv.contains(".m"),
+            "delta must include invoke witness for langitem_create: {tsv}"
         );
         assert!(
-            tsv.contains("labels=") || tsv.contains("label"),
-            "invoke row must name labels param: {tsv}"
+            tsv.contains("tags=") || tsv.contains("tag"),
+            "invoke row must name tags param: {tsv}"
         );
     }
 
@@ -542,21 +546,24 @@ mod tests {
     }
 
     #[test]
-    fn optional_legend_pairs_name_wire_for_github_issue_create() {
+    fn optional_legend_pairs_name_wire_for_langitem_create() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let cgs = load_schema_dir(&root.join("../../apis/github")).expect("github");
-        let exp = TeachingExposureSession::new(&cgs, "github", &["Repository", "Issue"]);
+        let cgs = load_schema_dir(&root.join("../../fixtures/schemas/plasm_language_matrix"))
+            .expect("plasm_language_matrix");
+        let exp = TeachingExposureSession::new(&cgs, "langmatrix", &["LangItem"]);
         let map = exp.symbol_map_arc();
-        let cap = cgs.get_capability("issue_create").expect("issue_create");
+        let cap = cgs
+            .get_capability("langitem_create")
+            .expect("langitem_create");
         let pairs = crate::symbol_tuning::capability_optional_legend_param_pairs(
             map.as_ref(),
-            "github",
-            "Issue",
+            "langmatrix",
+            "LangItem",
             cap,
         );
         assert!(
-            pairs.iter().any(|(w, s)| w == "labels" && s == "labels"),
-            "labels optional legend must use wire name: {pairs:?}"
+            pairs.iter().any(|(w, s)| w == "tags" && s == "tags"),
+            "tags optional legend must use wire name: {pairs:?}"
         );
     }
 }

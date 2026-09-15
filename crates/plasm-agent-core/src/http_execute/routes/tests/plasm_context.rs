@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_support::block_on_worker_stack;
 
 #[tokio::test]
 async fn open_wire_is_table_only() {
@@ -63,7 +64,7 @@ async fn open_wire_is_table_only() {
 
 #[tokio::test]
 async fn open_wire_includes_seeded_abstract_entity_row() {
-    let Some(st) = test_state_with_linear_registry() else {
+    let Some(st) = test_state_with_langmatrix_registry() else {
         return;
     };
     let out = apply_capability_seeds(
@@ -71,8 +72,8 @@ async fn open_wire_includes_seeded_abstract_entity_row() {
         None,
         None,
         vec![CapabilitySeed {
-            entry_id: "linear".into(),
-            entity: "IssueContext".into(),
+            entry_id: "langmatrix".into(),
+            entity: "LangItem".into(),
         }],
         None,
         None,
@@ -88,7 +89,7 @@ async fn open_wire_includes_seeded_abstract_entity_row() {
         .expect("open wave");
     assert!(
         open.markdown_delta.contains("e1"),
-        "abstract IssueContext seed must assign e1: {}",
+        "langmatrix LangItem seed must assign e1: {}",
         open.markdown_delta.chars().take(500).collect::<String>()
     );
     let data_rows: Vec<_> = open
@@ -102,8 +103,12 @@ async fn open_wire_includes_seeded_abstract_entity_row() {
     );
 }
 
-#[tokio::test]
-async fn same_intent_federated_expand_assigns_distinct_e_symbols() {
+#[test]
+fn same_intent_federated_expand_assigns_distinct_e_symbols() {
+    block_on_worker_stack(same_intent_federated_expand_assigns_distinct_e_symbols_inner);
+}
+
+async fn same_intent_federated_expand_assigns_distinct_e_symbols_inner() {
     const INTENT: &str = "matrix federated lang items same intent";
     let Some(st) = test_state_with_matrix_federated_registry() else {
         return;
@@ -114,7 +119,7 @@ async fn same_intent_federated_expand_assigns_distinct_e_symbols() {
         None,
         None,
         vec![CapabilitySeed {
-            entry_id: "github".into(),
+            entry_id: "langmatrix_a".into(),
             entity: "LangItem".into(),
         }],
         None,
@@ -132,7 +137,7 @@ async fn same_intent_federated_expand_assigns_distinct_e_symbols() {
         .expect("open wave");
     assert!(
         open.markdown_delta.contains("e1"),
-        "github LangItem should be e1: {}",
+        "langmatrix_a LangItem should be e1: {}",
         open.markdown_delta.chars().take(400).collect::<String>()
     );
 
@@ -143,11 +148,11 @@ async fn same_intent_federated_expand_assigns_distinct_e_symbols() {
         Some(binding),
         vec![
             CapabilitySeed {
-                entry_id: "github".into(),
+                entry_id: "langmatrix_a".into(),
                 entity: "LangItem".into(),
             },
             CapabilitySeed {
-                entry_id: "linear".into(),
+                entry_id: "langmatrix_b".into(),
                 entity: "LangItem".into(),
             },
         ],
@@ -169,7 +174,7 @@ async fn same_intent_federated_expand_assigns_distinct_e_symbols() {
         .expect("federate wave");
     assert!(
         federated.markdown_delta.contains("e2"),
-        "linear LangItem delta must assign e2: {}",
+        "langmatrix_b LangItem delta must assign e2: {}",
         federated
             .markdown_delta
             .chars()
@@ -183,11 +188,11 @@ async fn same_intent_federated_expand_assigns_distinct_e_symbols() {
         Some(binding),
         vec![
             CapabilitySeed {
-                entry_id: "github".into(),
+                entry_id: "langmatrix_a".into(),
                 entity: "LangItem".into(),
             },
             CapabilitySeed {
-                entry_id: "linear".into(),
+                entry_id: "langmatrix_b".into(),
                 entity: "LangItem".into(),
             },
         ],
@@ -287,8 +292,12 @@ fn tool_meta_keeps_slim_agent_keys() {
 }
 
 /// Federated extend: TSV delta assigns `e4` for a new catalog row; `plasm` must parse the same `e#`.
-#[tokio::test]
-async fn federated_extend_second_catalog_e_symbol_compiles_after_delta_tsv() {
+#[test]
+fn federated_extend_second_catalog_e_symbol_compiles_after_delta_tsv() {
+    block_on_worker_stack(federated_extend_second_catalog_e_symbol_compiles_after_delta_tsv_inner);
+}
+
+async fn federated_extend_second_catalog_e_symbol_compiles_after_delta_tsv_inner() {
     const INTENT: &str = "matrix federated extend e4 compile parity";
     let Some(st) = test_state_with_matrix_federated_registry() else {
         return;
@@ -300,15 +309,15 @@ async fn federated_extend_second_catalog_e_symbol_compiles_after_delta_tsv() {
         None,
         vec![
             CapabilitySeed {
-                entry_id: "linear".into(),
+                entry_id: "langmatrix_b".into(),
                 entity: "LangItem".into(),
             },
             CapabilitySeed {
-                entry_id: "linear".into(),
+                entry_id: "langmatrix_b".into(),
                 entity: "LangLine".into(),
             },
             CapabilitySeed {
-                entry_id: "linear".into(),
+                entry_id: "langmatrix_b".into(),
                 entity: "LangTag".into(),
             },
         ],
@@ -318,7 +327,7 @@ async fn federated_extend_second_catalog_e_symbol_compiles_after_delta_tsv() {
         INTENT,
     )
     .await
-    .expect("linear open");
+    .expect("langmatrix_b open");
     assert!(first.new_symbol_space);
 
     let binding = (first.prompt_hash.as_str(), first.session_id.as_str());
@@ -327,7 +336,7 @@ async fn federated_extend_second_catalog_e_symbol_compiles_after_delta_tsv() {
         None,
         Some(binding),
         vec![CapabilitySeed {
-            entry_id: "github".into(),
+            entry_id: "langmatrix_a".into(),
             entity: "LangDetail".into(),
         }],
         None,
@@ -336,7 +345,7 @@ async fn federated_extend_second_catalog_e_symbol_compiles_after_delta_tsv() {
         INTENT,
     )
     .await
-    .expect("github federate");
+    .expect("langmatrix_a federate");
     assert!(
         !extend.new_symbol_space,
         "same intent must reuse symbol space"
@@ -348,7 +357,7 @@ async fn federated_extend_second_catalog_e_symbol_compiles_after_delta_tsv() {
         .expect("federate wave");
     assert!(
         federated.markdown_delta.contains("e4"),
-        "github LangDetail delta must assign e4: {}",
+        "langmatrix_a LangDetail delta must assign e4: {}",
         federated
             .markdown_delta
             .chars()
@@ -363,9 +372,9 @@ async fn federated_extend_second_catalog_e_symbol_compiles_after_delta_tsv() {
     let exp = sess.teaching_exposure.as_ref().expect("exposure");
     let map = exp.symbol_map_arc();
     assert_eq!(
-        map.entity_sym_for("github", "LangDetail"),
+        map.entity_sym_for("langmatrix_a", "LangDetail"),
         "e4",
-        "exposure symbol map must stamp e4 for github LangDetail"
+        "exposure symbol map must stamp e4 for langmatrix_a LangDetail"
     );
 
     let pipeline = st.engine.prompt_pipeline();

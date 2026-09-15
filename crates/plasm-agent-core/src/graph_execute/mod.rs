@@ -40,7 +40,8 @@ impl GraphExecuteBranch {
     /// Snapshot graph + clone response/query stores under the session lock.
     pub async fn fork(sess: &ExecuteSession) -> Self {
         let guard = sess.lock_graph_cache().await;
-        let (mat, base) = fork_materialization(guard.materialization());
+        let (mut mat, base) = fork_materialization(guard.materialization());
+        mat.set_prerequisite_deployments(sess.prerequisite_deployments.clone());
         Self { mat, base }
     }
 

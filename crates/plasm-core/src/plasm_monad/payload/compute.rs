@@ -51,6 +51,10 @@ pub enum ComputeOp {
     With {
         columns: Vec<WithColumn>,
     },
+    /// RA-14 set-union; `source` is the left rowset, `other` is the right binding.
+    Union {
+        other: OutputName,
+    },
     Render {
         columns: Vec<OutputName>,
         template: String,
@@ -66,6 +70,23 @@ pub enum ComputeOp {
         )]
         render_bindings: Vec<OutputName>,
     },
+}
+
+impl ComputeOp {
+    /// RA-10: grain-preserving row algebra keeps parent Γ (entity, continuation).
+    /// `Project` / `Filter` / `Sort` / `Limit` / `DedupeBy` / `With` inherit; grain-changing
+    /// `Aggregate` / `GroupBy` / `Render` / `Union` do not.
+    pub fn preserves_row_identity(&self) -> bool {
+        matches!(
+            self,
+            Self::Project { .. }
+                | Self::Filter { .. }
+                | Self::Sort { .. }
+                | Self::Limit { .. }
+                | Self::DedupeBy { .. }
+                | Self::With { .. }
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -159,5 +180,53 @@ where
         other => Err(D::Error::custom(format!(
             "group_by keys must be a string or array, got {other}"
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preserves_row_identity_table() {
+        assert!(ComputeOp::Filter {
+            predicates: Vec::new()
+        }
+        .preserves_row_identity());
+        assert!(ComputeOp::Sort {
+            key: FieldPath::from_dotted("title").expect("path"),
+            descending: false,
+        }
+        .preserves_row_identity());
+        assert!(ComputeOp::Limit { count: 1 }.preserves_row_identity());
+        assert!(ComputeOp::DedupeBy { keys: Vec::new() }.preserves_row_identity());
+        assert!(ComputeOp::With {
+            columns: Vec::new()
+        }
+        .preserves_row_identity());
+        assert!(ComputeOp::Project {
+            fields: Default::default()
+        }
+        .preserves_row_identity());
+        assert!(!ComputeOp::Aggregate {
+            aggregates: Vec::new()
+        }
+        .preserves_row_identity());
+        assert!(!ComputeOp::GroupBy {
+            keys: vec![FieldPath::from_dotted("owner").expect("path")],
+            aggregates: Vec::new(),
+        }
+        .preserves_row_identity());
+        assert!(!ComputeOp::Render {
+            columns: Vec::new(),
+            template: String::new(),
+            column_aliases: Default::default(),
+            render_bindings: Vec::new(),
+        }
+        .preserves_row_identity());
+        assert!(!ComputeOp::Union {
+            other: OutputName::new("peers").expect("name"),
+        }
+        .preserves_row_identity());
     }
 }

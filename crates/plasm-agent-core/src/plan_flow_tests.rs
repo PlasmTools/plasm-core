@@ -103,6 +103,244 @@ fn forbidden_untrusted_to_outbound_sink_denies_mutation() {
 }
 
 #[test]
+fn union_clean_left_sensitive_right_keeps_labels_into_mutation() {
+    let mut catalog = FlowCatalogView::default();
+    let clean_key = QualifiedCapabilityKey::from_parts("flow", "PublicNote", "public_note_query");
+    let secret_key = QualifiedCapabilityKey::from_parts("flow", "SecretNote", "secret_note_query");
+    let send_key = QualifiedCapabilityKey::from_parts("flow", "Message", "send");
+    catalog
+        .capability_output_labels
+        .insert(clean_key, BTreeSet::new());
+    catalog.capability_output_labels.insert(
+        secret_key,
+        BTreeSet::from([DataClassName::new("credentials").expect("credentials")]),
+    );
+    catalog.capability_sink_params.insert(
+        send_key,
+        vec![SinkParamRef {
+            param: CapabilityParamName::from("body"),
+            sink_class: Some(SinkClassName::new("outbound_body").expect("sink")),
+        }],
+    );
+
+    let plan = serde_json::json!({
+        "version": 1,
+        "kind": "program",
+        "nodes": [
+            {
+                "id": "clean",
+                "kind": "query",
+                "qualified_entity": { "entry_id": "flow", "entity": "PublicNote" },
+                "expr": "PublicNote",
+                "ir": { "expr": { "op": "query", "entity": "PublicNote" } },
+                "effect_class": "read",
+                "result_shape": "list"
+            },
+            {
+                "id": "sensitive",
+                "kind": "query",
+                "qualified_entity": { "entry_id": "flow", "entity": "SecretNote" },
+                "expr": "SecretNote",
+                "ir": { "expr": { "op": "query", "entity": "SecretNote" } },
+                "effect_class": "read",
+                "result_shape": "list"
+            },
+            {
+                "id": "united",
+                "kind": "compute",
+                "effect_class": "artifact_read",
+                "result_shape": "list",
+                "depends_on": ["clean", "sensitive"],
+                "uses_result": [
+                    { "node": "clean", "as": "source" },
+                    { "node": "sensitive", "as": "sensitive" }
+                ],
+                "compute": {
+                    "source": "clean",
+                    "op": { "kind": "union", "other": "sensitive" },
+                    "schema": { "fields": [{ "name": "body", "value_kind": "string" }] }
+                }
+            },
+            {
+                "id": "send",
+                "kind": "action",
+                "qualified_entity": { "entry_id": "flow", "entity": "Message" },
+                "depends_on": ["united"],
+                "uses_result": [{ "node": "united", "as": "united" }],
+                "effect_class": "side_effect",
+                "result_shape": "side_effect_ack",
+                "ir_template": {
+                    "expr": {
+                        "op": "invoke",
+                        "capability": "send",
+                        "target": { "entity_type": "Message", "key": { "id": "1" } },
+                        "input": {
+                            "body": { "__plasm_hole": { "kind": "node_input", "alias": "united", "path": ["body"] } }
+                        }
+                    }
+                }
+            }
+        ],
+        "return": { "kind": "node", "node": "send" }
+    });
+    let validated = parse_and_validate_plan_json(&plan).expect("validate");
+    let topo: Vec<String> = validated
+        .topological_order()
+        .iter()
+        .map(|id| id.as_str().to_string())
+        .collect();
+    let policy = FlowPolicy {
+        forbidden: vec![ForbiddenFlowRule {
+            from_label: DataClassName::new("credentials").expect("credentials"),
+            to_sink: Some(SinkClassName::new("outbound_body").expect("sink")),
+            reason: Some("credentials cannot reach outbound body".into()),
+        }],
+        ..FlowPolicy::default()
+    };
+    let snapshot = FlowPolicySnapshot::Active {
+        revision: PolicyRevision(1),
+        policy,
+    };
+    let checked = verify_plan_flow(validated.artifact(), &topo, &catalog, &snapshot);
+    let united = checked
+        .analysis
+        .node_facts
+        .get("united")
+        .expect("united facts")
+        .row_join();
+    assert!(
+        united
+            .labels
+            .contains(&DataClassName::new("credentials").expect("credentials")),
+        "clean-left / sensitive-right union must keep right-hand labels, got {:?}",
+        united.labels
+    );
+    assert!(matches!(checked.analysis.verdict, FlowVerdict::Denied));
+    assert_eq!(checked.analysis.violations.len(), 1);
+    assert_eq!(checked.analysis.violations[0].node, "send");
+    assert!(checked.admit().is_err());
+}
+
+#[test]
+fn union_sensitive_left_clean_right_keeps_labels_into_mutation() {
+    let mut catalog = FlowCatalogView::default();
+    let clean_key = QualifiedCapabilityKey::from_parts("flow", "PublicNote", "public_note_query");
+    let secret_key = QualifiedCapabilityKey::from_parts("flow", "SecretNote", "secret_note_query");
+    let send_key = QualifiedCapabilityKey::from_parts("flow", "Message", "send");
+    catalog
+        .capability_output_labels
+        .insert(clean_key, BTreeSet::new());
+    catalog.capability_output_labels.insert(
+        secret_key,
+        BTreeSet::from([DataClassName::new("credentials").expect("credentials")]),
+    );
+    catalog.capability_sink_params.insert(
+        send_key,
+        vec![SinkParamRef {
+            param: CapabilityParamName::from("body"),
+            sink_class: Some(SinkClassName::new("outbound_body").expect("sink")),
+        }],
+    );
+
+    let plan = serde_json::json!({
+        "version": 1,
+        "kind": "program",
+        "nodes": [
+            {
+                "id": "sensitive",
+                "kind": "query",
+                "qualified_entity": { "entry_id": "flow", "entity": "SecretNote" },
+                "expr": "SecretNote",
+                "ir": { "expr": { "op": "query", "entity": "SecretNote" } },
+                "effect_class": "read",
+                "result_shape": "list"
+            },
+            {
+                "id": "clean",
+                "kind": "query",
+                "qualified_entity": { "entry_id": "flow", "entity": "PublicNote" },
+                "expr": "PublicNote",
+                "ir": { "expr": { "op": "query", "entity": "PublicNote" } },
+                "effect_class": "read",
+                "result_shape": "list"
+            },
+            {
+                "id": "united",
+                "kind": "compute",
+                "effect_class": "artifact_read",
+                "result_shape": "list",
+                "depends_on": ["sensitive", "clean"],
+                "uses_result": [
+                    { "node": "sensitive", "as": "source" },
+                    { "node": "clean", "as": "clean" }
+                ],
+                "compute": {
+                    "source": "sensitive",
+                    "op": { "kind": "union", "other": "clean" },
+                    "schema": { "fields": [{ "name": "body", "value_kind": "string" }] }
+                }
+            },
+            {
+                "id": "send",
+                "kind": "action",
+                "qualified_entity": { "entry_id": "flow", "entity": "Message" },
+                "depends_on": ["united"],
+                "uses_result": [{ "node": "united", "as": "united" }],
+                "effect_class": "side_effect",
+                "result_shape": "side_effect_ack",
+                "ir_template": {
+                    "expr": {
+                        "op": "invoke",
+                        "capability": "send",
+                        "target": { "entity_type": "Message", "key": { "id": "1" } },
+                        "input": {
+                            "body": { "__plasm_hole": { "kind": "node_input", "alias": "united", "path": ["body"] } }
+                        }
+                    }
+                }
+            }
+        ],
+        "return": { "kind": "node", "node": "send" }
+    });
+    let validated = parse_and_validate_plan_json(&plan).expect("validate");
+    let topo: Vec<String> = validated
+        .topological_order()
+        .iter()
+        .map(|id| id.as_str().to_string())
+        .collect();
+    let policy = FlowPolicy {
+        forbidden: vec![ForbiddenFlowRule {
+            from_label: DataClassName::new("credentials").expect("credentials"),
+            to_sink: Some(SinkClassName::new("outbound_body").expect("sink")),
+            reason: Some("credentials cannot reach outbound body".into()),
+        }],
+        ..FlowPolicy::default()
+    };
+    let snapshot = FlowPolicySnapshot::Active {
+        revision: PolicyRevision(1),
+        policy,
+    };
+    let checked = verify_plan_flow(validated.artifact(), &topo, &catalog, &snapshot);
+    let united = checked
+        .analysis
+        .node_facts
+        .get("united")
+        .expect("united facts")
+        .row_join();
+    assert!(
+        united
+            .labels
+            .contains(&DataClassName::new("credentials").expect("credentials")),
+        "sensitive-left / clean-right union must keep left-hand labels, got {:?}",
+        united.labels
+    );
+    assert!(matches!(checked.analysis.verdict, FlowVerdict::Denied));
+    assert_eq!(checked.analysis.violations.len(), 1);
+    assert_eq!(checked.analysis.violations[0].node, "send");
+    assert!(checked.admit().is_err());
+}
+
+#[test]
 fn inactive_policy_allows_unlabeled_flow() {
     let catalog = FlowCatalogView::default();
     let plan = serde_json::json!({

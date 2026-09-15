@@ -34,12 +34,13 @@ impl ExecutionEngine {
                 entities: vec![],
                 count: 0,
                 has_more: false,
+                coverage: source_result.coverage,
                 pagination_resume: None,
                 paging_handle: None,
                 source: source_result.source,
                 stats: source_result.stats,
                 request_fingerprints: source_result.request_fingerprints.clone(),
-            operations: OperationLedger::empty(),
+                operations: source_result.operations.clone(),
             });
         }
 
@@ -281,6 +282,7 @@ impl ExecutionEngine {
                 entities: resolved,
                 count,
                 has_more: false,
+                coverage: source_result.coverage,
                 pagination_resume: None,
                 paging_handle: None,
                 source: if any_live {
@@ -296,7 +298,7 @@ impl ExecutionEngine {
                     ..Default::default()
                 },
                 request_fingerprints: Vec::new(),
-            operations: OperationLedger::empty(),
+                operations: OperationLedger::empty(),
             });
         }
 
@@ -355,7 +357,7 @@ impl ExecutionEngine {
                 .find_capability(&target_entity_name, plasm_core::CapabilityKind::Get)
                 .map(|c| c.name.to_string())
                 .unwrap_or_else(|| "get".to_string());
-            let concurrency = self.config.hydrate_concurrency.max(1);
+            let concurrency = self.config.effective_hydrate_concurrency(cgs.entry_id.as_deref());
             let mut stream = stream::iter(to_fetch.into_iter().map(|reference| {
                 let inherit = inherit_by_id
                     .get(reference.primary_slot_str().as_str())
@@ -405,6 +407,7 @@ impl ExecutionEngine {
             entities: resolved,
             count,
             has_more: false,
+            coverage: source_result.coverage,
             pagination_resume: None,
             paging_handle: None,
             source: if any_live {
@@ -420,7 +423,7 @@ impl ExecutionEngine {
                 ..Default::default()
             },
             request_fingerprints: Vec::new(),
-        operations: OperationLedger::empty(),
+            operations: OperationLedger::empty(),
         })
     }
 
@@ -443,16 +446,10 @@ impl ExecutionEngine {
         let graph_hits = per_parent.iter().map(|v| v.len()).sum::<usize>();
 
         if !network_jobs.is_empty() {
-            let concurrency = self.config.hydrate_concurrency.max(1);
+            let concurrency = self.config.effective_hydrate_concurrency(cgs.entry_id.as_deref());
             let branch_seed = {
                 let snap = mat.snapshot();
-                SessionMaterialization {
-                    graph: snap.into_graph(),
-                    responses: mat.responses.clone(),
-                    query_index: mat.query_index.clone(),
-                    inherited_capability_params: mat.inherited_capability_params.clone(),
-                    ..SessionMaterialization::default()
-                }
+                SessionMaterialization::seed_read_branch(mat, snap.into_graph())
             };
 
             let mut stream = stream::iter(network_jobs.into_iter().map(|(parent_idx, q)| {
@@ -500,6 +497,7 @@ impl ExecutionEngine {
             entities: all_entities,
             count,
             has_more: false,
+            coverage: source_result.coverage,
             pagination_resume: None,
             paging_handle: None,
             source: if any_live {
@@ -509,7 +507,7 @@ impl ExecutionEngine {
             },
             stats: merged_stats,
             request_fingerprints: Vec::new(),
-        operations: OperationLedger::empty(),
+            operations: OperationLedger::empty(),
         })
     }
 
@@ -557,17 +555,19 @@ impl ExecutionEngine {
                 entities: vec![],
                 count: 0,
                 has_more: false,
+                coverage: source_result.coverage,
                 pagination_resume: None,
                 paging_handle: None,
                 source: source_result.source,
                 stats: source_result.stats.clone(),
                 request_fingerprints: source_result.request_fingerprints.clone(),
-            operations: OperationLedger::empty(),
+                operations: source_result.operations.clone(),
             });
         }
 
         let via = via_param.clone();
-        let network_jobs = partition_scoped_query_fanout(&source_result.entities, |entity| {
+        let mut network_jobs = Vec::new();
+        for (i, entity) in source_result.entities.iter().enumerate() {
             let id_field = cgs
                 .get_entity(entity.reference.entity_type.as_str())
                 .map(|def| def.id_field.as_str().to_string())
@@ -584,8 +584,10 @@ impl ExecutionEngine {
             let pred = plasm_core::Predicate::eq(via.as_str(), id);
             let mut q = QueryExpr::filtered(target_entity.clone(), pred);
             q.capability_name = Some(capability_name.clone());
-            q
-        });
+            relation_inherit_for_scoped_query(cgs, mat, entity, cap, &q)?
+                .apply_to_scoped_query(&mut q);
+            network_jobs.push((i, q));
+        }
         let per_parent = vec![Vec::new(); source_result.entities.len()];
         self.fanout_scoped_query_parallel(source_result, per_parent, network_jobs, cgs, mat, mode)
             .await
@@ -632,12 +634,13 @@ impl ExecutionEngine {
                 entities: vec![],
                 count: 0,
                 has_more: false,
+                coverage: source_result.coverage,
                 pagination_resume: None,
                 paging_handle: None,
                 source: source_result.source,
                 stats: source_result.stats.clone(),
                 request_fingerprints: source_result.request_fingerprints.clone(),
-            operations: OperationLedger::empty(),
+                operations: source_result.operations.clone(),
             });
         }
 
@@ -646,7 +649,8 @@ impl ExecutionEngine {
         let parent_def = parent_entity_def;
         let binds = bindings;
 
-        let network_jobs = partition_scoped_query_fanout(&source_result.entities, |entity| {
+        let mut network_jobs = Vec::new();
+        for (i, entity) in source_result.entities.iter().enumerate() {
             let preds: Vec<Predicate> = binds
                 .iter()
                 .map(|(cap_param, parent_field)| {
@@ -663,8 +667,10 @@ impl ExecutionEngine {
             };
             let mut q = QueryExpr::filtered(target_entity.clone(), pred);
             q.capability_name = Some(capability_name.clone());
-            q
-        });
+            relation_inherit_for_scoped_query(cgs, mat, entity, cap, &q)?
+                .apply_to_scoped_query(&mut q);
+            network_jobs.push((i, q));
+        }
         let per_parent = vec![Vec::new(); source_result.entities.len()];
         self.fanout_scoped_query_parallel(source_result, per_parent, network_jobs, cgs, mat, mode)
             .await
@@ -700,12 +706,13 @@ impl ExecutionEngine {
                 entities: vec![],
                 count: 0,
                 has_more: false,
+                coverage: source_result.coverage,
                 pagination_resume: None,
                 paging_handle: None,
                 source: source_result.source,
                 stats: source_result.stats.clone(),
                 request_fingerprints: source_result.request_fingerprints.clone(),
-            operations: OperationLedger::empty(),
+                operations: source_result.operations.clone(),
             });
         }
 
@@ -805,10 +812,7 @@ impl ExecutionEngine {
                 );
             }
             let reference = ref_from_materialize_bindings_for_get_chain(target_ent, &bound)?;
-            let inherit = CapabilityParamEnv::from_bindings(
-                &mat.capability_params_for(&entity.reference),
-                cap,
-            );
+            let inherit = CapabilityParamEnv::from_source_row_for_cap(cgs, mat, entity, cap);
             if !inherit.bindings().is_empty() {
                 mat.stamp_capability_params(&reference, inherit.bindings().clone());
             }
@@ -820,16 +824,17 @@ impl ExecutionEngine {
                 entities: vec![],
                 count: 0,
                 has_more: false,
+                coverage: source_result.coverage,
                 pagination_resume: None,
                 paging_handle: None,
                 source: source_result.source,
                 stats: source_result.stats.clone(),
                 request_fingerprints: source_result.request_fingerprints.clone(),
-            operations: OperationLedger::empty(),
+                operations: source_result.operations.clone(),
             });
         }
 
-        let concurrency = self.config.hydrate_concurrency.max(1);
+        let concurrency = self.config.effective_hydrate_concurrency(cgs.entry_id.as_deref());
         let mut all_entities: Vec<CachedEntity> = Vec::new();
         let total_network = source_result.stats.network_requests;
         let total_cache_hits = source_result.stats.cache_hits;
@@ -876,6 +881,7 @@ impl ExecutionEngine {
             entities: all_entities,
             count,
             has_more: false,
+            coverage: source_result.coverage,
             pagination_resume: None,
             paging_handle: None,
             source: if any_live {
@@ -891,7 +897,7 @@ impl ExecutionEngine {
                 ..Default::default()
             },
             request_fingerprints: Vec::new(),
-        operations: OperationLedger::empty(),
+            operations: OperationLedger::empty(),
         })
     }
 
@@ -935,12 +941,13 @@ impl ExecutionEngine {
                 entities: vec![],
                 count: 0,
                 has_more: false,
+                coverage: source_result.coverage,
                 pagination_resume: None,
                 paging_handle: None,
                 source: source_result.source,
                 stats: source_result.stats.clone(),
                 request_fingerprints: source_result.request_fingerprints.clone(),
-            operations: OperationLedger::empty(),
+                operations: source_result.operations.clone(),
             });
         }
 
@@ -973,6 +980,7 @@ impl ExecutionEngine {
                 entities: resolved,
                 count,
                 has_more: false,
+                coverage: source_result.coverage,
                 pagination_resume: None,
                 paging_handle: None,
                 source: if any_live {
@@ -988,7 +996,7 @@ impl ExecutionEngine {
                     ..Default::default()
                 },
                 request_fingerprints: Vec::new(),
-            operations: OperationLedger::empty(),
+                operations: OperationLedger::empty(),
             });
         }
 
@@ -1036,7 +1044,7 @@ impl ExecutionEngine {
                 .find_capability(target_entity, plasm_core::CapabilityKind::Get)
                 .map(|c| c.name.to_string())
                 .unwrap_or_else(|| "get".to_string());
-            let concurrency = self.config.hydrate_concurrency.max(1);
+            let concurrency = self.config.effective_hydrate_concurrency(cgs.entry_id.as_deref());
             let mut stream = stream::iter(to_fetch.into_iter().map(|reference| {
                 let inherit = inherit_by_ref.get(&reference).cloned().unwrap_or_default();
                 let get = synthesized_get(reference.clone(), &inherit);
@@ -1080,6 +1088,7 @@ impl ExecutionEngine {
             entities: resolved,
             count,
             has_more: false,
+            coverage: source_result.coverage,
             pagination_resume: None,
             paging_handle: None,
             source: if any_live {
@@ -1095,7 +1104,7 @@ impl ExecutionEngine {
                 ..Default::default()
             },
             request_fingerprints: Vec::new(),
-        operations: OperationLedger::empty(),
+            operations: OperationLedger::empty(),
         })
     }
 }

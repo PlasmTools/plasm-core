@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, realpath } from "node:fs/promises";
 import { promisify } from "node:util";
@@ -8,11 +8,51 @@ import { writeWorkspaceFile } from "./workspace-files.js";
 const execute = promisify(execFile);
 let cleanupFailed = false;
 
+export const ARTIFACT_IMAGE_PIN_RE = /^[-a-zA-Z0-9./_:]+@sha256:[a-f0-9]{64}$/;
+
+const LOCAL_NODE_IMAGE_CANDIDATES = [
+  "node:20-bookworm-slim",
+  "node:20-slim",
+  "node:20",
+  "node:lts-slim",
+  "node:lts",
+  "node",
+] as const;
+
+export function pinnedArtifactImage(
+  image = process.env.PLASM_ARTIFACT_IMAGE,
+): string | null {
+  const value = image?.trim() ?? "";
+  return ARTIFACT_IMAGE_PIN_RE.test(value) ? value : null;
+}
+
+/** Resolve a local Docker Node digest into `PLASM_ARTIFACT_IMAGE`. Never pulls. */
+export function pinLocalArtifactImageSync(): string | null {
+  const existing = pinnedArtifactImage();
+  if (existing) return existing;
+  for (const name of LOCAL_NODE_IMAGE_CANDIDATES) {
+    try {
+      const digest = execFileSync(
+        "docker",
+        ["image", "inspect", "--format", "{{index .RepoDigests 0}}", name],
+        { encoding: "utf8", timeout: 5_000, stdio: ["ignore", "pipe", "ignore"] },
+      ).trim();
+      if (pinnedArtifactImage(digest)) {
+        process.env.PLASM_ARTIFACT_IMAGE = digest;
+        return digest;
+      }
+    } catch {
+      // Candidate missing or Docker unavailable.
+    }
+  }
+  return null;
+}
+
 /** Runs untrusted computation in a disposable container, never in the host realm. */
 export async function runArtefactTransform(workspaceRoot: string, code: string): Promise<string> {
   if (cleanupFailed) throw new Error("Artifact runtime is disabled after a cleanup failure; restart after verifying container termination");
-  const image = process.env.PLASM_ARTIFACT_IMAGE?.trim();
-  if (!image || !/^[-a-zA-Z0-9./_:]+@sha256:[a-f0-9]{64}$/.test(image)) {
+  const image = pinnedArtifactImage();
+  if (!image) {
     throw new Error("Artifact execution requires PLASM_ARTIFACT_IMAGE pinned by sha256 digest");
   }
   if (Buffer.byteLength(code) > 128 * 1024) throw new Error("Artifact program exceeds 128 KiB");

@@ -9,6 +9,7 @@ use plasm_core::{FieldType, Ref, TypedFieldValue, Value, CGS};
 use crate::cache::{CachedEntity, EntityCompleteness};
 use crate::execution::{
     current_timestamp, ExecutionResult, ExecutionSource, ExecutionStats, OperationLedger,
+    ResultCoverage,
 };
 use crate::RuntimeError;
 
@@ -78,6 +79,7 @@ pub fn stub_query_result(
         entities: vec![cached],
         count: 1,
         has_more: false,
+        coverage: ResultCoverage::Complete,
         pagination_resume: None,
         paging_handle: None,
         source: ExecutionSource::Cache,
@@ -142,6 +144,7 @@ pub fn stub_get_result(
         entities: vec![cached],
         count: 1,
         has_more: false,
+        coverage: ResultCoverage::Complete,
         pagination_resume: None,
         paging_handle: None,
         source: ExecutionSource::Cache,

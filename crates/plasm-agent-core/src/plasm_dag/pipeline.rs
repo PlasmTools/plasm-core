@@ -85,8 +85,13 @@ pub(crate) fn compile_plasm_dag_to_plan_inner(
     validate_program_statement_order(&statements)?;
     let mut final_roots: Option<Vec<String>> = None;
     for stmt in statements {
-        if let Some((id, rhs)) = split_assignment_for_binding(&stmt) {
-            validate_program_label(id)?;
+        if let Some(assignment) = classify_top_level_assignment(&stmt) {
+            let (id, rhs) = match assignment {
+                TopLevelAssignment::Binding { label, rhs } => (label, rhs),
+                TopLevelAssignment::InvalidLabel { label } => {
+                    return Err(program_invalid_binding_label_error(label));
+                }
+            };
             for node in compile_node_expr(session, &state, id, rhs.trim())? {
                 state.insert(node)?;
             }
@@ -230,7 +235,14 @@ fn lower_expr_node(
                 Applicator::Render {
                     kind: RenderApplicator::CrossBinding { .. },
                 } => unreachable!("cross-binding render handled above"),
-                Applicator::ForEach { surface } => {
+                Applicator::Apply { surface } => {
+                    let surface = if let Some(tail) = surface.trim().strip_prefix("_.") {
+                        binding_continuation::row_receiver_surface(
+                            session, state, source, "_", tail,
+                        )?
+                    } else {
+                        surface
+                    };
                     let refs = state.program_node_id_set();
                     let parsed = parse_plasm_program_surface_for_dag(
                         session,
@@ -244,15 +256,9 @@ fn lower_expr_node(
                     let uses = collect_template_uses_from_expr(&parsed.expr, Some("_"));
                     let (kind, qualified, _effect, _shape) =
                         infer_surface_contract(session, &parsed.expr)?;
-                    if !matches!(
-                        kind,
-                        PlanNodeKind::Create
-                            | PlanNodeKind::Update
-                            | PlanNodeKind::Delete
-                            | PlanNodeKind::Action
-                    ) {
+                    if !kind.is_template_allowed() {
                         return Err(format!(
-                            "Plasm program `{id}` for_each right side must be a write/side-effect expression"
+                            "Plasm program `{id}` row application must be a catalog read or operation expression"
                         ));
                     }
                     vec![DagNode {
@@ -372,6 +378,13 @@ fn lower_iterate_until(
         let scratch = compile_state_with_nodes(state, &prefix);
         require_node(&scratch, seed_label.as_str())?;
     }
+    let seed_node = if seed_is_label {
+        state.get(seed_label.as_str())
+    } else {
+        prefix.iter().find(|n| n.id == seed_label)
+    }
+    .ok_or_else(|| format!("Plasm program `{id}`: iterate seed `{seed_label}` is unknown"))?;
+    require_iterate_seed_get_identity(seed_node, seed_label.as_str())?;
 
     let scratch = if prefix.is_empty() {
         None
@@ -416,6 +429,7 @@ fn lower_iterate_until(
         it.until.as_str(),
         &stack,
         sym_map,
+        &[],
     )
     .map_err(|e| format!("Plasm program `{id}` iterate until predicate: {e}"))?;
     let until_predicates = crate::row_predicate_lower::lower_row_predicate_to_plan(
@@ -423,6 +437,7 @@ fn lower_iterate_until(
         session,
         &qualified,
         state.cross_cache,
+        &[],
     )
     .map_err(|e| format!("Plasm program `{id}` iterate until lower: {e}"))?;
 
@@ -446,6 +461,23 @@ fn lower_iterate_until(
     Ok(prefix)
 }
 
+/// Get identity is re-observable: seed kind is Get (`ir` or `ir_template` + binding).
+fn dag_node_is_get_identity(node: &DagNode) -> bool {
+    match &node.source {
+        DagNodeSource::Surface { kind, .. } => *kind == PlanNodeKind::Get,
+        _ => false,
+    }
+}
+
+fn require_iterate_seed_get_identity(node: &DagNode, seed: &str) -> Result<(), String> {
+    if dag_node_is_get_identity(node) {
+        return Ok(());
+    }
+    Err(plasm_core::expr_parser::iterate_seed_must_be_get_identity(
+        seed,
+    ))
+}
+
 /// When the pipe head is not a bound label, decide catalog materialization vs unknown binding.
 fn pipe_head_materializes_catalog(
     session: &ExecuteSession,
@@ -465,6 +497,17 @@ fn pipe_head_materializes_catalog(
         };
     }
     Ok(true)
+}
+
+/// Compile a closed row expression to DAG nodes and the result node id (RA-13 membership RHS).
+pub(in crate::plasm_dag) fn compile_row_expr_nodes(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    id: &str,
+    display: &str,
+    row: &RowExpr,
+) -> Result<(Vec<DagNode>, String), String> {
+    stage_row_expr_to_source(session, state, id, display, row, Some(id))
 }
 
 fn stage_row_expr_to_source(
@@ -725,11 +768,26 @@ pub(in crate::plasm_dag) fn compile_surface_nodes(
         false,
         Some(id),
     )?;
+    plasm_core::apply_required_selection_defaults_in_expr(
+        &mut parsed.expr,
+        session.cgs.as_ref(),
+        expr,
+    )
+    .map_err(|e| e.to_string())?;
     if let Some(wire) = parsed.field_dot_extract.take() {
         return super::scalar_extract::compile_catalog_singleton_field_dot(
             session, state, id, expr, parsed, wire,
         );
     }
+    validate_invoke_scalar_field_refs(session, state, id, &parsed.expr)?;
+    super::password_domain::validate_password_domain_bind(session, state, id, &parsed.expr)?;
+    super::prerequisite_seats::validate_prerequisite_seat_bind(session, state, id, &parsed.expr)?;
+    let mut extra_nodes = super::scalar_extract::expand_get_scalar_extracts_in_expr(
+        session,
+        state,
+        id,
+        &mut parsed.expr,
+    )?;
     let uses = collect_template_uses_from_expr(&parsed.expr, None);
     let (kind, qualified_entity, effect_class, result_shape) =
         infer_surface_contract(session, &parsed.expr)?;
@@ -748,11 +806,8 @@ pub(in crate::plasm_dag) fn compile_surface_nodes(
         },
     };
     validate_surface_inline_projection(session, state, &node)?;
-    if let DagNodeSource::Surface { parsed, .. } = &node.source {
-        validate_invoke_scalar_field_refs(session, state, id, &parsed.expr)?;
-        super::password_domain::validate_password_domain_bind(session, state, id, &parsed.expr)?;
-    }
-    Ok(vec![node])
+    extra_nodes.push(node);
+    Ok(extra_nodes)
 }
 
 pub(in crate::plasm_dag) fn split_return_list(

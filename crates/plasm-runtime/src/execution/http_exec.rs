@@ -23,9 +23,11 @@ impl ExecutionEngine {
     ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
         let base_url = self.effective_http_base_for_request();
         let auth = self.resolve_compiled_http_auth(request).await?;
-        self.transport
-            .send_compiled_http(base_url.as_ref(), request, auth)
-            .await
+        annotate_http_401_login_tail(
+            self.transport
+                .send_compiled_http(base_url.as_ref(), request, auth)
+                .await,
+        )
     }
 
     pub(super) async fn resolve_compiled_http_auth(
@@ -76,8 +78,47 @@ impl ExecutionEngine {
         url: &str,
     ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
         let auth = self.resolve_auth_http().await?;
-        self.transport.get_json_absolute(url, auth).await
+        annotate_http_401_login_tail(self.transport.get_json_absolute(url, auth).await)
     }
+}
+
+fn annotate_http_401_login_tail<T>(result: Result<T, RuntimeError>) -> Result<T, RuntimeError> {
+    let Err(RuntimeError::RequestError {
+        status: Some(401),
+        message,
+        attempts,
+        body,
+    }) = result
+    else {
+        return result;
+    };
+    let Some(material) = super::session::try_current_execute_session_material() else {
+        return Err(RuntimeError::RequestError {
+            message,
+            attempts,
+            status: Some(401),
+            body,
+        });
+    };
+    let login_tail = material
+        .login_access_token_tail
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone());
+    let Some(login_tail) = login_tail else {
+        return Err(RuntimeError::RequestError {
+            message,
+            attempts,
+            status: Some(401),
+            body,
+        });
+    };
+    Err(RuntimeError::RequestError {
+        message: crate::http_auth_failure::append_login_token_compare(&message, &login_tail),
+        attempts,
+        status: Some(401),
+        body,
+    })
 }
 
 pub(super) fn credential_scope(

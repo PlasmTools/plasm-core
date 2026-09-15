@@ -2,11 +2,12 @@
 
 use crate::mcp_plasm_meta::PlasmPagingStepMeta;
 use crate::mcp_run_markdown::{
-    mcp_compact_markdown_multi_line, mcp_compact_markdown_single,
-    mcp_format_execute_result_table_or_tsv, mcp_in_band_row_limit_note,
-    mcp_inline_run_snapshot_line, mcp_prepend_artifact_followup_markdown,
-    mcp_tsv_body_to_markdown_fence, slim_result_section_header, OmittedReferenceOnlyFields,
+    mcp_compact_markdown_multi_line, mcp_compact_markdown_single, mcp_coverage_preview_note,
+    mcp_format_execute_result_table_or_tsv, mcp_inline_run_snapshot_line,
+    mcp_prepend_artifact_followup_markdown, mcp_tsv_body_to_markdown_fence,
+    slim_result_section_header_label, OmittedReferenceOnlyFields,
 };
+use crate::output::format_operations_block;
 use crate::output::LossySummaryFieldNames;
 use crate::run_artifacts::RunArtifactHandle;
 
@@ -44,16 +45,16 @@ pub(crate) fn format_resolved_steps(
     }
 }
 
-fn step_section_header(i: usize, total_steps: usize, label: &str, row_count: usize) -> String {
+fn step_section_header(i: usize, total_steps: usize, label: &str, count_label: &str) -> String {
     if total_steps <= 1 {
-        slim_result_section_header("## ", label, row_count)
+        slim_result_section_header_label("## ", label, count_label)
     } else if i == 0 {
         format!(
             "# Results\n\n{}",
-            slim_result_section_header("### ", label, row_count)
+            slim_result_section_header_label("### ", label, count_label)
         )
     } else {
-        slim_result_section_header("### ", label, row_count)
+        slim_result_section_header_label("### ", label, count_label)
     }
 }
 
@@ -81,6 +82,34 @@ fn append_paging_if_needed(
     ));
 }
 
+fn append_coverage_note(sections: &mut String, resolved: &ResolvedStepPublish, plan: &PublishPlan) {
+    let uri = resolved.artifact.as_ref().map(|h| {
+        if h.canonical_plasm_uri.is_empty() {
+            h.plasm_uri.as_str()
+        } else {
+            h.canonical_plasm_uri.as_str()
+        }
+    });
+    sections.push_str(&mcp_coverage_preview_note(
+        shown_rows_for_mode(resolved.mode, resolved.row_count),
+        resolved.row_count,
+        resolved.coverage,
+        resolved.artifact.is_some(),
+        uri,
+        resolved.continue_handle.as_deref(),
+        plan.artifact_access,
+    ));
+}
+
+fn shown_rows_for_mode(mode: StepInBandMode, row_count: usize) -> usize {
+    match mode {
+        StepInBandMode::Full => row_count,
+        StepInBandMode::CappedInline { shown } => shown,
+        // Snapshot-only bodies carry no inline rows.
+        StepInBandMode::SnapshotOnly => 0,
+    }
+}
+
 fn build_step_section(
     sections: &mut String,
     paging: &mut Vec<PlasmPagingStepMeta>,
@@ -92,14 +121,8 @@ fn build_step_section(
 ) {
     if let Some(fmt) = &resolved.format {
         sections.push_str(&mcp_tsv_body_to_markdown_fence(&fmt.formatted.tsv_body));
-        if let StepInBandMode::CappedInline { shown } = resolved.mode {
-            sections.push_str(&mcp_in_band_row_limit_note(
-                shown,
-                resolved.row_count,
-                resolved.artifact.is_some(),
-                plan.artifact_access,
-            ));
-        }
+        sections.push_str(&format_operations_block(&step.result));
+        append_coverage_note(sections, resolved, plan);
         if let Some(handle) = &resolved.artifact {
             if resolved.append_snapshot_supplement(fmt) {
                 sections.push_str(&mcp_inline_run_snapshot_line(handle, plan.artifact_access));
@@ -114,6 +137,10 @@ fn build_step_section(
             };
             sections.push_str(&plan.artifact_access.artifact_only_body(uri));
         }
+        append_coverage_note(sections, resolved, plan);
+    } else {
+        // Empty / unformatted Full path: still emit coverage.
+        append_coverage_note(sections, resolved, plan);
     }
     append_paging_if_needed(sections, paging, step, resolved, i);
 }
@@ -139,7 +166,7 @@ pub(crate) fn build_inline_bodies(
             i,
             total_steps,
             &resolved.label,
-            resolved.row_count,
+            &resolved.count_label,
         ));
         build_step_section(
             &mut sections,
@@ -210,14 +237,18 @@ pub(crate) fn render_markdown(
     let total = plan.resolved.len();
     let markdown = if preview_needed {
         let truncated_refs = truncated_step_refs(plan, preview_needed);
-        if total <= 1 {
-            let (label, rows) = plan
+        let mut md = if total <= 1 {
+            let (label, count_label) = plan
                 .per_step_compact
                 .first()
                 .cloned()
-                .unwrap_or_else(|| ("result".to_string(), 0));
-            let mut md =
-                mcp_compact_markdown_single(label.as_str(), rows, omitted, &lossy_preview_union);
+                .unwrap_or_else(|| ("result".to_string(), "0 rows".into()));
+            let mut md = mcp_compact_markdown_single(
+                label.as_str(),
+                count_label.as_str(),
+                omitted,
+                &lossy_preview_union,
+            );
             if let Some((_, h)) = truncated_refs.first() {
                 md.push_str(&mcp_inline_run_snapshot_line(h, plan.artifact_access));
             }
@@ -232,7 +263,12 @@ pub(crate) fn render_markdown(
                 &truncated_refs,
                 plan.artifact_access,
             )
+        };
+        // Compact preview must still carry expression coverage (same formatter as inline).
+        for resolved in &plan.resolved {
+            append_coverage_note(&mut md, resolved, plan);
         }
+        md
     } else {
         inline.sections.clone()
     };

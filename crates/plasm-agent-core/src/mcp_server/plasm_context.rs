@@ -167,8 +167,13 @@ impl PlasmMcpHandler {
             .await
             .map_err(|e| CallToolError::from_message(format!("routing error: {e}")))?;
         if receipt.closure.is_none() {
-            let mut lines = vec![format!("**plasm_context:** {:?}", receipt.selection.status)];
-            lines.extend(receipt.selection.explanation_lines());
+            let content = if let Some(recovery) = &receipt.recovery {
+                recovery.render_markdown(receipt.selection.status)
+            } else {
+                let mut lines = vec![format!("**plasm_context:** {:?}", receipt.selection.status)];
+                lines.extend(receipt.selection.explanation_lines());
+                lines.join("\n\n")
+            };
             let mut meta = serde_json::Map::new();
             meta.insert(
                 "routing".into(),
@@ -176,7 +181,7 @@ impl PlasmMcpHandler {
                     .map_err(|e| CallToolError::from_message(e.to_string()))?,
             );
             return Ok(crate::mcp_ui_payload::DualLaneToolResult {
-                content: lines.join("\n\n"),
+                content,
                 plasm_meta: meta,
                 profile: crate::mcp_delivery::McpDeliveryProfile::ContentOnly,
                 inline_plan_ui: None,
@@ -394,9 +399,17 @@ impl PlasmMcpHandler {
                 }
             }
         }
-        for explanation in route.selection.explanation_lines() {
-            text.push_str("\n\n");
-            text.push_str(&explanation);
+        // Insufficient / partial coverage: unresolved + catalog recovery lead; teaching follows.
+        if let Some(recovery) = &route.recovery {
+            let mut combined = recovery.render_markdown(route.selection.status);
+            combined.push_str("\n\n**Partial teaching** (does not claim complete coverage):\n\n");
+            combined.push_str(&text);
+            text = combined;
+        } else {
+            for explanation in route.selection.explanation_lines() {
+                text.push_str("\n\n");
+                text.push_str(&explanation);
+            }
         }
         for wave in &out.waves {
             if wave.teaching_prompt_chars_added > 0 {

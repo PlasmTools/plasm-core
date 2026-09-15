@@ -36,6 +36,10 @@ impl OutputFormat {
 /// optional `mime_type_hint` from CGS appended as `(mime)`); [`AgentPresentation::Lossy`] strings
 /// are capped in cells but stay full-fidelity in JSON snapshots. JSON-shaped output keeps full values.
 ///
+/// **Unavailable detail fields:** after a hydrate soft-fail, fields listed on
+/// [`CachedEntity::unavailable_fields`] render as `(unavailable)` — not a blank cell — so retained
+/// summary rows are not mistaken for present-empty content.
+///
 /// **Attachment-shaped values:** any field whose decoded `Value` contains reserved
 /// `__plasm_attachment: { uri, mime_type | media_type }` (and/or `bytes_base64`) is rendered in
 /// table/TSV without inlining raw bytes. Non-blob columns use a single cell `uri (mime)` or
@@ -133,6 +137,7 @@ pub fn http_execute_results_value(result: &ExecutionResult) -> serde_json::Value
     serde_json::json!({
         "rows": rows,
         "operations": operations,
+        "coverage": result.coverage.as_str(),
     })
 }
 
@@ -146,6 +151,7 @@ fn operation_ack_to_json(ack: &OperationAck) -> serde_json::Value {
         "failed": ack.failed,
         "source": ack.source.as_wire_str(),
         "description": ack.description,
+        "outcomes": ack.outcomes,
     })
 }
 
@@ -168,6 +174,20 @@ pub(crate) fn format_operations_block(result: &ExecutionResult) -> String {
             ack.source.as_wire_str(),
             ack.description,
         ));
+        for outcome in &ack.outcomes {
+            let error = outcome
+                .error
+                .as_deref()
+                .map(|message| format!(" — {message}"))
+                .unwrap_or_default();
+            out.push_str(&format!(
+                "  - row={} identity=`{}` status={}{}\n",
+                outcome.source_index,
+                outcome.source_identity.as_deref().unwrap_or("unknown"),
+                outcome.status.as_wire_str(),
+                error
+            ));
+        }
     }
     if any_failed {
         out.push_str("Completed operations are recorded; this result does not imply rollback.\n");
@@ -176,6 +196,8 @@ pub(crate) fn format_operations_block(result: &ExecutionResult) -> String {
 }
 
 pub(crate) const REFERENCE_ONLY_PLACEHOLDER: &str = "(in artifact)";
+/// Soft-fail hydrate: requested detail field was not obtained (not present-empty).
+pub(crate) const UNAVAILABLE_FIELD_PLACEHOLDER: &str = "(unavailable)";
 
 fn try_plasm_attachment_inner(v: &Value) -> Option<&indexmap::IndexMap<String, Value>> {
     let obj = v.as_object()?;
@@ -242,7 +264,7 @@ pub(crate) fn union_entity_table_columns(
 
     for entity in entities {
         let ent_def = cgs.and_then(|g| g.get_entity(entity.reference.entity_type.as_str()));
-        for key in entity.fields.keys() {
+        for key in entity.fields.keys().chain(entity.unavailable_fields.iter()) {
             if emitted.contains(key.as_str()) {
                 continue;
             }
@@ -375,7 +397,13 @@ pub(super) fn format_summary_column_cell(
     if col == "_ref" {
         return entity.reference.to_string();
     }
+    if entity.unavailable_fields.contains(col) {
+        return UNAVAILABLE_FIELD_PLACEHOLDER.to_string();
+    }
     if let Some(base) = col.strip_suffix("_ref").filter(|b| !b.is_empty()) {
+        if entity.unavailable_fields.contains(base) {
+            return UNAVAILABLE_FIELD_PLACEHOLDER.to_string();
+        }
         if field_type_is_blob(cgs, &entity.reference.entity_type, base) {
             let blob_val = entity.fields.get(base).map(|tf| tf.to_value());
             return format_blob_ref_column_cell(
@@ -389,6 +417,9 @@ pub(super) fn format_summary_column_cell(
         }
     }
     if let Some(base) = col.strip_suffix("_mime").filter(|b| !b.is_empty()) {
+        if entity.unavailable_fields.contains(base) {
+            return UNAVAILABLE_FIELD_PLACEHOLDER.to_string();
+        }
         if field_type_is_blob(cgs, &entity.reference.entity_type, base) {
             let blob_val = entity.fields.get(base).map(|tf| tf.to_value());
             return format_blob_mime_column_cell(
@@ -724,7 +755,7 @@ mod tests {
         FieldType, FieldValueKind, NamedValueSchema, Ref, ResourceSchema, ValueDomainKey,
         PLASM_ATTACHMENT_KEY,
     };
-    use plasm_runtime::{ExecutionSource, ExecutionStats};
+    use plasm_runtime::{ExecutionSource, ExecutionStats, ResultCoverage};
 
     use super::in_band_fidelity::SummaryFidelityLoss;
 
@@ -929,6 +960,7 @@ mod tests {
             entities: vec![entity],
             count: 1,
             has_more: false,
+            coverage: ResultCoverage::Unknown,
             pagination_resume: None,
             paging_handle: None,
             source: ExecutionSource::Live,
@@ -973,6 +1005,7 @@ mod tests {
             entities: vec![entity],
             count: 1,
             has_more: false,
+            coverage: ResultCoverage::Unknown,
             pagination_resume: None,
             paging_handle: None,
             source: ExecutionSource::Live,
@@ -1036,6 +1069,7 @@ mod tests {
             entities: vec![entity],
             count: 1,
             has_more: false,
+            coverage: ResultCoverage::Unknown,
             pagination_resume: None,
             paging_handle: None,
             source: ExecutionSource::Live,
@@ -1172,6 +1206,7 @@ mod tests {
             entities: vec![entity],
             count: 1,
             has_more: false,
+            coverage: ResultCoverage::Unknown,
             pagination_resume: None,
             paging_handle: None,
             source: ExecutionSource::Live,
@@ -1230,6 +1265,7 @@ mod tests {
             entities: vec![entity],
             count: 1,
             has_more: false,
+            coverage: ResultCoverage::Unknown,
             pagination_resume: None,
             paging_handle: None,
             source: ExecutionSource::Live,
@@ -1273,6 +1309,7 @@ mod tests {
             entities: vec![entity],
             count: 1,
             has_more: false,
+            coverage: ResultCoverage::Unknown,
             pagination_resume: None,
             paging_handle: None,
             source: ExecutionSource::Live,
@@ -1321,6 +1358,7 @@ mod tests {
             entities: vec![entity],
             count: 1,
             has_more: false,
+            coverage: ResultCoverage::Unknown,
             pagination_resume: None,
             paging_handle: None,
             source: ExecutionSource::Live,
@@ -1362,6 +1400,7 @@ mod tests {
             entities: vec![entity],
             count: 1,
             has_more: false,
+            coverage: ResultCoverage::Unknown,
             pagination_resume: None,
             paging_handle: None,
             source: ExecutionSource::Live,
@@ -1395,6 +1434,7 @@ mod tests {
             failed,
             source,
             description: "Records a ping against the item (matrix conformance).".into(),
+            outcomes: Vec::new(),
         }
     }
 
@@ -1406,6 +1446,7 @@ mod tests {
             entities: vec![],
             count: 0,
             has_more: false,
+            coverage: ResultCoverage::Unknown,
             pagination_resume: None,
             paging_handle: None,
             source,
@@ -1424,6 +1465,7 @@ mod tests {
         assert!(wire.is_object(), "HTTP-2 forbids a bare row array: {wire}");
         assert_eq!(wire["rows"], serde_json::json!([]));
         assert_eq!(wire["operations"], serde_json::json!([]));
+        assert_eq!(wire["coverage"], serde_json::json!("unknown"));
     }
 
     #[test]
@@ -1524,5 +1566,92 @@ mod tests {
         let wire = http_execute_results_value(&result);
         assert_eq!(wire["operations"][0]["source"], "replay");
         assert!(format_operations_block(&result).contains("source=replay"));
+    }
+
+    /// Soft-fail retained summary: unavailable detail must not render as a blank / empty cell.
+    #[test]
+    fn soft_fail_unavailable_detail_not_blank_or_empty_in_tsv() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = plasm_core::loader::load_schema_dir(&dir).expect("language matrix");
+        let r = Ref {
+            entity_type: "LangSecuredNote".into(),
+            key: plasm_core::EntityKey::Simple("1".into()),
+        };
+        let mut fields = IndexMap::new();
+        fields.insert("note_id".into(), Value::String("1".into()));
+        fields.insert("title".into(), Value::String("kept summary".into()));
+        // Present empty body (backend returned "") — distinct from unavailable.
+        let empty_present = CachedEntity::from_decoded(
+            r.clone(),
+            {
+                let mut f = fields.clone();
+                f.insert("body".into(), Value::String(String::new()));
+                f
+            },
+            IndexMap::<String, DecodedRelation>::new(),
+            0,
+            plasm_runtime::EntityCompleteness::Complete,
+        );
+        // Soft-fail summary: title kept, body never obtained.
+        let mut soft = CachedEntity::from_decoded(
+            r,
+            fields,
+            IndexMap::<String, DecodedRelation>::new(),
+            0,
+            plasm_runtime::EntityCompleteness::Summary,
+        );
+        soft.mark_detail_fields_unavailable(["body"]);
+
+        let soft_result = ExecutionResult {
+            entities: vec![soft],
+            count: 1,
+            has_more: false,
+            coverage: ResultCoverage::Partial,
+            pagination_resume: None,
+            paging_handle: None,
+            source: ExecutionSource::Live,
+            stats: ExecutionStats::default(),
+            request_fingerprints: vec![],
+            operations: plasm_runtime::OperationLedger::empty(),
+        };
+        let empty_result = ExecutionResult {
+            entities: vec![empty_present],
+            count: 1,
+            has_more: false,
+            coverage: ResultCoverage::Complete,
+            pagination_resume: None,
+            paging_handle: None,
+            source: ExecutionSource::Live,
+            stats: ExecutionStats::default(),
+            request_fingerprints: vec![],
+            operations: plasm_runtime::OperationLedger::empty(),
+        };
+
+        let (soft_tsv, _, _) = format_result_tsv_with_cgs(&soft_result, Some(&cgs), None);
+        let (empty_tsv, _, _) = format_result_tsv_with_cgs(&empty_result, Some(&cgs), None);
+        assert!(
+            soft_tsv.contains(UNAVAILABLE_FIELD_PLACEHOLDER),
+            "soft-fail body must show (unavailable), got:\n{soft_tsv}"
+        );
+        assert!(
+            soft_tsv.contains("kept summary"),
+            "summary title must be retained:\n{soft_tsv}"
+        );
+        assert!(
+            !empty_tsv.contains(UNAVAILABLE_FIELD_PLACEHOLDER),
+            "present-empty must not be marked unavailable:\n{empty_tsv}"
+        );
+        let soft_row =
+            plasm_runtime::entity_to_agent_row_json(&soft_result.entities[0], Some(&cgs));
+        assert_eq!(
+            soft_row.get("_unavailable_fields"),
+            Some(&serde_json::json!(["body"]))
+        );
+        assert!(soft_row.get("body").is_none());
+        let empty_row =
+            plasm_runtime::entity_to_agent_row_json(&empty_result.entities[0], Some(&cgs));
+        assert!(empty_row.get("_unavailable_fields").is_none());
+        assert_eq!(empty_row.get("body"), Some(&serde_json::json!("")));
     }
 }

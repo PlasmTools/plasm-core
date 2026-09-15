@@ -13,6 +13,22 @@ const closure = z.object({
   }).passthrough()),
 });
 
+const requirementCoverage = z
+  .object({
+    requirement: z.string().min(1),
+    supporting_capability_ids: z.array(z.string()),
+    unresolved_reason: z.string().default(""),
+  })
+  .strict()
+  .refine(
+    (entry) => {
+      const supporting = entry.supporting_capability_ids.length > 0;
+      const unresolved = entry.unresolved_reason.trim().length > 0;
+      return (supporting && !unresolved) || (!supporting && unresolved);
+    },
+    "requirement coverage must associate supporting IDs or an unresolved reason, not both or neither",
+  );
+
 /** The Rust router owns validation; this decoder also rejects mismatched native packages. */
 export const routingPacketSchema = z.object({
   routing: z.object({
@@ -27,9 +43,25 @@ export const routingPacketSchema = z.object({
     selection: z.object({
       status: z.enum(["ready", "insufficient"]),
       additional_capability_ids: z.array(z.string()),
-      unsupported: z.array(z.object({ intent_quote: z.string().min(1), reason: z.string().min(1) }).strict()),
-    }).strict().refine((selection) => selection.status === (selection.unsupported.length ? "insufficient" : "ready"), "routing status contradicts sufficiency"),
+      requirement_coverage: z.array(requirementCoverage),
+    }).strict().refine(
+      (selection) =>
+        selection.status ===
+        (selection.requirement_coverage.some((c) => c.unresolved_reason.trim().length > 0)
+          ? "insufficient"
+          : "ready"),
+      "routing status contradicts sufficiency",
+    ),
     closure: closure.nullable(),
+    recovery: z.object({
+      unresolved: z.array(z.object({ requirement: z.string().min(1), reason: z.string().min(1) }).strict()),
+      requirement_coverage: z.array(requirementCoverage).optional().default([]),
+      available_catalogs: z.array(z.object({
+        entry_id: z.string().min(1),
+        description: z.string().min(1),
+      }).strict()),
+      guidance: z.string().min(1),
+    }).strict().optional().nullable(),
   }),
   teaching: z.object({ tsv: z.string(), delta_refs: z.array(z.string()) }).nullable(),
 });
@@ -37,5 +69,37 @@ export type RoutingPacket = z.infer<typeof routingPacketSchema>;
 export type PrerequisiteClosure = z.infer<typeof closure>;
 
 export function routingExplanationLines(selection: RoutingPacket["routing"]["selection"]): string[] {
-  return selection.unsupported.map((work) => `Unsupported: ${work.intent_quote} — ${work.reason}`);
+  return selection.requirement_coverage
+    .filter((c) => c.unresolved_reason.trim().length > 0)
+    .map((work) => `Unresolved: ${work.requirement} — ${work.unresolved_reason}`);
+}
+
+/** Lead with unresolved needs + coverage audit + available integration descriptions. */
+export function routingRecoveryMarkdown(routing: RoutingPacket["routing"]): string | null {
+  const recovery = routing.recovery;
+  if (!recovery) return null;
+  const coverage = recovery.requirement_coverage?.length
+    ? recovery.requirement_coverage
+    : routing.selection.requirement_coverage;
+  const lines = [
+    `**plasm_context:** ${routing.selection.status}`,
+    recovery.unresolved.length
+      ? "**Unresolved** (intent not fully covered by presented capabilities):"
+      : "",
+    ...recovery.unresolved.map((work) => `- \`${work.requirement}\` — ${work.reason}`),
+    coverage.length ? "**Requirement coverage** (audit; not execution approval):" : "",
+    ...coverage.map((entry) =>
+      entry.unresolved_reason.trim()
+        ? `- \`${entry.requirement}\` — unresolved: ${entry.unresolved_reason}`
+        : `- \`${entry.requirement}\` — supporting: ${entry.supporting_capability_ids.join(", ")}`,
+    ),
+    recovery.guidance,
+    recovery.available_catalogs.length
+      ? "**Available integrations** (descriptions for broader rediscovery):"
+      : "",
+    ...recovery.available_catalogs.map(
+      (catalog) => `- \`${catalog.entry_id}\` — ${catalog.description}`,
+    ),
+  ].filter(Boolean);
+  return lines.join("\n\n");
 }

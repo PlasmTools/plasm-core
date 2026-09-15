@@ -1,4 +1,4 @@
-version: 14
+version: 17
 entry_id: splitwise
 auth:
   scheme: none
@@ -118,7 +118,7 @@ entities:
         value_ref: nv_expense_id
       group_id:
         required: false
-        value_ref: nv_group_id
+        value_ref: nv_group_ref
       description:
         required: true
         value_ref: nv_body
@@ -156,7 +156,7 @@ entities:
         value_ref: nv_payment_id
       group_id:
         required: false
-        value_ref: nv_group_id
+        value_ref: nv_group_ref
       description:
         required: false
         value_ref: nv_body
@@ -277,7 +277,7 @@ entities:
         data_class: untrusted
       group_id:
         required: false
-        value_ref: nv_group_id
+        value_ref: nv_group_ref
       group_name:
         required: true
         value_ref: nv_str
@@ -308,7 +308,7 @@ entities:
         value_ref: nv_str
       group_id:
         required: false
-        value_ref: nv_group_id
+        value_ref: nv_group_ref
       group_name:
         required: false
         value_ref: nv_str
@@ -370,12 +370,13 @@ entities:
   PeerBalance:
     id_field: you_owe_others
     primary_query: peer_balance_query
-    description: Interpersonal balance with a counterparty.
+    description: Interpersonal balances with all counterparties.
     discovery:
       names:
       - balance
       - owing
       - debt
+      - people
     fields:
       you_owe_others:
         required: false
@@ -391,7 +392,40 @@ entities:
         value_ref: nv_str
       group_id:
         required: false
-        value_ref: nv_group_id
+        value_ref: nv_group_ref
+      group_name:
+        required: false
+        value_ref: nv_str
+      direction:
+        required: false
+        value_ref: nv_balance_direction
+      amount:
+        required: false
+        value_ref: nv_number
+  PersonBalance:
+    id_field: email
+    primary_query: person_balance_query
+    description: Interpersonal balance with one counterparty, broken down by group.
+    discovery:
+      names:
+      - person balance
+      - counterparty balance
+    fields:
+      email:
+        required: true
+        value_ref: nv_email
+      you_owe_others:
+        required: false
+        value_ref: nv_number
+      others_owe_you:
+        required: false
+        value_ref: nv_number
+      name:
+        required: false
+        value_ref: nv_str
+      group_id:
+        required: false
+        value_ref: nv_group_ref
       group_name:
         required: false
         value_ref: nv_str
@@ -525,6 +559,7 @@ capabilities:
           value_ref: nv_access_token
           required: true
   group_add_member:
+    receiver: {kind: entity, entity: Group}
     description: Add a member to a group by email.
     kind: action
     entity: Group
@@ -542,6 +577,7 @@ capabilities:
       type: side_effect
       description: Adds the email as a group member.
   group_remove_member:
+    receiver: {kind: entity, entity: Group}
     description: Remove a member from a group.
     kind: action
     entity: Group
@@ -559,6 +595,7 @@ capabilities:
       type: side_effect
       description: Removes the email from the group.
   group_exit:
+    receiver: {kind: entity, entity: Group}
     description: Exit a group you belong to.
     kind: action
     entity: Group
@@ -573,6 +610,7 @@ capabilities:
       type: side_effect
       description: Removes the current user from the group.
   group_undelete:
+    receiver: {kind: entity, entity: Group}
     description: Restore a deleted group (and its expenses/payments).
     kind: action
     entity: Group
@@ -604,6 +642,7 @@ capabilities:
       type: side_effect
       description: Joins the current user to the invited group.
   group_regenerate_invitation:
+    receiver: {kind: entity, entity: Group}
     description: Regenerate a group's invitation code.
     kind: action
     entity: Group
@@ -652,7 +691,7 @@ capabilities:
     - created_at
     scope:
     - name: group_id
-      value_ref: nv_group_id
+      value_ref: nv_group_ref
       required: false
   expense_get:
     description: Show one expense.
@@ -699,7 +738,7 @@ capabilities:
           value_ref: nv_number_list
           required: false
         - name: group_id
-          value_ref: nv_group_id
+          value_ref: nv_group_ref
           required: false
     provides:
     - expense_id
@@ -743,6 +782,7 @@ capabilities:
           value_ref: nv_access_token
           required: true
   expense_undelete:
+    receiver: {kind: entity, entity: Expense}
     description: Restore a previously deleted expense.
     kind: action
     entity: Expense
@@ -757,6 +797,7 @@ capabilities:
       type: side_effect
       description: Clears the deleted flag on the expense.
   expense_attach_receipt:
+    receiver: {kind: entity, entity: Expense}
     description: Attach a file-system receipt file to an expense. receipt_file_path must be absolute /home/… (or resolved ~/subpath), not a relative path.
     kind: action
     entity: Expense
@@ -774,12 +815,13 @@ capabilities:
           value_ref: nv_bool
           required: false
         - name: file_system_access_token
-          value_ref: nv_access_token
+          value_ref: nv_file_access_token
           required: true
     output:
       type: side_effect
       description: Copies the file-system file onto the expense as a receipt.
   expense_delete_receipt:
+    receiver: {kind: entity, entity: Expense}
     description: Delete the receipt file attached to an expense.
     kind: action
     entity: Expense
@@ -793,6 +835,30 @@ capabilities:
     output:
       type: side_effect
       description: Removes the receipt file from the expense.
+  expense_receipt_download:
+    receiver: {kind: entity, entity: Expense}
+    description: Download the receipt attached to an expense onto a file-system path.
+    kind: action
+    entity: Expense
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: download_to_file_path
+          value_ref: nv_file_path
+          required: false
+        - name: overwrite
+          value_ref: nv_bool
+          required: false
+        - name: file_system_access_token
+          value_ref: nv_file_access_token
+          required: false
+    output:
+      type: side_effect
+      description: Writes the expense receipt to the given file path.
   payment_query:
     description: List payments — with group_id for a group, or ungrouped when omitted.
     kind: query
@@ -820,7 +886,7 @@ capabilities:
     - created_at
     scope:
     - name: group_id
-      value_ref: nv_group_id
+      value_ref: nv_group_ref
       required: false
   payment_get:
     description: Show one payment.
@@ -862,7 +928,7 @@ capabilities:
           required: true
           sink_class: external_settle
         - name: group_id
-          value_ref: nv_group_id
+          value_ref: nv_group_ref
           required: false
         - name: description
           value_ref: nv_body
@@ -899,6 +965,7 @@ capabilities:
           value_ref: nv_str
           required: false
   payment_undelete:
+    receiver: {kind: entity, entity: Payment}
     description: Restore a previously deleted payment.
     kind: action
     entity: Payment
@@ -913,6 +980,7 @@ capabilities:
       type: side_effect
       description: Restores the deleted payment.
   payment_attach_receipt:
+    receiver: {kind: entity, entity: Payment}
     description: Attach a file-system receipt file to a payment. receipt_file_path must be absolute /home/… (or resolved ~/subpath), not a relative path.
     kind: action
     entity: Payment
@@ -930,12 +998,13 @@ capabilities:
           value_ref: nv_bool
           required: false
         - name: file_system_access_token
-          value_ref: nv_access_token
+          value_ref: nv_file_access_token
           required: true
     output:
       type: side_effect
       description: Copies the file-system file onto the payment as a receipt.
   payment_delete_receipt:
+    receiver: {kind: entity, entity: Payment}
     description: Delete the receipt file attached to a payment.
     kind: action
     entity: Payment
@@ -949,6 +1018,30 @@ capabilities:
     output:
       type: side_effect
       description: Removes the receipt file from the payment.
+  payment_receipt_download:
+    receiver: {kind: entity, entity: Payment}
+    description: Download the receipt attached to a payment onto a file-system path.
+    kind: action
+    entity: Payment
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: download_to_file_path
+          value_ref: nv_file_path
+          required: false
+        - name: overwrite
+          value_ref: nv_bool
+          required: false
+        - name: file_system_access_token
+          value_ref: nv_file_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Writes the payment receipt to the given file path.
   settle_up:
     description: Settle up balances with a person (optionally within a group).
     kind: action
@@ -964,7 +1057,7 @@ capabilities:
           value_ref: nv_email
           required: true
         - name: group_id
-          value_ref: nv_group_id
+          value_ref: nv_group_ref
           required: false
         - name: description
           value_ref: nv_body
@@ -1152,6 +1245,7 @@ capabilities:
           value_ref: nv_access_token
           required: true
   notification_mark:
+    receiver: {kind: entity, entity: Notification}
     description: Mark one notification as read or unread.
     kind: action
     entity: Notification
@@ -1242,7 +1336,7 @@ capabilities:
     entity: Balance
     scope:
     - name: group_id
-      value_ref: nv_group_id
+      value_ref: nv_group_ref
       required: false
     selection:
     - name: access_token
@@ -1265,20 +1359,33 @@ capabilities:
     - others_owe_you
     - you_owe_others
   peer_balance_query:
-    description: List peer balances by shelf — person | people.
+    description: List interpersonal balances with all counterparties.
     kind: query
     entity: PeerBalance
     selection:
     - name: access_token
       value_ref: nv_access_token
       required: true
-    - name: shelf
-      value_ref: nv_peer_balance_shelf
+    provides:
+    - amount
+    - direction
+    - email
+    - group_id
+    - group_name
+    - name
+    - others_owe_you
+    - you_owe_others
+  person_balance_query:
+    description: Show interpersonal balance with one person by email.
+    kind: query
+    entity: PersonBalance
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
       required: true
-      description: person | people
     - name: email
       value_ref: nv_email
-      required: false
+      required: true
     provides:
     - amount
     - direction
@@ -1304,11 +1411,18 @@ values:
   nv_access_token:
     type: string
     description: Bearer access token from login.
+  nv_file_access_token:
+    type: string
+    description: Bearer token authorizing the file-path argument, distinct from this service's login token.
   nv_body:
     type: markdown
     description: Long text body.
   nv_group_id:
     type: integer
+    description: Group primary key.
+  nv_group_ref:
+    type: entity_ref
+    target: Group
     description: Group primary key.
   nv_expense_id:
     type: integer
@@ -1409,12 +1523,6 @@ values:
     - group
     - groups
     description: Group balance shelf
-  nv_peer_balance_shelf:
-    type: enum
-    enum:
-    - person
-    - people
-    description: Peer balance shelf
   prerequisite_principal_email:
     type: email
     description: Account holder email.
@@ -1642,6 +1750,9 @@ prerequisites:
           path:
           - access_token
         output: token
+    - id: file_session
+      contract: appworld.session
+      bindings:
       - input:
           lane: payload
           path:
@@ -1655,6 +1766,23 @@ prerequisites:
           lane: payload
           path:
           - access_token
+        output: token
+    expense_receipt_download:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    - id: file_session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - file_system_access_token
         output: token
     payment_query:
     - id: session
@@ -1719,6 +1847,9 @@ prerequisites:
           path:
           - access_token
         output: token
+    - id: file_session
+      contract: appworld.session
+      bindings:
       - input:
           lane: payload
           path:
@@ -1732,6 +1863,23 @@ prerequisites:
           lane: payload
           path:
           - access_token
+        output: token
+    payment_receipt_download:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    - id: file_session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - file_system_access_token
         output: token
     settle_up:
     - id: session
@@ -1887,6 +2035,15 @@ prerequisites:
           - access_token
         output: token
     peer_balance_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    person_balance_query:
     - id: session
       contract: appworld.session
       bindings:

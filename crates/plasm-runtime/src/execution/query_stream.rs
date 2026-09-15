@@ -64,13 +64,7 @@ impl ExecutionEngine {
                     &ambient,
                 )
                 .await?;
-                yield PageResult {
-                    entities: res.entities,
-                    page_index: 0,
-                    has_more: false,
-                    pagination_resume: None,
-                    stats: res.stats,
-                };
+                yield PageResult::from_execution_result(res);
             });
             return Ok(stream);
         }
@@ -110,13 +104,7 @@ impl ExecutionEngine {
             let res = self
                 .execute_query_cross_entity(&query, &crosses, cgs, mat, mode, consume, &ambient)
                 .await?;
-            yield PageResult {
-                entities: res.entities,
-                page_index: 0,
-                has_more: false,
-                pagination_resume: None,
-                stats: res.stats,
-            };
+            yield PageResult::from_execution_result(res);
         });
         Ok(stream)
     }
@@ -154,8 +142,10 @@ impl ExecutionEngine {
                     entities: cached_entities,
                     page_index: 0,
                     has_more: false,
+                    coverage: ResultCoverage::Unknown,
                     pagination_resume: None,
                     stats,
+                    operations: OperationLedger::empty(),
                 };
                 return;
             }
@@ -218,8 +208,7 @@ impl ExecutionEngine {
             res.stats.merge_telemetry(&consult);
             res.stats.record_rows_materialized(res.count);
             ExecutionCacheConsult::index_query_result(mat, &query, cap_name, &res.entities);
-            let inherit =
-                CapabilityParamEnv::for_entity_get(cgs, query.entity.as_str(), &env);
+            let inherit = CapabilityParamEnv::from_cml_env(&env, &capability);
             stamp_entities_and_mat(&res.entities, mat, &inherit);
             let (entities, extra_net) = self
                 .hydrate_query_summaries(
@@ -234,6 +223,10 @@ impl ExecutionEngine {
                 .await?;
             res.entities = entities;
             res.stats.network_requests += extra_net;
+            let hydrate_partial = res
+                .entities
+                .iter()
+                .any(CachedEntity::has_unavailable_detail_fields);
 
             if let Some(pred) = &query.predicate {
                 if let Some(entity_def) = cgs.get_entity(&query.entity) {
@@ -252,8 +245,14 @@ impl ExecutionEngine {
                 entities: res.entities,
                 page_index: 0,
                 has_more: false,
+                coverage: if hydrate_partial {
+                    ResultCoverage::Partial
+                } else {
+                    ResultCoverage::Complete
+                },
                 pagination_resume: None,
                 stats: res.stats,
+                operations: OperationLedger::empty(),
             };
         });
         Ok(stream)
@@ -342,6 +341,8 @@ impl ExecutionEngine {
             let mut pages = 0usize;
             let mut accumulated_total = 0usize;
             let mut collector = crate::paginated_collect::PageCollector::new(&consume);
+            #[allow(unused_assignments)]
+            let mut last_coverage = ResultCoverage::Unknown;
 
             loop {
                 cooperative_cancel_check()?;
@@ -430,8 +431,7 @@ impl ExecutionEngine {
                 }
 
                 let hydrate_run = query.hydrate.unwrap_or(self.config.hydrate);
-                let inherit =
-                    CapabilityParamEnv::for_entity_get(cgs, query.entity.as_str(), &env);
+                let inherit = CapabilityParamEnv::from_cml_env(&env, &capability);
                 stamp_entities_and_mat(&page_cached, mat, &inherit);
                 let (hydrated, extra_net) = self
                     .hydrate_query_summaries(
@@ -455,6 +455,9 @@ impl ExecutionEngine {
                     }
                     None => hydrated,
                 };
+                let hydrate_field_partial = entities
+                    .iter()
+                    .any(CachedEntity::has_unavailable_detail_fields);
 
                 let ingest = collector.ingest_page(entities);
                 if !ingest.merge_into_mat.is_empty() {
@@ -481,6 +484,14 @@ impl ExecutionEngine {
                     ingest.yield_entities
                 };
 
+                let page_stats = ExecutionStats {
+                    duration_ms: 0,
+                    network_requests: page_net,
+                    cache_hits: 0,
+                    cache_misses: page_cache_misses,
+                    ..Default::default()
+                };
+
                 if single_http_roundtrip {
                     let continue_pages = driver.advance_after_page(
                         &normalized,
@@ -500,86 +511,93 @@ impl ExecutionEngine {
                     } else {
                         None
                     };
-                    yield PageResult {
-                        entities: yield_entities,
-                        page_index: pages,
-                        has_more: continue_pages,
-                        pagination_resume,
-                        stats: ExecutionStats {
-                            duration_ms: 0,
-                            network_requests: page_net,
-                            cache_hits: 0,
-                            cache_misses: page_cache_misses,
-                        ..Default::default()
-                        },
+                    let hit_max = consume.max_items.is_some_and(|m| accumulated_total >= m);
+                    let stop = if truncated || hit_max {
+                        ConsumeStop::ItemCapHit {
+                            truncated_page: truncated,
+                            driver_has_more: Some(continue_pages),
+                        }
+                    } else if continue_pages {
+                        ConsumeStop::BackendHasMore
+                    } else {
+                        ConsumeStop::BackendExhausted
                     };
+                    let mut page = page_result(
+                        yield_entities,
+                        pages,
+                        &consume,
+                        stop,
+                        pagination_resume,
+                        page_stats,
+                    );
+                    if hydrate_field_partial { page.coverage = page.coverage.combine(ResultCoverage::Partial); }
+                    last_coverage = page.coverage;
+                    yield page;
                     break;
                 }
                 if truncated {
-                    yield PageResult {
-                        entities: yield_entities,
-                        page_index: pages,
-                        has_more: false,
-                        pagination_resume: None,
-                        stats: ExecutionStats {
-                            duration_ms: 0,
-                            network_requests: page_net,
-                            cache_hits: 0,
-                            cache_misses: page_cache_misses,
-                        ..Default::default()
+                    let mut page = page_result(
+                        yield_entities,
+                        pages,
+                        &consume,
+                        ConsumeStop::ItemCapHit {
+                            truncated_page: true,
+                            driver_has_more: None,
                         },
-                    };
+                        None,
+                        page_stats,
+                    );
+                    if hydrate_field_partial { page.coverage = page.coverage.combine(ResultCoverage::Partial); }
+                    last_coverage = page.coverage;
+                    yield page;
                     break;
                 }
                 if consume
                     .max_items
                     .is_some_and(|m| accumulated_total >= m)
                 {
-                    yield PageResult {
-                        entities: yield_entities,
-                        page_index: pages,
-                        has_more: false,
-                        pagination_resume: None,
-                        stats: ExecutionStats {
-                            duration_ms: 0,
-                            network_requests: page_net,
-                            cache_hits: 0,
-                            cache_misses: page_cache_misses,
-                        ..Default::default()
+                    let mut page = page_result(
+                        yield_entities,
+                        pages,
+                        &consume,
+                        ConsumeStop::ItemCapHit {
+                            truncated_page: false,
+                            driver_has_more: None,
                         },
-                    };
+                        None,
+                        page_stats,
+                    );
+                    if hydrate_field_partial { page.coverage = page.coverage.combine(ResultCoverage::Partial); }
+                    last_coverage = page.coverage;
+                    yield page;
                     break;
                 }
                 if ingest.row_match_budget_satisfied {
-                    yield PageResult {
-                        entities: yield_entities,
-                        page_index: pages,
-                        has_more: false,
-                        pagination_resume: None,
-                        stats: ExecutionStats {
-                            duration_ms: 0,
-                            network_requests: page_net,
-                            cache_hits: 0,
-                            cache_misses: page_cache_misses,
-                        ..Default::default()
-                        },
-                    };
+                    let mut page = page_result(
+                        yield_entities,
+                        pages,
+                        &consume,
+                        ConsumeStop::RowMatchBudgetSatisfied,
+                        None,
+                        page_stats,
+                    );
+                    if hydrate_field_partial { page.coverage = page.coverage.combine(ResultCoverage::Partial); }
+                    last_coverage = page.coverage;
+                    yield page;
                     break;
                 }
                 if full_page_len == 0 && !matches!(pconf.location, plasm_compile::PaginationLocation::BlockRange) {
-                    yield PageResult {
-                        entities: yield_entities,
-                        page_index: pages,
-                        has_more: false,
-                        pagination_resume: None,
-                        stats: ExecutionStats {
-                            duration_ms: 0,
-                            network_requests: page_net,
-                            cache_hits: 0,
-                            cache_misses: page_cache_misses,
-                        ..Default::default()
-                        },
-                    };
+                    let mut page = page_result(
+                        yield_entities,
+                        pages,
+                        &consume,
+                        ConsumeStop::EmptyPageUnproven,
+                        None,
+                        page_stats,
+                    );
+                    if hydrate_field_partial { page.coverage = page.coverage.combine(ResultCoverage::Partial); }
+                    last_coverage = page.coverage;
+                    yield page;
                     break;
                 }
 
@@ -590,19 +608,22 @@ impl ExecutionEngine {
                     last_id.as_deref(),
                 )?;
 
-                yield PageResult {
-                    entities: yield_entities,
-                    page_index: pages,
-                    has_more: continue_pages,
-                    pagination_resume: None,
-                    stats: ExecutionStats {
-                        duration_ms: 0,
-                        network_requests: page_net,
-                        cache_hits: 0,
-                        cache_misses: page_cache_misses,
-                    ..Default::default()
-                    },
+                let stop = if continue_pages {
+                    ConsumeStop::BackendHasMore
+                } else {
+                    ConsumeStop::BackendExhausted
                 };
+                let mut page = page_result(
+                    yield_entities,
+                    pages,
+                    &consume,
+                    stop,
+                    None,
+                    page_stats,
+                );
+                if hydrate_field_partial { page.coverage = page.coverage.combine(ResultCoverage::Partial); }
+                    last_coverage = page.coverage;
+                yield page;
 
                 pages += 1;
 
@@ -622,8 +643,10 @@ impl ExecutionEngine {
                     entities: yield_entities,
                     page_index: pages,
                     has_more: false,
+                    coverage: last_coverage,
                     pagination_resume: None,
                     stats: ExecutionStats::default(),
+                    operations: OperationLedger::empty(),
                 };
             }
         });

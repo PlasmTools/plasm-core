@@ -15,6 +15,7 @@ pub(crate) async fn materialize_synthetic_node(
     entity_override: Option<&str>,
     rows: Vec<serde_json::Value>,
     row_identities: Vec<Option<plasm_core::RowIdentity>>,
+    source_coverage: plasm_runtime::ResultCoverage,
     trace: Option<&PlasmTraceContext>,
 ) -> Result<MaterializedNode, String> {
     let entity = entity_override
@@ -30,10 +31,25 @@ pub(crate) async fn materialize_synthetic_node(
         });
     let full_entities = json_rows_to_entities(&entity, &rows);
     let request_fingerprints = vec![compute_fingerprint(node, &rows)];
+    let coverage = match node {
+        ValidatedPlanNode::Compute(compute) => {
+            if let crate::plasm_plan::ComputeOp::Limit { count } = &compute.compute.op {
+                plasm_runtime::coverage_after_explicit_take(
+                    source_coverage,
+                    *count as usize,
+                    full_entities.len(),
+                )
+            } else {
+                source_coverage
+            }
+        }
+        _ => source_coverage,
+    };
     let full_result = ExecutionResult {
         count: full_entities.len(),
         entities: full_entities.clone(),
         has_more: false,
+        coverage,
         pagination_resume: None,
         paging_handle: None,
         source: ExecutionSource::Cache,
@@ -76,6 +92,7 @@ pub(crate) async fn materialize_synthetic_node(
                 offset: page_size,
                 page_size,
                 request_fingerprints: request_fingerprints.clone(),
+                coverage: full_result.coverage,
             },
             trace.and_then(|t| t.logical_session_ref.as_deref()),
         );
@@ -96,6 +113,7 @@ pub(crate) async fn materialize_synthetic_node(
             count: entities.len(),
             entities,
             has_more,
+            coverage: full_result.coverage,
             pagination_resume: None,
             paging_handle,
             source: ExecutionSource::Cache,
@@ -504,6 +522,7 @@ pub(crate) fn execution_result_from_fanout_fold(
         count: fold.entities.len(),
         entities: fold.entities,
         has_more: false,
+        coverage: fold.coverage,
         pagination_resume: None,
         paging_handle: None,
         source: fold.source,
@@ -526,6 +545,7 @@ pub(crate) fn execution_result_from_relation_entities(
         count,
         entities,
         has_more: false,
+        coverage: plasm_runtime::ResultCoverage::Unknown,
         pagination_resume: None,
         paging_handle: None,
         source,
@@ -771,6 +791,8 @@ pub(crate) async fn archive_materialize_for_each_fanout(
 /// HTTP-2: rematerialized seed rows live on `result.entities` with `count == entities.len()`.
 /// Step acks are the merged fanout ledger on `result.operations`. Zero-step keeps that
 /// ledger empty. This constructor does not mint acks and does not use `inline_cache`.
+///
+/// Coverage is the folded seed (+ retained step) coverages — never a hard Complete literal.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn archive_materialize_iterate_until(
     st: &PlasmHostState,
@@ -785,6 +807,7 @@ pub(crate) async fn archive_materialize_iterate_until(
     stats: ExecutionStats,
     source: ExecutionSource,
     steps_taken: u32,
+    coverage: plasm_runtime::ResultCoverage,
     trace: Option<&PlasmTraceContext>,
 ) -> Result<MaterializedNode, String> {
     if steps_taken > 0 && operations.is_empty() {
@@ -801,6 +824,7 @@ pub(crate) async fn archive_materialize_iterate_until(
         count: entities.len(),
         entities,
         has_more: false,
+        coverage,
         pagination_resume: None,
         paging_handle: None,
         source,

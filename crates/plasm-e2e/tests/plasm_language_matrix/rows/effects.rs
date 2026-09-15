@@ -5,28 +5,47 @@ use super::super::row::MatrixRow;
 pub(crate) const ROWS: &[MatrixRow] = &[
     MatrixRow {
         id: "lang_bindings_render",
-        program: r#"rows = LangItem("i1") | select id, title
-hdr = rows => <<MD
-# {{ rows | length }} row(s): {% for r in rows %}{{ r.id }}{% endfor %}
+        program: r#"items = LangItem("i1") | select id, title
+hdr = items => <<MD
+# {{ title }}
 MD
 hdr"#,
         surface_line: false,
         federated: false,
-        features: &["bindings_assignment", "bracket_render"],
+        features: &["bindings_assignment", "bracket_render", "per_row_render"],
         min_node_results: 2,
-        expect_markdown_substrings: &["row(s)", "```"],
+        expect_markdown_substrings: &["#", "```"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_render_split_part",
+        program: r#"items = LangItem("i1") | select id
+hdr = items => <<MD
+split_part_ok={{ id | split_part('1', 0) }}
+MD
+hdr"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "bindings_assignment",
+            "bracket_render",
+            "render_minijinja_split_part",
+            "per_row_render",
+        ],
+        min_node_results: 2,
+        expect_markdown_substrings: &["split_part_ok=i"],
         expect_live_error: None,
     },
     MatrixRow {
         id: "lang_cross_binding_render",
         program: r#"a = LangItem("i1") | select id, title
 report = a => <<MD
-Item: {{ a.id }}
+Item: {{ id }}
 MD
 report"#,
         surface_line: false,
         federated: false,
-        features: &["bindings_assignment", "bracket_render"],
+        features: &["bindings_assignment", "bracket_render", "per_row_render"],
         min_node_results: 2,
         expect_markdown_substrings: &["Item:", "i1", "```tsv"],
         expect_live_error: None,
@@ -35,7 +54,7 @@ report"#,
         id: "lang_render_content_into_create",
         program: r#"one = LangItem | take 1 | select title
 hdr = one => <<PLASM_TITLE_PIPE
-{{ rows[0].title }}
+{{ title }}
 PLASM_TITLE_PIPE
 LangItem.create(title=hdr.content, score=0, owner="render-pipe-owner")"#,
         surface_line: false,
@@ -153,6 +172,52 @@ out"#,
         expect_live_error: None,
     },
     MatrixRow {
+        id: "lang_take_one_method_invoke",
+        program: r#"items = LangItem
+one = items | order by id | take 1
+out = one.update(title="after-take1", score=2, owner="alice")
+out"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "bounded_singleton_method_invoke",
+            "effect_update",
+            "pipe_take",
+        ],
+        min_node_results: 3,
+        expect_markdown_substrings: &["after-take1", "```tsv"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_take_one_method_invoke_empty",
+        program: r#"items = LangItem
+one = items | where id = "missing" | take 1
+out = one.update(title="must-not-write", score=2, owner="alice")
+out"#,
+        surface_line: false,
+        federated: false,
+        features: &["bounded_singleton_method_invoke", "effect_update"],
+        min_node_results: 3,
+        expect_markdown_substrings: &[],
+        expect_live_error: Some("zero rows"),
+    },
+    MatrixRow {
+        id: "lang_rows_each_method_invoke",
+        program: r#"items = LangItem
+out = items => _.update(title="after-each", score=2, owner=_.owner)
+out"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "row_identity_method_invoke",
+            "for_each_effect",
+            "effect_update",
+        ],
+        min_node_results: 2,
+        expect_markdown_substrings: &["after-each", "```tsv"],
+        expect_live_error: None,
+    },
+    MatrixRow {
         id: "lang_bind_singleton_field_scalar",
         program: r#"item = LangItem("i1")
 title = item.title
@@ -163,6 +228,49 @@ title"#,
         min_node_results: 2,
         expect_markdown_substrings: &["```tsv", "title"],
         expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_get_singleton_field_scalar",
+        program: r#"title = LangItem("i1").title
+title"#,
+        surface_line: false,
+        federated: false,
+        features: &["get_singleton_field_scalar", "bind_singleton_field_scalar"],
+        min_node_results: 2,
+        expect_markdown_substrings: &["```tsv", "title"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_get_singleton_field_argument",
+        program: r#"out = LangItem("i1").update(title=LangItem("i2").title, score=1, owner="alice")
+out"#,
+        surface_line: false,
+        federated: false,
+        features: &["get_singleton_field_scalar", "effect_update"],
+        min_node_results: 2,
+        expect_markdown_substrings: &["```tsv"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_get_singleton_field_password",
+        program: r#"pw = LangVault("venmo").password
+pw"#,
+        surface_line: false,
+        federated: false,
+        features: &["get_singleton_field_scalar"],
+        min_node_results: 2,
+        expect_markdown_substrings: &["```tsv", "venmo-secret"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_get_singleton_field_empty",
+        program: r#"LangVault("missing").password"#,
+        surface_line: false,
+        federated: false,
+        features: &["get_singleton_field_scalar"],
+        min_node_results: 1,
+        expect_markdown_substrings: &[],
+        expect_live_error: Some("zero rows"),
     },
     MatrixRow {
         id: "lang_derive_map_parallel",
@@ -213,6 +321,23 @@ tags"#,
         surface_line: false,
         federated: false,
         features: &["bind_pipe_take_continuation", "pipe_take"],
+        min_node_results: 3,
+        expect_markdown_substrings: &["```tsv"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_bind_filter_continuation",
+        program: r#"root = LangItem{owner="alice"}
+filtered = root | where owner="alice"
+tags = filtered => _.tags
+tags"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "bind_pipe_where_continuation",
+            "pipe_where",
+            "binding_continuation",
+        ],
         min_node_results: 3,
         expect_markdown_substrings: &["```tsv"],
         expect_live_error: None,
@@ -378,7 +503,7 @@ tags"#,
     MatrixRow {
         id: "lang_ra4_pipe_monolith",
         program: r#"LangItem | where owner="alice" | order by title | take 5 | select title, owner"#,
-        surface_line: false,
+        surface_line: true,
         federated: false,
         features: &[
             "ra4_pipe_factor",
@@ -419,7 +544,7 @@ t | select title, owner"#,
     MatrixRow {
         id: "lang_ra4_apply_monolith",
         program: r#"LangItem | where owner="alice" | take 3 => { t: _.title, o: _.owner }"#,
-        surface_line: false,
+        surface_line: true,
         federated: false,
         features: &[
             "ra4_apply_factor",
@@ -487,4 +612,139 @@ tags"#,
         expect_live_error: None,
     },
     // RA-4 apply — render bind-cut (pipe⇒render monolith needs named collection alias; sealed via bind).
+    MatrixRow {
+        id: "lang_per_row_render_zero",
+        program: r#"items = LangItem | where id = "missing"
+rendered = items => <<TEXT
+{{ title }}
+TEXT
+rendered"#,
+        surface_line: false,
+        federated: false,
+        features: &["per_row_render", "bracket_render"],
+        min_node_results: 2,
+        expect_markdown_substrings: &["```tsv"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_per_row_render_many",
+        program: r#"items = LangItem | take 2 | select id, title, code
+rendered = items => <<TEXT
+{{ title }} — {{ code }}
+TEXT
+rendered"#,
+        surface_line: false,
+        federated: false,
+        features: &["per_row_render", "bracket_render", "pipe_take"],
+        min_node_results: 2,
+        expect_markdown_substrings: &["```tsv", "content"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_plain_template_foreach",
+        program: r#"items = LangItem | take 2 | select id, title
+report = <<REPORT
+{% for item in items %}
+- {{ item.title }}
+{% endfor %}
+REPORT
+report"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "plain_template_foreach",
+            "static_heredoc_binding",
+            "pipe_take",
+        ],
+        min_node_results: 2,
+        expect_markdown_substrings: &["-"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_render_name_collision",
+        program: r#"title = LangItem("i1") | take 1
+items = LangItem | take 2
+bad = items => <<TEXT
+{{ title }}
+TEXT
+bad"#,
+        surface_line: false,
+        federated: false,
+        features: &["render_name_collision", "per_row_render"],
+        min_node_results: 1,
+        expect_markdown_substrings: &[],
+        expect_live_error: Some("both a row field and a program binding"),
+    },
+    MatrixRow {
+        id: "lang_render_content_plural_reject",
+        program: r#"items = LangItem | take 2 | select title
+hdr = items => <<TEXT
+{{ title }}
+TEXT
+LangItem.create(title=hdr.content, score=0, owner="plural-content")"#,
+        surface_line: false,
+        federated: false,
+        features: &["render_content_plural_reject", "bracket_render_content_ref"],
+        min_node_results: 2,
+        expect_markdown_substrings: &[],
+        expect_live_error: Some("not a singleton"),
+    },
+    MatrixRow {
+        id: "lang_per_row_arg_template",
+        program: r#"items = LangItem | take 2
+done = items => _.update(title=<<TITLE
+{{ title }} — {{ id }}
+TITLE, score=_.score, owner=_.owner)
+done"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "per_row_arg_template",
+            "for_each_effect",
+            "effect_update",
+            "row_identity_method_invoke",
+        ],
+        min_node_results: 2,
+        expect_markdown_substrings: &["```tsv"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_render_aggregate_report",
+        program: r#"items = LangItem | take 2
+done = items => _.update(title=<<TITLE
+{{ title }} — {{ id }}
+TITLE, score=_.score, owner=_.owner)
+report = <<REPORT
+{% for item in done %}
+- {{ item.title }}
+{% endfor %}
+REPORT
+report"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "render_aggregate_report",
+            "per_row_arg_template",
+            "plain_template_foreach",
+            "for_each_effect",
+            "effect_update",
+        ],
+        min_node_results: 3,
+        expect_markdown_substrings: &["-"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_render_undefined_field",
+        program: r#"items = LangItem("i1") | select id
+bad = items => <<TEXT
+{{ missing_field }}
+TEXT
+bad"#,
+        surface_line: false,
+        federated: false,
+        features: &["per_row_render"],
+        min_node_results: 1,
+        expect_markdown_substrings: &[],
+        expect_live_error: Some("not a current-row field"),
+    },
 ];

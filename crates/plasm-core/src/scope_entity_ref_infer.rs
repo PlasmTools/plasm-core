@@ -14,10 +14,10 @@ use crate::{FieldType, CGS};
 /// How a scope input field is supplied on dotted invoke/create.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ScopeParamSupply {
-    /// Must appear in `(…)` — not path-bound, not same-entity inferable.
+    /// Must appear in `(…)`; the receiver does not supply this input.
     Explicit,
-    /// Bound by CML path template from receiver identity (id_field / key_vars / single-alias).
-    PathTemplate,
+    /// Supplied by the declared receiver identity (id_field / key_vars).
+    ReceiverIdentity,
     /// Same-entity EntityRef scope — omit from teaching; infer at runtime when normalizable.
     ReceiverEntityRef,
 }
@@ -29,11 +29,13 @@ pub fn classify_scope_param_supply(
     field: &InputFieldSchema,
     cgs: &CGS,
 ) -> ScopeParamSupply {
-    if !cap.scope_params().iter().any(|scope| scope == field) {
+    if cap.receiver_entity() != Some(&receiver_entity.name)
+        || !cap.scope_params().iter().any(|scope| scope == field)
+    {
         return ScopeParamSupply::Explicit;
     }
-    if field_omitted_from_path_inject(receiver_entity, cap, field.name.as_str()) {
-        return ScopeParamSupply::PathTemplate;
+    if field_supplied_by_receiver_identity(receiver_entity, cap, field.name.as_str()) {
+        return ScopeParamSupply::ReceiverIdentity;
     }
     let Ok(nv) = field.named_value(cgs) else {
         return ScopeParamSupply::Explicit;
@@ -48,7 +50,7 @@ pub fn classify_scope_param_supply(
     }
 }
 
-/// Teaching exemplar: omit scope args already path-bound or same-entity EntityRef inferable.
+/// Teaching exemplar: omit scope args supplied by receiver identity or an EntityRef.
 pub fn should_omit_invoke_teaching_arg(
     receiver_entity: &EntityDef,
     cap: &CapabilitySchema,
@@ -57,32 +59,20 @@ pub fn should_omit_invoke_teaching_arg(
 ) -> bool {
     matches!(
         classify_scope_param_supply(receiver_entity, cap, field, cgs),
-        ScopeParamSupply::PathTemplate | ScopeParamSupply::ReceiverEntityRef
+        ScopeParamSupply::ReceiverIdentity | ScopeParamSupply::ReceiverEntityRef
     )
 }
 
-/// Omit path-bound scope keys from explicit dotted-call `(…)` when they are already supplied by the
-/// receiver identity via [`crate::is_identity_projectable`] (same vocabulary as
-/// [`crate::project_identity_onto_vars`] / pack-time path-env proof).
-pub fn field_omitted_from_path_inject(
+/// Whether a declared receiver identity supplies this semantic field.
+/// Transport templates do not participate in this decision.
+pub fn field_supplied_by_receiver_identity(
     ent: &EntityDef,
     cap: &CapabilitySchema,
     field_name: &str,
 ) -> bool {
-    let Some(mapping) = &cap.mapping else {
-        return false;
-    };
-    let vars = crate::identity_env_var_names(&mapping.template.0);
-    if !vars.iter().any(|pv| pv == field_name) {
-        return false;
-    }
-    // Create domain: no sole-path invent alias (parent keys are wire names or declared inputs).
-    crate::is_identity_projectable(
-        ent,
-        &vars,
-        field_name,
-        cap.kind.domain_path_env_alias_policy(),
-    )
+    cap.receiver_entity() == Some(&ent.name)
+        && (field_name == ent.id_field.as_str()
+            || ent.key_vars.iter().any(|key| key.as_str() == field_name))
 }
 
 /// Build a normalized EntityRef(scope) value from a same-entity receiver [`Ref`].
@@ -143,7 +133,16 @@ pub fn effective_capability_input(
             continue;
         }
         match classify_scope_param_supply(receiver_entity, cap, field, cgs) {
-            ScopeParamSupply::PathTemplate | ScopeParamSupply::Explicit => continue,
+            ScopeParamSupply::Explicit => continue,
+            ScopeParamSupply::ReceiverIdentity => {
+                let identity = crate::ResolvedIdentity::from_ref(
+                    receiver_ref,
+                    crate::IdentityProjectionCtx::Entity(receiver_entity),
+                );
+                if let Some(value) = identity.get_value(field.name.as_str()) {
+                    map.insert(field.name.to_string(), value.clone());
+                }
+            }
             ScopeParamSupply::ReceiverEntityRef => {
                 let Ok(nv) = field.named_value(cgs) else {
                     continue;
@@ -304,6 +303,9 @@ mod tests {
             }),
             derived: None,
             inputs: CapabilityInputs {
+                receiver: Some(crate::CapabilityReceiver::Entity {
+                    entity: "Repository".into(),
+                }),
                 scope: ParentScopeSchema(vec![repository]),
                 arguments: Some(InputSchema {
                     input_type: InputType::Object {
@@ -333,6 +335,16 @@ mod tests {
         cgs.add_resource(repository_resource(&cgs)).unwrap();
         let cap = repo_branch_create_cap(&cgs);
         cgs.add_capability(cap.clone()).unwrap();
+        let mut get = CapabilitySchema::minimal_test();
+        get.name = "repository_get".into();
+        get.domain = "Repository".into();
+        get.kind = CapabilityKind::Get;
+        get.mapping = Some(CapabilityMapping {
+            template: CapabilityTemplateJson(serde_json::json!({
+                "method": "GET", "path": [{"type":"var", "name":"owner"}, {"type":"var", "name":"repo"}]
+            })),
+        });
+        cgs.add_capability(get).unwrap();
         cgs.validate().expect("fixture");
 
         let receiver = Ref::compound(

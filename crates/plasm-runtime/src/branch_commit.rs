@@ -42,13 +42,9 @@ impl BranchMaterializationBase {
             responses: hot.responses.entries_snapshot(),
             query_index: hot.query_index.entries_snapshot(),
         };
-        let branch = SessionMaterialization {
-            graph: hot.graph.fork_for_branch(),
-            responses: hot.responses.clone(),
-            query_index: hot.query_index.clone(),
-            read_cache_invalidated: false,
-            inherited_capability_params: hot.inherited_capability_params.clone(),
-        };
+        // RA-11 reuse is inherited; branch-local write stays None until this
+        // fork itself poisons. Absorb uses the local-write flag, not inherited reuse.
+        let branch = SessionMaterialization::seed_read_branch(hot, hot.graph.fork_for_branch());
         (branch, base)
     }
 }

@@ -3,6 +3,25 @@
 use super::super::heredoc_surface::{heredoc_surface_step_at, HeredocSurfaceStep};
 use super::labels::is_valid_program_label;
 
+/// Top-level `=` that is a program binding, an invalid binding attempt, or pipe/where equality.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TopLevelAssignment<'a> {
+    Binding { label: &'a str, rhs: &'a str },
+    InvalidLabel { label: &'a str },
+}
+
+/// Classify `lhs = rhs` without treating `| where field="x"` as a binding.
+pub fn classify_top_level_assignment(line: &str) -> Option<TopLevelAssignment<'_>> {
+    let (label, rhs) = split_assignment_at_top_level(line)?;
+    if is_valid_program_label(label) && !matches!(label, "_" | "$" | "return") {
+        return Some(TopLevelAssignment::Binding { label, rhs });
+    }
+    if label.contains('|') || label.contains(char::is_whitespace) {
+        return None;
+    }
+    Some(TopLevelAssignment::InvalidLabel { label })
+}
+
 /// Split `lhs = rhs` at the first top-level `=` (respecting quotes and nesting).
 ///
 /// Does **not** validate `lhs`; use [`validate_program_label`] after splitting when the line is

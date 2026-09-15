@@ -544,6 +544,7 @@ capabilities:
           value_ref: nv_wire_bool
           required: false
   files_copy:
+    receiver: {kind: entity, entity: File}
     description: Copy an existing file to a new file entry.
     kind: action
     entity: File
@@ -560,6 +561,7 @@ capabilities:
     - mimeType
     - kind
   files_export:
+    receiver: {kind: entity, entity: File}
     description: Export a Google Workspace file to a downloadable MIME type (binary
       response).
     kind: action
@@ -910,12 +912,14 @@ capabilities:
           value_ref: nv_wire_bool
           required: false
   drives_hide:
+    receiver: {kind: entity, entity: SharedDrive}
     kind: action
     entity: SharedDrive
     output:
       type: side_effect
       description: Hides a shared drive from the default list.
   drives_unhide:
+    receiver: {kind: entity, entity: SharedDrive}
     kind: action
     entity: SharedDrive
     output:

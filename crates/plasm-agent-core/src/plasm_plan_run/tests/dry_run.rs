@@ -22,21 +22,24 @@ fn singleton_input_multi_row_error_mentions_ambiguity_remedy() {
     assert!(err.contains(".singleton()"), "{err}");
 }
 
-fn github_repository_commit_session() -> ExecuteSession {
+fn repository_commit_session() -> ExecuteSession {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let cgs = Arc::new(load_schema(&root.join("../../apis/github")).expect("load github"));
+    let cgs = Arc::new(
+        load_schema(&root.join("../../fixtures/schemas/repository_commit_matrix"))
+            .expect("load repository_commit_matrix"),
+    );
     let mut ctxs = indexmap::IndexMap::new();
     ctxs.insert(
-        "github".into(),
-        Arc::new(CgsContext::entry("github", cgs.clone())),
+        "repocommit".into(),
+        Arc::new(CgsContext::entry("repocommit", cgs.clone())),
     );
-    let exp = TeachingExposureSession::new(cgs.as_ref(), "github", &["Repository", "Commit"]);
+    let exp = TeachingExposureSession::new(cgs.as_ref(), "repocommit", &["Repository", "Commit"]);
     ExecuteSession::new(
         "ph".into(),
         "p".into(),
         cgs.clone(),
         ctxs,
-        "github".into(),
+        "repocommit".into(),
         String::new(),
         String::new(),
         None,
@@ -105,8 +108,8 @@ fn federated_bare_entity_mutator_stays_ambiguous() {
 }
 
 #[test]
-fn federated_github_linear_issue_children_relation_dry_run() {
-    let Some(session) = federated_github_linear_issue_session() else {
+fn federated_langmatrix_item_children_relation_dry_run() {
+    let Some(session) = federated_langmatrix_item_session() else {
         return;
     };
     let map = session
@@ -114,10 +117,10 @@ fn federated_github_linear_issue_children_relation_dry_run() {
         .as_ref()
         .expect("exposure")
         .symbol_map_arc();
-    let e2 = map.entity_sym_for("linear", "Issue");
-    let r_sym = map.ident_sym_relation_for("linear", "Issue", "children");
+    let e2 = map.entity_sym_for("langmatrix_b", "LangItem");
+    let r_sym = map.ident_sym_relation_for("langmatrix_b", "LangItem", "children");
     let program = format!(
-        r#"parent = {e2}("issue-id")
+        r#"parent = {e2}("LI1")
 kids = parent.{r_sym}
 kids"#
     );
@@ -125,16 +128,16 @@ kids"#
         &PromptPipelineConfig::default(),
         None,
         &session,
-        "fed-linear-children",
+        "fed-langmatrix-children",
         &program,
     )
-    .expect("compile federated linear children hop");
-    evaluate_plasm_plan_dry(&session, &plan).expect("dry-run federated linear children");
+    .expect("compile federated langmatrix children hop");
+    evaluate_plasm_plan_dry(&session, &plan).expect("dry-run federated langmatrix children");
 }
 
 #[test]
-fn federated_linear_issue_create_dry_run_preflight_compiles() {
-    let Some(session) = federated_github_linear_issue_team_session() else {
+fn federated_langitem_create_dry_run_preflight_compiles() {
+    let Some(session) = federated_langmatrix_item_team_session() else {
         return;
     };
     let map = session
@@ -142,51 +145,58 @@ fn federated_linear_issue_create_dry_run_preflight_compiles() {
         .as_ref()
         .expect("exposure")
         .symbol_map_arc();
-    let e2 = map.entity_sym_for("linear", "Issue");
-    let e3 = map.entity_sym_for("linear", "Team");
-    let m_create = map.method_sym_for("linear", "Issue", "create");
-    let p_key = map.ident_sym_entity_field_for("linear", "Team", "key");
-    let program =
-        format!("{e2}.{m_create}(team={e3}({p_key}=EVA), title=\"federation triage dry-run\")");
-    let plan = crate::plasm_dag::compile_plasm_dag_to_plan(
-        &PromptPipelineConfig::default(),
-        None,
-        &session,
-        "fed-linear-create",
-        &program,
-    )
-    .expect("compile federated linear issue create");
-    evaluate_plasm_plan_dry(&session, &plan).expect("dry-run federated linear issue create");
-}
-
-#[test]
-fn federated_linear_issue_create_dry_run_preflight_compiles_p_sym_tokens() {
-    let Some(session) = federated_github_linear_issue_team_session() else {
-        return;
-    };
-    let map = session
-        .teaching_exposure
-        .as_ref()
-        .expect("exposure")
-        .symbol_map_arc();
-    let e2 = map.entity_sym_for("linear", "Issue");
-    let e3 = map.entity_sym_for("linear", "Team");
-    let m_create = map.method_sym_for("linear", "Issue", "create");
-    let p_team = map.ident_sym_cap_param_for("linear", "Issue", "issue_create", "team");
-    let p_title = map.ident_sym_cap_param_for("linear", "Issue", "issue_create", "title");
-    let p_key = map.ident_sym_entity_field_for("linear", "Team", "key");
+    let e2 = map.entity_sym_for("langmatrix_b", "LangItem");
+    let m_create = map.method_sym_for("langmatrix_b", "LangItem", "langitem_create");
+    let p_title =
+        map.ident_sym_cap_param_for("langmatrix_b", "LangItem", "langitem_create", "title");
+    let p_score =
+        map.ident_sym_cap_param_for("langmatrix_b", "LangItem", "langitem_create", "score");
+    let p_owner =
+        map.ident_sym_cap_param_for("langmatrix_b", "LangItem", "langitem_create", "owner");
     let program = format!(
-        "{e2}.{m_create}({p_team}={e3}({p_key}=EVA), {p_title}=\"federation triage p# dry-run\")"
+        r#"{e2}.{m_create}({p_title}="federation triage dry-run", {p_score}=1, {p_owner}="alice")"#
     );
     let plan = crate::plasm_dag::compile_plasm_dag_to_plan(
         &PromptPipelineConfig::default(),
         None,
         &session,
-        "fed-linear-create-p-sym",
+        "fed-langitem-create",
         &program,
     )
-    .expect("compile federated linear issue create with p# tokens");
-    evaluate_plasm_plan_dry(&session, &plan).expect("dry-run federated linear issue create p#");
+    .expect("compile federated langitem create");
+    evaluate_plasm_plan_dry(&session, &plan).expect("dry-run federated langitem create");
+}
+
+#[test]
+fn federated_langitem_create_dry_run_preflight_compiles_p_sym_tokens() {
+    let Some(session) = federated_langmatrix_item_team_session() else {
+        return;
+    };
+    let map = session
+        .teaching_exposure
+        .as_ref()
+        .expect("exposure")
+        .symbol_map_arc();
+    let e2 = map.entity_sym_for("langmatrix_b", "LangItem");
+    let m_create = map.method_sym_for("langmatrix_b", "LangItem", "langitem_create");
+    let p_title =
+        map.ident_sym_cap_param_for("langmatrix_b", "LangItem", "langitem_create", "title");
+    let p_score =
+        map.ident_sym_cap_param_for("langmatrix_b", "LangItem", "langitem_create", "score");
+    let p_owner =
+        map.ident_sym_cap_param_for("langmatrix_b", "LangItem", "langitem_create", "owner");
+    let program = format!(
+        r#"{e2}.{m_create}({p_title}="federation triage p# dry-run", {p_score}=1, {p_owner}="alice")"#
+    );
+    let plan = crate::plasm_dag::compile_plasm_dag_to_plan(
+        &PromptPipelineConfig::default(),
+        None,
+        &session,
+        "fed-langitem-create-p-sym",
+        &program,
+    )
+    .expect("compile federated langitem create with p# tokens");
+    evaluate_plasm_plan_dry(&session, &plan).expect("dry-run federated langitem create p#");
 }
 
 /// A2: `provides` is the authoritative row schema for create/mutation outputs. Projecting a field
@@ -194,7 +204,7 @@ fn federated_linear_issue_create_dry_run_preflight_compiles_p_sym_tokens() {
 /// closed (compile error) rather than silently decode to null.
 #[test]
 fn issue_create_projection_honors_provides_fail_closed() {
-    let Some(session) = federated_github_linear_issue_team_session() else {
+    let Some(session) = federated_langmatrix_item_team_session() else {
         return;
     };
     let map = session
@@ -202,32 +212,42 @@ fn issue_create_projection_honors_provides_fail_closed() {
         .as_ref()
         .expect("exposure")
         .symbol_map_arc();
-    let e2 = map.entity_sym_for("linear", "Issue");
-    let e3 = map.entity_sym_for("linear", "Team");
-    let m_create = map.method_sym_for("linear", "Issue", "create");
-    let p_key = map.ident_sym_entity_field_for("linear", "Team", "key");
-    let p_desc = map.ident_sym_entity_field_for("linear", "Issue", "description");
-    let p_priority = map.ident_sym_entity_field_for("linear", "Issue", "priority");
+    let e2 = map.entity_sym_for("langmatrix_b", "LangItem");
+    let m_create = map.method_sym_for("langmatrix_b", "LangItem", "langitem_create");
+    let p_title =
+        map.ident_sym_cap_param_for("langmatrix_b", "LangItem", "langitem_create", "title");
+    let p_score =
+        map.ident_sym_cap_param_for("langmatrix_b", "LangItem", "langitem_create", "score");
+    let p_owner =
+        map.ident_sym_cap_param_for("langmatrix_b", "LangItem", "langitem_create", "owner");
+    let f_title = map.ident_sym_entity_field_for("langmatrix_b", "LangItem", "title");
+    let f_status = map.ident_sym_entity_field_for("langmatrix_b", "LangItem", "status");
 
-    let ok = format!("{e2}.{m_create}(team={e3}({p_key}=EVA), title=\"a\")[{p_desc}]");
+    let ok = format!(
+        r#"created = {e2}.{m_create}({p_title}="a", {p_score}=1, {p_owner}="alice")
+created | select {f_title}"#
+    );
     crate::plasm_dag::compile_plasm_dag_to_plan(
         &PromptPipelineConfig::default(),
         None,
         &session,
-        "create-proj-desc",
+        "create-proj-title",
         &ok,
     )
-    .expect("description is in issue_create.provides and must project");
+    .expect("title is in langitem_create.provides and must project");
 
-    let bad = format!("{e2}.{m_create}(team={e3}({p_key}=EVA), title=\"a\")[{p_priority}]");
+    let bad = format!(
+        r#"created = {e2}.{m_create}({p_title}="a", {p_score}=1, {p_owner}="alice")
+created | select {f_status}"#
+    );
     let err = crate::plasm_dag::compile_plasm_dag_to_plan(
         &PromptPipelineConfig::default(),
         None,
         &session,
-        "create-proj-priority",
+        "create-proj-status",
         &bad,
     )
-    .expect_err("priority is outside issue_create.provides and must fail closed");
+    .expect_err("status is outside langitem_create.provides and must fail closed");
     assert!(err.contains("not a row field"), "{err}");
 }
 
@@ -312,12 +332,12 @@ fn for_each_write_over_plural_source_is_fanout() {
     );
 }
 
-/// B4 — federated write smoke: pokeapi single GET `=>` linear issue_create. Locks the coherent
-/// shape: exactly one pokeapi GET, one write effect, no relation fanout, a single (non-parallel)
+/// B4 — federated write smoke: langmatrix_a Get `=>` langmatrix_b create. Locks the coherent
+/// shape: exactly one source GET, one write effect, no relation fanout, a single (non-parallel)
 /// return root, and (D1) no fanout risk on the singleton source.
 #[test]
-fn federated_pokeapi_linear_write_plan_is_coherent() {
-    let Some(session) = federated_pokeapi_linear_write_session() else {
+fn federated_langmatrix_write_plan_is_coherent() {
+    let Some(session) = federated_langmatrix_item_session() else {
         return;
     };
     let map = session
@@ -325,33 +345,36 @@ fn federated_pokeapi_linear_write_plan_is_coherent() {
         .as_ref()
         .expect("exposure")
         .symbol_map_arc();
-    let e_mon = map.entity_sym_for("pokeapi", "Pokemon");
-    let e_issue = map.entity_sym_for("linear", "Issue");
-    let e_team = map.entity_sym_for("linear", "Team");
-    let m_create = map.method_sym_for("linear", "Issue", "create");
-    let p_team = map.ident_sym_cap_param_for("linear", "Issue", "issue_create", "team");
-    let p_title = map.ident_sym_cap_param_for("linear", "Issue", "issue_create", "title");
-    let p_description =
-        map.ident_sym_cap_param_for("linear", "Issue", "issue_create", "description");
+    let e_src = map.entity_sym_for("langmatrix_a", "LangItem");
+    let e_item = map.entity_sym_for("langmatrix_b", "LangItem");
+    let m_create = map.method_sym_for("langmatrix_b", "LangItem", "langitem_create");
+    let p_title =
+        map.ident_sym_cap_param_for("langmatrix_b", "LangItem", "langitem_create", "title");
+    let p_score =
+        map.ident_sym_cap_param_for("langmatrix_b", "LangItem", "langitem_create", "score");
+    let p_owner =
+        map.ident_sym_cap_param_for("langmatrix_b", "LangItem", "langitem_create", "owner");
 
     let program = format!(
-        "pika = {e_mon}(\"pikachu\")\nticket = pika => {e_issue}.{m_create}({p_team}={e_team}(\"EVA\"), {p_title}=\"Pokedex #025 Pikachu\", {p_description}=<<MD\n# Pikachu\n\nElectric-type Pokémon #025.\nMD\n)\nticket"
+        r#"src = {e_src}("LI1")
+ticket = src => {e_item}.{m_create}({p_title}="Berry note", {p_score}=1, {p_owner}="alice")
+ticket"#
     );
     let plan = crate::plasm_dag::compile_plasm_dag_to_plan(
         &PromptPipelineConfig::default(),
         None,
         &session,
-        "fed-poke-linear-write",
+        "fed-langmatrix-write",
         &program,
     )
-    .expect("compile federated pokeapi -> linear write");
+    .expect("compile federated langmatrix write");
 
     let nodes = plan["nodes"].as_array().expect("nodes array");
     let poke_gets = nodes
         .iter()
-        .filter(|n| n["kind"] == "get" && n["qualified_entity"]["entry_id"] == "pokeapi")
+        .filter(|n| n["kind"] == "get" && n["qualified_entity"]["entry_id"] == "langmatrix_a")
         .count();
-    assert_eq!(poke_gets, 1, "exactly one pokeapi GET: {plan:#}");
+    assert_eq!(poke_gets, 1, "exactly one langmatrix_a GET: {plan:#}");
     let writes = nodes.iter().filter(|n| n["kind"] == "for_each").count();
     assert_eq!(writes, 1, "exactly one write effect: {plan:#}");
     let relations = nodes.iter().filter(|n| n["kind"] == "relation").count();
@@ -368,36 +391,36 @@ fn federated_pokeapi_linear_write_plan_is_coherent() {
     let bounded = crate::plan_prepare::analyze_read_boundedness(validated.artifact());
     assert!(
         !bounded.has_foreach_fanout_risk,
-        "singleton pokeapi GET `=>` write must not be fanout risk"
+        "singleton source GET `=>` write must not be fanout risk"
     );
 }
 
 #[test]
 fn federated_ambiguous_entity_parse_includes_session_stamps() {
-    let Some(session) = federated_github_linear_issue_session() else {
+    let Some(session) = federated_langmatrix_item_session() else {
         return;
     };
-    let err = parse_parsed_expr_for_session(&session, "Issue.create(title=\"x\")")
+    let err = parse_parsed_expr_for_session(&session, r#"LangItem.langitem-create(title="x")"#)
         .expect_err("ambiguous");
     let msg = format_session_symbolic_parse_error(
         &session,
         None,
         &PromptPipelineConfig::default(),
-        "Issue.create(title=\"x\")",
+        r#"LangItem.langitem-create(title="x")"#,
         &err,
     );
     assert!(
         msg.contains("e1")
             && msg.contains("e2")
-            && msg.contains("github")
-            && msg.contains("linear"),
+            && msg.contains("langmatrix_a")
+            && msg.contains("langmatrix_b"),
         "{msg}"
     );
 }
 
 #[test]
 fn relation_arrow_trap_does_not_mask_broken_write_parse_error() {
-    let Some(session) = federated_github_linear_issue_session() else {
+    let Some(session) = federated_langmatrix_item_session() else {
         return;
     };
     let line = "hits => e1.m1(p1=";
@@ -833,17 +856,17 @@ fn evaluate_plasm_plan_dry_accepts_runtime_checked_singleton_relation() {
 }
 
 #[test]
-fn evaluate_plasm_plan_dry_accepts_github_relation_limit_aggregate() {
-    let s = github_repository_commit_session();
+fn evaluate_plasm_plan_dry_accepts_repository_relation_limit_aggregate() {
+    let s = repository_commit_session();
     let plan = serde_json::json!({
         "version": 1,
         "kind": "program",
-        "name": "github-repo-commits-aggregate",
+        "name": "repocommit-commits-aggregate",
         "nodes": [
             {
                 "id": "repo",
                 "kind": "get",
-                "qualified_entity": { "entry_id": "github", "entity": "Repository" },
+                "qualified_entity": { "entry_id": "repocommit", "entity": "Repository" },
                 "expr": "Repository({owner=\"ryan-s-roberts\", repo=\"plasm-core\"})",
                 "ir": { "expr": { "op": "get", "ref": { "entity_type": "Repository", "key": { "owner": "ryan-s-roberts", "repo": "plasm-core" } } } },
                 "effect_class": "read",
@@ -857,13 +880,13 @@ fn evaluate_plasm_plan_dry_accepts_github_relation_limit_aggregate() {
                 "relation": {
                     "source": "repo",
                     "relation": "commits",
-                    "target": { "entry_id": "github", "entity": "Commit" },
+                    "target": { "entry_id": "repocommit", "entity": "Commit" },
                     "cardinality": "many",
                     "source_cardinality": "single",
                     "expr": "Repository({owner=\"ryan-s-roberts\", repo=\"plasm-core\"}).commits[sha,message]",
                     "ir": { "expr": { "op": "chain", "source": { "op": "get", "ref": { "entity_type": "Repository", "key": { "owner": "ryan-s-roberts", "repo": "plasm-core" } } }, "selector": "commits", "step": { "type": "auto_get" } }, "projection": ["sha", "message"] }
                 },
-                "qualified_entity": { "entry_id": "github", "entity": "Commit" },
+                "qualified_entity": { "entry_id": "repocommit", "entity": "Commit" },
                 "projection": ["sha", "message"],
                 "depends_on": ["repo"],
                 "uses_result": [{ "node": "repo", "as": "source" }]

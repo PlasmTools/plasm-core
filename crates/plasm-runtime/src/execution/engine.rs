@@ -140,36 +140,31 @@ impl ExecutionEngine {
         Fut: std::future::Future<Output = T> + Send,
         T: Send,
     {
+        // Keep the potentially large execution future out of each task-local wrapper.
+        // Scope nesting alone establishes the poll-time context; intermediate async
+        // blocks duplicated its state and debug poll frames at every level.
+        let fut = Box::pin(fut);
         EXECUTION_COMPILED_CATALOG
-            .scope(compiled_catalog, async move {
-                EXECUTION_EXECUTE_SESSION
-                    .scope(execute_session, async move {
-                        EXECUTION_FEDERATION
-                            .scope(federation, async move {
-                                EXECUTION_FINGERPRINT_SINK
-                                    .scope(request_fingerprint_sink, async move {
-                                        EXECUTION_AUTH_RESOLVER
-                                            .scope(auth_override, async move {
-                                                EXECUTION_CANCEL
-                                                    .scope(cancel, async move {
-                                                        EXECUTION_ROWS_PROGRESS
-                                                            .scope(rows_progress, async move {
-                                                                EXECUTION_HTTP_BASE
-                                                                    .scope(base, fut)
-                                                                    .await
-                                                            })
-                                                            .await
-                                                    })
-                                                    .await
-                                            })
-                                            .await
-                                    })
-                                    .await
-                            })
-                            .await
-                    })
-                    .await
-            })
+            .scope(
+                compiled_catalog,
+                EXECUTION_EXECUTE_SESSION.scope(
+                    execute_session,
+                    EXECUTION_FEDERATION.scope(
+                        federation,
+                        EXECUTION_FINGERPRINT_SINK.scope(
+                            request_fingerprint_sink,
+                            EXECUTION_AUTH_RESOLVER.scope(
+                                auth_override,
+                                EXECUTION_CANCEL.scope(
+                                    cancel,
+                                    EXECUTION_ROWS_PROGRESS
+                                        .scope(rows_progress, EXECUTION_HTTP_BASE.scope(base, fut)),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            )
             .await
     }
 
@@ -269,14 +264,18 @@ impl ExecutionEngine {
         })
     }
 
-    /// Build an engine with a custom [`HttpTransport`] (e.g. test double, corporate proxy, tracing).
+    /// Build an engine with a custom [`HttpTransport`] (e.g. NAPI host callback, test double).
+    ///
+    /// The injected client is wrapped in [`ResilientHttpTransport`] so safe-method
+    /// GET/HEAD/OPTIONS retries obey the same law as the default reqwest engine.
     pub fn new_with_transport(
         config: ExecutionConfig,
         transport: Arc<dyn HttpTransport>,
         auth_resolver: Option<AuthResolver>,
     ) -> Self {
+        let policy = HttpResiliencePolicy::from(&config);
         Self {
-            transport,
+            transport: Arc::new(ResilientHttpTransport::wrap(transport, policy)),
             config,
             replay_store: Some(crate::MemoryReplayStore::default()),
             auth_resolver,
@@ -386,17 +385,22 @@ impl ExecutionEngine {
         }
         let fingerprint = crate::RequestFingerprint::from_operation(compiled);
         let mut consult = CacheTelemetry::default();
+        let reuse_recorded = mat
+            .as_ref()
+            .is_none_or(|session| session.allows_recorded_read_reuse());
 
         match mode {
             ExecutionMode::Live => {
                 if let Some(session) = mat {
-                    if let Some(stored) = ExecutionCacheConsult::decide_response(
-                        &fingerprint,
-                        &session.responses,
-                        &mut consult,
-                    ) {
-                        append_request_fingerprint(fingerprint.to_hex());
-                        return Ok((stored.response, None, stored.source));
+                    if reuse_recorded {
+                        if let Some(stored) = ExecutionCacheConsult::decide_response(
+                            &fingerprint,
+                            &session.responses,
+                            &mut consult,
+                        ) {
+                            append_request_fingerprint(fingerprint.to_hex());
+                            return Ok((stored.response, None, stored.source));
+                        }
                     }
                     ExecutionCacheConsult::record_response_miss(&mut consult);
                     let (resp, link) = self.execute_operation_full(compiled).await?;
@@ -410,11 +414,13 @@ impl ExecutionEngine {
                 }
             }
             ExecutionMode::Replay => {
-                if let Some(store) = &self.replay_store {
-                    use crate::ReplayStore;
-                    if let Some(entry) = store.lookup(&fingerprint)? {
-                        append_request_fingerprint(fingerprint.to_hex());
-                        return Ok((entry.response, None, ExecutionSource::Replay));
+                if reuse_recorded {
+                    if let Some(store) = &self.replay_store {
+                        use crate::ReplayStore;
+                        if let Some(entry) = store.lookup(&fingerprint)? {
+                            append_request_fingerprint(fingerprint.to_hex());
+                            return Ok((entry.response, None, ExecutionSource::Replay));
+                        }
                     }
                 }
                 Err(RuntimeError::ReplayEntryNotFound {
@@ -422,21 +428,25 @@ impl ExecutionEngine {
                 })
             }
             ExecutionMode::Hybrid => {
-                if let Some(store) = &self.replay_store {
-                    use crate::ReplayStore;
-                    if let Some(entry) = store.lookup(&fingerprint)? {
-                        append_request_fingerprint(fingerprint.to_hex());
-                        return Ok((entry.response, None, ExecutionSource::Replay));
+                if reuse_recorded {
+                    if let Some(store) = &self.replay_store {
+                        use crate::ReplayStore;
+                        if let Some(entry) = store.lookup(&fingerprint)? {
+                            append_request_fingerprint(fingerprint.to_hex());
+                            return Ok((entry.response, None, ExecutionSource::Replay));
+                        }
                     }
                 }
                 if let Some(session) = mat {
-                    if let Some(stored) = ExecutionCacheConsult::decide_response(
-                        &fingerprint,
-                        &session.responses,
-                        &mut consult,
-                    ) {
-                        append_request_fingerprint(fingerprint.to_hex());
-                        return Ok((stored.response, None, stored.source));
+                    if reuse_recorded {
+                        if let Some(stored) = ExecutionCacheConsult::decide_response(
+                            &fingerprint,
+                            &session.responses,
+                            &mut consult,
+                        ) {
+                            append_request_fingerprint(fingerprint.to_hex());
+                            return Ok((stored.response, None, stored.source));
+                        }
                     }
                     ExecutionCacheConsult::record_response_miss(&mut consult);
                     let (resp, link) = self.execute_operation_full(compiled).await?;
@@ -642,13 +652,7 @@ impl ExecutionEngine {
                 let ambient = view_ambient;
                 let stream = Box::pin(async_stream::try_stream! {
                     let res = self.execute_get(&get, cgs, mat, execution_mode, &ambient).await?;
-                    yield PageResult {
-                        entities: res.entities,
-                        page_index: 0,
-                        has_more: false,
-                        pagination_resume: None,
-                        stats: res.stats,
-                    };
+                    yield PageResult::from_execution_result(res);
                 });
                 Ok(stream)
             }
@@ -656,13 +660,7 @@ impl ExecutionEngine {
                 let create = create.clone();
                 let stream = Box::pin(async_stream::try_stream! {
                     let res = self.execute_create(&create, cgs, mat, execution_mode).await?;
-                    yield PageResult {
-                        entities: res.entities,
-                        page_index: 0,
-                        has_more: false,
-                        pagination_resume: None,
-                        stats: res.stats,
-                    };
+                    yield PageResult::from_execution_result(res);
                 });
                 Ok(stream)
             }
@@ -670,13 +668,7 @@ impl ExecutionEngine {
                 let delete = delete.clone();
                 let stream = Box::pin(async_stream::try_stream! {
                     let res = self.execute_delete(&delete, cgs, mat, execution_mode).await?;
-                    yield PageResult {
-                        entities: res.entities,
-                        page_index: 0,
-                        has_more: false,
-                        pagination_resume: None,
-                        stats: res.stats,
-                    };
+                    yield PageResult::from_execution_result(res);
                 });
                 Ok(stream)
             }
@@ -684,13 +676,7 @@ impl ExecutionEngine {
                 let invoke = invoke.clone();
                 let stream = Box::pin(async_stream::try_stream! {
                     let res = self.execute_invoke(&invoke, cgs, mat, execution_mode).await?;
-                    yield PageResult {
-                        entities: res.entities,
-                        page_index: 0,
-                        has_more: false,
-                        pagination_resume: None,
-                        stats: res.stats,
-                    };
+                    yield PageResult::from_execution_result(res);
                 });
                 Ok(stream)
             }
@@ -700,13 +686,7 @@ impl ExecutionEngine {
                     let res = self
                         .execute_chain(&chain, cgs, mat, execution_mode, chain_consume, opts.clone())
                         .await?;
-                    yield PageResult {
-                        entities: res.entities,
-                        page_index: 0,
-                        has_more: false,
-                        pagination_resume: None,
-                        stats: res.stats,
-                    };
+                    yield PageResult::from_execution_result(res);
                 });
                 Ok(stream)
             }

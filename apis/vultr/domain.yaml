@@ -1629,6 +1629,7 @@ entities:
     relations: {}
 capabilities:
   account_get:
+    receiver: {kind: none}
     kind: get
     entity: Account
     provides:
@@ -1638,9 +1639,11 @@ capabilities:
     - pending_charges
     - acls
   account_bgp_get:
+    receiver: {kind: none}
     kind: get
     entity: AccountBgp
   account_bandwidth_get:
+    receiver: {kind: none}
     kind: get
     entity: AccountBandwidth
   region_query:
@@ -1963,18 +1966,21 @@ capabilities:
     kind: delete
     entity: Instance
   instance_start:
+    receiver: {kind: entity, entity: Instance}
     kind: action
     entity: Instance
     output:
       type: side_effect
       description: Transitions a stopped instance to running power state.
   instance_reboot:
+    receiver: {kind: entity, entity: Instance}
     kind: action
     entity: Instance
     output:
       type: side_effect
       description: Forcibly reboots the instance operating system and stack.
   instance_halt:
+    receiver: {kind: entity, entity: Instance}
     kind: action
     entity: Instance
     output:
@@ -2226,6 +2232,7 @@ capabilities:
     kind: delete
     entity: BlockStorage
   block_attach:
+    receiver: {kind: entity, entity: BlockStorage}
     kind: action
     entity: BlockStorage
     payload:
@@ -2243,6 +2250,7 @@ capabilities:
       description: Attaches this block volume to an instance, with optional live attach
         to avoid reboot.
   block_detach:
+    receiver: {kind: entity, entity: BlockStorage}
     kind: action
     entity: BlockStorage
     payload:
@@ -2550,6 +2558,7 @@ capabilities:
       value_ref: nv_vkeavailableupgrade_query_vke_id
       required: true
   kubernetescluster_start_upgrade:
+    receiver: {kind: entity, entity: KubernetesCluster}
     kind: action
     entity: KubernetesCluster
     payload:
@@ -2602,18 +2611,21 @@ capabilities:
     kind: delete
     entity: BareMetal
   baremetal_start:
+    receiver: {kind: entity, entity: BareMetal}
     kind: action
     entity: BareMetal
     output:
       type: side_effect
       description: Powers on a stopped bare metal server.
   baremetal_reboot:
+    receiver: {kind: entity, entity: BareMetal}
     kind: action
     entity: BareMetal
     output:
       type: side_effect
       description: Reboots the bare metal server and its operating system.
   baremetal_halt:
+    receiver: {kind: entity, entity: BareMetal}
     kind: action
     entity: BareMetal
     output:
@@ -2673,6 +2685,7 @@ capabilities:
       value_ref: nv_baremetalipv6_query_bare_metal_id
       required: true
   baremetal_set_ipv4_reverse:
+    receiver: {kind: entity, entity: BareMetal}
     kind: action
     entity: BareMetal
     payload:
@@ -2690,6 +2703,7 @@ capabilities:
       description: Publishes or updates reverse DNS (PTR) for a specific IPv4 address
         on this server.
   baremetal_set_ipv6_reverse:
+    receiver: {kind: entity, entity: BareMetal}
     kind: action
     entity: BareMetal
     payload:
@@ -2707,6 +2721,7 @@ capabilities:
       description: Publishes or updates reverse DNS (PTR) for a specific full-length
         IPv6 address on this server.
   baremetal_set_ipv4_default_reverse:
+    receiver: {kind: entity, entity: BareMetal}
     kind: action
     entity: BareMetal
     payload:
@@ -2720,6 +2735,7 @@ capabilities:
       type: side_effect
       description: Restores default Vultr reverse DNS for a given primary IPv4 address.
   baremetal_delete_ipv6_reverse:
+    receiver: {kind: entity, entity: BareMetal}
     kind: action
     entity: BareMetal
     payload:
@@ -2763,6 +2779,7 @@ capabilities:
       value_ref: nv_baremetalvpc2_query_bare_metal_id
       required: true
   baremetal_vpc2_attach:
+    receiver: {kind: entity, entity: BareMetal}
     kind: action
     entity: BareMetal
     payload:
@@ -2780,6 +2797,7 @@ capabilities:
       description: Connects a legacy-style VPC 2.0 network with a chosen private address;
         new integrations should use the. current VPC attach flow instead.
   baremetal_vpc2_detach:
+    receiver: {kind: entity, entity: BareMetal}
     kind: action
     entity: BareMetal
     payload:
@@ -2822,6 +2840,7 @@ capabilities:
     kind: delete
     entity: CdnPullZone
   cdnpullzone_purge:
+    receiver: {kind: entity, entity: CdnPullZone}
     kind: action
     entity: CdnPullZone
     output:
@@ -2973,6 +2992,7 @@ capabilities:
     kind: delete
     entity: KubernetesNodePoolNode
   kubernetesnodepoolnode_recycle:
+    receiver: {kind: entity, entity: KubernetesNodePoolNode}
     kind: action
     entity: KubernetesNodePoolNode
     output:
@@ -3009,6 +3029,7 @@ capabilities:
           value_ref: nv_wire_int
           required: true
   baremetal_reinstall:
+    receiver: {kind: entity, entity: BareMetal}
     kind: action
     entity: BareMetal
     payload:
@@ -3029,11 +3050,13 @@ capabilities:
     - hostname
     - date_created
   baremetal_vnc:
+    receiver: {kind: entity, entity: BareMetal}
     kind: action
     entity: BareMetal
     provides:
     - vnc_url
   baremetal_vpc_attach:
+    receiver: {kind: entity, entity: BareMetal}
     kind: action
     entity: BareMetal
     payload:
@@ -3047,6 +3070,7 @@ capabilities:
       type: side_effect
       description: Joins this server to a VPC for private network traffic.
   baremetal_vpc_detach:
+    receiver: {kind: entity, entity: BareMetal}
     kind: action
     entity: BareMetal
     payload:

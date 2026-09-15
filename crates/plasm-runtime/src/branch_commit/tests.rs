@@ -23,6 +23,7 @@ fn type_entity_with_relation(relation: &str, target: Ref) -> crate::CachedEntity
         last_updated: 1,
         version: 1,
         completeness: EntityCompleteness::Complete,
+        unavailable_fields: Default::default(),
     }
 }
 
@@ -267,6 +268,7 @@ fn brand_new_identical_ref_both_commit() {
         last_updated: 1,
         version: 1,
         completeness: crate::EntityCompleteness::Complete,
+        unavailable_fields: Default::default(),
     };
     branch_a.insert(entity.clone()).expect("branch a");
     branch_b.insert(entity).expect("branch b");
@@ -482,6 +484,7 @@ proptest::proptest! {
             last_updated: 1,
             version: 1,
             completeness: crate::EntityCompleteness::Complete,
+            unavailable_fields: Default::default(),
         };
         branch_a.insert(entity.clone()).expect("branch a");
         branch_b.insert(entity).expect("branch b");

@@ -12,7 +12,7 @@ entities:
         value_ref: nv_access_token
   SecuredNote:
     id_field: note_id
-    description: Note list requiring Bearer access_token (AppWorld AuthSession-shaped search).
+    description: Secured note
     fields:
       note_id:
         required: true
@@ -55,7 +55,7 @@ capabilities:
     - note_id
     - title
   securednote_get:
-    description: Get a secured note by id; Bearer access_token required (anchors SecuredNote under context search).
+    description: Continue from a known secured-note identity.
     kind: get
     entity: SecuredNote
     arguments:

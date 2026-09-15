@@ -1340,6 +1340,7 @@ capabilities:
     kind: delete
     entity: ContactPoint
   notification_policy_get:
+    receiver: {kind: none}
     description: Fetch the root notification policy tree.
     kind: get
     entity: NotificationPolicy
@@ -1479,6 +1480,7 @@ capabilities:
     - name
     - email
   team_get:
+    receiver: {kind: none}
     kind: get
     entity: Team
     provides:
@@ -1704,6 +1706,7 @@ capabilities:
     - teams_json
     - service_accounts_json
   org_user_role_assign:
+    receiver: {kind: entity, entity: OrgUser}
     description: Assign one RBAC role to an org user.
     kind: action
     entity: OrgUser
@@ -1738,6 +1741,7 @@ capabilities:
       type: side_effect
       description: Synchronizes RBAC role assignments for the org user.
   org_user_role_revoke:
+    receiver: {kind: entity, entity: OrgUser}
     description: Revoke one RBAC role from an org user.
     kind: action
     entity: OrgUser
@@ -1754,6 +1758,7 @@ capabilities:
       type: side_effect
       description: Removes the specified role assignment from the user; the user remains.
   team_role_assign:
+    receiver: {kind: entity, entity: Team}
     description: Assign one RBAC role to a team.
     kind: action
     entity: Team
@@ -1784,6 +1789,7 @@ capabilities:
       type: side_effect
       description: Synchronizes RBAC role assignments for the team.
   team_role_revoke:
+    receiver: {kind: entity, entity: Team}
     description: Revoke one RBAC role from a team.
     kind: action
     entity: Team
@@ -1829,6 +1835,7 @@ capabilities:
     - actions_json
     - scopes_json
   datasource_prometheus_label_names_query:
+    receiver: {kind: entity, entity: Datasource}
     description: List Prometheus label names through the datasource discovery proxy.
     kind: action
     entity: Datasource
@@ -1848,6 +1855,7 @@ capabilities:
       get: datasource_get
       prefix: ds
   datasource_prometheus_label_values_query:
+    receiver: {kind: entity, entity: Datasource}
     description: List values for one Prometheus label name.
     kind: action
     entity: Datasource
@@ -1870,6 +1878,7 @@ capabilities:
       get: datasource_get
       prefix: ds
   datasource_prometheus_metric_names_query:
+    receiver: {kind: entity, entity: Datasource}
     description: List Prometheus metric names (__name__ label values).
     kind: action
     entity: Datasource
@@ -1891,6 +1900,7 @@ capabilities:
       get: datasource_get
       prefix: ds
   datasource_loki_label_names_query:
+    receiver: {kind: entity, entity: Datasource}
     description: List Loki label names through the datasource discovery proxy.
     kind: action
     entity: Datasource
@@ -1910,6 +1920,7 @@ capabilities:
       get: datasource_get
       prefix: ds
   datasource_loki_label_values_query:
+    receiver: {kind: entity, entity: Datasource}
     description: List Loki values for one label name.
     kind: action
     entity: Datasource
@@ -1932,6 +1943,7 @@ capabilities:
       get: datasource_get
       prefix: ds
   datasource_loki_patterns_query:
+    receiver: {kind: entity, entity: Datasource}
     description: Detect log patterns for a Loki stream selector.
     kind: action
     entity: Datasource
@@ -1956,6 +1968,7 @@ capabilities:
       get: datasource_get
       prefix: ds
   datasource_loki_stats_query:
+    receiver: {kind: entity, entity: Datasource}
     description: Approximate Loki index stats for a stream selector.
     kind: action
     entity: Datasource

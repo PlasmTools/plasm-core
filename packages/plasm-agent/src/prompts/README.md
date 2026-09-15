@@ -8,9 +8,11 @@ byte-identical without a sync step.
 
 `PlasmAgent.loadInstructions()` always prepends `buildDefaultSystemLiturgy()`
 (initialize workflow + resource rites + `plasm_tool.txt`). With
-`includeEvalTerminals`, the opening paragraph teaches `complete_task` /
-`submit_answer` instead of a no-tool-call stop — same gate that registers
-those tools. Project `instructions.md` is an overlay only.
+`includeEvalTerminals`, `overlayWorkflowCompletion` replaces the named
+`WORKFLOW_COMPLETION_SLOT` paragraph with `EVAL_TERMINAL_COMPLETION`
+(`complete_task` / `submit_answer`) — same gate that registers those tools.
+The slot is the product no-tool-call contract text, not a paragraph index.
+Project `instructions.md` is an overlay only.
 
 After editing crates assets, refresh vendored copies:
 

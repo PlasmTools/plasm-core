@@ -1,0 +1,17 @@
+ledgerentry_query:
+  method: GET
+  path:
+  - type: literal
+    value: ledger
+  - type: literal
+    value: entries
+
+ledgerentry_get:
+  method: GET
+  path:
+  - type: literal
+    value: ledger
+  - type: literal
+    value: entries
+  - type: var
+    name: id

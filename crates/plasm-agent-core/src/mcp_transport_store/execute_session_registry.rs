@@ -220,6 +220,9 @@ pub struct PersistedExecuteSessionDescriptor {
     /// Append-only symbol ledger (`PLSL` + postcard); required for cross-pod rehydrate.
     #[serde(default)]
     pub symbol_ledger_bytes: Vec<u8>,
+    /// Explicit prerequisite deployments (RA-17). Missing on older snapshots.
+    #[serde(default)]
+    pub prerequisite_deployments: plasm_core::prerequisites::DeploymentBindings,
 }
 
 fn default_expires_at_unix() -> u64 {
@@ -276,6 +279,7 @@ impl PersistedExecuteSessionDescriptor {
             operations: op_snapshot.operations,
             operation_handle_next: op_snapshot.operation_handle_next,
             symbol_ledger_bytes: durable.symbol_ledger_bytes.clone(),
+            prerequisite_deployments: session.prerequisite_deployments.clone(),
         }
     }
 }

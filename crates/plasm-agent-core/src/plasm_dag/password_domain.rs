@@ -4,7 +4,9 @@ use super::prelude::*;
 use super::schema_validate::cgs_for_qualified_entity;
 use super::types::{CompileState, DagNodeSource};
 use plasm_core::schema::InputFieldWire;
-use plasm_core::{CreateExpr, PlasmInputRef, Predicate, QueryExpr, Value, ValueDomainSlot};
+use plasm_core::{
+    CreateExpr, PlasmInputRef, Predicate, QueryExpr, Value, ValueDomainSlot, WithExpr,
+};
 
 const PASSWORD_EXACT: &str = "nv_password";
 const PASSWORD_SUFFIX: &str = "_password";
@@ -213,6 +215,27 @@ fn reject_value_refs(
     target_ref: Option<&str>,
 ) -> Result<(), String> {
     match value {
+        Value::GetScalarExtract(extract) => {
+            let qe = QualifiedEntityKey {
+                entry_id: extract
+                    .catalog_entry_id
+                    .clone()
+                    .unwrap_or_else(|| session.entry_id.clone()),
+                entity: extract.entity.clone(),
+            };
+            let source_ref = field_value_ref_key(session, &qe, &extract.wire);
+            let Some(source_ref) = source_ref else {
+                return Ok(());
+            };
+            let target = target_ref.unwrap_or("");
+            if !is_password_value_ref(&source_ref) && !is_password_value_ref(target) {
+                return Ok(());
+            }
+            if source_ref == target {
+                return Ok(());
+            }
+            Err(ra9_password_domain(node_id, param))
+        }
         Value::PlasmInputRef(r) => reject_input_ref(session, state, node_id, param, r, target_ref),
         Value::Array(items) => {
             for item in items {
@@ -297,8 +320,9 @@ fn source_value_ref_key(
                 source_value_ref_key(session, state, source, path, depth + 1)
             }
         }
-        DagNodeSource::Compute { source, .. } => {
-            source_value_ref_key(session, state, source, path, depth + 1)
+        DagNodeSource::Compute { source, op, .. } => {
+            let remapped = remap_compute_policy_path(op, path);
+            source_value_ref_key(session, state, source, &remapped, depth + 1)
         }
         DagNodeSource::Surface {
             qualified_entity, ..
@@ -312,6 +336,40 @@ fn source_value_ref_key(
         DagNodeSource::Data(_)
         | DagNodeSource::ForEach { .. }
         | DagNodeSource::IterateUntil { .. } => None,
+    }
+}
+
+fn remap_compute_policy_path(op: &ComputeOp, path: &[String]) -> Vec<String> {
+    if path.is_empty() {
+        return path.to_vec();
+    }
+    match op {
+        ComputeOp::With { columns } => {
+            for col in columns.iter().rev() {
+                if col.name.as_str() != path[0] {
+                    continue;
+                }
+                let WithExpr::Field(fp) = &col.expr else {
+                    return path.to_vec();
+                };
+                let mut out = fp.segments().to_vec();
+                out.extend_from_slice(&path[1..]);
+                return out;
+            }
+            path.to_vec()
+        }
+        ComputeOp::Project { fields } => {
+            for (name, fp) in fields {
+                if name.as_str() != path[0] {
+                    continue;
+                }
+                let mut out = fp.segments().to_vec();
+                out.extend_from_slice(&path[1..]);
+                return out;
+            }
+            path.to_vec()
+        }
+        _ => path.to_vec(),
     }
 }
 

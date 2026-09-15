@@ -621,6 +621,7 @@ capabilities:
     scope: []
     controls: []
   team_seats:
+    receiver: {kind: none}
     description: Get workspace seat usage.
     kind: get
     entity: WorkspaceSeatUsage
@@ -629,6 +630,7 @@ capabilities:
     - members
     - guests
   team_plan:
+    receiver: {kind: none}
     description: Get workspace plan details.
     kind: get
     entity: WorkspacePlan
@@ -759,6 +761,7 @@ capabilities:
           value_ref: nv_team_id
           required: true
   team_start_time_entry:
+    receiver: {kind: entity, entity: Team}
     description: Start a running time entry.
     kind: action
     entity: Team
@@ -766,6 +769,7 @@ capabilities:
       type: side_effect
       description: Start a running time entry.
   team_stop_time_entry:
+    receiver: {kind: entity, entity: Team}
     description: Stop the current running time entry.
     kind: action
     entity: Team
@@ -1167,6 +1171,7 @@ capabilities:
           value_ref: nv_task_id
           required: true
   task_create_attachment:
+    receiver: {kind: entity, entity: Task}
     description: Upload an attachment to a task.
     kind: action
     entity: Task
@@ -1174,6 +1179,7 @@ capabilities:
       type: side_effect
       description: Upload an attachment to a task.
   task_create_checklist:
+    receiver: {kind: entity, entity: Task}
     description: Create a checklist on a task.
     kind: action
     entity: Task
@@ -1188,6 +1194,7 @@ capabilities:
           value_ref: nv_wire_str_short
           required: false
   task_add_dependency:
+    receiver: {kind: entity, entity: Task}
     description: Add a dependency to a task.
     kind: action
     entity: Task
@@ -1202,6 +1209,7 @@ capabilities:
           value_ref: nv_wire_str_short
           required: false
   task_remove_dependency:
+    receiver: {kind: entity, entity: Task}
     description: Remove a dependency from a task.
     kind: action
     entity: Task
@@ -1219,6 +1227,7 @@ capabilities:
           value_ref: nv_wire_str_short
           required: true
   task_time_in_status:
+    receiver: {kind: none}
     description: Get time spent in each status.
     kind: get
     entity: TaskTimeInStatus
@@ -1256,6 +1265,7 @@ capabilities:
           value_ref: nv_task_id
           required: true
   task_tag_add:
+    receiver: {kind: entity, entity: Task}
     description: Add a tag to a task.
     kind: action
     entity: Task
@@ -1270,6 +1280,7 @@ capabilities:
           value_ref: nv_wire_str_short
           required: true
   task_tag_remove:
+    receiver: {kind: entity, entity: Task}
     description: Remove a tag from a task.
     kind: action
     entity: Task

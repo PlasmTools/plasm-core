@@ -238,6 +238,9 @@ capabilities:
     - name: per_page
       value_ref: nv_zone_query_per_page
       required: false
+    - name: sort_by
+      value_ref: nv_zone_query_sort_by
+      required: false
   zone_get:
     description: Load canonical zone metadata when you already hold the zone id.
     kind: get
@@ -341,6 +344,7 @@ capabilities:
     - version
     - last_updated
   ruleset_entrypoint_update:
+    receiver: {kind: entity, entity: RulesetEntrypoint}
     description: Point a phase entrypoint at a different ruleset—requires zone WAF edit on the token.
     kind: action
     entity: RulesetEntrypoint
@@ -717,6 +721,9 @@ values:
   nv_zone_query_per_page:
     type: integer
     description: Preferred maximum zones per page when listing.
+  nv_zone_query_sort_by:
+    type: string
+    description: Invocation-control list order (not a Query brace filter).
   nv_zone_query_status:
     type: string
     description: Zone status filter (e.g. active, pending, initializing).

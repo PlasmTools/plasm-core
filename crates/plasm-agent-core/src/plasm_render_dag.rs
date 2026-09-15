@@ -1,6 +1,6 @@
-//! Row-to-text render lowering from typed applicator data into DAG compute nodes.
+//! Per-row render lowering from typed applicator data into DAG compute nodes (PLP-12).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::execute_session::ExecuteSession;
 use crate::plasm_plan::{
@@ -8,8 +8,8 @@ use crate::plasm_plan::{
 };
 use crate::plasm_plan_run::RenderColumns;
 use crate::plasm_render_compile::{
-    infer_render_column_tokens_from_template, resolve_inferred_render_columns,
-    resolve_render_collection_alias, validate_template_binding_labels,
+    classify_per_row_template_names, resolve_inferred_render_columns,
+    resolve_render_collection_alias,
 };
 
 use super::pipeline::compile_surface_nodes;
@@ -42,6 +42,11 @@ pub(in crate::plasm_dag) fn compile_render_from_applicator(
     sources: &[String],
     template: String,
 ) -> Result<Vec<DagNode>, String> {
+    if sources.len() != 1 {
+        return Err(plasm_core::plp::plp12_per_row_apply(format!(
+            "Plasm program `{id}`: comma-separated render sources are abolished — `=>` applies once per row. Whole-collection text uses a plain template (`report = <<TAG {{% for item in items %}}… TAG`)"
+        )));
+    }
     for src in sources {
         if !state.contains(src.trim()) {
             return Err(format!(
@@ -65,7 +70,6 @@ fn compile_render_chain(
         .first()
         .map(String::as_str)
         .ok_or_else(|| format!("Plasm program `{id}`: render requires at least one source"))?;
-    validate_template_binding_labels(&template, render_sources, id)?;
 
     let (head_core, suffixes) = decompose_row_suffix_stream(session, state, head)?;
     let tail_singleton = suffixes.iter().any(|s| matches!(s, RowSuffix::Singleton));
@@ -98,49 +102,54 @@ fn compile_render_chain(
             .ok_or_else(|| format!("Plasm program `{id}`: empty render chain"))?
     };
 
-    let spec = if let Some(raw_tokens) =
-        infer_render_column_tokens_from_template(&template, head_core.trim())
-    {
-        let scratch = compile_state_with_nodes(state, &prefix);
-        let qe = resolve_qualified_entity_for_dag_source(&scratch, &prefix, chain_tail_id.clone());
-        resolve_inferred_render_columns(session, state.cross_cache, qe.as_ref(), &raw_tokens)?
-    } else {
-        let tail_node =
-            lookup_dag_node(state, &prefix, chain_tail_id.as_str()).ok_or_else(|| {
-                format!(
-                    "Plasm program `{id}`: template column inference failed for `{chain_tail_id}`"
-                )
-            })?;
-        let cols = infer_render_columns_for_node(session, state, &prefix, tail_node)
-            .map_err(|e| format!("Plasm program `{id}`: cannot infer template columns: {e}"))?;
-        RenderColumns::from_op_parts(cols, BTreeMap::new())
-    };
-
-    if spec.is_empty() {
-        return Err(format!(
-            "Plasm program `{id}`: row-to-text templates require at least one column; use `[field,...] <<TAG` after narrowing"
-        ));
+    let scratch = compile_state_with_nodes(state, &prefix);
+    let tail_node =
+        lookup_dag_node(&scratch, &prefix, chain_tail_id.as_str()).ok_or_else(|| {
+            format!("Plasm program `{id}`: render source `{chain_tail_id}` is unknown")
+        })?;
+    plasm_core::validate_interpolation_syntax(&template, |e| format!("Plasm program `{id}`: {e}"))?;
+    let source_field_names: BTreeSet<String> =
+        match infer_render_columns_for_node(session, &scratch, &prefix, tail_node) {
+            Ok(cols) => cols.into_iter().map(|n| n.as_str().to_string()).collect(),
+            Err(e) if plasm_core::contains_minijinja_markers(&template) => {
+                return Err(format!(
+                    "Plasm program `{id}`: cannot infer render source fields: {e}"
+                ));
+            }
+            Err(_) => BTreeSet::new(),
+        };
+    let mut binding_names = scratch.program_node_id_set();
+    binding_names.insert(head_core.trim().to_string());
+    binding_names.insert(chain_tail_id.clone());
+    for node in &prefix {
+        binding_names.insert(node.id.clone());
     }
+
+    let (row_tokens, binding_labels) =
+        classify_per_row_template_names(&template, &source_field_names, &binding_names, id)?;
+
+    let spec = if !row_tokens.is_empty() {
+        let qe = resolve_qualified_entity_for_dag_source(&scratch, &prefix, chain_tail_id.clone());
+        resolve_inferred_render_columns(session, state.cross_cache, qe.as_ref(), &row_tokens)?
+    } else {
+        RenderColumns::from_op_parts(Vec::new(), BTreeMap::new())
+    };
 
     let (columns, column_aliases) = spec.into_op_parts();
     let collection_alias =
         resolve_render_collection_alias(head_core.trim(), &columns, |label| state.contains(label));
 
-    let render_bindings: Vec<OutputName> = if render_sources.len() > 1 {
-        render_sources
-            .iter()
-            .map(|label| OutputName::new(label.clone()).map_err(|e| e.to_string()))
-            .collect::<Result<_, _>>()?
-    } else if let Some(alias) = collection_alias.clone() {
-        vec![alias]
-    } else {
-        vec![]
-    };
+    let render_bindings: Vec<OutputName> = binding_labels
+        .into_iter()
+        .map(|label| OutputName::new(label).map_err(|e| e.to_string()))
+        .collect::<Result<_, _>>()?;
+
+    let source_singleton = tail_node.singleton || tail_singleton;
 
     let mut render_node = DagNode {
         id: id.to_string(),
         expr: rhs_display.to_string(),
-        singleton: true,
+        singleton: source_singleton,
         page_size: if prefix.is_empty() {
             tail_page_size
         } else {

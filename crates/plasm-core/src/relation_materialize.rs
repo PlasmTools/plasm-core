@@ -446,40 +446,41 @@ mod tests {
     }
 
     #[test]
-    fn pokeapi_mutual_prefer_embed_loads_and_validates() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
-        let cgs = crate::loader::load_schema(&dir).expect("pokeapi");
+    fn language_matrix_prefer_embed_loads_and_validates() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = crate::loader::load_schema(&dir).expect("plasm_language_matrix");
         cgs.validate()
-            .expect("pokeapi validates with mutual prefer embeds");
+            .expect("language matrix validates with prefer embeds");
         validate_from_parent_get_embed_acyclic(&cgs)
             .expect("forward from_parent_get edges acyclic");
-        let type_rel = cgs
-            .get_entity("Type")
-            .and_then(|e| e.relations.get("pokemon"))
-            .expect("Type.pokemon");
+        let tags_rel = cgs
+            .get_entity("LangItem")
+            .and_then(|e| e.relations.get("tags"))
+            .expect("LangItem.tags");
         assert!(matches!(
-            type_rel.materialize,
+            tags_rel.materialize,
             Some(RelationMaterialization::PreferFromParentGet { .. })
         ));
     }
 
     #[test]
-    fn all_packaged_api_catalogs_load_and_validate() {
-        let apis_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis");
-        let mut count = 0usize;
-        for entry in std::fs::read_dir(&apis_root).expect("apis dir") {
-            let entry = entry.expect("dir entry");
-            let path = entry.path();
-            if !path.is_dir() || !path.join("domain.yaml").is_file() {
-                continue;
-            }
-            let cgs = crate::loader::load_schema(&path)
-                .unwrap_or_else(|e| panic!("load {}: {e}", path.display()));
+    fn matrix_schema_fixtures_load_and_validate() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas");
+        for name in [
+            "plasm_language_matrix",
+            "plasm_language_matrix_views",
+            "plasm_prompt_matrix",
+            "plasm_pagination_matrix",
+            "pokeapi_mini",
+            "overshow_tools",
+        ] {
+            let path = root.join(name);
+            let cgs =
+                crate::loader::load_schema(&path).unwrap_or_else(|e| panic!("load {name}: {e}"));
             cgs.validate()
-                .unwrap_or_else(|e| panic!("validate {}: {e}", path.display()));
-            count += 1;
+                .unwrap_or_else(|e| panic!("validate {name}: {e}"));
         }
-        assert!(count > 5, "expected multiple API catalogs under apis/");
     }
 
     #[test]

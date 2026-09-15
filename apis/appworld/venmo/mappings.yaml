@@ -129,6 +129,32 @@ bank_transfer_query:
         then_expr: { type: var, name: transfer_type }
         else_expr: { type: const, value: null }
   pagination: *appworld_page_index_limit
+bank_transfer_receipt_download:
+  method: GET
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: bank_transfers }
+  - { type: var, name: id }
+  - { type: literal, value: receipt }
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - - download_to_file_path
+      - type: if
+        condition: { type: exists, var: download_to_file_path }
+        then_expr: { type: var, name: download_to_file_path }
+        else_expr: { type: const, value: null }
+    - - overwrite
+      - type: if
+        condition: { type: exists, var: overwrite }
+        then_expr: { type: var, name: overwrite }
+        else_expr: { type: const, value: null }
+    - - file_system_access_token
+      - type: if
+        condition: { type: exists, var: file_system_access_token }
+        then_expr: { type: var, name: file_system_access_token }
+        else_expr: { type: const, value: null }
 transaction_query:
   method: GET
   path:
@@ -207,6 +233,32 @@ transaction_get:
   - { type: literal, value: transactions }
   - { type: var, name: id }
   auth: *request_auth
+transaction_receipt_download:
+  method: GET
+  path:
+  - { type: literal, value: venmo }
+  - { type: literal, value: transactions }
+  - { type: var, name: id }
+  - { type: literal, value: receipt }
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - - download_to_file_path
+      - type: if
+        condition: { type: exists, var: download_to_file_path }
+        then_expr: { type: var, name: download_to_file_path }
+        else_expr: { type: const, value: null }
+    - - overwrite
+      - type: if
+        condition: { type: exists, var: overwrite }
+        then_expr: { type: var, name: overwrite }
+        else_expr: { type: const, value: null }
+    - - file_system_access_token
+      - type: if
+        condition: { type: exists, var: file_system_access_token }
+        then_expr: { type: var, name: file_system_access_token }
+        else_expr: { type: const, value: null }
 transaction_create:
   method: POST
   path:

@@ -1,0 +1,48 @@
+version: 1
+auth:
+  scheme: none
+http_backend: http://127.0.0.1:9
+entities:
+  LedgerEntry:
+    id_field: id
+    description: Directed transfer. payer and debtor are opposite roles on the same row.
+    fields:
+      id:
+        required: true
+        value_ref: nv_ledger_id
+      payer:
+        required: true
+        value_ref: nv_ledger_party
+      debtor:
+        required: true
+        value_ref: nv_ledger_party
+      amount:
+        required: true
+        value_ref: nv_ledger_amount
+    relations: {}
+capabilities:
+  ledgerentry_query:
+    description: List ledger entries. Filter payer versus debtor to select direction.
+    kind: query
+    entity: LedgerEntry
+    provides:
+    - id
+    - payer
+    - debtor
+    - amount
+  ledgerentry_get:
+    description: Get one ledger entry by id.
+    kind: get
+    entity: LedgerEntry
+    provides:
+    - id
+    - payer
+    - debtor
+    - amount
+values:
+  nv_ledger_id:
+    type: string
+  nv_ledger_party:
+    type: string
+  nv_ledger_amount:
+    type: integer

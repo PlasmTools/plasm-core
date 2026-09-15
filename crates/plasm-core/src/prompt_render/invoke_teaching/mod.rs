@@ -20,8 +20,8 @@ pub(crate) use union_ctor::{
 };
 
 #[inline]
-pub(crate) fn path_vars_empty(cap: &crate::CapabilitySchema) -> bool {
-    !cap.domain_exemplar_requires_entity_anchor()
+pub(crate) fn receiver_absent(cap: &crate::CapabilitySchema) -> bool {
+    !cap.requires_receiver()
 }
 
 /// Capability legend after result gloss in teaching rows: `[scope …]` / `optional params: …` only.

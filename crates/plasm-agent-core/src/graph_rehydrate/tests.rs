@@ -234,6 +234,7 @@ async fn materialized_entities_use_walker_when_persistence_exists() {
         entities: Vec::new(),
         count: 10,
         has_more: false,
+        coverage: plasm_runtime::ResultCoverage::Unknown,
         pagination_resume: None,
         paging_handle: None,
         source: plasm_runtime::ExecutionSource::Live,
@@ -291,6 +292,7 @@ async fn matrix_row_identity_upgrades_to_graph_parent() {
         last_updated: 1,
         version: 1,
         completeness: EntityCompleteness::Complete,
+        unavailable_fields: Default::default(),
     };
     let projected = CachedEntity {
         reference: item_ref.clone(),
@@ -302,6 +304,7 @@ async fn matrix_row_identity_upgrades_to_graph_parent() {
         last_updated: 1,
         version: 1,
         completeness: EntityCompleteness::Summary,
+        unavailable_fields: Default::default(),
     };
     {
         let mut guard = sess.lock_graph_cache().await;
@@ -318,6 +321,7 @@ async fn matrix_row_identity_upgrades_to_graph_parent() {
         entities: vec![projected],
         count: 1,
         has_more: false,
+        coverage: plasm_runtime::ResultCoverage::Unknown,
         pagination_resume: None,
         paging_handle: None,
         source: ExecutionSource::Cache,
@@ -370,6 +374,7 @@ async fn row_identity_graph_miss_omits_thin_projected_fallback() {
         last_updated: 1,
         version: 1,
         completeness: EntityCompleteness::Summary,
+        unavailable_fields: Default::default(),
     };
     let row_identity = RowIdentity::new(
         QualifiedEntityKey::new("default", "LangItem"),
@@ -381,6 +386,7 @@ async fn row_identity_graph_miss_omits_thin_projected_fallback() {
         entities: vec![projected],
         count: 1,
         has_more: false,
+        coverage: plasm_runtime::ResultCoverage::Unknown,
         pagination_resume: None,
         paging_handle: None,
         source: ExecutionSource::Cache,
@@ -435,6 +441,7 @@ async fn pokeapi_type_pokemon_plan_prefers_graph_parent() {
         last_updated: 1,
         version: 1,
         completeness: EntityCompleteness::Complete,
+        unavailable_fields: Default::default(),
     };
     let electric = CachedEntity {
         reference: Ref::new("Type", "electric"),
@@ -449,6 +456,7 @@ async fn pokeapi_type_pokemon_plan_prefers_graph_parent() {
         last_updated: 1,
         version: 1,
         completeness: EntityCompleteness::Complete,
+        unavailable_fields: Default::default(),
     };
     {
         let mut guard = sess.lock_graph_cache().await;

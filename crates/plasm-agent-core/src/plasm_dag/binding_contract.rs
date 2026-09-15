@@ -172,15 +172,13 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
                 }
                 _ => ContinuationAnchor::BindingLabel,
             };
-            ProgramBindingContract {
-                label: label.to_string(),
-                row_entity: parent.row_entity.clone(),
-                result_shape: parent.result_shape,
-                row_cardinality: parent.row_cardinality,
+            inherit_row_preserving_contract(
+                label,
                 value_kind,
-                continuation: parent.continuation,
+                &parent,
+                parent.row_cardinality,
                 anchor,
-            }
+            )
         }
         DagNodeSource::Compute {
             source,
@@ -194,38 +192,68 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
                 parent.row_cardinality,
                 RowCardinalityProof::StaticPlural | RowCardinalityProof::RuntimeChecked
             ) || *count > 1;
-            ProgramBindingContract {
-                label: label.to_string(),
-                row_entity: parent.row_entity.clone(),
-                result_shape: parent.result_shape,
-                row_cardinality: if *count <= 1 {
-                    RowCardinalityProof::BoundedSingleton {
-                        kind: BoundedSingletonKind::LimitOne,
-                        from_plural_source: from_plural,
-                    }
-                } else {
-                    RowCardinalityProof::StaticPlural
-                },
+            let row_cardinality = if *count <= 1 {
+                RowCardinalityProof::BoundedSingleton {
+                    kind: BoundedSingletonKind::LimitOne,
+                    from_plural_source: from_plural,
+                }
+            } else {
+                RowCardinalityProof::StaticPlural
+            };
+            inherit_row_preserving_contract(
+                label,
                 value_kind,
-                continuation: parent.continuation,
-                anchor: ContinuationAnchor::BindingLabel,
-            }
+                &parent,
+                row_cardinality,
+                ContinuationAnchor::BindingLabel,
+            )
         }
         DagNodeSource::Compute {
+            source,
+            op:
+                ComputeOp::Filter { .. }
+                | ComputeOp::Sort { .. }
+                | ComputeOp::DedupeBy { .. }
+                | ComputeOp::With { .. },
+            schema,
+            ..
+        } => {
+            let parent = binding_contract(state, source)
+                .unwrap_or_else(|| synthetic_row_contract(source, schema));
+            inherit_row_preserving_contract(
+                label,
+                value_kind,
+                &parent,
+                parent.row_cardinality,
+                ContinuationAnchor::BindingLabel,
+            )
+        }
+        DagNodeSource::Compute {
+            source,
             op: ComputeOp::Render { .. },
             ..
-        } => ProgramBindingContract {
-            label: label.to_string(),
-            row_entity: QualifiedEntityKey {
-                entry_id: String::new(),
-                entity: String::new(),
-            },
-            result_shape: crate::plasm_plan::ResultShape::Single,
-            row_cardinality: RowCardinalityProof::StaticSingleton,
-            value_kind,
-            continuation: ContinuationCapability::RenderContentScalar,
-            anchor: ContinuationAnchor::None,
-        },
+        } => {
+            let parent_card = binding_contract(state, source)
+                .map(|p| p.row_cardinality)
+                .unwrap_or(RowCardinalityProof::RuntimeChecked);
+            let result_shape = if parent_card.permits_scalar_field_extract() {
+                crate::plasm_plan::ResultShape::Single
+            } else {
+                crate::plasm_plan::ResultShape::List
+            };
+            ProgramBindingContract {
+                label: label.to_string(),
+                row_entity: QualifiedEntityKey {
+                    entry_id: String::new(),
+                    entity: String::new(),
+                },
+                result_shape,
+                row_cardinality: parent_card,
+                value_kind,
+                continuation: ContinuationCapability::RenderContentScalar,
+                anchor: ContinuationAnchor::None,
+            }
+        }
         DagNodeSource::Compute { schema, .. } => synthetic_terminal_contract(label, schema),
         DagNodeSource::Data(value) => {
             let shape = data_literal_shape(value);
@@ -274,11 +302,7 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
 /// PLP-1 table: which DAG sources denote a proven scalar cell vs an entity row.
 fn binding_value_kind(source: &DagNodeSource) -> BindingValueKind {
     match source {
-        DagNodeSource::ScalarExtract { .. }
-        | DagNodeSource::Compute {
-            op: ComputeOp::Render { .. },
-            ..
-        } => BindingValueKind::ScalarCell,
+        DagNodeSource::ScalarExtract { .. } => BindingValueKind::ScalarCell,
         DagNodeSource::Data(value) => data_literal_shape(value).value_kind,
         _ => BindingValueKind::EntityRow,
     }
@@ -325,6 +349,24 @@ fn data_literal_shape(value: &PlanValue) -> DataLiteralShape {
             row_cardinality: RowCardinalityProof::StaticPlural,
             value_kind: BindingValueKind::EntityRow,
         },
+    }
+}
+
+fn inherit_row_preserving_contract(
+    label: &str,
+    value_kind: BindingValueKind,
+    parent: &ProgramBindingContract,
+    row_cardinality: RowCardinalityProof,
+    anchor: ContinuationAnchor,
+) -> ProgramBindingContract {
+    ProgramBindingContract {
+        label: label.to_string(),
+        row_entity: parent.row_entity.clone(),
+        result_shape: parent.result_shape,
+        row_cardinality,
+        value_kind,
+        continuation: parent.continuation,
+        anchor,
     }
 }
 
@@ -394,7 +436,7 @@ mod tests {
                 },
                 collection_alias: None,
             }),
-            BindingValueKind::ScalarCell
+            BindingValueKind::EntityRow
         );
         assert_eq!(
             binding_value_kind(&DagNodeSource::Data(PlanValue::Literal {

@@ -11,6 +11,7 @@ use plasm_core::{
 use plasm_runtime::workflow_reconcile::{
     detect_identity_mismatch, should_skip_write_after_preflight, skipped_write_result,
 };
+use plasm_runtime::ResultCoverage;
 
 fn workflow_matrix_dir() -> std::path::PathBuf {
     let crate_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -142,6 +143,7 @@ fn workflow_matrix_identity_mismatch_detected_on_extra_field() {
         )],
         count: 1,
         has_more: false,
+        coverage: ResultCoverage::Unknown,
         pagination_resume: None,
         paging_handle: None,
         source: plasm_runtime::execution::ExecutionSource::Cache,

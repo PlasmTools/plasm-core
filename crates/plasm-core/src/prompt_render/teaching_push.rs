@@ -11,6 +11,7 @@ use super::gloss_collect::GlossScratch;
 use super::input_legend::RowContractLegend;
 use super::line_validate::{
     domain_line_validate_cached, DomainLineValidCacheKey, DomainLineValidEntry,
+    ValidatedTeachingLine,
 };
 use super::teaching_legend::{
     teaching_expr_demonstrates_optional_params, teaching_expr_is_nullary_method_call,
@@ -169,28 +170,49 @@ pub(crate) fn try_push_teaching_example(
     }
     let dedupe_key = TeachingRowDedupeKey::new(expr, gloss.as_ref(), cap_leg.as_ref());
 
-    let Some((parsed, work)) =
+    let Some(validated) =
         domain_line_validate_cached(line_valid_cache, line_valid_cache_seed, cgs, expr, map_arc)
     else {
         return false;
     };
 
-    let meta = if collect_meta {
-        domain_line_execution_meta_from_validated(
-            cgs,
-            work,
-            relation,
-            source_capability,
-            &parsed.expr,
-        )
-    } else {
-        TeachingLineMeta {
-            expression: work,
+    let meta = match (&validated, collect_meta) {
+        (ValidatedTeachingLine::Expr { parsed, wire }, true) => {
+            domain_line_execution_meta_from_validated(
+                cgs,
+                wire.clone(),
+                relation,
+                source_capability,
+                &parsed.expr,
+            )
+        }
+        (ValidatedTeachingLine::QueryBind { wire }, true) => TeachingLineMeta {
+            expression: wire.clone(),
+            kind: DomainLineKind::Query,
+            source_capability: None,
+            cross_entity: None,
+            relation_materialization: None,
+        },
+        (ValidatedTeachingLine::RelationFanout { wire }, true) => TeachingLineMeta {
+            expression: wire.clone(),
+            kind: DomainLineKind::RelationNav,
+            source_capability: None,
+            cross_entity: None,
+            relation_materialization: relation.map(|r| {
+                RelationMaterializationSummary::from(
+                    r.materialize
+                        .as_ref()
+                        .unwrap_or(&RelationMaterialization::Unavailable),
+                )
+            }),
+        },
+        (_, false) => TeachingLineMeta {
+            expression: validated.wire().to_string(),
             kind: DomainLineKind::Other,
             source_capability: None,
             cross_entity: None,
             relation_materialization: None,
-        }
+        },
     };
     // Sparse exception: nullary method calls that yield a singleton entity row use `→ e`
     // (not terminal write / chain hint) — override Method→Terminal.

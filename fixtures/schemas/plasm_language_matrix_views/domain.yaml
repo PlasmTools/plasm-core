@@ -1,4 +1,4 @@
-version: 4
+version: 5
 auth:
   scheme: none
 http_backend: http://127.0.0.1:9
@@ -45,7 +45,7 @@ entities:
     relations: {}
   LangSecuredNote:
     id_field: note_id
-    description: Note list requiring Bearer access_token from LangAuthSession (federated hole-fill witness).
+    description: Secured note
     fields:
       note_id:
         required: true
@@ -59,8 +59,7 @@ entities:
     relations: {}
   LangSecuredGroup:
     id_field: group_id
-    description: Group list requiring Bearer access_token from a second LangAuthSession (CUGA dual-login
-      hole-fill witness).
+    description: Secured group
     fields:
       group_id:
         required: true
@@ -71,7 +70,7 @@ entities:
     relations: {}
   LangItem:
     id_field: id
-    description: Primary matrix entity — list, search, CRUD, relations, actions.
+    description: Primary matrix item
     fields:
       id:
         required: true
@@ -158,7 +157,7 @@ entities:
   LangTagFilterDemo:
     id_field: item_id
     primary_read: lang_tag_filter_demo_get
-    description: View-backed tag list with literal label filter (optional CML if-exists conformance).
+    description: Tag-filter snapshot
     fields:
       item_id:
         required: true
@@ -170,7 +169,7 @@ entities:
   LangKeyPick:
     id_field: key
     primary_read: lang_key_pick_get
-    description: "Keyed singleton over a list-only query via derive: Get (AccountPassword pattern)."
+    description: Keyed singleton row
     fields:
       key:
         required: true
@@ -246,6 +245,19 @@ entities:
         materialize:
           kind: view_embed
           view: lang_work_snapshot
+  LangPivotRow:
+    id_field: id
+    description: Pivot rows, unscoped unless a parent LangItem is bound.
+    fields:
+      id:
+        required: true
+        value_ref: nv_lang_pivot_row_id
+      item_id:
+        required: false
+        value_ref: nv_lang_pivot_row_item_id
+      title:
+        required: true
+        value_ref: nv_lang_pivot_row_title
   LangWorkSnapshotEmpty:
     id_field: viewer_id
     primary_read: lang_work_snapshot_empty_get
@@ -354,6 +366,7 @@ capabilities:
     kind: delete
     entity: LangItem
   langitem_ping:
+    receiver: {kind: entity, entity: LangItem}
     description: Side-effect ping on LangItem
     kind: action
     entity: LangItem
@@ -620,6 +633,7 @@ capabilities:
         key: id
         title: title
   langviewer_get:
+    receiver: {kind: none}
     description: Current viewer row (parameterless dashboard seed).
     kind: get
     entity: LangViewer
@@ -627,6 +641,7 @@ capabilities:
     - id
     - display_name
   langviewer_nobody_get:
+    receiver: {kind: none}
     description: Viewer row with no assigned items (empty dashboard seed).
     kind: get
     entity: LangViewer
@@ -641,6 +656,7 @@ capabilities:
     - viewer_id
     - item_count
   lang_work_snapshot_get:
+    receiver: {kind: none}
     description: Parameterless work dashboard GET root.
     kind: get
     entity: LangWorkSnapshot
@@ -655,12 +671,41 @@ capabilities:
     - viewer_id
     - item_count
   lang_work_snapshot_empty_get:
+    receiver: {kind: none}
     description: Parameterless empty dashboard GET root.
     kind: get
     entity: LangWorkSnapshotEmpty
     provides:
     - viewer_id
     - item_count
+  langpivotrow_query:
+    description: List pivot rows, optionally scoped to one LangItem.
+    kind: query
+    entity: LangPivotRow
+    scope:
+    - name: item_id
+      value_ref: nv_lang_pivot_row_item_id
+      required: false
+    selection:
+    - name: title
+      value_ref: nv_lang_pivot_row_title
+      required: false
+    provides:
+    - id
+    - item_id
+    - title
+  langpivotrow_get:
+    description: Get a pivot row by id.
+    kind: get
+    entity: LangPivotRow
+    scope:
+    - name: id
+      value_ref: nv_lang_pivot_row_id
+      required: true
+    provides:
+    - id
+    - item_id
+    - title
 values:
   nv_lang_tag_id:
     type: string
@@ -755,6 +800,13 @@ values:
   nv_lang_key_pick_key:
     type: string
   nv_lang_key_pick_title:
+    type: string
+  nv_lang_pivot_row_id:
+    type: string
+  nv_lang_pivot_row_item_id:
+    type: entity_ref
+    target: LangItem
+  nv_lang_pivot_row_title:
     type: string
 views:
   lang_digest:

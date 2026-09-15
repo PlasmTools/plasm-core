@@ -171,6 +171,8 @@ async fn list_lane_stocks(Query(q): Query<ShelfQuery>) -> Json<Value> {
         Some("mine") => json!([
             lane_row("s1", "stock-one", "mine"),
             lane_row("s2", "stock-two", "mine"),
+            // Shared title with LangLane{shelf=alpha} so RA-13 A minus B drops a row.
+            lane_row("s3", "alpha-one", "mine"),
         ]),
         Some("empty") => json!([]),
         _ => json!([]),

@@ -45,7 +45,7 @@ impl EntityRefPayload {
     pub fn try_from_value(v: &Value) -> Result<Self, EntityRefValueError> {
         match v {
             Value::UnionCtor { .. } => Err(EntityRefValueError::Unsupported),
-            Value::PlasmInputRef(_) | Value::StringTemplate(_) => {
+            Value::PlasmInputRef(_) | Value::StringTemplate(_) | Value::GetScalarExtract(_) => {
                 Err(EntityRefValueError::Unsupported)
             }
             Value::Null => Err(EntityRefValueError::Null),

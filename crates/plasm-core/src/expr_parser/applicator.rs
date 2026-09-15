@@ -1,4 +1,4 @@
-//! Application stratum (`=>` applicators): derive, render, for_each, relation fanout.
+//! Application stratum (`=>` applicators): derive, render, row application, relation fanout.
 
 use super::heredoc_surface::tagged_heredoc_close_kind;
 use super::{split_top_level, validate_program_label};
@@ -10,8 +10,11 @@ pub enum Applicator {
     Derive { body: String },
     /// `=> <<TAG … TAG`
     Render { kind: RenderApplicator },
-    /// `=> Entity.m#(…, _.f)` / wire method invoke per row.
-    ForEach { surface: String },
+    /// A catalog read or operation evaluated once per source row.
+    ///
+    /// Examples: `=> Entity(_.id)`, `=> Entity{parent_id=_.id}` and
+    /// `=> Entity.m#(…, _.f)`.
+    Apply { surface: String },
     /// `=> _.r#` / `=> _.wire`
     Relation { wire: String },
 }
@@ -42,6 +45,11 @@ pub fn parse_applicator(raw: &str) -> Result<Applicator, String> {
         });
     }
     if let Some(wire) = right.strip_prefix("_.") {
+        if method_call_at_depth_zero(right) {
+            return Ok(Applicator::Apply {
+                surface: right.to_string(),
+            });
+        }
         let wire = wire.trim();
         if wire.is_empty() || wire.contains(char::is_whitespace) || wire.contains('(') {
             return Err(format!(
@@ -57,13 +65,13 @@ pub fn parse_applicator(raw: &str) -> Result<Applicator, String> {
             body: right.to_string(),
         });
     }
-    if is_foreach_surface(right) {
-        return Ok(Applicator::ForEach {
+    if is_row_application_surface(right) {
+        return Ok(Applicator::Apply {
             surface: right.to_string(),
         });
     }
     Err(format!(
-        "unsupported `=>` applicator `{right}`; use `=> {{ … }}` to derive, `=> <<TAG` to render, `=> Entity.m#(…, _)` for each row, or `=> _.r#` for relation fanout"
+        "unsupported `=>` applicator `{right}`; use a row-producing form such as `=> {{ … }}`, `=> <<TAG`, `=> Entity(_.id)`, `=> Entity{{parent_id=_.id}}`, `=> Entity.m#(…, _)`, or `=> _.r#`"
     ))
 }
 
@@ -146,14 +154,29 @@ fn try_parse_cross_binding_sources(head: &str) -> Option<Vec<String>> {
     Some(sources)
 }
 
-/// True when `rhs` is a per-row effect/method surface (not a derive map / relation).
-fn is_foreach_surface(rhs: &str) -> bool {
+/// True when `rhs` is a catalog source or operation evaluated in row scope.
+fn is_row_application_surface(rhs: &str) -> bool {
     let t = rhs.trim();
     if t.starts_with('{') || t.starts_with("<<") || t.starts_with("_.") {
         return false;
     }
-    // Teaching opaque methods (`.m12(`) or domain wire verbs (`.update(`, `.secured-touch(`).
-    method_call_at_depth_zero(t)
+    if method_call_at_depth_zero(t) {
+        return true;
+    }
+
+    // Catalog Get / Query / Search. Context-sensitive entity resolution and
+    // row-reference type checking belong to typed elaboration, not this lexer.
+    let Some(first) = t.as_bytes().first() else {
+        return false;
+    };
+    if !(first.is_ascii_alphabetic() || *first == b'_') {
+        return false;
+    }
+    let head_end = t
+        .char_indices()
+        .find_map(|(idx, ch)| (!(ch.is_ascii_alphanumeric() || ch == '_')).then_some(idx))
+        .unwrap_or(t.len());
+    matches!(t.as_bytes().get(head_end), Some(b'(' | b'{' | b'~'))
 }
 
 /// `.method(` at paren/bracket/brace depth 0 outside quotes.
@@ -238,16 +261,21 @@ mod tests {
     #[test]
     fn foreach_opaque_m_digit() {
         let a = parse_applicator("LangItem.m3(title=_.title)").unwrap();
-        assert!(matches!(a, Applicator::ForEach { .. }));
+        assert!(matches!(a, Applicator::Apply { .. }));
     }
 
     #[test]
     fn foreach_wire_update_and_secured_touch() {
         let a = parse_applicator("LangItem(_.id).update(score=9, title=_.title)").unwrap();
-        assert!(matches!(a, Applicator::ForEach { .. }));
+        assert!(matches!(a, Applicator::Apply { .. }));
         let b = parse_applicator("LangItem(_.id).secured-touch(access_token=auth.access_token)")
             .unwrap();
-        assert!(matches!(b, Applicator::ForEach { .. }));
+        assert!(matches!(b, Applicator::Apply { .. }));
+
+        let get = parse_applicator("LangItem(_.id)").unwrap();
+        assert!(matches!(get, Applicator::Apply { .. }));
+        let query = parse_applicator("LangItem{owner_id=_.id}").unwrap();
+        assert!(matches!(query, Applicator::Apply { .. }));
     }
 
     #[test]

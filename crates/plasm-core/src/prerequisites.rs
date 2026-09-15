@@ -1,4 +1,15 @@
-//! Explicit prerequisite contracts. These are discovery metadata, not execution.
+//! Explicit prerequisite contracts.
+//!
+//! Teaching recites acquisitions. **RA-17** is the compile/resolve law: a seat
+//! bound to a requirement may only be filled from that requirement's deployed
+//! provider (`provider_catalog:provider`). A foreign catalog's acquisition — or
+//! the same program binding shared across distinct deployed providers — is a
+//! typed reject, not a vendor 401. Token-string / JWT inspection is not a law.
+//!
+//! **RA-6 inherit** may copy a parent Get / session param onto a child seat only
+//! when [`inherit_may_fill_param`] proves the same deployed provider, or the
+//! child has no distinct foreign-provider seat. Unproven catalog identity omits
+//! the binding — it does not silently send the parent token.
 
 use crate::schema::{CapabilitySchema, InputFieldSchema, InputFieldWire, InputType};
 use crate::{FieldType, NamedValueSchema, CGS};
@@ -254,9 +265,16 @@ impl PrerequisiteCatalog {
                         requirement.id
                     ));
                 }
+                let mut bound_outputs = BTreeSet::new();
                 for binding in &requirement.bindings {
                     if !bound.insert(&binding.input) {
                         return Err(format!("duplicate input binding on {cap_name}"));
+                    }
+                    if !bound_outputs.insert(&binding.output) {
+                        return Err(format!(
+                            "requirement {} binds contract output {} to more than one input",
+                            requirement.id, binding.output
+                        ));
                     }
                     let value = contract
                         .outputs
@@ -523,6 +541,182 @@ fn descend_input<'a>(
         },
         _ => Err("prerequisite path traverses scalar input".into()),
     }
+}
+
+/// Program value wired to a capability input that may be a prerequisite seat.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SeatWiring {
+    pub input: InputPath,
+    /// Top-level program binding (`sw` in `sw.access_token`).
+    pub binding: Option<String>,
+    /// Catalog that produced the value when statically known (acquisition entity).
+    pub source_catalog: Option<String>,
+}
+
+/// `provider_catalog:provider` — the identity RA-17 names in rejects.
+pub fn deployed_provider_label(catalog: &str, provider: &str) -> String {
+    format!("{catalog}:{provider}")
+}
+
+fn seat_wire_name(input: &InputPath) -> String {
+    input
+        .path
+        .last()
+        .cloned()
+        .unwrap_or_else(|| format!("{:?}", input.lane).to_ascii_lowercase())
+}
+
+fn seat_binds_param(input: &InputPath, param: &str) -> bool {
+    input.path.last().is_some_and(|p| p == param)
+}
+
+/// Deployed `provider_catalog` for `param` on `consumer` when that wire name is
+/// a prerequisite seat with an explicit deployment.
+pub fn deployed_seat_catalog_for_param<'a>(
+    deployments: &'a DeploymentBindings,
+    consumer: &CapabilityRef,
+    requirements: &[Requirement],
+    param: &str,
+) -> Option<&'a str> {
+    for req in requirements {
+        if !req
+            .bindings
+            .iter()
+            .any(|b| seat_binds_param(&b.input, param))
+        {
+            continue;
+        }
+        let catalog_unproven = consumer.catalog.trim().is_empty();
+        return deployments
+            .bindings
+            .iter()
+            .find(|b| {
+                b.requirement == req.id
+                    && b.consumer.capability == consumer.capability
+                    && (catalog_unproven || b.consumer.catalog == consumer.catalog)
+            })
+            .map(|b| b.provider_catalog.as_str());
+    }
+    None
+}
+
+/// RA-6 ∩ RA-17: may inherit copy `param` from a parent fetch onto `consumer`?
+///
+/// No deployed seat → inherit (name intersection). Same `provider_catalog` as
+/// the proven parent catalog → inherit. Foreign seat, or unproven parent
+/// catalog while a seat is distinctly deployed → omit.
+pub fn inherit_may_fill_param(
+    deployments: &DeploymentBindings,
+    consumer: &CapabilityRef,
+    requirements: &[Requirement],
+    param: &str,
+    parent_catalog: Option<&str>,
+) -> bool {
+    let Some(seat_catalog) =
+        deployed_seat_catalog_for_param(deployments, consumer, requirements, param)
+    else {
+        return true;
+    };
+    match parent_catalog.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(src) => src == seat_catalog,
+        None => false,
+    }
+}
+
+/// RA-17: a prerequisite seat may only be filled from its deployed provider.
+///
+/// Statically provable: producing catalog ≠ deployed `provider_catalog`, or the
+/// same binding name used for two seats deployed to different providers.
+/// Literals with no catalog provenance are not rejected unless they share a
+/// binding name across distinct providers. JWT / token-string inspection is
+/// not a law. RA-6 inherit uses [`inherit_may_fill_param`]: omit when the
+/// parent catalog cannot prove the same deployed provider.
+pub fn validate_deployed_prerequisite_seats(
+    catalogs: &BTreeMap<String, &CGS>,
+    deployments: &DeploymentBindings,
+    consumer: &CapabilityRef,
+    wirings: &[SeatWiring],
+) -> Result<(), String> {
+    if wirings.is_empty() {
+        return Ok(());
+    }
+    let cgs = *catalogs
+        .get(&consumer.catalog)
+        .ok_or_else(|| format!("missing consumer catalog {}", consumer.catalog))?;
+    let Some(requirements) = cgs.prerequisites.requirements.get(&consumer.capability) else {
+        return Ok(());
+    };
+    if requirements.is_empty() {
+        return Ok(());
+    }
+
+    let mut seat_provider: BTreeMap<&InputPath, (&str, &str, &str)> = BTreeMap::new();
+    for req in requirements {
+        let Some(dep) = deployments
+            .bindings
+            .iter()
+            .find(|b| b.consumer == *consumer && b.requirement == req.id)
+        else {
+            continue;
+        };
+        for cb in &req.bindings {
+            seat_provider.insert(
+                &cb.input,
+                (
+                    req.id.as_str(),
+                    dep.provider_catalog.as_str(),
+                    dep.provider.as_str(),
+                ),
+            );
+        }
+    }
+    if seat_provider.is_empty() {
+        return Ok(());
+    }
+
+    let mut by_binding: BTreeMap<&str, Vec<(&InputPath, &str, &str)>> = BTreeMap::new();
+    for w in wirings {
+        let Some((_req_id, pcat, provider)) = seat_provider.get(&w.input) else {
+            continue;
+        };
+        if let Some(src) = w.source_catalog.as_deref() {
+            if src != *pcat {
+                let seat = seat_wire_name(&w.input);
+                return Err(format!(
+                    "RA-17: prerequisite seat `{seat}` requires provider `{}`; bound value comes from catalog `{src}`",
+                    deployed_provider_label(pcat, provider)
+                ));
+            }
+        }
+        if let Some(name) = w.binding.as_deref() {
+            by_binding
+                .entry(name)
+                .or_default()
+                .push((&w.input, *pcat, *provider));
+        }
+    }
+    for (name, seats) in by_binding {
+        let mut providers = BTreeSet::new();
+        for (_, pcat, provider) in &seats {
+            providers.insert((*pcat, *provider));
+        }
+        if providers.len() > 1 {
+            let labels: Vec<String> = providers
+                .iter()
+                .map(|(c, p)| deployed_provider_label(c, p))
+                .collect();
+            let seat_names: Vec<String> = seats
+                .iter()
+                .map(|(inp, _, _)| seat_wire_name(inp))
+                .collect();
+            return Err(format!(
+                "RA-17: prerequisite seats `{}` require distinct providers (`{}`); they cannot share binding `{name}`",
+                seat_names.join("` and `"),
+                labels.join("` vs `"),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Resolve only explicit deployment bindings; every dependency must be permitted.
@@ -891,8 +1085,122 @@ mod tests {
         )
         .unwrap();
         assert!(guidance.contains("scoped_access"));
-        assert!(guidance.contains(" / m"));
+        assert!(
+            guidance.contains(".m"),
+            "action acquisitions use taught e#.m# not e# / m#:\n{guidance}"
+        );
+        assert!(
+            guidance.contains("{…}"),
+            "query consumers use taught e#{{…}} not e# / m#:\n{guidance}"
+        );
+        assert!(
+            !guidance.contains(" / "),
+            "prerequisite seats must not use e# / m#:\n{guidance}"
+        );
         assert!(!guidance.contains("context="));
+    }
+
+    #[test]
+    fn get_acquisition_teaches_parens_id_not_slash_method() {
+        let mut cgs = fixture();
+        cgs.capabilities.get_mut("acquire").unwrap().kind = crate::CapabilityKind::Get;
+        let catalogs = BTreeMap::from([("matrix".into(), &cgs)]);
+        let business = CapabilityRef {
+            catalog: "matrix".into(),
+            capability: "read".into(),
+        };
+        let bindings = DeploymentBindings {
+            bindings: vec![DeploymentBinding {
+                consumer: business.clone(),
+                requirement: "scoped_access".into(),
+                provider_catalog: "matrix".into(),
+                provider: "value_source".into(),
+            }],
+        };
+        let closure = prerequisite_closure(
+            &catalogs,
+            &bindings,
+            std::slice::from_ref(&business),
+            &BTreeSet::from(["matrix".into()]),
+        )
+        .unwrap();
+        let exposure = crate::TeachingExposureSession::new(
+            &cgs,
+            "matrix",
+            &["BusinessRecord", "ProviderResult"],
+        );
+        let symbols = exposure.to_symbol_map();
+        let guidance = crate::prompt_render::render_prerequisite_bindings(
+            &closure,
+            &catalogs,
+            symbols.as_ref(),
+        )
+        .unwrap();
+        let get_sym = symbols.entity_sym_for("matrix", "ProviderResult");
+        assert!(
+            guidance.contains(&format!("{get_sym}(<id>)")),
+            "Get acquisition must name taught e#(<id>), got:\n{guidance}"
+        );
+        assert!(
+            !guidance.contains(" / "),
+            "Get must not be taught as e# / m#:\n{guidance}"
+        );
+        assert!(
+            !guidance.contains(&format!("{get_sym}.m")),
+            "Get must not be taught as a dotted mutator:\n{guidance}"
+        );
+    }
+
+    #[test]
+    fn get_identity_constant_fills_taught_parens() {
+        let mut cgs = fixture();
+        cgs.capabilities.get_mut("acquire").unwrap().kind = crate::CapabilityKind::Get;
+        let ent = cgs.entities.get_mut("ProviderResult").unwrap();
+        let value_field = ent.fields.get("value").expect("value field").clone();
+        ent.fields.insert("account".into(), value_field);
+        ent.id_field = "account".into();
+        let catalogs = BTreeMap::from([("matrix".into(), &cgs)]);
+        let business = CapabilityRef {
+            catalog: "matrix".into(),
+            capability: "read".into(),
+        };
+        let bindings = DeploymentBindings {
+            bindings: vec![DeploymentBinding {
+                consumer: business.clone(),
+                requirement: "scoped_access".into(),
+                provider_catalog: "matrix".into(),
+                provider: "value_source".into(),
+            }],
+        };
+        let closure = prerequisite_closure(
+            &catalogs,
+            &bindings,
+            std::slice::from_ref(&business),
+            &BTreeSet::from(["matrix".into()]),
+        )
+        .unwrap();
+        let exposure = crate::TeachingExposureSession::new(
+            &cgs,
+            "matrix",
+            &["BusinessRecord", "ProviderResult"],
+        );
+        let symbols = exposure.to_symbol_map();
+        let guidance = crate::prompt_render::render_prerequisite_bindings(
+            &closure,
+            &catalogs,
+            symbols.as_ref(),
+        )
+        .unwrap();
+        let get_sym = symbols.entity_sym_for("matrix", "ProviderResult");
+        assert!(
+            guidance.contains(&format!("{get_sym}(\"account-a\")")),
+            "constant Get identity must fill e#(\"…\"), got:\n{guidance}"
+        );
+        assert!(
+            !guidance.contains(&format!("{get_sym}(<id>)")),
+            "filled identity should not also show the hole:\n{guidance}"
+        );
+        assert!(!guidance.contains(" / "));
     }
 
     #[test]
@@ -1015,5 +1323,306 @@ mod tests {
             .validate(&cgs)
             .unwrap_err()
             .contains("argument cycle"));
+    }
+
+    fn dual_session_catalogs() -> (CGS, CGS) {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/prerequisite_dual_session");
+        let source = crate::loader::load_schema_dir(&root.join("source"))
+            .expect("abstract source session catalog");
+        let consumer = crate::loader::load_schema_dir(&root.join("consumer"))
+            .expect("abstract consumer dual-token catalog");
+        (source, consumer)
+    }
+
+    #[test]
+    fn requirement_cannot_bind_one_output_to_two_inputs() {
+        let (_, mut consumer) = dual_session_catalogs();
+        let requirements = consumer
+            .prerequisites
+            .requirements
+            .get_mut("attach")
+            .unwrap();
+        let extra = requirements[1].bindings[0].clone();
+        requirements[0].bindings.push(extra);
+        requirements.remove(1);
+        let err = consumer.prerequisites.validate(&consumer).unwrap_err();
+        assert!(
+            err.contains("binds contract output token to more than one input"),
+            "collapse must fail validate: {err}"
+        );
+    }
+
+    #[test]
+    fn dual_session_teaching_names_each_provider() {
+        let (source, consumer) = dual_session_catalogs();
+        let catalogs = BTreeMap::from([("source".into(), &source), ("consumer".into(), &consumer)]);
+        let business = CapabilityRef {
+            catalog: "consumer".into(),
+            capability: "attach".into(),
+        };
+        let bindings = DeploymentBindings {
+            bindings: vec![
+                DeploymentBinding {
+                    consumer: business.clone(),
+                    requirement: "session".into(),
+                    provider_catalog: "consumer".into(),
+                    provider: "session".into(),
+                },
+                DeploymentBinding {
+                    consumer: business.clone(),
+                    requirement: "source_session".into(),
+                    provider_catalog: "source".into(),
+                    provider: "session".into(),
+                },
+            ],
+        };
+        let closure = prerequisite_closure(
+            &catalogs,
+            &bindings,
+            std::slice::from_ref(&business),
+            &BTreeSet::from(["source".into(), "consumer".into()]),
+        )
+        .unwrap();
+        let consumer_acq = closure
+            .acquisitions
+            .iter()
+            .find(|a| a.provider_catalog == "consumer")
+            .expect("consumer login acquisition");
+        let source_acq = closure
+            .acquisitions
+            .iter()
+            .find(|a| a.provider_catalog == "source")
+            .expect("source login acquisition");
+        assert_ne!(consumer_acq.id, source_acq.id);
+
+        let mut exposure = crate::TeachingExposureSession::new(&source, "source", &["AuthSession"]);
+        exposure.expose_entities(
+            &[&source, &consumer],
+            std::sync::Arc::new(consumer.clone()),
+            "consumer",
+            &["AuthSession", "Record"],
+        );
+        let symbols = exposure.to_symbol_map();
+        let guidance = crate::prompt_render::render_prerequisite_bindings(
+            &closure,
+            &catalogs,
+            symbols.as_ref(),
+        )
+        .unwrap();
+        assert!(
+            guidance.contains(&format!(
+                "Payload.access_token <- acquisition {} output",
+                consumer_acq.id
+            )),
+            "local token must bind consumer login:\n{guidance}"
+        );
+        assert!(
+            guidance.contains(&format!(
+                "Payload.source_access_token <- acquisition {} output",
+                source_acq.id
+            )),
+            "foreign token must bind source login:\n{guidance}"
+        );
+        assert!(
+            !guidance.contains(&format!(
+                "Payload.source_access_token <- acquisition {} output",
+                consumer_acq.id
+            )),
+            "foreign token must not alias consumer login:\n{guidance}"
+        );
+        assert!(
+            !guidance.contains(&format!(
+                "Payload.access_token <- acquisition {} output",
+                source_acq.id
+            )),
+            "local token must not alias source login:\n{guidance}"
+        );
+    }
+
+    fn dual_session_deployments(business: &CapabilityRef) -> DeploymentBindings {
+        DeploymentBindings {
+            bindings: vec![
+                DeploymentBinding {
+                    consumer: business.clone(),
+                    requirement: "session".into(),
+                    provider_catalog: "consumer".into(),
+                    provider: "session".into(),
+                },
+                DeploymentBinding {
+                    consumer: business.clone(),
+                    requirement: "source_session".into(),
+                    provider_catalog: "source".into(),
+                    provider: "session".into(),
+                },
+            ],
+        }
+    }
+
+    fn attach_consumer() -> CapabilityRef {
+        CapabilityRef {
+            catalog: "consumer".into(),
+            capability: "attach".into(),
+        }
+    }
+
+    fn payload_seat(name: &str) -> InputPath {
+        InputPath {
+            lane: InputLane::Payload,
+            path: vec![name.into()],
+        }
+    }
+
+    #[test]
+    fn ra17_rejects_consumer_acquisition_on_source_seat() {
+        let (source, consumer) = dual_session_catalogs();
+        let catalogs = BTreeMap::from([("source".into(), &source), ("consumer".into(), &consumer)]);
+        let business = attach_consumer();
+        let err = validate_deployed_prerequisite_seats(
+            &catalogs,
+            &dual_session_deployments(&business),
+            &business,
+            &[SeatWiring {
+                input: payload_seat("source_access_token"),
+                binding: Some("sw".into()),
+                source_catalog: Some("consumer".into()),
+            }],
+        )
+        .expect_err("foreign catalog on source seat");
+        assert!(
+            err.contains("source:session"),
+            "reject must name required provider:\n{err}"
+        );
+        assert!(
+            err.contains("consumer"),
+            "reject must name the foreign catalog:\n{err}"
+        );
+        assert!(
+            err.contains("source_access_token"),
+            "reject must name the seat:\n{err}"
+        );
+    }
+
+    #[test]
+    fn ra17_rejects_shared_binding_across_distinct_providers() {
+        let (source, consumer) = dual_session_catalogs();
+        let catalogs = BTreeMap::from([("source".into(), &source), ("consumer".into(), &consumer)]);
+        let business = attach_consumer();
+        let err = validate_deployed_prerequisite_seats(
+            &catalogs,
+            &dual_session_deployments(&business),
+            &business,
+            &[
+                SeatWiring {
+                    input: payload_seat("access_token"),
+                    binding: Some("sw".into()),
+                    source_catalog: None,
+                },
+                SeatWiring {
+                    input: payload_seat("source_access_token"),
+                    binding: Some("sw".into()),
+                    source_catalog: None,
+                },
+            ],
+        )
+        .expect_err("same binding on two providers");
+        assert!(
+            err.contains("source:session") && err.contains("consumer:session"),
+            "reject must name both providers:\n{err}"
+        );
+        assert!(err.contains("`sw`"), "reject must name the binding:\n{err}");
+    }
+
+    #[test]
+    fn ra17_accepts_matching_provider_catalogs() {
+        let (source, consumer) = dual_session_catalogs();
+        let catalogs = BTreeMap::from([("source".into(), &source), ("consumer".into(), &consumer)]);
+        let business = attach_consumer();
+        validate_deployed_prerequisite_seats(
+            &catalogs,
+            &dual_session_deployments(&business),
+            &business,
+            &[
+                SeatWiring {
+                    input: payload_seat("access_token"),
+                    binding: Some("sw".into()),
+                    source_catalog: Some("consumer".into()),
+                },
+                SeatWiring {
+                    input: payload_seat("source_access_token"),
+                    binding: Some("fs".into()),
+                    source_catalog: Some("source".into()),
+                },
+            ],
+        )
+        .expect("matching deployments are lawful");
+    }
+
+    fn file_query_consumer() -> CapabilityRef {
+        CapabilityRef {
+            catalog: "consumer".into(),
+            capability: "file_query".into(),
+        }
+    }
+
+    fn file_query_source_deployments() -> DeploymentBindings {
+        DeploymentBindings {
+            bindings: vec![DeploymentBinding {
+                consumer: file_query_consumer(),
+                requirement: "source_session".into(),
+                provider_catalog: "source".into(),
+                provider: "session".into(),
+            }],
+        }
+    }
+
+    #[test]
+    fn inherit_may_fill_param_omits_foreign_and_unproven() {
+        let (_, consumer) = dual_session_catalogs();
+        let reqs = consumer
+            .prerequisites
+            .requirements
+            .get("file_query")
+            .expect("file_query source seat");
+        let file = file_query_consumer();
+        let deps = file_query_source_deployments();
+        assert!(
+            inherit_may_fill_param(&deps, &file, reqs, "id", Some("consumer")),
+            "scope id is not a deployed seat"
+        );
+        assert!(
+            !inherit_may_fill_param(&deps, &file, reqs, "access_token", Some("consumer")),
+            "consumer parent must not fill source-deployed access_token"
+        );
+        assert!(
+            inherit_may_fill_param(&deps, &file, reqs, "access_token", Some("source")),
+            "matching source parent may fill the source seat"
+        );
+        assert!(
+            !inherit_may_fill_param(&deps, &file, reqs, "access_token", None),
+            "unproven parent catalog must omit a deployed seat"
+        );
+        assert!(
+            inherit_may_fill_param(
+                &DeploymentBindings::default(),
+                &file,
+                reqs,
+                "access_token",
+                Some("consumer")
+            ),
+            "no deployment is not a distinct foreign seat"
+        );
+        let unproven = CapabilityRef {
+            catalog: String::new(),
+            capability: "file_query".into(),
+        };
+        assert!(
+            !inherit_may_fill_param(&deps, &unproven, reqs, "access_token", Some("consumer")),
+            "empty consumer catalog still finds the source deployment by capability"
+        );
+        assert!(
+            inherit_may_fill_param(&deps, &unproven, reqs, "access_token", Some("source")),
+            "matching provider still inherits when catalog id is unbound"
+        );
     }
 }

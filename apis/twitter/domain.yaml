@@ -273,6 +273,7 @@ capabilities:
           value_ref: nv_tweet_create_reply_to_tweet_id
           required: false
   tweet_delete:
+    receiver: {kind: entity, entity: Tweet}
     kind: action
     entity: Tweet
     output:
@@ -301,6 +302,7 @@ capabilities:
           value_ref: nv_wire_bool
           required: false
   list_delete:
+    receiver: {kind: entity, entity: List}
     kind: action
     entity: List
     output:

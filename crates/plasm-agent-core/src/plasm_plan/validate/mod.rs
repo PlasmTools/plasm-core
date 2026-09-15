@@ -299,6 +299,17 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
             if !adj[i].contains(&t) {
                 adj[i].push(t);
             }
+            if let ComputeOp::Union { other } = &compute.op {
+                let t = *by_id.get(other.as_str()).ok_or_else(|| {
+                    format!(
+                        "plan.nodes[{i}].compute.union.other references unknown id {:?}",
+                        other.as_str()
+                    )
+                })?;
+                if !adj[i].contains(&t) {
+                    adj[i].push(t);
+                }
+            }
         }
         if let Some(relation) = &n.relation {
             let t = *by_id.get(&relation.source).ok_or_else(|| {
@@ -638,20 +649,38 @@ fn validated_node_from_raw(
                 )?,
                 until_predicates: node.predicates.clone(),
                 take,
-                seed_ir: Some(
-                    plan.nodes
+                seed_ir: Some({
+                    let seed_node = plan
+                        .nodes
                         .iter()
                         .find(|n| n.id == source.as_str())
-                        .and_then(|n| n.ir.as_ref())
                         .ok_or_else(|| {
-                            format!(
-                                "plan.nodes[{node_index}]: iterate_until seed `{source}` must carry ir for re-observe"
+                            plasm_core::expr_parser::iterate_seed_must_be_get_identity(
+                                source.as_str(),
                             )
-                        })
-                        .and_then(|ir| {
-                            validated_plan_expr_ir(ir, node_index, "iterate_until.seed_ir")
-                        })?,
-                ),
+                        })?;
+                    if seed_node.kind != PlanNodeKind::Get {
+                        return Err(plasm_core::expr_parser::iterate_seed_must_be_get_identity(
+                            source.as_str(),
+                        ));
+                    }
+                    // Bound identity is `ir_template` at plan time; literal identity is `ir`.
+                    // Iterate replays either form (template + binding), not `uses_result.is_empty()`.
+                    let seed_replay = if let Some(ir) = seed_node.ir.as_ref() {
+                        ir.clone()
+                    } else if let Some(template) = seed_node.ir_template.as_ref() {
+                        crate::plasm_plan::PlanExprIr {
+                            expr: template.expr.clone(),
+                            projection: template.projection.clone(),
+                            display_expr: template.display_expr.clone(),
+                        }
+                    } else {
+                        return Err(plasm_core::expr_parser::iterate_seed_must_be_get_identity(
+                            source.as_str(),
+                        ));
+                    };
+                    validated_plan_expr_ir(&seed_replay, node_index, "iterate_until.seed_ir")?
+                }),
                 depends_on,
                 uses_result,
                 approval: node.approval.clone(),

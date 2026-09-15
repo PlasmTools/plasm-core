@@ -42,7 +42,8 @@ pub(crate) fn matrix_program_for_row(
                 .as_ref()
                 .expect("federated dup session exposure");
             let map = exp.symbol_map_arc();
-            let r_sym = map.ident_sym_relation_for("linear", "LangItem", "children");
+            let r_sym =
+                map.ident_sym_relation_for(language_matrix::MATRIX_FED_B, "LangItem", "children");
             format!("parent = e2(\"i1\")\nkids = parent.{r_sym}\nkids | select id, title")
         }
         "lang_federated_duplicate_entity_mutator_m" => {
@@ -51,7 +52,7 @@ pub(crate) fn matrix_program_for_row(
                 .as_ref()
                 .expect("federated dup session exposure");
             let map = exp.symbol_map_arc();
-            let m_sym = map.method_sym_for("linear", "LangItem", "create");
+            let m_sym = map.method_sym_for(language_matrix::MATRIX_FED_B, "LangItem", "create");
             format!("e2.{m_sym}(title=\"fed-mutator-matrix\", score=0, owner=\"matrix-fed-owner\")")
         }
         "lang_federated_duplicate_entity_pathless_action" => {
@@ -60,7 +61,7 @@ pub(crate) fn matrix_program_for_row(
                 .as_ref()
                 .expect("federated dup session exposure");
             let map = exp.symbol_map_arc();
-            let m_sym = map.method_sym_for("linear", "LangItem", "broadcast");
+            let m_sym = map.method_sym_for(language_matrix::MATRIX_FED_B, "LangItem", "broadcast");
             format!(r#"e2.{m_sym}(message="fed-pathless-broadcast")"#)
         }
         "lang_federated_auth_session_provides_mutation" => {
@@ -69,12 +70,14 @@ pub(crate) fn matrix_program_for_row(
                 .as_ref()
                 .expect("federated auth session exposure");
             let map = exp.symbol_map_arc();
-            let e_sn_auth = map.entity_sym_for("linear", "LangAuthSession");
-            let m_sn_login = map.method_sym_for("linear", "LangAuthSession", "login");
-            let e_sw_auth = map.entity_sym_for("github", "LangAuthSession");
-            let m_sw_login = map.method_sym_for("github", "LangAuthSession", "login");
-            let e_note = map.entity_sym_for("linear", "LangSecuredNote");
-            let e_group = map.entity_sym_for("github", "LangSecuredGroup");
+            let e_sn_auth = map.entity_sym_for(language_matrix::MATRIX_FED_B, "LangAuthSession");
+            let m_sn_login =
+                map.method_sym_for(language_matrix::MATRIX_FED_B, "LangAuthSession", "login");
+            let e_sw_auth = map.entity_sym_for(language_matrix::MATRIX_FED_A, "LangAuthSession");
+            let m_sw_login =
+                map.method_sym_for(language_matrix::MATRIX_FED_A, "LangAuthSession", "login");
+            let e_note = map.entity_sym_for(language_matrix::MATRIX_FED_B, "LangSecuredNote");
+            let e_group = map.entity_sym_for(language_matrix::MATRIX_FED_A, "LangSecuredGroup");
             // CUGA AppWorld shape: two federated logins → two Bearer consumers in one plasm_run.
             format!(
                 r#"sn_auth = {e_sn_auth}.{m_sn_login}(username="simple_note", password="secret")
@@ -92,14 +95,14 @@ notes, groups"#
                 .as_ref()
                 .expect("federated relation target session exposure");
             let map = exp.symbol_map_arc();
-            let e_poke = map.entity_sym_for("pokeapi", "LangItem");
+            let e_poke = map.entity_sym_for(language_matrix::MATRIX_FED_B, "LangItem");
             format!("item = {e_poke}(\"i1\")\nsummary = item.summary\nsummary")
         }
         "lang_federated_duplicate_entity_e2_search" => r#"e2~"Alpha""#.to_string(),
         "lang_federated_parallel_roots" => r#"e1{owner="alice"}, e2~"Alpha""#.to_string(),
         "lang_bind_template_inline_on_e1" => r#"rows = e1{owner="alice"} | select title
 report = rows => <<INLINE_E1
-# {{ rows | length }} row(s)
+# {{ title }}
 INLINE_E1
 report"#
             .to_string(),

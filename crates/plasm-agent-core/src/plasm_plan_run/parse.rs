@@ -457,11 +457,13 @@ pub(crate) fn propagate_row_identities(
             let Some(rows) = mat.row_source.inline_rows() else {
                 return Ok(Vec::new());
             };
+            let resolved =
+                super::resolve_filter_predicates_with_materialized(predicates, materialized)?;
             Ok(mat
                 .row_identities
                 .iter()
                 .zip(rows.iter())
-                .filter(|(_, row)| predicates.iter().all(|p| predicate_matches(row, p)))
+                .filter(|(_, row)| resolved.iter().all(|p| predicate_matches(row, p)))
                 .map(|(id, _)| id.clone())
                 .collect())
         }

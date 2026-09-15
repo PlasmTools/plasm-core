@@ -543,16 +543,17 @@ mod tests {
     use super::*;
     use crate::{compile_operation, CmlEnv, CompiledOperation};
 
-    fn github_cgs() -> plasm_core::CGS {
+    fn commit_matrix_cgs() -> plasm_core::CGS {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        load_schema(&root.join("../../apis/github")).expect("load github schema")
+        load_schema(&root.join("../../fixtures/schemas/repository_commit_matrix"))
+            .expect("load repository_commit_matrix")
     }
 
-    fn compile_github_repo_scoped_path(capability: &str, repository: &str) -> String {
-        let cgs = github_cgs();
+    fn compile_commit_query_path(repository: &str) -> String {
+        let cgs = commit_matrix_cgs();
         let cap = cgs
-            .get_capability(capability)
-            .unwrap_or_else(|| panic!("missing capability {capability}"));
+            .get_capability("commit_query")
+            .expect("missing capability commit_query");
         let mut env = CmlEnv::new();
         env.insert(
             "repository".to_string(),
@@ -561,45 +562,36 @@ mod tests {
         apply_entity_ref_scope_splat(&mut env, &cgs, cap).expect("scope splat");
         let template =
             parse_capability_template(&cap.require_mapping().expect("cml mapping").template)
-                .unwrap_or_else(|e| panic!("parse {capability}: {e}"));
+                .unwrap_or_else(|e| panic!("parse commit_query: {e}"));
         let CompiledOperation::Http(req) = compile_operation(&template, &env)
-            .unwrap_or_else(|e| panic!("compile {capability}: {e}"))
+            .unwrap_or_else(|e| panic!("compile commit_query: {e}"))
         else {
-            panic!("{capability} should compile to HTTP");
+            panic!("commit_query should compile to HTTP");
         };
         req.path
     }
 
     #[test]
-    fn github_repository_ref_splats_into_repo_scoped_list_paths() {
-        for (capability, suffix) in [
-            ("commit_query", "/commits"),
-            ("branch_query", "/branches"),
-            ("contributor_query", "/contributors"),
-        ] {
-            let path = compile_github_repo_scoped_path(capability, "ryan-s-roberts/plasm-core");
-            assert_eq!(path, format!("/repos/ryan-s-roberts/plasm-core{suffix}"));
-            assert!(
-                !path.contains("%2F") && !path.contains("//"),
-                "{capability} built malformed path {path}"
-            );
-        }
+    fn commit_matrix_repository_ref_splats_into_commit_query_path() {
+        let path = compile_commit_query_path("ryan-s-roberts/plasm-core");
+        assert_eq!(path, "/repositories/ryan-s-roberts/plasm-core/commits");
+        assert!(!path.contains("%2F") && !path.contains("//"), "{path}");
     }
 
     #[test]
-    fn github_commit_query_provides_same_modeled_fields_as_get() {
-        let cgs = github_cgs();
+    fn commit_matrix_query_provides_same_modeled_fields_as_get() {
+        let cgs = commit_matrix_cgs();
         let query = cgs.get_capability("commit_query").expect("commit_query");
         let get = cgs.get_capability("commit_get").expect("commit_get");
         assert_eq!(cgs.effective_provides(query), cgs.effective_provides(get));
     }
 
     #[test]
-    fn github_repository_ref_without_owner_fails_before_malformed_path() {
-        let cgs = github_cgs();
-        let cap = cgs.get_capability("commit_query").expect("commit_query");
+    fn repo_get_without_owner_fails_before_malformed_path() {
+        let cgs = commit_matrix_cgs();
+        let cap = cgs.get_capability("repo_get").expect("repo_get");
         let mut env = CmlEnv::new();
-        env.insert("repository".to_string(), Value::String("plasm-core".into()));
+        env.insert("repo".to_string(), Value::String("plasm-core".into()));
         let splat_err = apply_entity_ref_scope_splat(&mut env, &cgs, cap).expect_err("splat");
         assert!(
             splat_err.to_string().contains("cannot normalize")
@@ -766,22 +758,25 @@ mod tests {
     }
 
     #[test]
-    fn supervisor_account_password_catalog_validates() {
+    fn language_matrix_templates_validate() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let cgs =
-            plasm_core::load_schema(&root.join("../../apis/appworld/supervisor")).expect("load");
+            plasm_core::load_schema(&root.join("../../fixtures/schemas/plasm_language_matrix"))
+                .expect("load");
         validate_cgs_capability_templates(&cgs).expect("templates");
         validate_cgs_views(&cgs).expect("views");
     }
 
     #[test]
-    fn appworld_amazon_and_gmail_templates_validate() {
+    fn pagination_and_prompt_matrix_templates_validate() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        for rel in ["../../apis/appworld/amazon", "../../apis/appworld/gmail"] {
+        for rel in [
+            "../../fixtures/schemas/plasm_pagination_matrix",
+            "../../fixtures/schemas/plasm_prompt_matrix",
+        ] {
             let cgs = plasm_core::load_schema(&root.join(rel)).expect(rel);
-            validate_cgs_capability_templates(&cgs).unwrap_or_else(|e| {
-                panic!("{rel} templates must validate after pagination cutover: {e}")
-            });
+            validate_cgs_capability_templates(&cgs)
+                .unwrap_or_else(|e| panic!("{rel} templates must validate: {e}"));
         }
     }
 

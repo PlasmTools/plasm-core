@@ -27,6 +27,35 @@ pub struct OperationAck {
     pub failed: usize,
     pub source: ExecutionSource,
     pub description: String,
+    /// Per-invocation evidence for explicit row fanout. Empty for scalar operations.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outcomes: Vec<OperationInvocationOutcome>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperationInvocationOutcome {
+    pub source_index: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_identity: Option<String>,
+    pub status: OperationInvocationStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationInvocationStatus {
+    Completed,
+    Failed,
+}
+
+impl OperationInvocationStatus {
+    pub fn as_wire_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+        }
+    }
 }
 
 impl OperationAck {
@@ -73,6 +102,7 @@ impl OperationAck {
             failed,
             source,
             description: Self::description_for_capability(capability),
+            outcomes: Vec::new(),
         }
     }
 
@@ -102,6 +132,7 @@ impl OperationAck {
             failed,
             source,
             description: String::new(),
+            outcomes: Vec::new(),
         })
     }
 
@@ -121,6 +152,7 @@ impl OperationAck {
             failed: 0,
             source,
             description: description.into(),
+            outcomes: Vec::new(),
         }
     }
 }
@@ -148,6 +180,12 @@ impl OperationLedger {
         &self.entries
     }
 
+    pub fn get_mut(&mut self, identity: &OperationIdentity) -> Option<&mut OperationAck> {
+        self.entries.iter_mut().find(|entry| {
+            entry.entry_id == identity.entry_id && entry.capability == identity.capability
+        })
+    }
+
     pub fn from_ack(ack: OperationAck) -> Self {
         let mut ledger = Self::empty();
         ledger.merge_ack(ack);
@@ -169,6 +207,7 @@ impl OperationLedger {
             if existing.description.trim().is_empty() && !ack.description.trim().is_empty() {
                 existing.description = ack.description;
             }
+            existing.outcomes.extend(ack.outcomes);
         } else {
             self.entries.push(ack);
         }
@@ -225,6 +264,7 @@ mod tests {
             failed,
             source: ExecutionSource::Live,
             description: format!("desc-{cap}"),
+            outcomes: Vec::new(),
         }
     }
 

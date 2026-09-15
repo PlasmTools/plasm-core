@@ -1,4 +1,4 @@
-version: 9
+version: 11
 entry_id: gmail
 auth:
   scheme: none
@@ -138,6 +138,29 @@ entities:
       registered_at:
         required: false
         value_ref: nv_datetime
+  Account:
+    id_field: email
+    description: Signed-in Gmail account.
+    discovery:
+      names:
+      - account
+      - mailbox account
+    fields:
+      first_name:
+        required: false
+        value_ref: nv_str
+      last_name:
+        required: false
+        value_ref: nv_str
+      email:
+        required: true
+        value_ref: nv_email
+      registered_at:
+        required: false
+        value_ref: nv_datetime
+      last_logged_in:
+        required: false
+        value_ref: nv_datetime
   User:
     id_field: email
     description: Gmail directory person for addressing mail.
@@ -234,7 +257,7 @@ capabilities:
       type: side_effect
       description: Ends the Gmail session for this token.
   email_thread_query:
-    description: 'List email threads by mailbox (inbox/outbox/archived/spam/snoozed) with optional query/label filters.
+    description: 'List email threads by mailbox (inbox/outbox/archived/spam) with optional query/label filters.
 
       '
     kind: query
@@ -250,7 +273,6 @@ capabilities:
       - outbox
       - archived
       - spam
-      - snoozed
     selection:
     - name: access_token
       value_ref: nv_access_token
@@ -258,7 +280,7 @@ capabilities:
     - name: mailbox
       value_ref: nv_email_thread_mailbox
       required: true
-      description: inbox | outbox | archived | spam | snoozed
+      description: inbox | outbox | archived | spam
     - name: query
       value_ref: nv_str
       required: false
@@ -268,10 +290,15 @@ capabilities:
     provides:
     - email_thread_id
     - subject
-    - snippet
-    - category
-    - is_read
-    - is_starred
+    - label
+    - read
+    - starred
+    - archived
+    - spam
+    - incoming
+    - outgoing
+    - created_at
+    - updated_at
   email_thread_get:
     description: Show one email thread including messages.
     kind: get
@@ -307,6 +334,7 @@ capabilities:
           value_ref: nv_access_token
           required: true
   email_thread_mark_read:
+    receiver: {kind: entity, entity: EmailThread}
     description: Mark a thread as read.
     kind: action
     entity: EmailThread
@@ -321,6 +349,7 @@ capabilities:
       type: side_effect
       description: Marks the thread read.
   email_thread_mark_unread:
+    receiver: {kind: entity, entity: EmailThread}
     description: Mark a thread as unread.
     kind: action
     entity: EmailThread
@@ -335,6 +364,7 @@ capabilities:
       type: side_effect
       description: Marks the thread unread.
   email_thread_star:
+    receiver: {kind: entity, entity: EmailThread}
     description: Star a thread.
     kind: action
     entity: EmailThread
@@ -349,6 +379,7 @@ capabilities:
       type: side_effect
       description: Stars the thread.
   email_thread_unstar:
+    receiver: {kind: entity, entity: EmailThread}
     description: Unstar a thread.
     kind: action
     entity: EmailThread
@@ -363,6 +394,7 @@ capabilities:
       type: side_effect
       description: Removes the star from the thread.
   email_thread_archive:
+    receiver: {kind: entity, entity: EmailThread}
     description: Archive a thread.
     kind: action
     entity: EmailThread
@@ -377,6 +409,7 @@ capabilities:
       type: side_effect
       description: Archives the thread.
   email_thread_unarchive:
+    receiver: {kind: entity, entity: EmailThread}
     description: Unarchive a thread.
     kind: action
     entity: EmailThread
@@ -391,6 +424,7 @@ capabilities:
       type: side_effect
       description: Moves the thread out of archive.
   email_thread_snooze:
+    receiver: {kind: entity, entity: EmailThread}
     description: Snooze a thread until a future datetime.
     kind: action
     entity: EmailThread
@@ -408,6 +442,7 @@ capabilities:
       type: side_effect
       description: Hides the thread until snooze_until, then returns it unread.
   email_thread_unsnooze:
+    receiver: {kind: entity, entity: EmailThread}
     description: Cancel snooze on a thread.
     kind: action
     entity: EmailThread
@@ -463,6 +498,7 @@ capabilities:
       type: side_effect
       description: Sends an email to the given addresses.
   email_reply:
+    receiver: {kind: entity, entity: Email}
     description: Reply to this email (entity id) within its thread.
     kind: action
     entity: Email
@@ -597,6 +633,7 @@ capabilities:
           value_ref: nv_access_token
           required: true
   draft_send:
+    receiver: {kind: entity, entity: Draft}
     description: Send an existing draft.
     kind: action
     entity: Draft
@@ -626,6 +663,114 @@ capabilities:
     - last_name
     - email
     - registered_at
+  account_get:
+    description: Show the signed-in Gmail account.
+    kind: get
+    entity: Account
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - first_name
+    - last_name
+    - email
+    - registered_at
+    - last_logged_in
+  account_create:
+    description: Sign up a new Gmail account.
+    kind: create
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: first_name
+          value_ref: nv_str
+          required: true
+        - name: last_name
+          value_ref: nv_str
+          required: true
+        - name: email
+          value_ref: nv_email
+          required: true
+        - name: password
+          value_ref: nv_password
+          required: true
+    output:
+      type: side_effect
+      description: Creates the Gmail account for this email.
+  account_update:
+    description: Update the signed-in account holder's name.
+    kind: update
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: first_name
+          value_ref: nv_str
+          required: false
+        - name: last_name
+          value_ref: nv_str
+          required: false
+    output:
+      type: side_effect
+      description: Updates the account holder's display name.
+  account_delete:
+    description: Delete the signed-in Gmail account.
+    kind: delete
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Deletes the signed-in Gmail account.
+  send_password_reset_code:
+    description: Email a password-reset code for a Gmail account.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: email
+          value_ref: nv_email
+          required: true
+    output:
+      type: side_effect
+      description: Sends a password-reset code to the email.
+  reset_password:
+    description: Set a new Gmail password using a reset code.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: email
+          value_ref: nv_email
+          required: true
+        - name: password_reset_code
+          value_ref: nv_str
+          required: true
+        - name: new_password
+          value_ref: nv_password
+          required: true
+    output:
+      type: side_effect
+      description: Replaces the account password.
   user_query:
     description: List or filter Gmail directory users before composing.
     kind: query
@@ -667,6 +812,7 @@ capabilities:
     - unscheduled_drafts
     - scheduled_drafts
   email_thread_label:
+    receiver: {kind: entity, entity: EmailThread}
     description: Assign a label to a thread.
     kind: action
     entity: EmailThread
@@ -684,6 +830,7 @@ capabilities:
       type: side_effect
       description: Applies the label to the thread.
   email_thread_unlabel:
+    receiver: {kind: entity, entity: EmailThread}
     description: Remove the label from a thread.
     kind: action
     entity: EmailThread
@@ -698,6 +845,7 @@ capabilities:
       type: side_effect
       description: Removes the label from the thread.
   email_thread_mark_spam:
+    receiver: {kind: entity, entity: EmailThread}
     description: Mark a thread as spam.
     kind: action
     entity: EmailThread
@@ -712,6 +860,7 @@ capabilities:
       type: side_effect
       description: Moves the thread to spam.
   email_thread_mark_not_spam:
+    receiver: {kind: entity, entity: EmailThread}
     description: Mark a thread as not spam.
     kind: action
     entity: EmailThread
@@ -726,6 +875,7 @@ capabilities:
       type: side_effect
       description: Removes the thread from spam.
   email_forward:
+    receiver: {kind: entity, entity: Email}
     description: Forward this email to one or more addresses.
     kind: action
     entity: Email
@@ -750,6 +900,7 @@ capabilities:
       type: side_effect
       description: Forwards the email to the given addresses.
   email_thread_forward:
+    receiver: {kind: entity, entity: EmailThread}
     description: Forward an entire thread to one or more addresses.
     kind: action
     entity: EmailThread
@@ -771,6 +922,7 @@ capabilities:
       type: side_effect
       description: Forwards the thread to the given addresses.
   attachment_download:
+    receiver: {kind: entity, entity: Attachment}
     description: Download an attachment to a file-system path.
     kind: action
     entity: Attachment
@@ -788,7 +940,7 @@ capabilities:
           value_ref: nv_bool
           required: false
         - name: file_system_access_token
-          value_ref: nv_access_token
+          value_ref: nv_file_access_token
           required: true
     output:
       type: side_effect
@@ -815,7 +967,7 @@ capabilities:
           value_ref: nv_bool
           required: false
         - name: file_system_access_token
-          value_ref: nv_access_token
+          value_ref: nv_file_access_token
           required: true
     output:
       type: side_effect
@@ -843,8 +995,7 @@ values:
     - outbox
     - archived
     - spam
-    - snoozed
-    description: Mailbox shelf for listing email threads.
+    description: Mailbox shelf for listing email threads (OpenAPI category paths).
   nv_str:
     type: string
     description: Free-form string.
@@ -860,6 +1011,9 @@ values:
   nv_access_token:
     type: string
     description: Bearer access token from login.
+  nv_file_access_token:
+    type: string
+    description: Bearer token authorizing the file-path argument, distinct from this service's login token.
   nv_body:
     type: markdown
     description: Email body text.
@@ -957,6 +1111,33 @@ prerequisites:
           - password
         output: password
     logout:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    account_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    account_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    account_delete:
     - id: session
       contract: appworld.session
       bindings:
@@ -1226,6 +1407,9 @@ prerequisites:
           path:
           - access_token
         output: token
+    - id: file_session
+      contract: appworld.session
+      bindings:
       - input:
           lane: payload
           path:
@@ -1240,6 +1424,9 @@ prerequisites:
           path:
           - access_token
         output: token
+    - id: file_session
+      contract: appworld.session
+      bindings:
       - input:
           lane: payload
           path:

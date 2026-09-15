@@ -31,6 +31,11 @@ pub fn parsed_expr_for_plan_node(node: &crate::plasm_plan::ValidatedPlanNode) ->
             projection: Some(for_each.effect_template.projection.clone()).filter(|p| !p.is_empty()),
             field_dot_extract: None,
         },
+        crate::plasm_plan::ValidatedPlanNode::IterateUntil(it) => ParsedExpr {
+            expr: it.effect_template.ir_template.expr.clone(),
+            projection: Some(it.effect_template.projection.clone()).filter(|p| !p.is_empty()),
+            field_dot_extract: None,
+        },
         _ => archive_fallback_parsed_expr(),
     }
 }

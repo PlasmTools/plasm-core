@@ -116,7 +116,7 @@ fn matrix_views_row_to_text_wire_column_aliases() {
             "LangItem.title teaching token is its wire name"
         );
         let program = format!(
-            "items = LangItem(\"i1\") | select {f_id}, {f_title}\nreport = items => <<PLASM_VIEWS_WIRE_BODY\n{{% for r in rows %}}- {{{{ r.{f_id} }}}}: {{{{ r.{f_title} }}}}\n{{% endfor %}}\nPLASM_VIEWS_WIRE_BODY\nreport"
+            "items = LangItem(\"i1\") | select {f_id}, {f_title}\nreport = items => <<PLASM_VIEWS_WIRE_BODY\n- {{{{ {f_id} }}}}: {{{{ {f_title} }}}}\nPLASM_VIEWS_WIRE_BODY\nreport"
         );
         let bundle = compile_plasm_program(
             &PromptPipelineConfig::default(),
@@ -200,7 +200,7 @@ fn matrix_views_row_to_text_source_alias_iteration() {
         let p_title = map.ident_sym_entity_field_for(VIEWS_MATRIX_ENTRY_ID, "LangItem", "title");
         let p_score = map.ident_sym_entity_field_for(VIEWS_MATRIX_ENTRY_ID, "LangItem", "score");
         let program = format!(
-            "items = LangItem(\"i1\") | select {p_id}, {p_title}, {p_score}\nreport = items => <<PLASM_VIEWS_ALIAS_BODY\n{{% for r in items %}}- {{{{ r.{p_id} }}}}: {{{{ r.{p_title} }}}} (score: {{{{ r.{p_score} or \"—\" }}}})\n{{% endfor %}}\nPLASM_VIEWS_ALIAS_BODY\nreport"
+            "items = LangItem(\"i1\") | select {p_id}, {p_title}, {p_score}\nreport = <<PLASM_VIEWS_ALIAS_BODY\n{{% for r in items %}}- {{{{ r.{p_id} }}}}: {{{{ r.{p_title} }}}} (score: {{{{ r.{p_score} or \"—\" }}}})\n{{% endfor %}}\nPLASM_VIEWS_ALIAS_BODY\nreport"
         );
         let bundle = compile_plasm_program(
             &PromptPipelineConfig::default(),
@@ -209,16 +209,13 @@ fn matrix_views_row_to_text_source_alias_iteration() {
             "matrix_views_alias_render",
             &program,
         )
-        .expect("compile row-to-text source alias");
-        evaluate_plasm_comp_dry(es.as_ref(), &bundle).expect("dry row-to-text source alias");
+        .expect("compile plain-template collection render");
+        evaluate_plasm_comp_dry(es.as_ref(), &bundle)
+            .expect("dry plain-template collection render");
         let comp_wire = serde_json::to_string(&bundle.artifact().comp).expect("comp json");
         assert!(
-            comp_wire.contains("collection_alias"),
-            "comp wire must persist render collection_alias"
-        );
-        assert!(
             comp_wire.contains("\"items\""),
-            "comp wire must retain items source alias"
+            "comp wire must retain items as a named-binding dependency"
         );
         let st = Arc::new(views_matrix_host_state(
             ExecutionEngine::new(ExecutionConfig {
@@ -254,10 +251,8 @@ fn matrix_views_row_to_text_source_alias_iteration() {
     });
 }
 
-/// Regression (WS1): a `{% for <cursor> in rows %}` loop must accept ANY cursor name, not only the
-/// special `r`. Before the fix, the render-source validator classified `{{ entry.field }}` as a
-/// cross-binding reference to a binding named `entry` and rejected it as "not among render sources".
-/// Fields bind by wire name (the `p#` field-symbol scheme was removed).
+/// A `{% for <cursor> in items %}` loop in a **plain** template accepts any cursor name.
+/// Whole-collection text is one template evaluation (PLP-12); there is no implicit `rows` list.
 #[test]
 fn matrix_views_row_to_text_named_loop_cursor() {
     block_on_views_live(async {
@@ -267,8 +262,7 @@ fn matrix_views_row_to_text_named_loop_cursor() {
         let cgs = load_language_matrix_views_cgs();
         plasm_compile::validate_cgs_capability_templates(&cgs).expect("templates");
         let es = Arc::new(views_execute_session(cgs.clone()));
-        // Cursor is named `entry` (not `r`) and iterates the always-bound projected `rows` list.
-        let program = "items = LangItem(\"i1\") | select id, title\nreport = items => <<PLASM_VIEWS_NAMED_CURSOR\n{% for entry in rows %}- {{ entry.id }}: {{ entry.title or \"—\" }}\n{% endfor %}\nPLASM_VIEWS_NAMED_CURSOR\nreport";
+        let program = "items = LangItem(\"i1\") | select id, title\nreport = <<PLASM_VIEWS_NAMED_CURSOR\n{% for entry in items %}- {{ entry.id }}: {{ entry.title or \"—\" }}\n{% endfor %}\nPLASM_VIEWS_NAMED_CURSOR\nreport";
         let bundle = compile_plasm_program(
             &PromptPipelineConfig::default(),
             None,
@@ -388,9 +382,16 @@ fn matrix_views_parameterless_dashboard_view_embed_nonempty() {
             .as_ref()
             .expect("views session exposure")
             .symbol_map_arc();
+        let esym = map.entity_sym_for(VIEWS_MATRIX_ENTRY_ID, "LangWorkSnapshot");
+        let msym = map.method_sym_for(
+            VIEWS_MATRIX_ENTRY_ID,
+            "LangWorkSnapshot",
+            "lang_work_snapshot_get",
+        );
         let items_rel =
             map.ident_sym_relation_for(VIEWS_MATRIX_ENTRY_ID, "LangWorkSnapshot", "items");
-        let program = format!("e9.lang-work-snapshot-get().{items_rel}");
+        // Pathless dashboard Get: taught `e#.m#().r#` (receiver none), not kebab `e#.slug()`.
+        let program = format!("{esym}.{msym}().{items_rel}");
         let bundle = compile_plasm_program(
             &PromptPipelineConfig::default(),
             None,
@@ -450,9 +451,16 @@ fn matrix_views_parameterless_dashboard_view_embed_empty() {
             .as_ref()
             .expect("views session exposure")
             .symbol_map_arc();
+        let esym = map.entity_sym_for(VIEWS_MATRIX_ENTRY_ID, "LangWorkSnapshotEmpty");
+        let msym = map.method_sym_for(
+            VIEWS_MATRIX_ENTRY_ID,
+            "LangWorkSnapshotEmpty",
+            "lang_work_snapshot_empty_get",
+        );
         let items_rel =
             map.ident_sym_relation_for(VIEWS_MATRIX_ENTRY_ID, "LangWorkSnapshotEmpty", "items");
-        let program = format!("e10.lang-work-snapshot-empty-get().{items_rel}");
+        // Pathless dashboard Get: taught `e#.m#().r#` (receiver none), not kebab `e#.slug()`.
+        let program = format!("{esym}.{msym}().{items_rel}");
         let bundle = compile_plasm_program(
             &PromptPipelineConfig::default(),
             None,

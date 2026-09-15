@@ -11,6 +11,12 @@ product_query:
   path:
     - type: literal
       value: "/products"
+  query:
+    type: object
+    fields:
+      - ["owner", {type: var, name: owner}]
+      - ["repo", {type: var, name: repo}]
+      - ["active", {type: var, name: active}]
 
 product_search:
   method: GET

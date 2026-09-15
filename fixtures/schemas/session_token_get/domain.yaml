@@ -1,0 +1,48 @@
+version: 1
+http_backend: http://127.0.0.1:9
+entities:
+  Wallet:
+    id_field: access_token
+    implicit_request_identity: true
+    primary_read: wallet_get
+    description: Session wallet measure — identity is the bearer, not the balance.
+    # Plan-time identity law: Wallet{access_token=tok} is ir_template (not concrete ir).
+    # Dry/CML must not stuff Binding holes into HTTP bearer. Iterate seed is Get kind
+    # (template + binding). Literal Wallet{access_token="…"} remains ir.
+    fields:
+      access_token:
+        required: true
+        value_ref: nv_tok
+      amount:
+        required: true
+        value_ref: nv_num
+capabilities:
+  wallet_get:
+    description: Show the authenticated wallet amount.
+    kind: get
+    entity: Wallet
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_tok
+          required: true
+    provides:
+    - amount
+  wallet_nudge:
+    description: Advance the wallet measure one step.
+    kind: action
+    entity: Wallet
+    invalidates_entities:
+    - Wallet
+    output:
+      type: side_effect
+      description: Nudges the authenticated wallet measure; re-observe via get after each step.
+values:
+  nv_tok:
+    type: string
+    description: Bearer token.
+  nv_num:
+    type: number
+    description: Measure.

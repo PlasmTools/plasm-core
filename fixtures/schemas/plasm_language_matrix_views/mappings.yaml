@@ -353,3 +353,38 @@ lang_work_snapshot_empty_query:
 lang_work_snapshot_empty_get:
   transport: view
   view: lang_work_snapshot_empty
+
+langpivotrow_query:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: pivot-rows
+  query:
+    type: object
+    fields:
+    - - item_id
+      - name: item_id
+        type: var
+        if:
+          exists: item_id
+    - - title
+      - name: title
+        type: var
+        if:
+          exists: title
+
+langpivotrow_get:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: pivot-rows
+  - type: var
+    name: id

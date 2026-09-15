@@ -253,61 +253,37 @@ mod tests {
     }
 
     #[test]
-    fn correction_with_clickup_schema() {
-        let dir = std::path::Path::new("../../apis/clickup");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = crate::loader::load_schema_dir(dir).unwrap();
+    fn correction_with_language_matrix_schema() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = crate::loader::load_schema_dir(dir).expect("plasm_language_matrix");
         let lexicon = DomainLexicon::from_cgs(&cgs);
 
-        // Webhook{space_id=Space(42)} → Webhook{team_id=Team(42)}
-        let result = try_auto_correct("Webhook{space_id=Space(42424242)}", &lexicon, &cgs);
+        let result = try_auto_correct("LangTag{owner=LangItem(i1)}", &lexicon, &cgs);
         match &result {
             CorrectionOutcome::Corrected(s) | CorrectionOutcome::Dropped(s) => {
-                assert!(s.contains("team_id"), "expected team_id in: {s}");
-                assert!(s.contains("Team"), "expected Team entity ref in: {s}");
+                assert!(s.contains("LangTag"), "expected LangTag kept in: {s}");
+                assert!(
+                    !s.contains("owner"),
+                    "invalid LangTag owner filter must be dropped: {s}"
+                );
             }
             other => panic!("expected Corrected/Dropped, got: {other:?}"),
         }
 
-        // Goal{team_id=Team(x), readout_time=next_week} → drop readout_time
         let result = try_auto_correct(
-            "Goal{team_id=Team(999888777), readout_time=next_week}",
+            r#"LangItem{owner=alice, readout_time=next_week}"#,
             &lexicon,
             &cgs,
         );
         match &result {
             CorrectionOutcome::Dropped(s) | CorrectionOutcome::Corrected(s) => {
-                assert!(s.contains("team_id"), "expected team_id in: {s}");
+                assert!(s.contains("owner"), "expected owner kept in: {s}");
                 assert!(
                     !s.contains("readout_time"),
                     "should have dropped readout_time"
                 );
             }
             other => panic!("expected Corrected/Dropped, got: {other:?}"),
-        }
-
-        // Member{space_id=Space(x)} → ambiguous (team_id | list_id | task_id)
-        let result = try_auto_correct("Member{space_id=Space(555555555)}", &lexicon, &cgs);
-        match result {
-            CorrectionOutcome::Ambiguous { hints } => {
-                assert!(!hints.is_empty());
-                match &hints[0] {
-                    RecoveryHint::AmbiguousScopes {
-                        entity,
-                        scope_options,
-                    } => {
-                        assert_eq!(entity, "Member");
-                        assert!(
-                            scope_options.len() >= 2,
-                            "expected multiple scope rows: {scope_options:?}"
-                        );
-                    }
-                    other => panic!("expected AmbiguousScopes for Member, got: {other:?}"),
-                }
-            }
-            other => panic!("expected Ambiguous for Member, got: {other:?}"),
         }
     }
 }

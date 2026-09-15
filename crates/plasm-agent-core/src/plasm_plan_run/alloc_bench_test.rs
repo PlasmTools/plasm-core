@@ -34,9 +34,9 @@ fn matrix_fixture_dir() -> PathBuf {
 fn matrix_host() -> PlasmHostState {
     let cgs = Arc::new(load_schema_dir(&matrix_fixture_dir()).expect("plasm_language_matrix"));
     let reg = CgsRegistry::from_pairs(vec![(
-        "github".into(),
-        "GitHub".into(),
-        vec!["github".into()],
+        "langmatrix".into(),
+        "Langmatrix".into(),
+        vec!["langmatrix".into()],
         cgs.clone(),
     )]);
     let engine = ExecutionEngine::new(ExecutionConfig::default()).expect("engine");
@@ -64,7 +64,7 @@ async fn matrix_limit_3_session(
 ) {
     let st = Arc::new(st.clone());
     let seeds = vec![CapabilitySeed {
-        entry_id: "github".into(),
+        entry_id: "langmatrix".into(),
         entity: "LangItem".into(),
     }];
     let out = apply_capability_seeds(

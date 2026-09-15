@@ -226,35 +226,13 @@ mod tests {
     }
 
     #[test]
-    fn rewrite_issue_identifier_brace_to_get() {
-        let dir = std::path::Path::new("../../apis/linear");
-        if !dir.exists() {
-            return;
-        }
-        let Ok(cgs) = load_schema_dir(dir) else {
-            return;
-        };
-        let q = QueryExpr::filtered("Issue", Predicate::eq("identifier", "EVA-60"));
+    fn rewrite_langitem_id_brace_to_get() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
+        let q = QueryExpr::filtered("LangItem", Predicate::eq("id", "EVA-60"));
         let expr = lower_id_field_brace_to_get(Expr::Query(q), &cgs).unwrap();
         match expr {
             Expr::Get(g) => assert_eq!(g.reference.primary_slot_str(), "EVA-60"),
-            other => panic!("expected Get, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn account_password_brace_lowers_to_get() {
-        let dir = std::path::Path::new("../../apis/appworld/supervisor");
-        if !dir.exists() {
-            return;
-        }
-        let Ok(cgs) = load_schema_dir(dir) else {
-            return;
-        };
-        let q = QueryExpr::filtered("AccountPassword", Predicate::eq("account_name", "alice"));
-        let expr = lower_id_field_brace_to_get(Expr::Query(q), &cgs).unwrap();
-        match expr {
-            Expr::Get(g) => assert_eq!(g.reference.primary_slot_str(), "alice"),
             other => panic!("expected Get, got {other:?}"),
         }
     }

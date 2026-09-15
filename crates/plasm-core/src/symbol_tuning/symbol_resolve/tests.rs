@@ -6,23 +6,22 @@ use crate::symbol_tuning::TeachingExposureSession;
 use std::path::PathBuf;
 
 #[test]
-fn lookup_linear_issue_create_in_federated_layers() {
+fn lookup_langitem_create_in_federated_layers() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let pokeapi_dir = root.join("../../apis/pokeapi");
-    let linear_dir = root.join("../../apis/linear");
-    if !pokeapi_dir.is_dir() || !linear_dir.is_dir() {
-        return;
-    }
-    let cgs_pokeapi = load_schema(&pokeapi_dir).expect("pokeapi");
-    let cgs_linear = load_schema(&linear_dir).expect("linear");
+    let dir = root.join("../../fixtures/schemas/plasm_language_matrix");
+    let mut cgs_a = load_schema(&dir).expect("plasm_language_matrix");
+    cgs_a.bind_registry_entry_id("langmatrix_a");
+    let mut cgs_b = load_schema(&dir).expect("plasm_language_matrix");
+    cgs_b.bind_registry_entry_id("langmatrix_b");
     let layers = [
-        CgsLayer::new("pokeapi", &cgs_pokeapi),
-        CgsLayer::new("linear", &cgs_linear),
+        CgsLayer::new("langmatrix_a", &cgs_a),
+        CgsLayer::new("langmatrix_b", &cgs_b),
     ];
-    let cap = lookup_capability_in_layer_stack(&layers, "linear", "Issue", "issue_create")
-        .expect("linear issue_create");
-    assert_eq!(cap.name.as_str(), "issue_create");
-    assert_eq!(cap.domain.as_str(), "Issue");
+    let cap =
+        lookup_capability_in_layer_stack(&layers, "langmatrix_b", "LangItem", "langitem_create")
+            .expect("langmatrix_b langitem_create");
+    assert_eq!(cap.name.as_str(), "langitem_create");
+    assert_eq!(cap.domain.as_str(), "LangItem");
 }
 
 #[test]
@@ -136,27 +135,23 @@ fn resolve_cap_param_rejects_query_scope_p_on_mutator_invoke() {
 
 #[test]
 fn resolve_query_filter_field_accepts_cap_scope_param_p_sym() {
-    std::env::set_var("PLASM_CGS_FAST_LOAD", "1");
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/github");
-    if !dir.is_dir() {
-        return;
-    }
-    let Ok(cgs) = load_schema_dir(&dir) else {
-        return;
-    };
-    let exp = TeachingExposureSession::new(&cgs, "github", &["Repository", "Issue", "Label"]);
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/plasm_language_matrix");
+    let mut cgs = load_schema_dir(&dir).expect("plasm_language_matrix");
+    cgs.bind_registry_entry_id("langmatrix");
+    let exp = TeachingExposureSession::new(&cgs, "langmatrix", &["LangItem", "LangTag"]);
     let map = exp.symbol_map_arc();
-    let ent = cgs.get_entity("Label").expect("Label");
+    let ent = cgs.get_entity("LangTag").expect("LangTag");
     let wire = map
         .resolve_query_filter_field(
-            CatalogScope::qualified("github"),
-            "Label",
+            CatalogScope::qualified("langmatrix"),
+            "LangTag",
             ent,
             &cgs,
-            "repository",
+            "item_id",
         )
-        .expect("label_query repository scope param");
-    assert_eq!(wire, "repository");
+        .expect("langtag_query item_id scope param");
+    assert_eq!(wire, "item_id");
 }
 
 #[test]
@@ -240,37 +235,36 @@ fn resolve_entity_field_federated_wire_name_by_receiver_after_extend() {
 }
 
 #[test]
-fn resolve_cap_param_shared_scope_p_on_issue_create_when_only_issue_query_committed() {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/github");
-    if !dir.is_dir() {
-        return;
-    }
-    let Ok(cgs) = load_schema_dir(&dir) else {
-        return;
-    };
+fn resolve_cap_param_shared_scope_p_on_create_when_only_query_committed() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/plasm_language_matrix");
+    let mut cgs = load_schema_dir(&dir).expect("plasm_language_matrix");
+    cgs.bind_registry_entry_id("langmatrix");
     let exp = TeachingExposureSession::new_with_intent_delta(
         &cgs,
-        "github",
-        &["Issue"],
+        "langmatrix",
+        &["LangItem"],
         crate::capability_exposure::explicit_entity_capability_surface(
             &cgs,
-            "github",
-            &["Issue".to_string()],
+            "langmatrix",
+            &["LangItem".to_string()],
         )
         .expect("explicit fixture capability exposure"),
     );
     let map = exp.symbol_map_arc();
-    let create_cap = cgs.get_capability("issue_create").expect("issue_create");
+    let create_cap = cgs
+        .get_capability("langitem_create")
+        .expect("langitem_create");
     let wire = map
         .resolve_cap_param(
-            CatalogScope::qualified("github"),
-            "Issue",
-            "issue_create",
-            "repository",
+            CatalogScope::qualified("langmatrix"),
+            "LangItem",
+            "langitem_create",
+            "tags",
             create_cap,
         )
-        .expect("shared repository wire must resolve on issue_create invoke");
-    assert_eq!(wire, "repository");
+        .expect("shared tags wire must resolve on langitem_create invoke");
+    assert_eq!(wire, "tags");
 }
 
 #[test]
@@ -365,42 +359,41 @@ fn query_selection_param_misused_as_row_field_hints_brace_not_method() {
 }
 
 #[test]
-fn resolve_cap_param_homographed_union_variant_ref_paths() {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/proof");
-    if !dir.is_dir() {
-        return;
-    }
-    let Ok(cgs) = load_schema_dir(&dir) else {
-        return;
-    };
-    let exp = TeachingExposureSession::new(&cgs, "proof", &["Document"]);
+fn resolve_cap_param_homographed_create_update_title() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/plasm_language_matrix");
+    let mut cgs = load_schema_dir(&dir).expect("plasm_language_matrix");
+    cgs.bind_registry_entry_id("langmatrix");
+    let exp = TeachingExposureSession::new(&cgs, "langmatrix", &["LangItem"]);
     let map = exp.symbol_map_arc();
-    let cap = cgs
+    let create = cgs
         .capabilities
-        .get("document_edit_v2")
-        .expect("document_edit_v2");
-    let replace_wire = "operations.replace_block.ref";
-    let insert_wire = "operations.insert_before.ref";
-    let wire = map
+        .get("langitem_create")
+        .expect("langitem_create");
+    let update = cgs
+        .capabilities
+        .get("langitem_update")
+        .expect("langitem_update");
+    let w1 = map
         .resolve_cap_param(
-            CatalogScope::qualified("proof"),
-            "Document",
-            "document_edit_v2",
-            replace_wire,
-            cap,
+            CatalogScope::qualified("langmatrix"),
+            "LangItem",
+            "langitem_create",
+            "title",
+            create,
         )
-        .expect("union-variant ref wire must resolve on document_edit_v2 invoke");
-    assert_eq!(wire, replace_wire);
-    let wire2 = map
+        .expect("create title");
+    let w2 = map
         .resolve_cap_param(
-            CatalogScope::qualified("proof"),
-            "Document",
-            "document_edit_v2",
-            insert_wire,
-            cap,
+            CatalogScope::qualified("langmatrix"),
+            "LangItem",
+            "langitem_update",
+            "title",
+            update,
         )
-        .expect("second ref wire");
-    assert_eq!(wire2, insert_wire);
+        .expect("update title");
+    assert_eq!(w1, "title");
+    assert_eq!(w2, "title");
 }
 
 #[test]
@@ -427,9 +420,82 @@ fn opaque_query_m_sym_rejected_on_mutator_payload_dotted_call() {
         .expect_err("query m# must not bind as mutator payload");
     let msg = err.message();
     assert!(
-        msg.contains("not a mutator") && msg.contains("query"),
+        msg.contains("query") && msg.contains(&format!("{e_sym}{{…}}")) && !msg.contains("mutator"),
         "unexpected message: {msg}"
     );
+}
+
+#[test]
+fn opaque_get_m_sym_names_taught_get_seat_not_mutator() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/plasm_language_matrix");
+    let Ok(cgs) = load_schema_dir(&dir) else {
+        return;
+    };
+    let entry = "langmatrix";
+    let exp = TeachingExposureSession::new(&cgs, entry, &["LangItem"]);
+    let map = exp.symbol_map_arc();
+    let e_sym = map.entity_sym_for(entry, "LangItem");
+    let m_sym = map.method_sym_for(entry, "LangItem", "langitem_get");
+    let line = format!("{e_sym}($).{m_sym}(title=$)");
+    let err =
+        crate::expr_parser::parse_session_line(
+            &line,
+            &cgs,
+            Some(std::sync::Arc::clone(&map)
+                as std::sync::Arc<dyn crate::symbol_tuning::SymbolSession>),
+        )
+        .expect_err("get m# must not bind as mutator payload");
+    let msg = err.message();
+    assert!(
+        msg.contains("get") && msg.contains(&format!("{e_sym}(<id>)")) && !msg.contains("mutator"),
+        "unexpected message: {msg}"
+    );
+}
+
+#[test]
+fn pathless_identity_mutator_names_taught_seat_not_illegal_form() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/plasm_language_matrix");
+    let Ok(cgs) = load_schema_dir(&dir) else {
+        return;
+    };
+    let entry = "langmatrix";
+    let exp = TeachingExposureSession::new(&cgs, entry, &["LangItem"]);
+    let map = exp.symbol_map_arc();
+    let e_sym = map.entity_sym_for(entry, "LangItem");
+    let m_sym = map.method_sym_for(entry, "LangItem", "langitem_update");
+    let illegal = format!(r#"{e_sym}.{m_sym}(title="x")"#);
+    let err =
+        crate::expr_parser::parse_session_line(
+            &illegal,
+            &cgs,
+            Some(std::sync::Arc::clone(&map)
+                as std::sync::Arc<dyn crate::symbol_tuning::SymbolSession>),
+        )
+        .expect_err("pathless identity mutator must still fail");
+    let msg = err.message();
+    let taught = format!("{e_sym}(<id>).{m_sym}");
+    assert!(
+        msg.contains(&taught),
+        "diagnostic must name taught seat `{taught}`, got: {msg}"
+    );
+    assert!(
+        !msg.contains(&format!("requires `{e_sym}.{m_sym}")),
+        "must not advertise pathless `{e_sym}.{m_sym}` as required, got: {msg}"
+    );
+    assert!(
+        !msg.contains(&format!("Required by {e_sym}.{m_sym}")),
+        "must not require pathless basename, got: {msg}"
+    );
+
+    let lawful = format!(r#"{e_sym}("i1").{m_sym}(title="x")"#);
+    crate::expr_parser::parse_session_line(
+        &lawful,
+        &cgs,
+        Some(std::sync::Arc::clone(&map) as std::sync::Arc<dyn crate::symbol_tuning::SymbolSession>),
+    )
+    .expect("taught identity seat must still parse");
 }
 
 #[test]

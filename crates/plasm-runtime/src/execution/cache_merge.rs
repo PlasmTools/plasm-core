@@ -29,6 +29,7 @@ pub(crate) fn query_result_merge_cache(
         entities: cached_entities,
         count,
         has_more: false,
+        coverage: ResultCoverage::Unknown,
         pagination_resume: None,
         paging_handle: None,
         source,

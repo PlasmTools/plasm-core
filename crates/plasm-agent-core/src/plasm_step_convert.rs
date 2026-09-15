@@ -12,7 +12,7 @@ use crate::plasm_plan::{
 };
 use plasm_core::{
     BindingName as CoreBindingName, DeriveKind, DerivePayload, DeriveTemplate, EffectClass,
-    EffectTemplate as CoreEffectTemplate, FlatMapEffectPayload, FlatMapRelationPayload,
+    EffectTemplate as CoreEffectTemplate, FlatMapApplyPayload, FlatMapRelationPayload,
     InputCardinality as CoreInputCardinality, InvokePayload, MapPayload, PlanDataInput, PlanExprIr,
     PlanExprTemplate, PlanInputBinding, PlanPredicate, PlanQualifiedEntityKey,
     PlanRelationTraversal, PlasmBindGraph, PlasmComp, PlasmDataValue, PlasmReturn,
@@ -32,7 +32,7 @@ pub(crate) fn validated_node_to_step_payload(
             Ok(PlasmStepPayload::FlatMapRelation(relation_to_payload(n)?))
         }
         ValidatedPlanNode::ForEach(n) => {
-            Ok(PlasmStepPayload::FlatMapEffect(for_each_to_payload(n)?))
+            Ok(PlasmStepPayload::FlatMapApply(for_each_to_payload(n)?))
         }
         ValidatedPlanNode::IterateUntil(n) => {
             Ok(PlasmStepPayload::UnfoldUntil(iterate_until_to_payload(n)?))
@@ -107,8 +107,8 @@ fn relation_to_payload(
     })
 }
 
-fn for_each_to_payload(node: &ValidatedForEachNode) -> Result<FlatMapEffectPayload, String> {
-    Ok(FlatMapEffectPayload {
+fn for_each_to_payload(node: &ValidatedForEachNode) -> Result<FlatMapApplyPayload, String> {
+    Ok(FlatMapApplyPayload {
         source: node.source.as_str().to_string(),
         item_binding: binding_name(&node.item_binding)?,
         effect_template: effect_template_to_core(&node.effect_template)?,
@@ -346,21 +346,19 @@ fn step_payload_to_validated_node(
                 pushed_read_budget: None,
             },
         )),
-        PlasmStepPayload::FlatMapEffect(p) => {
-            Ok(ValidatedPlanNode::ForEach(ValidatedForEachNode {
-                id,
-                effect_class: plan_effect_class(p.effect_class),
-                result_shape: plan_result_shape(p.result_shape),
-                source: PlanNodeId::new(p.source.clone())?,
-                item_binding: BindingName::new(p.item_binding.as_str())?,
-                effect_template: effect_template_to_plan(&p.effect_template)?,
-                projection: p.projection.clone(),
-                predicates: convert_predicates_back(&p.predicates)?,
-                depends_on,
-                uses_result,
-                approval: p.approval.clone(),
-            }))
-        }
+        PlasmStepPayload::FlatMapApply(p) => Ok(ValidatedPlanNode::ForEach(ValidatedForEachNode {
+            id,
+            effect_class: plan_effect_class(p.effect_class),
+            result_shape: plan_result_shape(p.result_shape),
+            source: PlanNodeId::new(p.source.clone())?,
+            item_binding: BindingName::new(p.item_binding.as_str())?,
+            effect_template: effect_template_to_plan(&p.effect_template)?,
+            projection: p.projection.clone(),
+            predicates: convert_predicates_back(&p.predicates)?,
+            depends_on,
+            uses_result,
+            approval: p.approval.clone(),
+        })),
         PlasmStepPayload::UnfoldUntil(p) => {
             Ok(ValidatedPlanNode::IterateUntil(ValidatedIterateUntilNode {
                 id,
@@ -644,7 +642,7 @@ mod tests {
                 source: "items".into(),
                 op: ComputeOp::Render {
                     columns: vec![OutputName::new("name").expect("name")],
-                    template: "{% for r in rows %}{{ r.p23 }}{% endfor %}".into(),
+                    template: "{{ p23 }}".into(),
                     column_aliases,
                     render_bindings: vec![],
                 },

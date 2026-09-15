@@ -38,6 +38,6 @@ pub use physical_lines::{
     PhysicalLineStmtState,
 };
 pub use split::{
-    split_assignment_at_top_level, split_assignment_for_binding, split_token_top_level,
-    split_top_level,
+    classify_top_level_assignment, split_assignment_at_top_level, split_assignment_for_binding,
+    split_token_top_level, split_top_level, TopLevelAssignment,
 };

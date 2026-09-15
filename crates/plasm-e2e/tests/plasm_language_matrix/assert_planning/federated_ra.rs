@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 
 use super::super::ir_helpers::*;
 use super::super::row::MatrixRow;
+use crate::language_matrix::{MATRIX_FED_A, MATRIX_FED_B};
 use plasm_agent::plasm_plan::{ComputeOp, ComputeTemplate, PlanValue};
 use plasm_agent::plasm_plan_run::DryPlasmPlanEvaluation;
 use plasm_core::{Expr, InvokeExpr};
@@ -20,9 +21,9 @@ pub(crate) fn assert_planning_federated_ra(
         "lang_federated_relation_target_entry" => {
             let summary = comp_relation_named(comp, "summary")
                 .ok_or_else(|| "expected `.summary` relation in federated session".to_string())?;
-            if summary.pointer("/target/entry_id").and_then(|v| v.as_str()) != Some("pokeapi") {
+            if summary.pointer("/target/entry_id").and_then(|v| v.as_str()) != Some(MATRIX_FED_B) {
                 return Err(format!(
-                    "relation target must own pokeapi catalog, not primary linear: {summary:?}"
+                    "relation target must own {MATRIX_FED_B} catalog, not primary {MATRIX_FED_A}: {summary:?}"
                 ));
             }
             if summary.pointer("/target/entity").and_then(|v| v.as_str()) != Some("LangSummary") {
@@ -41,16 +42,18 @@ pub(crate) fn assert_planning_federated_ra(
             if q.entity != "LangItem" {
                 return Err(format!("expected LangItem query on e1, got {:?}", q.entity));
             }
-            if q.catalog_entry_id.as_deref() != Some("github") {
+            if q.catalog_entry_id.as_deref() != Some(MATRIX_FED_A) {
                 return Err(format!(
-                    "e1 must resolve to github catalog, got catalog_entry_id={:?}",
+                    "e1 must resolve to langmatrix_a catalog, got catalog_entry_id={:?}",
                     q.catalog_entry_id
                 ));
             }
             let qe = comp_first_invoke_qualified_entity(comp)
                 .ok_or_else(|| "expected qualified_entity on comp invoke step".to_string())?;
-            if qe.get("entry_id").and_then(|v| v.as_str()) != Some("github") {
-                return Err(format!("comp qualified_entity must be github: {qe:?}"));
+            if qe.get("entry_id").and_then(|v| v.as_str()) != Some(MATRIX_FED_A) {
+                return Err(format!(
+                    "comp qualified_entity must be langmatrix_a: {qe:?}"
+                ));
             }
             if qe.get("entity").and_then(|v| v.as_str()) != Some("LangItem") {
                 return Err(format!("comp qualified_entity entity LangItem: {qe:?}"));
@@ -64,9 +67,9 @@ pub(crate) fn assert_planning_federated_ra(
                     q.entity
                 ));
             }
-            if q.catalog_entry_id.as_deref() != Some("linear") {
+            if q.catalog_entry_id.as_deref() != Some(MATRIX_FED_B) {
                 return Err(format!(
-                    "e2 must resolve to linear catalog, got catalog_entry_id={:?}",
+                    "e2 must resolve to langmatrix_b catalog, got catalog_entry_id={:?}",
                     q.catalog_entry_id
                 ));
             }
@@ -78,16 +81,18 @@ pub(crate) fn assert_planning_federated_ra(
             }
             let qe = comp_first_invoke_qualified_entity(comp)
                 .ok_or_else(|| "expected qualified_entity on comp invoke step".to_string())?;
-            if qe.get("entry_id").and_then(|v| v.as_str()) != Some("linear") {
-                return Err(format!("comp qualified_entity must be linear: {qe:?}"));
+            if qe.get("entry_id").and_then(|v| v.as_str()) != Some(MATRIX_FED_B) {
+                return Err(format!(
+                    "comp qualified_entity must be langmatrix_b: {qe:?}"
+                ));
             }
         }
         "lang_federated_duplicate_entity_relation_r" => {
             let rel = comp_relation_named(comp, "children")
                 .ok_or_else(|| "expected `.children` relation hop on e2 parent".to_string())?;
-            if rel.pointer("/target/entry_id").and_then(|v| v.as_str()) != Some("linear") {
+            if rel.pointer("/target/entry_id").and_then(|v| v.as_str()) != Some(MATRIX_FED_B) {
                 return Err(format!(
-                    "homonymous LangItem relation target must stay on linear catalog: {rel:?}"
+                    "homonymous LangItem relation target must stay on langmatrix_b catalog: {rel:?}"
                 ));
             }
             if rel.pointer("/target/entity").and_then(|v| v.as_str()) != Some("LangItem") {
@@ -102,9 +107,9 @@ pub(crate) fn assert_planning_federated_ra(
                     _ => None,
                 })
                 .ok_or_else(|| "expected Create surface from e2.m#".to_string())?;
-            if create.catalog_entry_id.as_deref() != Some("linear") {
+            if create.catalog_entry_id.as_deref() != Some(MATRIX_FED_B) {
                 return Err(format!(
-                    "e2 mutator must stamp linear catalog, got {:?}",
+                    "e2 mutator must stamp langmatrix_b catalog, got {:?}",
                     create.catalog_entry_id
                 ));
             }
@@ -123,9 +128,9 @@ pub(crate) fn assert_planning_federated_ra(
                     _ => None,
                 })
                 .ok_or_else(|| "expected Invoke surface from e2 pathless Action".to_string())?;
-            if inv.catalog_entry_id.as_deref() != Some("linear") {
+            if inv.catalog_entry_id.as_deref() != Some(MATRIX_FED_B) {
                 return Err(format!(
-                    "e2 pathless Action must stamp linear catalog, got {:?}",
+                    "e2 pathless Action must stamp langmatrix_b catalog, got {:?}",
                     inv.catalog_entry_id
                 ));
             }
@@ -154,9 +159,9 @@ pub(crate) fn assert_planning_federated_ra(
                 .iter()
                 .filter_map(|i| i.catalog_entry_id.as_deref())
                 .collect();
-            if catalogs != BTreeSet::from(["github", "linear"]) {
+            if catalogs != BTreeSet::from([MATRIX_FED_A, MATRIX_FED_B]) {
                 return Err(format!(
-                    "logins must stamp github+linear catalogs, got {:?}",
+                    "logins must stamp langmatrix_a+langmatrix_b catalogs, got {:?}",
                     catalogs
                 ));
             }
@@ -209,7 +214,7 @@ pub(crate) fn assert_planning_federated_ra(
         "lang_federated_parallel_roots" => {
             if surfaces.len() < 2 {
                 return Err(format!(
-                    "expected parallel github+linear roots, got {} surfaces",
+                    "expected parallel langmatrix_a+langmatrix_b roots, got {} surfaces",
                     surfaces.len()
                 ));
             }
@@ -231,9 +236,9 @@ pub(crate) fn assert_planning_federated_ra(
                 return Err(format!("expected aggregate n, got {:?}", aggregates));
             }
             let q = first_query(surfaces)?;
-            if q.catalog_entry_id.as_deref() != Some("github") {
+            if q.catalog_entry_id.as_deref() != Some(MATRIX_FED_A) {
                 return Err(format!(
-                    "e1 group_by query must be github, got {:?}",
+                    "e1 group_by query must be langmatrix_a, got {:?}",
                     q.catalog_entry_id
                 ));
             }
@@ -243,9 +248,9 @@ pub(crate) fn assert_planning_federated_ra(
                 return Err("expected render compute on inline e1 template".into());
             }
             let q = first_query(surfaces)?;
-            if q.catalog_entry_id.as_deref() != Some("github") {
+            if q.catalog_entry_id.as_deref() != Some(MATRIX_FED_A) {
                 return Err(format!(
-                    "inline template query must be github e1, got {:?}",
+                    "inline template query must be langmatrix_a e1, got {:?}",
                     q.catalog_entry_id
                 ));
             }
@@ -328,6 +333,15 @@ pub(crate) fn assert_planning_federated_ra(
             if d.capability.as_str() != "langitem_delete" {
                 return Err(format!("expected langitem_delete, got {:?}", d.capability));
             }
+        }
+        "lang_for_each_empty_ping" => {
+            assert_for_each_action_node(dry, comp)?;
+        }
+        "lang_apply_get_multirow" => {
+            assert_row_apply_node(dry, comp, "get")?;
+        }
+        "lang_apply_query_multirow" => {
+            assert_row_apply_node(dry, comp, "query")?;
         }
         "lang_for_each_update" => {
             // CGS `update` capabilities lower to `Expr::Invoke`, which [`infer_surface_contract`]

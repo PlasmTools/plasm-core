@@ -15,6 +15,9 @@ use crate::http_execute::{
 };
 use crate::server_state::{CatalogBootstrap, PlasmHostState};
 
+pub const LANGMATRIX_A: &str = "langmatrix_a";
+pub const LANGMATRIX_B: &str = "langmatrix_b";
+
 pub fn matrix_language_matrix_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix")
 }
@@ -26,15 +29,15 @@ pub fn matrix_language_matrix_cgs() -> Arc<CGS> {
 pub fn matrix_federated_registry(cgs: Arc<CGS>) -> Arc<CgsRegistry> {
     Arc::new(CgsRegistry::from_pairs(vec![
         (
-            "linear".into(),
-            "Linear".into(),
-            vec!["linear".into()],
+            LANGMATRIX_B.into(),
+            "Langmatrix B".into(),
+            vec![LANGMATRIX_B.into()],
             cgs.clone(),
         ),
         (
-            "github".into(),
-            "GitHub".into(),
-            vec!["github".into()],
+            LANGMATRIX_A.into(),
+            "Langmatrix A".into(),
+            vec![LANGMATRIX_A.into()],
             cgs.clone(),
         ),
     ]))
@@ -66,7 +69,11 @@ impl EntityCatalogPairing {
     pub fn interleaved_federated_matrix() -> Self {
         Self {
             entities: vec!["LangItem".into(), "LangDetail".into(), "LangTag".into()],
-            catalog_entry_ids: vec!["linear".into(), "github".into(), "linear".into()],
+            catalog_entry_ids: vec![
+                LANGMATRIX_B.into(),
+                LANGMATRIX_A.into(),
+                LANGMATRIX_B.into(),
+            ],
         }
     }
 }
@@ -74,7 +81,7 @@ impl EntityCatalogPairing {
 pub struct InterleavedFederatedFixture {
     pub contexts: IndexMap<String, Arc<CgsContext>>,
     pub cgs: Arc<CGS>,
-    /// Live federate path: linear LangItem → github LangDetail → linear LangTag.
+    /// Live federate path: langmatrix_b LangItem → langmatrix_a LangDetail → langmatrix_b LangTag.
     pub live: TeachingExposureSession,
     pub pairing: EntityCatalogPairing,
 }
@@ -84,19 +91,19 @@ pub fn interleaved_federated_matrix_fixture() -> InterleavedFederatedFixture {
     let cgs = matrix_language_matrix_cgs();
     let mut contexts = IndexMap::new();
     contexts.insert(
-        "linear".to_string(),
-        Arc::new(CgsContext::entry("linear", cgs.clone())),
+        LANGMATRIX_B.to_string(),
+        Arc::new(CgsContext::entry(LANGMATRIX_B, cgs.clone())),
     );
     contexts.insert(
-        "github".to_string(),
-        Arc::new(CgsContext::entry("github", cgs.clone())),
+        LANGMATRIX_A.to_string(),
+        Arc::new(CgsContext::entry(LANGMATRIX_A, cgs.clone())),
     );
     let layers: Vec<&CGS> = contexts.values().map(|c| c.cgs.as_ref()).collect();
 
     let mut live = build_initial_exposure_wave(
         &contexts,
         &ExposureCatalogWave {
-            entry_id: "linear".to_string(),
+            entry_id: LANGMATRIX_B.to_string(),
             entities: vec!["LangItem".to_string()],
         },
     );
@@ -105,7 +112,7 @@ pub fn interleaved_federated_matrix_fixture() -> InterleavedFederatedFixture {
         &layers,
         &contexts,
         &ExposureCatalogWave {
-            entry_id: "github".to_string(),
+            entry_id: LANGMATRIX_A.to_string(),
             entities: vec!["LangDetail".to_string()],
         },
     );
@@ -114,7 +121,7 @@ pub fn interleaved_federated_matrix_fixture() -> InterleavedFederatedFixture {
         &layers,
         &contexts,
         &ExposureCatalogWave {
-            entry_id: "linear".to_string(),
+            entry_id: LANGMATRIX_B.to_string(),
             entities: vec!["LangTag".to_string()],
         },
     );
@@ -127,16 +134,16 @@ pub fn interleaved_federated_matrix_fixture() -> InterleavedFederatedFixture {
     }
 }
 
-/// Assert github `LangDetail` `e#` / `body` `p#` parity (primary federated numbering regression).
-pub fn assert_github_langdetail_numbering_parity(live: &SymbolMap, other: &SymbolMap) {
+/// Assert langmatrix_a `LangDetail` `e#` / `body` `p#` parity (primary federated numbering regression).
+pub fn assert_langmatrix_a_langdetail_numbering_parity(live: &SymbolMap, other: &SymbolMap) {
     assert_eq!(
-        other.entity_sym_for("github", "LangDetail"),
-        live.entity_sym_for("github", "LangDetail"),
-        "github LangDetail e# must match"
+        other.entity_sym_for(LANGMATRIX_A, "LangDetail"),
+        live.entity_sym_for(LANGMATRIX_A, "LangDetail"),
+        "langmatrix_a LangDetail e# must match"
     );
     assert_eq!(
-        other.ident_sym_entity_field_for("github", "LangDetail", "body"),
-        live.ident_sym_entity_field_for("github", "LangDetail", "body"),
-        "github LangDetail.body p# must match"
+        other.ident_sym_entity_field_for(LANGMATRIX_A, "LangDetail", "body"),
+        live.ident_sym_entity_field_for(LANGMATRIX_A, "LangDetail", "body"),
+        "langmatrix_a LangDetail.body p# must match"
     );
 }

@@ -6,7 +6,7 @@ use crate::execution::ExecutionConfig;
 use crate::http_trace::HttpTraceOutcome;
 use crate::http_transport::{
     compiled_method_label, host_key_from_url, http_retryable_is_rate_limited, is_safe_http_method,
-    join_base_url_path, HttpAttemptResult, HttpTransport, ReqwestHttpTransport,
+    join_base_url_path, HttpAttemptResult, HttpTransport,
 };
 use async_trait::async_trait;
 use plasm_compile::CompiledRequest;
@@ -41,16 +41,24 @@ impl From<&ExecutionConfig> for HttpResiliencePolicy {
     }
 }
 
-/// Decorator around [`ReqwestHttpTransport`] with semaphores and safe-method retries.
+/// Decorator around any [`HttpTransport`] with semaphores and safe-method retries.
+///
+/// Default engine construction wraps [`ReqwestHttpTransport`]. NAPI / test
+/// engines that inject a custom client via [`crate::ExecutionEngine::new_with_transport`]
+/// receive the same GET/HEAD/OPTIONS retry law.
 pub struct ResilientHttpTransport {
-    inner: ReqwestHttpTransport,
+    inner: Arc<dyn HttpTransport>,
     policy: HttpResiliencePolicy,
     global: Arc<Semaphore>,
     per_host: Mutex<HashMap<String, Arc<Semaphore>>>,
 }
 
 impl ResilientHttpTransport {
-    pub fn new(inner: ReqwestHttpTransport, policy: HttpResiliencePolicy) -> Self {
+    pub fn new(inner: impl HttpTransport + 'static, policy: HttpResiliencePolicy) -> Self {
+        Self::wrap(Arc::new(inner), policy)
+    }
+
+    pub fn wrap(inner: Arc<dyn HttpTransport>, policy: HttpResiliencePolicy) -> Self {
         let global = Arc::new(Semaphore::new(policy.global_max_inflight));
         Self {
             inner,
@@ -290,6 +298,10 @@ fn jitter_duration(base: Duration, url: &str, attempt: u32) -> Duration {
 
 #[async_trait]
 impl HttpTransport for ResilientHttpTransport {
+    fn injects_host_auth(&self) -> bool {
+        self.inner.injects_host_auth()
+    }
+
     async fn send_compiled_http(
         &self,
         base_url: &str,
@@ -369,7 +381,191 @@ fn http_trace_outcome<T, E: std::fmt::Display>(result: &Result<T, E>) -> HttpTra
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::http_transport::{HttpTransport, ReqwestHttpTransport};
+    use futures_util::future::join_all;
+    use indexmap::IndexMap;
+    use plasm_compile::{CompiledRequest, HttpBodyFormat, HttpMethod};
+    use plasm_core::Value;
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    const SHARED_BEARER: &str = "Bearer shared-search-token";
+    const FANOUT_N: usize = 8;
+
+    #[derive(Clone, Copy)]
+    enum MockMode {
+        AlwaysOk,
+        First500ThenOk,
+        Always401,
+        HoldMs(u64),
+    }
+
+    struct MockStats {
+        inflight: AtomicUsize,
+        peak: AtomicUsize,
+        hits: AtomicUsize,
+        auths: Mutex<Vec<Option<String>>>,
+        per_target: Mutex<HashMap<String, usize>>,
+    }
+
+    impl MockStats {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                inflight: AtomicUsize::new(0),
+                peak: AtomicUsize::new(0),
+                hits: AtomicUsize::new(0),
+                auths: Mutex::new(Vec::new()),
+                per_target: Mutex::new(HashMap::new()),
+            })
+        }
+    }
+
+    fn header_value(req: &str, name: &str) -> Option<String> {
+        req.lines()
+            .skip(1)
+            .take_while(|l| !l.is_empty())
+            .find_map(|line| {
+                let (key, value) = line.split_once(':')?;
+                key.eq_ignore_ascii_case(name)
+                    .then(|| value.trim().to_string())
+            })
+    }
+
+    fn request_target(req: &str) -> String {
+        req.lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .unwrap_or("/")
+            .to_string()
+    }
+
+    fn http_reply(status: &str, body: &str) -> String {
+        format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    async fn read_http_head(stream: &mut tokio::net::TcpStream) -> std::io::Result<String> {
+        let mut buf = Vec::new();
+        let mut tmp = [0u8; 1024];
+        loop {
+            let n = stream.read(&mut tmp).await?;
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&tmp[..n]);
+            if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                break;
+            }
+            if buf.len() > 16 * 1024 {
+                break;
+            }
+        }
+        Ok(String::from_utf8_lossy(&buf).into_owned())
+    }
+
+    async fn spawn_search_fanout_mock(mode: MockMode) -> (String, Arc<MockStats>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock");
+        let addr = listener.local_addr().expect("addr");
+        let stats = MockStats::new();
+        let serve_stats = Arc::clone(&stats);
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    break;
+                };
+                let stats = Arc::clone(&serve_stats);
+                tokio::spawn(async move {
+                    let Ok(req) = read_http_head(&mut stream).await else {
+                        return;
+                    };
+                    let target = request_target(&req);
+                    let auth = header_value(&req, "Authorization");
+                    stats.hits.fetch_add(1, Ordering::SeqCst);
+                    {
+                        let mut auths = stats.auths.lock().await;
+                        auths.push(auth);
+                    }
+                    let attempt = {
+                        let mut map = stats.per_target.lock().await;
+                        let n = map.entry(target).or_insert(0);
+                        *n += 1;
+                        *n
+                    };
+                    let cur = stats.inflight.fetch_add(1, Ordering::SeqCst) + 1;
+                    stats.peak.fetch_max(cur, Ordering::SeqCst);
+                    if let MockMode::HoldMs(ms) = mode {
+                        tokio::time::sleep(Duration::from_millis(ms)).await;
+                    }
+                    stats.inflight.fetch_sub(1, Ordering::SeqCst);
+                    let reply = match mode {
+                        MockMode::AlwaysOk | MockMode::HoldMs(_) => {
+                            http_reply("200 OK", r#"{"ok":true}"#)
+                        }
+                        MockMode::First500ThenOk if attempt == 1 => {
+                            http_reply("500 Internal Server Error", "Internal Server Error")
+                        }
+                        MockMode::First500ThenOk => http_reply("200 OK", r#"{"ok":true}"#),
+                        MockMode::Always401 => http_reply(
+                            "401 Unauthorized",
+                            r#"{"message":"access token is missing, invalid or expired"}"#,
+                        ),
+                    };
+                    let _ = stream.write_all(reply.as_bytes()).await;
+                });
+            }
+        });
+        (format!("http://{addr}"), stats)
+    }
+
+    fn search_shaped_get(slot: usize) -> CompiledRequest {
+        let mut query = IndexMap::new();
+        query.insert("q".into(), Value::String(format!("slot-{slot}")));
+        let headers = Value::Object(IndexMap::from([(
+            "Authorization".into(),
+            Value::String(SHARED_BEARER.into()),
+        )]));
+        CompiledRequest {
+            credential: None,
+            method: HttpMethod::Get,
+            path: "/records".into(),
+            query: Some(Value::Object(query)),
+            body: None,
+            body_format: HttpBodyFormat::Json,
+            multipart: None,
+            headers: Some(headers),
+        }
+    }
+
+    fn fast_retry_policy(per_host: usize) -> HttpResiliencePolicy {
+        HttpResiliencePolicy {
+            global_max_inflight: 64,
+            per_host_max_inflight: per_host,
+            max_attempts: 4,
+            initial_backoff: Duration::from_millis(5),
+            max_backoff: Duration::from_millis(20),
+            total_retry_budget: Duration::from_secs(5),
+        }
+    }
+
+    async fn fanout_compiled_gets(
+        transport: &ResilientHttpTransport,
+        base: &str,
+        n: usize,
+    ) -> Vec<Result<(serde_json::Value, Option<String>), RuntimeError>> {
+        let jobs: Vec<_> = (0..n)
+            .map(|i| {
+                let request = search_shaped_get(i);
+                async move { transport.send_compiled_http(base, &request, None).await }
+            })
+            .collect();
+        join_all(jobs).await
+    }
 
     #[test]
     fn jitter_within_band() {
@@ -414,5 +610,195 @@ mod tests {
             }
             other => panic!("expected RateLimited, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn fanout_preserves_shared_bearer_on_every_get() {
+        let (base, stats) = spawn_search_fanout_mock(MockMode::AlwaysOk).await;
+        let transport = ResilientHttpTransport::new(
+            ReqwestHttpTransport::new(reqwest::Client::new()),
+            fast_retry_policy(24),
+        );
+        let results = fanout_compiled_gets(&transport, &base, FANOUT_N).await;
+        assert!(
+            results.iter().all(|r| r.is_ok()),
+            "shared-bearer fanout must succeed: {results:?}"
+        );
+        let auths = stats.auths.lock().await;
+        assert_eq!(auths.len(), FANOUT_N);
+        assert!(
+            auths.iter().all(|h| h.as_deref() == Some(SHARED_BEARER)),
+            "Authorization must be present and identical on every fanout GET: {auths:?}"
+        );
+        assert_eq!(stats.hits.load(Ordering::SeqCst), FANOUT_N);
+    }
+
+    #[tokio::test]
+    async fn fanout_retries_get_500_then_succeeds_with_stable_bearer() {
+        let (base, stats) = spawn_search_fanout_mock(MockMode::First500ThenOk).await;
+        let transport = ResilientHttpTransport::new(
+            ReqwestHttpTransport::new(reqwest::Client::new()),
+            fast_retry_policy(24),
+        );
+        let results = fanout_compiled_gets(&transport, &base, FANOUT_N).await;
+        assert!(
+            results.iter().all(|r| r.is_ok()),
+            "GET 500 must retry on safe methods: {results:?}"
+        );
+        let auths = stats.auths.lock().await;
+        assert_eq!(auths.len(), FANOUT_N * 2, "one 500 then one 200 per slot");
+        assert!(
+            auths.iter().all(|h| h.as_deref() == Some(SHARED_BEARER)),
+            "retry must resend the same Authorization: {auths:?}"
+        );
+        assert_eq!(stats.hits.load(Ordering::SeqCst), FANOUT_N * 2);
+    }
+
+    #[tokio::test]
+    async fn fanout_401_is_terminal_and_authorization_was_sent() {
+        let (base, stats) = spawn_search_fanout_mock(MockMode::Always401).await;
+        let transport = ResilientHttpTransport::new(
+            ReqwestHttpTransport::new(reqwest::Client::new()),
+            fast_retry_policy(24),
+        );
+        let results = fanout_compiled_gets(&transport, &base, FANOUT_N).await;
+        assert!(
+            results.iter().all(|r| r.is_err()),
+            "401 must stay terminal: {results:?}"
+        );
+        let auths = stats.auths.lock().await;
+        assert_eq!(
+            auths.len(),
+            FANOUT_N,
+            "401 must not be retried (hits would be 4N)"
+        );
+        assert!(
+            auths.iter().all(|h| h.as_deref() == Some(SHARED_BEARER)),
+            "401 is backend; client must still send Authorization: {auths:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn fanout_respects_per_host_inflight_cap() {
+        let (base, stats) = spawn_search_fanout_mock(MockMode::HoldMs(40)).await;
+        let transport = ResilientHttpTransport::new(
+            ReqwestHttpTransport::new(reqwest::Client::new()),
+            fast_retry_policy(2),
+        );
+        let results = fanout_compiled_gets(&transport, &base, FANOUT_N).await;
+        assert!(results.iter().all(|r| r.is_ok()), "{results:?}");
+        let peak = stats.peak.load(Ordering::SeqCst);
+        assert!(
+            peak <= 2,
+            "per-host inflight cap must hold under fanout, peak={peak}"
+        );
+        assert!(peak >= 1, "mock must observe at least one in-flight GET");
+    }
+
+    struct SequenceInner {
+        hits: AtomicUsize,
+        fail_status: u16,
+    }
+
+    #[async_trait]
+    impl HttpTransport for SequenceInner {
+        async fn send_compiled_http(
+            &self,
+            _base_url: &str,
+            _request: &CompiledRequest,
+            _auth: Option<ResolvedAuth>,
+        ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+            let n = self.hits.fetch_add(1, Ordering::SeqCst);
+            if n == 0 {
+                return Err(RuntimeError::RequestError {
+                    message: format!("HTTP {}", self.fail_status),
+                    attempts: 1,
+                    status: Some(self.fail_status),
+                    body: None,
+                });
+            }
+            Ok((serde_json::json!({ "ok": true }), None))
+        }
+
+        async fn get_json_absolute(
+            &self,
+            _url: &str,
+            _auth: Option<ResolvedAuth>,
+        ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+            Err(RuntimeError::ConfigurationError {
+                message: "absolute GET unused".into(),
+            })
+        }
+    }
+
+    fn post_search_shaped() -> CompiledRequest {
+        let mut req = search_shaped_get(0);
+        req.method = HttpMethod::Post;
+        req
+    }
+
+    #[tokio::test]
+    async fn custom_transport_get_500_then_200_is_retried() {
+        let inner = Arc::new(SequenceInner {
+            hits: AtomicUsize::new(0),
+            fail_status: 500,
+        });
+        let transport = ResilientHttpTransport::wrap(inner.clone(), fast_retry_policy(24));
+        let started = Instant::now();
+        let result = transport
+            .send_compiled_http("https://example.test", &search_shaped_get(0), None)
+            .await;
+        assert!(
+            result.is_ok(),
+            "NAPI-shaped GET 500 must retry on the shared decorator: {result:?}"
+        );
+        assert_eq!(inner.hits.load(Ordering::SeqCst), 2);
+        assert!(
+            started.elapsed() >= Duration::from_millis(2),
+            "retry must sleep; elapsed={:?}",
+            started.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn custom_transport_post_500_is_terminal() {
+        let inner = Arc::new(SequenceInner {
+            hits: AtomicUsize::new(0),
+            fail_status: 500,
+        });
+        let transport = ResilientHttpTransport::wrap(inner.clone(), fast_retry_policy(24));
+        let result = transport
+            .send_compiled_http("https://example.test", &post_search_shaped(), None)
+            .await;
+        assert!(result.is_err(), "POST 500 must stay terminal: {result:?}");
+        assert_eq!(inner.hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn new_with_transport_retries_custom_get_500() {
+        let inner = Arc::new(SequenceInner {
+            hits: AtomicUsize::new(0),
+            fail_status: 500,
+        });
+        let engine = crate::ExecutionEngine::new_with_transport(
+            crate::ExecutionConfig {
+                http_retry_initial_backoff_ms: 5,
+                http_retry_max_backoff_ms: 20,
+                http_max_attempts: 4,
+                http_retry_total_budget_ms: 5_000,
+                ..crate::ExecutionConfig::default()
+            },
+            inner.clone(),
+            None,
+        );
+        let result = engine
+            .transport
+            .send_compiled_http("https://example.test", &search_shaped_get(0), None)
+            .await;
+        assert!(
+            result.is_ok(),
+            "new_with_transport must wrap resilience: {result:?}"
+        );
+        assert_eq!(inner.hits.load(Ordering::SeqCst), 2);
     }
 }

@@ -1,0 +1,38 @@
+pwgroup_get:
+  method: GET
+  path:
+    - type: literal
+      value: pw
+    - type: literal
+      value: groups
+    - type: var
+      name: group_id
+
+pwexpense_create:
+  method: POST
+  path:
+    - type: literal
+      value: pw
+    - type: literal
+      value: expenses
+  body:
+    type: object
+    fields:
+      - - group_id
+        - type: var
+          name: group_id
+      - - description
+        - type: var
+          name: description
+
+pwexpense_query:
+  method: GET
+  path:
+    - type: literal
+      value: pw
+    - type: literal
+      value: groups
+    - type: var
+      name: group_id
+    - type: literal
+      value: expenses

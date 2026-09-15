@@ -1427,41 +1427,32 @@ mod tests {
     }
 
     #[test]
-    fn jira_catalog_loads_with_schema_overlay() {
-        let jira = Path::new("apis/jira");
-        if !jira.join("domain.yaml").exists() {
-            return;
-        }
-        let cgs = load_schema_dir(jira).expect("jira catalog loads");
+    fn jira_overlay_fixture_loads_with_schema_overlay() {
+        let jira = Path::new("../../fixtures/schemas/jira_schema_overlay");
+        let cgs = load_schema_dir(jira).expect("jira overlay fixture loads");
         assert!(cgs.schema_overlay.is_some());
-        cgs.validate().expect("jira catalog validates");
+        cgs.validate().expect("jira overlay fixture validates");
     }
 
     #[test]
-    fn fibery_catalog_loads_with_schema_overlay() {
-        let fibery = Path::new("apis/fibery");
-        if !fibery.join("domain.yaml").exists() {
-            return;
-        }
-        let cgs = load_schema_dir(fibery).expect("fibery catalog loads");
+    fn fibery_overlay_fixture_loads_with_schema_overlay() {
+        let fibery = Path::new("../../fixtures/schemas/fibery_schema_overlay");
+        let cgs = load_schema_dir(fibery).expect("fibery overlay fixture loads");
         assert!(
             cgs.schema_overlay.is_some(),
-            "fibery declares schema_overlay"
+            "fibery overlay fixture declares schema_overlay"
         );
-        cgs.validate().expect("fibery catalog validates");
+        cgs.validate().expect("fibery overlay fixture validates");
     }
 
     #[test]
-    fn notion_catalog_loads_with_schema_overlay() {
-        let notion = Path::new("apis/notion");
-        if !notion.join("domain.yaml").exists() {
-            return;
-        }
-        let cgs = load_schema_dir(notion).expect("notion catalog loads");
+    fn notion_overlay_fixture_loads_with_schema_overlay() {
+        let notion = Path::new("../../fixtures/schemas/notion_schema_overlay");
+        let cgs = load_schema_dir(notion).expect("notion overlay fixture loads");
         assert!(
             cgs.schema_overlay.is_some(),
-            "notion declares schema_overlay"
+            "notion overlay fixture declares schema_overlay"
         );
-        cgs.validate().expect("notion catalog validates");
+        cgs.validate().expect("notion overlay fixture validates");
     }
 }

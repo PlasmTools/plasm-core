@@ -13,6 +13,8 @@ export const CatalogManifestSchema = z.object({
   label: z.string().optional(),
   tags: z.array(z.string()).default([]),
   cgs_json: basename,
+  recipes_json: basename,
+  recipes_hash: digest,
   discovery_json: basename,
   discovery_hash: digest,
   embedding_profile: z.object({
@@ -46,7 +48,11 @@ export async function loadPackedCatalog(manifestPath: string): Promise<LoadedCat
   const absolute = path.resolve(manifestPath);
   const rootDir = path.dirname(absolute);
   const manifest = CatalogManifestSchema.parse(JSON.parse(await readFile(absolute, "utf8")));
-  for (const [name, expected] of [[manifest.cgs_json, manifest.cgs_hash], [manifest.discovery_json, manifest.discovery_hash]]) {
+  for (const [name, expected] of [
+    [manifest.cgs_json, manifest.cgs_hash],
+    [manifest.recipes_json, manifest.recipes_hash],
+    [manifest.discovery_json, manifest.discovery_hash],
+  ]) {
     const bytes = await readFile(path.join(rootDir, name!));
     if (createHash("sha256").update(bytes).digest("hex") !== expected) {
       throw new Error(`Catalog artifact digest mismatch: ${name}`);

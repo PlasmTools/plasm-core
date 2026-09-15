@@ -489,6 +489,11 @@ fn attach_query_pagination_if_present(
         fetch_all,
         max_items,
         one_page: false,
+        bound_kind: if max_items.is_some() {
+            plasm_runtime::ConsumeBoundKind::ExpressionTake
+        } else {
+            plasm_runtime::ConsumeBoundKind::None
+        },
         ..Default::default()
     };
 

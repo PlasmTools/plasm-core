@@ -1,4 +1,4 @@
-//! Bounded large-stack worker pool for live `run_plasm_comp` (avoids tokio 2 MiB worker overflow).
+//! Bounded worker pool for live `run_plasm_comp`, with a normal stack in every build profile.
 
 use std::any::Any;
 use std::future::Future;
@@ -9,22 +9,8 @@ use tokio::sync::{oneshot, Semaphore};
 
 use crate::execute_session::max_running_ops_per_session;
 
-/// Debug builds: deep synchronous `run_plasm_comp` stacks (matrix / federated compile).
-pub const DEFAULT_LIVE_PLAN_RUN_STACK_BYTES_DEBUG: usize = 16 * 1024 * 1024;
-/// Release builds: profiled default for cheap pokeapi-style plans on dedicated workers.
-pub const DEFAULT_LIVE_PLAN_RUN_STACK_BYTES_RELEASE: usize = 4 * 1024 * 1024;
-
-/// Back-compat alias (debug default).
-pub const DEFAULT_LIVE_PLAN_RUN_STACK_BYTES: usize = DEFAULT_LIVE_PLAN_RUN_STACK_BYTES_DEBUG;
-
-#[must_use]
-pub fn default_live_plan_run_stack_bytes() -> usize {
-    if cfg!(debug_assertions) {
-        DEFAULT_LIVE_PLAN_RUN_STACK_BYTES_DEBUG
-    } else {
-        DEFAULT_LIVE_PLAN_RUN_STACK_BYTES_RELEASE
-    }
-}
+/// Same normal worker budget in debug and release builds.
+pub const DEFAULT_LIVE_PLAN_RUN_STACK_BYTES: usize = 2 * 1024 * 1024;
 
 /// `PLASM_LIVE_RUN_STACK_BYTES` — per-worker stack for live plan execution.
 #[must_use]
@@ -33,7 +19,7 @@ pub fn live_plan_run_stack_bytes() -> usize {
         .ok()
         .and_then(|s| s.parse().ok())
         .filter(|n| *n >= 512 * 1024)
-        .unwrap_or_else(default_live_plan_run_stack_bytes)
+        .unwrap_or(DEFAULT_LIVE_PLAN_RUN_STACK_BYTES)
 }
 
 #[must_use]
@@ -78,7 +64,7 @@ impl LivePlanRunPool {
         self.stack_size
     }
 
-    /// Run `f` on a dedicated large-stack thread (`block_on` on the current runtime handle).
+    /// Run `f` on a dedicated worker thread (`block_on` on the current runtime handle).
     pub async fn run<F, Fut, T>(&self, f: F) -> Result<T, String>
     where
         F: FnOnce() -> Fut + Send + 'static,
@@ -141,26 +127,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_stack_matches_profile() {
-        assert_eq!(
-            live_plan_run_stack_bytes(),
-            default_live_plan_run_stack_bytes()
-        );
-    }
-
-    #[test]
-    fn release_default_is_smaller_than_debug_cap() {
-        if cfg!(debug_assertions) {
-            assert_eq!(
-                default_live_plan_run_stack_bytes(),
-                DEFAULT_LIVE_PLAN_RUN_STACK_BYTES_DEBUG
-            );
-        } else {
-            assert_eq!(
-                default_live_plan_run_stack_bytes(),
-                DEFAULT_LIVE_PLAN_RUN_STACK_BYTES_RELEASE
-            );
-        }
+    fn default_worker_stack_is_profile_independent() {
+        assert_eq!(LivePlanRunPool::new().stack_size(), 2 * 1024 * 1024);
     }
 
     #[test]

@@ -559,10 +559,30 @@ pub(crate) fn render_template(
     template: &plasm_core::program_string_template::CompiledProgramString,
     env: &PlanEvalEnv<'_>,
 ) -> Result<String, String> {
-    let scope = insert_plan_eval_scope(env, |row| {
-        json_row_to_display_plasm(row, json_scalar_display)
-    });
-    template.render(&scope).map_err(|e| e.to_string())
+    let current_row = match env.scope {
+        EvalScope::Bound { row, .. } => Some(row),
+        EvalScope::Root { .. } => None,
+    };
+    let mut bindings = BTreeMap::new();
+    for (alias, input) in env.inputs.rows {
+        bindings.insert(alias.as_str().to_string(), input.rows.clone());
+        bindings.insert(input.node.as_str().to_string(), input.rows.clone());
+    }
+    let mut ctx = plasm_core::unified_template_context(current_row, &bindings);
+    if let Some(row) = current_row {
+        ctx.insert("_".to_string(), minijinja::Value::from_serialize(row));
+        if let EvalScope::Bound { binding, .. } = env.scope {
+            if binding.as_str() != "_" {
+                ctx.insert(
+                    binding.as_str().to_string(),
+                    minijinja::Value::from_serialize(row),
+                );
+            }
+        }
+    }
+    template
+        .render_minijinja_context(&ctx)
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

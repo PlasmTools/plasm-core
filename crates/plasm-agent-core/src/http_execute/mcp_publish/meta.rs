@@ -91,6 +91,7 @@ fn plasm_run_ui_meta_object(
                     "return_label": spec.return_label,
                     "display": spec.display,
                     "row_count": spec.row_count,
+                    "coverage": spec.coverage.as_str(),
                 });
                 if let Some(ref node_id) = spec.node_id {
                     if let Some(obj) = step.as_object_mut() {
@@ -218,6 +219,7 @@ fn strip_cache_keys_from_agent_preview_row(v: &mut serde_json::Value) {
         for key in ["_ref", "_version", "_last_updated", "_completeness"] {
             obj.remove(key);
         }
+        // Keep `_unavailable_fields`: soft-fail honesty marker for agents.
     }
 }
 
@@ -264,6 +266,7 @@ pub(crate) fn build_ui_steps(
                 artifact: resolved.artifact.clone(),
                 lossy_summary_fields: lossy,
                 column_schema,
+                coverage: step.result.coverage,
             }
         })
         .collect()

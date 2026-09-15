@@ -5,6 +5,9 @@ use std::collections::{HashMap, HashSet};
 use crate::symbol_tuning::SymbolMap;
 
 use super::contract::enforce_teaching_tsv_teaching_invariant;
+use super::evaluation_now::{
+    format_evaluation_now_teaching_meaning, teaching_bundle_teaches_temporal, EVALUATION_NOW_EXPR,
+};
 use super::gloss_dedup::{
     gloss_emit_identity_for_row, join_field_gloss_meaning_atoms, FieldGlossMeaning,
     FieldGlossMeaningAtom, GlossDescription, GlossTsvDedupe,
@@ -186,6 +189,7 @@ fn write_sorted_symbol_prefix_gloss_rows(
 pub(crate) fn render_prompt_tsv_from_bundle(bundle: &TeachingPromptBundle) -> String {
     let mut out = String::new();
     out.push_str(TSV_TEACHING_TABLE_HEADER);
+    write_evaluation_now_row_if_taught(&mut out, bundle);
     let mut tsv_dedupe = GlossTsvDedupe::default();
     for (block_i, block) in bundle.teaching_blocks.iter().enumerate() {
         let heading = &block.heading;
@@ -338,6 +342,23 @@ pub(crate) fn render_prompt_tsv_from_bundle(bundle: &TeachingPromptBundle) -> St
     }
     enforce_teaching_tsv_teaching_invariant(&out);
     out
+}
+
+/// PLP-9: one session-level clock row when temporal slots appear on the card.
+fn write_evaluation_now_row_if_taught(out: &mut String, bundle: &TeachingPromptBundle) {
+    if !teaching_bundle_teaches_temporal(bundle) {
+        return;
+    }
+    let Ok(now) = crate::temporal_reference_now() else {
+        return;
+    };
+    DomainTsvEncodedLine {
+        expr: DomainTsvExprCell::from_plasm_expr(EVALUATION_NOW_EXPR),
+        meaning: DomainTsvMeaningCell::from_teaching_atoms(vec![
+            TeachingMeaningAtom::CapabilityGloss(format_evaluation_now_teaching_meaning(now)),
+        ]),
+    }
+    .write_line(out);
 }
 
 const TSV_MEANING_JOIN: &str = super::gloss_dedup::FIELD_GLOSS_MEANING_JOIN;

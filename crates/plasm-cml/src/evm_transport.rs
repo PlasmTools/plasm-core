@@ -251,11 +251,13 @@ pub fn compile_evm_logs(
 
 pub fn coerce_dyn_value(value: &Value, ty: &DynSolType) -> Result<DynSolValue, CmlError> {
     match value {
-        Value::PlasmInputRef(_) | Value::StringTemplate(_) => Err(CmlError::TypeError {
-            message: format!(
-                "Plasm compile-time input references cannot be coerced to solidity type '{ty}'"
-            ),
-        }),
+        Value::PlasmInputRef(_) | Value::GetScalarExtract(_) | Value::StringTemplate(_) => {
+            Err(CmlError::TypeError {
+                message: format!(
+                    "Plasm compile-time input references cannot be coerced to solidity type '{ty}'"
+                ),
+            })
+        }
         Value::String(s) | Value::PhraseIdent(s) => {
             ty.coerce_str(s).map_err(|e| CmlError::EvaluationError {
                 message: format!("failed to coerce '{s}' to solidity type '{ty}': {e}"),

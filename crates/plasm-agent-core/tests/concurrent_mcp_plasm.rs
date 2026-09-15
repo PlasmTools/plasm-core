@@ -32,19 +32,22 @@ fn matrix_fixture_dir() -> PathBuf {
 }
 
 fn matrix_federated_host() -> Arc<plasm_agent_core::server_state::PlasmHostState> {
-    let cgs = Arc::new(load_schema_dir(&matrix_fixture_dir()).expect("plasm_language_matrix"));
+    let cgs_a = Arc::new(load_schema_dir(&matrix_fixture_dir()).expect("plasm_language_matrix"));
+    let views_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/plasm_language_matrix_views");
+    let cgs_b = Arc::new(load_schema_dir(&views_dir).expect("plasm_language_matrix_views"));
     let reg = CgsRegistry::from_pairs(vec![
         (
-            "github".into(),
-            "GitHub".into(),
-            vec!["github".into()],
-            cgs.clone(),
+            "langmatrix_a".into(),
+            "Langmatrix A".into(),
+            vec!["langmatrix_a".into()],
+            cgs_a,
         ),
         (
-            "linear".into(),
-            "Linear".into(),
-            vec!["linear".into()],
-            cgs.clone(),
+            "langmatrix_b".into(),
+            "Langmatrix B".into(),
+            vec!["langmatrix_b".into()],
+            cgs_b,
         ),
     ]);
     let engine = ExecutionEngine::new(ExecutionConfig::default()).expect("engine");
@@ -84,7 +87,7 @@ async fn parallel_context_open_single_flight() {
     let st = matrix_federated_host();
     let logical_id = Uuid::new_v4();
     let seeds = vec![CapabilitySeed {
-        entry_id: "github".into(),
+        entry_id: "langmatrix_a".into(),
         entity: "LangItem".into(),
     }];
     let (a, b) = tokio::join!(
@@ -104,7 +107,7 @@ async fn concurrent_plasm_context_merge_seeds() {
             st.as_ref(),
             logical_id,
             vec![CapabilitySeed {
-                entry_id: "github".into(),
+                entry_id: "langmatrix_a".into(),
                 entity: "LangItem".into(),
             }],
         ),
@@ -112,7 +115,7 @@ async fn concurrent_plasm_context_merge_seeds() {
             st.as_ref(),
             logical_id,
             vec![CapabilitySeed {
-                entry_id: "linear".into(),
+                entry_id: "langmatrix_b".into(),
                 entity: "LangItem".into(),
             }],
         ),
@@ -123,15 +126,15 @@ async fn concurrent_plasm_context_merge_seeds() {
         .get_execute_session(&a.prompt_hash, &a.session_id)
         .await
         .expect("execute session");
-    assert!(es.contexts_by_entry.contains_key("github"));
-    assert!(es.contexts_by_entry.contains_key("linear"));
+    assert!(es.contexts_by_entry.contains_key("langmatrix_a"));
+    assert!(es.contexts_by_entry.contains_key("langmatrix_b"));
     let map = es
         .teaching_exposure
         .as_ref()
         .expect("exposure")
         .symbol_map_arc();
-    assert_eq!(map.entity_sym_for("github", "LangItem"), "e1");
-    assert_eq!(map.entity_sym_for("linear", "LangItem"), "e2");
+    assert_eq!(map.entity_sym_for("langmatrix_a", "LangItem"), "e1");
+    assert_eq!(map.entity_sym_for("langmatrix_b", "LangItem"), "e2");
 }
 
 #[tokio::test]
@@ -142,11 +145,11 @@ async fn concurrent_mcp_plasm_dry_two_commits() {
         Uuid::new_v4(),
         vec![
             CapabilitySeed {
-                entry_id: "github".into(),
+                entry_id: "langmatrix_a".into(),
                 entity: "LangItem".into(),
             },
             CapabilitySeed {
-                entry_id: "linear".into(),
+                entry_id: "langmatrix_b".into(),
                 entity: "LangItem".into(),
             },
         ],
@@ -209,11 +212,11 @@ async fn concurrent_disjoint_plasm_run() {
         Uuid::new_v4(),
         vec![
             CapabilitySeed {
-                entry_id: "github".into(),
+                entry_id: "langmatrix_a".into(),
                 entity: "LangItem".into(),
             },
             CapabilitySeed {
-                entry_id: "linear".into(),
+                entry_id: "langmatrix_b".into(),
                 entity: "LangItem".into(),
             },
         ],

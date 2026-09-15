@@ -66,6 +66,7 @@ capabilities:
     - body
     - subject
   send:
+    receiver: {kind: entity, entity: Message}
     description: Deliver a message to an external endpoint.
     kind: action
     entity: Message
@@ -102,6 +103,7 @@ capabilities:
       type: side_effect
       description: Mutates ACL / permission state.
   sanitize_body:
+    receiver: {kind: entity, entity: Message}
     description: Strip untrusted content from a message body.
     kind: action
     entity: Message

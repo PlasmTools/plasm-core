@@ -96,9 +96,9 @@ impl HttpTransport for Transport {
 
 #[test]
 fn credential_create_returns_receipt_and_cached_reads_revalidate_scope() {
-    // Debug builds retain the full create/decoder future.
+    // Exercise credential creation on the normal worker budget in debug builds too.
     std::thread::Builder::new()
-        .stack_size(32 * 1024 * 1024)
+        .stack_size(2 * 1024 * 1024)
         .spawn(|| {
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -145,6 +145,7 @@ async fn exercise_scoped_injection() {
         transport_origin: None,
         ui_origin: None,
         catalog_bind: None,
+        login_access_token_tail: ExecuteSessionMaterial::empty_login_access_token_tail(),
     });
     ExecutionEngine::run_in_execute_task_scopes("https://example.test".into(), None, None, None, Some(material), compiled_catalog, None, None, async {
         let cap = cgs.get_capability("acquire").unwrap();

@@ -59,7 +59,7 @@ pub(crate) enum RowCardinalityProof {
     StaticSingleton,
     /// Query/search, many-relation, or list-preserving compute chain.
     StaticPlural,
-    /// `.limit(1)` / `.singleton()` on a row-producing binding.
+    /// `| take 1` / `.singleton()` on a row-producing binding.
     BoundedSingleton {
         kind: BoundedSingletonKind,
         /// When true, the bounded pick came from a plural/static-many source (runtime proof).
@@ -98,6 +98,20 @@ pub(crate) enum ContinuationCapability {
 }
 
 impl RowCardinalityProof {
+    /// CGS-owned method receivers (`ℓ.m#`). Identity-preserving singletons —
+    /// Get / mutation-result / `| take 1` — keep the row's entity identity.
+    /// Empty bounded receivers fail at runtime before the dependent mutation.
+    /// Do not use this gate for scalar field-dot (`ℓ.wire` into a param).
+    pub(crate) fn permits_identity_receiver(self) -> bool {
+        matches!(self, Self::StaticSingleton | Self::BoundedSingleton { .. })
+    }
+
+    /// Scalar field extraction (`ℓ.wire` / bind of that cell). Distinct from
+    /// [`Self::permits_identity_receiver`]: field-dot is not the method-receiver law.
+    pub(crate) fn permits_scalar_field_extract(self) -> bool {
+        matches!(self, Self::StaticSingleton | Self::BoundedSingleton { .. })
+    }
+
     pub(crate) fn to_relation_source_cardinality(self) -> RelationSourceCardinality {
         match self {
             Self::StaticSingleton => RelationSourceCardinality::Single,
@@ -301,6 +315,41 @@ mod tests {
             .try_auto_broadcast_input_proof(),
             Some(InputCardinalityProof::RuntimeCheckedSingleton)
         );
+    }
+
+    #[test]
+    fn identity_receiver_admits_static_and_take_one_not_plural() {
+        assert!(RowCardinalityProof::StaticSingleton.permits_identity_receiver());
+        assert!(RowCardinalityProof::BoundedSingleton {
+            kind: BoundedSingletonKind::LimitOne,
+            from_plural_source: true,
+        }
+        .permits_identity_receiver());
+        assert!(RowCardinalityProof::BoundedSingleton {
+            kind: BoundedSingletonKind::ExplicitSingletonPostfix,
+            from_plural_source: false,
+        }
+        .permits_identity_receiver());
+        assert!(!RowCardinalityProof::StaticPlural.permits_identity_receiver());
+        assert!(!RowCardinalityProof::RuntimeChecked.permits_identity_receiver());
+    }
+
+    #[test]
+    fn scalar_field_extract_is_not_the_method_receiver_predicate() {
+        // Same proof set today, distinct laws: method invoke must not call
+        // `permits_scalar_field_extract`, and field-dot must not call
+        // `permits_identity_receiver`.
+        assert_ne!(
+            stringify!(RowCardinalityProof::permits_identity_receiver),
+            stringify!(RowCardinalityProof::permits_scalar_field_extract)
+        );
+        assert!(RowCardinalityProof::StaticSingleton.permits_scalar_field_extract());
+        assert!(RowCardinalityProof::BoundedSingleton {
+            kind: BoundedSingletonKind::LimitOne,
+            from_plural_source: true,
+        }
+        .permits_scalar_field_extract());
+        assert!(!RowCardinalityProof::StaticPlural.permits_scalar_field_extract());
     }
 
     #[test]

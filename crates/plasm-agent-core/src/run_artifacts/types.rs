@@ -256,8 +256,17 @@ pub struct RunArtifactDocument {
     pub display_lines: Vec<String>,
     pub request_fingerprints: Vec<String>,
     pub entities: Vec<serde_json::Value>,
+    /// Coverage of `entities` relative to the requested expression.
+    ///
+    /// Existing snapshots that omit this field deserialize as
+    /// [`plasm_runtime::ResultCoverage::Unknown`] — the honest default, not an optional path.
+    #[serde(default)]
+    pub coverage: plasm_runtime::ResultCoverage,
     pub source: ExecutionSource,
     pub stats: ExecutionStats,
+    /// HTTP-2 operation ledger. Absent on pre-HTTP-2 snapshots.
+    #[serde(default)]
+    pub operations: plasm_runtime::OperationLedger,
 }
 
 /// Agent-facing run snapshot projection (slim read path; canonical doc retains evidence fields).
@@ -269,6 +278,9 @@ pub struct RunArtifactAgentView {
     pub resource_index: Option<u64>,
     pub request_fingerprints: Vec<String>,
     pub entities: Vec<serde_json::Value>,
+    /// Same law as [`RunArtifactDocument::coverage`].
+    #[serde(default)]
+    pub coverage: plasm_runtime::ResultCoverage,
 }
 
 impl RunArtifactDocument {
@@ -279,6 +291,7 @@ impl RunArtifactDocument {
             resource_index: self.resource_index,
             request_fingerprints: self.request_fingerprints.clone(),
             entities: self.entities.clone(),
+            coverage: self.coverage,
         }
     }
 }
@@ -345,6 +358,32 @@ mod metadata_tests {
         assert_eq!(RunArtifactId::from_wire(&wire), Some(id));
         assert!(RunArtifactId::from_wire("pr").is_none());
         assert!(RunArtifactId::from_wire("przz").is_none());
+    }
+
+    #[test]
+    fn missing_coverage_deserializes_unknown() {
+        let parsed =
+            plasm_core::expr_parser::ParsedExpr::from_expr(plasm_core::Expr::TeachingValue {
+                value: plasm_core::Value::String("probe".into()),
+            });
+        let body = serde_json::json!({
+            "run_id": "praaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "prompt_hash": "ph",
+            "session_id": "sid",
+            "entry_id": "matrix",
+            "parsed_preimage": parsed,
+            "display_lines": [],
+            "request_fingerprints": [],
+            "entities": [],
+            "source": "live",
+            "stats": { "duration_ms": 0, "network_requests": 0, "cache_hits": 0, "cache_misses": 0 }
+        });
+        let doc: RunArtifactDocument = serde_json::from_value(body).expect("doc");
+        assert_eq!(doc.coverage, plasm_runtime::ResultCoverage::Unknown);
+        assert_eq!(
+            doc.agent_view().coverage,
+            plasm_runtime::ResultCoverage::Unknown
+        );
     }
 
     #[test]

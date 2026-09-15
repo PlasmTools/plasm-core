@@ -14,7 +14,8 @@ use std::sync::{Arc, OnceLock};
 #[path = "capability_inputs.rs"]
 mod capability_inputs;
 pub use capability_inputs::{
-    BackendSelectionSchema, CapabilityInputs, InvocationControlsSchema, ParentScopeSchema,
+    BackendSelectionSchema, CapabilityInputs, CapabilityReceiver, InvocationControlsSchema,
+    ParentScopeSchema,
 };
 
 /// Opaque CML mapping payload (HTTP or EVM); validated at load via `plasm_compile::parse_capability_template`.
@@ -870,26 +871,6 @@ pub use crate::path_env::{
     path_var_names_from_mapping_json,
 };
 
-/// Drop CML `path` template var keys from an object input before body-schema validate.
-///
-/// Parse injects anchor path segments into the same object as body fields for CML env splat;
-/// [`crate::validate_capability_input`] must not treat those as unexpected payload/arguments keys.
-pub fn body_value_without_mapping_path_vars(
-    cap: &CapabilitySchema,
-    input: crate::Value,
-) -> crate::Value {
-    let crate::Value::Object(mut map) = input else {
-        return input;
-    };
-    let Some(mapping) = &cap.mapping else {
-        return crate::Value::Object(map);
-    };
-    for pv in path_var_names_from_mapping_json(&mapping.template.0) {
-        map.swap_remove(&pv);
-    }
-    crate::Value::Object(map)
-}
-
 /// True when a Create capability's CML identity-env vars project from `anchor`'s identity
 /// (including single-path-var primary alias). Used for dotted `Anchor(id).create-…` binding.
 pub fn can_bind_create_from_anchor(cap: &CapabilitySchema, anchor: &EntityDef) -> bool {
@@ -907,31 +888,6 @@ pub fn mapping_body_is_whole_var_input(template: &serde_json::Value) -> bool {
         body.get("type").and_then(|t| t.as_str()) == Some("var")
             && body.get("name").and_then(|n| n.as_str()) == Some("input")
     })
-}
-
-/// True when teaching table exemplars must use `Entity($)` / an anchored receiver (`Entity($).m()`), not a
-/// bare pathless `Entity.get()`-style line.
-///
-/// Transport-neutral predicate: combines HTTP path `var` segments with GraphQL operation `variables`
-/// that bind the primary subject (`id`). Prompt synthesis calls this via
-/// [`CapabilitySchema::domain_exemplar_requires_entity_anchor`]; it does **not** import GraphQL by name.
-pub fn template_domain_exemplar_requires_entity_anchor(template: &serde_json::Value) -> bool {
-    if !path_var_names_from_mapping_json(template).is_empty() {
-        return true;
-    }
-    if template.get("transport").and_then(|t| t.as_str()) != Some("graphql") {
-        return false;
-    }
-    graphql_operation_variable_names(template)
-        .iter()
-        .any(|n| n == "id")
-}
-
-/// True when parse of dotted-call alias `Entity($).method()` cannot default the subject id to `"0"`: any path
-/// template variable or any GraphQL operation variable (pagination vars count for queries).
-pub fn template_invoke_requires_explicit_anchor_id(template: &serde_json::Value) -> bool {
-    !path_var_names_from_mapping_json(template).is_empty()
-        || !graphql_operation_variable_names(template).is_empty()
 }
 
 /// Path method segment for prompts and parser matching (`team_seats` → `seats` after domain strip).
@@ -2311,6 +2267,22 @@ pub struct EntityDef {
     pub discovery: Option<DiscoveryEntityHints>,
 }
 
+impl EntityDef {
+    /// Session-token identity Get: `id_field` is the bearer (`implicit_request_identity`)
+    /// and this entity has no Query peer (same fetch seat as `e#{id_field=<wire>}`).
+    /// Sole predicate for teaching keyed Get braces. A Search peer or an absent Query
+    /// does not flip a unary Get (email / path / note_id) onto `{id_field=<wire>}`.
+    /// Unary app-key / File-polarity Gets stay `e#(<id>)`.
+    #[inline]
+    pub fn teaches_token_identity_braces(&self, cgs: &CGS) -> bool {
+        self.implicit_request_identity
+            && !self.id_field.as_str().is_empty()
+            && cgs
+                .find_capabilities(self.name.as_str(), CapabilityKind::Query)
+                .is_empty()
+    }
+}
+
 impl ResourceSchema {
     /// Convert this resource schema to an internal EntityDef.
     pub fn to_entity_def(&self) -> Result<EntityDef, SchemaError> {
@@ -2572,9 +2544,7 @@ impl CGS {
         let get = self.primary_get_capability(entity).map(|c| c.name.clone());
         let singleton_gets: Vec<CapabilityName> = get_caps
             .iter()
-            .filter(|c| {
-                !c.domain_exemplar_requires_entity_anchor() && capability_is_zero_arity_invoke(c)
-            })
+            .filter(|c| !c.requires_receiver() && capability_is_zero_arity_invoke(c))
             .map(|c| c.name.clone())
             .collect();
 
@@ -2636,6 +2606,15 @@ impl CGS {
             });
         }
 
+        if let Some(receiver) = capability.receiver_entity() {
+            if !self.entities.contains_key(receiver) {
+                return Err(SchemaError::UnknownTargetEntity {
+                    entity: "capability receiver".into(),
+                    relation: capability.name.to_string(),
+                    target: receiver.to_string(),
+                });
+            }
+        }
         self.capabilities
             .insert(capability.name.clone(), capability);
         Ok(())
@@ -2992,7 +2971,56 @@ impl CGS {
         Ok(())
     }
 
+    /// Every `id_field` / compound `key_vars` slot must be a lawful identity scalar.
+    /// Rejects `entity_ref` (and other non-scalar) primary keys at validate/pack time —
+    /// same law as [`crate::operand_binding::IdentityCodec`] (dry-plan / Get binding).
+    fn validate_identity_slots(&self) -> Result<(), SchemaError> {
+        use crate::operand_binding::IdentityCodec;
+        use crate::wire_coercion::parent_entity_field_type;
+
+        for (entity_name, entity) in &self.entities {
+            let slots: Vec<&str> = if entity.key_vars.len() > 1 {
+                entity.key_vars.iter().map(|k| k.as_str()).collect()
+            } else {
+                vec![entity
+                    .key_vars
+                    .first()
+                    .unwrap_or(&entity.id_field)
+                    .as_str()]
+            };
+            for field in slots {
+                // id_from / implicit path identity with no declared field → String default.
+                let field_type = parent_entity_field_type(self, entity, field).map_err(|e| {
+                    SchemaError::UnknownKeyVarField {
+                        entity: entity_name.to_string(),
+                        field: format!("{field} ({e})"),
+                    }
+                })?;
+                if !IdentityCodec::is_lawful_identity_type(&field_type) {
+                    return Err(SchemaError::UnsupportedIdentityType {
+                        entity: entity_name.to_string(),
+                        field: field.to_string(),
+                        field_type: format!("{field_type:?}"),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn validate_core(&self) -> Result<(), SchemaError> {
+        self.validate_identity_slots()?;
+        for cap in self.capabilities.values() {
+            if let Some(receiver) = cap.receiver_entity() {
+                if !self.entities.contains_key(receiver) {
+                    return Err(SchemaError::UnknownTargetEntity {
+                        entity: "capability receiver".into(),
+                        relation: cap.name.to_string(),
+                        target: receiver.to_string(),
+                    });
+                }
+            }
+        }
         for (entity_name, entity) in &self.entities {
             if let Some(ref cap_id) = entity.primary_read {
                 Self::validate_primary_read_ref(self, entity_name.as_str(), cap_id)?;
@@ -4789,11 +4817,14 @@ impl CGS {
     /// Several helpers derive ordered field names; they are **not** interchangeable:
     ///
     /// 1. **teaching table / prompt teaching** — [`Self::effective_ordered_response_fields`],
-    ///    [`Self::domain_projection_heading_fields`] / [`Self::projection_prompt_field_prefixes`]: use explicit capability `provides` when present;
-    ///    otherwise [`Self::default_ordered_entity_field_names`] on the capability’s domain entity
-    ///    (`id_field` first, then remaining fields lexicographically).
+    ///    [`Self::domain_projection_heading_fields`] / [`Self::projection_prompt_field_prefixes`]:
+    ///    Get/Query/Search always use [`Self::default_ordered_entity_field_names`] on the domain
+    ///    entity (`id_field` first, then remaining fields lexicographically). A read `provides`
+    ///    list is **not** a teaching summary subset (RA-12). Mutators use explicit `provides`.
+    ///    [`crate::capability_exposure::selected_capability_surface`] admits this same read set
+    ///    (NAPI / `exposeSeeds`) — no provides-shear dual path.
     /// 2. **Runtime decode, cache, and [`Self::field_providers`]** — [`Self::effective_provides`]:
-    ///    same `provides` vs default rule as (1) so empty-`provides` defaults stay aligned with teaching table.
+    ///    cache/provider contract (explicit `provides`, or the same default entity order when empty).
     /// 3. **Short error / CLI hints** — internal `error_render` projection scalars (scalar-only,
     ///    sorted, `prioritize_projection_scalars`): intentionally **not** the full teaching table projection field list.
     ///
@@ -4811,17 +4842,17 @@ impl CGS {
         }
     }
 
-    /// Ordered field names for teaching heading projection teaching: explicit `provides`, or default entity order when empty.
+    /// Ordered field names for teaching row projection (`[…]`).
+    ///
+    /// Get / Query / Search: full authored entity fields ([`Self::default_ordered_entity_field_names`]).
+    /// A read `provides` list is not a teaching summary (RA-12). Mutators: explicit `provides`.
     pub fn effective_ordered_response_fields(&self, cap: &CapabilitySchema) -> Vec<String> {
-        if !cap.provides.is_empty() {
-            return cap.provides.clone();
-        }
         match cap.kind {
             CapabilityKind::Get | CapabilityKind::Query | CapabilityKind::Search => self
                 .get_entity(cap.domain.as_str())
                 .map(Self::default_ordered_entity_field_names)
                 .unwrap_or_default(),
-            _ => vec![],
+            _ => cap.provides.clone(),
         }
     }
 
@@ -4840,7 +4871,7 @@ impl CGS {
         }
     }
 
-    /// Resolve which **Get** supplies ordered `provides` / default field order for teaching heading projection.
+    /// Resolve which **Get** supplies teaching heading projection field order.
     ///
     /// Uses [`EntityDef::primary_read`] when set (required at load when 2+ Gets); otherwise the sole Get.
     pub fn resolved_primary_get_for_projection<'a>(
@@ -5411,7 +5442,8 @@ impl CGS {
     ///
     /// - Explicit `provides` list → use it directly
     /// - Empty + `Get` / `Query` / `Search` → all entity fields in [`Self::default_ordered_entity_field_names`]
-    ///   order (same default as [`Self::effective_ordered_response_fields`])
+    ///   order (cache default). Teaching `[…]` for those kinds ignores a nonempty `provides` subset
+    ///   and always uses that full entity order ([`Self::effective_ordered_response_fields`]).
     /// - Empty + `Create` / `Update` / `Delete` / `Action` → empty (may only return `id`)
     pub fn effective_provides(&self, cap: &CapabilitySchema) -> Vec<String> {
         if !cap.provides.is_empty() {
@@ -5528,7 +5560,8 @@ impl CapabilitySchema {
             .flat_map(input_schema_top_level_fields)
     }
 
-    /// Scope + selection + control params (query/search surface braces and CLI flags).
+    /// Scope + selection + control params (CLI / hydrate flags). Source braces teach
+    /// selection (+ required scope pivots) only — controls are not a brace lane (RA-1).
     pub fn query_surface_fields(&self) -> impl Iterator<Item = &InputFieldSchema> {
         self.scope_params()
             .iter()
@@ -5585,22 +5618,25 @@ impl CapabilitySchema {
             .ok_or_else(|| format!("capability '{}' has no CML mapping (derived)", self.name))
     }
 
-    /// See [`template_domain_exemplar_requires_entity_anchor`].
-    #[inline]
-    pub fn domain_exemplar_requires_entity_anchor(&self) -> bool {
-        let Some(mapping) = &self.mapping else {
-            return false;
-        };
-        template_domain_exemplar_requires_entity_anchor(&mapping.template.0)
+    /// Receiver identity required by the domain operation. Transport mappings
+    /// cannot change this contract.
+    pub fn receiver_entity(&self) -> Option<&EntityName> {
+        match &self.inputs.receiver {
+            Some(CapabilityReceiver::None) => None,
+            Some(CapabilityReceiver::Entity { entity }) => Some(entity),
+            None if matches!(
+                self.kind,
+                CapabilityKind::Get | CapabilityKind::Update | CapabilityKind::Delete
+            ) =>
+            {
+                Some(&self.domain)
+            }
+            None => None,
+        }
     }
 
-    /// See [`template_invoke_requires_explicit_anchor_id`].
-    #[inline]
-    pub fn invoke_requires_explicit_anchor_id(&self) -> bool {
-        let Some(mapping) = &self.mapping else {
-            return false;
-        };
-        template_invoke_requires_explicit_anchor_id(&mapping.template.0)
+    pub fn requires_receiver(&self) -> bool {
+        self.receiver_entity().is_some()
     }
 
     /// True when this capability's CML mapping uses `transport: view`.
@@ -5613,7 +5649,7 @@ impl CapabilitySchema {
 
     /// True when this Get must be keyed (identity / view scope / required body / derived list-pick) — not bare `e#` or `e#.m#()`.
     pub fn get_requires_identity_anchor(&self, cgs: &CGS) -> bool {
-        if self.domain_exemplar_requires_entity_anchor() {
+        if self.requires_receiver() {
             return true;
         }
         if !capability_is_zero_arity_invoke(self) {
@@ -5902,53 +5938,80 @@ mod capability_index_tests {
     }
 
     #[test]
-    fn domain_projection_heading_fields_linear_issue_despite_singleton_get_exemplar() {
-        let p = Path::new("../../apis/linear");
-        if !p.exists() {
-            return;
-        }
-        let cgs = crate::loader::load_schema_dir(p).expect("linear");
-        let Some(ent) = cgs.get_entity("Issue") else {
-            panic!("missing Issue entity");
-        };
-        let wire = cgs
-            .domain_projection_heading_fields("Issue", ent)
-            .expect("Linear Issue should expose heading projection fields");
+    fn read_teaching_projection_ignores_provides_summary_subset() {
+        let p = Path::new("../../fixtures/schemas/return_projection_teaching");
+        let cgs = crate::loader::load_schema_dir(p).expect("return_projection_teaching");
+        let ent = cgs.get_entity("Notice").expect("Notice");
+        let want = CGS::default_ordered_entity_field_names(ent);
         assert_eq!(
-            wire,
+            want,
             vec![
-                "id".to_string(),
-                "identifier".to_string(),
+                "notice_id".to_string(),
+                "author_email".to_string(),
+                "body".to_string(),
+                "created_at".to_string(),
                 "title".to_string(),
-                "description".to_string(),
-                "priority".to_string(),
-                "estimate".to_string(),
-                "dueDate".to_string(),
-                "team".to_string(),
-                "project".to_string(),
-                "assignee".to_string(),
-                "state".to_string(),
-                "cycle".to_string(),
-                "parent".to_string(),
             ]
         );
+        for name in ["notice_get", "notice_query", "notice_search"] {
+            let cap = cgs.capabilities.get(name).expect(name);
+            assert_eq!(
+                cap.provides,
+                vec!["notice_id".to_string(), "title".to_string()],
+                "{name} authors a display subset"
+            );
+            assert_eq!(
+                cgs.effective_ordered_response_fields(cap),
+                want,
+                "{name} teaching F is the full authored field set"
+            );
+        }
+
+        let tx = cgs.get_entity("Transaction").expect("Transaction");
+        let tx_want = CGS::default_ordered_entity_field_names(tx);
         assert_eq!(
-            cgs.projection_prompt_field_prefixes("Issue", ent),
-            vec![wire.clone()]
+            tx_want,
+            vec![
+                "transaction_id".to_string(),
+                "amount".to_string(),
+                "created_at".to_string(),
+                "description".to_string(),
+                "private".to_string(),
+            ]
         );
+        for name in ["transaction_get", "transaction_query"] {
+            let cap = cgs.capabilities.get(name).expect(name);
+            assert_eq!(
+                cap.provides,
+                vec![
+                    "transaction_id".to_string(),
+                    "amount".to_string(),
+                    "description".to_string(),
+                ],
+                "{name} authors the T132207 display subset"
+            );
+            assert_eq!(
+                cgs.effective_ordered_response_fields(cap),
+                tx_want,
+                "{name} teaching F is the full authored field set"
+            );
+        }
     }
 
     #[test]
     fn chain_materialize_capability_rejects_wrong_domain() {
-        let p = Path::new("../../apis/clickup");
-        if !p.exists() {
-            return;
-        }
-        let cgs = crate::loader::load_schema_dir(p).expect("clickup");
-        let cap: CapabilityName = "task_query".into();
+        let p = Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = crate::loader::load_schema_dir(p).expect("plasm_language_matrix");
+        let cap: CapabilityName = "langitem_query".into();
         let err = cgs
-            .validate_chain_materialize_capability("Team", "spaces", "Space", &cap, &["team_id"])
-            .expect_err("task_query is on Task, not Space");
+            .validate_chain_materialize_capability(
+                "LangItem",
+                "tags",
+                "LangTag",
+                &cap,
+                &["item_id"],
+            )
+            .expect_err("langitem_query is on LangItem, not LangTag");
         assert!(
             matches!(
                 err,
@@ -5960,30 +6023,30 @@ mod capability_index_tests {
 
     #[test]
     fn chain_materialize_capability_accepts_named_query() {
-        let p = Path::new("../../apis/clickup");
-        if !p.exists() {
-            return;
-        }
-        let cgs = crate::loader::load_schema_dir(p).expect("clickup");
-        let cap: CapabilityName = "space_query".into();
-        cgs.validate_chain_materialize_capability("Team", "spaces", "Space", &cap, &["team_id"])
-            .expect("space_query lists Space rows scoped by team_id");
+        let p = Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = crate::loader::load_schema_dir(p).expect("plasm_language_matrix");
+        let cap: CapabilityName = "langtag_query".into();
+        cgs.validate_chain_materialize_capability(
+            "LangItem",
+            "tags",
+            "LangTag",
+            &cap,
+            &["item_id"],
+        )
+        .expect("langtag_query lists LangTag rows scoped by item_id");
     }
 
     #[test]
-    fn template_binding_helpers_linear_issue_get() {
-        let p = Path::new("../../apis/linear");
-        if !p.exists() {
-            return;
-        }
-        let cgs = crate::loader::load_schema_dir(p).expect("linear");
-        let cap = cgs.capabilities.get("issue_get").expect("issue_get");
+    fn template_binding_helpers_langitem_get() {
+        let p = Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = crate::loader::load_schema_dir(p).expect("plasm_language_matrix");
+        let cap = cgs.capabilities.get("langitem_get").expect("langitem_get");
         assert!(
-            cap.domain_exemplar_requires_entity_anchor(),
-            "GraphQL variables.id must force teaching table anchor exemplar"
+            cap.requires_receiver(),
+            "path var id must force teaching table anchor exemplar"
         );
         assert!(
-            cap.invoke_requires_explicit_anchor_id(),
+            cap.requires_receiver(),
             "invoke parse must not default id to 0"
         );
     }
@@ -5996,45 +6059,31 @@ mod oauth_extension_tests {
     use std::path::Path;
 
     #[test]
-    fn gmail_linear_jira_load_with_oauth_block() {
-        for dir in [
-            "../../apis/gmail",
-            "../../apis/linear",
-            "../../apis/jira",
-            "../../apis/github",
-            "../../apis/twitter",
-        ] {
-            let p = Path::new(dir);
-            if !p.exists() {
-                continue;
-            }
-            let cgs = crate::loader::load_schema_dir(p).unwrap_or_else(|e| panic!("{dir}: {e}"));
-            let oauth = cgs.oauth.as_ref().expect("oauth section");
-            assert!(!oauth.provider.trim().is_empty());
-            assert!(!oauth.scopes.is_empty());
-        }
+    fn prompt_matrix_loads_with_oauth_block() {
+        let p = Path::new("../../fixtures/schemas/plasm_prompt_matrix");
+        let cgs = crate::loader::load_schema_dir(p).expect("plasm_prompt_matrix");
+        let oauth = cgs.oauth.as_ref().expect("oauth section");
+        assert!(!oauth.provider.trim().is_empty());
+        assert!(!oauth.scopes.is_empty());
     }
 
     #[test]
     fn oauth_capability_satisfied_any_of() {
-        let p = Path::new("../../apis/linear");
-        if !p.exists() {
-            return;
-        }
-        let cgs = crate::loader::load_schema_dir(p).expect("linear");
+        let p = Path::new("../../fixtures/schemas/plasm_prompt_matrix");
+        let cgs = crate::loader::load_schema_dir(p).expect("plasm_prompt_matrix");
         let mut granted = HashSet::new();
-        granted.insert("read".to_string());
+        granted.insert("cloudflare.zone.read".to_string());
         assert_eq!(
-            cgs.oauth_capability_satisfied("issue_get", &granted),
+            cgs.oauth_capability_satisfied("zone_query", &granted),
             Some(true)
         );
         assert_eq!(
-            cgs.oauth_capability_satisfied("issue_create", &granted),
+            cgs.oauth_capability_satisfied("ruleset_query", &granted),
             Some(false)
         );
-        granted.insert("issues:create".to_string());
+        granted.insert("cloudflare.zone.waf.read".to_string());
         assert_eq!(
-            cgs.oauth_capability_satisfied("issue_create", &granted),
+            cgs.oauth_capability_satisfied("ruleset_query", &granted),
             Some(true)
         );
         assert_eq!(
@@ -6045,11 +6094,8 @@ mod oauth_extension_tests {
 
     #[test]
     fn oauth_json_round_trip() {
-        let p = Path::new("../../apis/gmail");
-        if !p.exists() {
-            return;
-        }
-        let cgs = crate::loader::load_schema_dir(p).expect("gmail");
+        let p = Path::new("../../fixtures/schemas/plasm_prompt_matrix");
+        let cgs = crate::loader::load_schema_dir(p).expect("plasm_prompt_matrix");
         let json = serde_json::to_string(&cgs).expect("serialize");
         let back: CGS = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(cgs.oauth, back.oauth);
@@ -6078,14 +6124,11 @@ mod oauth_extension_tests {
     }
 
     #[test]
-    fn tavily_research_create_passes_body_var_input_validation() {
-        let p = Path::new("../../apis/tavily");
-        if !p.exists() {
-            return;
-        }
-        let cgs = crate::loader::load_schema_dir(p).expect("tavily");
+    fn language_matrix_passes_body_var_input_validation() {
+        let p = Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = crate::loader::load_schema_dir(p).expect("plasm_language_matrix");
         cgs.validate()
-            .expect("tavily validate after research_create body fix");
+            .expect("language matrix validates after body-var input check");
     }
 }
 

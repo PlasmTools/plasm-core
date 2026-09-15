@@ -56,19 +56,33 @@ const plasmRunInputSchema = z.object({
     .describe("Optional short note explaining the intent of this call"),
 });
 
-const plasmReadRunArtifactInputSchema = z.object({
-  logical_session_ref: z
-    .string()
-    .describe("Same logical_session_ref returned by plasm_context"),
-  run_id: z
-    .string()
-    .min(1)
-    .describe("Run snapshot id (pr… hex) from plasm_run markdown / archive"),
-  reasoning: z
-    .string()
-    .optional()
-    .describe("Optional short note explaining the intent of this call"),
-});
+const plasmReadRunArtifactInputSchema = z
+  .object({
+    logical_session_ref: z
+      .string()
+      .describe("Same logical_session_ref returned by plasm_context"),
+    run_id: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("Run snapshot id (pr… hex) from _meta.plasm.steps[] / markdown"),
+    artifact_uri: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("plasm://… snapshot URI from _meta.plasm.steps[] / resource_link"),
+    reasoning: z
+      .string()
+      .optional()
+      .describe("Optional short note explaining the intent of this call"),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      [Boolean(value.run_id?.trim()), Boolean(value.artifact_uri?.trim())].filter(Boolean)
+        .length === 1,
+    { message: "provide exactly one of run_id or artifact_uri" },
+  );
 
 export function createPlasmTools(runtime: AgentRuntime): ToolSet {
   const tools: ToolSet = {};
@@ -121,10 +135,11 @@ export function createPlasmTools(runtime: AgentRuntime): ToolSet {
   tools.plasm_read_run_artifact = tool({
     description: PLASM_READ_RUN_ARTIFACT_TOOL_DESCRIPTION,
     inputSchema: toolInput(plasmReadRunArtifactInputSchema),
-    execute: async ({ logical_session_ref, run_id, reasoning }) =>
+    execute: async ({ logical_session_ref, run_id, artifact_uri, reasoning }) =>
       runtime.readRunArtifact({
         logicalSessionRef: logical_session_ref,
         runId: run_id,
+        artifactUri: artifact_uri,
         reasoning,
       }),
   });

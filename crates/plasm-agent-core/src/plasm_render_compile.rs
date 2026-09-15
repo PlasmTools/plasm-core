@@ -12,19 +12,7 @@ use plasm_core::SymbolMapCrossRequestCache;
 
 /// Minijinja identifiers that iterate over engine builtins / globals, not render-source bindings.
 /// Loop iterables rooted at these must never be treated as required render sources.
-const TEMPLATE_ITERABLE_BUILTINS: &[&str] = &[
-    "rows",
-    "range",
-    "dict",
-    "namespace",
-    "loop",
-    "true",
-    "false",
-    "none",
-    "True",
-    "False",
-    "None",
-];
+const TEMPLATE_ITERABLE_BUILTINS: &[&str] = plasm_core::MINIJINJA_TEMPLATE_BUILTINS;
 
 /// Locals introduced by `{% for … %}` / `{% set … %}` inside a row-to-text template.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -32,7 +20,7 @@ pub(crate) struct TemplateLocals {
     /// Every name bound by a `for` target or `set` statement (loop cursors, unpacked tuples, set vars).
     pub names: BTreeSet<String>,
     /// Loop cursor → the bare-binding root identifier of the iterable it ranges over
-    /// (`rows` and builtins are recorded so cursor field access can be attributed correctly).
+    /// (builtins are recorded so cursor field access can be attributed correctly).
     pub cursor_iterables: BTreeMap<String, String>,
     /// Bare-binding roots iterated by a `for` loop that are NOT builtins — these must be in scope.
     pub loop_iterable_roots: BTreeSet<String>,
@@ -41,7 +29,7 @@ pub(crate) struct TemplateLocals {
 /// Extract the leading bare-binding identifier of an iterable expression.
 ///
 /// Returns `None` for literals (`[…]`, `{…}`, quotes, digits) and function calls (`range(…)`),
-/// so only plain binding references (`all_labels`, `rows`, `sorted | reverse`, `items[1:]`) qualify.
+/// so only plain binding references (`all_labels`, `sorted | reverse`, `items[1:]`) qualify.
 fn iterable_binding_root(raw: &str) -> Option<String> {
     let s = raw.trim();
     let first = s.chars().next()?;
@@ -136,16 +124,16 @@ fn split_for_in(body: &str) -> Option<(&str, &str)> {
 /// Parsed Minijinja field references from a row-to-text template body.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct TemplateFieldRefs {
-    /// Fields accessed via `{{ r.field }}`, `{{ rows[0].field }}`, or a loop cursor over `rows`.
-    pub row_fields: Vec<String>,
-    /// Fields accessed via a genuine cross-binding `{{ label.field }}`, keyed by binding label.
+    /// Fields accessed via a genuine named-binding `{{ label.field }}`, keyed by binding label.
     pub label_fields: BTreeMap<String, Vec<String>>,
     /// Fields accessed via a loop cursor, keyed by the render-source root the cursor iterates.
     pub cursor_fields: BTreeMap<String, Vec<String>>,
     /// Template-local names (`for` targets + `set` vars) — never treated as cross-bindings.
     pub locals: BTreeSet<String>,
-    /// Bare-binding roots iterated by `for` loops (excluding builtins/`rows`) — must be in scope.
+    /// Bare-binding roots iterated by `for` loops (excluding builtins) — must be in scope.
     pub loop_iterable_roots: BTreeSet<String>,
+    /// Bare `{{ title }}` roots (not `label.field`, not locals, not builtins).
+    pub bare_roots: Vec<String>,
 }
 
 fn push_unique(cols: &mut Vec<String>, field: &str) {
@@ -173,15 +161,7 @@ pub(crate) fn infer_template_field_refs(template: &str) -> TemplateFieldRefs {
             break;
         };
         let expr = after[..end].trim();
-        if let Some(field) = expr
-            .strip_prefix("r.")
-            .or_else(|| expr.strip_prefix("rows[0]."))
-        {
-            let field = first_field_segment(field);
-            if !field.is_empty() && field != "rows" {
-                push_unique(&mut out.row_fields, field);
-            }
-        } else if let Some((label, tail)) = expr.split_once('.') {
+        if let Some((label, tail)) = expr.split_once('.') {
             let label = label.trim();
             let field = first_field_segment(tail);
             if !label.is_empty()
@@ -191,13 +171,13 @@ pub(crate) fn infer_template_field_refs(template: &str) -> TemplateFieldRefs {
             {
                 if locals.names.contains(label) {
                     // Loop cursor / set local: attribute fields to the iterated source, never a binding.
-                    match locals.cursor_iterables.get(label).map(String::as_str) {
-                        Some("rows") => push_unique(&mut out.row_fields, field),
-                        Some(root) if !TEMPLATE_ITERABLE_BUILTINS.contains(&root) => push_unique(
-                            out.cursor_fields.entry(root.to_string()).or_default(),
-                            field,
-                        ),
-                        _ => {}
+                    if let Some(root) = locals.cursor_iterables.get(label).map(String::as_str) {
+                        if !TEMPLATE_ITERABLE_BUILTINS.contains(&root) {
+                            push_unique(
+                                out.cursor_fields.entry(root.to_string()).or_default(),
+                                field,
+                            );
+                        }
                     }
                 } else {
                     push_unique(
@@ -205,6 +185,15 @@ pub(crate) fn infer_template_field_refs(template: &str) -> TemplateFieldRefs {
                         field,
                     );
                 }
+            }
+        } else {
+            let head = first_field_segment(expr);
+            if !head.is_empty()
+                && validate_program_label(head).is_ok()
+                && !locals.names.contains(head)
+                && !TEMPLATE_ITERABLE_BUILTINS.contains(&head)
+            {
+                push_unique(&mut out.bare_roots, head);
             }
         }
         rest = &after[end + 2..];
@@ -223,57 +212,53 @@ fn first_field_segment(tail: &str) -> &str {
     &s[..end]
 }
 
-/// Infer wire column tokens for render projection from a template body.
-pub(crate) fn infer_render_column_tokens_from_template(
+/// Classify template identifier roots as row fields vs named bindings (PLP-12).
+/// A name that is both is a compile-time ambiguity error.
+pub(crate) fn classify_per_row_template_names(
     template: &str,
-    primary_label: &str,
-) -> Option<Vec<String>> {
-    let refs = infer_template_field_refs(template);
-    if !refs.row_fields.is_empty() {
-        return Some(refs.row_fields);
-    }
-    if let Some(cols) = refs
-        .cursor_fields
-        .get(primary_label)
-        .filter(|cols| !cols.is_empty())
-    {
-        return Some(cols.clone());
-    }
-    refs.label_fields
-        .get(primary_label)
-        .cloned()
-        .filter(|cols| !cols.is_empty())
-}
-
-/// Ensure every cross-binding `{{ label.field }}` reference and every `{% for … in <binding> %}`
-/// iterable resolves to an in-scope render source. Loop-introduced locals (`for` targets, `set`
-/// vars) are legal Minijinja bindings and are **not** required to be render sources.
-pub(crate) fn validate_template_binding_labels(
-    template: &str,
-    allowed_labels: &[String],
+    source_fields: &BTreeSet<String>,
+    binding_names: &BTreeSet<String>,
     program_id: &str,
-) -> Result<(), String> {
+) -> Result<(Vec<String>, Vec<String>), String> {
     let refs = infer_template_field_refs(template);
-    for label in refs.label_fields.keys() {
-        if !allowed_labels.iter().any(|allowed| allowed == label) {
-            return Err(format!(
-                "Plasm program `{program_id}`: template references binding `{label}` which is not among render sources {:?} — declare it as a render source, or if `{label}` is a `{{% for {label} in … %}}` loop variable, iterate an in-scope source instead",
-                allowed_labels
-            ));
-        }
+    let mut roots: BTreeSet<String> = BTreeSet::new();
+    for root in refs.bare_roots.iter().chain(refs.label_fields.keys()) {
+        roots.insert(root.clone());
     }
     for root in &refs.loop_iterable_roots {
-        if refs.locals.contains(root) {
-            continue;
-        }
-        if !allowed_labels.iter().any(|allowed| allowed == root) {
-            return Err(format!(
-                "Plasm program `{program_id}`: template iterates `{{% for … in {root} %}}` but `{root}` is not among render sources {:?}",
-                allowed_labels
-            ));
+        if !refs.locals.contains(root) {
+            roots.insert(root.clone());
         }
     }
-    Ok(())
+    for root in plasm_core::interpolation_roots(template) {
+        if !root.is_empty() {
+            roots.insert(root);
+        }
+    }
+    let mut row_fields = Vec::new();
+    let mut binding_labels = Vec::new();
+    for root in roots {
+        if refs.locals.contains(&root) || TEMPLATE_ITERABLE_BUILTINS.contains(&root.as_str()) {
+            continue;
+        }
+        let in_row = source_fields.contains(&root);
+        let in_bind = binding_names.contains(&root);
+        match (in_row, in_bind) {
+            (true, true) => {
+                return Err(plasm_core::plp::plp12_per_row_apply(format!(
+                    "Plasm program `{program_id}`: template name `{root}` is both a row field and a program binding — rename the binding or project the field away"
+                )));
+            }
+            (true, false) => row_fields.push(root),
+            (false, true) => binding_labels.push(root),
+            (false, false) => {
+                return Err(plasm_core::plp::plp12_per_row_apply(format!(
+                    "Plasm program `{program_id}`: template references `{root}` which is not a current-row field or an in-scope program binding"
+                )));
+            }
+        }
+    }
+    Ok((row_fields, binding_labels))
 }
 
 pub(crate) fn parse_field_list_with_tokens(
@@ -310,15 +295,15 @@ pub(crate) fn parse_field_list_with_tokens(
     Ok(out)
 }
 
-/// When the render source is a simple in-scope binding label, expose the projected list under that
-/// name in Minijinja (alongside `rows`).
+/// When the render source is a simple in-scope binding label, expose that named binding
+/// in the per-row template environment (PLP-12). A binding actually named `rows` is ordinary.
 pub(crate) fn resolve_render_collection_alias(
     head_core: &str,
     columns: &[OutputName],
     label_in_scope: impl Fn(&str) -> bool,
 ) -> Option<OutputName> {
     let label = head_core.trim();
-    if label.is_empty() || label == "rows" || label.contains('.') {
+    if label.is_empty() || label.contains('.') {
         return None;
     }
     if !label_in_scope(label) {
@@ -338,12 +323,12 @@ pub(crate) fn render_context_hint(
     collection_alias: Option<&str>,
 ) -> String {
     let mut out = format!(
-        "{} Iterate the projected list with `{{% for r in rows %}}` (one Minijinja render over the whole list, not per-row).",
+        "{} `=>` applies once per row: use `{{{{ field }}}}` for the current row.",
         columns.access_hint()
     );
-    if let Some(alias) = collection_alias.filter(|a| *a != "rows") {
+    if let Some(alias) = collection_alias {
         out.push_str(&format!(
-            " The same list is also bound as `{alias}` (`{{% for r in {alias} %}}`)."
+            " Named binding `{alias}` remains available. Whole-collection text uses a plain template (`report = <<TAG {{% for item in {alias} %}}… TAG`)."
         ));
     }
     out
@@ -405,10 +390,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn infer_template_field_refs_collects_row_and_label_fields() {
-        let refs =
-            infer_template_field_refs("Row {{ r.name }} cross {{ a.title }} / {{ b.owner }}");
-        assert_eq!(refs.row_fields, vec!["name".to_string()]);
+    fn infer_template_field_refs_collects_named_binding_fields() {
+        let refs = infer_template_field_refs("cross {{ a.title }} / {{ b.owner }}");
         assert_eq!(
             refs.label_fields.get("a").map(|v| v.as_slice()),
             Some(&["title".to_string()][..])
@@ -420,53 +403,69 @@ mod tests {
     }
 
     #[test]
-    fn validate_template_binding_labels_rejects_unknown_labels() {
-        let err = validate_template_binding_labels(
-            "{{ ghost.field }}",
-            &["a".to_string(), "b".to_string()],
-            "prog",
-        )
-        .expect_err("unknown label");
+    fn classify_rejects_unknown_template_name() {
+        let fields = BTreeSet::from(["title".to_string()]);
+        let binds = BTreeSet::from(["items".to_string()]);
+        let err = classify_per_row_template_names("{{ ghost.field }}", &fields, &binds, "prog")
+            .expect_err("unknown name");
         assert!(err.contains("ghost"), "{err}");
+        assert!(err.contains("PLP-12"), "{err}");
     }
 
     #[test]
-    fn for_loop_cursor_is_not_a_cross_binding() {
-        // Regression: `{% for label in all_labels %}{{ label.name }}` must NOT be rejected as a
-        // reference to a binding named `label`; `label` is a loop-local iterating `all_labels`.
+    fn classify_rejects_row_field_binding_collision() {
+        let fields = BTreeSet::from(["title".to_string()]);
+        let binds = BTreeSet::from(["title".to_string(), "items".to_string()]);
+        let err = classify_per_row_template_names("{{ title }}", &fields, &binds, "prog")
+            .expect_err("collision");
+        assert!(
+            err.contains("both a row field and a program binding"),
+            "{err}"
+        );
+        assert!(err.contains("PLP-12"), "{err}");
+    }
+
+    #[test]
+    fn for_loop_cursor_is_not_a_named_binding() {
         let tmpl = "{% for label in all_labels %}| {{ label.name }} | {{ label.description or '—' }} |\n{% endfor %}";
         let refs = infer_template_field_refs(tmpl);
         assert!(refs.locals.contains("label"), "label is a local: {refs:?}");
         assert!(
             refs.label_fields.is_empty(),
-            "loop cursor must not be a cross-binding: {refs:?}"
+            "loop cursor must not be a named binding: {refs:?}"
         );
         assert_eq!(
             refs.cursor_fields.get("all_labels").map(|v| v.as_slice()),
             Some(&["name".to_string(), "description".to_string()][..]),
             "cursor fields attributed to iterated source: {refs:?}"
         );
-        validate_template_binding_labels(tmpl, &["all_labels".to_string()], "prog")
-            .expect("loop over in-scope render source is valid");
+        let fields = BTreeSet::new();
+        let binds = BTreeSet::from(["all_labels".to_string()]);
+        let (row, labels) = classify_per_row_template_names(tmpl, &fields, &binds, "prog")
+            .expect("loop over in-scope binding");
+        assert!(row.is_empty(), "{row:?}");
+        assert_eq!(labels, vec!["all_labels".to_string()]);
     }
 
     #[test]
-    fn for_loop_cursor_named_row_is_accepted() {
-        // Renaming the cursor to `row` (or anything) must also work — not only the special `r`.
-        let tmpl = "{% for row in all_labels %}{{ row.name }}{% endfor %}";
-        validate_template_binding_labels(tmpl, &["all_labels".to_string()], "prog")
-            .expect("cursor `row` over in-scope source is valid");
-        assert_eq!(
-            infer_render_column_tokens_from_template(tmpl, "all_labels"),
-            Some(vec!["name".to_string()])
-        );
+    fn for_loop_cursor_named_entry_is_accepted() {
+        let tmpl = "{% for entry in items %}{{ entry.title }}{% endfor %}";
+        let fields = BTreeSet::from(["title".to_string()]);
+        let binds = BTreeSet::from(["items".to_string()]);
+        let (row, labels) = classify_per_row_template_names(tmpl, &fields, &binds, "prog")
+            .expect("cursor `entry` over in-scope source");
+        assert!(row.is_empty(), "{row:?}");
+        assert_eq!(labels, vec!["items".to_string()]);
     }
 
     #[test]
     fn for_loop_over_undeclared_source_is_rejected() {
-        let err = validate_template_binding_labels(
+        let fields = BTreeSet::new();
+        let binds = BTreeSet::from(["items".to_string()]);
+        let err = classify_per_row_template_names(
             "{% for x in ghost %}{{ x.name }}{% endfor %}",
-            &["all_labels".to_string()],
+            &fields,
+            &binds,
             "prog",
         )
         .expect_err("iterating an out-of-scope binding must fail");
@@ -475,17 +474,20 @@ mod tests {
 
     #[test]
     fn for_loop_over_builtin_range_is_not_treated_as_binding() {
-        // `range(...)` and other Minijinja builtins must never require a render source.
-        validate_template_binding_labels(
-            "{% for i in range(3) %}{{ i }}{% endfor %}{% for r in rows %}{{ r.name }}{% endfor %}",
-            &["all_labels".to_string()],
+        let fields = BTreeSet::new();
+        let binds = BTreeSet::from(["items".to_string()]);
+        let (row, labels) = classify_per_row_template_names(
+            "{% for i in range(3) %}{{ i }}{% endfor %}",
+            &fields,
+            &binds,
             "prog",
         )
-        .expect("range() and rows loops are builtins, not render sources");
+        .expect("range() is a builtin, not a render source");
+        assert!(row.is_empty() && labels.is_empty(), "{row:?} {labels:?}");
     }
 
     #[test]
-    fn set_local_is_not_a_cross_binding() {
+    fn set_local_is_not_a_named_binding() {
         let tmpl = "{% set total = 0 %}{{ total.foo }}";
         let refs = infer_template_field_refs(tmpl);
         assert!(refs.locals.contains("total"), "{refs:?}");
@@ -510,11 +512,14 @@ mod tests {
     }
 
     #[test]
-    fn render_context_hint_mentions_rows_and_collection_alias() {
+    fn render_context_hint_mentions_per_row_fields() {
         let cols =
             RenderColumns::from_field_pairs(&[("name".into(), "name".into())]).expect("cols");
         let hint = render_context_hint(&cols, Some("items"));
-        assert!(hint.contains("{% for r in rows %}"), "{hint}");
-        assert!(hint.contains("{% for r in items %}"), "{hint}");
+        assert!(
+            hint.contains("{{ field }}") || hint.contains("current row"),
+            "{hint}"
+        );
+        assert!(hint.contains("items"), "{hint}");
     }
 }

@@ -105,5 +105,6 @@ pub fn plan_node_from_compute(op: &ComputeOp) -> Result<PlanNode, RowComputeErro
             Ok(PlanNode::Aggregate { aggs })
         }
         ComputeOp::Render { .. } => Err(FusionError::RenderInPipeline.into()),
+        ComputeOp::Union { .. } => Err(FusionError::UnionInPipeline.into()),
     }
 }

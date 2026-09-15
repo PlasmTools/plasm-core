@@ -39,7 +39,7 @@ pub(crate) fn projection_field_sets_equal(a: &[String], b: &[String]) -> bool {
     aa == bb
 }
 
-/// Attach capability `provides` `[p#,…]` unless the entity witness already taught the same set.
+/// Attach the capability row `[…]` unless the entity witness already taught the same set.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn enrich_row_producer_teaching_line(
     cgs: &CGS,
@@ -85,7 +85,7 @@ pub(crate) fn enrich_row_producer_teaching_line(
     (expr, gloss, row_contract)
 }
 
-/// Bracket `[p#,…]` from a capability's ordered `provides` (row contract), when non-empty.
+/// Bracket `[wires…]` from the capability's teaching return projection (RA-12).
 pub(crate) fn capability_row_projection_bracket(
     cgs: &CGS,
     cap: &crate::CapabilitySchema,

@@ -1,4 +1,4 @@
-version: 20
+version: 21
 entry_id: spotify
 auth:
   scheme: none
@@ -489,7 +489,7 @@ entities:
         value_ref: nv_str
       card_number:
         required: false
-        value_ref: nv_int
+        value_ref: nv_card_number
         data_class: pii_payment
       expiry_year:
         required: false
@@ -605,6 +605,7 @@ capabilities:
     - like_count
     - shareable_link
   song_like:
+    receiver: {kind: entity, entity: Song}
     description: Like a song.
     kind: action
     entity: Song
@@ -619,6 +620,7 @@ capabilities:
       type: side_effect
       description: Likes the song.
   song_unlike:
+    receiver: {kind: entity, entity: Song}
     description: Unlike a song.
     kind: action
     entity: Song
@@ -661,6 +663,7 @@ capabilities:
     - duration
     - downloaded_at
   song_download:
+    receiver: {kind: entity, entity: Song}
     description: Download a song for offline playback.
     kind: action
     entity: Song
@@ -675,6 +678,7 @@ capabilities:
       type: side_effect
       description: Downloads this song for offline play.
   song_undownload:
+    receiver: {kind: entity, entity: Song}
     description: Remove a song from offline downloads.
     kind: action
     entity: Song
@@ -707,6 +711,7 @@ capabilities:
     - like_count
     - release_date
   album_like:
+    receiver: {kind: entity, entity: Album}
     description: Like an album.
     kind: action
     entity: Album
@@ -721,6 +726,7 @@ capabilities:
       type: side_effect
       description: Likes the album.
   album_unlike:
+    receiver: {kind: entity, entity: Album}
     description: Unlike an album.
     kind: action
     entity: Album
@@ -751,6 +757,7 @@ capabilities:
     - genre
     - follower_count
   artist_follow:
+    receiver: {kind: entity, entity: Artist}
     description: Follow an artist.
     kind: action
     entity: Artist
@@ -765,6 +772,7 @@ capabilities:
       type: side_effect
       description: Follows the artist.
   artist_unfollow:
+    receiver: {kind: entity, entity: Artist}
     description: Unfollow an artist.
     kind: action
     entity: Artist
@@ -854,6 +862,7 @@ capabilities:
           value_ref: nv_access_token
           required: true
   playlist_add_song:
+    receiver: {kind: entity, entity: Playlist}
     description: Add a song to this playlist.
     kind: action
     entity: Playlist
@@ -871,6 +880,7 @@ capabilities:
       type: side_effect
       description: Adds song_id to the playlist.
   playlist_remove_song:
+    receiver: {kind: entity, entity: Playlist}
     description: Remove a song from this playlist.
     kind: action
     entity: Playlist
@@ -888,6 +898,7 @@ capabilities:
       type: side_effect
       description: Removes song_id from the playlist.
   playlist_like:
+    receiver: {kind: entity, entity: Playlist}
     description: Like a playlist.
     kind: action
     entity: Playlist
@@ -902,6 +913,7 @@ capabilities:
       type: side_effect
       description: Likes the playlist.
   playlist_unlike:
+    receiver: {kind: entity, entity: Playlist}
     description: Unlike a playlist.
     kind: action
     entity: Playlist
@@ -1333,6 +1345,7 @@ capabilities:
     - like_count
     - shareable_link
   song_library_add:
+    receiver: {kind: entity, entity: Song}
     description: Add a song to the user's library.
     kind: action
     entity: Song
@@ -1347,6 +1360,7 @@ capabilities:
       type: side_effect
       description: Saves this song to the library.
   song_library_remove:
+    receiver: {kind: entity, entity: Song}
     description: Remove a song from the user's library.
     kind: action
     entity: Song
@@ -1402,6 +1416,7 @@ capabilities:
     - like_count
     - release_date
   album_library_add:
+    receiver: {kind: entity, entity: Album}
     description: Add an album to the user's library.
     kind: action
     entity: Album
@@ -1416,6 +1431,7 @@ capabilities:
       type: side_effect
       description: Saves this album to the library.
   album_library_remove:
+    receiver: {kind: entity, entity: Album}
     description: Remove an album from the user's library.
     kind: action
     entity: Album
@@ -1750,7 +1766,7 @@ capabilities:
           value_ref: nv_str
           required: true
         - name: card_number
-          value_ref: nv_int
+          value_ref: nv_card_number
           required: true
         - name: expiry_year
           value_ref: nv_int
@@ -1834,6 +1850,7 @@ capabilities:
     provides:
     - premium_subscription_id
   premium_subscription_receipt:
+    receiver: {kind: entity, entity: PremiumSubscription}
     description: Download a premium subscription receipt to a file-system path.
     kind: action
     entity: PremiumSubscription
@@ -1851,7 +1868,7 @@ capabilities:
           value_ref: nv_bool
           required: false
         - name: file_system_access_token
-          value_ref: nv_access_token
+          value_ref: nv_file_access_token
           required: false
     output:
       type: side_effect
@@ -1956,6 +1973,9 @@ values:
   nv_access_token:
     type: string
     description: Bearer access token from login.
+  nv_file_access_token:
+    type: string
+    description: Bearer token authorizing the file-path argument, distinct from this service's login token.
   nv_song_shelf:
     type: enum
     enum:
@@ -2049,6 +2069,9 @@ values:
   nv_int:
     type: integer
     description: Integer.
+  nv_card_number:
+    type: digit_id
+    description: Linked payment card primary account number.
   nv_like_count:
     type: integer
     description: Community/social popularity tally for this item — how many users have liked it, not whether the current user
@@ -2697,6 +2720,9 @@ prerequisites:
           path:
           - access_token
         output: token
+    - id: file_session
+      contract: appworld.session
+      bindings:
       - input:
           lane: payload
           path:

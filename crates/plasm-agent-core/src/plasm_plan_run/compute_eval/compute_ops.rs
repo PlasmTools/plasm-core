@@ -1,7 +1,5 @@
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
-use minijinja::value::{Enumerator, Object, ObjectRepr};
 use plasm_runtime::{eval_compute_ops, ComputeEvalOutcome};
 
 use crate::plasm_plan::OutputName;
@@ -34,7 +32,17 @@ pub(crate) fn eval_compute_from_rows(
     rows: &[serde_json::Value],
     cross_binding_rows: &BTreeMap<String, Vec<serde_json::Value>>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    match eval_compute_ops(std::slice::from_ref(&compute.op), rows)? {
+    if let ComputeOp::Union { other } = &compute.op {
+        let right = cross_binding_rows.get(other.as_str()).ok_or_else(|| {
+            format!(
+                "union RHS `{}` has not been materialized (RA-14)",
+                other.as_str()
+            )
+        })?;
+        return plasm_core::union_rowsets(rows, right);
+    }
+    let op = resolve_membership_filter_op(&compute.op, cross_binding_rows)?;
+    match eval_compute_ops(std::slice::from_ref(&op), rows)? {
         ComputeEvalOutcome::Rows(out) => Ok(out),
         ComputeEvalOutcome::Render {
             rows,
@@ -91,93 +99,187 @@ pub(crate) fn render_compute(
             rows.len()
         ));
     }
-    let projected = rows
-        .iter()
-        .enumerate()
-        .map(|(row_index, row)| {
-            input
-                .columns
-                .project_row(row, row_index)
-                .map(serde_json::Value::Object)
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-
-    let mut env = minijinja::Environment::new();
-    env.set_auto_escape_callback(|_| minijinja::AutoEscape::None);
-    env.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
-    env.add_template("plan_render", input.template)
-        .map_err(|e| format!("Plan.render template compile error: {e}"))?;
-    let tmpl = env
-        .get_template("plan_render")
-        .map_err(|e| format!("Plan.render template load error: {e}"))?;
-    let alias_name = input.collection_alias.map(|a| a.as_str());
-    let rows_val = minijinja::Value::from_serialize(&projected);
-    let mut ctx: BTreeMap<String, minijinja::Value> =
-        BTreeMap::from([("rows".to_string(), rows_val)]);
-    for label in effective_render_binding_labels(input.render_bindings, input.collection_alias) {
+    let source_label = input
+        .collection_alias
+        .map(|a| a.as_str())
+        .unwrap_or("source");
+    let binding_labels =
+        effective_render_binding_labels(input.render_bindings, input.collection_alias);
+    let mut named_bindings = BTreeMap::new();
+    for label in &binding_labels {
         let binding_rows = input
             .binding_rows
             .get(label.as_str())
             .map(|rows| rows.as_slice())
             .unwrap_or(rows);
-        ctx.insert(label, template_binding_value(binding_rows));
+        named_bindings.insert(label.clone(), binding_rows.to_vec());
     }
-    let rendered = tmpl.render(ctx).map_err(|e| {
-        if matches!(e.kind(), minijinja::ErrorKind::UndefinedError) {
-            format!(
-                "Plan.render template render error: {e}. {}",
-                render_context_hint(input.columns, alias_name)
-            )
+
+    let mut out = Vec::with_capacity(rows.len());
+    for (row_index, row) in rows.iter().enumerate() {
+        let projected = if input.columns.is_empty() {
+            row.clone()
         } else {
-            format!("Plan.render template render error: {e}")
+            serde_json::Value::Object(input.columns.project_row(row, row_index)?)
+        };
+        let rendered = plasm_core::render_minijinja(input.template, Some(&projected), &named_bindings)
+            .map_err(|e| {
+                let hint = render_context_hint(input.columns, Some(source_label));
+                format!(
+                    "template render failed on binding `{source_label}` at row {row_index}: {e}. {hint}"
+                )
+            })?;
+        if rendered.chars().count() > PLAN_RENDER_MAX_OUTPUT_CHARS {
+            return Err(format!(
+                "template render failed on binding `{source_label}` at row {row_index}: output exceeds {PLAN_RENDER_MAX_OUTPUT_CHARS} characters"
+            ));
         }
-    })?;
-    if rendered.chars().count() > PLAN_RENDER_MAX_OUTPUT_CHARS {
-        return Err(format!(
-            "Plan.render output exceeds {PLAN_RENDER_MAX_OUTPUT_CHARS} characters"
-        ));
+        out.push(serde_json::json!({ "content": rendered }));
     }
-
-    Ok(vec![serde_json::json!({ "content": rendered })])
+    Ok(out)
 }
 
-/// A render-binding value bound into the Minijinja context (collection alias / cross-binding source).
-///
-/// It is BOTH an iterable sequence — so `{% for r in items %}` always works, even for a single-row
-/// binding — AND an object whose attribute access delegates to the first row, so the single-object
-/// convenience `{{ items.title }}` still resolves. This resolves the prior collapse where a 1-row
-/// binding bound as a scalar object and `{% for r in items %}` iterated an object (undefined value).
-#[derive(Debug)]
-struct RenderBindingValue {
-    rows: Vec<minijinja::Value>,
-}
-
-impl Object for RenderBindingValue {
-    fn repr(self: &Arc<Self>) -> ObjectRepr {
-        ObjectRepr::Seq
-    }
-
-    fn get_value(self: &Arc<Self>, key: &minijinja::Value) -> Option<minijinja::Value> {
-        if let Some(name) = key.as_str() {
-            return self
-                .rows
-                .first()
-                .and_then(|row| row.get_attr(name).ok())
-                .filter(|value| !value.is_undefined());
+pub(crate) fn binding_rows_for_compute(
+    compute: &ComputeTemplate,
+    materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
+) -> Result<BTreeMap<String, Vec<serde_json::Value>>, String> {
+    let mut out = binding_rows_for_render(compute, materialized)?;
+    for label in membership_binding_labels(&compute.op) {
+        if out.contains_key(&label) {
+            continue;
         }
-        usize::try_from(key.clone())
-            .ok()
-            .and_then(|idx| self.rows.get(idx).cloned())
+        let node_id = PlanNodeId::new(label.clone())?;
+        let mat = materialized.get(&node_id).ok_or_else(|| {
+            format!("membership binding `{label}`: node `{label}` has not been materialized")
+        })?;
+        let rows = mat
+            .row_source
+            .inline_rows()
+            .map(|r| r.to_vec())
+            .ok_or_else(|| {
+                format!("membership binding `{label}`: node `{label}` is not inline materialized")
+            })?;
+        out.insert(label, rows);
     }
-
-    fn enumerate(self: &Arc<Self>) -> Enumerator {
-        Enumerator::Seq(self.rows.len())
-    }
+    Ok(out)
 }
 
-fn template_binding_value(rows: &[serde_json::Value]) -> minijinja::Value {
-    let rows: Vec<minijinja::Value> = rows.iter().map(minijinja::Value::from_serialize).collect();
-    minijinja::Value::from_object(RenderBindingValue { rows })
+pub(crate) fn resolve_filter_predicates_with_materialized(
+    predicates: &[crate::plasm_plan::PlanPredicate],
+    materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
+) -> Result<Vec<crate::plasm_plan::PlanPredicate>, String> {
+    let mut binding_rows = BTreeMap::new();
+    for label in membership_binding_labels(&ComputeOp::Filter {
+        predicates: predicates.to_vec(),
+    }) {
+        let node_id = PlanNodeId::new(label.clone())?;
+        let mat = materialized.get(&node_id).ok_or_else(|| {
+            format!("membership binding `{label}`: node `{label}` has not been materialized")
+        })?;
+        let rows = mat
+            .row_source
+            .inline_rows()
+            .map(|r| r.to_vec())
+            .ok_or_else(|| {
+                format!("membership binding `{label}`: node `{label}` is not inline materialized")
+            })?;
+        binding_rows.insert(label, rows);
+    }
+    predicates
+        .iter()
+        .map(|p| resolve_membership_predicate(p, &binding_rows))
+        .collect()
+}
+
+fn resolve_membership_filter_op(
+    op: &ComputeOp,
+    binding_rows: &BTreeMap<String, Vec<serde_json::Value>>,
+) -> Result<ComputeOp, String> {
+    let ComputeOp::Filter { predicates } = op else {
+        return Ok(op.clone());
+    };
+    let mut resolved = Vec::with_capacity(predicates.len());
+    for pred in predicates {
+        resolved.push(resolve_membership_predicate(pred, binding_rows)?);
+    }
+    Ok(ComputeOp::Filter {
+        predicates: resolved,
+    })
+}
+
+fn resolve_membership_predicate(
+    pred: &crate::plasm_plan::PlanPredicate,
+    binding_rows: &BTreeMap<String, Vec<serde_json::Value>>,
+) -> Result<crate::plasm_plan::PlanPredicate, String> {
+    let crate::plasm_plan::PlanValue::BindingSymbol { binding, path } = &pred.value else {
+        return Ok(pred.clone());
+    };
+    if !matches!(
+        pred.op,
+        crate::plasm_plan::PlanPredicateOp::In | crate::plasm_plan::PlanPredicateOp::NotIn
+    ) {
+        return Ok(pred.clone());
+    }
+    let rows = binding_rows
+        .get(binding)
+        .ok_or_else(|| format!("membership RHS `{binding}` has not been materialized (RA-13)"))?;
+    let values = collect_membership_column(binding, path, rows)?;
+    Ok(crate::plasm_plan::PlanPredicate {
+        field_path: pred.field_path.clone(),
+        op: pred.op,
+        value: crate::plasm_plan::PlanValue::Literal {
+            value: serde_json::Value::Array(values),
+        },
+    })
+}
+
+fn collect_membership_column(
+    binding: &str,
+    path: &[String],
+    rows: &[serde_json::Value],
+) -> Result<Vec<serde_json::Value>, String> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for row in rows {
+        let cell = membership_cell(binding, path, row)?;
+        if cell.is_null() {
+            continue;
+        }
+        let key = serde_json::to_string(&cell).map_err(|e| format!("membership cell: {e}"))?;
+        if seen.insert(key) {
+            out.push(cell);
+        }
+    }
+    Ok(out)
+}
+
+fn membership_cell(
+    binding: &str,
+    path: &[String],
+    row: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    if path.is_empty() {
+        let obj = row
+            .as_object()
+            .ok_or_else(|| format!("membership RHS `{binding}` row is not an object"))?;
+        if obj.len() != 1 {
+            return Err(format!(
+                "membership RHS `{binding}` must be one column; write `({binding} | select field)` (RA-13)"
+            ));
+        }
+        return Ok(obj
+            .values()
+            .next()
+            .cloned()
+            .unwrap_or(serde_json::Value::Null));
+    }
+    let mut cur = row;
+    for key in path {
+        cur = cur
+            .get(key)
+            .ok_or_else(|| format!("membership RHS `{binding}` has no column `{key}`"))?;
+    }
+    Ok(cur.clone())
 }
 
 pub(crate) fn binding_rows_for_render(
@@ -208,6 +310,63 @@ pub(crate) fn binding_rows_for_render(
         out.insert(label, rows);
     }
     Ok(out)
+}
+
+pub(crate) fn binding_rows_for_data_uses(
+    uses: &[crate::plasm_plan::PlanResultUse],
+    materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
+) -> Result<BTreeMap<String, Vec<serde_json::Value>>, String> {
+    let mut out = BTreeMap::new();
+    for use_ref in uses {
+        let label = use_ref.r#as.as_str();
+        let node_id = PlanNodeId::new(use_ref.node.clone())?;
+        let mat = materialized.get(&node_id).ok_or_else(|| {
+            format!(
+                "plain template binding `{label}`: node `{}` has not been materialized",
+                use_ref.node
+            )
+        })?;
+        let rows = mat
+            .row_source
+            .inline_rows()
+            .map(|r| r.to_vec())
+            .ok_or_else(|| {
+                format!(
+                    "plain template binding `{label}`: node `{}` is not inline materialized",
+                    use_ref.node
+                )
+            })?;
+        out.insert(label.to_string(), rows);
+    }
+    Ok(out)
+}
+
+pub(crate) fn eval_data_plan_value(
+    value: &crate::plasm_plan::PlanValue,
+    binding_rows: &BTreeMap<String, Vec<serde_json::Value>>,
+) -> Result<Vec<serde_json::Value>, String> {
+    match value {
+        crate::plasm_plan::PlanValue::Template {
+            template,
+            input_bindings,
+        } => {
+            let mut named = BTreeMap::new();
+            for binding in input_bindings {
+                let rows = binding_rows.get(&binding.from).cloned().ok_or_else(|| {
+                    format!(
+                        "plain template binding `{}` has not been materialized",
+                        binding.from
+                    )
+                })?;
+                named.insert(binding.to.clone(), rows);
+            }
+            let rendered = template
+                .render_minijinja_context(&plasm_core::unified_template_context(None, &named))
+                .map_err(|e| e.to_string())?;
+            Ok(vec![serde_json::Value::String(rendered)])
+        }
+        other => plan_value_to_rows(other),
+    }
 }
 
 pub(crate) fn json_scalar_display(v: &serde_json::Value) -> String {

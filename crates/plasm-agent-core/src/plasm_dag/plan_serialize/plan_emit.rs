@@ -58,6 +58,11 @@ impl PlanNodeEmitter for DagNodeSource {
                 out.projection = parsed.projection.clone().unwrap_or_default();
                 out.uses_result = uses_result.clone();
                 out.page_size = node.page_size;
+                // Identity is concrete `ir` only when resolved at plan time (no result
+                // bindings). Bound Get (`e#{id_field=tok}`) stays `ir_template` so dry/CML
+                // never stuffs a Binding hole (`@tok`) or dry stub into HTTP bearer.
+                // Iterate seed admits Get *kind* with `ir` or `ir_template` (PLP-8); do not
+                // use `uses_result.is_empty()` as the iterate gate.
                 if uses_result.is_empty() {
                     out.ir = Some(PlanExprIr {
                         expr: parsed.expr.clone(),
@@ -86,7 +91,16 @@ impl PlanNodeEmitter for DagNodeSource {
                 out.uses_result = relation_plan_uses_result(source_label, parsed);
                 out.page_size = node.page_size;
             }
-            Self::Data(value) => out.data = Some(value.clone()),
+            Self::Data(value) => {
+                out.data = Some(value.clone());
+                if let PlanValue::Template { input_bindings, .. } = value {
+                    out.uses_result = input_bindings
+                        .iter()
+                        .map(|b| result_use(&b.from, &b.to))
+                        .collect();
+                    out.result_shape = ResultShape::Single;
+                }
+            }
             Self::Compute {
                 source,
                 op,
@@ -94,7 +108,7 @@ impl PlanNodeEmitter for DagNodeSource {
                 collection_alias,
             } => {
                 out.kind = PlanNodeKind::Compute;
-                out.result_shape = if matches!(op, ComputeOp::Render { .. }) {
+                out.result_shape = if matches!(op, ComputeOp::Render { .. }) && node.singleton {
                     ResultShape::Single
                 } else {
                     ResultShape::List
@@ -110,6 +124,14 @@ impl PlanNodeEmitter for DagNodeSource {
                     ComputeOp::Render {
                         render_bindings, ..
                     } => render_plan_graph_edges(source, render_bindings).1,
+                    ComputeOp::Filter { predicates } => filter_plan_graph_edges(source, predicates),
+                    ComputeOp::Union { other } => {
+                        let mut uses = vec![result_use(source, "source")];
+                        if other.as_str() != source {
+                            uses.push(result_use(other.as_str(), other.as_str()));
+                        }
+                        uses
+                    }
                     _ => vec![result_use(source, "source")],
                 };
             }
@@ -229,6 +251,18 @@ fn effect_template(
         projection: vec![],
         input_bindings: vec![],
     }
+}
+
+fn filter_plan_graph_edges(source: &str, predicates: &[PlanPredicate]) -> Vec<PlanResultUse> {
+    let mut uses = vec![result_use(source, "source")];
+    for pred in predicates {
+        if let PlanValue::BindingSymbol { binding, .. } = &pred.value {
+            if binding != source {
+                uses.push(result_use(binding, binding));
+            }
+        }
+    }
+    uses
 }
 
 pub(in crate::plasm_dag) fn expression_template(

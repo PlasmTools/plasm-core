@@ -541,3 +541,59 @@ langcursor_tick:
     name: id
   - type: literal
     value: tick
+
+langvault_query:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: vaults
+
+langvault_unlock:
+  method: POST
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: vaults
+  - type: var
+    name: id
+  - type: literal
+    value: unlock
+  body:
+    type: object
+    fields:
+    - ["secret", { type: var, name: secret }]
+
+langlane_query:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: lanes
+  query:
+    type: object
+    fields:
+    - ["shelf", { type: var, name: shelf }]
+
+langlanestock_query:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: lane_stocks
+  query:
+    type: object
+    fields:
+    - ["shelf", { type: var, name: shelf }]

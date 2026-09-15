@@ -1,0 +1,89 @@
+version: 1
+auth:
+  scheme: none
+http_backend: http://127.0.0.1:9
+entities:
+  PwGroup:
+    id_field: group_id
+    description: Group with query-scoped expenses (partial-write relation fixture).
+    fields:
+      group_id:
+        required: true
+        value_ref: nv_pw_group_id
+      name:
+        required: true
+        value_ref: nv_pw_group_name
+    relations:
+      expenses:
+        description: Expenses belonging to this group.
+        target: PwExpense
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: pwexpense_query
+          param: group_id
+  PwExpense:
+    id_field: expense_id
+    description: Expense row created under a group.
+    fields:
+      expense_id:
+        required: true
+        value_ref: nv_pw_expense_id
+      group_id:
+        required: true
+        value_ref: nv_pw_group_id
+      description:
+        required: true
+        value_ref: nv_pw_expense_description
+    relations: {}
+capabilities:
+  pwgroup_get:
+    description: Get PwGroup by id
+    kind: get
+    entity: PwGroup
+    provides:
+      - group_id
+      - name
+  pwexpense_create:
+    description: Create a PwExpense under a group
+    kind: create
+    entity: PwExpense
+    payload:
+      input_type:
+        type: object
+        fields:
+          - name: group_id
+            value_ref: nv_pw_group_id
+            required: true
+          - name: description
+            value_ref: nv_pw_expense_description
+            required: true
+    provides:
+      - expense_id
+      - group_id
+      - description
+  pwexpense_query:
+    description: List PwExpense rows scoped by group_id
+    kind: query
+    entity: PwExpense
+    scope:
+      - name: group_id
+        value_ref: nv_pw_group_id
+        required: true
+    provides:
+      - expense_id
+      - group_id
+      - description
+values:
+  nv_pw_group_id:
+    type: string
+    description: Group id
+  nv_pw_group_name:
+    type: string
+    description: Group name
+  nv_pw_expense_id:
+    type: string
+    description: Expense id
+  nv_pw_expense_description:
+    type: string
+    description: Expense description

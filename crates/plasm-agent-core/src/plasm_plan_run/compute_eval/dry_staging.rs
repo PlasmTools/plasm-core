@@ -246,7 +246,54 @@ fn dry_stub_entity_rows_for(
         .cgs
         .get_entity(qe.entity.as_str())
         .ok_or_else(|| format!("dry staging: unknown entity `{}`", qe.entity))?;
-    dry_stub_entity_rows(scoped.cgs.as_ref(), ent, count)
+    let (rows, _) = dry_stub_entity_rows(scoped.cgs.as_ref(), ent, count)?;
+    let keys: Vec<String> = ent.key_vars.iter().map(ToString::to_string).collect();
+    let identities = rows
+        .iter()
+        .map(|row| {
+            let scalar = |key: &str| -> Result<String, String> {
+                let value = row
+                    .get(key)
+                    .ok_or_else(|| format!("dry identity lacks `{key}`"))?;
+                plasm_core::operand_binding::IdentityCodec::compile(
+                    scoped.cgs.as_ref(),
+                    plasm_core::operand_binding::IdentityTarget {
+                        entity: &ent.name,
+                        field: (keys.len() > 1).then_some(key),
+                    },
+                )?
+                .encode(value)
+                .map(|id| id.to_string())
+            };
+            let reference = if keys.len() > 1 {
+                let parts = keys
+                    .iter()
+                    .map(|key| scalar(key).map(|value| (key.clone(), value)))
+                    .collect::<Result<std::collections::BTreeMap<_, _>, _>>()?;
+                plasm_core::Ref::compound(ent.name.to_string(), parts)
+            } else {
+                plasm_core::Ref::new(
+                    ent.name.to_string(),
+                    scalar(
+                        keys.first()
+                            .map(String::as_str)
+                            .unwrap_or(ent.id_field.as_str()),
+                    )?,
+                )
+            };
+            Ok(Some(plasm_core::row_composition::row_identity_from_parts(
+                plasm_core::QualifiedEntityKey {
+                    entry_id: qe.entry_id.clone().into(),
+                    entity: qe.entity.clone().into(),
+                },
+                reference,
+                &indexmap::IndexMap::new(),
+                ent.id_field.as_str(),
+                &keys,
+            )))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok((rows, identities))
 }
 
 /// Dry stub materialization of one node, dispatched through the PEC [`ExecStep`] taxonomy. Pure
@@ -342,7 +389,24 @@ pub(crate) fn dry_validate_staged_surfaces(
         .map(|n| (n.id().as_str().to_string(), n))
         .collect();
     let mut materialized: BTreeMap<PlanNodeId, MaterializedNode> = BTreeMap::new();
+    let mut synthetic = std::collections::BTreeSet::new();
+    let mut deferred = std::collections::BTreeSet::new();
     for n in &plan.nodes {
+        // Backend stubs witness types, not membership. A predicate evaluated on
+        // invented values cannot prove a real query empty (or nonempty). Stage
+        // that computation and its dependents until live rows are available;
+        // their IR still receives the normal template/type preflight.
+        let has_synthetic_input = n.depends_on().iter().any(|id| synthetic.contains(id));
+        if matches!(ExecStep::classify(n.clone()), ExecStep::Io(_)) || has_synthetic_input {
+            synthetic.insert(n.id().clone());
+        }
+        let filters_synthetic_rows = has_synthetic_input
+            && matches!(n, ValidatedPlanNode::Compute(c)
+                if matches!(c.compute.op, crate::plasm_plan::ComputeOp::Filter { .. }));
+        if filters_synthetic_rows || n.depends_on().iter().any(|id| deferred.contains(id)) {
+            deferred.insert(n.id().clone());
+            continue;
+        }
         // Dry validation performs no backend exchange. `block_on` is only the sync bridge for the
         // shared async materialization helpers used by the closed execution machine.
         futures::executor::block_on(async {

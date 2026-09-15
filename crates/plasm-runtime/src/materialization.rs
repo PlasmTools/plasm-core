@@ -5,6 +5,7 @@ use crate::query_index::{QueryCacheKey, QueryIndex};
 use crate::replay::{MemoryReplayStore, ReplayEntry, ReplayStore, RequestFingerprint};
 use crate::{ExecutionSource, RuntimeError};
 use indexmap::IndexMap;
+use plasm_core::prerequisites::DeploymentBindings;
 use plasm_core::{CompOp, GetExpr, QueryExpr, Ref, Value, CGS};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -177,22 +178,71 @@ impl SessionResponseStore {
 
 use crate::materialization_conflict::content_diverged;
 
+/// Whether Complete-graph / query-index / response-store consults are lawful (RA-11).
+///
+/// Completeness is field coverage. This flag is freshness: after an in-session write,
+/// a Complete row must not satisfy recorded-read reuse. Copied on fork; not a write-set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum RecordedReadReuse {
+    #[default]
+    Allowed,
+    Invalidated,
+}
+
+/// Mutations *performed by this materialization*, distinct from inherited RA-11 reuse.
+///
+/// Absorb wholesale-replaces graph + auxiliary stores only when this branch itself
+/// recorded a write. Inherited [`RecordedReadReuse::Invalidated`] still union-merges
+/// so sibling read observations accumulate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum BranchLocalWrite {
+    #[default]
+    None,
+    Recorded,
+}
+
 /// Unified per-session materialization state.
 #[derive(Debug, Clone, Default)]
 pub struct SessionMaterialization {
     pub graph: GraphCache,
     pub responses: SessionResponseStore,
     pub query_index: QueryIndex,
-    /// Set when a mutating execute poisons scoped read consults on this materialization.
-    /// Branch commit replaces session auxiliary caches (and graph) when true.
-    pub(crate) read_cache_invalidated: bool,
+    /// RA-11 freshness of recorded reads. Independent of [`Self::branch_local_write`].
+    pub(crate) recorded_read_reuse: RecordedReadReuse,
+    /// Whether *this* store ran a mutator. Independent of inherited [`Self::recorded_read_reuse`].
+    pub(crate) branch_local_write: BranchLocalWrite,
     /// Capability params from the fetch that produced each row. Inherited by synthesized GETs.
     pub(crate) inherited_capability_params: std::collections::HashMap<Ref, IndexMap<String, Value>>,
+    /// Catalog-keyed fields from action-with-`provides` (e.g. AuthSession login `access_token`).
+    /// Overlay onto unary Gets the same way a per-ref stamp / `catalog_bind` already does.
+    /// Search selection holes do not read this map.
+    pub(crate) provided_session_params: std::collections::HashMap<String, IndexMap<String, Value>>,
+    /// RA-17 deployments for RA-6 inherit: omit a parent token onto a foreign seat.
+    pub(crate) prerequisite_deployments: DeploymentBindings,
 }
 
 impl SessionMaterialization {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Read-side fan-out / fork seed: same stores and inherited RA-11 reuse; no local write.
+    pub(crate) fn seed_read_branch(hot: &Self, graph: GraphCache) -> Self {
+        Self {
+            graph,
+            responses: hot.responses.clone(),
+            query_index: hot.query_index.clone(),
+            recorded_read_reuse: hot.recorded_read_reuse,
+            branch_local_write: BranchLocalWrite::None,
+            inherited_capability_params: hot.inherited_capability_params.clone(),
+            provided_session_params: hot.provided_session_params.clone(),
+            prerequisite_deployments: hot.prerequisite_deployments.clone(),
+        }
+    }
+
+    /// Pin RA-17 deployments so relation inherit can prove catalog identity.
+    pub fn set_prerequisite_deployments(&mut self, bindings: DeploymentBindings) {
+        self.prerequisite_deployments = bindings;
     }
 
     /// Stamp non-identity capability params (CLI flags, session inherit) onto a row ref.
@@ -214,6 +264,50 @@ impl SessionMaterialization {
             .unwrap_or_default()
     }
 
+    /// Catalog key for provided-session overlay: explicit stamp, else CGS `entry_id`, else `""`.
+    pub(crate) fn provide_catalog_key(cgs: &plasm_core::CGS, stamp: Option<&str>) -> String {
+        stamp
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToOwned::to_owned)
+            .or_else(|| cgs.entry_id.clone())
+            .unwrap_or_default()
+    }
+
+    /// Stamp action-`provides` fields for later unary Gets on this catalog.
+    /// Survives [`Self::poison_read_caches_after_mutation`] — login is not a cached read.
+    pub fn stamp_provided_session_params(
+        &mut self,
+        catalog_key: impl Into<String>,
+        params: IndexMap<String, Value>,
+    ) {
+        if params.is_empty() {
+            return;
+        }
+        self.provided_session_params
+            .entry(catalog_key.into())
+            .or_default()
+            .extend(params);
+    }
+
+    pub(crate) fn provided_session_params_for(&self, catalog_key: &str) -> IndexMap<String, Value> {
+        self.provided_session_params
+            .get(catalog_key)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Get CML overlay: catalog-provided session fields, then per-ref stamps (per-ref wins).
+    pub(crate) fn capability_params_for_get(
+        &self,
+        reference: &Ref,
+        catalog_key: &str,
+    ) -> IndexMap<String, Value> {
+        let mut overlay = self.provided_session_params_for(catalog_key);
+        overlay.extend(self.capability_params_for(reference));
+        overlay
+    }
+
     pub fn graph_mut(&mut self) -> &mut GraphCache {
         &mut self.graph
     }
@@ -231,13 +325,31 @@ impl SessionMaterialization {
         self.responses.invalidate_entity_type(entity_type);
     }
 
-    /// After any mutation, composed views must not consult pre-write scoped caches.
+    /// After any mutation, composed views and unary Gets must not consult pre-write
+    /// scoped caches, response fingerprints, or replay cassettes (RA-11).
     pub fn poison_read_caches_after_mutation(&mut self) {
-        self.read_cache_invalidated = true;
+        self.recorded_read_reuse = RecordedReadReuse::Invalidated;
+        self.branch_local_write = BranchLocalWrite::Recorded;
         self.query_index = QueryIndex::default();
         self.responses = SessionResponseStore::default();
         self.inherited_capability_params
             .retain(|reference, _| self.graph.get(reference).is_some());
+    }
+
+    /// RA-11: recorded Get / HTTP reuse is lawful only before the first in-session write.
+    #[must_use]
+    pub fn allows_recorded_read_reuse(&self) -> bool {
+        matches!(self.recorded_read_reuse, RecordedReadReuse::Allowed)
+    }
+
+    /// Unary Get graph consult. After poison, returns `None` so Get re-observes live.
+    #[must_use]
+    pub fn consult_complete_get(&self, reference: &Ref) -> Option<&CachedEntity> {
+        if !self.allows_recorded_read_reuse() {
+            return None;
+        }
+        self.get(reference)
+            .filter(|entity| entity.completeness == EntityCompleteness::Complete)
     }
 
     /// Evict every cached row of each `invalidates_entities` type and drop scoped query /
@@ -270,24 +382,32 @@ impl SessionMaterialization {
 
     /// Merge fanout branch materialization back into the session (graph + response + query index).
     ///
-    /// When the branch recorded a mutation (`read_cache_invalidated`), the branch graph is the
-    /// authoritative post-write read model — replace session stores wholesale instead of union-merge,
-    /// which would resurrect evicted query-index entries and HTTP response fingerprints.
+    /// Wholesale replace is keyed on [`BranchLocalWrite::Recorded`] (this branch mutated),
+    /// not inherited [`RecordedReadReuse::Invalidated`]. A poisoned parent with two
+    /// read-only sibling forks must union-merge so both observations survive absorb.
     pub fn absorb_branch(&mut self, branch: SessionMaterialization) -> Result<usize, RuntimeError> {
-        if branch.read_cache_invalidated {
+        if matches!(branch.branch_local_write, BranchLocalWrite::Recorded) {
             let merged = branch.graph.stats().total_entities;
             self.graph = branch.graph;
             self.query_index = branch.query_index;
             self.responses = branch.responses;
             self.inherited_capability_params = branch.inherited_capability_params;
-            self.read_cache_invalidated = true;
+            self.provided_session_params = branch.provided_session_params;
+            self.recorded_read_reuse = RecordedReadReuse::Invalidated;
+            self.branch_local_write = BranchLocalWrite::Recorded;
             return Ok(merged);
         }
         let merged = self.graph.merge_from_graph(&branch.graph)?;
         self.responses.merge_from(branch.responses);
         self.query_index.merge_from(branch.query_index);
+        if matches!(branch.recorded_read_reuse, RecordedReadReuse::Invalidated) {
+            self.recorded_read_reuse = RecordedReadReuse::Invalidated;
+        }
         for (reference, params) in branch.inherited_capability_params {
             self.stamp_capability_params(&reference, params);
+        }
+        for (catalog_key, params) in branch.provided_session_params {
+            self.stamp_provided_session_params(catalog_key, params);
         }
         Ok(merged)
     }
@@ -494,44 +614,28 @@ mod tests {
     #[test]
     fn post_mutation_evicts_stale_read_model_graph_rows() {
         use crate::cache::EntityCompleteness;
-        use plasm_core::schema::{
-            CapabilityKind, CapabilityMapping, CapabilitySchema, CapabilityTemplateJson,
-        };
-        use plasm_core::{CapabilityName, EntityName, Ref};
+        use plasm_core::Ref;
 
-        let domain = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../apis/tau3_banking/domain.yaml");
-        let mappings = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../apis/tau3_banking/mappings.yaml");
-        let cgs = plasm_core::loader::load_split_schema(&domain, &mappings).expect("cgs");
+        let cgs = plasm_core::loader::load_schema_dir(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/plasm_language_matrix"),
+        )
+        .expect("language matrix CGS");
 
-        let cap = CapabilitySchema {
-            name: CapabilityName::from("CreditCardAccountLocked_pay_from_checking"),
-            description: String::new(),
-            kind: CapabilityKind::Action,
-            domain: EntityName::from("CreditCardAccountLocked"),
-            mapping: Some(CapabilityMapping {
-                template: CapabilityTemplateJson(serde_json::json!({ "method": "POST" })),
-            }),
-            derived: None,
-            inputs: Default::default(),
-            output_schema: None,
-            provides: vec![],
-            sanitizes: vec![],
-            deterministic: None,
-            scope_aggregate_key_policy: Default::default(),
-            preflight: None,
-            discovery: None,
-            identity_key: None,
-            invalidates_entities: vec!["CreditCardAccount".to_string()],
-        };
+        let cap = cgs
+            .get_capability("langcursor_tick")
+            .expect("langcursor_tick on plasm_language_matrix");
+        assert!(
+            cap.invalidates_entities.iter().any(|e| e == "LangCursor"),
+            "fixture must declare type-wide LangCursor eviction"
+        );
 
         let mut mat = SessionMaterialization::new();
         mat.insert(CachedEntity::from_decoded(
-            Ref::new("CreditCardAccount", "cc1"),
+            Ref::new("LangCursor", "c1"),
             [
-                ("account_id".into(), Value::String("cc1".into())),
-                ("balance".into(), Value::Integer(3000)),
+                ("id".into(), Value::String("c1".into())),
+                ("phase".into(), Value::String("open".into())),
             ]
             .into_iter()
             .collect(),
@@ -540,58 +644,38 @@ mod tests {
             EntityCompleteness::Complete,
         ))
         .unwrap();
-        let key = QueryCacheKey::test("CreditCardAccount\0get\0user_id=u1");
+        let key = QueryCacheKey::test("LangCursor\0get\0id=c1");
         mat.query_index
-            .insert(key.clone(), vec![Ref::new("CreditCardAccount", "cc1")]);
+            .insert(key.clone(), vec![Ref::new("LangCursor", "c1")]);
 
         // Type-wide eviction ignores mutator echo identity; only invalidates_entities matters.
-        mat.apply_post_mutation_cache_effects(&cap, &cgs).unwrap();
+        mat.apply_post_mutation_cache_effects(cap, &cgs).unwrap();
 
-        assert!(mat.get(&Ref::new("CreditCardAccount", "cc1")).is_none());
+        assert!(mat.get(&Ref::new("LangCursor", "c1")).is_none());
         assert!(mat.query_index.get(&key).is_none());
     }
 
     #[test]
     fn post_mutation_type_wide_evicts_even_when_echo_ref_is_empty() {
         use crate::cache::EntityCompleteness;
-        use plasm_core::schema::{
-            CapabilityKind, CapabilityMapping, CapabilitySchema, CapabilityTemplateJson,
-        };
-        use plasm_core::{CapabilityName, EntityName, Ref};
+        use plasm_core::Ref;
 
-        let domain = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../apis/tau3_banking/domain.yaml");
-        let mappings = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../apis/tau3_banking/mappings.yaml");
-        let cgs = plasm_core::loader::load_split_schema(&domain, &mappings).expect("cgs");
+        let cgs = plasm_core::loader::load_schema_dir(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/plasm_language_matrix"),
+        )
+        .expect("language matrix CGS");
 
-        let cap = CapabilitySchema {
-            name: CapabilityName::from("CreditCardAccountLocked_pay_from_checking"),
-            description: String::new(),
-            kind: CapabilityKind::Action,
-            domain: EntityName::from("CreditCardAccountLocked"),
-            mapping: Some(CapabilityMapping {
-                template: CapabilityTemplateJson(serde_json::json!({ "method": "POST" })),
-            }),
-            derived: None,
-            inputs: Default::default(),
-            output_schema: None,
-            provides: vec![],
-            sanitizes: vec![],
-            deterministic: None,
-            scope_aggregate_key_policy: Default::default(),
-            preflight: None,
-            discovery: None,
-            identity_key: None,
-            invalidates_entities: vec!["CreditCardAccount".to_string()],
-        };
+        let cap = cgs
+            .get_capability("langcursor_tick")
+            .expect("langcursor_tick on plasm_language_matrix");
 
         let mut mat = SessionMaterialization::new();
         mat.insert(CachedEntity::from_decoded(
-            Ref::new("CreditCardAccount", "jwt-or-seed-id"),
+            Ref::new("LangCursor", "seed-cursor"),
             [
-                ("account_id".into(), Value::String("jwt-or-seed-id".into())),
-                ("balance".into(), Value::Integer(3000)),
+                ("id".into(), Value::String("seed-cursor".into())),
+                ("phase".into(), Value::String("open".into())),
             ]
             .into_iter()
             .collect(),
@@ -603,11 +687,49 @@ mod tests {
 
         // Former surgical-by-echo-id path would miss this seed when the mutator decoded
         // under an empty Ref; type-wide eviction clears the whole entity type.
-        mat.apply_post_mutation_cache_effects(&cap, &cgs).unwrap();
+        mat.apply_post_mutation_cache_effects(cap, &cgs).unwrap();
 
-        assert!(mat
-            .get(&Ref::new("CreditCardAccount", "jwt-or-seed-id"))
-            .is_none());
+        assert!(mat.get(&Ref::new("LangCursor", "seed-cursor")).is_none());
+    }
+
+    #[test]
+    fn ra11_consult_complete_get_skips_after_mutation_poison() {
+        let mut mat = SessionMaterialization::new();
+        let reference = Ref::new("Widget", "w1");
+        mat.insert(CachedEntity::from_decoded(
+            reference.clone(),
+            [("label".into(), Value::String("seed".into()))]
+                .into_iter()
+                .collect(),
+            indexmap::IndexMap::new(),
+            1,
+            EntityCompleteness::Complete,
+        ))
+        .unwrap();
+        assert!(mat.allows_recorded_read_reuse());
+        assert!(mat.consult_complete_get(&reference).is_some());
+
+        mat.poison_read_caches_after_mutation();
+        assert!(!mat.allows_recorded_read_reuse());
+        assert!(mat.consult_complete_get(&reference).is_none());
+        assert!(
+            mat.get(&reference).is_some(),
+            "poison skips Get consult; it does not drop the graph row"
+        );
+    }
+
+    #[test]
+    fn seed_read_branch_inherits_reuse_not_local_write() {
+        let mut hot = SessionMaterialization::new();
+        hot.poison_read_caches_after_mutation();
+        assert!(matches!(hot.branch_local_write, BranchLocalWrite::Recorded));
+        let branch = SessionMaterialization::seed_read_branch(&hot, hot.graph.fork_for_branch());
+        assert!(!branch.allows_recorded_read_reuse());
+        assert!(matches!(branch.branch_local_write, BranchLocalWrite::None));
+        assert!(matches!(
+            hot.recorded_read_reuse,
+            RecordedReadReuse::Invalidated
+        ));
     }
 
     #[test]

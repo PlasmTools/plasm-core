@@ -59,6 +59,7 @@ impl TypedLiteral {
         match v {
             Value::UnionCtor { .. } => Err(TypedLiteralError::UnionConstructor),
             Value::PlasmInputRef(r) => Ok(TypedLiteral::InputRef(r.clone())),
+            Value::GetScalarExtract(_) => Err(TypedLiteralError::UnsupportedPlasmHoleInCollection),
             Value::Null => Ok(TypedLiteral::Null),
             Value::Bool(b) => Ok(TypedLiteral::Bool(*b)),
             Value::Integer(i) => Ok(TypedLiteral::Integer(*i)),

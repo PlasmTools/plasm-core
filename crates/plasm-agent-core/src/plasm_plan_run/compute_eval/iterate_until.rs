@@ -34,16 +34,14 @@ pub(crate) async fn materialize_iterate_until_node(
     let wire_coercion_by_alias = wire_coercion_by_alias_from_inputs(es, &mut input_rows)?;
     let scoped_es = entry_scoped_execute_session(es, Some(&it.effect_template.qualified_entity))?;
 
-    let seed_qe = materialized
-        .get(&it.source)
-        .ok_or_else(|| {
-            format!(
-                "iterate_until source {} has not been materialized",
-                it.source.as_str()
-            )
-        })?
-        .qualified_entity
-        .clone();
+    let seed_mat = materialized.get(&it.source).ok_or_else(|| {
+        format!(
+            "iterate_until source {} has not been materialized",
+            it.source.as_str()
+        )
+    })?;
+    let seed_qe = seed_mat.qualified_entity.clone();
+    let seed_coverage = seed_mat.result.coverage;
 
     if row_satisfies_until(&current_rows[0], &it.until_predicates) {
         return super::super::materialize::archive_materialize_iterate_until(
@@ -59,6 +57,7 @@ pub(crate) async fn materialize_iterate_until_node(
             ExecutionStats::default(),
             ExecutionSource::Cache,
             0,
+            coverage_for_iterate_until(seed_coverage, []),
             trace,
         )
         .await;
@@ -68,6 +67,7 @@ pub(crate) async fn materialize_iterate_until_node(
     let mut request_fingerprints = Vec::new();
     let mut stats = ExecutionStats::default();
     let mut source = ExecutionSource::Cache;
+    let mut step_coverages = Vec::new();
 
     for step_idx in 1..=it.take {
         let row = current_rows
@@ -94,7 +94,7 @@ pub(crate) async fn materialize_iterate_until_node(
             trace,
             sink,
             plan_shared.clone(),
-            super::super::plan_fanout_parallel::RowFanoutPolicy::for_each(false, 1),
+            super::super::plan_fanout_parallel::RowFanoutPolicy::state_step(),
         )
         .await
         .map_err(|e| format!("iterate_until step {step_idx}: {e}"))?;
@@ -106,6 +106,7 @@ pub(crate) async fn materialize_iterate_until_node(
             super::super::plan_fanout_parallel::ExecutionStatsFold::Telemetry,
         );
         source = super::super::plan_fanout_parallel::combine_execution_source(source, fold.source);
+        step_coverages.push(fold.coverage);
 
         // Always re-Get the seed after the step. Mutator echoes (even with `provides`) are not a
         // substitute for primary_read / composed views — e.g. Player.previous may echo song_id while
@@ -140,6 +141,7 @@ pub(crate) async fn materialize_iterate_until_node(
                 stats,
                 source,
                 step_idx,
+                coverage_for_iterate_until(seed_coverage, step_coverages.iter().copied()),
                 trace,
             )
             .await;

@@ -31,13 +31,17 @@
 //! Model output must be those expression shapes—not prose.
 //! Use [`RenderConfig::focus`] to subset entities.
 //!
-//! **Relations** lines teach `Get(id).relation` when that path **parses and type-checks**. With an
+//! **Relations** lines teach **both** StaticSingleton `eN(<id>).r#` and program-stratum fanout
+//! `rows = <taught list query>` then `rows => _.r#` (`Applicator::Relation`) when that relation
+//! is admissible and a list query was taught for the source entity. The bind RHS is the same
+//! `eN{…}` head already on the card (projection bracket stripped). List-query `eN{…}.r#`
+//! is never emitted (PLP-4 reject). With an
 //! [`ExposureSurface`](crate::symbol_tuning::ExposureSurface) filter (incremental teaching waves), **outgoing**
 //! navigation teaches only targets in the surface entity set, and **incoming** projection-witness bases
 //! (`ParentRecv…[p#,…]`) require the parent entity on the surface plus the same slot checks as outgoing nav;
 //! field gloss rows and `ref:*` typing are unchanged.
 //! Meaning uses
-//! `relation e#_src ↣ [e#_tgt]` (many) or `relation e#_src → e#_tgt` (one) in **Meaning** only; executable nav is `<receiver>.r#` or wire in `plasm_expr`. Result arrows mirror [`ReturnArrow`]: `→` single, `↣` list, `↠` terminal write.
+//! `relation e#_src ↣ [e#_tgt]` (many) or `relation e#_src → e#_tgt` (one) in **Meaning** only; executable nav is `eN(<id>).r#` and `rows = eN{…}` / `rows => _.r#` (or wire) in `plasm_expr`. Result arrows mirror [`ReturnArrow`]: `→` single, `↣` list, `↠` terminal write.
 //! For terminal relation chains, the example line already carries a **result gloss** (`relation …`);
 //! relation hops use the **`r#` pool** in exemplars (`.r#` in `plasm_expr`) with standalone **`r#` gloss rows**
 //! mapping alias → wire name (parallel to `p#` / `v# · wire`).
@@ -47,9 +51,15 @@
 //! edges with `materialize` (`from_parent_get`, `query_scoped`, …) the IR is [`Expr::Chain`](crate::Expr);
 //! many-relations without materialization **fail parse** and are omitted from teaching table.
 //!
-//! **Validation:** every **single-expression** teaching example (after stripping human-only `  ;;  …` suffixes,
-//! legacy `  =>  ` before `;;`, and legacy relation ` -> …` before `;;`) is checked with **parse →
-//! [`normalize_expr_query_capabilities`](crate::normalize_expr_query_capabilities) → [`type_check_expr`](crate::type_check_expr)** before emission.
+//! **Validation:** every teaching example (after stripping human-only `  ;;  …` suffixes,
+//! legacy `  =>  ` before `;;`, and legacy relation ` -> …` before `;;`) is checked before emission.
+//! Expr-stratum lines use **parse →
+//! [`normalize_expr_query_capabilities`](crate::normalize_expr_query_capabilities) → [`type_check_expr`](crate::type_check_expr)**.
+//! Program-stratum seats use [`parse_expr_node`](crate::expr_parser::parse_expr_node): `ident = <list Query>`
+//! (bind echoing the taught query) and `ident => _.r#` ([`Applicator::Relation`](crate::expr_parser::Applicator)
+//! + relation resolve/admissibility — the same surface parser that executes `ℓ => _.r#`).
+//! Arbitrary programs are not admitted as teaching lines.
+//!
 //! Zero-arity pipeline methods emit **one** `…()` expression per line (each line is fully validated).
 //!
 //! **Load-time invariant:** [`CGS::validate`](crate::schema::CGS::validate) runs [`crate::cgs_expression_validate`],
@@ -65,6 +75,7 @@ mod bundle_render;
 mod capability_delta;
 mod contract;
 mod entity_block;
+mod evaluation_now;
 mod fetch_head_teaching;
 mod gloss_collect;
 mod gloss_dedup;
@@ -100,6 +111,10 @@ pub use bundle_render::{
     render_prompt_tsv_with_config, render_prompt_with_config, render_teaching_bundle,
     render_teaching_prompt_bundle, render_teaching_prompt_bundle_for_exposure,
     render_teaching_prompt_bundle_for_exposure_federated, render_teaching_tsv,
+};
+pub use evaluation_now::{
+    format_evaluation_now_instant, format_evaluation_now_teaching_meaning, EVALUATION_NOW_EXPR,
+    EVALUATION_NOW_MEANING_SUFFIX,
 };
 pub use input_legend::{
     CapabilityInputLegend, ReturnArrow, RowContractLegend, RowProjectionContract, TeachingExprLine,

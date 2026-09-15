@@ -1,0 +1,4 @@
+login:
+  method: POST
+  path:
+    - {type: literal, value: login}

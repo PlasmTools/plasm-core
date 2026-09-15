@@ -500,7 +500,8 @@ pub async fn apply_capability_seeds(
     }
 
     let skip_primary_open = binding.is_none() && waves.iter().any(|w| w.mode == "open");
-    let federate_expand_waves = commit_federate_and_expand_waves(
+    // Isolate the commit/materialization future from the context orchestration frame.
+    let federate_expand_waves = Box::pin(commit_federate_and_expand_waves(
         st,
         principal_incoming,
         prompt_hash.as_str(),
@@ -510,7 +511,7 @@ pub async fn apply_capability_seeds(
         principal.clone(),
         outbound_ref,
         bindings_ref,
-    )
+    ))
     .await?;
     waves.extend(federate_expand_waves);
 
@@ -613,10 +614,11 @@ mod sufficiency_tests {
             selection: CapabilitySelection {
                 status,
                 additional_capability_ids: vec![],
-                unsupported: if status == SelectionStatus::Insufficient {
-                    vec![crate::discovery_service::UnsupportedWork {
-                        intent_quote: "continue".into(),
-                        reason: "Missing presented functionality".into(),
+                requirement_coverage: if status == SelectionStatus::Insufficient {
+                    vec![crate::discovery_service::RequirementCoverage {
+                        requirement: "continue".into(),
+                        supporting_capability_ids: vec![],
+                        unresolved_reason: "Missing presented functionality".into(),
                     }]
                 } else {
                     vec![]
@@ -628,6 +630,7 @@ mod sufficiency_tests {
                 acquisitions: vec![],
                 edges: vec![],
             }),
+            recovery: None,
         }));
         let unchanged = apply_capability_seeds(
             &host,

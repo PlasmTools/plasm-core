@@ -141,6 +141,7 @@ capabilities:
           value_ref: nv_issue_project_key
           required: true
   issue_get:
+    receiver: {kind: none}
     kind: get
     entity: Issue
 values:

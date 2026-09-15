@@ -22,7 +22,7 @@ pub use operators::{
 };
 pub use payload::{
     AggregateFunction, AggregateSpec, ArithOp, BindingName, ComputeOp, ComputeTemplate, DeriveKind,
-    DerivePayload, DeriveTemplate, EffectTemplate, FieldPath, FlatMapEffectPayload,
+    DerivePayload, DeriveTemplate, EffectTemplate, FieldPath, FlatMapApplyPayload,
     FlatMapRelationPayload, InputCardinality, InvokePayload, MapPayload, OutputName, PlanDataInput,
     PlanExprIr, PlanExprTemplate, PlanInputBinding, PlanPredicate, PlanPredicateOp,
     PlanQualifiedEntityKey, PlanRelationTraversal, PlanResultUse, PlasmDataValue, PlasmStepPayload,

@@ -118,6 +118,7 @@ impl MaterializedNode {
                 count: rows.len(),
                 entities: Vec::new(),
                 has_more: false,
+                coverage: plasm_runtime::ResultCoverage::Unknown,
                 pagination_resume: None,
                 paging_handle: None,
                 source: ExecutionSource::Cache,
@@ -372,7 +373,8 @@ pub(crate) async fn run_executable_plan_phased(
                     node,
                     &materialized,
                 ))
-                .await?;
+                .await
+                .map_err(|error| error_with_completed_operations(error, &materialized))?;
                 apply_step_materialize_outcomes(
                     &mut materialized,
                     &mut evidence_steps,
@@ -568,6 +570,7 @@ mod tests {
                 count: 0,
                 entities: Vec::new(),
                 has_more: false,
+                coverage: plasm_runtime::ResultCoverage::Unknown,
                 pagination_resume: None,
                 paging_handle: None,
                 source: ExecutionSource::Cache,
@@ -603,4 +606,21 @@ mod tests {
             "CEP-9: same-layer materialization must not appear in the worker snapshot"
         );
     }
+}
+
+/// Preserve acknowledgments from completed steps when a later step aborts the plan.
+/// These are confirmed effects, not a claim that the failing step had no effects.
+fn error_with_completed_operations(
+    error: String,
+    materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
+) -> String {
+    let completed: Vec<_> = materialized.iter().flat_map(|(node, value)| {
+        value.result.operations.entries().iter().filter(|ack| ack.completed > 0).map(move |ack| {
+            serde_json::json!({"node": node, "entry_id": ack.entry_id, "capability": ack.capability, "completed": ack.completed})
+        })
+    }).collect();
+    if completed.is_empty() {
+        return error;
+    }
+    format!("{error}\nConfirmed operations before failure (not rolled back): {}\nThe failing operation may require reconciliation; do not replay confirmed effects.", serde_json::Value::Array(completed))
 }

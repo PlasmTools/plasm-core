@@ -1,4 +1,4 @@
-version: 3
+version: 4
 auth:
   scheme: none
 http_backend: http://127.0.0.1:9
@@ -63,7 +63,7 @@ entities:
         value_ref: nv_compound_branch_owner
       item_id:
         required: true
-        value_ref: nv_lang_tag_item_id
+        value_ref: nv_compound_branch_item_id
       name:
         required: true
         value_ref: nv_compound_branch_name
@@ -121,7 +121,7 @@ entities:
     relations: {}
   LangSecuredNote:
     id_field: note_id
-    description: Note list requiring Bearer access_token from LangAuthSession (federated hole-fill witness).
+    description: Secured note
     fields:
       note_id:
         required: true
@@ -135,8 +135,7 @@ entities:
     relations: {}
   LangSecuredGroup:
     id_field: group_id
-    description: Group list requiring Bearer access_token from a second LangAuthSession (CUGA dual-login
-      hole-fill witness).
+    description: Secured group
     fields:
       group_id:
         required: true
@@ -147,7 +146,7 @@ entities:
     relations: {}
   LangItem:
     id_field: id
-    description: Primary matrix entity — list, search, CRUD, relations, actions.
+    description: Primary matrix item
     fields:
       id:
         required: true
@@ -296,6 +295,48 @@ entities:
         required: false
         value_ref: nv_lang_cursor_ticks
     relations: {}
+  LangVault:
+    id_field: id
+    description: Credential vault row used to lock singleton Get extract and password-domain policy.
+    fields:
+      id:
+        required: true
+        value_ref: nv_lang_vault_id
+      service:
+        required: true
+        value_ref: nv_lang_vault_service
+      password:
+        required: true
+        value_ref: nv_lang_vault_password
+    relations: {}
+  LangLane:
+    id_field: id
+    description: Shelf-scoped lane row whose query requires an authored shelf slot.
+    fields:
+      id:
+        required: true
+        value_ref: nv_lang_lane_id
+      title:
+        required: true
+        value_ref: nv_lang_lane_title
+      shelf:
+        required: true
+        value_ref: nv_lang_lane_shelf
+    relations: {}
+  LangLaneStock:
+    id_field: id
+    description: Shelf-scoped stock lane whose query authors a default shelf.
+    fields:
+      id:
+        required: true
+        value_ref: nv_lang_lane_stock_id
+      title:
+        required: true
+        value_ref: nv_lang_lane_stock_title
+      shelf:
+        required: true
+        value_ref: nv_lang_lane_stock_shelf
+    relations: {}
 capabilities:
   langitem_query:
     description: List LangItem rows (optional tags filter; optional owner filter uses owner-scoped path)
@@ -406,6 +447,7 @@ capabilities:
     kind: delete
     entity: LangItem
   langitem_ping:
+    receiver: {kind: entity, entity: LangItem}
     description: Side-effect ping on LangItem
     kind: action
     entity: LangItem
@@ -413,6 +455,7 @@ capabilities:
       type: side_effect
       description: Records a ping against the item (matrix conformance).
   langitem_secured_touch:
+    receiver: {kind: entity, entity: LangItem}
     description: Secured side-effect touch on LangItem; Bearer access_token required (for_each auth fanout witness).
     kind: action
     entity: LangItem
@@ -558,6 +601,7 @@ capabilities:
     - amount
     - status
   queryonly_request_approve:
+    receiver: {kind: entity, entity: QueryOnlyRequest}
     description: Approve and pay a received payment request
     kind: action
     entity: QueryOnlyRequest
@@ -572,6 +616,7 @@ capabilities:
           value_ref: nv_lang_auth_access_token
           required: true
   queryonly_request_deny:
+    receiver: {kind: entity, entity: QueryOnlyRequest}
     description: Deny a received payment request
     kind: action
     entity: QueryOnlyRequest
@@ -586,6 +631,7 @@ capabilities:
           value_ref: nv_lang_auth_access_token
           required: true
   queryonly_request_remind:
+    receiver: {kind: entity, entity: QueryOnlyRequest}
     description: Send a reminder about a pending payment request
     kind: action
     entity: QueryOnlyRequest
@@ -688,6 +734,7 @@ capabilities:
     - phase
     - ticks
   langcursor_tick:
+    receiver: {kind: entity, entity: LangCursor}
     description: Advance LangCursor phase one step (open → mid → done).
     kind: action
     entity: LangCursor
@@ -697,6 +744,69 @@ capabilities:
     output:
       type: side_effect
       description: Advances the cursor phase toward done; re-observe via get after each tick.
+  langvault_get:
+    description: Get LangVault by id over the vault list (derive).
+    kind: get
+    entity: LangVault
+    provides:
+    - id
+    - service
+    - password
+    derive:
+      source: langvault_query
+      match_field: id
+      projection:
+        id: id
+        service: service
+        password: password
+  langvault_query:
+    description: List LangVault rows
+    kind: query
+    entity: LangVault
+    provides:
+    - id
+    - service
+    - password
+  langvault_unlock:
+    receiver: {kind: entity, entity: LangVault}
+    description: Confirm a vault password cell against the same named value.
+    kind: action
+    entity: LangVault
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: secret
+          value_ref: nv_lang_vault_password
+          required: true
+    output:
+      type: side_effect
+      description: Confirms the vault password cell; no catalog fields change.
+  langlane_query:
+    description: List LangLane rows for one required shelf
+    kind: query
+    entity: LangLane
+    selection:
+    - name: shelf
+      value_ref: nv_lang_lane_shelf
+      required: true
+    provides:
+    - id
+    - title
+    - shelf
+  langlanestock_query:
+    description: List LangLaneStock rows; omitted shelf uses the authored default
+    kind: query
+    entity: LangLaneStock
+    selection:
+    - name: shelf
+      value_ref: nv_lang_lane_stock_shelf
+      required: true
+      default: mine
+    provides:
+    - id
+    - title
+    - shelf
 values:
   nv_lang_cursor_id:
     type: string
@@ -828,6 +938,8 @@ values:
     type: integer
   nv_compound_branch_owner:
     type: string
+  nv_compound_branch_item_id:
+    type: string
   nv_compound_branch_name:
     type: string
   nv_compound_branch_color:
@@ -842,4 +954,22 @@ values:
   nv_lang_offer_price:
     type: money
   nv_lang_offer_currency:
+    type: string
+  nv_lang_vault_id:
+    type: string
+  nv_lang_vault_service:
+    type: string
+  nv_lang_vault_password:
+    type: string
+  nv_lang_lane_id:
+    type: string
+  nv_lang_lane_title:
+    type: string
+  nv_lang_lane_shelf:
+    type: string
+  nv_lang_lane_stock_id:
+    type: string
+  nv_lang_lane_stock_title:
+    type: string
+  nv_lang_lane_stock_shelf:
     type: string

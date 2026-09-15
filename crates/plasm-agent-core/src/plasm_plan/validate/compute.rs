@@ -359,6 +359,14 @@ pub(super) fn validate_compute_template(
                 "plan.nodes[{node_index}].compute.limit.count must be greater than zero"
             ));
         }
+        ComputeOp::Union { other } => {
+            if !by_id.contains_key(other.as_str()) {
+                return Err(format!(
+                    "plan.nodes[{node_index}].compute.union.other references unknown id {:?}",
+                    other.as_str()
+                ));
+            }
+        }
         ComputeOp::Render {
             columns,
             template,
@@ -415,7 +423,7 @@ fn validate_render_compute_template(
     for label in render_bindings {
         OutputName::new(label.as_str().to_string())
             .map_err(|e| format!("plan.nodes[{node_index}].compute.render.render_bindings: {e}"))?;
-        if matches!(label.as_str(), "rows" | "source") {
+        if label.as_str() == "source" {
             return Err(format!(
                 "plan.nodes[{node_index}].compute.render.render_bindings must not use reserved name {:?}",
                 label.as_str()
@@ -434,11 +442,12 @@ fn validate_render_compute_template(
     }
     if let Some(span) = plasm_core::find_dollar_interpolation_in_minijinja_body(template) {
         return Err(format!(
-            "plan.nodes[{node_index}].compute.render.template uses abolished `${{…}}` interpolation ({span}); use Minijinja `{{ … }}` over `rows` (also bound under the source label when applicable). Later string params use `{{{{ binding.content }}}}` or bare `param=binding.content`."
+            "plan.nodes[{node_index}].compute.render.template uses abolished `${{…}}` interpolation ({span}); use Minijinja `{{{{ field }}}}` on the current row, or a named program binding. Later string params use singleton `param=binding.content`."
         ));
     }
     let mut env = minijinja::Environment::new();
     env.set_auto_escape_callback(|_| minijinja::AutoEscape::None);
+    plasm_core::register_shared_minijinja_filters(&mut env);
     env.add_template("plan_render", template)
         .map_err(|e| format!("plan.nodes[{node_index}].compute.render.template: {e}"))?;
     if t.schema.entity.as_deref() != Some("PlanRender")

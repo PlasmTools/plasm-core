@@ -270,6 +270,7 @@ pub(crate) async fn finalize_typed_relation_materialized_node(
         count,
         entities: hydrated,
         has_more: mat.result.has_more,
+        coverage: mat.result.coverage,
         pagination_resume: mat.result.pagination_resume.clone(),
         paging_handle: mat.result.paging_handle.clone(),
         source: mat.result.source,
@@ -314,6 +315,7 @@ mod tests {
             last_updated: 0,
             version: 0,
             completeness: plasm_runtime::EntityCompleteness::Summary,
+            unavailable_fields: Default::default(),
         }
     }
 

@@ -18,6 +18,7 @@ capabilities:
   profile_get:
     description: Show phone profile by phone number.
     kind: get
+    receiver: {kind: none}
     entity: Profile
     provides:
     - first_name

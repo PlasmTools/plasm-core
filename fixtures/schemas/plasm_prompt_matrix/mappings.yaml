@@ -45,6 +45,11 @@ zone_query:
           condition: { type: exists, var: per_page }
           then_expr: { type: var, name: per_page }
           else_expr: { type: const, value: null }
+      - - sort_by
+        - type: if
+          condition: { type: exists, var: sort_by }
+          then_expr: { type: var, name: sort_by }
+          else_expr: { type: const, value: null }
 
 zone_get:
   method: GET

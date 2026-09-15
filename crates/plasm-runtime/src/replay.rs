@@ -351,7 +351,7 @@ fn normalize_json_for_fingerprint(value: &Value) -> String {
 /// Convert plasm_core::Value to serde_json::Value
 fn value_to_json_value(value: &Value) -> serde_json::Value {
     match value {
-        Value::PlasmInputRef(_) | Value::StringTemplate(_) => {
+        Value::PlasmInputRef(_) | Value::GetScalarExtract(_) | Value::StringTemplate(_) => {
             serde_json::to_value(value).unwrap_or(serde_json::Value::Null)
         }
         Value::Null => serde_json::Value::Null,

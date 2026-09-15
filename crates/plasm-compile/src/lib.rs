@@ -19,9 +19,9 @@ pub use plasm_cml::{
     compile_operation, compile_request, eval_cml, eval_cond, parse_capability_template,
     path_var_names_from_request, template_pagination, template_var_names, AuxiliaryHttpMerge,
     CapabilityTemplate, CmlCond, CmlEnv, CmlExpr, CmlRequest, CmlType, CompiledMultipartBody,
-    CompiledMultipartPart, CompiledOperation, CompiledRequest, CredentialSource, HttpBodyFormat,
-    HttpMethod, HttpResponseDecode, MultipartBodySpec, MultipartPartSpec, PaginationConfig,
-    PaginationLocation, PaginationParam, PaginationParamRole, PaginationStop,
+    CompiledMultipartPart, CompiledOperation, CompiledRequest, ConcatArraySource, CredentialSource,
+    HttpBodyFormat, HttpMethod, HttpResponseDecode, MultipartBodySpec, MultipartPartSpec,
+    PaginationConfig, PaginationLocation, PaginationParam, PaginationParamRole, PaginationStop,
     PaginationStrategyKind, PathSegment as CmlPathSegment, ResponsePreprocess, ValidatedPagination,
     ViewCompiled, ViewTemplate,
 };

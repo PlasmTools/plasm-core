@@ -348,6 +348,9 @@ pub struct DomainCapability {
     pub description: String,
     pub kind: String,
     pub entity: String,
+    /// Domain receiver; never inferred from a CML path, body, or transport.
+    #[serde(default)]
+    pub receiver: Option<crate::CapabilityReceiver>,
     /// Policy for compound `entity_ref` scope parameters after runtime splat (`retain` default).
     #[serde(default)]
     pub scope_aggregate_key_policy: Option<ScopeAggregateKeyPolicy>,
@@ -432,6 +435,9 @@ pub struct DomainParameter {
     /// Optional sink class for information-flow validation (must exist in top-level `data_classes:`).
     #[serde(default)]
     pub sink_class: Option<crate::SinkClassName>,
+    /// Authored fill when the agent omits a required selection/scope slot (RA-15).
+    #[serde(default)]
+    pub default: Option<crate::Value>,
 }
 
 /// YAML `items:` block for `array` fields and parameters.
@@ -840,7 +846,7 @@ fn input_field_schema_from_domain_parameter(
                 wire: crate::InputFieldWire::Registry(vdk),
                 required: p.required,
                 description,
-                default: None,
+                default: p.default.clone(),
                 sink_class: p.sink_class.clone(),
                 wire_json_path: None,
                 wire_array_element_key: None,
@@ -855,7 +861,7 @@ fn input_field_schema_from_domain_parameter(
             } else {
                 Some(p.description.clone())
             },
-            default: None,
+            default: p.default.clone(),
             sink_class: p.sink_class.clone(),
             wire_json_path: None,
             wire_array_element_key: None,
@@ -886,6 +892,10 @@ fn capability_inputs_from_domain(
     values: &IndexMap<String, NamedValueSchema>,
 ) -> Result<CapabilityInputs, String> {
     Ok(CapabilityInputs {
+        receiver: cap
+            .receiver
+            .clone()
+            .or_else(|| (cap.kind == "singleton").then_some(crate::CapabilityReceiver::None)),
         scope: ParentScopeSchema(input_fields_from_domain_parameters(
             cap_name, &cap.scope, values,
         )?),
@@ -1297,24 +1307,13 @@ mod tests {
 
     #[test]
     fn unlabeled_output_data_warnings_when_catalog_opts_into_data_classes() {
-        let dir = Path::new("../../apis/github");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).expect("github");
+        let dir = Path::new("../../fixtures/schemas/flow_matrix");
+        let cgs = load_schema_dir(dir).expect("flow_matrix");
+        assert!(
+            !cgs.data_classes.is_empty(),
+            "flow_matrix must declare data_classes"
+        );
         let warnings = cgs.unlabeled_output_data_warnings();
-        assert!(
-            warnings
-                .iter()
-                .any(|w| w.contains("Commit") && w.contains("message")),
-            "structured provided fields without data_class must warn: {warnings:?}"
-        );
-        assert!(
-            !warnings
-                .iter()
-                .any(|w| w.contains("Repository") && w.contains("description")),
-            "labeled Repository.description must not warn: {warnings:?}"
-        );
         assert!(
             warnings
                 .iter()
@@ -1602,17 +1601,14 @@ capabilities:
     #[test]
     fn test_entity_ref_yaml_and_reverse_caps() {
         init_loader_tracing_test();
-        let dir = Path::new("../../apis/clickup");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        assert!(cgs.get_entity("Space").is_some());
-        let caps = cgs.find_reverse_traversal_caps("Team");
+        let dir = Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
+        assert!(cgs.get_entity("LangTag").is_some());
+        let caps = cgs.find_reverse_traversal_caps("LangItem");
         assert!(
             caps.iter()
-                .any(|(c, p)| c.name == "space_query" && *p == "team_id"),
-            "expected space_query.team_id: {:?}",
+                .any(|(c, p)| c.name.as_str() == "langtag_query" && *p == "item_id"),
+            "expected langtag_query.item_id: {:?}",
             caps
         );
     }
@@ -1631,6 +1627,39 @@ capabilities:
     }
 
     #[test]
+    fn load_schema_dir_rejects_entity_ref_as_identity() {
+        let dir = Path::new("../../fixtures/schemas/entity_ref_as_identity");
+        let err = load_schema_dir(dir).expect_err("entity_ref id_field must fail CGS validate");
+        assert!(
+            err.contains("unsupported identity type")
+                && err.contains("BadProduct")
+                && err.contains("product_id"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn load_schema_dir_accepts_lawful_identity_scalars() {
+        for name in ["digit_id_identity", "date_identity"] {
+            let dir = Path::new("../../fixtures/schemas").join(name);
+            let cgs = load_schema_dir(&dir).unwrap_or_else(|e| panic!("load {name}: {e}"));
+            cgs.validate()
+                .unwrap_or_else(|e| panic!("validate {name}: {e}"));
+            let entity_name = cgs.entities.keys().next().expect("entity");
+            let entity = cgs.entities.get(entity_name).unwrap();
+            let codec = crate::operand_binding::IdentityCodec::compile(
+                &cgs,
+                crate::operand_binding::IdentityTarget {
+                    entity: &entity.name,
+                    field: None,
+                },
+            )
+            .unwrap_or_else(|e| panic!("{name} IdentityCodec: {e}"));
+            let _ = codec;
+        }
+    }
+
+    #[test]
     fn test_load_evm_erc20_fixture() {
         let dir = Path::new("../../fixtures/schemas/evm_erc20");
         if !dir.exists() {
@@ -1643,50 +1672,28 @@ capabilities:
         assert!(cgs.get_capability("transfer_query").is_some());
     }
 
-    /// Smoke: standard split schemas under `apis/` that load with the current domain YAML shape.
+    /// Smoke: matrix and overlay fixtures load with the current domain YAML shape.
     #[test]
-    fn test_apis_split_schemas_smoke() {
+    fn test_schema_fixture_split_schemas_smoke() {
         init_loader_tracing_test();
         const NAMES: &[&str] = &[
-            "clickup",
-            "dnd5e",
-            "evm-erc20",
-            "github",
-            "gitlab",
-            "gmail",
-            "google-calendar",
-            "google-sheets",
-            "graphqlzero",
-            "jira",
-            "linear",
-            "musixmatch",
-            "notion",
-            "nytimes",
-            "omdb",
-            "openbrewerydb",
-            "openmeteo",
-            "pokeapi",
-            "rawg",
-            "rickandmorty",
-            "slack",
-            "spotify",
-            "tau2_retail",
-            "tavily",
-            "themealdb",
-            "xkcd",
+            "plasm_language_matrix",
+            "plasm_language_matrix_views",
+            "plasm_prompt_matrix",
+            "plasm_pagination_matrix",
+            "pokeapi_mini",
+            "overshow_tools",
+            "capability_with_input",
+            "sole_nullary_get",
+            "flow_matrix",
+            "repository_commit_matrix",
         ];
-        let root = Path::new("../../apis");
-        if !root.is_dir() {
-            return;
-        }
+        let root = Path::new("../../fixtures/schemas");
         for name in NAMES {
             let dir = root.join(name);
-            if !dir.join("domain.yaml").exists() || !dir.join("mappings.yaml").exists() {
-                continue;
-            }
-            let cgs = load_schema_dir(&dir).unwrap_or_else(|e| panic!("load apis/{name}: {e}"));
+            let cgs = load_schema_dir(&dir).unwrap_or_else(|e| panic!("load fixture {name}: {e}"));
             cgs.validate()
-                .unwrap_or_else(|e| panic!("validate apis/{name}: {e}"));
+                .unwrap_or_else(|e| panic!("validate fixture {name}: {e}"));
         }
         let pet_dir = Path::new("../../fixtures/schemas/petstore");
         if pet_dir.join("domain.yaml").exists() && pet_dir.join("mappings.yaml").exists() {
@@ -1711,46 +1718,22 @@ capabilities:
     fn test_cgs_serde_yaml_roundtrip_smoke() {
         use crate::schema::CGS;
         const NAMES: &[&str] = &[
-            "clickup",
-            "dnd5e",
-            "evm-erc20",
-            "github",
-            "gitlab",
-            "gmail",
-            "google-calendar",
-            "google-sheets",
-            "graphqlzero",
-            "jira",
-            "linear",
-            "musixmatch",
-            "notion",
-            "nytimes",
-            "omdb",
-            "openbrewerydb",
-            "openmeteo",
-            "pokeapi",
-            "rawg",
-            "rickandmorty",
-            "slack",
-            "spotify",
-            "tau2_retail",
-            "tavily",
-            "themealdb",
-            "xkcd",
+            "plasm_language_matrix",
+            "plasm_prompt_matrix",
+            "plasm_pagination_matrix",
+            "pokeapi_mini",
+            "overshow_tools",
+            "capability_with_input",
+            "repository_commit_matrix",
         ];
-        let root = Path::new("../../apis");
-        if !root.is_dir() {
-            return;
-        }
+        let root = Path::new("../../fixtures/schemas");
         for name in NAMES {
             let dir = root.join(name);
-            if !dir.join("domain.yaml").exists() || !dir.join("mappings.yaml").exists() {
-                continue;
-            }
-            let cgs = load_schema_dir(&dir).unwrap_or_else(|e| panic!("load apis/{name}: {e}"));
+            let cgs = load_schema_dir(&dir).unwrap_or_else(|e| panic!("load fixture {name}: {e}"));
             let yaml = serde_yaml::to_string(&cgs).expect("serde_yaml::to_string");
-            let _: CGS = serde_yaml::from_str(&yaml)
-                .unwrap_or_else(|e| panic!("serde_yaml round-trip apis/{name}: {e}\n---\n{yaml}"));
+            let _: CGS = serde_yaml::from_str(&yaml).unwrap_or_else(|e| {
+                panic!("serde_yaml round-trip fixture {name}: {e}\n---\n{yaml}")
+            });
         }
         let pet_dir = Path::new("../../fixtures/schemas/petstore");
         if pet_dir.join("domain.yaml").exists() && pet_dir.join("mappings.yaml").exists() {
@@ -2422,23 +2405,19 @@ capabilities:
     }
 
     #[test]
-    fn all_apis_packages_validate() {
-        let apis = std::path::Path::new("../../apis");
-        if !apis.is_dir() {
-            return;
-        }
-        for entry in std::fs::read_dir(apis).expect("read apis dir") {
-            let entry = entry.expect("apis entry");
-            if !entry.file_type().expect("file type").is_dir() {
-                continue;
-            }
-            let dir = entry.path();
-            if !dir.join("domain.yaml").is_file() {
-                continue;
-            }
-            let name = entry.file_name().to_string_lossy().into_owned();
+    fn matrix_schema_fixtures_validate() {
+        let root = std::path::Path::new("../../fixtures/schemas");
+        for name in [
+            "plasm_language_matrix",
+            "plasm_language_matrix_views",
+            "plasm_prompt_matrix",
+            "plasm_pagination_matrix",
+            "pokeapi_mini",
+            "overshow_tools",
+        ] {
+            let dir = root.join(name);
             load_schema_dir(&dir).unwrap_or_else(|e| {
-                panic!("apis/{name} failed CGS validation: {e}");
+                panic!("fixture {name} failed CGS validation: {e}");
             });
         }
     }

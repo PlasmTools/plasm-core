@@ -21,6 +21,123 @@
     {
       "consumer": {
         "catalog": "amazon",
+        "capability": "account_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "account_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "account_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "cart_add_gift_wrap"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "cart_remove_gift_wrap"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "payment_card_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "prime_plan_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "prime_subscription_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "product_question_answer_create"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "product_question_answer_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "product_question_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "product_return_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "product_return_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
         "capability": "product_query"
       },
       "requirement": "session",
@@ -246,6 +363,15 @@
     {
       "consumer": {
         "catalog": "amazon",
+        "capability": "order_receipt_download"
+      },
+      "requirement": "file_session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
         "capability": "address_query"
       },
       "requirement": "session",
@@ -376,6 +502,24 @@
       },
       "requirement": "session",
       "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "prime_subscription_receipt_download"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "prime_subscription_receipt_download"
+      },
+      "requirement": "file_session",
+      "provider_catalog": "file_system",
       "provider": "session"
     },
     {
@@ -516,6 +660,15 @@
     {
       "consumer": {
         "catalog": "file_system",
+        "capability": "file_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "file_system",
         "capability": "file_get"
       },
       "requirement": "session",
@@ -607,6 +760,33 @@
       "consumer": {
         "catalog": "gmail",
         "capability": "logout"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "account_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "account_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "account_delete"
       },
       "requirement": "session",
       "provider_catalog": "gmail",
@@ -876,10 +1056,28 @@
     {
       "consumer": {
         "catalog": "gmail",
+        "capability": "attachment_download"
+      },
+      "requirement": "file_session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
         "capability": "draft_attachment_upload"
       },
       "requirement": "session",
       "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "draft_attachment_upload"
+      },
+      "requirement": "file_session",
+      "provider_catalog": "file_system",
       "provider": "session"
     },
     {
@@ -1353,10 +1551,37 @@
     {
       "consumer": {
         "catalog": "splitwise",
+        "capability": "expense_attach_receipt"
+      },
+      "requirement": "file_session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
         "capability": "expense_delete_receipt"
       },
       "requirement": "session",
       "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "expense_receipt_download"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "expense_receipt_download"
+      },
+      "requirement": "file_session",
+      "provider_catalog": "file_system",
       "provider": "session"
     },
     {
@@ -1425,10 +1650,37 @@
     {
       "consumer": {
         "catalog": "splitwise",
+        "capability": "payment_attach_receipt"
+      },
+      "requirement": "file_session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
         "capability": "payment_delete_receipt"
       },
       "requirement": "session",
       "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "payment_receipt_download"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "payment_receipt_download"
+      },
+      "requirement": "file_session",
+      "provider_catalog": "file_system",
       "provider": "session"
     },
     {
@@ -1588,6 +1840,15 @@
       "consumer": {
         "catalog": "splitwise",
         "capability": "peer_balance_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "person_balance_query"
       },
       "requirement": "session",
       "provider_catalog": "splitwise",
@@ -2199,6 +2460,15 @@
     {
       "consumer": {
         "catalog": "spotify",
+        "capability": "premium_subscription_receipt"
+      },
+      "requirement": "file_session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
         "capability": "login"
       },
       "requirement": "principal",
@@ -2442,10 +2712,37 @@
     {
       "consumer": {
         "catalog": "todoist",
+        "capability": "task_comment_upload_attachment"
+      },
+      "requirement": "file_session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
         "capability": "task_comment_delete_attachment"
       },
       "requirement": "session",
       "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "task_comment_download_attachment"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "task_comment_download_attachment"
+      },
+      "requirement": "file_session",
+      "provider_catalog": "file_system",
       "provider": "session"
     },
     {
@@ -2604,6 +2901,15 @@
     {
       "consumer": {
         "catalog": "venmo",
+        "capability": "friend_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
         "capability": "friend_add"
       },
       "requirement": "session",
@@ -2658,6 +2964,24 @@
     {
       "consumer": {
         "catalog": "venmo",
+        "capability": "bank_transfer_receipt_download"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "bank_transfer_receipt_download"
+      },
+      "requirement": "file_session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
         "capability": "transaction_query"
       },
       "requirement": "session",
@@ -2671,6 +2995,24 @@
       },
       "requirement": "session",
       "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "transaction_receipt_download"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "transaction_receipt_download"
+      },
+      "requirement": "file_session",
+      "provider_catalog": "file_system",
       "provider": "session"
     },
     {

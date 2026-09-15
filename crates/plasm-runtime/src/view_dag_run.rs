@@ -8,6 +8,7 @@ use plasm_core::{Ref, WriteOutcome, CGS};
 use crate::cache::{CachedEntity, EntityCompleteness};
 use crate::execution::{
     current_timestamp, ExecutionResult, ExecutionSource, ExecutionStats, OperationLedger,
+    ResultCoverage,
 };
 use crate::view_plan::{
     build_view_row_reference, load_view_dag, node_fields_for_row, prepare_view_node,
@@ -82,6 +83,7 @@ fn execution_result_from_view_row(
         entities: vec![cached],
         count: 1,
         has_more: false,
+        coverage: ResultCoverage::Complete,
         pagination_resume: None,
         paging_handle: None,
         source: if any_live {
@@ -277,6 +279,7 @@ impl ViewDagWalkState {
                 entities: vec![],
                 count: 0,
                 has_more: false,
+                coverage: ResultCoverage::Complete,
                 pagination_resume: None,
                 paging_handle: None,
                 source: ExecutionSource::Cache,

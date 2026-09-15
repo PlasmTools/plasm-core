@@ -6,22 +6,44 @@
 //! - Markers present → Minijinja with shared filters (incl. `split_part`).
 
 use std::collections::{BTreeMap, HashSet};
+use std::sync::Arc;
 
+use minijinja::value::{Enumerator, Object, ObjectRepr};
 use minijinja::{Environment, UndefinedBehavior, Value as MjValue};
 use thiserror::Error;
 
 use crate::value::Value;
 
-pub const DEFAULT_MAX_INTERPOLATED_LEN: usize = 512 * 1024;
+/// Minijinja identifiers that are engine builtins, not program bindings or row fields.
+pub const MINIJINJA_TEMPLATE_BUILTINS: &[&str] = &[
+    "range",
+    "dict",
+    "namespace",
+    "loop",
+    "true",
+    "false",
+    "none",
+    "True",
+    "False",
+    "None",
+];
 
+/// Shared filter names on the program-string / view / render registry.
 /// Keep in lockstep with [`register_shared_minijinja_filters`].
 pub const SHARED_MINIJINJA_FILTERS: &[&str] =
     &["urlencode", "strip_trailing_slash", "split", "split_part"];
 
 #[must_use]
+pub fn is_minijinja_template_builtin(name: &str) -> bool {
+    MINIJINJA_TEMPLATE_BUILTINS.contains(&name)
+}
+
+#[must_use]
 pub fn is_shared_minijinja_filter(name: &str) -> bool {
     SHARED_MINIJINJA_FILTERS.contains(&name)
 }
+
+pub const DEFAULT_MAX_INTERPOLATED_LEN: usize = 512 * 1024;
 
 const DOLLAR_HARD_ERROR: &str = "abolished `${…}` / `$$` string interpolation; use Minijinja `{{ path }}` (filters: `| split_part`) or a bare wire `param=binding.content`";
 
@@ -119,8 +141,15 @@ impl CompiledProgramString {
     pub fn render(&self, scope: &BTreeMap<String, Value>) -> Result<String, ProgramStringError> {
         let context: BTreeMap<_, _> = scope
             .iter()
-            .map(|(key, value)| (key.as_str(), plasm_to_mj(value)))
+            .map(|(key, value)| (key.clone(), plasm_to_mj(value)))
             .collect();
+        self.render_minijinja_context(&context)
+    }
+
+    pub fn render_minijinja_context(
+        &self,
+        context: &BTreeMap<String, MjValue>,
+    ) -> Result<String, ProgramStringError> {
         let output = self
             .environment
             .get_template("operand")
@@ -178,6 +207,12 @@ pub fn reject_dollar_interpolation(s: &str) -> Result<(), ProgramStringError> {
     Ok(())
 }
 
+/// Shared Minijinja environment for plain templates, per-row render, argument templates,
+/// CGS view computed output, and Plan.render.
+pub fn shared_minijinja_environment() -> Environment<'static> {
+    program_string_env()
+}
+
 /// Register filters shared by program strings and CGS view computed templates.
 pub fn register_shared_minijinja_filters(env: &mut Environment<'_>) {
     env.add_filter(
@@ -224,6 +259,98 @@ fn program_string_env() -> Environment<'static> {
     env
 }
 
+/// A program-binding value in Minijinja: iterable sequence, with attribute access
+/// delegated to the first row so a singleton binding admits `{{ item.title }}`.
+#[derive(Debug)]
+struct TemplateBindingValue {
+    rows: Vec<MjValue>,
+}
+
+impl Object for TemplateBindingValue {
+    fn repr(self: &Arc<Self>) -> ObjectRepr {
+        ObjectRepr::Seq
+    }
+
+    fn get_value(self: &Arc<Self>, key: &MjValue) -> Option<MjValue> {
+        if let Some(name) = key.as_str() {
+            return self
+                .rows
+                .first()
+                .and_then(|row| row.get_attr(name).ok())
+                .filter(|value| !value.is_undefined());
+        }
+        usize::try_from(key.clone())
+            .ok()
+            .and_then(|idx| self.rows.get(idx).cloned())
+    }
+
+    fn enumerate(self: &Arc<Self>) -> Enumerator {
+        Enumerator::Seq(self.rows.len())
+    }
+}
+
+/// Bind a program binding's materialized rows into the shared template context.
+pub fn template_binding_mj_value(rows: &[serde_json::Value]) -> MjValue {
+    let rows: Vec<MjValue> = rows.iter().map(MjValue::from_serialize).collect();
+    MjValue::from_object(TemplateBindingValue { rows })
+}
+
+/// Flatten a source row's fields into `ctx` (`{{ title }}` spelling).
+pub fn flatten_row_fields_into_ctx(row: &serde_json::Value, ctx: &mut BTreeMap<String, MjValue>) {
+    if let serde_json::Value::Object(map) = row {
+        for (key, value) in map {
+            ctx.insert(key.clone(), MjValue::from_serialize(value));
+        }
+    }
+}
+
+/// Build the unified template context: optional current-row fields + named bindings.
+/// Row-field / binding collisions are a compile-time error; this constructor does not pick a winner.
+pub fn unified_template_context(
+    current_row: Option<&serde_json::Value>,
+    bindings: &BTreeMap<String, Vec<serde_json::Value>>,
+) -> BTreeMap<String, MjValue> {
+    let mut ctx = BTreeMap::new();
+    if let Some(row) = current_row {
+        flatten_row_fields_into_ctx(row, &mut ctx);
+    }
+    for (label, rows) in bindings {
+        ctx.insert(label.clone(), template_binding_mj_value(rows));
+    }
+    ctx
+}
+
+/// Evaluate a Minijinja body with the shared registry (plain / per-row / argument).
+pub fn render_minijinja(
+    template: &str,
+    current_row: Option<&serde_json::Value>,
+    bindings: &BTreeMap<String, Vec<serde_json::Value>>,
+) -> Result<String, ProgramStringError> {
+    reject_dollar_interpolation(template)?;
+    if !contains_minijinja_markers(template) {
+        if template.len() > DEFAULT_MAX_INTERPOLATED_LEN {
+            return Err(ProgramStringError::MaxLengthExceeded {
+                max: DEFAULT_MAX_INTERPOLATED_LEN,
+            });
+        }
+        return Ok(template.to_string());
+    }
+    let env = shared_minijinja_environment();
+    let tmpl = env
+        .template_from_str(template)
+        .map_err(|e| ProgramStringError::Render(e.to_string()))?;
+    let ctx = unified_template_context(current_row, bindings);
+    let out = tmpl
+        .render(ctx)
+        .map_err(|e| ProgramStringError::Render(e.to_string()))?;
+    if out.len() > DEFAULT_MAX_INTERPOLATED_LEN {
+        return Err(ProgramStringError::MaxLengthExceeded {
+            max: DEFAULT_MAX_INTERPOLATED_LEN,
+        });
+    }
+    Ok(out)
+}
+
 fn plasm_to_mj(v: &Value) -> MjValue {
     match v {
         Value::Null => MjValue::from(()),
@@ -242,9 +369,10 @@ fn plasm_to_mj(v: &Value) -> MjValue {
             MjValue::from_serialize(&obj)
         }
         Value::Money(m) => MjValue::from(m.display()),
-        Value::StringTemplate(_) | Value::PlasmInputRef(_) | Value::UnionCtor { .. } => {
-            MjValue::from(())
-        }
+        Value::StringTemplate(_)
+        | Value::PlasmInputRef(_)
+        | Value::GetScalarExtract(_)
+        | Value::UnionCtor { .. } => MjValue::from(()),
     }
 }
 
@@ -405,6 +533,18 @@ mod tests {
         let out =
             render_program_string("{{ title }} / {{ report.content }}", &scope_title()).unwrap();
         assert_eq!(out, "Hello / BODY");
+    }
+
+    #[test]
+    fn shared_minijinja_filter_names() {
+        for name in SHARED_MINIJINJA_FILTERS {
+            assert!(
+                is_shared_minijinja_filter(name),
+                "{name} must be on the shared filter set"
+            );
+        }
+        assert!(!is_shared_minijinja_filter("where"));
+        assert!(!is_shared_minijinja_filter("select"));
     }
 
     #[test]

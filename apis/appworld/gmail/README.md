@@ -1,6 +1,6 @@
 # AppWorld gmail — mail simulation.
 
-Task-critical surface: inbox/outbox/archived thread search, thread mutators (read/star/archive), send/reply, drafts, profile. Auth taught via `login`.
+Task-critical surface: inbox/outbox/archived/spam thread search (unified `email_thread_query` + `mailbox`), thread mutators (read/star/archive/spam/label/snooze), send/reply/forward, drafts (+ attachments), profile/account, attachment download. Auth taught via `login`.
 
 ```bash
 cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/appworld/gmail
@@ -11,6 +11,6 @@ OpenAPI: `openapi.json`. Backend: `http://127.0.0.1:9000` after `appworld serve 
 
 ## Scope notes
 
-- Category searches are separate caps (`email_thread_query` = inbox, `email_thread_outbox_query`, `email_thread_archived_query`) — vendor paths differ; not a single `views:` mailbox.
-- Inbox/outbox archive workflows use search filters + thread actions; no composed snapshot view required.
-- Spam category search (`email_thread_spam_query`), label/spam mutators, forward (`email_forward`, `email_thread_forward`), and attachment download (`attachment_download` on `Attachment`).
+- Category list endpoints are one capability: `email_thread_query` with required `mailbox` ∈ {inbox, outbox, archived, spam} (no OpenAPI `category/snoozed` path — use `email_thread_snooze` / `email_thread_unsnooze` mutators).
+- Account signup/update/delete and password-reset are mapped; public profile remains `profile_get`.
+- Spam/label/forward/attachment download are first-class.

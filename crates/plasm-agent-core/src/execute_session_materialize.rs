@@ -280,15 +280,16 @@ mod tests {
 
     #[tokio::test]
     async fn materialize_is_idempotent_for_catalog_default_hosted_kv() {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/github");
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
         if !dir.is_dir() {
             return;
         }
-        let cgs = Arc::new(load_schema_dir(&dir).expect("github"));
+        let cgs = Arc::new(load_schema_dir(&dir).expect("plasm_language_matrix"));
         let reg = Arc::new(CgsRegistry::from_pairs(vec![(
-            "github".into(),
-            "GitHub".into(),
-            vec!["github".into()],
+            "langmatrix".into(),
+            "Langmatrix".into(),
+            vec!["langmatrix".into()],
             cgs,
         )]));
         let engine = ExecutionEngine::new(ExecutionConfig::default()).expect("engine");
@@ -303,11 +304,11 @@ mod tests {
             oss_local_filesystem_defaults: false,
         });
 
-        let baseline = materialize_entry_context(&st, "github", None, None)
+        let baseline = materialize_entry_context(&st, "langmatrix", None, None)
             .await
             .expect("baseline");
         let kv = outbound_hosted_kv_from_cgs(baseline.effective_cgs.as_ref()).expect("hosted_kv");
-        let with_kv = materialize_entry_context(&st, "github", Some(kv.as_str()), None)
+        let with_kv = materialize_entry_context(&st, "langmatrix", Some(kv.as_str()), None)
             .await
             .expect("with_kv");
         assert_eq!(

@@ -10,12 +10,10 @@
 //!
 //! - **I1 (key–value identity).** For every entry `(k, v)` in the entity map, `v.reference == k`
 //!   (the map key is always the entity’s [`Ref`]).
-//! - **I2 (type index coverage).** If `r` is a key in `entities`, then `r` appears **at least once**
-//!   in `type_index[r.entity_type]` after a successful insert of that ref. Operations that remove an
-//!   entity remove `r` from `type_index` for that type ([`GraphCache::remove`], [`GraphCache::clear_type`]).
-//!   *Implementation note:* [`GraphCache::insert`] appends to the per-type list even when merging into an
-//!   existing row, so **duplicate `Ref` entries in that vector are possible**; treat `type_index` as a
-//!   hint list and resolve through `entities` (e.g. [`GraphCache::get_entities_by_type`] deduplicates via lookup).
+//! - **I2 (type index uniqueness).** If `r` is a key in `entities`, then `r` appears **exactly once**
+//!   in `type_index[r.entity_type]` after a successful insert or overwrite of that ref. Operations that
+//!   remove an entity remove `r` from `type_index` for that type ([`GraphCache::remove`],
+//!   [`GraphCache::clear_type`]). Updating an existing `Ref` must not append a second index entry.
 //!
 //! ## Temporal / versioning
 //!
@@ -43,7 +41,7 @@ use indexmap::IndexMap;
 use plasm_compile::DecodedRelation;
 use plasm_core::{EntityName, Ref, TypedFieldValue, Value};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 /// Whether cached fields came from a list/query response or from a single-resource GET.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -70,12 +68,16 @@ pub struct CachedEntity {
     /// Provenance of field coverage (summary list rows vs detail GET).
     #[serde(default)]
     pub completeness: EntityCompleteness,
+    /// Detail fields requested via hydrate GET that remain unavailable after soft-fail
+    /// (distinct from present empty string / null that the backend actually returned).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub unavailable_fields: BTreeSet<String>,
 }
 
 /// Graph cache with stable identity and merge semantics.
 ///
 /// **Invariants:** See [Cache invariants (semi-formal)](crate::cache#cache-invariants-semi-formal) (*I1–I7*).
-/// In short: map keys match row identity; the type index may list duplicate refs after repeated merges;
+/// In short: map keys match row identity; the type index holds one entry per live `Ref`;
 /// callers must provide external synchronization for concurrent use (*I5*).
 #[derive(Debug, Clone)]
 pub struct GraphCache {
@@ -112,6 +114,7 @@ impl CachedEntity {
             last_updated: timestamp,
             version: 1,
             completeness: EntityCompleteness::Complete,
+            unavailable_fields: BTreeSet::new(),
         }
     }
 
@@ -141,7 +144,38 @@ impl CachedEntity {
             last_updated: timestamp,
             version: 1,
             completeness,
+            unavailable_fields: BTreeSet::new(),
         }
+    }
+
+    /// True when hydrate soft-fail left requested detail fields unavailable.
+    #[must_use]
+    pub fn has_unavailable_detail_fields(&self) -> bool {
+        !self.unavailable_fields.is_empty()
+    }
+
+    /// Mark detail fields that a failed hydrate GET would have supplied and that are still
+    /// missing/null on this summary row. Present empty strings are not unavailable.
+    pub fn mark_detail_fields_unavailable<I, S>(&mut self, fields: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        for field in fields {
+            let name = field.into();
+            let present_non_null = self
+                .fields
+                .get(name.as_str())
+                .is_some_and(|v| !v.is_null());
+            if !present_non_null {
+                self.unavailable_fields.insert(name);
+            }
+        }
+    }
+
+    /// Clear unavailable markers (successful detail upgrade or field fill).
+    pub fn clear_unavailable_fields(&mut self) {
+        self.unavailable_fields.clear();
     }
 
     /// Get a field value
@@ -226,7 +260,7 @@ impl CachedEntity {
         for (k, v) in obj {
             if matches!(
                 k.as_str(),
-                "_ref" | "_version" | "_last_updated" | "_completeness"
+                "_ref" | "_version" | "_last_updated" | "_completeness" | "_unavailable_fields"
             ) {
                 continue;
             }
@@ -263,6 +297,15 @@ impl CachedEntity {
             .get("_last_updated")
             .and_then(|v| v.as_u64())
             .unwrap_or(1);
+        let unavailable_fields = obj
+            .get("_unavailable_fields")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|item| item.as_str().map(str::to_string))
+                    .collect::<BTreeSet<_>>()
+            })
+            .unwrap_or_default();
         Ok(Self {
             reference,
             fields,
@@ -270,6 +313,7 @@ impl CachedEntity {
             last_updated,
             version,
             completeness,
+            unavailable_fields,
         })
     }
 
@@ -300,6 +344,7 @@ impl CachedEntity {
                 self.relations.insert(k.clone(), v.clone());
             }
             self.completeness = EntityCompleteness::Complete;
+            self.unavailable_fields.clear();
             self.last_updated = self.last_updated.max(other.last_updated);
             self.version = self.version.max(other.version) + 1;
             return Ok(true);
@@ -330,6 +375,7 @@ impl CachedEntity {
                 }
                 if self.fields.get(field) != Some(value) {
                     self.fields.insert(field.clone(), value.clone());
+                    self.unavailable_fields.remove(field);
                     changed = true;
                 }
             }
@@ -350,6 +396,7 @@ impl CachedEntity {
             }
             self.last_updated = other.last_updated;
             self.completeness = other.completeness;
+            self.unavailable_fields = other.unavailable_fields.clone();
             self.version = other.version.max(self.version) + 1;
             changed = true;
         } else if other.last_updated == self.last_updated {
@@ -362,12 +409,28 @@ impl CachedEntity {
             }
 
             changed |= Self::merge_relation_maps(&mut self.relations, &other.relations);
+            let before_unavail = self.unavailable_fields.len();
+            self.unavailable_fields
+                .extend(other.unavailable_fields.iter().cloned());
+            for field in self.fields.keys() {
+                if self
+                    .fields
+                    .get(field)
+                    .is_some_and(|v| !v.is_null())
+                {
+                    self.unavailable_fields.remove(field);
+                }
+            }
+            if self.unavailable_fields.len() != before_unavail {
+                changed = true;
+            }
 
             if changed {
                 self.version += 1;
             }
             if other.completeness == EntityCompleteness::Complete {
                 self.completeness = EntityCompleteness::Complete;
+                self.unavailable_fields.clear();
             }
         }
 
@@ -468,6 +531,18 @@ pub fn entity_to_agent_row_json(
         return v;
     };
     apply_identity_slots_to_row(obj, entity, cgs);
+    if !entity.unavailable_fields.is_empty() {
+        obj.insert(
+            "_unavailable_fields".to_string(),
+            serde_json::Value::Array(
+                entity
+                    .unavailable_fields
+                    .iter()
+                    .map(|f| serde_json::Value::String(f.clone()))
+                    .collect(),
+            ),
+        );
+    }
     v
 }
 
@@ -548,18 +623,22 @@ impl GraphCache {
         self.entities.get_mut(reference)
     }
 
-    /// Insert or update an entity
+    fn index_ref_once(&mut self, reference: &Ref) {
+        let bucket = self
+            .type_index
+            .entry(reference.entity_type.clone())
+            .or_default();
+        if !bucket.contains(reference) {
+            bucket.push(reference.clone());
+        }
+    }
+
+    /// Insert or merge an entity. Updating an existing `Ref` keeps one type-index entry.
     pub fn insert(&mut self, entity: CachedEntity) -> Result<bool, RuntimeError> {
         let timestamp = self.current_timestamp();
         let reference = entity.reference.clone();
         self.capture_fork_base_before_mutate(&reference);
-
-        // Update type index
-        let entity_type = reference.entity_type.clone();
-        self.type_index
-            .entry(entity_type)
-            .or_default()
-            .push(reference.clone());
+        self.index_ref_once(&reference);
 
         // Insert or merge
         if let Some(existing) = self.entities.get_mut(&reference) {
@@ -573,6 +652,25 @@ impl GraphCache {
             self.insertion_order.push(reference);
             Ok(true)
         }
+    }
+
+    /// Replace the row for `entity.reference` with this observation (no Complete-protects-Summary merge).
+    ///
+    /// Freshness: after recorded-read invalidation, the current list/GET observation is the
+    /// post-write fact. Completeness describes field coverage of *this* observation only.
+    pub fn overwrite(&mut self, entity: CachedEntity) -> Result<(), RuntimeError> {
+        let timestamp = self.current_timestamp();
+        let reference = entity.reference.clone();
+        self.capture_fork_base_before_mutate(&reference);
+        self.index_ref_once(&reference);
+        let existed = self.entities.contains_key(&reference);
+        let mut new_entity = entity;
+        new_entity.last_updated = timestamp;
+        self.entities.insert(reference.clone(), new_entity);
+        if !existed {
+            self.insertion_order.push(reference);
+        }
+        Ok(())
     }
 
     /// Merge multiple entities into the cache
@@ -973,6 +1071,19 @@ mod tests {
     }
 
     #[test]
+    fn proximal_repeated_insert_does_not_duplicate_type_index() {
+        let mut cache = GraphCache::new();
+        let e = create_test_entity("1", "Item");
+        cache.insert(e.clone()).unwrap();
+        cache.insert(e).unwrap();
+        assert_eq!(
+            cache.get_entities_by_type("Item").len(),
+            1,
+            "same Ref must enumerate once"
+        );
+    }
+
+    #[test]
     fn test_cache_relations() {
         let mut cache = GraphCache::new();
 
@@ -1282,6 +1393,7 @@ mod tests {
             last_updated: 1,
             version: 1,
             completeness: EntityCompleteness::Complete,
+            unavailable_fields: Default::default(),
         };
         let row = entity_to_row_json(&entity, Some(&cgs));
         let restored =

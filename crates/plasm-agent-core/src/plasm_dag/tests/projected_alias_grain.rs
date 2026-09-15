@@ -78,7 +78,9 @@ fn select_alias_rename_is_projected_grain() {
 sent_peers = sent | select email = receiver_email
 sent_peers"#,
     )
-    .expect("| select email = receiver_email must type dest as projected grain, not Transfer.email");
+    .expect(
+        "| select email = receiver_email must type dest as projected grain, not Transfer.email",
+    );
 }
 
 #[test]

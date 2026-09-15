@@ -1,0 +1,37 @@
+token_note_get:
+  method: GET
+  path:
+  - type: literal
+    value: notes
+  - type: var
+    name: note_id
+  headers:
+    type: object
+    fields:
+    - - Authorization
+      - type: format
+        template: "Bearer {token}"
+        vars:
+          token:
+            type: var
+            name: access_token
+
+token_note_comment_query:
+  method: GET
+  path:
+  - type: literal
+    value: notes
+  - type: var
+    name: note_id
+  - type: literal
+    value: comments
+  headers:
+    type: object
+    fields:
+    - - Authorization
+      - type: format
+        template: "Bearer {token}"
+        vars:
+          token:
+            type: var
+            name: access_token

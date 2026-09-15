@@ -13,6 +13,16 @@ item_query:
   response:
     items: results
 
+item_get:
+  method: GET
+  path:
+    - type: literal
+      value: items
+    - type: literal
+      value: indexed
+    - type: var
+      name: id
+
 item_offset_query:
   method: GET
   path:

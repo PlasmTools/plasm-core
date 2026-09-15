@@ -103,6 +103,7 @@ fn synthetic_page_result(
     cursor.offset = end;
     let has_more = cursor.offset < cursor.rows.len();
     let request_fingerprints = cursor.request_fingerprints.clone();
+    let coverage = cursor.coverage;
     let paging_handle = if has_more {
         sess.upsert_synthetic_paging_resume(handle, cursor);
         Some(handle.clone())
@@ -115,6 +116,7 @@ fn synthetic_page_result(
         count: entities.len(),
         entities,
         has_more,
+        coverage,
         pagination_resume: None,
         paging_handle,
         source: ExecutionSource::Cache,

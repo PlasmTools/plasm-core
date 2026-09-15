@@ -83,6 +83,16 @@ RULES: dict[str, tuple[Severity, str, re.Pattern[str]]] = {
             re.I,
         ),
     ),
+    "I_get_meaning_create_shelf": (
+        "error",
+        "Get-bearing entity What puts create/send/record (or deposit/withdraw) verbs on Get Meaning",
+        re.compile(
+            r"send/request creates|deposit or withdraw|or move it|"
+            r"send money|\bor send\b|on send/request creates|"
+            r"\bsearchable\b|directory entry",
+            re.I,
+        ),
+    ),
 }
 
 G_TABULAR_JARGON_ALLOW = re.compile(
@@ -124,6 +134,45 @@ def discover_catalogs(apis_root: Path) -> list[str]:
                 catalogs.append(f"{p.name}/{child.name}")
     return catalogs
 
+
+
+def get_bearing_entities(text: str) -> set[str]:
+    """Entity names that declare at least one `kind: get` capability."""
+    ents: set[str] = set()
+    in_caps = False
+    current_entity: str | None = None
+    current_kind: str | None = None
+    for line in text.splitlines():
+        if re.match(r"^capabilities:\s*$", line):
+            if current_kind == "get" and current_entity:
+                ents.add(current_entity)
+            in_caps = True
+            current_entity = None
+            current_kind = None
+            continue
+        if in_caps and re.match(r"^[a-z_][a-z0-9_]*:\s*$", line):
+            if current_kind == "get" and current_entity:
+                ents.add(current_entity)
+            in_caps = False
+            continue
+        if not in_caps:
+            continue
+        if re.match(r"^  [A-Za-z0-9_]+:\s*$", line):
+            if current_kind == "get" and current_entity:
+                ents.add(current_entity)
+            current_entity = None
+            current_kind = None
+            continue
+        kind_m = re.match(r"^    kind:\s*(\S+)", line)
+        if kind_m:
+            current_kind = kind_m.group(1)
+            continue
+        ent_m = re.match(r"^    entity:\s*(\S+)", line)
+        if ent_m:
+            current_entity = ent_m.group(1)
+    if current_kind == "get" and current_entity:
+        ents.add(current_entity)
+    return ents
 
 
 def classify_description_context(
@@ -177,6 +226,8 @@ def scan_domain_yaml(path: Path, catalog: str) -> list[Finding]:
     in_parameters = False
     in_output = False
     section_indent = 0
+    current_entity_name: str | None = None
+    get_bearing = get_bearing_entities(text)
 
     for line_no, line in enumerate(lines, start=1):
         stripped = line.lstrip()
@@ -219,6 +270,11 @@ def scan_domain_yaml(path: Path, catalog: str) -> list[Finding]:
                 in_parameters = False
                 in_output = False
 
+        if section == "entities":
+            ent_m = re.match(r"^  ([A-Z][A-Za-z0-9_]*):\s*$", line)
+            if ent_m:
+                current_entity_name = ent_m.group(1)
+
         if not re.match(r"description:\s*", stripped):
             continue
 
@@ -239,6 +295,11 @@ def scan_domain_yaml(path: Path, catalog: str) -> list[Finding]:
             # glosses may correctly name both poles when one op filters by direction.
             if rule_id == "H_sibling_list_polarity" and context != "entity":
                 continue
+            if rule_id == "I_get_meaning_create_shelf":
+                if context != "entity" or in_fields:
+                    continue
+                if current_entity_name not in get_bearing:
+                    continue
             sev = effective_severity(rule_id, base_sev, context)
             findings.append(
                 Finding(

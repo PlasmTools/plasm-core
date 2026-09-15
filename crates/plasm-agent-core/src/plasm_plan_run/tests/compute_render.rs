@@ -35,40 +35,55 @@ fn render(
 }
 
 #[test]
-fn render_compute_emits_single_content_row() {
+fn render_compute_emits_one_content_record_per_row() {
     let rows = vec![
         serde_json::json!({ "name": "a" }),
         serde_json::json!({ "name": "b" }),
     ];
     let cols = empty_cols(&["name"]);
-    let out = render(
-        &rows,
-        &cols,
-        "{% for r in rows %}- {{ r.name }}\n{% endfor %}",
-        None,
-    )
-    .expect("render");
+    let out = render(&rows, &cols, "{{ name }}", None).expect("render");
 
-    assert_eq!(out, vec![serde_json::json!({ "content": "- a\n- b\n" })]);
+    assert_eq!(
+        out,
+        vec![
+            serde_json::json!({ "content": "a" }),
+            serde_json::json!({ "content": "b" }),
+        ]
+    );
 }
 
 #[test]
-fn render_compute_source_alias_binds_collection_under_label() {
+fn render_compute_zero_rows_emits_empty_rowset() {
+    let cols = empty_cols(&["name"]);
+    let out = render(&[], &cols, "{{ name }}", None).expect("empty");
+    assert!(out.is_empty());
+}
+
+#[test]
+fn render_compute_named_binding_available_without_implicit_rows() {
     let rows = vec![
         serde_json::json!({ "name": "a" }),
         serde_json::json!({ "name": "b" }),
     ];
     let cols = empty_cols(&["name"]);
-    let alias = OutputName::new("items").expect("alias");
-    let out = render(
-        &rows,
-        &cols,
-        "{% for r in items %}- {{ r.name }}\n{% endfor %}",
-        Some(&alias),
-    )
-    .expect("render with source alias");
+    let items = OutputName::new("items").expect("alias");
+    let out = render_compute(&RenderComputeInput {
+        primary_rows: &rows,
+        columns: &cols,
+        template: "{{ name }} ({{ items | length }})",
+        collection_alias: Some(&items),
+        render_bindings: &[items.clone()],
+        binding_rows: &BTreeMap::from([("items".to_string(), rows.clone())]),
+    })
+    .expect("named binding");
 
-    assert_eq!(out, vec![serde_json::json!({ "content": "- a\n- b\n" })]);
+    assert_eq!(
+        out,
+        vec![
+            serde_json::json!({ "content": "a (2)" }),
+            serde_json::json!({ "content": "b (2)" }),
+        ]
+    );
 }
 
 #[test]
@@ -81,34 +96,15 @@ fn render_compute_p_symbol_alias_resolves_alongside_wire_name() {
     aliases.insert("p23".into(), OutputName::new("name").expect("name"));
     aliases.insert("p21".into(), OutputName::new("id").expect("id"));
     let cols = render_cols(&["name", "id"], aliases);
-    let out = render(
-        &rows,
-        &cols,
-        "{% for r in rows %}- {{ r.p23 }} (#{{ r.p21 }})\n{% endfor %}",
-        None,
-    )
-    .expect("render p# aliases");
+    let out = render(&rows, &cols, "{{ p23 }} (#{{ p21 }})", None).expect("p# aliases");
 
     assert_eq!(
         out,
-        vec![serde_json::json!({ "content": "- a (#1)\n- b (#2)\n" })]
+        vec![
+            serde_json::json!({ "content": "a (#1)" }),
+            serde_json::json!({ "content": "b (#2)" }),
+        ]
     );
-}
-
-#[test]
-fn render_compute_mixed_p_and_wire_names() {
-    let rows = vec![serde_json::json!({ "name": "a" })];
-    let mut aliases = BTreeMap::new();
-    aliases.insert("p23".into(), OutputName::new("name").expect("name"));
-    let cols = render_cols(&["name"], aliases);
-    let out = render(
-        &rows,
-        &cols,
-        "{% for r in rows %}{{ r.p23 }} / {{ r.name }}{% endfor %}",
-        None,
-    )
-    .expect("mixed");
-    assert_eq!(out, vec![serde_json::json!({ "content": "a / a" })]);
 }
 
 #[test]
@@ -118,152 +114,69 @@ fn render_compute_null_field_coalesces_with_or() {
         serde_json::json!({ "name": "b", "score": 42 }),
     ];
     let cols = empty_cols(&["name", "score"]);
-    let out = render(
-        &rows,
-        &cols,
-        "{% for r in rows %}{{ r.name }}: {{ r.score or \"—\" }}\n{% endfor %}",
-        None,
-    )
-    .expect("null coalesce");
-    assert_eq!(out, vec![serde_json::json!({ "content": "a: —\nb: 42\n" })]);
+    let out =
+        render(&rows, &cols, "{{ name }}: {{ score or \"—\" }}", None).expect("null coalesce");
+    assert_eq!(
+        out,
+        vec![
+            serde_json::json!({ "content": "a: —" }),
+            serde_json::json!({ "content": "b: 42" }),
+        ]
+    );
 }
 
 #[test]
-fn render_compute_null_renders_none_literal_without_coalesce() {
-    let rows = vec![serde_json::json!({ "name": "a", "score": null })];
-    let cols = empty_cols(&["name", "score"]);
-    let out = render(
-        &rows,
-        &cols,
-        "{% for r in rows %}{{ r.name }}:{{ r.score }}{% endfor %}",
-        None,
-    )
-    .expect("null bare");
-    assert_eq!(out, vec![serde_json::json!({ "content": "a:none" })]);
+fn render_compute_split_part_filter_matches_taught_minijinja() {
+    let rows = vec![serde_json::json!({ "blob": "alpha:beta:gamma" })];
+    let cols = empty_cols(&["blob"]);
+    let out = render(&rows, &cols, "{{ blob | split_part(':', 1) }}", None)
+        .expect("split_part is a shared Minijinja filter");
+    assert_eq!(out, vec![serde_json::json!({ "content": "beta" })]);
 }
 
 #[test]
-fn render_compute_propagates_minijinja_errors_with_field_hint() {
+fn render_compute_propagates_minijinja_errors_with_row_position() {
     let rows = vec![serde_json::json!({ "name": "a" })];
     let cols = empty_cols(&["name"]);
-    let err =
-        render(&rows, &cols, "{{ missing }}", None).expect_err("strict undefined is rejected");
+    let err = render(&rows, &cols, "{{ missing }}", None).expect_err("strict undefined");
 
-    assert!(err.contains("Plan.render template render error"), "{err}");
-    assert!(err.contains("Valid row fields: r.name"), "{err}");
-    assert!(err.contains("{% for r in rows %}"), "{err}");
+    assert!(err.contains("template render failed on binding"), "{err}");
+    assert!(err.contains("at row 0"), "{err}");
+    assert!(!err.contains("\"a\""), "must not expose row values: {err}");
 }
 
 #[test]
-fn render_compute_rejects_missing_columns_with_hint() {
-    let rows = vec![serde_json::json!({ "name": "a" })];
-    let cols = empty_cols(&["missing"]);
-    let err = render(&rows, &cols, "{{ rows }}", None).expect_err("missing column rejected");
-
-    assert!(err.contains("did not resolve in source row 0"), "{err}");
-    assert!(err.contains("Valid row fields:"), "{err}");
+fn render_compute_fails_closed_on_first_row_error() {
+    let rows = vec![
+        serde_json::json!({ "name": "a" }),
+        serde_json::json!({ "other": "b" }),
+    ];
+    let cols = empty_cols(&[]);
+    let err = render(&rows, &cols, "{{ name }}", None).expect_err("row 1 missing name");
+    assert!(err.contains("at row 1"), "{err}");
 }
 
 #[test]
-fn render_compute_preserves_unicode_markdown() {
+fn render_compute_preserves_unicode_and_whitespace() {
     let rows = vec![serde_json::json!({
         "title": "Pokémon",
         "arrow": "→",
     })];
     let cols = empty_cols(&["title", "arrow"]);
-    let rendered = render(
-        &rows,
-        &cols,
-        "# {{ rows[0].title }}\nstep {{ rows[0].arrow }} done",
-        None,
-    )
-    .expect("render unicode");
+    let rendered =
+        render(&rows, &cols, "# {{ title }}\nstep {{ arrow }} done", None).expect("render unicode");
     let content = rendered[0]["content"].as_str().expect("content");
     assert!(content.contains("Pokémon"), "{content}");
     assert!(content.contains('→'), "{content}");
+    assert!(content.contains("# "), "{content}");
 }
 
 #[test]
-fn render_compute_feeds_node_input_for_action_content() {
-    let rows = vec![
-        serde_json::json!({ "name": "a" }),
-        serde_json::json!({ "name": "b" }),
-    ];
+fn render_compute_no_implicit_rows_variable() {
+    let rows = vec![serde_json::json!({ "name": "a" })];
     let cols = empty_cols(&["name"]);
-    let rendered = render(
-        &rows,
-        &cols,
-        "{% for r in rows %}- {{ r.name }}\n{% endfor %}",
-        None,
-    )
-    .expect("render");
-    let input = rendered.into_iter().next().expect("singleton row");
-    let value = PlanValue::Object {
-        fields: BTreeMap::from([(
-            "content".to_string(),
-            PlanValue::NodeSymbol {
-                node: "doc".to_string(),
-                alias: "doc".to_string(),
-                path: vec!["content".to_string()],
-            },
-        )]),
-    };
-    let inputs = BTreeMap::from([(
-        InputAlias::new("doc".to_string()).expect("alias"),
-        MaterializedInputRow {
-            node: PlanNodeId::new("doc".to_string()).expect("node id"),
-            qualified_entity: crate::plasm_plan::QualifiedEntityKey {
-                entry_id: "acme".into(),
-                entity: "Doc".into(),
-            },
-            id_field: "id".into(),
-            proof: crate::plasm_plan::InputCardinalityProof::StaticSingleton,
-            row: input.clone(),
-            rows: vec![input],
-            row_identity: None,
-            row_identities: vec![None],
-        },
-    )]);
-    let scope = EvalScope::Root {
-        row: &serde_json::Value::Null,
-    };
-    let empty_coercion = BTreeMap::new();
-    let env = PlanEvalEnv {
-        scope,
-        inputs: InputEnv { rows: &inputs },
-        wire_coercion_by_alias: &empty_coercion,
-    };
-    let out = eval_plan_value(&value, &env).expect("eval");
-
-    assert_eq!(out["content"], "- a\n- b\n");
-}
-
-#[test]
-fn render_compute_cross_binding_binds_singleton_labels_for_dot_access() {
-    let rows = vec![serde_json::json!({ "name": "pika" })];
-    let cols = empty_cols(&["name"]);
-    let pika = OutputName::new("pika").expect("alias");
-    let repos = OutputName::new("repos").expect("repos");
-    let binding_rows = BTreeMap::from([
-        ("pika".to_string(), rows.clone()),
-        (
-            "repos".to_string(),
-            vec![serde_json::json!({ "owner": "ash" })],
-        ),
-    ]);
-    let out = render_compute(&RenderComputeInput {
-        primary_rows: &rows,
-        columns: &cols,
-        template: "Pokemon: {{ pika.name }}\nOwner: {{ repos.owner }}",
-        collection_alias: None,
-        render_bindings: &[pika, repos],
-        binding_rows: &binding_rows,
-    })
-    .expect("render");
-    assert_eq!(
-        out,
-        vec![serde_json::json!({ "content": "Pokemon: pika\nOwner: ash" })]
-    );
+    let err = render(&rows, &cols, "{{ rows | length }}", None).expect_err("implicit rows is gone");
+    assert!(err.contains("at row 0"), "{err}");
 }
 
 #[test]
@@ -273,17 +186,11 @@ fn render_compute_matrix_sized_rows_within_wall_time_guard() {
         .map(|i| serde_json::json!({ "id": format!("i{i}"), "title": format!("t{i}") }))
         .collect();
     let cols = empty_cols(&["id", "title"]);
-    let out = render(
-        &rows,
-        &cols,
-        "{% for r in rows %}{{ r.id }} {% endfor %}",
-        None,
-    )
-    .expect("render");
-    assert_eq!(out.len(), 1);
+    let out = render(&rows, &cols, "{{ id }}", None).expect("render");
+    assert_eq!(out.len(), 100);
     let elapsed = started.elapsed();
     assert!(
         elapsed.as_millis() < 500,
-        "render_compute on 100 rows should stay sub-second, took {elapsed:?}"
+        "per-row render on 100 rows should stay sub-second, took {elapsed:?}"
     );
 }

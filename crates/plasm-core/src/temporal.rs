@@ -9,6 +9,10 @@
 //! so relative phrases (`now`, `today`, `7 days ago`, …) anchor to a harness world clock (e.g.
 //! AppWorld task `specs.json` `datetime` on an out-of-process `plasm-mcp`).
 //!
+//! **Teaching (PLP-9):** when a language card teaches any temporal profile / Date slot, it must
+//! state this same instant as `evaluation_now` — relative tokens resolve against that clock, not
+//! an untaught wall calendar. Catalogs stay semantically pure (no harness dates in `values:` copy).
+//!
 //! **URL / query wire slots** — [`wire_temporal_value`]: preserves backend-relative literals
 //! (`now`, `now-1h`, …) and all-digit opaque tokens; otherwise same NL/ISO parsing as predicates.
 //!

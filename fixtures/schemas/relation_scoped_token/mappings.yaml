@@ -1,0 +1,37 @@
+token_folder_query:
+  method: GET
+  path:
+  - type: literal
+    value: folders
+  headers:
+    type: object
+    fields:
+    - - Authorization
+      - type: format
+        template: "Bearer {token}"
+        vars:
+          token:
+            type: var
+            name: access_token
+
+token_file_query:
+  method: GET
+  path:
+  - type: literal
+    value: files
+  headers:
+    type: object
+    fields:
+    - - Authorization
+      - type: format
+        template: "Bearer {token}"
+        vars:
+          token:
+            type: var
+            name: access_token
+  query:
+    type: object
+    fields:
+    - - folder_id
+      - type: var
+        name: folder_id

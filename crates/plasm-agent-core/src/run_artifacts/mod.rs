@@ -391,8 +391,10 @@ pub fn document_from_run(d: DocumentFromRun<'_>) -> RunArtifactDocument {
         display_lines: d.display_lines,
         request_fingerprints: d.result.request_fingerprints.clone(),
         entities,
+        coverage: d.result.coverage,
         source: d.result.source,
         stats: d.result.stats.clone(),
+        operations: d.result.operations.clone(),
     }
 }
 

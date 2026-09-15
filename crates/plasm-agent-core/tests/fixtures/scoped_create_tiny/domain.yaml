@@ -89,6 +89,7 @@ capabilities:
     - name
     - category_id
   product_label:
+    receiver: {kind: entity, entity: Product}
     description: Label a product
     kind: action
     entity: Product
@@ -121,6 +122,7 @@ capabilities:
     - name
     - category_id
   product_add_support_reply:
+    receiver: {kind: entity, entity: Product}
     description: Post a public reply on the helpdesk case thread
     kind: action
     entity: Product

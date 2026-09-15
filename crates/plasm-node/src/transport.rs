@@ -12,6 +12,7 @@ use plasm_runtime::error::RuntimeError;
 use plasm_runtime::http_transport::{
     compiled_http_url, compiled_template_headers, plasm_value_to_form_urlencoded, HttpTransport,
 };
+use plasm_runtime::request_error_from_host_http;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -87,6 +88,7 @@ impl JsCallbackHttpTransport {
         &self,
         req: JsTransportRequest,
     ) -> std::result::Result<JsTransportResponse, RuntimeError> {
+        tracing::debug!(target: "plasm_node::transport", method = %req.method, "dispatch JS transport callback");
         let js_promise =
             self.tsfn
                 .call_async_catch(req)
@@ -146,28 +148,24 @@ impl JsCallbackHttpTransport {
     }
 
     fn parse_response(
+        method: &str,
+        url: &str,
+        authorization_header: Option<&str>,
         resp: JsTransportResponse,
     ) -> std::result::Result<(serde_json::Value, Option<String>), RuntimeError> {
+        plasm_runtime::http_transport::trace_hydration_http_response(resp.status, resp.body.len());
         if !(200..300).contains(&resp.status) {
-            return Err(RuntimeError::RequestError {
-                message: format!("HTTP {}: {}", resp.status, summarize_error_body(&resp.body)),
-                attempts: 1,
-                status: Some(resp.status),
-                body: serde_json::from_str(&resp.body).ok(),
-            });
+            return Err(request_error_from_host_http(
+                method,
+                url,
+                authorization_header,
+                resp.status,
+                &resp.body,
+            ));
         }
         let json = serde_json::from_str(&resp.body)
             .unwrap_or_else(|_| serde_json::json!({ "content": resp.body }));
         Ok((json, resp.next_url))
-    }
-}
-
-fn summarize_error_body(body: &str) -> String {
-    let trimmed = body.trim();
-    if trimmed.len() > 512 {
-        format!("{}…", &trimmed[..512])
-    } else {
-        trimmed.to_string()
     }
 }
 
@@ -239,8 +237,7 @@ impl HttpTransport for JsCallbackHttpTransport {
         let mut req = self.build_request(method, url, auth, body, content_type, template_headers);
         req.reject_redirects = request.credential.is_some();
         req.require_host_auth = require_host_auth;
-        let resp = self.invoke(req).await?;
-        Self::parse_response(resp)
+        self.invoke_and_parse(req).await
     }
 
     async fn get_json_absolute(
@@ -249,8 +246,25 @@ impl HttpTransport for JsCallbackHttpTransport {
         auth: Option<ResolvedAuth>,
     ) -> std::result::Result<(serde_json::Value, Option<String>), RuntimeError> {
         let req = self.build_request("GET", url.to_string(), auth, None, None, Vec::new());
+        self.invoke_and_parse(req).await
+    }
+}
+
+impl JsCallbackHttpTransport {
+    async fn invoke_and_parse(
+        &self,
+        req: JsTransportRequest,
+    ) -> std::result::Result<(serde_json::Value, Option<String>), RuntimeError> {
+        let method = req.method.clone();
+        let url = req.url.clone();
+        let authorization = req.headers.as_ref().and_then(|headers| {
+            headers
+                .iter()
+                .find(|(key, _)| key.eq_ignore_ascii_case("authorization"))
+                .map(|(_, value)| value.clone())
+        });
         let resp = self.invoke(req).await?;
-        Self::parse_response(resp)
+        Self::parse_response(&method, &url, authorization.as_deref(), resp)
     }
 }
 
@@ -301,5 +315,42 @@ mod tests {
             body.contains("\"ok\":true") || body.contains("\"ok\": true"),
             "{body}"
         );
+    }
+
+    #[test]
+    fn host_401_bearer_present_names_wire_hides_token() {
+        const JWT: &str = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.signatureTAIL";
+        let err = plasm_runtime::request_error_from_host_http(
+            "GET",
+            "https://api.example.com/users?query=alice",
+            Some(&format!("Bearer {JWT}")),
+            401,
+            r#"{"message":"Invalid credentials"}"#,
+        );
+        let message = err.to_string();
+        assert!(
+            message.contains("GET path=/users query=query=alice"),
+            "{message}"
+        );
+        assert!(message.contains("Authorization: present"), "{message}");
+        assert!(!message.contains(JWT), "full JWT leaked: {message}");
+    }
+
+    #[test]
+    fn host_401_authorization_absent() {
+        let err = plasm_runtime::request_error_from_host_http(
+            "POST",
+            "https://api.example.com/notes",
+            None,
+            401,
+            r#"{"message":"missing token"}"#,
+        );
+        let message = err.to_string();
+        assert!(
+            message.contains("POST path=/notes query=(none)"),
+            "{message}"
+        );
+        assert!(message.contains("Authorization: absent"), "{message}");
+        assert!(!message.contains("tail"), "{message}");
     }
 }

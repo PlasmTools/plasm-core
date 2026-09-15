@@ -5,6 +5,7 @@ use super::*;
 use crate::cache::{CachedEntity, EntityCompleteness};
 use crate::execution::{
     current_timestamp, ExecutionResult, ExecutionSource, ExecutionStats, OperationLedger,
+    ResultCoverage,
 };
 use crate::view_dag_run::run_view_dag_sync;
 use crate::view_test_support::{lang_digest_scope, matrix_views_cgs};
@@ -94,6 +95,7 @@ fn stub_item_node_result(id: &str, title: &str) -> ExecutionResult {
         entities: vec![stub_item_row(id, title)],
         count: 1,
         has_more: false,
+        coverage: ResultCoverage::Unknown,
         pagination_resume: None,
         paging_handle: None,
         source: ExecutionSource::Cache,
@@ -176,6 +178,7 @@ fn fixture_runner_node_single_row_cardinality_error() {
             entities: vec![stub_item_row("a", "A"), stub_item_row("b", "B")],
             count: 2,
             has_more: false,
+            coverage: ResultCoverage::Unknown,
             pagination_resume: None,
             paging_handle: None,
             source: ExecutionSource::Cache,
@@ -218,6 +221,7 @@ fn resolve_view_relation_maps_stamps_empty_many_relation_key() {
                 )],
                 count: 1,
                 has_more: false,
+                coverage: ResultCoverage::Unknown,
                 pagination_resume: None,
                 paging_handle: None,
                 source: ExecutionSource::Cache,
@@ -232,6 +236,7 @@ fn resolve_view_relation_maps_stamps_empty_many_relation_key() {
                 entities: vec![],
                 count: 0,
                 has_more: false,
+                coverage: ResultCoverage::Unknown,
                 pagination_resume: None,
                 paging_handle: None,
                 source: ExecutionSource::Cache,

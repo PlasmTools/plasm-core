@@ -1,0 +1,119 @@
+version: 1
+http_backend: http://127.0.0.1:9
+entities:
+  Notice:
+    id_field: notice_id
+    primary_read: notice_get
+    primary_query: notice_query
+    primary_search: notice_search
+    description: Posted notice in a shared board.
+    fields:
+      notice_id:
+        required: true
+        value_ref: nv_notice_id
+      title:
+        required: true
+        value_ref: nv_title
+      body:
+        required: false
+        value_ref: nv_body
+      author_email:
+        required: false
+        value_ref: nv_email
+      created_at:
+        required: false
+        value_ref: nv_ts
+  Transaction:
+    id_field: transaction_id
+    primary_read: transaction_get
+    primary_query: transaction_query
+    description: Completed transfer already sent or received.
+    fields:
+      transaction_id:
+        required: true
+        value_ref: nv_tx_id
+      amount:
+        required: true
+        value_ref: nv_amount
+      description:
+        required: true
+        value_ref: nv_tx_desc
+      created_at:
+        required: false
+        value_ref: nv_ts
+      private:
+        required: false
+        value_ref: nv_private
+capabilities:
+  notice_query:
+    description: List notices on the board.
+    kind: query
+    entity: Notice
+    provides:
+    - notice_id
+    - title
+  notice_get:
+    description: Show one notice by id.
+    kind: get
+    entity: Notice
+    provides:
+    - notice_id
+    - title
+  notice_search:
+    description: Search notices by text.
+    kind: search
+    entity: Notice
+    selection:
+    - name: query
+      value_ref: nv_q
+      required: true
+    provides:
+    - notice_id
+    - title
+  transaction_query:
+    description: List completed transfers.
+    kind: query
+    entity: Transaction
+    provides:
+    - transaction_id
+    - amount
+    - description
+  transaction_get:
+    description: Show one completed transfer by id.
+    kind: get
+    entity: Transaction
+    provides:
+    - transaction_id
+    - amount
+    - description
+values:
+  nv_notice_id:
+    type: string
+    description: Notice identity.
+  nv_title:
+    type: string
+    description: Notice title.
+  nv_body:
+    type: string
+    description: Notice body.
+  nv_email:
+    type: string
+    description: Author email.
+  nv_ts:
+    type: string
+    description: Creation timestamp.
+  nv_q:
+    type: string
+    description: Search text.
+  nv_tx_id:
+    type: string
+    description: Transfer identity.
+  nv_amount:
+    type: string
+    description: Transfer amount.
+  nv_tx_desc:
+    type: string
+    description: Transfer note.
+  nv_private:
+    type: string
+    description: Whether the transfer is private.

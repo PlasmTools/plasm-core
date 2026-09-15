@@ -24,9 +24,9 @@ fn matrix_host() -> crate::server_state::PlasmHostState {
         .join("../../fixtures/schemas/plasm_language_matrix");
     let cgs = Arc::new(load_schema_dir(&dir).expect("plasm_language_matrix"));
     let reg = CgsRegistry::from_pairs(vec![(
-        "github".into(),
-        "GitHub".into(),
-        vec!["github".into()],
+        "langmatrix".into(),
+        "Langmatrix".into(),
+        vec!["langmatrix".into()],
         cgs,
     )]);
     let engine = ExecutionEngine::new(ExecutionConfig::default()).expect("engine");
@@ -57,7 +57,7 @@ fn mcp_apply_capability_seeds_future_size() {
             let _guard = rt.enter();
             let st = matrix_host();
             let seeds = vec![CapabilitySeed {
-                entry_id: "github".into(),
+                entry_id: "langmatrix".into(),
                 entity: "LangItem".into(),
             }];
             let fut =
@@ -124,7 +124,7 @@ fn mcp_plasm_context_future_size() {
             let args = json!({
                 "session_mode": "new",
                 "intent": "size probe",
-                "seeds": [{"api": "github", "entity": "LangItem"}]
+                "seeds": [{"api": "langmatrix", "entity": "LangItem"}]
             });
             let fut = handler.handle_mcp_tool_plasm_context("size-probe-session", &runtime, &args);
             let n = size_of_future(fut);
@@ -190,7 +190,7 @@ fn mcp_call_tool_dispatch_future_size() {
                     json!({
                         "session_mode": "new",
                         "intent": "size probe",
-                        "seeds": [{"api": "github", "entity": "LangItem"}]
+                        "seeds": [{"api": "langmatrix", "entity": "LangItem"}]
                     })
                     .as_object()
                     .cloned()

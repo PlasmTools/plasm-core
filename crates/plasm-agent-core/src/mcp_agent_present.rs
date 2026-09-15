@@ -476,6 +476,7 @@ mod tests {
             artifact: Some(handle.clone()),
             lossy_summary_fields: crate::output::LossySummaryFieldNames::default(),
             column_schema: None,
+            coverage: plasm_runtime::ResultCoverage::Unknown,
         };
         let tokens = RunTokens::from_first_step(Some("inline"), Some(&step));
         assert_eq!(

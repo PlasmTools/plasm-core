@@ -44,7 +44,9 @@ fn plasm_value_to_json(v: &Value) -> serde_json::Value {
         Value::StringTemplate(value) => {
             serde_json::json!({"__plasm_string_template": value.source()})
         }
-        Value::PlasmInputRef(_) | Value::UnionCtor { .. } => serde_json::Value::Null,
+        Value::PlasmInputRef(_) | Value::GetScalarExtract(_) | Value::UnionCtor { .. } => {
+            serde_json::Value::Null
+        }
         Value::Money(m) => serde_json::Value::String(m.display()),
     }
 }
@@ -173,7 +175,10 @@ fn register_view_template_filters(env: &mut Environment<'_>) {
                 Value::Array(_) | Value::Object(_) => {
                     serde_json::to_string(&plasm_value_to_json(&out)).unwrap_or_default()
                 }
-                Value::StringTemplate(_) | Value::PlasmInputRef(_) | Value::UnionCtor { .. } => {
+                Value::StringTemplate(_)
+                | Value::PlasmInputRef(_)
+                | Value::GetScalarExtract(_)
+                | Value::UnionCtor { .. } => {
                     return Err(minijinja::Error::new(
                         minijinja::ErrorKind::InvalidOperation,
                         "unbound operand reached wire_time",

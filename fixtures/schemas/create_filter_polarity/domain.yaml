@@ -1,0 +1,50 @@
+version: 2
+entry_id: create_filter_polarity
+auth:
+  scheme: none
+http_backend: http://127.0.0.1:9
+entities:
+  Doc:
+    id_field: path
+    description: Path-identified document
+    fields:
+      path:
+        required: true
+        value_ref: nv_path
+      body:
+        required: false
+        value_ref: nv_body
+capabilities:
+  doc_get:
+    description: Show one document by path.
+    kind: get
+    entity: Doc
+    provides:
+    - path
+    - body
+  doc_create:
+    description: Create a document at a path.
+    kind: create
+    entity: Doc
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_token
+          required: true
+        - name: path
+          value_ref: nv_path
+          required: true
+        - name: body
+          value_ref: nv_body
+          required: true
+    provides:
+    - path
+values:
+  nv_path:
+    type: string
+  nv_body:
+    type: string
+  nv_token:
+    type: string

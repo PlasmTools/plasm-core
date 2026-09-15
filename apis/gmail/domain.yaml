@@ -13,7 +13,7 @@ data_classes:
 entities:
   Message:
     id_field: id
-    description: A single mailbox email for unread, search, get, or send at message grain.
+    description: A single mailbox email.
     discovery:
       names:
       - message
@@ -458,6 +458,7 @@ capabilities:
       get: message_get
       prefix: parent
   message_trash:
+    receiver: {kind: entity, entity: Message}
     description: Move a message to TRASH.
     kind: action
     entity: Message
@@ -465,6 +466,7 @@ capabilities:
       type: side_effect
       description: Move a message to TRASH.
   message_untrash:
+    receiver: {kind: entity, entity: Message}
     description: Remove a message from TRASH.
     kind: action
     entity: Message
@@ -554,6 +556,7 @@ capabilities:
     - snippet
     - historyId
   thread_trash:
+    receiver: {kind: entity, entity: Thread}
     description: Move a thread and all its messages to TRASH.
     kind: action
     entity: Thread
@@ -561,6 +564,7 @@ capabilities:
       type: side_effect
       description: Move a thread and all its messages to TRASH.
   thread_untrash:
+    receiver: {kind: entity, entity: Thread}
     description: Remove a thread and all its messages from TRASH.
     kind: action
     entity: Thread
@@ -694,6 +698,7 @@ capabilities:
       type: side_effect
       description: Send an existing draft immediately.
   attachment_get:
+    receiver: {kind: entity, entity: Attachment}
     description: Fetch an attachment's data. Requires both messageId (scope) and attachment id.
     kind: action
     entity: Attachment

@@ -1,0 +1,35 @@
+login:
+  method: POST
+  path:
+    - {type: literal, value: login}
+record_get:
+  method: GET
+  path:
+    - {type: literal, value: records}
+    - {type: var, name: id}
+  auth:
+    scheme: bearer
+    token: {type: var, name: access_token}
+file_query:
+  method: GET
+  path:
+    - {type: literal, value: records}
+    - {type: var, name: id}
+    - {type: literal, value: files}
+  auth:
+    scheme: bearer
+    token: {type: var, name: access_token}
+attach:
+  method: POST
+  path:
+    - {type: literal, value: records}
+    - {type: var, name: id}
+    - {type: literal, value: file}
+  auth:
+    scheme: bearer
+    token: {type: var, name: access_token}
+  body:
+    type: object
+    fields:
+      - [file_path, {type: var, name: file_path}]
+      - [source_access_token, {type: var, name: source_access_token}]

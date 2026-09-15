@@ -302,7 +302,7 @@ pub fn normalize(
             m.attach_currency_if_absent(default_currency);
             Ok(Value::Money(m.with_format(format)))
         }
-        Value::PlasmInputRef(_) => Ok(val),
+        Value::PlasmInputRef(_) | Value::GetScalarExtract(_) => Ok(val),
         other => {
             let (amount, from_obj_ccy) = parse_amount_and_optional_currency(&other, format)?;
             let currency = from_obj_ccy.or_else(|| default_currency.map(str::to_string));

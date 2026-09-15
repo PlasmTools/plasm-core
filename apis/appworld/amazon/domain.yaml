@@ -1,4 +1,4 @@
-version: 10
+version: 14
 entry_id: amazon
 auth:
   scheme: none
@@ -31,12 +31,13 @@ entities:
         value_ref: nv_str
   User:
     id_field: email
-    description: Amazon user public profile.
+    description: Amazon user public profile or signed-in account.
     discovery:
       names:
       - profile
       - user
       - account holder
+      - account
     fields:
       first_name:
         required: false
@@ -50,9 +51,18 @@ entities:
       registered_at:
         required: false
         value_ref: nv_datetime
+      last_logged_in:
+        required: false
+        value_ref: nv_datetime
+      verified:
+        required: false
+        value_ref: nv_bool
+      is_prime:
+        required: false
+        value_ref: nv_bool
   Product:
     id_field: product_id
-    description: Searchable Amazon retail catalog listing.
+    description: Amazon retail catalog listing.
     discovery:
       names:
       - product
@@ -271,6 +281,9 @@ entities:
       delivery_fee:
         required: false
         value_ref: nv_number
+      gift_wrap_fee:
+        required: false
+        value_ref: nv_number
       discount:
         required: false
         value_ref: nv_number
@@ -332,7 +345,7 @@ entities:
         value_ref: nv_str
       card_number:
         required: false
-        value_ref: nv_int
+        value_ref: nv_card_number
         data_class: pii_payment
       expiry_year:
         required: false
@@ -340,6 +353,10 @@ entities:
       expiry_month:
         required: false
         value_ref: nv_int
+      cvv_number:
+        required: false
+        value_ref: nv_int
+        data_class: pii_payment
   ProductReview:
     id_field: review_id
     description: Customer review of a product.
@@ -354,7 +371,7 @@ entities:
         value_ref: nv_review_id
       product_id:
         required: true
-        value_ref: nv_product_id
+        value_ref: nv_product_ref
       is_verified:
         required: false
         value_ref: nv_bool
@@ -404,7 +421,7 @@ entities:
         value_ref: nv_order_id
       product_id:
         required: true
-        value_ref: nv_product_id
+        value_ref: nv_product_ref
       product_name:
         required: false
         value_ref: nv_str
@@ -426,6 +443,9 @@ entities:
       returned_at:
         required: false
         value_ref: nv_datetime
+      confirmation_code:
+        required: false
+        value_ref: nv_str
   ProductQuestion:
     id_field: question_id
     description: Customer question about a product.
@@ -440,7 +460,7 @@ entities:
         value_ref: nv_question_id
       product_id:
         required: true
-        value_ref: nv_product_id
+        value_ref: nv_product_ref
       question:
         required: true
         value_ref: nv_body
@@ -476,9 +496,26 @@ entities:
       user_name:
         required: false
         value_ref: nv_str
+        path: [user, name]
       user_email:
         required: false
         value_ref: nv_email
+        path: [user, email]
+  PrimePlan:
+    id_field: monthly
+    description: Amazon Prime subscription plan prices.
+    discovery:
+      names:
+      - prime plans
+      - prime pricing
+      - monthly yearly prime
+    fields:
+      monthly:
+        required: true
+        value_ref: nv_int
+      yearly:
+        required: true
+        value_ref: nv_int
   PrimeSubscription:
     id_field: prime_subscription_id
     description: Amazon Prime subscription period.
@@ -555,6 +592,147 @@ capabilities:
     - last_name
     - email
     - registered_at
+  account_get:
+    description: Show the signed-in Amazon account.
+    kind: get
+    entity: User
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - first_name
+    - last_name
+    - email
+    - registered_at
+    - last_logged_in
+    - verified
+    - is_prime
+  account_create:
+    description: Sign up a new Amazon account.
+    kind: create
+    entity: User
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: first_name
+          value_ref: nv_str
+          required: true
+        - name: last_name
+          value_ref: nv_str
+          required: true
+        - name: email
+          value_ref: nv_email
+          required: true
+        - name: password
+          value_ref: nv_password
+          required: true
+    output:
+      type: side_effect
+      description: Creates the Amazon account for this email.
+  account_update:
+    description: Update the signed-in account holder's name.
+    kind: update
+    entity: User
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: first_name
+          value_ref: nv_str
+          required: false
+        - name: last_name
+          value_ref: nv_str
+          required: false
+    output:
+      type: side_effect
+      description: Updates the account holder's display name.
+  account_delete:
+    description: Delete the signed-in Amazon account.
+    kind: delete
+    entity: User
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Deletes the signed-in Amazon account.
+  send_verification_code:
+    description: Email a verification code to confirm an Amazon account.
+    kind: action
+    entity: User
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: email
+          value_ref: nv_email
+          required: true
+    output:
+      type: side_effect
+      description: Sends an account verification code to the email.
+  verify_account:
+    description: Confirm an Amazon account with a verification code.
+    kind: action
+    entity: User
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: email
+          value_ref: nv_email
+          required: true
+        - name: verification_code
+          value_ref: nv_str
+          required: true
+    output:
+      type: side_effect
+      description: Marks the account as verified.
+  send_password_reset_code:
+    description: Email a password-reset code for an Amazon account.
+    kind: action
+    entity: User
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: email
+          value_ref: nv_email
+          required: true
+    output:
+      type: side_effect
+      description: Sends a password-reset code to the email.
+  reset_password:
+    description: Set a new Amazon password using a reset code.
+    kind: action
+    entity: User
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: email
+          value_ref: nv_email
+          required: true
+        - name: password_reset_code
+          value_ref: nv_str
+          required: true
+        - name: new_password
+          value_ref: nv_password
+          required: true
+    output:
+      type: side_effect
+      description: Replaces the account password.
   product_query:
     description: Search the product catalog.
     kind: query
@@ -764,6 +942,7 @@ capabilities:
     - quantity
     - price
   wish_list_add:
+    receiver: {kind: entity, entity: Product}
     description: Add a product to the wish list.
     kind: action
     entity: Product
@@ -784,6 +963,7 @@ capabilities:
       type: side_effect
       description: Adds this product to the wish list.
   wish_list_update_quantity:
+    receiver: {kind: entity, entity: Product}
     description: Update quantity of a product already on the wish list.
     kind: action
     entity: Product
@@ -801,6 +981,7 @@ capabilities:
       type: side_effect
       description: Updates wish-list quantity for this product.
   wish_list_remove:
+    receiver: {kind: entity, entity: Product}
     description: Remove a product from the wish list.
     kind: action
     entity: Product
@@ -829,6 +1010,7 @@ capabilities:
       type: side_effect
       description: Empties the wish list.
   cart_move_to_wish_list:
+    receiver: {kind: entity, entity: Product}
     description: Move a product from the cart to the wish list.
     kind: action
     entity: Product
@@ -846,6 +1028,7 @@ capabilities:
       type: side_effect
       description: Moves this product from cart to wish list.
   wish_list_move_to_cart:
+    receiver: {kind: entity, entity: Product}
     description: Move a product from the wish list to the cart.
     kind: action
     entity: Product
@@ -863,6 +1046,7 @@ capabilities:
       type: side_effect
       description: Moves this product from wish list to cart.
   cart_add_product:
+    receiver: {kind: entity, entity: Product}
     description: Add a product to the cart.
     kind: action
     entity: Product
@@ -883,6 +1067,7 @@ capabilities:
       type: side_effect
       description: Adds this product to the cart.
   cart_update_quantity:
+    receiver: {kind: entity, entity: Product}
     description: Update quantity of a product already in the cart.
     kind: action
     entity: Product
@@ -900,6 +1085,7 @@ capabilities:
       type: side_effect
       description: Updates cart line quantity for this product.
   cart_remove_product:
+    receiver: {kind: entity, entity: Product}
     description: Remove a product from the cart.
     kind: action
     entity: Product
@@ -958,6 +1144,39 @@ capabilities:
     output:
       type: side_effect
       description: Clears the applied promo code from the cart.
+  cart_add_gift_wrap:
+    receiver: {kind: entity, entity: Product}
+    description: Add or update gift wrapping for a product already in the cart.
+    kind: action
+    entity: Product
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: quantity
+          value_ref: nv_int
+          required: false
+    output:
+      type: side_effect
+      description: Sets gift-wrap quantity for this cart line.
+  cart_remove_gift_wrap:
+    receiver: {kind: entity, entity: Product}
+    description: Remove gift wrapping from a product in the cart.
+    kind: action
+    entity: Product
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Clears gift wrapping for this cart line.
   order_query:
     description: List past orders.
     kind: query
@@ -986,6 +1205,7 @@ capabilities:
     - name
     - tax
     - delivery_fee
+    - gift_wrap_fee
     - discount
     - paid_amount
     - address_text
@@ -1009,6 +1229,7 @@ capabilities:
     - name
     - tax
     - delivery_fee
+    - gift_wrap_fee
     - discount
     - paid_amount
     - address_text
@@ -1035,6 +1256,7 @@ capabilities:
     provides:
     - order_id
   order_receipt_download:
+    receiver: {kind: entity, entity: Order}
     description: Download an order receipt to a file-system path.
     kind: action
     entity: Order
@@ -1052,7 +1274,7 @@ capabilities:
           value_ref: nv_bool
           required: false
         - name: file_system_access_token
-          value_ref: nv_access_token
+          value_ref: nv_file_access_token
           required: false
     output:
       type: side_effect
@@ -1159,6 +1381,25 @@ capabilities:
     - card_number
     - expiry_year
     - expiry_month
+  payment_card_get:
+    description: Show one saved payment card.
+    kind: get
+    entity: PaymentCard
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - payment_card_id
+    - card_name
+    - owner_name
+    - card_number
+    - expiry_year
+    - expiry_month
+    - cvv_number
   payment_card_create:
     description: Add a saved payment card.
     kind: create
@@ -1177,7 +1418,7 @@ capabilities:
           value_ref: nv_str
           required: true
         - name: card_number
-          value_ref: nv_int
+          value_ref: nv_card_number
           required: true
           sink_class: external_order
         - name: expiry_year
@@ -1223,7 +1464,7 @@ capabilities:
     entity: ProductReview
     selection:
     - name: product_id
-      value_ref: nv_product_id
+      value_ref: nv_product_ref
       required: true
     - name: access_token
       value_ref: nv_access_token
@@ -1270,7 +1511,7 @@ capabilities:
         type: object
         fields:
         - name: product_id
-          value_ref: nv_product_id
+          value_ref: nv_product_ref
           required: true
         - name: access_token
           value_ref: nv_access_token
@@ -1317,6 +1558,62 @@ capabilities:
         - name: access_token
           value_ref: nv_access_token
           required: true
+  product_return_query:
+    description: List product returns, optionally filtered by order.
+    kind: query
+    entity: ProductReturn
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: order_id
+      value_ref: nv_order_id
+      required: false
+    controls:
+    - name: page_index
+      value_ref: nv_int
+      required: false
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+    provides:
+    - return_id
+    - order_id
+    - product_id
+    - product_name
+    - quantity
+    - deliverer_id
+    - deliverer_name
+    - refund_amount
+    - initiated_at
+    - returned_at
+    - confirmation_code
+  product_return_get:
+    description: Show one product return.
+    kind: get
+    entity: ProductReturn
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - return_id
+    - order_id
+    - product_id
+    - product_name
+    - quantity
+    - deliverer_id
+    - deliverer_name
+    - refund_amount
+    - initiated_at
+    - returned_at
+    - confirmation_code
   product_return_create:
     description: Initiate a product return for an order line.
     kind: create
@@ -1332,7 +1629,7 @@ capabilities:
           value_ref: nv_order_id
           required: true
         - name: product_id
-          value_ref: nv_product_id
+          value_ref: nv_product_ref
           required: true
         - name: deliverer_id
           value_ref: nv_deliverer_id
@@ -1353,6 +1650,41 @@ capabilities:
     provides:
     - deliverer_id
     - deliverer_name
+  prime_plan_get:
+    description: Show Amazon Prime monthly and yearly plan prices.
+    kind: get
+    entity: PrimePlan
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - monthly
+    - yearly
+  prime_subscription_query:
+    description: List Amazon Prime subscriptions for the signed-in account.
+    kind: query
+    entity: PrimeSubscription
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    controls:
+    - name: page_index
+      value_ref: nv_int
+      required: false
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+    provides:
+    - prime_subscription_id
+    - start_date
+    - end_date
+    - payment_card_digits
+    - paid_amount
   prime_subscribe:
     description: Subscribe to Amazon Prime with a saved payment card.
     kind: create
@@ -1373,6 +1705,62 @@ capabilities:
           required: true
     provides:
     - prime_subscription_id
+  prime_subscription_receipt_download:
+    receiver: {kind: entity, entity: PrimeSubscription}
+    description: Download a Prime subscription receipt to a file-system path.
+    kind: action
+    entity: PrimeSubscription
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: download_to_file_path
+          value_ref: nv_file_path
+          required: false
+        - name: overwrite
+          value_ref: nv_bool
+          required: false
+        - name: file_system_access_token
+          value_ref: nv_file_access_token
+          required: false
+    output:
+      type: side_effect
+      description: Writes the Prime subscription receipt to the given file path.
+  product_question_query:
+    description: List questions for a product.
+    kind: query
+    entity: ProductQuestion
+    selection:
+    - name: product_id
+      value_ref: nv_product_ref
+      required: true
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_str
+      required: false
+    - name: user_email
+      value_ref: nv_email
+      required: false
+    controls:
+    - name: page_index
+      value_ref: nv_int
+      required: false
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+    provides:
+    - question_id
+    - product_id
+    - question
+    - created_at
   product_question_create:
     description: Write a question about a product.
     kind: create
@@ -1382,7 +1770,7 @@ capabilities:
         type: object
         fields:
         - name: product_id
-          value_ref: nv_product_id
+          value_ref: nv_product_ref
           required: true
         - name: access_token
           value_ref: nv_access_token
@@ -1417,6 +1805,63 @@ capabilities:
         - name: access_token
           value_ref: nv_access_token
           required: true
+  product_question_answer_query:
+    description: List answers for a product question.
+    kind: query
+    entity: ProductQuestionAnswer
+    selection:
+    - name: question_id
+      value_ref: nv_question_id
+      required: true
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_str
+      required: false
+    - name: user_email
+      value_ref: nv_email
+      required: false
+    - name: is_verified
+      value_ref: nv_bool
+      required: false
+    controls:
+    - name: page_index
+      value_ref: nv_int
+      required: false
+    - name: page_limit
+      value_ref: nv_int
+      required: false
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+    provides:
+    - question_answer_id
+    - question_id
+    - is_verified
+    - answer
+    - created_at
+    - user_name
+    - user_email
+  product_question_answer_create:
+    description: Write an answer to a product question.
+    kind: create
+    entity: ProductQuestionAnswer
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: question_id
+          value_ref: nv_question_id
+          required: true
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: answer
+          value_ref: nv_body
+          required: true
+    provides:
+    - question_answer_id
   product_question_answer_update:
     description: Update a product question answer.
     kind: update
@@ -1458,13 +1903,19 @@ values:
   nv_access_token:
     type: string
     description: Bearer access token from login.
+  nv_file_access_token:
+    type: string
+    description: Bearer token authorizing the file-path argument, distinct from this service's login token.
   nv_body:
     type: markdown
     description: Long text body.
   nv_product_id:
+    type: integer
+    description: Product primary key.
+  nv_product_ref:
     type: entity_ref
     target: Product
-    description: Product primary key.
+    description: Reference to a Product by primary key.
   nv_order_id:
     type: integer
     description: Order primary key.
@@ -1539,6 +1990,9 @@ values:
   nv_int:
     type: integer
     description: Integer.
+  nv_card_number:
+    type: digit_id
+    description: Linked payment card primary account number.
   nv_datetime:
     type: rfc3339
     description: ISO datetime string.
@@ -1613,6 +2067,33 @@ prerequisites:
       bindings:
       - input:
           lane: selection
+          path:
+          - access_token
+        output: token
+    account_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    account_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    account_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
           path:
           - access_token
         output: token
@@ -1805,6 +2286,24 @@ prerequisites:
           path:
           - access_token
         output: token
+    cart_add_gift_wrap:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    cart_remove_gift_wrap:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
     order_query:
     - id: session
       contract: appworld.session
@@ -1841,6 +2340,9 @@ prerequisites:
           path:
           - access_token
         output: token
+    - id: file_session
+      contract: appworld.session
+      bindings:
       - input:
           lane: payload
           path:
@@ -1888,6 +2390,15 @@ prerequisites:
       bindings:
       - input:
           lane: selection
+          path:
+          - access_token
+        output: token
+    payment_card_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
           path:
           - access_token
         output: token
@@ -1954,6 +2465,24 @@ prerequisites:
           path:
           - access_token
         output: token
+    product_return_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    product_return_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
     product_return_create:
     - id: session
       contract: appworld.session
@@ -1972,12 +2501,56 @@ prerequisites:
           path:
           - access_token
         output: token
+    prime_plan_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    prime_subscription_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
     prime_subscribe:
     - id: session
       contract: appworld.session
       bindings:
       - input:
           lane: payload
+          path:
+          - access_token
+        output: token
+    prime_subscription_receipt_download:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    - id: file_session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - file_system_access_token
+        output: token
+    product_question_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
           path:
           - access_token
         output: token
@@ -2000,6 +2573,24 @@ prerequisites:
           - access_token
         output: token
     product_question_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    product_question_answer_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path:
+          - access_token
+        output: token
+    product_question_answer_create:
     - id: session
       contract: appworld.session
       bindings:

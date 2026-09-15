@@ -472,17 +472,15 @@ mod tests {
     }
 
     #[test]
-    fn persisted_symbol_ledger_github_round_trip_when_catalog_present() {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/github");
-        if !dir.is_dir() {
-            return;
-        }
-        let cgs = load_schema_dir(&dir).expect("github");
-        let exp = TeachingExposureSession::new(&cgs, "github", &["Repository", "Issue", "Label"]);
+    fn persisted_symbol_ledger_langmatrix_round_trip() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(&dir).expect("plasm_language_matrix");
+        let exp = TeachingExposureSession::new(&cgs, "langmatrix", &["LangItem", "LangTag"]);
         let restored = round_trip(&exp);
         assert_eq!(
-            exp.qualified_entity_symbol("github", "Label"),
-            restored.qualified_entity_symbol("github", "Label")
+            exp.qualified_entity_symbol("langmatrix", "LangTag"),
+            restored.qualified_entity_symbol("langmatrix", "LangTag")
         );
     }
 

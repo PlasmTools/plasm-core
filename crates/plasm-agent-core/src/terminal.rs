@@ -499,9 +499,16 @@ async fn run_context_command(
         .join("\n");
     teaching.push('\n');
     teaching.push_str(&reply.prerequisite_guidance);
-    for explanation in reply.routing.selection.explanation_lines() {
-        teaching.push_str("\n\n");
-        teaching.push_str(&explanation);
+    if let Some(recovery) = &reply.routing.recovery {
+        let mut combined = recovery.render_markdown(reply.routing.selection.status);
+        combined.push_str("\n\n**Partial teaching** (does not claim complete coverage):\n\n");
+        combined.push_str(&teaching);
+        teaching = combined;
+    } else {
+        for explanation in reply.routing.selection.explanation_lines() {
+            teaching.push_str("\n\n");
+            teaching.push_str(&explanation);
+        }
     }
     let artifact = mirror.write_file(&op_dir, "teaching.md", teaching.as_bytes())?;
     mirror.update_latest_pointer(&mirror.rel_dir_for_display(&op_dir))?;
@@ -910,7 +917,7 @@ mod routed_terminal_tests {
                                 "authorization":{"catalogs":["matrix"],"capabilities":{}},
                                 "intent":payload["intent"],"pin_id":"pin",
                                 "retrieval":{"generation":"generation-one","candidates":[],"lexical_count":0,"vector_count":0,"lexical_truncated":false,"vector_truncated":false,"fusion_truncated":0,"relation_truncated":0},
-                                "selection":{"status":if insufficient {"insufficient"} else {"ready"},"additional_capability_ids":[],"unsupported":if insufficient {json!([{"intent_quote":"unavailable","reason":"No supplied capability"}])} else {json!([])}},
+                                "selection":{"status":if insufficient {"insufficient"} else {"ready"},"additional_capability_ids":[],"requirement_coverage":if insufficient {json!([{"requirement":"unavailable","supporting_capability_ids":[],"unresolved_reason":"No supplied capability"}])} else {json!([])}},
                                 "closure":null
                             }
                         });

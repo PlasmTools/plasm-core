@@ -59,7 +59,7 @@ pub struct FlatMapRelationPayload {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct FlatMapEffectPayload {
+pub struct FlatMapApplyPayload {
     pub source: String,
     pub item_binding: super::atoms::BindingName,
     pub effect_template: EffectTemplate,
@@ -100,7 +100,7 @@ pub enum PlasmStepPayload {
     Map(MapPayload),
     Derive(DerivePayload),
     FlatMapRelation(FlatMapRelationPayload),
-    FlatMapEffect(FlatMapEffectPayload),
+    FlatMapApply(FlatMapApplyPayload),
     UnfoldUntil(UnfoldUntilPayload),
 }
 
@@ -112,7 +112,7 @@ impl PlasmStepPayload {
             Self::Map { .. } => PlasmStepKind::Map,
             Self::Derive { .. } => PlasmStepKind::Derive,
             Self::FlatMapRelation { .. } => PlasmStepKind::FlatMapRelation,
-            Self::FlatMapEffect { .. } => PlasmStepKind::FlatMapEffect,
+            Self::FlatMapApply { .. } => PlasmStepKind::FlatMapApply,
             Self::UnfoldUntil { .. } => PlasmStepKind::UnfoldUntil,
         }
     }
@@ -124,7 +124,7 @@ impl PlasmStepPayload {
             Self::Map(p) => p.effect_class,
             Self::Derive(p) => p.effect_class,
             Self::FlatMapRelation(p) => p.effect_class,
-            Self::FlatMapEffect(p) => p.effect_class,
+            Self::FlatMapApply(p) => p.effect_class,
             Self::UnfoldUntil(p) => p.effect_class,
         }
     }
@@ -136,7 +136,7 @@ impl PlasmStepPayload {
             Self::Map(p) => p.result_shape,
             Self::Derive(p) => p.result_shape,
             Self::FlatMapRelation(p) => p.result_shape,
-            Self::FlatMapEffect(p) => p.result_shape,
+            Self::FlatMapApply(p) => p.result_shape,
             Self::UnfoldUntil(p) => p.result_shape,
         }
     }
@@ -156,7 +156,7 @@ impl PlasmStepPayload {
             Self::Map(p) => compute_op_label(&p.compute.op),
             Self::Derive(p) => format!("derive {}", derive_kind_label(p.derive.kind)),
             Self::FlatMapRelation(p) => format!("relation {}", p.relation.relation),
-            Self::FlatMapEffect(p) => format!("for_each {}", surface_label(p.effect_template.kind)),
+            Self::FlatMapApply(p) => format!("apply {}", surface_label(p.effect_template.kind)),
             Self::UnfoldUntil(p) => format!(
                 "iterate_until {} take {}",
                 surface_label(p.effect_template.kind),
@@ -196,6 +196,7 @@ fn compute_op_label(op: &super::compute::ComputeOp) -> String {
         ComputeOp::Limit { count } => format!("limit {count}"),
         ComputeOp::DedupeBy { .. } => "dedupe_by".into(),
         ComputeOp::With { .. } => "with".into(),
+        ComputeOp::Union { .. } => "union".into(),
         ComputeOp::Render { .. } => "render".into(),
     }
 }

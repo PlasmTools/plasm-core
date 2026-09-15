@@ -353,6 +353,8 @@ pub struct SyntheticPageCursor {
     pub offset: usize,
     pub page_size: usize,
     pub request_fingerprints: Vec<String>,
+    /// Expression coverage of the archived snapshot these rows belong to.
+    pub coverage: plasm_runtime::ResultCoverage,
 }
 
 #[derive(Clone, Debug)]

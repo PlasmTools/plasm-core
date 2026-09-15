@@ -285,6 +285,9 @@ fn lift_inner(value: &Value, input_type: &InputType, cgs: &CGS) -> Result<TypedI
         };
         return Ok(TypedInvokeInput::PlasmInputRef(r));
     }
+    if matches!(value, Value::GetScalarExtract(_)) {
+        return Ok(TypedInvokeInput::Json(value.clone()));
+    }
 
     match input_type {
         InputType::None => {
@@ -463,7 +466,6 @@ mod tests {
     use crate::schema::{InputFieldWire, InputType, NamedValueSchema, ValueDomainKey};
     use crate::FieldType;
     use crate::Value;
-    use std::path::PathBuf;
 
     #[test]
     fn lifts_simple_object() {
@@ -507,150 +509,5 @@ mod tests {
             }
             other => panic!("expected typed object: {other:?}"),
         }
-    }
-
-    #[test]
-    fn proof_document_edit_v2_union_ctor_injects_discriminator() {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/proof");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = crate::loader::load_schema_dir(&dir).expect("proof apis");
-        let cap = cgs
-            .capabilities
-            .get("document_edit_v2")
-            .expect("document_edit_v2");
-        let InputType::Object { fields, .. } =
-            &cap.inputs.payload.as_ref().expect("payload").input_type
-        else {
-            panic!("object input");
-        };
-        let ops = fields
-            .iter()
-            .find(|f| f.name == "operations")
-            .expect("operations");
-        let InputFieldWire::Inline(ty) = &ops.wire else {
-            panic!("inline");
-        };
-        let InputType::Array { element_type, .. } = ty.as_ref() else {
-            panic!("operations array");
-        };
-        let arr_ty = InputType::Array {
-            element_type: element_type.clone(),
-            min_length: None,
-            max_length: None,
-        };
-        let op_elem = Value::UnionCtor {
-            ctor_label: "v101".into(),
-            ctor_fields: {
-                let mut m = IndexMap::new();
-                m.insert("ref".into(), Value::String("blk".into()));
-                m.insert("markdown".into(), Value::String("body".into()));
-                m
-            },
-        };
-        let v = Value::Array(vec![op_elem]);
-        let p = InvokeInputPayload::lift(&v, &arr_ty, &cgs);
-        let InvokeInputPayload::Typed(t) = p else {
-            panic!("expected typed payload: {p:?}");
-        };
-        let out = t.to_value();
-        let Value::Array(rows) = out else {
-            panic!("array out: {out:?}");
-        };
-        let Value::Object(row) = rows.first().expect("one op") else {
-            panic!("row: {:?}", rows.first());
-        };
-        assert_eq!(
-            row.get("op").and_then(|x| x.as_str()),
-            Some("replace_block")
-        );
-        assert_eq!(
-            row.get("block")
-                .and_then(|b| b.as_object())
-                .and_then(|o| o.get("markdown"))
-                .and_then(|x| x.as_str()),
-            Some("body")
-        );
-    }
-
-    #[test]
-    fn proof_document_edit_v2_insert_before_wraps_block_markdown_elements() {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/proof");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = crate::loader::load_schema_dir(&dir).expect("proof apis");
-        let cap = cgs
-            .capabilities
-            .get("document_edit_v2")
-            .expect("document_edit_v2");
-        let InputType::Object { fields, .. } =
-            &cap.inputs.payload.as_ref().expect("payload").input_type
-        else {
-            panic!("object input");
-        };
-        let ops = fields
-            .iter()
-            .find(|f| f.name == "operations")
-            .expect("operations");
-        let InputFieldWire::Inline(ty) = &ops.wire else {
-            panic!("inline");
-        };
-        let InputType::Array { element_type, .. } = ty.as_ref() else {
-            panic!("operations array");
-        };
-        let arr_ty = InputType::Array {
-            element_type: element_type.clone(),
-            min_length: None,
-            max_length: None,
-        };
-        let op_elem = Value::UnionCtor {
-            ctor_label: "v102".into(),
-            ctor_fields: {
-                let mut m = IndexMap::new();
-                m.insert("ref".into(), Value::String("r1".into()));
-                m.insert(
-                    "blocks".into(),
-                    Value::Array(vec![Value::String("a".into()), Value::String("b".into())]),
-                );
-                m
-            },
-        };
-        let v = Value::Array(vec![op_elem]);
-        let p = InvokeInputPayload::lift(&v, &arr_ty, &cgs);
-        let InvokeInputPayload::Typed(t) = p else {
-            panic!("expected typed payload: {p:?}");
-        };
-        let out = t.to_value();
-        let Value::Array(rows) = out else {
-            panic!("array out: {out:?}");
-        };
-        let Value::Object(row) = rows.first().expect("one op") else {
-            panic!("row: {:?}", rows.first());
-        };
-        assert_eq!(
-            row.get("op").and_then(|x| x.as_str()),
-            Some("insert_before")
-        );
-        let blocks = row
-            .get("blocks")
-            .and_then(|x| x.as_array())
-            .expect("blocks array");
-        assert_eq!(blocks.len(), 2);
-        assert_eq!(
-            blocks[0]
-                .as_object()
-                .and_then(|o| o.get("markdown"))
-                .and_then(|x| x.as_str()),
-            Some("a")
-        );
-        assert_eq!(
-            blocks[1]
-                .as_object()
-                .and_then(|o| o.get("markdown"))
-                .and_then(|x| x.as_str()),
-            Some("b")
-        );
     }
 }

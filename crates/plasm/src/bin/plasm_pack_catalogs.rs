@@ -122,7 +122,16 @@ async fn reusable_catalogs(
         return Ok(reusable);
     }
     for path in plasm_core::catalog_il::read_catalog_set(out_dir).map_err(anyhow::Error::msg)? {
-        let manifest: CatalogManifest = serde_json::from_slice(&fs::read(&path)?)?;
+        let manifest: CatalogManifest = match serde_json::from_slice(&fs::read(&path)?) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                eprintln!(
+                    "plasm-pack-catalogs: skip unreadable publication {}: {error}",
+                    path.display()
+                );
+                continue;
+            }
+        };
         // Packing may replace an older generation; only matching profiles can supply cache hits.
         if manifest.format_version != PLASM_CATALOG_FORMAT_VERSION
             || manifest.embedding_profile != Default::default()

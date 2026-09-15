@@ -342,6 +342,7 @@ pub async fn rehydrate_execute_session(
         compiled_catalogs_by_entry,
     );
     session.discovery_pin = desc.discovery_pin.clone();
+    session.set_prerequisite_deployments(desc.prerequisite_deployments.clone());
     session.registry_catalog_hashes_by_entry = desc.registry_catalog_hashes_by_entry.clone();
     session.materialized_outbound_hosted_kv_by_entry = desc.outbound_hosted_kv_by_entry.clone();
     session.domain_revision = desc.domain_revision;
@@ -368,7 +369,7 @@ mod tests {
         PersistedExecuteSessionDescriptor, PersistedSessionReuseKey,
     };
     use crate::test_support::exposure_replay_fixtures::{
-        assert_github_langdetail_numbering_parity, interleaved_federated_matrix_fixture,
+        assert_langmatrix_a_langdetail_numbering_parity, interleaved_federated_matrix_fixture,
         matrix_federated_host,
     };
     use indexmap::IndexMap;
@@ -453,6 +454,7 @@ mod tests {
             operations: Vec::new(),
             operation_handle_next: 0,
             symbol_ledger_bytes: Vec::new(),
+            prerequisite_deployments: Default::default(),
         };
         assert!(descriptor_expired(&desc));
     }
@@ -462,7 +464,7 @@ mod tests {
         use RehydrateError::*;
         assert!(should_discard_persisted_execute_on_rehydrate_error(
             &CatalogHashMismatch {
-                entry_id: "github".into(),
+                entry_id: "langmatrix_a".into(),
                 expected: "a".into(),
                 live: "b".into(),
             }
@@ -489,15 +491,15 @@ mod tests {
         let cgs = Arc::new(load_schema_dir(&matrix_dir).expect("matrix"));
         let reg = Arc::new(CgsRegistry::from_pairs(vec![
             (
-                "github".into(),
-                "GitHub".into(),
-                vec!["github".into()],
+                "langmatrix_a".into(),
+                "Langmatrix A".into(),
+                vec!["langmatrix_a".into()],
                 cgs.clone(),
             ),
             (
-                "linear".into(),
-                "Linear".into(),
-                vec!["linear".into()],
+                "langmatrix_b".into(),
+                "Langmatrix B".into(),
+                vec!["langmatrix_b".into()],
                 cgs.clone(),
             ),
         ]));
@@ -517,10 +519,10 @@ mod tests {
             prompt_hash: "ph".into(),
             session_id: "sid".into(),
             prompt_text: String::new(),
-            entry_id: "github".into(),
-            context_entry_ids: vec!["github".into(), "linear".into()],
+            entry_id: "langmatrix_a".into(),
+            context_entry_ids: vec!["langmatrix_a".into(), "langmatrix_b".into()],
             entities: vec!["LangItem".into(), "LangItem".into()],
-            entity_catalog_entry_ids: vec!["github".into()],
+            entity_catalog_entry_ids: vec!["langmatrix_a".into()],
             tenant_scope: String::new(),
             principal_subject: String::new(),
             http_backend: None,
@@ -530,7 +532,7 @@ mod tests {
             domain_revision: 0,
             reuse_key: PersistedSessionReuseKey {
                 tenant_scope: String::new(),
-                entry_id: "github".into(),
+                entry_id: "langmatrix_a".into(),
                 catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
                 entities: vec!["LangItem".into(), "LangItem".into()],
                 context_intent: None,
@@ -548,6 +550,7 @@ mod tests {
             operations: Vec::new(),
             operation_handle_next: 0,
             symbol_ledger_bytes: Vec::new(),
+            prerequisite_deployments: Default::default(),
         };
         let err = match rehydrate_execute_session(&host, &desc).await {
             Err(e) => e,
@@ -596,6 +599,7 @@ mod tests {
             operations: Vec::new(),
             operation_handle_next: 0,
             symbol_ledger_bytes: Vec::new(),
+            prerequisite_deployments: Default::default(),
         };
         let pins = legacy_descriptor_pins::PinnedCatalogHashes::from_descriptor(&desc);
         assert_eq!(pins.entry_ids, vec!["overshow".to_string()]);
@@ -648,21 +652,21 @@ mod tests {
         let cgs = Arc::new(load_schema_dir(&matrix_dir).expect("matrix"));
         let mut contexts = IndexMap::new();
         contexts.insert(
-            "github".into(),
-            Arc::new(plasm_core::CgsContext::entry("github", cgs.clone())),
+            "langmatrix_a".into(),
+            Arc::new(plasm_core::CgsContext::entry("langmatrix_a", cgs.clone())),
         );
         contexts.insert(
-            "linear".into(),
-            Arc::new(plasm_core::CgsContext::entry("linear", cgs.clone())),
+            "langmatrix_b".into(),
+            Arc::new(plasm_core::CgsContext::entry("langmatrix_b", cgs.clone())),
         );
         let desc = PersistedExecuteSessionDescriptor {
             prompt_hash: "ph".into(),
             session_id: "sid".into(),
             prompt_text: String::new(),
-            entry_id: "github".into(),
-            context_entry_ids: vec!["github".into(), "linear".into()],
+            entry_id: "langmatrix_a".into(),
+            context_entry_ids: vec!["langmatrix_a".into(), "langmatrix_b".into()],
             entities: vec!["LangItem".into(), "LangItem".into()],
-            entity_catalog_entry_ids: vec!["github".into(), "linear".into()],
+            entity_catalog_entry_ids: vec!["langmatrix_a".into(), "langmatrix_b".into()],
             tenant_scope: String::new(),
             principal_subject: String::new(),
             http_backend: None,
@@ -672,7 +676,7 @@ mod tests {
             domain_revision: 0,
             reuse_key: PersistedSessionReuseKey {
                 tenant_scope: String::new(),
-                entry_id: "github".into(),
+                entry_id: "langmatrix_a".into(),
                 catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
                 entities: vec!["LangItem".into(), "LangItem".into()],
                 context_intent: None,
@@ -690,18 +694,22 @@ mod tests {
             operations: Vec::new(),
             operation_handle_next: 0,
             symbol_ledger_bytes: Vec::new(),
+            prerequisite_deployments: Default::default(),
         };
         let exp = replay_teaching_exposure_waves(
             &contexts,
             &desc.entities,
             &desc.entity_catalog_entry_ids,
         );
-        assert_eq!(exp.entity_catalog_entry_ids, vec!["github", "linear"]);
+        assert_eq!(
+            exp.entity_catalog_entry_ids,
+            vec!["langmatrix_a", "langmatrix_b"]
+        );
         let (map, _): (Arc<plasm_core::SymbolMap>, _) = exp.symbol_map_arc_cross(None, None);
         assert!(map.resolve_session_entity_symbol("e2").is_some());
         assert_eq!(
             map.entry_id_for_entity_symbol("e2").as_deref(),
-            Some("linear")
+            Some("langmatrix_b")
         );
     }
 
@@ -716,7 +724,7 @@ mod tests {
                 String::new(),
                 fixture.cgs.clone(),
                 fixture.contexts.clone(),
-                "linear".into(),
+                "langmatrix_b".into(),
                 String::new(),
                 String::new(),
                 None,
@@ -731,7 +739,7 @@ mod tests {
             "sid",
             &SessionReuseKey {
                 tenant_scope: String::new(),
-                entry_id: "linear".into(),
+                entry_id: "langmatrix_b".into(),
                 catalog_cgs_hash: fixture.cgs.catalog_cgs_hash_hex(),
                 entities: fixture.live.entities.clone(),
                 context_intent: None,
@@ -743,16 +751,16 @@ mod tests {
         desc.expires_at_unix = u64::MAX;
         desc.registry_catalog_hashes_by_entry = HashMap::from([
             (
-                "linear".into(),
-                reg.load_context("linear")
-                    .expect("linear")
+                "langmatrix_b".into(),
+                reg.load_context("langmatrix_b")
+                    .expect("langmatrix_b")
                     .cgs
                     .catalog_cgs_hash_hex(),
             ),
             (
-                "github".into(),
-                reg.load_context("github")
-                    .expect("github")
+                "langmatrix_a".into(),
+                reg.load_context("langmatrix_a")
+                    .expect("langmatrix_a")
                     .cgs
                     .catalog_cgs_hash_hex(),
             ),
@@ -777,7 +785,7 @@ mod tests {
             String::new(),
             fixture.cgs.clone(),
             fixture.contexts.clone(),
-            "linear".into(),
+            "langmatrix_b".into(),
             String::new(),
             String::new(),
             None,
@@ -792,7 +800,7 @@ mod tests {
 
         let reuse_key = SessionReuseKey {
             tenant_scope: String::new(),
-            entry_id: "linear".into(),
+            entry_id: "langmatrix_b".into(),
             catalog_cgs_hash: session.catalog_cgs_hash.clone(),
             entities: session.entities.clone(),
             context_intent: None,
@@ -805,16 +813,16 @@ mod tests {
         desc.expires_at_unix = u64::MAX;
         desc.registry_catalog_hashes_by_entry = HashMap::from([
             (
-                "linear".into(),
-                reg.load_context("linear")
-                    .expect("linear")
+                "langmatrix_b".into(),
+                reg.load_context("langmatrix_b")
+                    .expect("langmatrix_b")
                     .cgs
                     .catalog_cgs_hash_hex(),
             ),
             (
-                "github".into(),
-                reg.load_context("github")
-                    .expect("github")
+                "langmatrix_a".into(),
+                reg.load_context("langmatrix_a")
+                    .expect("langmatrix_a")
                     .cgs
                     .catalog_cgs_hash_hex(),
             ),
@@ -834,7 +842,7 @@ mod tests {
             .as_ref()
             .expect("rehydrated exposure")
             .symbol_map_arc();
-        assert_github_langdetail_numbering_parity(&live_map, &re_map);
+        assert_langmatrix_a_langdetail_numbering_parity(&live_map, &re_map);
         assert_eq!(rehydrated.entities, session.entities);
     }
 }

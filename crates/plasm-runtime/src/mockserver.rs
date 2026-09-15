@@ -286,7 +286,7 @@ impl MockEntity {
 /// Convert plasm_core::Value to serde_json::Value for MockServer
 fn plasm_value_to_json(value: &Value) -> serde_json::Value {
     match value {
-        Value::PlasmInputRef(_) | Value::StringTemplate(_) => {
+        Value::PlasmInputRef(_) | Value::GetScalarExtract(_) | Value::StringTemplate(_) => {
             serde_json::to_value(value).unwrap_or(serde_json::Value::Null)
         }
         Value::Null => serde_json::Value::Null,

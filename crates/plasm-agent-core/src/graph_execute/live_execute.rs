@@ -68,6 +68,7 @@ async fn execute_on_branch(
                 fetch_all: false,
                 max_items: page.limit,
                 one_page: true,
+                bound_kind: plasm_runtime::ConsumeBoundKind::HostPage,
                 ..Default::default()
             };
             st.engine

@@ -496,6 +496,54 @@ expense_delete_receipt:
   - type: literal
     value: file
   auth: *request_auth
+expense_receipt_download:
+  method: GET
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: expenses
+  - type: var
+    name: id
+  - type: literal
+    value: file
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - - download_to_file_path
+      - type: if
+        condition:
+          type: exists
+          var: download_to_file_path
+        then_expr:
+          type: var
+          name: download_to_file_path
+        else_expr:
+          type: const
+          value: null
+    - - overwrite
+      - type: if
+        condition:
+          type: exists
+          var: overwrite
+        then_expr:
+          type: var
+          name: overwrite
+        else_expr:
+          type: const
+          value: null
+    - - file_system_access_token
+      - type: if
+        condition:
+          type: exists
+          var: file_system_access_token
+        then_expr:
+          type: var
+          name: file_system_access_token
+        else_expr:
+          type: const
+          value: null
 payment_query:
   method: GET
   path:
@@ -706,6 +754,46 @@ payment_delete_receipt:
   - type: literal
     value: file
   auth: *request_auth
+payment_receipt_download:
+  method: GET
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: payments
+  - type: var
+    name: id
+  - type: literal
+    value: file
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - - download_to_file_path
+      - type: if
+        condition:
+          type: exists
+          var: download_to_file_path
+        then_expr:
+          type: var
+          name: download_to_file_path
+        else_expr:
+          type: const
+          value: null
+    - - overwrite
+      - type: if
+        condition:
+          type: exists
+          var: overwrite
+        then_expr:
+          type: var
+          name: overwrite
+        else_expr:
+          type: const
+          value: null
+    - - file_system_access_token
+      - type: var
+        name: file_system_access_token
 settle_up:
   method: POST
   path:
@@ -1075,45 +1163,38 @@ balance_query:
         else_expr:
           type: const
           value: null
+  # Vendor `GroupsBalanceResponse` is `{ you_owe_others, others_owe_you, breakdown }`.
+  # `GET /balance/group` is a root array; items_path wrap-key keeps that shelf a list.
+  response:
+    items_path:
+    - breakdown
 peer_balance_query:
-  method: POST
+  method: GET
   path:
   - type: literal
     value: splitwise
   - type: literal
     value: balance
-  - type: if
-    condition:
-      type: equals
-      left:
-        type: var
-        name: shelf
-      right:
-        type: const
-        value: person
-    then_expr:
-      type: const
-      value: person
-    else_expr:
-      type: const
-      value: people
+  - type: literal
+    value: people
   headers: *id002
-  body:
-    type: if
-    condition:
-      type: equals
-      left:
-        type: var
-        name: shelf
-      right:
-        type: const
-        value: person
-    then_expr:
-      type: object
-      fields:
-      - - email
-        - type: var
-          name: email
-    else_expr:
-      type: object
-      fields: []
+  # Vendor `PeopleBalanceResponse` is an object with `breakdown`.
+  response:
+    items_path:
+    - breakdown
+person_balance_query:
+  method: GET
+  path:
+  - type: literal
+    value: splitwise
+  - type: literal
+    value: balance
+  - type: literal
+    value: person
+  - type: var
+    name: email
+  headers: *id002
+  # Vendor `PersonBalanceResponse` is an object with `breakdown`.
+  response:
+    items_path:
+    - breakdown

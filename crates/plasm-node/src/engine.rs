@@ -815,6 +815,7 @@ mod tests {
     use plasm_core::{EntityKey, Ref, Value};
     use plasm_runtime::{
         CachedEntity, EntityCompleteness, ExecutionResult, ExecutionSource, ExecutionStats,
+        ResultCoverage,
     };
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -850,6 +851,7 @@ mod tests {
                 count: 1,
                 entities: vec![entity],
                 has_more: false,
+                coverage: ResultCoverage::Unknown,
                 pagination_resume: None,
                 paging_handle: None,
                 source: ExecutionSource::Live,

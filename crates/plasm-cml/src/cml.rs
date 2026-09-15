@@ -536,9 +536,25 @@ pub enum ResponsePreprocess {
         path: Vec<String>,
         from_each: String,
     },
+    /// **Replace** the decode root: concatenate arrays from each [`ConcatArraySource`] in order,
+    /// re-wrap as `{ <items key>: concatenated }`. If **no** source resolves to an array, the
+    /// body is **unchanged**. Use this when a collection endpoint returns sibling and/or nested
+    /// row arrays (e.g. `{ no_section_tasks: [...], sections: [{ tasks: [...] }] }`).
+    ConcatArrays { sources: Vec<ConcatArraySource> },
     /// **In-place** at `path`: replace a JSON `string[]` with `[{ field: s }, …]`. Non-strings
     /// are **dropped**. If `path` is invalid, the body is **unchanged**.
     StringIdsToFieldObjects { path: Vec<String>, field: String },
+}
+
+/// One array source for [`ResponsePreprocess::ConcatArrays`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConcatArraySource {
+    /// Object-key / numeric-index path to a JSON array.
+    pub path: Vec<String>,
+    /// When set, `path` must resolve to an array of objects; concatenate each object's
+    /// `from_each` array (same walk as [`ResponsePreprocess::ConcatFieldArrays`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_each: Option<String>,
 }
 
 impl CmlRequest {
@@ -1039,9 +1055,11 @@ pub fn eval_cml(expr: &CmlExpr, env: &CmlEnv) -> Result<Value, CmlError> {
 
 fn value_to_string(value: &Value) -> Result<String, CmlError> {
     match value {
-        Value::PlasmInputRef(_) | Value::StringTemplate(_) => Err(CmlError::TypeError {
-            message: "unbound program operand reached CML encoding".into(),
-        }),
+        Value::PlasmInputRef(_) | Value::GetScalarExtract(_) | Value::StringTemplate(_) => {
+            Err(CmlError::TypeError {
+                message: "unbound program operand reached CML encoding".into(),
+            })
+        }
         Value::String(s) | Value::PhraseIdent(s) => Ok(s.clone()),
         Value::Integer(i) => Ok(i.to_string()),
         Value::Float(f) => Ok(f.to_string()),
@@ -1473,6 +1491,36 @@ mod tests {
             Some(ResponsePreprocess::ConcatFieldArrays {
                 path: vec!["data".to_string()],
                 from_each: "intervals".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn http_response_decode_concat_arrays_tagged_json() {
+        let decode: HttpResponseDecode = serde_json::from_value(serde_json::json!({
+            "items": "tasks",
+            "response_preprocess": {
+                "kind": "concat_arrays",
+                "sources": [
+                    { "path": ["no_section_tasks"] },
+                    { "path": ["sections"], "from_each": "tasks" }
+                ]
+            }
+        }))
+        .unwrap();
+        assert_eq!(
+            decode.response_preprocess,
+            Some(ResponsePreprocess::ConcatArrays {
+                sources: vec![
+                    ConcatArraySource {
+                        path: vec!["no_section_tasks".to_string()],
+                        from_each: None,
+                    },
+                    ConcatArraySource {
+                        path: vec!["sections".to_string()],
+                        from_each: Some("tasks".to_string()),
+                    },
+                ],
             })
         );
     }

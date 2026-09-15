@@ -1,0 +1,41 @@
+version: 1
+auth:
+  scheme: none
+http_backend: http://127.0.0.1:9
+entities:
+  BadProduct:
+    id_field: product_id
+    primary_query: bad_product_query
+    description: >
+      Negative fixture — id_field typed as entity_ref to self.
+      Must fail CGS validate (UnsupportedIdentityType) and IdentityCodec::compile.
+    fields:
+      product_id:
+        required: true
+        value_ref: nv_product_id
+      name:
+        required: false
+        value_ref: nv_name
+capabilities:
+  bad_product_query:
+    description: List BadProduct rows
+    kind: query
+    entity: BadProduct
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides:
+    - product_id
+    - name
+values:
+  nv_product_id:
+    type: entity_ref
+    target: BadProduct
+    description: Illegally typed primary key (must be a scalar identity, not entity_ref).
+  nv_name:
+    type: string
+    description: Display name.
+  nv_access_token:
+    type: string
+    description: Bearer token.

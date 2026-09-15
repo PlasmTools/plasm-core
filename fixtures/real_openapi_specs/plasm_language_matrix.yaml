@@ -39,6 +39,13 @@ paths:
                   title: "Alpha"
                   score: 10
                   owner: "alice"
+                  lines:
+                    - id: "l1"
+                      item_id: "i1"
+                      note: "line-a"
+                    - id: "l2"
+                      item_id: "i1"
+                      note: "line-b"
                   tags:
                     - id: "t1"
                       item_id: "i1"
@@ -214,6 +221,13 @@ paths:
                 title: "Patched"
                 score: 11
                 owner: "alice"
+                lines:
+                  - id: "l1"
+                    item_id: "i1"
+                    note: "line-a"
+                  - id: "l2"
+                    item_id: "i1"
+                    note: "line-b"
     delete:
       summary: Delete item
       parameters:
@@ -575,6 +589,13 @@ components:
         title: "Alpha"
         score: 10
         owner: "alice"
+        lines:
+          - id: "l1"
+            item_id: "i1"
+            note: "line-a"
+          - id: "l2"
+            item_id: "i1"
+            note: "line-b"
       properties:
         id:
           type: string

@@ -361,6 +361,7 @@ capabilities:
     - acked_at
     - acked_by
   document_edit_v2:
+    receiver: {kind: entity, entity: Document}
     description: 'Apply one batch of block edits. Use base_revision from your latest snapshot (integer—not
       baseToken). Combine replace, insert, delete, range replace, and find/replace steps in one request
       when needed.
@@ -530,6 +531,7 @@ capabilities:
           required: false
           description: DocumentAccess.reference for this document; omit to use configured host authentication.
   annotation_comment_add:
+    receiver: {kind: entity, entity: Document}
     description: Start a comment thread on quoted text from the document.
     kind: action
     entity: Document
@@ -566,6 +568,7 @@ capabilities:
           required: false
           description: DocumentAccess.reference for this document; omit to use configured host authentication.
   annotation_comment_reply:
+    receiver: {kind: entity, entity: Document}
     description: Reply in a thread; optionally mark it resolved in the same step.
     kind: action
     entity: Document
@@ -605,6 +608,7 @@ capabilities:
           required: false
           description: DocumentAccess.reference for this document; omit to use configured host authentication.
   annotation_comment_resolve:
+    receiver: {kind: entity, entity: Document}
     description: Mark a thread resolved; history stays visible.
     kind: action
     entity: Document
@@ -637,6 +641,7 @@ capabilities:
           required: false
           description: DocumentAccess.reference for this document; omit to use configured host authentication.
   annotation_comment_unresolve:
+    receiver: {kind: entity, entity: Document}
     description: Open a resolved thread for more discussion.
     kind: action
     entity: Document
@@ -669,6 +674,7 @@ capabilities:
           required: false
           description: DocumentAccess.reference for this document; omit to use configured host authentication.
   annotation_suggestion_insert:
+    receiver: {kind: entity, entity: Document}
     description: Propose inserting text after a quoted passage for a human to accept or reject.
     kind: action
     entity: Document
@@ -711,6 +717,7 @@ capabilities:
           required: false
           description: DocumentAccess.reference for this document; omit to use configured host authentication.
   annotation_suggestion_delete:
+    receiver: {kind: entity, entity: Document}
     description: Propose deleting a quoted passage for a human to accept or reject.
     kind: action
     entity: Document
@@ -749,6 +756,7 @@ capabilities:
           required: false
           description: DocumentAccess.reference for this document; omit to use configured host authentication.
   annotation_suggestion_replace:
+    receiver: {kind: entity, entity: Document}
     description: Propose replacing a quoted passage with new content for a human to accept or reject.
     kind: action
     entity: Document
@@ -791,6 +799,7 @@ capabilities:
           required: false
           description: DocumentAccess.reference for this document; omit to use configured host authentication.
   annotation_suggestion_accept:
+    receiver: {kind: entity, entity: Document}
     description: Accept a pending suggestion and apply it to the document.
     kind: action
     entity: Document
@@ -823,6 +832,7 @@ capabilities:
           required: false
           description: DocumentAccess.reference for this document; omit to use configured host authentication.
   annotation_suggestion_reject:
+    receiver: {kind: entity, entity: Document}
     description: Reject a pending suggestion without changing the document body.
     kind: action
     entity: Document
@@ -855,6 +865,7 @@ capabilities:
           required: false
           description: DocumentAccess.reference for this document; omit to use configured host authentication.
   annotation_comment_batch_apply:
+    receiver: {kind: entity, entity: Document}
     description: Apply several comment updates in one request.
     kind: action
     entity: Document
@@ -938,6 +949,7 @@ capabilities:
           required: false
           description: DocumentAccess.reference for this document; omit to use configured host authentication.
   collaboration_event_ack:
+    receiver: {kind: entity, entity: Document}
     description: Tell the server how far you read the collaboration event stream.
     kind: action
     entity: Document
@@ -966,6 +978,7 @@ capabilities:
           required: false
           description: DocumentAccess.reference for this document; omit to use configured host authentication.
   presence_update:
+    receiver: {kind: entity, entity: Document}
     description: 'You MUST announce presence before you edit or comment—call this once per document after
       share binding
 

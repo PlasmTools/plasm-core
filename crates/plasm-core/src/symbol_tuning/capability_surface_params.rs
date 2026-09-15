@@ -3,14 +3,15 @@
 use std::collections::{BTreeSet, HashSet};
 
 use crate::schema::{CapabilitySchema, InputFieldSchema, InputFieldWire, InputType};
-use crate::{FieldType, CGS};
+use crate::{CapabilityKind, FieldType, CGS};
 
 use super::{ExposureCapabilityKey, ExposureSlotKey, SymbolMap, TeachingExposureSession};
 
 /// Which capability input params to include when building wire→`p#` pairs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CapabilityParamSurfaceFilter {
-    /// Optional invoke params for Meaning `optional` legend — includes opaque `p#` and teaching wire tokens when both apply.
+    /// Optional invoke / Query-Search **selection**, Query optional **scope**, and invocation
+    /// slots for Meaning `optional:` — never control-lane wires (RA-1: controls are not braces).
     OptionalLegend,
     /// Optional params admitted on the exposure surface.
     OptionalOnSurface,
@@ -18,28 +19,58 @@ pub enum CapabilityParamSurfaceFilter {
     AllOnSurface,
 }
 
-fn iter_cap_input_fields(cap: &CapabilitySchema) -> Vec<&InputFieldSchema> {
-    let mut seen = HashSet::new();
-    let raw = cap
-        .selection_params()
-        .iter()
-        .chain(cap.control_params())
-        .chain(
-            cap.invocation_input_schemas()
-                .flat_map(|schema| match &schema.input_type {
-                    InputType::Object { fields, .. } => {
-                        Box::new(fields.iter()) as Box<dyn Iterator<Item = &InputFieldSchema>>
-                    }
-                    InputType::Union { variants } => {
-                        Box::new(variants.iter().flat_map(|variant| variant.fields.iter()))
-                    }
-                    _ => Box::new(std::iter::empty()),
-                }),
-        );
+fn iter_cap_input_fields(
+    cap: &CapabilitySchema,
+    filter: CapabilityParamSurfaceFilter,
+) -> Vec<&InputFieldSchema> {
+    let mut seen: HashSet<&str> = HashSet::new();
     let mut out = Vec::new();
-    for f in raw {
+    for f in cap.selection_params() {
         if seen.insert(f.name.as_str()) {
             out.push(f);
+        }
+    }
+    // Query optional scope is brace-owned (RA-1). Search/method scope stays on those seats.
+    if matches!(cap.kind, CapabilityKind::Query)
+        && matches!(
+            filter,
+            CapabilityParamSurfaceFilter::OptionalLegend
+                | CapabilityParamSurfaceFilter::OptionalOnSurface
+        )
+    {
+        for f in cap.scope_params() {
+            if seen.insert(f.name.as_str()) {
+                out.push(f);
+            }
+        }
+    }
+    // RA-1: `optional:` invites brace/invoke omission — not pagination/hydrate controls.
+    if !matches!(filter, CapabilityParamSurfaceFilter::OptionalLegend) {
+        for f in cap.control_params() {
+            if seen.insert(f.name.as_str()) {
+                out.push(f);
+            }
+        }
+    }
+    for schema in cap.invocation_input_schemas() {
+        match &schema.input_type {
+            InputType::Object { fields, .. } => {
+                for f in fields {
+                    if seen.insert(f.name.as_str()) {
+                        out.push(f);
+                    }
+                }
+            }
+            InputType::Union { variants } => {
+                for variant in variants {
+                    for f in &variant.fields {
+                        if seen.insert(f.name.as_str()) {
+                            out.push(f);
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
     out
@@ -61,7 +92,7 @@ pub fn optional_legend_param_syms(
 ) -> Vec<String> {
     let cap_name = cap.name.as_str();
     let mut syms = Vec::new();
-    for f in iter_cap_input_fields(cap) {
+    for f in iter_cap_input_fields(cap, CapabilityParamSurfaceFilter::OptionalLegend) {
         if !field_matches_filter(f, CapabilityParamSurfaceFilter::OptionalLegend) {
             continue;
         }
@@ -83,7 +114,7 @@ pub fn capability_optional_legend_param_pairs(
 ) -> Vec<(String, String)> {
     let cap_name = cap.name.as_str();
     let mut out = Vec::new();
-    for f in iter_cap_input_fields(cap) {
+    for f in iter_cap_input_fields(cap, CapabilityParamSurfaceFilter::OptionalLegend) {
         if !field_matches_filter(f, CapabilityParamSurfaceFilter::OptionalLegend) {
             continue;
         }
@@ -147,7 +178,7 @@ pub fn capability_exposure_param_triples(
     let domain = cap_key.domain.as_str();
     let cap_name = cap_key.capability.as_str();
     let mut out = Vec::new();
-    for f in iter_cap_input_fields(cap) {
+    for f in iter_cap_input_fields(cap, filter) {
         if !field_matches_filter(f, filter) {
             continue;
         }
@@ -203,4 +234,54 @@ pub fn loaded_catalog_entry_ids(exp: &TeachingExposureSession) -> BTreeSet<Strin
         ids.insert(cap_key.entry_id.clone());
     }
     ids
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::loader::load_schema_dir;
+    use crate::symbol_tuning::{symbol_map_for_prompt, FocusSpec};
+
+    use super::{
+        capability_optional_legend_param_pairs, iter_cap_input_fields, CapabilityParamSurfaceFilter,
+    };
+
+    fn prompt_matrix_cgs() -> crate::CGS {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_prompt_matrix");
+        load_schema_dir(&dir).expect("plasm_prompt_matrix")
+    }
+
+    #[test]
+    fn optional_legend_pairs_omit_query_control_wires() {
+        let cgs = prompt_matrix_cgs();
+        let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
+        let cap = cgs.get_capability("zone_query").expect("zone_query");
+        let pairs = capability_optional_legend_param_pairs(
+            map.as_ref(),
+            cgs.entry_id.as_deref().unwrap_or(""),
+            cap.domain.as_str(),
+            cap,
+        );
+        let wires: Vec<&str> = pairs.iter().map(|(w, _)| w.as_str()).collect();
+        assert!(
+            wires.contains(&"name") && wires.contains(&"status"),
+            "selection optionals remain: {wires:?}"
+        );
+        assert!(
+            !wires
+                .iter()
+                .any(|w| ["page", "per_page", "sort_by"].contains(w)),
+            "RA-1: controls must not join optional: {wires:?}"
+        );
+    }
+
+    #[test]
+    fn optional_legend_iterator_skips_controls_other_filters_keep_them() {
+        let cgs = prompt_matrix_cgs();
+        let cap = cgs.get_capability("zone_query").expect("zone_query");
+        let legend = iter_cap_input_fields(cap, CapabilityParamSurfaceFilter::OptionalLegend);
+        let surface = iter_cap_input_fields(cap, CapabilityParamSurfaceFilter::AllOnSurface);
+        assert!(legend.iter().all(|f| f.name != "sort_by"));
+        assert!(surface.iter().any(|f| f.name == "sort_by"));
+    }
 }

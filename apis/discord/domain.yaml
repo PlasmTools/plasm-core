@@ -997,6 +997,7 @@ capabilities:
     kind: delete
     entity: Guild
   guild_preview_fetch:
+    receiver: {kind: entity, entity: Guild}
     kind: action
     entity: Guild
     description: Fetches public preview metadata for a discoverable guild.
@@ -1112,6 +1113,7 @@ capabilities:
           value_ref: nv_message_delete_channel_id
           required: true
   message_bulk_delete:
+    receiver: {kind: entity, entity: Message}
     kind: action
     entity: Message
     payload:
@@ -1127,6 +1129,7 @@ capabilities:
       type: side_effect
       description: Deletes up to many messages in bulk for the channel.
   message_crosspost:
+    receiver: {kind: entity, entity: Message}
     kind: action
     entity: Message
     provides:
@@ -1206,6 +1209,7 @@ capabilities:
       value_ref: nv_message_search_in_guild_guild_id
       required: true
   channel_typing:
+    receiver: {kind: entity, entity: Channel}
     kind: action
     entity: Channel
     output:
@@ -1246,6 +1250,7 @@ capabilities:
     kind: get
     entity: GuildMember
   guild_member_put:
+    receiver: {kind: entity, entity: GuildMember}
     kind: action
     entity: GuildMember
     payload:
@@ -1277,6 +1282,7 @@ capabilities:
           value_ref: nv_guild_member_remove_guild_id
           required: true
   guild_member_role_add:
+    receiver: {kind: entity, entity: GuildMember}
     kind: action
     entity: GuildMember
     output:
@@ -1352,6 +1358,7 @@ capabilities:
           value_ref: nv_role_delete_guild_id
           required: true
   guild_roles_positions_patch:
+    receiver: {kind: entity, entity: Role}
     kind: action
     entity: Role
     payload:
@@ -1381,6 +1388,7 @@ capabilities:
     kind: get
     entity: Ban
   ban_put:
+    receiver: {kind: entity, entity: Ban}
     kind: action
     entity: Ban
     payload:
@@ -1478,6 +1486,7 @@ capabilities:
           value_ref: nv_application_command_delete_application_id
           required: true
   application_command_bulk_put:
+    receiver: {kind: entity, entity: ApplicationCommand}
     kind: action
     entity: ApplicationCommand
     payload:
@@ -1579,6 +1588,7 @@ capabilities:
           value_ref: nv_entitlement_delete_application_id
           required: true
   entitlement_consume:
+    receiver: {kind: entity, entity: Entitlement}
     kind: action
     entity: Entitlement
     output:
@@ -1768,6 +1778,7 @@ capabilities:
           value_ref: nv_soundboard_sound_delete_guild_id
           required: true
   channel_send_soundboard_sound:
+    receiver: {kind: entity, entity: Channel}
     kind: action
     entity: Channel
     payload:
@@ -2067,6 +2078,7 @@ capabilities:
     - shards
     - session_start_limit
   interaction_callback:
+    receiver: {kind: entity, entity: Interaction}
     kind: action
     entity: Interaction
     payload:

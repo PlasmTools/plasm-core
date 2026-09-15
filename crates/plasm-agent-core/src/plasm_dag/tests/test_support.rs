@@ -1,48 +1,39 @@
-//! Shared GitHub execute-session builders for `plasm_dag` tests.
+//! Shared language-matrix execute-session builders for `plasm_dag` tests.
 
 use super::super::*;
 use crate::plasm_plan_run::symbol_map_for_plasm_surface_parse;
 
 use plasm_core::{load_schema, CgsContext, TeachingExposureSession, CGS};
 use std::path::PathBuf;
-use std::sync::{Arc, Once};
+use std::sync::Arc;
 
-static GITHUB_FAST_LOAD: Once = Once::new();
-
-fn enable_github_fast_load_for_tests() {
-    GITHUB_FAST_LOAD.call_once(|| {
-        // View-backed entities (IssueTriageContext, …) may lack teaching rows; structural load is enough for symbol resolution tests.
-        std::env::set_var("PLASM_CGS_FAST_LOAD", "1");
-    });
+pub(super) fn matrix_cgs() -> Arc<CGS> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut cgs = load_schema(&root.join("../../fixtures/schemas/plasm_language_matrix"))
+        .expect("load plasm_language_matrix");
+    cgs.bind_registry_entry_id("langmatrix");
+    Arc::new(cgs)
 }
 
-pub(super) fn github_cgs() -> Arc<CGS> {
-    enable_github_fast_load_for_tests();
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    Arc::new(load_schema(&root.join("../../apis/github")).expect("load github"))
-}
-
-pub(super) fn github_issue_label_session() -> ExecuteSession {
-    enable_github_fast_load_for_tests();
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let cgs = Arc::new(load_schema(&root.join("../../apis/github")).expect("load github"));
-    let entities = ["Repository", "Issue", "Label"];
-    let exp = TeachingExposureSession::new(cgs.as_ref(), "github", &entities);
+pub(super) fn langitem_tag_session() -> ExecuteSession {
+    let cgs = matrix_cgs();
+    let entities = ["LangItem", "LangTag"];
+    let exp = TeachingExposureSession::new(cgs.as_ref(), "langmatrix", &entities);
     let mut ctxs = indexmap::IndexMap::new();
     ctxs.insert(
-        "github".into(),
-        Arc::new(CgsContext::entry("github", cgs.clone())),
+        "langmatrix".into(),
+        Arc::new(CgsContext::entry("langmatrix", cgs.clone())),
     );
     ExecuteSession::new(
         "ph".into(),
         "p".into(),
         cgs.clone(),
         ctxs,
-        "github".into(),
+        "langmatrix".into(),
         String::new(),
         String::new(),
         None,
-        vec!["Repository".into(), "Issue".into(), "Label".into()],
+        vec!["LangItem".into(), "LangTag".into()],
         Some(exp),
         None,
         cgs.catalog_cgs_hash_hex(),
@@ -50,17 +41,16 @@ pub(super) fn github_issue_label_session() -> ExecuteSession {
     )
 }
 
-pub(super) fn github_ranked_mutator_session(
+pub(super) fn langitem_ranked_mutator_session(
     cgs: &Arc<CGS>,
     entities: &[&str],
     _intent: &str,
     _ranked: &[&str],
     mutator: &str,
 ) -> ExecuteSession {
-    enable_github_fast_load_for_tests();
     let delta = plasm_core::capability_exposure::explicit_entity_capability_surface(
         cgs.as_ref(),
-        "github",
+        "langmatrix",
         &entities
             .iter()
             .map(|e| (*e).to_string())
@@ -76,18 +66,18 @@ pub(super) fn github_ranked_mutator_session(
         "{mutator} must appear on ranked exposure delta"
     );
     let exp =
-        TeachingExposureSession::new_with_intent_delta(cgs.as_ref(), "github", entities, delta);
+        TeachingExposureSession::new_with_intent_delta(cgs.as_ref(), "langmatrix", entities, delta);
     let mut ctxs = indexmap::IndexMap::new();
     ctxs.insert(
-        "github".into(),
-        Arc::new(CgsContext::entry("github", cgs.clone())),
+        "langmatrix".into(),
+        Arc::new(CgsContext::entry("langmatrix", cgs.clone())),
     );
     ExecuteSession::new(
         "ph".into(),
         "p".into(),
         cgs.clone(),
         ctxs,
-        "github".into(),
+        "langmatrix".into(),
         String::new(),
         String::new(),
         None,
@@ -99,7 +89,7 @@ pub(super) fn github_ranked_mutator_session(
     )
 }
 
-pub(super) fn compile_github_program(
+pub(super) fn compile_matrix_program(
     session: &ExecuteSession,
     name: &str,
     source: &str,
@@ -148,6 +138,6 @@ pub(super) fn assert_compile_rejects_query_filter_psym(err: &str) {
     );
 }
 
-pub(super) fn github_symbol_map(session: &ExecuteSession) -> Arc<dyn plasm_core::SymbolSession> {
+pub(super) fn matrix_symbol_map(session: &ExecuteSession) -> Arc<dyn plasm_core::SymbolSession> {
     symbol_map_for_plasm_surface_parse(session, None)
 }

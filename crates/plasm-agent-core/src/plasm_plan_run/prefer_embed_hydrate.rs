@@ -198,7 +198,8 @@ mod tests {
 
     #[test]
     fn wire_embed_rows_from_type_get_payload() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/pokeapi_mini");
         let cgs = plasm_core::loader::load_schema(&dir).expect("pokeapi");
         let mat = type_pokemon_prefer_mat();
         let RelationMaterialization::PreferFromParentGet { path, .. } = &mat else {
@@ -220,7 +221,8 @@ mod tests {
         use indexmap::IndexMap;
         use plasm_runtime::EntityCompleteness;
 
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/pokeapi_mini");
         let cgs = plasm_core::loader::load_schema(&dir).expect("pokeapi");
         let mat = type_pokemon_prefer_mat();
         let RelationMaterialization::PreferFromParentGet { path, .. } = &mat else {
@@ -237,6 +239,7 @@ mod tests {
             last_updated: 0,
             version: 1,
             completeness: EntityCompleteness::Summary,
+            unavailable_fields: Default::default(),
         };
         let refs = prefer_hydrate_target_refs(
             &row,

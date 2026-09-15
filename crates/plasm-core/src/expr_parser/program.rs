@@ -6,8 +6,8 @@
 
 use super::iterate_until::{try_parse_iterate_until, IterateUntilExpr};
 use super::program_surface::{
-    collect_program_statement_lines, split_assignment_at_top_level, split_top_level,
-    validate_program_label,
+    classify_top_level_assignment, collect_program_statement_lines, split_top_level,
+    validate_program_label, TopLevelAssignment,
 };
 use super::{
     parse_pipe_expr, peel_collect_meta, split_apply_expr, Applicator, CollectMeta, PipeExpr,
@@ -76,7 +76,14 @@ pub fn parse_program_shape(source: &str) -> Result<ParsedProgram, String> {
         if line.is_empty() {
             continue;
         }
-        if let Some((label, rhs)) = split_assignment_at_top_level(line) {
+        if let Some(assignment) = classify_top_level_assignment(line) {
+            let (label, rhs) = match assignment {
+                TopLevelAssignment::Binding { label, rhs } => (label, rhs),
+                TopLevelAssignment::InvalidLabel { label } => {
+                    validate_program_label(label)?;
+                    unreachable!("invalid label must error");
+                }
+            };
             validate_program_label(label)?;
             let expr = parse_expr_node(rhs)?;
             statements.push(Statement::Bind {
@@ -179,6 +186,17 @@ mod tests {
     }
 
     #[test]
+    fn pipe_where_equality_is_not_a_program_binding() {
+        let p = parse_program_shape(
+            r#"LangItem | where owner="alice" | order by title | take 5 | select title, owner"#,
+        )
+        .expect("pipe with where-equality is a root, not a binding");
+        assert!(p.statements.is_empty());
+        assert_eq!(p.roots.len(), 1);
+        assert_eq!(p.roots[0].primary_head(), "LangItem");
+    }
+
+    #[test]
     fn retains_apply_stratum_on_pipe_root() {
         let node =
             parse_expr_node("e1 | where owner=\"alice\" | take 2 => { t: _.message, o: _.owner }")
@@ -203,6 +221,16 @@ mod tests {
         assert!(
             err.contains("Binding names must be labels") && err.contains("e1"),
             "{err}"
+        );
+        let err = parse_program_shape("p1 = e4{query=\"a\"}\np2 = e4{query=\"b\"}\np1, p2")
+            .expect_err("p# label is a teaching symbol");
+        assert!(
+            err.contains("Binding names must be labels") && err.contains("p1"),
+            "{err}"
+        );
+        assert!(
+            !err.contains("Only one return line"),
+            "reserved-label assign must not be misdiagnosed as a return-root reject: {err}"
         );
     }
 

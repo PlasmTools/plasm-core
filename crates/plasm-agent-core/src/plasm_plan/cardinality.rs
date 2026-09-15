@@ -70,9 +70,8 @@ pub(super) fn analyze_static_cardinality(
                 .compute
                 .as_ref()
                 .map(|compute| match &compute.op {
-                    ComputeOp::Aggregate { .. } | ComputeOp::Render { .. } => {
-                        RowCardinalityProof::StaticSingleton
-                    }
+                    ComputeOp::Aggregate { .. } => RowCardinalityProof::StaticSingleton,
+                    ComputeOp::Render { .. } => inner(plan, by_id, &compute.source, memo),
                     ComputeOp::Project { .. }
                     | ComputeOp::Filter { .. }
                     | ComputeOp::Sort { .. }
@@ -81,9 +80,9 @@ pub(super) fn analyze_static_cardinality(
                     ComputeOp::Limit { count } if *count <= 1 => {
                         limit_one_bounded(inner(plan, by_id, &compute.source, memo))
                     }
-                    ComputeOp::Limit { .. } | ComputeOp::GroupBy { .. } => {
-                        RowCardinalityProof::StaticPlural
-                    }
+                    ComputeOp::Limit { .. }
+                    | ComputeOp::GroupBy { .. }
+                    | ComputeOp::Union { .. } => RowCardinalityProof::StaticPlural,
                 })
                 .unwrap_or(RowCardinalityProof::StaticPlural),
             PlanNodeKind::Relation => node
@@ -178,7 +177,7 @@ fn validated_analyze_static_cardinality(
                 ComputeOp::Limit { count } if *count <= 1 => {
                     limit_one_bounded(inner(plan, by_id, c.compute.source.as_str(), memo))
                 }
-                ComputeOp::Limit { .. } | ComputeOp::GroupBy { .. } => {
+                ComputeOp::Limit { .. } | ComputeOp::GroupBy { .. } | ComputeOp::Union { .. } => {
                     RowCardinalityProof::StaticPlural
                 }
             },

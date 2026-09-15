@@ -169,6 +169,7 @@ mod tests {
             last_updated: 0,
             version: 0,
             completeness: EntityCompleteness::Summary,
+            unavailable_fields: Default::default(),
         }
     }
 

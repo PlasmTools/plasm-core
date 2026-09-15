@@ -65,12 +65,85 @@ export {
 export type { LoadedSubagent, SubagentRegistry } from "./authoring/subagent-loader.js";
 export {
   createArtefactTransformTool,
+  createCompleteTaskTool,
+  createEvalTerminalTools,
   createHarnessTools,
+  createSubmitAnswerTool,
   renderSkillIndex,
   runArtefactTransform,
+  COMPLETE_TASK_TOOL_DESCRIPTION,
+  EVAL_TERMINAL_REQUIRES_DISCOVERY,
   PLASM_ARTEFACT_TRANSFORM_TOOL_DESCRIPTION,
+  SUBMIT_ANSWER_TOOL_DESCRIPTION,
 } from "./tools/harness-tools.js";
-export { gateArtefactTransform } from "./tools/format.js";
+export type { EvalTerminalGate } from "./tools/harness-tools.js";
+export {
+  TASK_LEDGER_MAX_BYTES,
+  TASK_LEDGER_STATE_HEADER,
+  TASK_LEDGER_TOOL_DESCRIPTION,
+  TASK_LEDGER_TOOL_NAME,
+  TaskLedgerStore,
+  createTaskLedgerTool,
+  emptyTaskLedger,
+  isKnownEvidenceRef,
+  parseTaskLedgerRecord,
+  renderTaskLedgerState,
+  taskLedgerRecordBytes,
+  taskLedgerRecordSchema,
+} from "./tools/task-ledger.js";
+export type { ParseTaskLedgerResult, TaskLedgerRecord } from "./tools/task-ledger.js";
+export {
+  TASK_LEDGER_REVIEW_ACTOR_LITURGY,
+  TASK_LEDGER_REVIEW_ACTION_HEADER,
+  TASK_LEDGER_REVIEW_GATED_TOOLS,
+  TASK_LEDGER_REVIEW_INSTRUCTION_HEADER,
+  TASK_LEDGER_REVIEW_LEDGER_HEADER,
+  TASK_LEDGER_REVIEW_LITURGY,
+  TASK_LEDGER_REVIEW_OBSERVATIONS_HEADER,
+  TaskLedgerReviewSeat,
+  composeTaskLedgerReviewPacket,
+  extractRecentPlasmObservations,
+  isTaskLedgerReviewGatedTool,
+  parseTaskLedgerReviewVerdict,
+  reviewAllowsProposedAction,
+  wrapTaskLedgerReviewTools,
+} from "./tools/task-ledger-review.js";
+export type {
+  ParseTaskLedgerReviewVerdict,
+  TaskLedgerReviewGatedTool,
+  TaskLedgerReviewRecord,
+  TaskLedgerReviewVerdict,
+} from "./tools/task-ledger-review.js";
+export {
+  artefactTransformAdvertised,
+  extractGradedScalarFromObservation,
+  gateArtefactTransform,
+  evalTerminalGrade,
+  gradedScalarAfterLiveWrites,
+  hostMayInjectAppWorldComplete,
+  isEvalTerminalTool,
+  lastSuccessfulEvalTerminal,
+  submittedAnswerFromSubmitAnswer,
+  successfulEvalTerminalInStep,
+  validSubmitAnswerPayload,
+  taskPrefersLabelAnswer,
+  writeCountFromSummary,
+  COMPLETE_TASK_TOOL_NAME,
+  SUBMIT_ANSWER_TOOL_NAME,
+} from "./tools/format.js";
+export type { EvalTerminalGrade, SuccessfulEvalTerminal } from "./tools/format.js";
+export {
+  applyArtifactLedger,
+  artifactKeysInText,
+  artifactRefFromToolInput,
+  previewRequiresArtifact,
+  runIdFromArtifactRef,
+} from "./tools/artifact-contract.js";
+export {
+  ARTIFACT_IMAGE_PIN_RE,
+  pinLocalArtifactImageSync,
+  pinnedArtifactImage,
+} from "./tools/artifact-process.js";
 export { maybeCompactMessages } from "./runtime/compaction.js";
 
 export { defineEval, isEvalDefinition } from "./evals/define-eval.js";
@@ -142,6 +215,10 @@ export { createFixtureMockTransport } from "./engine/fixture-mock-transport.js";
 export { createProductionHostTransport, createStubHostTransport } from "./engine/create-host-transport.js";
 export { loadAgentEnv } from "./load-env.js";
 export {
+  DEFAULT_EVAL_MAX_OUTPUT_TOKENS,
+  resolveEvalMaxOutputTokens,
+} from "./eval-max-output-tokens.js";
+export {
   isGatewayConfigured,
   isVercelHosted,
   resolveGatewayModel,
@@ -194,10 +271,16 @@ export { createPlasmTools } from "./tools/plasm-tools.js";
 export type { PlasmTools } from "./tools/plasm-tools.js";
 
 export {
+  TASK_LEDGER_LITURGY,
+  TASK_LEDGER_PLAN_OVERLAY,
+  TASK_LEDGER_PLAN_SLOT,
+  WORKFLOW_COMPLETION_SLOT,
   buildDefaultSystemLiturgy,
   loadPromptAsset,
+  overlayNamedSlot,
+  overlayWorkflowCompletion,
 } from "./prompts/index.js";
-export type { PromptAssetName } from "./prompts/index.js";
+export type { PromptAssetName, SystemLiturgyOptions } from "./prompts/index.js";
 
 export {
   DISCOVER_TOOL_DESCRIPTION,

@@ -20,7 +20,7 @@ pub(in crate::plasm_dag) fn plp4_reject(id: &str, label: &str, tail: &str) -> St
     plp::plp4_program(
         id,
         format!(
-            "binding `{label}` cannot extend with `{tail}` — use `{label} | …` for row algebra, `{label} => _.r#` for plural relations, or `{label} => Entity.m#(…, _)` for per-row invokes"
+            "binding `{label}` cannot extend with `{tail}` — use `{label} | …` for row algebra, `{label} => _.r#` for plural relations, or `{label} => _.m#(args)` for per-row invokes"
         ),
     )
 }
@@ -31,13 +31,9 @@ fn is_row_producing_relation_source(state: &CompileState<'_>, label: &str) -> bo
         Some(DagNodeSource::Surface { kind, parsed, .. }) => {
             matches!(kind, PlanNodeKind::Get) || matches!(parsed.expr, Expr::Get(_))
         }
-        Some(DagNodeSource::Compute {
-            op:
-                crate::plasm_plan::ComputeOp::Limit { .. }
-                | crate::plasm_plan::ComputeOp::Project { .. },
-            source,
-            ..
-        }) => is_row_producing_relation_source(state, source),
+        Some(DagNodeSource::Compute { op, source, .. }) if op.preserves_row_identity() => {
+            is_row_producing_relation_source(state, source)
+        }
         _ => false,
     }
 }
@@ -45,13 +41,9 @@ fn is_row_producing_relation_source(state: &CompileState<'_>, label: &str) -> bo
 fn relation_sourced_continuation_eligible(state: &CompileState<'_>, label: &str) -> bool {
     match state.get(label).map(|n| &n.source) {
         Some(DagNodeSource::RelationTraversal { .. }) => true,
-        Some(DagNodeSource::Compute {
-            op:
-                crate::plasm_plan::ComputeOp::Limit { .. }
-                | crate::plasm_plan::ComputeOp::Project { .. },
-            source,
-            ..
-        }) => is_row_producing_relation_source(state, source),
+        Some(DagNodeSource::Compute { op, source, .. }) if op.preserves_row_identity() => {
+            is_row_producing_relation_source(state, source)
+        }
         _ => false,
     }
 }
@@ -211,30 +203,44 @@ fn looks_like_method_invoke_continuation_tail(
     .is_none()
 }
 
-fn method_invoke_expanded_surface(
+pub(in crate::plasm_dag) fn row_receiver_surface(
+    session: &ExecuteSession,
     state: &CompileState<'_>,
-    label: &str,
-    contract: &ProgramBindingContract,
+    source: &str,
+    receiver: &str,
     tail: &str,
 ) -> Result<String, String> {
-    match &contract.anchor {
-        ContinuationAnchor::RootSurface(prefix) | ContinuationAnchor::RelationExpand(prefix) => {
-            Ok(format!("{prefix}.{tail}"))
-        }
-        ContinuationAnchor::BindingLabel => {
-            let node = state.get(label).ok_or_else(|| {
-                plp::plp4_program(
-                    "",
-                    format!("unknown binding `{label}` for method continuation"),
-                )
-            })?;
-            Ok(format!("{}.{tail}", node.expr.trim()))
-        }
-        ContinuationAnchor::None => Err(plp::plp4_program(
-            "",
-            format!("binding `{label}` has no continuation anchor for method invoke `{tail}`"),
-        )),
+    let contract = binding_contract(state, source)
+        .ok_or_else(|| format!("unknown receiver binding `{source}`"))?;
+    if !contract.supports_method_invoke() {
+        return Err(format!(
+            "`{source}` does not retain entity identity for a method receiver"
+        ));
     }
+    let map = crate::plasm_plan_run::symbol_map_for_plasm_surface_parse(session, state.cross_cache);
+    let entity = map.entity_sym_for(
+        contract.row_entity.entry_id.as_str(),
+        contract.row_entity.entity.as_str(),
+    );
+    let cgs = super::relation::resolve_cgs_for_qualified_entity(session, &contract.row_entity)
+        .ok_or_else(|| format!("receiver catalog is unavailable for `{source}`"))?;
+    let definition = cgs
+        .get_entity(contract.row_entity.entity.as_str())
+        .ok_or_else(|| format!("receiver entity is unavailable for `{source}`"))?;
+    let identity = if definition.key_vars.len() > 1 {
+        definition
+            .key_vars
+            .iter()
+            .map(|key| format!("{key}={receiver}.{key}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    } else {
+        format!(
+            "{receiver}.{}",
+            definition.key_vars.first().unwrap_or(&definition.id_field)
+        )
+    };
+    Ok(format!("{entity}({identity}).{tail}"))
 }
 
 fn lower_method_invoke_continuation(
@@ -246,18 +252,15 @@ fn lower_method_invoke_continuation(
     contract: &ProgramBindingContract,
     tail: &str,
 ) -> Result<DagNode, String> {
-    if !matches!(
-        contract.row_cardinality,
-        RowCardinalityProof::StaticSingleton
-    ) {
+    if !contract.row_cardinality.permits_identity_receiver() {
         return Err(plp::plp4_program(
             id,
             format!(
-                "method invoke `{label}.{tail}` requires a statically singleton binding — use `{label} => Entity.m#(…, _)` for per-row application"
+                "method invoke `{label}.{tail}` requires an identity-preserving singleton — use `{label} => _.{tail}` for per-row application"
             ),
         ));
     }
-    let expanded = method_invoke_expanded_surface(state, label, contract, tail)?;
+    let expanded = row_receiver_surface(session, state, label, label, tail)?;
     compile_surface_node(session, state, id, &expanded)
 }
 

@@ -12,14 +12,14 @@ use super::gloss_filter;
 use super::input_legend::RowContractLegend;
 use super::invoke_teaching::{
     build_standalone_create_paren_args, capability_legend_with_session_gloss,
-    emit_array_of_union_constructor_teaching_gloss, format_dotted_call_line, path_vars_empty,
+    emit_array_of_union_constructor_teaching_gloss, format_dotted_call_line, receiver_absent,
     try_push_union_constructor_teaching_expr_rows,
 };
 use super::line_validate::{DomainLineValidCacheKey, DomainLineValidEntry};
 use super::query_teaching::{
-    compound_get_expr_line, get_requires_identity_anchor, keyed_identity_get_teaching_expr_line,
+    compound_get_expr_line, get_requires_identity_anchor, primary_get_identity_teaching_expr_line,
     query_expr_filters_only, query_expr_maximal, query_expr_scope_only, search_expr_primary,
-    search_expr_with_filters, unary_entity_id_teaching_expr_line,
+    search_expr_with_filters,
 };
 use super::relation_teaching::{receiver_for_dotted_suffix, try_emit_relation_nav_teaching_row};
 use super::row_producer::with_projection_bracket;
@@ -34,7 +34,6 @@ use super::symbol_tokens::{ent_sym, id_sym_entity, id_sym_rel, met_sym};
 use super::teaching_push::try_push_teaching_example;
 use super::teaching_util::truncate_inline_desc;
 use super::teaching_util::TEACHING_SEARCH_QUERY_LITERAL;
-use super::tsv_emit::relation_sym_shown_in_query_teaching_rows;
 use super::{EntityTeachingBlock, EntityTeachingExprRow, TeachingHeading};
 
 /// Query Meaning: listing is not a create when this entity exposes `kind: create`.
@@ -226,7 +225,7 @@ pub(crate) fn collect_entity_teaching_block(
     let only_singleton_gets = !get_caps.is_empty()
         && ent.key_vars.len() <= 1
         && get_caps.iter().all(|cap| {
-            path_vars_empty(cap)
+            receiver_absent(cap)
                 && capability_is_zero_arity_invoke(cap)
                 && !get_requires_identity_anchor(cap, cgs, ent)
         });
@@ -271,7 +270,6 @@ pub(crate) fn collect_entity_teaching_block(
         surface_filter,
         catalog_entry_id,
         ident_meta,
-        get_gloss.clone(),
         canonical_bracket,
         line_valid_cache,
         line_valid_cache_seed,
@@ -302,12 +300,11 @@ pub(crate) fn collect_entity_teaching_block(
                 emitted_primary_get = true;
             }
         }
-        // Keyed identity get only when there is no query surface (compound already attempted above).
+        // Token-identity braces only when `teaches_token_identity_braces`; else unary `e#(<id>)`.
+        // A missing Query peer (Search-only / File polarity) must not steal the token-brace seat.
         if !emitted_primary_get && query_caps.is_empty() {
-            let line_base = keyed_identity_get_teaching_expr_line(&es, ent, map, catalog_entry_id)
-                .unwrap_or_else(|| {
-                    unary_entity_id_teaching_expr_line(&es, ent, map, catalog_entry_id)
-                });
+            let line_base =
+                primary_get_identity_teaching_expr_line(&es, ent, cgs, map, catalog_entry_id);
             if try_push_teaching_example(
                 gloss_emit,
                 &mut teaching_rows,
@@ -474,7 +471,7 @@ pub(crate) fn collect_entity_teaching_block(
     let mut pathless: Vec<&crate::CapabilitySchema> = Vec::new();
     let mut pathful: Vec<&crate::CapabilitySchema> = Vec::new();
     for cap in &zero_arity_method_caps {
-        if path_vars_empty(cap) {
+        if receiver_absent(cap) {
             pathless.push(cap);
         } else {
             pathful.push(cap);
@@ -487,7 +484,7 @@ pub(crate) fn collect_entity_teaching_block(
         }
         for cap in group.iter() {
             let ms = met_sym(map, catalog_entry_id, ename, cap);
-            let expr = if path_vars_empty(cap) {
+            let expr = if receiver_absent(cap) {
                 format!("{es}.{ms}()")
             } else {
                 let suffix = format!(".{ms}()");
@@ -594,16 +591,15 @@ pub(crate) fn collect_entity_teaching_block(
         emit_query_capability_rows!();
     }
 
-    // Unary `e#(p…)` after query lines when primary GET was not emitted earlier.
-    // Attach field alphabet when present (list-all Query may already have taught it).
+    // Unary `e#(<id>)` (or token-identity braces) after query lines when primary GET
+    // was not emitted earlier. Attach field alphabet when present.
     if primary_get_cap.is_some()
         && !only_singleton_gets
         && !emitted_primary_get
         && !query_caps.is_empty()
     {
         let primary_name = primary_get_cap.map(|c| &c.name);
-        let keyed = keyed_identity_get_teaching_expr_line(&es, ent, map, catalog_entry_id)
-            .unwrap_or_else(|| unary_entity_id_teaching_expr_line(&es, ent, map, catalog_entry_id));
+        let keyed = primary_get_identity_teaching_expr_line(&es, ent, cgs, map, catalog_entry_id);
         let keyed_with_wires = with_projection_bracket(keyed, canonical_bracket);
         let _ = try_push_teaching_example(
             gloss_emit,
@@ -769,9 +765,6 @@ pub(crate) fn collect_entity_teaching_block(
         } else {
             id_sym_entity(map, catalog_entry_id, ename, rel.as_str())
         };
-        if relation_sym_shown_in_query_teaching_rows(&teaching_rows, &rel_sym) {
-            continue;
-        }
         let rel_desc_opt = if rel_for_meta.is_some() {
             None
         } else if let Some(f) = ent.fields.get(rel.as_str()) {

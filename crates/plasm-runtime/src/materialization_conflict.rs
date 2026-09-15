@@ -204,6 +204,7 @@ mod tests {
             last_updated: 1,
             version: 1,
             completeness: EntityCompleteness::Complete,
+            unavailable_fields: Default::default(),
         }
     }
 

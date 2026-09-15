@@ -7778,33 +7778,25 @@
                 ]
             }
         },
-        "/splitwise/balance/person/": {
-            "post": {
+        "/splitwise/balance/person/{email}": {
+            "get": {
                 "summary": "Splitwise: Show Person Balance",
                 "description": "Show the amounts you and a given person owe to each other, broken down by group. The non-grouped expenses/payments will be shown as a group with ID None.",
                 "operationId": "splitwise__show_person_balance",
-                "requestBody": {
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "properties": {
-                                    "email": {
-                                        "type": "string",
-                                        "format": "email",
-                                        "title": "Email",
-                                        "description": "The email of the person to show your balance with."
-                                    }
-                                },
-                                "type": "object",
-                                "required": [
-                                    "email"
-                                ],
-                                "title": "Body_show_person_balance_balance_person__post"
-                            }
-                        }
-                    },
-                    "required": true
-                },
+                "parameters": [
+                    {
+                        "name": "email",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "description": "The email of the person to show your balance with.",
+                            "format": "email",
+                            "title": "Email"
+                        },
+                        "description": "The email of the person to show your balance with."
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "Successful Response",
@@ -7953,7 +7945,7 @@
             }
         },
         "/splitwise/balance/people": {
-            "post": {
+            "get": {
                 "summary": "Splitwise: Show People Balance",
                 "description": "Show the aggregate amounts you owe to each person and they owe to you.",
                 "operationId": "splitwise__show_people_balance",

@@ -110,7 +110,8 @@ impl PureStep {
     pub(crate) fn inputs(&self) -> &[ValidatedPlanDataInput] {
         match self {
             PureStep::Derive(d) => &d.inputs,
-            PureStep::Data(_) | PureStep::Compute(_) => &[],
+            PureStep::Compute(_) => &[],
+            PureStep::Data(_) => &[],
         }
     }
 
@@ -124,14 +125,15 @@ impl PureStep {
         }
     }
 
-    /// Cross-binding row lists for a `Plasm.render` compute (empty for every other step).
+    /// Cross-binding row lists for per-row render and plain template Data nodes.
     pub(crate) fn binding_rows(
         &self,
         materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
     ) -> Result<BTreeMap<String, Vec<serde_json::Value>>, String> {
         match self {
-            PureStep::Compute(c) => binding_rows_for_render(&c.compute, materialized),
-            PureStep::Data(_) | PureStep::Derive(_) => Ok(BTreeMap::new()),
+            PureStep::Compute(c) => binding_rows_for_compute(&c.compute, materialized),
+            PureStep::Data(d) => binding_rows_for_data_uses(&d.uses_result, materialized),
+            PureStep::Derive(_) => Ok(BTreeMap::new()),
         }
     }
 
@@ -145,7 +147,7 @@ impl PureStep {
     ) -> Result<PureMaterialization, String> {
         match self {
             PureStep::Data(d) => {
-                let rows = plan_value_to_rows(&d.data)?;
+                let rows = eval_data_plan_value(&d.data, inputs.binding_rows)?;
                 let row_identities = vec![None; rows.len()];
                 Ok(PureMaterialization {
                     rows,
@@ -154,6 +156,16 @@ impl PureStep {
                 })
             }
             PureStep::Derive(d) => {
+                if matches!(d.result_shape, crate::plasm_plan::ResultShape::Single)
+                    && inputs.source_rows.len() != 1
+                {
+                    return Err(super::compute_eval::singleton_input_row_count_error(
+                        d.source.as_str(),
+                        d.item_binding.as_str(),
+                        inputs.source_rows.len(),
+                        "scalar field extraction",
+                    ));
+                }
                 let rows = derive_node_rows(
                     &d.item_binding,
                     &d.value,

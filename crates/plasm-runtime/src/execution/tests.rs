@@ -562,6 +562,7 @@ fn test_execution_result_serialization() {
         entities: vec![],
         count: 0,
         has_more: false,
+        coverage: ResultCoverage::Unknown,
         pagination_resume: None,
         paging_handle: None,
         source: ExecutionSource::Live,
@@ -573,12 +574,13 @@ fn test_execution_result_serialization() {
             ..Default::default()
         },
         request_fingerprints: Vec::new(),
-    operations: OperationLedger::empty(),
+        operations: OperationLedger::empty(),
     };
 
     let json = serde_json::to_string(&result).unwrap();
     assert!(json.contains("live")); // lowercase due to serde rename_all
     assert!(json.contains("duration_ms"));
+    assert!(json.contains("\"coverage\":\"unknown\""));
 }
 
 #[test]
@@ -588,6 +590,7 @@ fn test_execution_result_json_skips_host_pagination_fields() {
         entities: vec![],
         count: 0,
         has_more: true,
+        coverage: ResultCoverage::Unknown,
         pagination_resume: None,
         paging_handle: Some(PagingHandle::mint_monotonic(1)),
         source: ExecutionSource::Live,
@@ -599,7 +602,7 @@ fn test_execution_result_json_skips_host_pagination_fields() {
             ..Default::default()
         },
         request_fingerprints: Vec::new(),
-    operations: OperationLedger::empty(),
+        operations: OperationLedger::empty(),
     };
     let json = serde_json::to_string(&result).unwrap();
     assert!(
@@ -871,8 +874,7 @@ fn block_range_without_upper_bound_stays_single_page_by_default() {
 
 #[tokio::test]
 async fn execute_http_respects_base_url_override() {
-    use crate::execution::OperationLedger;
-use crate::auth::ResolvedAuth;
+    use crate::auth::ResolvedAuth;
     use crate::http_transport::HttpTransport;
     use async_trait::async_trait;
     use plasm_compile::CompiledRequest;
@@ -1026,6 +1028,7 @@ async fn session_identity_does_not_inject_business_inputs() {
         transport_origin: None,
         ui_origin: None,
         catalog_bind: None,
+        login_access_token_tail: ExecuteSessionMaterial::empty_login_access_token_tail(),
     });
 
     ExecutionEngine::run_in_execute_task_scopes(
@@ -1286,6 +1289,255 @@ fn prepare_http_query_response_single_skipped_when_preprocess() {
 }
 
 #[test]
+fn prepare_http_query_response_concat_arrays_sibling_and_nested() {
+    use plasm_compile::CmlRequest;
+
+    let cml: CmlRequest = serde_json::from_value(serde_json::json!({
+        "method": "GET",
+        "path": [{"type": "literal", "value": "projects"}],
+        "response": {
+            "items": "tasks",
+            "response_preprocess": {
+                "kind": "concat_arrays",
+                "sources": [
+                    { "path": ["no_section_tasks"] },
+                    { "path": ["sections"], "from_each": "tasks" }
+                ]
+            }
+        }
+    }))
+    .unwrap();
+    let env = CmlEnv::new();
+    let body = serde_json::json!({
+        "project_id": 280,
+        "no_section_tasks": [{"task_id": 1, "title": "Prepare Playlist"}],
+        "sections": [
+            { "section_id": 9, "tasks": [{"task_id": 3, "title": "Buy Travel Insurance"}] }
+        ]
+    });
+    let out = prepare_http_query_response(body, &cml, &env);
+    assert_eq!(
+        out,
+        serde_json::json!({
+            "tasks": [
+                {"task_id": 1, "title": "Prepare Playlist"},
+                {"task_id": 3, "title": "Buy Travel Insurance"}
+            ]
+        })
+    );
+}
+
+#[test]
+fn prepare_http_query_response_concat_arrays_bad_sources_unchanged() {
+    use plasm_compile::CmlRequest;
+
+    let cml: CmlRequest = serde_json::from_value(serde_json::json!({
+        "method": "GET",
+        "path": [{"type": "literal", "value": "projects"}],
+        "response": {
+            "items": "tasks",
+            "response_preprocess": {
+                "kind": "concat_arrays",
+                "sources": [
+                    { "path": ["no_section_tasks"] },
+                    { "path": ["sections"], "from_each": "tasks" }
+                ]
+            }
+        }
+    }))
+    .unwrap();
+    let env = CmlEnv::new();
+    let body = serde_json::json!({ "other": 1 });
+    let out = prepare_http_query_response(body.clone(), &cml, &env);
+    assert_eq!(out, body);
+}
+
+/// Default `results` collection key on a nested collection envelope yields zero rows.
+#[test]
+fn nested_collection_envelope_without_preprocess_decodes_zero() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/nested_collection_decode");
+    let cgs = plasm_core::load_schema(&dir).expect("load nested_collection_decode fixture");
+    let body: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/schemas/nested_collection_decode/sample_task_collection.json"
+    )))
+    .expect("sample collection JSON");
+    let dishonest: plasm_compile::CmlRequest = serde_json::from_value(serde_json::json!({
+        "method": "GET",
+        "path": [
+            {"type": "literal", "value": "projects"},
+            {"type": "var", "name": "project_id"},
+            {"type": "literal", "value": "tasks"}
+        ]
+    }))
+    .unwrap();
+    let normalized = prepare_http_query_response(body, &dishonest, &CmlEnv::new());
+    let decoder = create_entity_decoder(
+        "Task",
+        &cgs,
+        Some(http_collection_source(&dishonest)),
+        None,
+        None,
+    );
+    let entities = decode_entities(&decoder, &normalized).expect("decode");
+    assert!(
+        entities.is_empty(),
+        "object envelope without concat_arrays must not invent rows, got {entities:?}"
+    );
+}
+
+#[test]
+fn nested_collection_fixture_concat_arrays_decodes_all_tasks() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/nested_collection_decode");
+    let cgs = plasm_core::load_schema(&dir).expect("load nested_collection_decode fixture");
+    let cap = cgs
+        .get_capability("task_query")
+        .expect("task_query capability");
+    let capability_template =
+        parse_capability_template(&cap.require_mapping().expect("cml mapping").template).unwrap();
+    let cml = match &capability_template {
+        plasm_compile::CapabilityTemplate::Http(c) => c,
+        _ => panic!("expected HTTP template"),
+    };
+    let body: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/schemas/nested_collection_decode/sample_task_collection.json"
+    )))
+    .expect("sample collection JSON");
+    let normalized = prepare_http_query_response(body, cml, &CmlEnv::new());
+    let decoder =
+        create_entity_decoder("Task", &cgs, Some(http_collection_source(cml)), None, None);
+    let entities = decode_entities(&decoder, &normalized).expect("decode tasks");
+    assert_eq!(entities.len(), 3);
+    let titles: Vec<_> = entities
+        .iter()
+        .map(|e| e.fields.get("title").cloned())
+        .collect();
+    assert!(
+        titles
+            .iter()
+            .any(|t| matches!(t, Some(Value::String(s)) if s == "Prepare Playlist")),
+        "expected Prepare Playlist, got {titles:?}"
+    );
+}
+
+/// Default `results` collection key on a `{ breakdown: [...] }` envelope yields zero rows.
+#[test]
+fn object_envelope_without_items_path_decodes_zero() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/object_envelope_items_path");
+    let cgs = plasm_core::load_schema(&dir).expect("load object_envelope_items_path fixture");
+    let body: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/schemas/object_envelope_items_path/sample_groups_balance.json"
+    )))
+    .expect("sample groups balance JSON");
+    let dishonest: plasm_compile::CmlRequest = serde_json::from_value(serde_json::json!({
+        "method": "GET",
+        "path": [
+            {"type": "literal", "value": "balance"},
+            {"type": "literal", "value": "groups"}
+        ]
+    }))
+    .unwrap();
+    let normalized = prepare_http_query_response(body, &dishonest, &CmlEnv::new());
+    let decoder = create_entity_decoder(
+        "BalanceRow",
+        &cgs,
+        Some(http_collection_source(&dishonest)),
+        None,
+        None,
+    );
+    let entities = decode_entities(&decoder, &normalized).expect("decode");
+    assert!(
+        entities.is_empty(),
+        "object envelope without items_path must not invent rows, got {entities:?}"
+    );
+}
+
+#[test]
+fn object_envelope_items_path_decodes_breakdown_rows() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/object_envelope_items_path");
+    let cgs = plasm_core::load_schema(&dir).expect("load object_envelope_items_path fixture");
+    let cap = cgs
+        .get_capability("balance_query")
+        .expect("balance_query capability");
+    let capability_template =
+        parse_capability_template(&cap.require_mapping().expect("cml mapping").template).unwrap();
+    let cml = match &capability_template {
+        plasm_compile::CapabilityTemplate::Http(c) => c,
+        _ => panic!("expected HTTP template"),
+    };
+    let body: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/schemas/object_envelope_items_path/sample_groups_balance.json"
+    )))
+    .expect("sample groups balance JSON");
+    let normalized = prepare_http_query_response(body, cml, &CmlEnv::new());
+    let decoder = create_entity_decoder(
+        "BalanceRow",
+        &cgs,
+        Some(http_collection_source(cml)),
+        None,
+        None,
+    );
+    let entities = decode_entities(&decoder, &normalized).expect("decode breakdown");
+    assert_eq!(entities.len(), 2);
+    let names: Vec<_> = entities
+        .iter()
+        .map(|e| e.fields.get("group_name").cloned())
+        .collect();
+    assert!(
+        names
+            .iter()
+            .any(|t| matches!(t, Some(Value::String(s)) if s == "Trip")),
+        "expected Trip, got {names:?}"
+    );
+    assert!(
+        names
+            .iter()
+            .any(|t| matches!(t, Some(Value::String(s)) if s == "Rent")),
+        "expected Rent, got {names:?}"
+    );
+}
+
+#[test]
+fn object_envelope_items_path_wraps_root_array_shelf() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/object_envelope_items_path");
+    let cgs = plasm_core::load_schema(&dir).expect("load object_envelope_items_path fixture");
+    let cap = cgs
+        .get_capability("balance_query")
+        .expect("balance_query capability");
+    let capability_template =
+        parse_capability_template(&cap.require_mapping().expect("cml mapping").template).unwrap();
+    let cml = match &capability_template {
+        plasm_compile::CapabilityTemplate::Http(c) => c,
+        _ => panic!("expected HTTP template"),
+    };
+    let body = serde_json::json!([
+        {"group_id": 7, "group_name": "Cabin", "you_owe_others": 1.0, "others_owe_you": 0.0}
+    ]);
+    let normalized = prepare_http_query_response(body, cml, &CmlEnv::new());
+    let decoder = create_entity_decoder(
+        "BalanceRow",
+        &cgs,
+        Some(http_collection_source(cml)),
+        None,
+        None,
+    );
+    let entities = decode_entities(&decoder, &normalized).expect("decode root array shelf");
+    assert_eq!(entities.len(), 1);
+    assert!(matches!(
+        entities[0].fields.get("group_name"),
+        Some(Value::String(s)) if s == "Cabin"
+    ));
+}
+
+#[test]
 fn schema_overlay_decode_routes_to_typed_entity() {
     use plasm_core::loader::load_schema_dir;
     use plasm_core::schema_overlay::build_schema_overlay;
@@ -1382,7 +1634,8 @@ fn fibery_schema_query_decodes_database_rows_from_fibery_name_id_path() {
     use plasm_compile::decode_entities;
     use plasm_core::loader::load_schema_dir;
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/fibery");
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/fibery_schema_overlay");
     let cgs = load_schema_dir(&dir).expect("load fibery catalog");
     let cap = cgs.get_capability("schema_query").expect("schema_query");
     let capability_template =
@@ -1419,7 +1672,8 @@ fn fibery_user_get_me_narrowing_decodes_first_result_row() {
     use plasm_compile::decode_entities;
     use plasm_core::loader::load_schema_dir;
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/fibery");
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/fibery_schema_overlay");
     let cgs = load_schema_dir(&dir).expect("load fibery catalog");
     let cap = cgs.get_capability("user_get_me").expect("user_get_me");
     let capability_template =
@@ -1457,7 +1711,8 @@ fn fibery_entity_create_narrowing_decodes_result_object() {
     use plasm_compile::decode_entities;
     use plasm_core::loader::load_schema_dir;
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/fibery");
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/fibery_schema_overlay");
     let cgs = load_schema_dir(&dir).expect("load fibery catalog");
     let cap = cgs.get_capability("entity_create").expect("entity_create");
     let capability_template =
@@ -1502,7 +1757,8 @@ fn fibery_entity_update_merge_injects_fibery_id_into_input() {
     use plasm_compile::CompiledOperation;
     use plasm_core::loader::load_schema_dir;
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/fibery");
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/fibery_schema_overlay");
     let cgs = load_schema_dir(&dir).expect("load fibery catalog");
     let cap = cgs.get_capability("entity_update").expect("entity_update");
     let capability_template =
@@ -1546,7 +1802,8 @@ fn fibery_entity_delete_compiles_fibery_id_and_database() {
     use plasm_compile::CompiledOperation;
     use plasm_core::loader::load_schema_dir;
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/fibery");
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/fibery_schema_overlay");
     let cgs = load_schema_dir(&dir).expect("load fibery catalog");
     let cap = cgs.get_capability("entity_delete").expect("entity_delete");
     let capability_template =
@@ -1601,7 +1858,8 @@ fn fibery_view_query_decodes_result_array() {
     use plasm_compile::decode_entities;
     use plasm_core::loader::load_schema_dir;
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/fibery");
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/fibery_schema_overlay");
     let cgs = load_schema_dir(&dir).expect("load fibery catalog");
     let cap = cgs.get_capability("view_query").expect("view_query");
     let capability_template =
@@ -1644,7 +1902,8 @@ fn fibery_user_get_me_compile_preserves_my_id_filter() {
     use plasm_compile::CompiledOperation;
     use plasm_core::loader::load_schema_dir;
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/fibery");
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/fibery_schema_overlay");
     let cgs = load_schema_dir(&dir).expect("load fibery catalog");
     let cap = cgs.get_capability("user_get_me").expect("user_get_me");
     let capability_template =
@@ -1680,7 +1939,8 @@ fn fibery_user_get_me_compile_preserves_my_id_filter() {
 fn fibery_command_envelope_preflight_surfaces_success_false() {
     use plasm_core::loader::load_schema_dir;
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/fibery");
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/fibery_schema_overlay");
     let cgs = load_schema_dir(&dir).expect("load fibery catalog");
     let cap = cgs.get_capability("user_get_me").expect("user_get_me");
     let capability_template =
@@ -1704,7 +1964,8 @@ fn fibery_command_envelope_preflight_surfaces_success_false() {
 fn fibery_command_envelope_preflight_surfaces_empty_result_array() {
     use plasm_core::loader::load_schema_dir;
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/fibery");
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/fibery_schema_overlay");
     let cgs = load_schema_dir(&dir).expect("load fibery catalog");
     let cap = cgs.get_capability("user_get_me").expect("user_get_me");
     let capability_template =
@@ -1722,7 +1983,8 @@ fn fibery_command_envelope_preflight_surfaces_empty_result_array() {
 fn graphql_get_null_entity_surfaces_request_error_not_config() {
     use plasm_core::loader::load_schema_dir;
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/linear");
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/plasm_language_matrix");
     if !dir.is_dir() {
         return;
     }
@@ -1753,7 +2015,8 @@ fn graphql_get_null_entity_surfaces_request_error_not_config() {
 fn graphql_mutation_success_false_surfaces_actionable_error() {
     use plasm_core::loader::load_schema_dir;
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/linear");
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/plasm_language_matrix");
     let cgs = load_schema_dir(&dir).expect("load linear catalog");
     let cap = cgs.get_capability("issue_create").expect("issue_create");
     let capability_template =
@@ -1776,7 +2039,8 @@ fn graphql_mutation_success_false_surfaces_actionable_error() {
 fn graphql_mutation_success_false_prefers_graphql_errors() {
     use plasm_core::loader::load_schema_dir;
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/linear");
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/plasm_language_matrix");
     let cgs = load_schema_dir(&dir).expect("load linear catalog");
     let cap = cgs.get_capability("issue_create").expect("issue_create");
     let capability_template =
@@ -1797,7 +2061,8 @@ fn graphql_mutation_success_false_prefers_graphql_errors() {
 fn graphql_mutation_success_true_decodes_normally() {
     use plasm_core::loader::load_schema_dir;
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/linear");
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/plasm_language_matrix");
     let cgs = load_schema_dir(&dir).expect("load linear catalog");
     let cap = cgs.get_capability("issue_create").expect("issue_create");
     let capability_template =
@@ -1934,7 +2199,8 @@ fn langitem_get_decoder_embed_decoders_are_leaf() {
 fn pokemon_get_decoder_embed_decoders_are_leaf() {
     use plasm_core::loader::load_schema_dir;
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/pokeapi_mini");
     let cgs = load_schema_dir(&dir).expect("pokeapi");
     let decoder = create_entity_decoder_for_capability(
         "Pokemon",
@@ -1966,7 +2232,8 @@ fn pokemon_get_decode_on_release_stack_budget() {
         return;
     }
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/pokeapi_mini");
     let cgs = load_schema_dir(&dir).expect("pokeapi");
     let decoder = create_entity_decoder_for_capability(
         "Pokemon",

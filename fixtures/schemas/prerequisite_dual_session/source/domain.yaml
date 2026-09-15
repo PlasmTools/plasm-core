@@ -1,0 +1,34 @@
+version: 1
+entry_id: source
+auth: {scheme: none}
+http_backend: http://127.0.0.1:9
+values:
+  nv_access_token:
+    type: string
+    description: Bearer access token from login.
+entities:
+  AuthSession:
+    id_field: access_token
+    description: Login session for the source service.
+    fields:
+      access_token: {value_ref: nv_access_token, required: true}
+capabilities:
+  login:
+    entity: AuthSession
+    kind: action
+    description: Login to the source service; returns access_token for Bearer auth.
+    provides: [access_token]
+    output: {type: entity, entity_type: AuthSession}
+prerequisites:
+  contracts:
+    appworld.session:
+      version: 1
+      inputs: {}
+      outputs:
+        token: nv_access_token
+  providers:
+    session:
+      contract: appworld.session
+      capability: login
+      outputs:
+        token: access_token

@@ -1,0 +1,14 @@
+task_query:
+  method: GET
+  path:
+    - {type: literal, value: projects}
+    - {type: var, name: project_id}
+    - {type: literal, value: tasks}
+  response:
+    items: tasks
+    response_preprocess:
+      kind: concat_arrays
+      sources:
+        - path: [no_section_tasks]
+        - path: [sections]
+          from_each: tasks

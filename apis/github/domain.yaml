@@ -2184,6 +2184,7 @@ capabilities:
     - submitted_at
     - html_url
   pr_review_submit:
+    receiver: {kind: entity, entity: PullRequestReview}
     description: Submit an existing pending pull request review.
     kind: action
     entity: PullRequestReview
@@ -2351,6 +2352,7 @@ capabilities:
     - html_url
     - badge_url
   workflow_dispatch:
+    receiver: {kind: entity, entity: Workflow}
     description: Start a manual workflow run on a selected ref.
     kind: action
     entity: Workflow
@@ -2439,6 +2441,7 @@ capabilities:
     - created_at
     - updated_at
   workflow_run_rerun:
+    receiver: {kind: entity, entity: WorkflowRun}
     description: Rerun all jobs in a workflow run.
     kind: action
     entity: WorkflowRun
@@ -2446,6 +2449,7 @@ capabilities:
       type: side_effect
       description: Queue a rerun of the workflow run.
   workflow_run_rerun_failed_jobs:
+    receiver: {kind: entity, entity: WorkflowRun}
     description: Rerun only failed jobs in a workflow run.
     kind: action
     entity: WorkflowRun
@@ -2453,6 +2457,7 @@ capabilities:
       type: side_effect
       description: Queue a rerun of failed jobs for the workflow run.
   workflow_run_cancel:
+    receiver: {kind: entity, entity: WorkflowRun}
     description: Cancel an in-progress workflow run.
     kind: action
     entity: WorkflowRun
@@ -2460,6 +2465,7 @@ capabilities:
       type: side_effect
       description: Request cancellation of the workflow run.
   workflow_run_logs_delete:
+    receiver: {kind: entity, entity: WorkflowRun}
     description: Remove stored logs for a workflow run.
     kind: action
     entity: WorkflowRun
@@ -2657,6 +2663,7 @@ capabilities:
     - url
     - subscription_url
   notification_mark_read:
+    receiver: {kind: entity, entity: Notification}
     description: Mark a notification thread as read.
     kind: action
     entity: Notification
@@ -3114,6 +3121,7 @@ capabilities:
     kind: delete
     entity: Issue
   issue_sub_issue_add:
+    receiver: {kind: entity, entity: Issue}
     description: Add an existing issue as a sub-issue of this issue.
     kind: action
     entity: Issue
@@ -3131,6 +3139,7 @@ capabilities:
       type: side_effect
       description: Attach the selected issue under this parent issue.
   issue_sub_issue_remove:
+    receiver: {kind: entity, entity: Issue}
     description: Remove a sub-issue from this parent issue.
     kind: action
     entity: Issue
@@ -3145,6 +3154,7 @@ capabilities:
       type: side_effect
       description: Remove the selected sub-issue from this parent.
   issue_sub_issue_reprioritize:
+    receiver: {kind: entity, entity: Issue}
     description: Reorder a sub-issue within this parent issue.
     kind: action
     entity: Issue
@@ -3165,6 +3175,7 @@ capabilities:
       type: side_effect
       description: Reorder a sub-issue under this parent.
   issue_assignees_add:
+    receiver: {kind: entity, entity: Issue}
     description: Add assignees without replacing existing ones.
     kind: action
     entity: Issue
@@ -3187,6 +3198,7 @@ capabilities:
       type: side_effect
       description: Add the selected assignees to the issue.
   issue_assignees_remove:
+    receiver: {kind: entity, entity: Issue}
     description: Remove one or more assignees from an issue.
     kind: action
     entity: Issue
@@ -3201,6 +3213,7 @@ capabilities:
       type: side_effect
       description: Remove the selected assignees from the issue.
   issue_assign_copilot:
+    receiver: {kind: entity, entity: Issue}
     description: Assign Copilot agent to an issue.
     kind: action
     entity: Issue
@@ -3348,6 +3361,7 @@ capabilities:
     - closed_at
     - html_url
   pr_merge:
+    receiver: {kind: entity, entity: PullRequest}
     description: Merge a pull request.
     kind: action
     entity: PullRequest
@@ -3375,6 +3389,7 @@ capabilities:
       type: side_effect
       description: Merge the pull request.
   pr_update_branch:
+    receiver: {kind: entity, entity: PullRequest}
     description: Update a pull request branch from its base branch.
     kind: action
     entity: PullRequest
@@ -3525,6 +3540,7 @@ capabilities:
     kind: delete
     entity: Label
   repo_content_create:
+    receiver: {kind: entity, entity: Repository}
     description: Create a new file at a repository path on the given branch (no blob sha).
     kind: action
     entity: Repository
@@ -3562,6 +3578,7 @@ capabilities:
       type: side_effect
       description: Create the file at the path.
   repo_content_update:
+    receiver: {kind: entity, entity: Repository}
     description: Update an existing file at a repository path; requires the current blob sha.
     kind: action
     entity: Repository
@@ -3594,6 +3611,7 @@ capabilities:
       type: side_effect
       description: Replace the file at the path.
   repo_branch_create:
+    receiver: {kind: entity, entity: Repository}
     description: Create a branch ref in a repository from an existing commit SHA.
     kind: action
     entity: Repository
@@ -3625,6 +3643,7 @@ capabilities:
     - repository
     - name
   repo_content_delete:
+    receiver: {kind: entity, entity: Repository}
     description: Remove a file from a repository.
     kind: action
     entity: Repository

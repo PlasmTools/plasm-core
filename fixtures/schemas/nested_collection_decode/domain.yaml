@@ -1,0 +1,24 @@
+version: 1
+entry_id: nested_collection_decode
+http_backend: http://127.0.0.1:9
+auth: {scheme: none}
+values:
+  task_id: {type: integer, description: Task identity}
+  project_id: {type: integer, description: Owning project identity}
+  title: {type: string, description: Task title}
+entities:
+  Task:
+    description: A task listed from a nested collection envelope
+    id_field: task_id
+    fields:
+      task_id: {value_ref: task_id, required: true}
+      project_id: {value_ref: project_id, required: false}
+      title: {value_ref: title, required: true}
+capabilities:
+  task_query:
+    description: List tasks in a project
+    entity: Task
+    kind: query
+    scope:
+      - {name: project_id, value_ref: project_id, required: true}
+    provides: [task_id, title]

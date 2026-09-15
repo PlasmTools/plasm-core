@@ -45,6 +45,11 @@ CREATE TABLE IF NOT EXISTS discovery_intent_embeddings (
     profile jsonb NOT NULL,
     embedding vector(1536) NOT NULL
 );
+CREATE TABLE IF NOT EXISTS discovery_selector_cache (
+    cache_key text PRIMARY KEY,
+    envelope text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS discovery_routing_receipts (
     routing_ref text PRIMARY KEY,
     generation_id text NOT NULL REFERENCES discovery_generations(generation_id),

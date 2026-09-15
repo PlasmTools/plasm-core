@@ -18,7 +18,7 @@ impl ArrayFieldCoercionPolicy {
 
     /// Values resolved later from bindings (e.g. `labels.name` column projections).
     pub fn accepts_deferred_value(value: &Value) -> bool {
-        matches!(value, Value::PlasmInputRef(_))
+        matches!(value, Value::PlasmInputRef(_) | Value::GetScalarExtract(_))
     }
 }
 

@@ -9,7 +9,7 @@ use crate::plasm_plan::{
     ValidatedPlanReturn, ValidatedRelationTraversalNode, ValidatedSurfaceNode,
 };
 use plasm_runtime::row_predicate::{JsonRowPredicate, JsonRowPredicateOp};
-use plasm_runtime::{ OperationLedger,CachedEntity, ExecutionResult, RowMatchBudget, TopKSpec};
+use plasm_runtime::{CachedEntity, ExecutionResult, RowMatchBudget, TopKSpec};
 
 /// Canonical host page size for unbounded list/page read roots: the first page is materialized
 /// in-band, with continuation via `page(...)`. The MCP inline row cap
@@ -129,7 +129,7 @@ pub fn cap_execution_result_page(
         offset: cap,
         page_size: cap,
         request_fingerprints: result.request_fingerprints.clone(),
-    operations: plasm_runtime::OperationLedger::empty(),
+        coverage: result.coverage,
     };
     result.paging_handle =
         Some(sess.register_synthetic_paging_continuation(cursor, logical_session_ref));
@@ -451,6 +451,7 @@ pub fn plan_predicate_to_json(pred: &PlanPredicate) -> Result<JsonRowPredicate, 
             crate::plasm_plan::PlanPredicateOp::Gte => JsonRowPredicateOp::Gte,
             crate::plasm_plan::PlanPredicateOp::Contains => JsonRowPredicateOp::Contains,
             crate::plasm_plan::PlanPredicateOp::In => JsonRowPredicateOp::In,
+            crate::plasm_plan::PlanPredicateOp::NotIn => JsonRowPredicateOp::NotIn,
             crate::plasm_plan::PlanPredicateOp::Exists => JsonRowPredicateOp::Exists,
         },
         value: rhs,
@@ -500,6 +501,7 @@ pub fn pushed_budget_to_stream_fields(
 mod tests {
     use super::*;
     use crate::plasm_plan::{ComputeOp, ValidatedPlanNode};
+    use plasm_runtime::ResultCoverage;
 
     #[test]
     fn limit_only_chain_budget() {
@@ -605,6 +607,95 @@ mod tests {
             relation.pushed_read_budget,
             Some(PushedReadBudget::Limit(3))
         );
+    }
+
+    #[test]
+    fn default_host_page_size_for_unbounded_search_surface() {
+        let plan = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "name": "unbounded-search",
+            "nodes": [{
+                "id": "hits",
+                "kind": "search",
+                "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                "expr": "Product~\"q\"",
+                "ir": { "expr": { "op": "query", "entity": "Product", "capability_name": "product_search" } },
+                "effect_class": "read",
+                "result_shape": "list"
+            }],
+            "return": { "kind": "node", "node": "hits" }
+        });
+        let validated = crate::plasm_plan::parse_and_validate_plan_json(&plan).expect("validate");
+        let surface = match &validated.nodes()[0] {
+            ValidatedPlanNode::Surface(s) => s,
+            _ => panic!("expected surface"),
+        };
+        assert_eq!(
+            effective_host_page_size(surface),
+            Some(DEFAULT_HOST_PAGE_SIZE),
+            "unbounded Search uses the same first-page cap as Query"
+        );
+    }
+
+    #[test]
+    fn cap_execution_result_page_at_cap_does_not_claim_remainder() {
+        use indexmap::IndexMap;
+        use plasm_core::{EntityKey, Ref, Value};
+        use plasm_runtime::{CachedEntity, EntityCompleteness};
+
+        let cgs = std::sync::Arc::new(
+            plasm_core::loader::load_schema_dir(
+                &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../fixtures/schemas/plasm_language_matrix"),
+            )
+            .expect("matrix"),
+        );
+        let sess = crate::test_support::graph_fixtures::test_execute_session(
+            cgs.clone(),
+            "cap-page-eq-test",
+        );
+        let mut entities = Vec::new();
+        for i in 0..DEFAULT_HOST_PAGE_SIZE {
+            let mut fields = IndexMap::new();
+            fields.insert("id".into(), Value::String(format!("i{i}")));
+            entities.push(CachedEntity::from_decoded(
+                Ref {
+                    entity_type: "LangItem".into(),
+                    key: EntityKey::Simple(format!("i{i}").into()),
+                },
+                fields,
+                IndexMap::new(),
+                0,
+                EntityCompleteness::Complete,
+            ));
+        }
+        let mut result = ExecutionResult {
+            count: entities.len(),
+            entities,
+            has_more: false,
+            coverage: ResultCoverage::Unknown,
+            pagination_resume: None,
+            paging_handle: None,
+            source: plasm_runtime::ExecutionSource::Cache,
+            stats: Default::default(),
+            request_fingerprints: vec![],
+            operations: plasm_runtime::OperationLedger::empty(),
+        };
+        cap_execution_result_page(
+            &sess,
+            &mut result,
+            DEFAULT_HOST_PAGE_SIZE,
+            "rows",
+            "LangItem",
+            Some("l_test"),
+        );
+        assert_eq!(result.entities.len(), DEFAULT_HOST_PAGE_SIZE);
+        assert!(
+            !result.has_more,
+            "len==cap is an honest page, not a silent drop"
+        );
+        assert!(result.paging_handle.is_none());
     }
 
     #[test]
@@ -751,17 +842,24 @@ mod tests {
             count: entities.len(),
             entities,
             has_more: false,
+            coverage: ResultCoverage::Unknown,
             pagination_resume: None,
             paging_handle: None,
             source: plasm_runtime::ExecutionSource::Cache,
             stats: Default::default(),
             request_fingerprints: vec![],
-        operations: plasm_runtime::OperationLedger::empty(),
+            operations: plasm_runtime::OperationLedger::empty(),
         };
+        result.coverage = plasm_runtime::ResultCoverage::Complete;
         cap_execution_result_page(&sess, &mut result, 2, "rows", "LangItem", Some("l_test"));
         assert_eq!(result.entities.len(), 2);
         assert!(result.has_more);
         assert!(result.paging_handle.is_some());
+        assert_eq!(
+            result.coverage,
+            plasm_runtime::ResultCoverage::Complete,
+            "presentation paging must not rewrite expression coverage"
+        );
     }
 
     #[test]

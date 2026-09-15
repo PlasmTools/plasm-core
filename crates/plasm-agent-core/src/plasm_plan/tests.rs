@@ -41,7 +41,7 @@ fn enrich_uses_result_stamps_source_qualified_entity() {
             {
                 "id": "sn",
                 "kind": "action",
-                "qualified_entity": { "entry_id": "linear", "entity": "LangAuthSession" },
+                "qualified_entity": { "entry_id": "langmatrix", "entity": "LangAuthSession" },
                 "effect_class": "side_effect",
                 "result_shape": "single",
                 "depends_on": [],
@@ -50,7 +50,7 @@ fn enrich_uses_result_stamps_source_qualified_entity() {
             {
                 "id": "notes",
                 "kind": "search",
-                "qualified_entity": { "entry_id": "linear", "entity": "LangSecuredNote" },
+                "qualified_entity": { "entry_id": "langmatrix", "entity": "LangSecuredNote" },
                 "effect_class": "read",
                 "result_shape": "list",
                 "depends_on": ["sn"],
@@ -64,7 +64,7 @@ fn enrich_uses_result_stamps_source_qualified_entity() {
         enrich_uses_result_provenance(&plan.nodes[1].uses_result, &plan, "notes").expect("enrich");
     assert_eq!(uses.len(), 1);
     let qe = uses[0].qualified_entity.as_ref().expect("stamped qe");
-    assert_eq!(qe.entry_id, "linear");
+    assert_eq!(qe.entry_id, "langmatrix");
     assert_eq!(qe.entity, "LangAuthSession");
 }
 

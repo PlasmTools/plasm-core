@@ -1,5 +1,5 @@
-Plasm source text, not JSON data — one expression, or `label = …` bindings then ONE final return line (comma-separated roots on that line only). No prose, no `return` keyword, no code fences.
+Plasm source text, not JSON data — one expression, or `label = …` bindings (not `e#`/`m#`/`p#`/`r#`/`v#`) then ONE final return line (comma-separated roots on that line only). No prose, no `return` keyword, no code fences.
 
-Symbols from the `plasm_context` language card: `e#` entity, `m#` method, `r#` relation; **wire names** for fields, params, and filters. Fill card holes with real values; never emit leftover placeholders.
+Symbols from the `plasm_context` language card: `e#` entity, `m#` method, `r#` relation; **wire names** for fields, params, and filters. Fill card `<>` holes (`<id>` / `<wire>` / `<query>`) with real values; never emit leftover `<…>` placeholders.
 
-Full grammar (catalog · `|` row algebra · `=>` application) lives in the **`plasm` tool description** (not duplicated here). Multiline strings: `label = <<TAG` … `TAG`. Session / parse recovery: **`plasm_context`** (`session_mode: "extend"`, same `logical_session_ref` — not `new`).
+Full grammar (catalog · `|` row algebra · `=>` application) lives in the **`plasm` tool description** (not duplicated here). Multiline strings: `label = <<TAG` … `TAG`. Session: **`plasm_context`** (`session_mode: "extend"`, same `logical_session_ref` — not `new`).

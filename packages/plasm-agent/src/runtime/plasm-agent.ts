@@ -23,6 +23,18 @@ import { createPlasmTools } from "../tools/plasm-tools.js";
 import { buildDefaultSystemLiturgy } from "../prompts/index.js";
 import { runEveToolLoop, type AgentStepEvent } from "../telemetry/eve-tool-loop.js";
 import type { EveChannelKind } from "../telemetry/eve-agent-runs.js";
+import {
+  renderTaskLedgerState,
+  TaskLedgerStore,
+  type TaskLedgerRecord,
+} from "../tools/task-ledger.js";
+import {
+  TaskLedgerReviewSeat,
+  addLanguageModelUsage,
+  snapshotOrEmptyLedger,
+  wrapTaskLedgerReviewTools,
+  type TaskLedgerReviewRecord,
+} from "../tools/task-ledger-review.js";
 
 export type { AgentStepEvent };
 
@@ -48,6 +60,19 @@ export interface PlasmAgentConfig extends AgentRuntimeConfig {
    * `buildDefaultSystemLiturgy`. Product hosts must leave this unset.
    */
   includeEvalTerminals?: boolean;
+  /**
+   * Register `task_ledger` and compose the ledger rite. Eval/A-B factor
+   * (`PLASM_EVAL_TASK_LEDGER=1` on the TS eval host). Product default unset.
+   */
+  includeTaskLedger?: boolean;
+  /**
+   * Isolated ledger-review seat before `plasm_run` and finish proposals.
+   * Eval/A-B factor (`PLASM_EVAL_TASK_LEDGER_REVIEW=1`). Product default unset.
+   * Same model, separate context — one nested generate per gated decision.
+   */
+  includeTaskLedgerReview?: boolean;
+  /** Override the review-seat model. Defaults to the actor model. */
+  taskLedgerReviewModel?: string | LanguageModel;
 }
 
 export interface AgentGenerateOptions {
@@ -83,6 +108,19 @@ export interface AgentTurnResult {
   toolInvocations: string[];
   messages: ModelMessage[];
   stopReason: Awaited<ReturnType<typeof runEveToolLoop>>["stopReason"];
+  /** Per-model-step finish reasons from the tool loop. */
+  stepFinishReasons: string[];
+  /** Per-generation output ceiling applied to the model (if configured). */
+  maxOutputTokens?: number;
+  /** Steps whose finishReason was `length`. */
+  lengthTruncationCount: number;
+  /** Successful live write-node count on this runtime (`plasm_run`). */
+  committedWriteOps: number;
+  /**
+   * Nested review generates this turn. Zero when the experiment flag is off.
+   * Each gated `plasm_run` / finish proposal costs one extra model call.
+   */
+  reviewGenerateCount: number;
 }
 
 export class PlasmAgent {
@@ -99,6 +137,12 @@ export class PlasmAgent {
   private readonly subagentRegistry?: SubagentRegistry;
   private readonly getAuthoringContext?: () => AuthoringContext;
   private readonly includeEvalTerminals: boolean;
+  private readonly includeTaskLedger: boolean;
+  private readonly includeTaskLedgerReview: boolean;
+  private readonly taskLedgerReviewModel?: string | LanguageModel;
+  private readonly taskLedgerStore = new TaskLedgerStore();
+  private lastReviewRecords: TaskLedgerReviewRecord[] = [];
+  private reviewInstruction = "";
   private readonly agentName: string;
   private conversation: ModelMessage[] = [];
 
@@ -128,6 +172,19 @@ export class PlasmAgent {
     this.subagentRegistry = config.subagentRegistry;
     this.getAuthoringContext = config.getAuthoringContext;
     this.includeEvalTerminals = config.includeEvalTerminals === true;
+    this.includeTaskLedger = config.includeTaskLedger === true;
+    this.includeTaskLedgerReview = config.includeTaskLedgerReview === true;
+    this.taskLedgerReviewModel = config.taskLedgerReviewModel;
+  }
+
+  /** Last accepted model write, or `null` when the experiment flag is off. */
+  get taskLedger(): TaskLedgerRecord | null {
+    return this.includeTaskLedger ? this.taskLedgerStore.record : null;
+  }
+
+  /** Review verdicts from the last generate, or `[]` when the flag is off. */
+  get taskLedgerReviews(): TaskLedgerReviewRecord[] {
+    return this.includeTaskLedgerReview ? this.lastReviewRecords.map((r) => ({ ...r })) : [];
   }
 
   async bootstrap(): Promise<void> {
@@ -138,6 +195,8 @@ export class PlasmAgent {
     // Framework core: language law + resource rites (same bytes as MCP tool cards).
     const core = buildDefaultSystemLiturgy({
       includeEvalTerminals: this.includeEvalTerminals,
+      includeTaskLedger: this.includeTaskLedger,
+      includeTaskLedgerReview: this.includeTaskLedgerReview,
     });
     let project = "";
     try {
@@ -149,7 +208,8 @@ export class PlasmAgent {
     const isPlaceholder =
       !project ||
       /^#\s*Placeholder\b/i.test(project) ||
-      /^#\s*Catalog-native Plasm agent\b/i.test(project);    const base = isPlaceholder
+      /^#\s*Catalog-native Plasm agent\b/i.test(project);
+    const base = isPlaceholder
       ? core
       : `${core}\n\n# Project instructions\n\n${project}`;
 
@@ -175,6 +235,14 @@ export class PlasmAgent {
       await this.hookRunner.emit("agent:start", this.getAuthoringContext(), { prompt });
     }
 
+    if (options.resetConversation) {
+      this.taskLedgerStore.clear();
+      this.reviewInstruction = "";
+    }
+    if (!this.reviewInstruction) {
+      this.reviewInstruction = prompt;
+    }
+
     const system = await this.loadInstructions();
     const plasmTools = createPlasmTools(this.runtime);
     const harnessTools = createHarnessTools({
@@ -183,6 +251,11 @@ export class PlasmAgent {
       artefactWorkspaceRoot: this.runtime.artefactWorkspaceRoot,
       includeArtefactTransform: true,
       includeEvalTerminals: this.includeEvalTerminals,
+      discoveryCompleted: this.includeEvalTerminals
+        ? () => this.runtime.hasOpenWorkflow()
+        : undefined,
+      includeTaskLedger: this.includeTaskLedger,
+      taskLedgerStore: this.includeTaskLedger ? this.taskLedgerStore : undefined,
     });
     let tools = {
       ...plasmTools,
@@ -211,8 +284,23 @@ export class PlasmAgent {
 
     messages = await maybeCompactMessages(messages, this.compaction, this.model);
 
+    this.lastReviewRecords = [];
+    let liveMessages = messages;
+    const reviewSeat = this.includeTaskLedgerReview
+      ? new TaskLedgerReviewSeat({
+          model: resolveGatewayModel(this.taskLedgerReviewModel ?? this.model, this.modelOptions),
+          getInstruction: () => this.reviewInstruction || prompt,
+          getLedger: () => snapshotOrEmptyLedger(this.taskLedgerStore.record),
+          getMessages: () => liveMessages,
+        })
+      : null;
+    if (reviewSeat) {
+      tools = wrapTaskLedgerReviewTools(tools, reviewSeat);
+    }
+
     const toolInvocations: string[] = [];
     const onStepFinish = async (step: AgentStepEvent) => {
+      if (step.messages) liveMessages = step.messages;
       for (const call of step.toolCalls ?? []) {
         toolInvocations.push(call.toolName);
       }
@@ -226,6 +314,15 @@ export class PlasmAgent {
       model,
       system,
       tools: () => gateArtefactTransform(tools, this.runtime.hasMaterializedArtefact()),
+      prepareMessages: this.includeTaskLedger
+        ? (history) => [
+            ...history,
+            {
+              role: "user" as const,
+              content: renderTaskLedgerState(this.taskLedgerStore.record),
+            },
+          ]
+        : undefined,
       messages,
       maxSteps: options.maxSteps ?? this.maxSteps,
       agentName: this.agentName,
@@ -240,20 +337,32 @@ export class PlasmAgent {
       },
       modelOptions: this.modelOptions,
       toolChoice: options.toolChoice,
+      // Env-action evals: force plasm_context until attempted; terminals still
+      // require hasOpenWorkflow via the harness gate (tool-error on refusal).
+      requireInitialDiscovery: this.includeEvalTerminals,
+      discoveryCompleted: this.includeEvalTerminals
+        ? () => this.runtime.hasOpenWorkflow()
+        : undefined,
     });
 
     if (!externalMessages) {
       this.conversation = result.messages;
     }
+    this.lastReviewRecords = reviewSeat?.records ?? [];
     return {
       text: result.text,
       steps: result.steps,
-      usage: result.usage,
+      usage: reviewSeat ? addLanguageModelUsage(result.usage, reviewSeat.usage) : result.usage,
       toolsAvailable: Object.keys(tools).length,
       toolCount: toolInvocations.length,
       toolInvocations,
       messages: result.messages,
       stopReason: result.stopReason,
+      stepFinishReasons: result.stepFinishReasons,
+      maxOutputTokens: result.maxOutputTokens,
+      lengthTruncationCount: result.lengthTruncationCount,
+      committedWriteOps: this.runtime.committedLiveWriteOps(),
+      reviewGenerateCount: reviewSeat?.generateCount ?? 0,
     };
   }
 }

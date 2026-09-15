@@ -456,7 +456,7 @@ mod tests {
         let out = ApplyCapabilitySeedsOutcome {
             prompt_hash: "ph_new".into(),
             session_id: "sid_new".into(),
-            primary_entry_id: "github".into(),
+            primary_entry_id: "langmatrix".into(),
             principal: None,
             waves: vec![],
             binding_updated: true,

@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use plasm_core::Ref;
-use plasm_runtime::{CachedEntity, SessionMaterialization};
+use plasm_runtime::{CachedEntity, ResultCoverage, SessionMaterialization};
 use shuttle::future;
 use shuttle::sync::{Arc as ShuttleArc, Mutex as ShuttleMutex};
 
@@ -578,6 +578,7 @@ fn empty_graph_result(count: usize) -> plasm_runtime::ExecutionResult {
         entities: Vec::new(),
         count,
         has_more: false,
+        coverage: ResultCoverage::Unknown,
         pagination_resume: None,
         paging_handle: None,
         source: plasm_runtime::ExecutionSource::Live,

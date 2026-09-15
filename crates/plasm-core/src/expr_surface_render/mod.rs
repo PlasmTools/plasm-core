@@ -126,57 +126,37 @@ mod tests {
     }
 
     #[test]
-    fn wire_surface_dotted_create_clickup() {
-        let dir = std::path::Path::new("../../apis/clickup");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = match load_schema_dir(dir) {
-            Ok(c) => c,
-            Err(_) => return,
-        };
-        let surface = "Team(11111).team-create-space(name=\"Sprint Sandbox\")";
+    fn wire_surface_dotted_create_langitem() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
+        let surface = r#"LangItem.langitem-create(title="Sprint Sandbox")"#;
         let parsed = parse(surface, &cgs).unwrap();
         let back = render_expr_surface(&parsed.expr, &cgs);
         assert_eq!(back, surface);
     }
 
     #[test]
-    fn wire_surface_opaque_dotted_invoke_proof() {
-        let dir = std::path::Path::new("../../apis/proof");
-        if !dir.is_dir() {
-            return;
-        }
-        let cgs = match load_schema_dir(dir) {
-            Ok(c) => c,
-            Err(_) => return,
-        };
-        let session = TeachingExposureSession::new(&cgs, "proof", &["Document"]);
+    fn wire_surface_opaque_dotted_invoke_langitem() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let mut cgs = load_schema_dir(dir).expect("plasm_language_matrix");
+        cgs.bind_registry_entry_id("langmatrix");
+        let session = TeachingExposureSession::new(&cgs, "langmatrix", &["LangItem"]);
         let map = session.symbol_map_arc();
-        let e_sym = map.entity_sym_for("proof", "Document");
-        let cap = cgs
-            .get_capability("annotation_suggestion_insert")
-            .expect("cap");
+        let e_sym = map.entity_sym_for("langmatrix", "LangItem");
+        let cap = cgs.get_capability("langitem_ping").expect("cap");
         let kebab = crate::schema::capability_method_label_kebab(cap);
-        let m_sym = map.method_sym_for("proof", "Document", &kebab);
-        let slug_sym = map.ident_sym_entity_field_for("proof", "Document", "slug");
-        let agent_sym = map.ident_sym_cap_param_for(
-            "proof",
-            "Document",
-            "annotation_suggestion_insert",
-            "agent_id",
-        );
+        let m_sym = map.method_sym_for("langmatrix", "LangItem", &kebab);
+        let id_sym = map.ident_sym_entity_field_for("langmatrix", "LangItem", "id");
         let opaque = format!(
-            "{e}({slug}=\"acme\").{m}({agent}=\"bot\")",
+            "{e}({id}=\"acme\").{m}()",
             e = e_sym,
-            slug = slug_sym,
+            id = id_sym,
             m = m_sym,
-            agent = agent_sym,
         );
         let wire = wire_surface_from_teaching_session_line(&opaque, &session).expect("wire");
         assert!(
-            wire.contains("acme") && wire.contains("bot"),
-            "wire={wire:?} opaque={opaque:?} slug_sym={slug_sym}"
+            wire.contains("acme"),
+            "wire={wire:?} opaque={opaque:?} id_sym={id_sym}"
         );
     }
 }

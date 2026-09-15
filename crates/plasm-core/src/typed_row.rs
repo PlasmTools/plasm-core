@@ -110,6 +110,7 @@ impl From<Value> for TypedFieldValue {
         match v {
             Value::UnionCtor { .. } => TypedFieldValue::Json(v),
             Value::PlasmInputRef(r) => TypedFieldValue::PlasmInputRef(r),
+            Value::GetScalarExtract(_) => TypedFieldValue::Json(v),
             Value::Null => TypedFieldValue::Null,
             Value::Bool(b) => TypedFieldValue::Bool(b),
             Value::Integer(i) => TypedFieldValue::Integer(i),

@@ -70,6 +70,8 @@ pub enum PlanPredicateOp {
     Gte,
     Contains,
     In,
+    /// Row-plane anti-join (`| where field not in rhs`).
+    NotIn,
     Exists,
 }
 

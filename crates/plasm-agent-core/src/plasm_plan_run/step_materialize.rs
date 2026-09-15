@@ -112,7 +112,7 @@ async fn live_materialize_pure(
             )
         })?;
         let owner_entry_id = source_mat.qualified_entity.entry_id.clone();
-        let binding_rows = binding_rows_for_render(&compute.compute, materialized)?;
+        let binding_rows = binding_rows_for_compute(&compute.compute, materialized)?;
         let rows = eval_compute_with_row_source(
             &compute.compute,
             &source_mat.row_source,
@@ -126,6 +126,11 @@ async fn live_materialize_pure(
         let row_identities =
             propagate_row_identities(&source_id, &compute.compute.op, materialized, rows.len())?;
         let entity_override = compute.compute.schema.entity.as_deref().map(str::to_string);
+        let input_coverage = coverage_from_compute_collections(
+            source_mat.result.coverage,
+            &compute.compute.op,
+            materialized,
+        );
         return materialize_synthetic_node(
             ctx.st,
             ctx.es,
@@ -135,6 +140,7 @@ async fn live_materialize_pure(
             entity_override.as_deref(),
             rows,
             row_identities,
+            input_coverage,
             ctx.trace,
         )
         .await;
@@ -147,14 +153,13 @@ async fn live_materialize_pure(
         Some(src) => materialized_rows(ctx.es, ctx.st, ctx.session_id, materialized, src).await?,
         None => Vec::new(),
     };
-    let owner_entry_id = source
-        .as_ref()
-        .and_then(|src| {
-            materialized
-                .get(src)
-                .map(|m| m.qualified_entity.entry_id.clone())
-        })
-        .unwrap_or_else(|| ctx.es.entry_id.clone());
+    let owner_entry_id = match &source {
+        Some(src) => materialized
+            .get(src)
+            .map(|m| m.qualified_entity.entry_id.clone())
+            .ok_or_else(|| format!("source node {:?} has not been materialized", src.as_str()))?,
+        None => ctx.es.entry_id.clone(),
+    };
     let input_rows = materialized_singleton_inputs(materialized, pure.inputs())?;
     let binding_rows = pure.binding_rows(materialized)?;
     let pm = pure.materialize(
@@ -165,6 +170,7 @@ async fn live_materialize_pure(
         },
         materialized,
     )?;
+    let source_coverage = coverage_of_declared_source(source.as_ref(), materialized)?;
     materialize_synthetic_node(
         ctx.st,
         ctx.es,
@@ -174,6 +180,7 @@ async fn live_materialize_pure(
         pm.entity_override.as_deref(),
         pm.rows,
         pm.row_identities,
+        source_coverage,
         ctx.trace,
     )
     .await
@@ -316,13 +323,14 @@ async fn live_materialize_io(
                 artifact,
             })
         }
+        // Heap-bound control-flow children keep their futures out of this dispatcher.
         IoStep::Relation(relation) => {
             let relation = (**relation).clone();
             let node = ValidatedPlanNode::RelationTraversal(relation);
             let ValidatedPlanNode::RelationTraversal(relation_ref) = &node else {
                 unreachable!("relation traversal node");
             };
-            Ok(materialize_validated_relation_traversal(
+            Ok(Box::pin(materialize_validated_relation_traversal(
                 ctx.st,
                 ctx.es,
                 ctx.session_id,
@@ -333,10 +341,10 @@ async fn live_materialize_io(
                 ctx.trace,
                 ctx.sink,
                 Some(Arc::clone(ctx.plan_shared)),
-            )
+            ))
             .await?)
         }
-        IoStep::ForEach(for_each) => Ok(materialize_for_each_node(
+        IoStep::ForEach(for_each) => Ok(Box::pin(materialize_for_each_node(
             ctx.st,
             ctx.es,
             ctx.session_id,
@@ -346,9 +354,9 @@ async fn live_materialize_io(
             ctx.trace,
             ctx.sink,
             Some(Arc::clone(ctx.plan_shared)),
-        )
+        ))
         .await?),
-        IoStep::IterateUntil(it) => Ok(materialize_iterate_until_node(
+        IoStep::IterateUntil(it) => Ok(Box::pin(materialize_iterate_until_node(
             ctx.st,
             ctx.es,
             ctx.session_id,
@@ -358,7 +366,7 @@ async fn live_materialize_io(
             ctx.trace,
             ctx.sink,
             Some(Arc::clone(ctx.plan_shared)),
-        )
+        ))
         .await?),
     }
 }

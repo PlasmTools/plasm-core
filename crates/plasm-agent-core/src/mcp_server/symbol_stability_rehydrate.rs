@@ -17,20 +17,25 @@ mod tests {
     use plasm_core::CgsCatalog;
     use uuid::Uuid;
 
-    fn github_fixture_dir() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/github")
+    use crate::test_support::block_on_worker_stack;
+
+    const ENTRY: &str = "langmatrix";
+
+    fn matrix_fixture_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix")
     }
 
-    fn github_host() -> Option<PlasmHostState> {
-        let dir = github_fixture_dir();
+    fn matrix_host() -> Option<PlasmHostState> {
+        let dir = matrix_fixture_dir();
         if !dir.is_dir() {
             return None;
         }
         let cgs = Arc::new(load_schema_dir(&dir).ok()?);
         let reg = CgsRegistry::from_pairs(vec![(
-            "github".into(),
-            "GitHub".into(),
-            vec!["github".into()],
+            ENTRY.into(),
+            "Langmatrix".into(),
+            vec![ENTRY.into()],
             cgs.clone(),
         )]);
         let engine =
@@ -47,34 +52,40 @@ mod tests {
         }))
     }
 
-    fn repo_issue_label_seeds() -> Vec<CapabilitySeed> {
+    fn item_tag_line_seeds() -> Vec<CapabilitySeed> {
         vec![
             CapabilitySeed {
-                entry_id: "github".into(),
-                entity: "Repository".into(),
+                entry_id: ENTRY.into(),
+                entity: "LangItem".into(),
             },
             CapabilitySeed {
-                entry_id: "github".into(),
-                entity: "Issue".into(),
+                entry_id: ENTRY.into(),
+                entity: "LangTag".into(),
             },
             CapabilitySeed {
-                entry_id: "github".into(),
-                entity: "Label".into(),
+                entry_id: ENTRY.into(),
+                entity: "LangLine".into(),
             },
         ]
     }
 
     /// Multi-replica path: durable descriptor + embedded ledger rehydrate preserves `m#`.
-    #[tokio::test]
-    async fn symbol_stability_incremental_expand_rehydrate_preserves_m_symbols() {
-        let Some(st) = github_host() else {
+    #[test]
+    fn symbol_stability_incremental_expand_rehydrate_preserves_m_symbols() {
+        block_on_worker_stack(
+            symbol_stability_incremental_expand_rehydrate_preserves_m_symbols_inner,
+        );
+    }
+
+    async fn symbol_stability_incremental_expand_rehydrate_preserves_m_symbols_inner() {
+        let Some(st) = matrix_host() else {
             return;
         };
         let st = Arc::new(st);
         let logical_id = Uuid::new_v4();
-        let intent = "create branch for label documentation workflow";
+        let intent = "create a lang item for tag documentation workflow";
 
-        let seeds_open = repo_issue_label_seeds();
+        let seeds_open = item_tag_line_seeds();
         let out = apply_capability_seeds(
             st.as_ref(),
             None,
@@ -90,8 +101,8 @@ mod tests {
 
         let mut seeds_extend = seeds_open;
         seeds_extend.push(CapabilitySeed {
-            entry_id: "github".into(),
-            entity: "Branch".into(),
+            entry_id: ENTRY.into(),
+            entity: "CompoundBranch".into(),
         });
         let out_extend = apply_capability_seeds(
             st.as_ref(),
@@ -115,7 +126,7 @@ mod tests {
             .as_ref()
             .expect("exposure")
             .symbol_map_arc();
-        let m_branch = live_map.method_sym_for("github", "Repository", "repo_branch_create");
+        let m_create = live_map.method_sym_for(ENTRY, "LangItem", "langitem_create");
 
         let reuse_key = SessionReuseKey {
             tenant_scope: es.tenant_scope.clone(),
@@ -139,9 +150,9 @@ mod tests {
         desc.expires_at_unix = u64::MAX;
         let reg = st.catalog.snapshot();
         desc.registry_catalog_hashes_by_entry = HashMap::from([(
-            "github".into(),
-            reg.load_context("github")
-                .expect("github")
+            ENTRY.into(),
+            reg.load_context(ENTRY)
+                .expect("langmatrix")
                 .cgs
                 .catalog_cgs_hash_hex(),
         )]);
@@ -159,15 +170,15 @@ mod tests {
             .expect("rehydrated exposure")
             .symbol_map_arc();
         assert_eq!(
-            re_map.method_sym_for("github", "Repository", "repo_branch_create"),
-            m_branch,
-            "rehydrate must restore exact branch-create m#"
+            re_map.method_sym_for(ENTRY, "LangItem", "langitem_create"),
+            m_create,
+            "rehydrate must restore exact langitem_create m#"
         );
         assert_eq!(
             re_map
-                .resolve_method_symbol_triple(m_branch.as_str())
+                .resolve_method_symbol_triple(m_create.as_str())
                 .map(|(_, _, cap)| cap.to_string()),
-            Some("repo_branch_create".into())
+            Some("langitem_create".into())
         );
     }
 }

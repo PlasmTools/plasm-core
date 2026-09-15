@@ -7,16 +7,16 @@ use crate::plan_flow_policy::{
 
 #[test]
 fn create_template_approval_uses_create_operation_not_description_text() {
-    let mut s = test_session();
-    // Active policy: require review for issue_create so the gate is emitted.
+    let mut s = language_matrix_session();
+    // Active policy: require review for langitem_create so the gate is emitted.
     s.flow_policy = FlowPolicySnapshot::Active {
         revision: PolicyRevision(1),
         policy: FlowPolicy {
             capability_gates: vec![CapabilityGateRule {
                 pattern: CapabilityGatePattern {
-                    entry_id: Some("linear".into()),
-                    entity: Some("Issue".into()),
-                    capability: "issue_create".into(),
+                    entry_id: Some("langmatrix".into()),
+                    entity: Some("LangItem".into()),
+                    capability: "langitem_create".into(),
                 },
                 enforcement: OperatorDisposition::Approve,
             }],
@@ -31,9 +31,9 @@ fn create_template_approval_uses_create_operation_not_description_text() {
             {
                 "id": "products",
                 "kind": "query",
-                "qualified_entity": { "entry_id": "acme", "entity": "Product" },
-                "expr": "Product",
-                "ir": { "expr": { "op": "query", "entity": "Product" } },
+                "qualified_entity": { "entry_id": "langmatrix", "entity": "LangItem" },
+                "expr": "LangItem",
+                "ir": { "expr": { "op": "query", "entity": "LangItem" } },
                 "effect_class": "read",
                 "result_shape": "list"
             },
@@ -43,21 +43,22 @@ fn create_template_approval_uses_create_operation_not_description_text() {
                 "effect_class": "write",
                 "result_shape": "mutation_result",
                 "source": "products",
-                "item_binding": "product",
+                "item_binding": "item",
                 "depends_on": ["products"],
-                "uses_result": [{ "node": "products", "as": "product" }],
+                "uses_result": [{ "node": "products", "as": "item" }],
                 "effect_template": {
                     "kind": "create",
-                    "qualified_entity": { "entry_id": "linear", "entity": "Issue" },
-                    "expr_template": "Issue.create(title=\"Report\", description=\"1.) text that looks like member syntax\")",
+                    "qualified_entity": { "entry_id": "langmatrix", "entity": "LangItem" },
+                    "expr_template": "LangItem.create(title=\"1.) text that looks like member syntax\", score=1, owner=\"alice\")",
                     "ir_template": {
                         "expr": {
                             "op": "create",
-                            "capability": "issue_create",
-                            "entity": "Issue",
+                            "capability": "langitem_create",
+                            "entity": "LangItem",
                             "input": {
-                                "title": "Report",
-                                "description": "1.) text that looks like member syntax"
+                                "title": "1.) text that looks like member syntax",
+                                "score": 1,
+                                "owner": "alice"
                             }
                         },
                         "input_bindings": []
@@ -72,7 +73,7 @@ fn create_template_approval_uses_create_operation_not_description_text() {
     let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
     assert_eq!(
         dry.graph_summary["approval_gates"][0]["policy_key"],
-        "linear.Issue.issue_create"
+        "langmatrix.LangItem.langitem_create"
     );
     let text = render_plasm_plan_dry_text(&dry, None);
     assert!(

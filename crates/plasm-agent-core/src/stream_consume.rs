@@ -22,6 +22,7 @@ pub(crate) fn stream_consume_for_surface_read(
                 graph_backed_result: graph_page_spill,
                 row_match_budget: None,
                 top_k: None,
+                bound_kind: plasm_runtime::ConsumeBoundKind::None,
             });
         }
         let (row_match_budget, top_k) = pushed_budget_to_stream_fields(budget)?;
@@ -33,6 +34,7 @@ pub(crate) fn stream_consume_for_surface_read(
                 graph_backed_result: graph_page_spill,
                 row_match_budget,
                 top_k,
+                bound_kind: plasm_runtime::ConsumeBoundKind::ExpressionTake,
             });
         }
         if let Some(row_match_budget) = row_match_budget {
@@ -43,6 +45,7 @@ pub(crate) fn stream_consume_for_surface_read(
                 graph_backed_result: graph_page_spill,
                 row_match_budget: Some(row_match_budget),
                 top_k: None,
+                bound_kind: plasm_runtime::ConsumeBoundKind::ExpressionTake,
             });
         }
         if let PushedReadBudget::Limit(n) = budget {
@@ -54,6 +57,7 @@ pub(crate) fn stream_consume_for_surface_read(
                     graph_backed_result: graph_page_spill,
                     row_match_budget: None,
                     top_k: None,
+                    bound_kind: plasm_runtime::ConsumeBoundKind::ExpressionTake,
                 });
             }
         }
@@ -64,6 +68,7 @@ pub(crate) fn stream_consume_for_surface_read(
             max_items: host_page_size,
             one_page: false,
             graph_backed_result: graph_page_spill,
+            bound_kind: plasm_runtime::ConsumeBoundKind::HostPage,
             ..Default::default()
         });
     }
@@ -155,6 +160,10 @@ mod tests {
                 .expect("consume");
         assert!(!consume.fetch_all);
         assert_eq!(consume.max_items, Some(10));
+        assert_eq!(
+            consume.bound_kind,
+            plasm_runtime::ConsumeBoundKind::HostPage
+        );
     }
 
     #[test]
@@ -171,5 +180,9 @@ mod tests {
         .expect("consume");
         assert!(!consume.fetch_all);
         assert_eq!(consume.max_items, Some(5));
+        assert_eq!(
+            consume.bound_kind,
+            plasm_runtime::ConsumeBoundKind::ExpressionTake
+        );
     }
 }

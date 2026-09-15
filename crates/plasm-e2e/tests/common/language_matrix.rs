@@ -15,6 +15,10 @@ use plasm_core::{CgsContext, TeachingExposureSession};
 use plasm_runtime::{ExecutionEngine, ExecutionMode};
 
 pub const MATRIX_ENTRY_ID: &str = "langmatrix";
+/// Federated primary stamp (same fixture CGS, distinct registry id).
+pub const MATRIX_FED_A: &str = "langmatrix_a";
+/// Federated secondary stamp (same fixture CGS, distinct registry id).
+pub const MATRIX_FED_B: &str = "langmatrix_b";
 
 /// Clone a fixture [`CGS`] and stamp registry `entry_id` for federated parser/layer tests.
 pub fn cgs_with_registry_entry_id(cgs: &plasm_core::CGS, entry_id: &str) -> plasm_core::CGS {
@@ -23,39 +27,39 @@ pub fn cgs_with_registry_entry_id(cgs: &plasm_core::CGS, entry_id: &str) -> plas
     out
 }
 
-/// Dual-catalog session: AuthSession on github+linear; secured notes on linear; secured groups on github
-/// (CUGA-shaped: two logins → two Bearer surfaces in one program).
+/// Dual-catalog session: AuthSession on both federated stamps; secured notes on B; secured groups on A
+/// (two logins → two Bearer surfaces in one program).
 #[allow(dead_code)]
 pub fn matrix_federated_auth_session_session(cgs: Arc<plasm_core::CGS>) -> ExecuteSession {
-    let cgs_github = Arc::new(cgs_with_registry_entry_id(cgs.as_ref(), "github"));
-    let cgs_linear = Arc::new(cgs_with_registry_entry_id(cgs.as_ref(), "linear"));
+    let cgs_a = Arc::new(cgs_with_registry_entry_id(cgs.as_ref(), MATRIX_FED_A));
+    let cgs_b = Arc::new(cgs_with_registry_entry_id(cgs.as_ref(), MATRIX_FED_B));
     let mut ctxs = IndexMap::new();
     ctxs.insert(
-        "github".into(),
-        Arc::new(CgsContext::entry("github", cgs_github.clone())),
+        MATRIX_FED_A.into(),
+        Arc::new(CgsContext::entry(MATRIX_FED_A, cgs_a.clone())),
     );
     ctxs.insert(
-        "linear".into(),
-        Arc::new(CgsContext::entry("linear", cgs_linear.clone())),
+        MATRIX_FED_B.into(),
+        Arc::new(CgsContext::entry(MATRIX_FED_B, cgs_b.clone())),
     );
-    let layers: Vec<&plasm_core::CGS> = vec![cgs_github.as_ref(), cgs_linear.as_ref()];
+    let layers: Vec<&plasm_core::CGS> = vec![cgs_a.as_ref(), cgs_b.as_ref()];
     let mut exp = TeachingExposureSession::new(
-        cgs_github.as_ref(),
-        "github",
+        cgs_a.as_ref(),
+        MATRIX_FED_A,
         &["LangAuthSession", "LangSecuredGroup"],
     );
     exp.expose_entities(
         &layers,
-        cgs_linear.clone(),
-        "linear",
+        cgs_b.clone(),
+        MATRIX_FED_B,
         &["LangAuthSession", "LangSecuredNote"],
     );
     ExecuteSession::new(
         "matrix_ph".into(),
         String::new(),
-        cgs_github.clone(),
+        cgs_a.clone(),
         ctxs,
-        "github".into(),
+        MATRIX_FED_A.into(),
         String::new(),
         String::new(),
         None,
@@ -66,7 +70,7 @@ pub fn matrix_federated_auth_session_session(cgs: Arc<plasm_core::CGS>) -> Execu
         ],
         Some(exp),
         None,
-        cgs_github.catalog_cgs_hash_hex(),
+        cgs_a.catalog_cgs_hash_hex(),
         None,
     )
 }
@@ -123,36 +127,36 @@ pub fn matrix_execute_session(cgs: Arc<plasm_core::CGS>) -> ExecuteSession {
     )
 }
 
-/// Same wire entity (`LangItem`) in `github` and `linear` catalogs — distinct session `e1` / `e2`.
+/// Same wire entity (`LangItem`) in `langmatrix_a` and `langmatrix_b` — distinct session `e1` / `e2`.
 #[allow(dead_code)]
 pub fn matrix_federated_duplicate_entity_session(cgs: Arc<plasm_core::CGS>) -> ExecuteSession {
-    let cgs_github = Arc::new(cgs_with_registry_entry_id(cgs.as_ref(), "github"));
-    let cgs_linear = Arc::new(cgs_with_registry_entry_id(cgs.as_ref(), "linear"));
+    let cgs_a = Arc::new(cgs_with_registry_entry_id(cgs.as_ref(), MATRIX_FED_A));
+    let cgs_b = Arc::new(cgs_with_registry_entry_id(cgs.as_ref(), MATRIX_FED_B));
     let mut ctxs = IndexMap::new();
     ctxs.insert(
-        "github".into(),
-        Arc::new(CgsContext::entry("github", cgs_github.clone())),
+        MATRIX_FED_A.into(),
+        Arc::new(CgsContext::entry(MATRIX_FED_A, cgs_a.clone())),
     );
     ctxs.insert(
-        "linear".into(),
-        Arc::new(CgsContext::entry("linear", cgs_linear.clone())),
+        MATRIX_FED_B.into(),
+        Arc::new(CgsContext::entry(MATRIX_FED_B, cgs_b.clone())),
     );
-    let layers: Vec<&plasm_core::CGS> = vec![cgs_github.as_ref(), cgs_linear.as_ref()];
-    let mut exp = TeachingExposureSession::new(cgs_github.as_ref(), "github", &["LangItem"]);
-    exp.expose_entities(&layers, cgs_linear.clone(), "linear", &["LangItem"]);
+    let layers: Vec<&plasm_core::CGS> = vec![cgs_a.as_ref(), cgs_b.as_ref()];
+    let mut exp = TeachingExposureSession::new(cgs_a.as_ref(), MATRIX_FED_A, &["LangItem"]);
+    exp.expose_entities(&layers, cgs_b.clone(), MATRIX_FED_B, &["LangItem"]);
     ExecuteSession::new(
         "matrix_ph".into(),
         String::new(),
-        cgs_github.clone(),
+        cgs_a.clone(),
         ctxs,
-        "github".into(),
+        MATRIX_FED_A.into(),
         String::new(),
         String::new(),
         None,
         vec!["LangItem".into()],
         Some(exp),
         None,
-        cgs_github.catalog_cgs_hash_hex(),
+        cgs_a.catalog_cgs_hash_hex(),
         None,
     )
 }
@@ -164,14 +168,14 @@ pub fn matrix_federated_duplicate_entity_host_state(
 ) -> plasm_agent::server_state::PlasmHostState {
     let registry = Arc::new(CgsRegistry::from_pairs(vec![
         (
-            "github".into(),
-            "GitHub (matrix federated duplicate LangItem)".into(),
+            MATRIX_FED_A.into(),
+            "Language matrix A (federated duplicate LangItem)".into(),
             vec!["matrix".into()],
             cgs.clone(),
         ),
         (
-            "linear".into(),
-            "Linear (matrix federated duplicate LangItem)".into(),
+            MATRIX_FED_B.into(),
+            "Language matrix B (federated duplicate LangItem)".into(),
             vec!["matrix".into()],
             cgs.clone(),
         ),
@@ -195,23 +199,23 @@ pub fn matrix_federated_relation_target_session(
 ) -> ExecuteSession {
     let mut ctxs = IndexMap::new();
     ctxs.insert(
-        "linear".into(),
-        Arc::new(CgsContext::entry("linear", cgs_primary.clone())),
+        MATRIX_FED_A.into(),
+        Arc::new(CgsContext::entry(MATRIX_FED_A, cgs_primary.clone())),
     );
     ctxs.insert(
-        "pokeapi".into(),
-        Arc::new(CgsContext::entry("pokeapi", cgs_secondary.clone())),
+        MATRIX_FED_B.into(),
+        Arc::new(CgsContext::entry(MATRIX_FED_B, cgs_secondary.clone())),
     );
     let layers: Vec<&plasm_core::CGS> = vec![cgs_primary.as_ref(), cgs_secondary.as_ref()];
-    let mut exp = TeachingExposureSession::new(cgs_primary.as_ref(), "linear", &["LangLine"]);
-    exp.expose_entities(&layers, cgs_secondary.clone(), "pokeapi", &["LangItem"]);
+    let mut exp = TeachingExposureSession::new(cgs_primary.as_ref(), MATRIX_FED_A, &["LangLine"]);
+    exp.expose_entities(&layers, cgs_secondary.clone(), MATRIX_FED_B, &["LangItem"]);
     let wave: &[&str] = &["LangItem", "LangLine"];
     ExecuteSession::new(
         "matrix_ph".into(),
         String::new(),
         cgs_primary.clone(),
         ctxs,
-        "linear".into(),
+        MATRIX_FED_A.into(),
         String::new(),
         String::new(),
         None,
@@ -231,14 +235,14 @@ pub fn matrix_federated_host_state(
 ) -> plasm_agent::server_state::PlasmHostState {
     let registry = Arc::new(CgsRegistry::from_pairs(vec![
         (
-            "linear".into(),
-            "Linear (matrix federated primary)".into(),
+            MATRIX_FED_A.into(),
+            "Language matrix A (federated primary)".into(),
             vec!["matrix".into()],
             cgs_primary,
         ),
         (
-            "pokeapi".into(),
-            "Pokeapi (matrix federated secondary)".into(),
+            MATRIX_FED_B.into(),
+            "Language matrix B (federated secondary)".into(),
             vec!["matrix".into()],
             cgs_secondary,
         ),

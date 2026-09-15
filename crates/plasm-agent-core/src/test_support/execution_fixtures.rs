@@ -6,7 +6,7 @@ use indexmap::IndexMap;
 use plasm_core::{EntityKey, Ref, Value};
 use plasm_runtime::{
     CachedEntity, EntityCompleteness, ExecutionResult, ExecutionSource, ExecutionStats,
-    OperationLedger,
+    OperationLedger, ResultCoverage,
 };
 
 use crate::http_execute::PublishedResultStep;
@@ -52,6 +52,7 @@ pub fn synthetic_published_result_step_with_paging(
             count: row_count,
             entities,
             has_more: paging_handle.is_some(),
+            coverage: ResultCoverage::Unknown,
             pagination_resume: None,
             paging_handle,
             source: ExecutionSource::Live,

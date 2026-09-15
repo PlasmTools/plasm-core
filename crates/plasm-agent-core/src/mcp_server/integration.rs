@@ -47,19 +47,22 @@ fn ensure_test_http_no_system_proxy() {
 
 fn matrix_federated_host_with_base(base_url: Option<&str>) -> PlasmHostState {
     ensure_test_http_no_system_proxy();
-    let cgs = Arc::new(load_schema_dir(&matrix_fixture_dir()).expect("plasm_language_matrix"));
+    let cgs_a = Arc::new(load_schema_dir(&matrix_fixture_dir()).expect("plasm_language_matrix"));
+    let views_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/plasm_language_matrix_views");
+    let cgs_b = Arc::new(load_schema_dir(&views_dir).expect("plasm_language_matrix_views"));
     let reg = CgsRegistry::from_pairs(vec![
         (
-            "github".into(),
-            "GitHub".into(),
-            vec!["github".into()],
-            cgs.clone(),
+            "langmatrix_a".into(),
+            "Langmatrix A".into(),
+            vec!["langmatrix_a".into()],
+            cgs_a,
         ),
         (
-            "linear".into(),
-            "Linear".into(),
-            vec!["linear".into()],
-            cgs.clone(),
+            "langmatrix_b".into(),
+            "Langmatrix B".into(),
+            vec!["langmatrix_b".into()],
+            cgs_b,
         ),
     ]);
     let config = ExecutionConfig {
@@ -181,7 +184,7 @@ impl MatrixPcNFixture {
 
     async fn open(st: Arc<PlasmHostState>, intent: &str, compile_tag: &str) -> Self {
         let seeds = vec![CapabilitySeed {
-            entry_id: "github".into(),
+            entry_id: "langmatrix_a".into(),
             entity: "LangItem".into(),
         }];
         let out = apply_capability_seeds(st.as_ref(), None, None, seeds, None, None, None, intent)
@@ -258,11 +261,11 @@ async fn mcp_apply_capability_seeds_federates_multi_catalog_and_dry_runs_distinc
     let st = Arc::new(matrix_federated_host());
     let seeds = vec![
         CapabilitySeed {
-            entry_id: "github".into(),
+            entry_id: "langmatrix_a".into(),
             entity: "LangItem".into(),
         },
         CapabilitySeed {
-            entry_id: "linear".into(),
+            entry_id: "langmatrix_b".into(),
             entity: "LangItem".into(),
         },
     ];
@@ -279,23 +282,23 @@ async fn mcp_apply_capability_seeds_federates_multi_catalog_and_dry_runs_distinc
     .await
     .expect("apply_capability_seeds");
 
-    assert_eq!(out.primary_entry_id, "github");
+    assert_eq!(out.primary_entry_id, "langmatrix_a");
     assert!(out.waves.len() >= 2, "expected open + federate waves");
     let distinct_catalogs: std::collections::BTreeSet<_> =
         out.waves.iter().map(|w| w.entry_id.as_str()).collect();
-    assert!(distinct_catalogs.contains("github"));
-    assert!(distinct_catalogs.contains("linear"));
+    assert!(distinct_catalogs.contains("langmatrix_a"));
+    assert!(distinct_catalogs.contains("langmatrix_b"));
 
     let es = st
         .get_execute_session(&out.prompt_hash, &out.session_id)
         .await
         .expect("execute session");
-    assert!(es.contexts_by_entry.contains_key("github"));
-    assert!(es.contexts_by_entry.contains_key("linear"));
+    assert!(es.contexts_by_entry.contains_key("langmatrix_a"));
+    assert!(es.contexts_by_entry.contains_key("langmatrix_b"));
 
     let pipeline = st.engine.prompt_pipeline();
     let cross = st.sessions.symbol_map_cross_cache();
-    for (sym, entry_id) in [("e1", "github"), ("e2", "linear")] {
+    for (sym, entry_id) in [("e1", "langmatrix_a"), ("e2", "langmatrix_b")] {
         let bundle = compile_plasm_expression(pipeline, Some(cross), &es, sym, sym)
             .unwrap_or_else(|e| panic!("compile bundle {sym}: {e}"));
         let dry = evaluate_plasm_comp_dry(&es, &bundle).expect("dry-run");
@@ -314,8 +317,8 @@ async fn mcp_apply_capability_seeds_federates_multi_catalog_and_dry_runs_distinc
 
     let exp = es.teaching_exposure.as_ref().expect("exposure");
     let map = exp.symbol_map_arc();
-    let r_sym = map.ident_sym_relation_for("linear", "LangItem", "children");
-    let rel_program = format!("parent = e2(\"i1\")\nkids = parent.{r_sym}\nkids[id,title]");
+    let r_sym = map.ident_sym_relation_for("langmatrix_a", "LangItem", "children");
+    let rel_program = format!("parent = e1(\"i1\")\nkids = parent.{r_sym}\nkids[id,title]");
     let rel_bundle =
         compile_plasm_program(pipeline, Some(cross), &es, "federated_rel", &rel_program)
             .unwrap_or_else(|e| panic!("compile federated relation hop: {e}"));
@@ -327,11 +330,11 @@ async fn mcp_federated_post_async_finalize_compiles_e2_with_cross_cache() {
     let st = Arc::new(matrix_federated_host());
     let seeds = vec![
         CapabilitySeed {
-            entry_id: "github".into(),
+            entry_id: "langmatrix_a".into(),
             entity: "LangItem".into(),
         },
         CapabilitySeed {
-            entry_id: "linear".into(),
+            entry_id: "langmatrix_b".into(),
             entity: "LangItem".into(),
         },
     ];
@@ -451,7 +454,7 @@ async fn mcp_policy_always_spawns_async_when_wait_live() {
 
     let st = Arc::new(matrix_federated_host());
     let seeds = vec![CapabilitySeed {
-        entry_id: "github".into(),
+        entry_id: "langmatrix_a".into(),
         entity: "LangItem".into(),
     }];
     let out = apply_capability_seeds(
@@ -491,7 +494,7 @@ async fn mcp_policy_always_spawns_async_when_wait_live() {
 async fn mcp_query_limit_uses_async_await_path() {
     let st = Arc::new(matrix_federated_host());
     let seeds = vec![CapabilitySeed {
-        entry_id: "github".into(),
+        entry_id: "langmatrix_a".into(),
         entity: "LangItem".into(),
     }];
     let out = apply_capability_seeds(
@@ -575,7 +578,7 @@ async fn matrix_query_limit_on_injected_live_plan_pool() {
     st.oss.live_plan_pool = Arc::new(crate::live_plan_run_worker::LivePlanRunPool::new());
     let st = Arc::new(st);
     let seeds = vec![CapabilitySeed {
-        entry_id: "github".into(),
+        entry_id: "langmatrix_a".into(),
         entity: "LangItem".into(),
     }];
     let out = apply_capability_seeds(
@@ -596,7 +599,7 @@ async fn matrix_query_limit_on_injected_live_plan_pool() {
         .expect("execute session");
     let pipeline = st.engine.prompt_pipeline();
     let cross = st.sessions.symbol_map_cross_cache();
-    let program = "items = e1.limit(3)\nitems";
+    let program = "items = e1 | take 3\nitems";
     let bundle = compile_plasm_expression(pipeline, Some(cross), &es, program, program)
         .expect("query+limit compile");
     let dry = evaluate_plasm_comp_dry(&es, &bundle).expect("dry");
@@ -648,7 +651,7 @@ async fn matrix_render_only_live_await_finishes_within_wall_time() {
     st.oss.live_plan_pool = Arc::new(crate::live_plan_run_worker::LivePlanRunPool::new());
     let st = Arc::new(st);
     let seeds = vec![CapabilitySeed {
-        entry_id: "github".into(),
+        entry_id: "langmatrix_a".into(),
         entity: "LangItem".into(),
     }];
     let out = apply_capability_seeds(
@@ -669,8 +672,9 @@ async fn matrix_render_only_live_await_finishes_within_wall_time() {
         .expect("execute session");
     let pipeline = st.engine.prompt_pipeline();
     let cross = st.sessions.symbol_map_cross_cache();
-    let program = r#"hdr = LangItem("i1")[id,title] <<MD
-# {{ rows | length }} row(s)
+    let program = r#"item = LangItem("i1") | select id, title
+hdr = item => <<MD
+# {{ title }}
 MD
 hdr"#;
     let bundle = compile_plasm_expression(pipeline, Some(cross), &es, program, program)
@@ -718,18 +722,17 @@ hdr"#;
     );
 }
 
-#[cfg(not(debug_assertions))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn matrix_query_limit_on_release_stack_budget() {
-    use crate::live_plan_run_worker::{LivePlanRunPool, DEFAULT_LIVE_PLAN_RUN_STACK_BYTES_RELEASE};
+async fn matrix_query_take_on_normal_stack_budget() {
+    use crate::live_plan_run_worker::{LivePlanRunPool, DEFAULT_LIVE_PLAN_RUN_STACK_BYTES};
 
     let mut st = matrix_federated_host();
     st.oss.live_plan_pool = Arc::new(LivePlanRunPool::with_stack_bytes(
-        DEFAULT_LIVE_PLAN_RUN_STACK_BYTES_RELEASE,
+        DEFAULT_LIVE_PLAN_RUN_STACK_BYTES,
     ));
     let st = Arc::new(st);
     let seeds = vec![CapabilitySeed {
-        entry_id: "github".into(),
+        entry_id: "langmatrix_a".into(),
         entity: "LangItem".into(),
     }];
     let out = apply_capability_seeds(
@@ -740,7 +743,7 @@ async fn matrix_query_limit_on_release_stack_budget() {
         None,
         None,
         None,
-        "release stack budget",
+        "normal worker stack budget",
     )
     .await
     .expect("apply_capability_seeds");
@@ -750,7 +753,7 @@ async fn matrix_query_limit_on_release_stack_budget() {
         .expect("execute session");
     let pipeline = st.engine.prompt_pipeline();
     let cross = st.sessions.symbol_map_cross_cache();
-    let program = "items = e1.limit(3)\nitems";
+    let program = "items = e1 | take 3\nitems";
     let bundle = compile_plasm_expression(pipeline, Some(cross), &es, program, program)
         .expect("query+limit compile");
     let dry = evaluate_plasm_comp_dry(&es, &bundle).expect("dry");
@@ -792,7 +795,7 @@ async fn matrix_query_limit_on_release_stack_budget() {
     .await;
     assert!(
         delivered.is_ok(),
-        "cheap matrix live must finish on 4 MiB worker stack"
+        "cheap matrix live must finish on 2 MiB worker stack"
     );
 }
 
@@ -1089,6 +1092,7 @@ async fn execute_mcp_live_run_page_handle_synthetic_continuation() {
         offset: 25,
         page_size: 25,
         request_fingerprints: vec![],
+        coverage: plasm_runtime::ResultCoverage::Complete,
     };
     let handle = fx
         .es
@@ -1223,7 +1227,7 @@ async fn plasm_run_page_handle_through_handler() {
             &json!({
                 "session_mode": "new",
                 "intent": "page handler e2e",
-                "seeds": [{"api": "github", "entity": "LangItem"}]
+                "seeds": [{"api": "langmatrix_a", "entity": "LangItem"}]
             }),
         )
         .await
@@ -1274,6 +1278,7 @@ async fn plasm_run_page_handle_through_handler() {
         offset: 25,
         page_size: 25,
         request_fingerprints: vec![],
+        coverage: plasm_runtime::ResultCoverage::Complete,
     };
     let page_handle = es.register_synthetic_paging_continuation(cursor, Some(logical_session_ref));
 
@@ -1324,7 +1329,7 @@ async fn plasm_read_run_artifact_matches_resources_read() {
                 &json!({
                     "session_mode": "new",
                     "intent": "artifact read parity",
-                    "seeds": [{"api": "github", "entity": "LangItem"}]
+                    "seeds": [{"api": "langmatrix_a", "entity": "LangItem"}]
                 }),
             ),
         )

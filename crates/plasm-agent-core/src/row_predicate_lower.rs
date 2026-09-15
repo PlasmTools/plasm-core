@@ -10,16 +10,21 @@ pub(crate) fn lower_row_predicate_to_plan(
     session: &ExecuteSession,
     qe: &QualifiedEntityKey,
     cross_cache: Option<&SymbolMapCrossRequestCache>,
+    row_schema_fields: &[String],
 ) -> Result<Vec<PlanPredicate>, String> {
     pred.0
         .iter()
         .map(|c| {
-            let wire = crate::plasm_plan_run::resolve_wire_field_token(
-                session,
-                cross_cache,
-                Some(qe),
-                c.field.as_str(),
-            )?;
+            let wire = if row_schema_fields.iter().any(|f| f == c.field.as_str()) {
+                c.field.clone()
+            } else {
+                crate::plasm_plan_run::resolve_wire_field_token(
+                    session,
+                    cross_cache,
+                    Some(qe),
+                    c.field.as_str(),
+                )?
+            };
             Ok(PlanPredicate {
                 field_path: FieldPath::from_dotted(&wire)?,
                 op: comp_op_to_plan(c.op),

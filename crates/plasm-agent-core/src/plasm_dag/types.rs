@@ -90,7 +90,7 @@ pub(in crate::plasm_dag) enum DagNodeSource {
         value: PlanValue,
         inputs: Vec<crate::plasm_plan::PlanDataInput>,
     },
-    /// PLP-1: StaticSingleton field cell extract (`ℓ.wire` / `Get.wire`).
+    /// PLP-1: checked static/bounded singleton field cell extract (`ℓ.wire` / `Get.wire`).
     /// Lowers to a typed derive node with a binding-field operand.
     ScalarExtract {
         source: String,

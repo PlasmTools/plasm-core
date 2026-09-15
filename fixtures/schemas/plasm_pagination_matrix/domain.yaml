@@ -41,6 +41,10 @@ capabilities:
     description: List items with page_index + page_limit (AppWorld-shaped)
     kind: query
     entity: Item
+  item_get:
+    description: Unary Item by id (hydrate target for RA-16)
+    kind: get
+    entity: Item
   item_offset_query:
     description: List items with offset + limit
     kind: query

@@ -1,4 +1,4 @@
-//! Row-to-text render column projection: wire fields + teaching `p#` aliases for Minijinja `rows`.
+//! Per-row render column projection: wire fields + teaching `p#` aliases for Minijinja.
 
 use std::collections::BTreeMap;
 
@@ -55,7 +55,7 @@ impl RenderColumns {
                     .cloned()
                     .ok_or_else(|| {
                         format!(
-                            "Plan.render column {:?} did not resolve in source row {row_index}. {}",
+                            "render column {:?} did not resolve at row {row_index}. {}",
                             column.as_str(),
                             self.access_hint()
                         )
@@ -73,12 +73,16 @@ impl RenderColumns {
     pub fn access_hint(&self) -> String {
         let mut parts = Vec::new();
         for column in &self.wires {
-            parts.push(format!("r.{}", column.as_str()));
+            parts.push(column.as_str().to_string());
         }
         for (alias, wire) in &self.aliases {
-            parts.push(format!("r.{alias} (alias for r.{})", wire.as_str()));
+            parts.push(format!("{alias} (alias for {})", wire.as_str()));
         }
-        format!("Valid row fields: {}", parts.join(", "))
+        if parts.is_empty() {
+            "Use `{{ field }}` for the current row, or a named program binding.".to_string()
+        } else {
+            format!("Valid row fields: {}", parts.join(", "))
+        }
     }
 }
 

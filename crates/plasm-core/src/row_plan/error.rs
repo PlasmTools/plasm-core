@@ -104,6 +104,8 @@ pub enum FusionError {
     JoinFromSurface,
     #[error("render is a collect barrier, not a pipeline node")]
     RenderInPipeline,
+    #[error("union is a two-source collect, not a unary pipeline node")]
+    UnionInPipeline,
     #[error("derive remap cannot fold into a row-compute pipeline")]
     DeriveInPipeline,
 }

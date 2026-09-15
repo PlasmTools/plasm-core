@@ -271,10 +271,20 @@ async fn post_terminal_discover(
         Ok(receipt) => receipt,
         Err(error) => return (StatusCode::SERVICE_UNAVAILABLE, error.to_string()).into_response(),
     };
-    let mut text = format!("Discovery: {:?}\n\n", receipt.selection.status);
-    text.push_str(&receipt.selection.explanation_lines().join("\n\n"));
-    text.push_str("\n\n");
+    let mut text = if let Some(recovery) = &receipt.recovery {
+        let mut body = recovery.render_markdown(receipt.selection.status);
+        body.push_str("\n\n");
+        body
+    } else {
+        let mut body = format!("Discovery: {:?}\n\n", receipt.selection.status);
+        body.push_str(&receipt.selection.explanation_lines().join("\n\n"));
+        body.push_str("\n\n");
+        body
+    };
     if let Some(closure) = &receipt.closure {
+        if receipt.recovery.is_some() {
+            text.push_str("**Partial teaching** (does not claim complete coverage):\n\n");
+        }
         let registry = match st.catalog.pinned_view(&receipt.retrieval.generation).await {
             Ok(view) => view.snapshot(),
             Err(error) => {

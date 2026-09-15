@@ -158,10 +158,10 @@ mod tests {
     #[test]
     fn resolves_from_exposure_first() {
         let cgs = matrix_cgs();
-        let exp = TeachingExposureSession::new(cgs.as_ref(), "github", &["LangItem"]);
-        let session = session_with_contexts("github", cgs, vec![], Some(exp));
+        let exp = TeachingExposureSession::new(cgs.as_ref(), "langmatrix_a", &["LangItem"]);
+        let session = session_with_contexts("langmatrix_a", cgs, vec![], Some(exp));
         let qe = resolve_qualified_entity_key(&session, "LangItem", None).expect("qe");
-        assert_eq!(qe.entry_id, "github");
+        assert_eq!(qe.entry_id, "langmatrix_a");
         assert_eq!(qe.entity, "LangItem");
     }
 
@@ -169,14 +169,19 @@ mod tests {
     fn resolves_unexposed_entity_via_resolving_cgs() {
         let cgs_primary = matrix_cgs();
         let cgs_secondary = matrix_cgs();
-        let exp = TeachingExposureSession::new(cgs_primary.as_ref(), "github", &["LangItem"]);
+        let exp = TeachingExposureSession::new(cgs_primary.as_ref(), "langmatrix_a", &["LangItem"]);
         let mut exp = exp;
         let layers: Vec<&CGS> = vec![cgs_primary.as_ref(), cgs_secondary.as_ref()];
-        exp.expose_entities(&layers, cgs_secondary.clone(), "linear", &["LangLine"]);
+        exp.expose_entities(
+            &layers,
+            cgs_secondary.clone(),
+            "langmatrix_b",
+            &["LangLine"],
+        );
         let session = session_with_contexts(
-            "github",
+            "langmatrix_a",
             cgs_primary,
-            vec![("linear", cgs_secondary)],
+            vec![("langmatrix_b", cgs_secondary)],
             Some(exp),
         );
         let qe = resolve_qualified_entity_key(
@@ -185,14 +190,14 @@ mod tests {
             Some(
                 session
                     .contexts_by_entry
-                    .get("linear")
+                    .get("langmatrix_b")
                     .unwrap()
                     .cgs
                     .as_ref(),
             ),
         )
         .expect("qe");
-        assert_eq!(qe.entry_id, "linear");
+        assert_eq!(qe.entry_id, "langmatrix_b");
     }
 
     #[test]
@@ -206,18 +211,18 @@ mod tests {
     #[test]
     fn resolve_cgs_for_entry_entity_federated_homonym() {
         let cgs = matrix_cgs();
-        let mut exp = TeachingExposureSession::new(cgs.as_ref(), "github", &["LangItem"]);
+        let mut exp = TeachingExposureSession::new(cgs.as_ref(), "langmatrix_a", &["LangItem"]);
         let layers: Vec<&CGS> = vec![cgs.as_ref(), cgs.as_ref()];
-        exp.expose_entities(&layers, cgs.clone(), "linear", &["LangItem"]);
+        exp.expose_entities(&layers, cgs.clone(), "langmatrix_b", &["LangItem"]);
         let session = session_with_contexts(
-            "github",
+            "langmatrix_a",
             cgs.clone(),
-            vec![("linear", cgs.clone())],
+            vec![("langmatrix_b", cgs.clone())],
             Some(exp),
         );
         assert!(resolve_cgs_for_entity(&session, "LangItem", None).is_err());
-        assert!(resolve_cgs_for_entry_entity(&session, "linear", "LangItem").is_ok());
-        assert!(resolve_cgs_for_entry_entity(&session, "github", "LangItem").is_ok());
+        assert!(resolve_cgs_for_entry_entity(&session, "langmatrix_b", "LangItem").is_ok());
+        assert!(resolve_cgs_for_entry_entity(&session, "langmatrix_a", "LangItem").is_ok());
     }
 
     #[test]

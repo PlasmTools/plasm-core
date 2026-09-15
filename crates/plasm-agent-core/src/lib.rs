@@ -23,6 +23,9 @@ pub mod catalog_runtime;
 pub mod cli_builder;
 pub mod control_plane_http;
 pub mod discovery_embeddings;
+pub mod discovery_recovery;
+#[path = "discovery_selection.rs"]
+mod discovery_selection;
 pub mod discovery_service;
 pub mod discovery_store;
 pub mod dispatch;

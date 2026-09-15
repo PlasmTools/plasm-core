@@ -219,6 +219,7 @@ pub(crate) async fn execute_session_create_response_inner(
                 pin_id: route.pin_id.clone(),
                 authorization: route.authorization.clone(),
             });
+    session.set_prerequisite_deployments(st.catalog.prerequisite_deployments());
     session.registry_catalog_hashes_by_entry = registry_catalog_hashes;
     if let Some(kv) = hosted_kv_key {
         session

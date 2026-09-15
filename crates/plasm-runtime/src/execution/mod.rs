@@ -20,8 +20,8 @@ use plasm_compile::parse_capability_template;
 use plasm_compile::{
     compile_operation, compile_query, decode_entities_with_cgs, path_var_names_from_request,
     template_pagination, template_var_names, BackendFilter, CapabilityTemplate, CmlEnv, CmlRequest,
-    CompiledOperation, CompiledRequest, HttpBodyFormat, PaginationConfig, PathExpr, PathSegment,
-    ResponsePreprocess,
+    CompiledOperation, CompiledRequest, ConcatArraySource, HttpBodyFormat, PaginationConfig,
+    PathExpr, PathSegment, ResponsePreprocess,
 };
 use plasm_core::partition_prefer_resolutions;
 use plasm_core::resolve_relation_row_resolution;
@@ -47,6 +47,7 @@ use tracing::Instrument;
 mod cache_merge;
 mod chain;
 mod compile_preflight;
+mod coverage;
 mod embed_cache;
 mod engine;
 mod engine_get;
@@ -74,10 +75,13 @@ mod types;
 #[cfg(test)]
 mod credential_tests;
 #[cfg(test)]
+mod observation_honesty;
+#[cfg(test)]
 mod tests;
 
 pub(crate) use hydrate::{
-    get_with_session_params, identity_keys_for_entity, stamp_entities_and_mat, synthesized_get,
+    get_with_session_params, identity_keys_for_entity, relation_inherit_for_scoped_query,
+    stamp_entities_and_mat, stamp_get_capability_params, synthesized_get,
     wrap_synthesized_get_error, CapabilityParamEnv,
 };
 pub(crate) use session::{compiled_capability_template, compiled_conflict_rules};
@@ -96,11 +100,18 @@ pub(crate) use pagination_state::PaginationLoopState;
 pub(crate) use pagination_state::{merge_pagination_into_body, pagination_context_map};
 pub(crate) use plasm_core::json_value_to_plasm_value as json_to_plasm_value;
 
-pub use operation_outcome::{OperationAck, OperationIdentity, OperationLedger};
+pub use coverage::{
+    coverage_after_explicit_take, coverage_for_consume_stop, page_result, ConsumeStop,
+    ResultCoverage,
+};
+pub use operation_outcome::{
+    OperationAck, OperationIdentity, OperationInvocationOutcome, OperationInvocationStatus,
+    OperationLedger,
+};
 pub use types::{
-    ExecutionConfig, ExecutionMode, ExecutionResult, ExecutionSource, ExecutionStats, PageResult,
-    QueryPaginationResumeData, QueryPaginationState, QueryStream, RowMatchBudget, RowsProgressFn,
-    StreamConsumeOpts,
+    ConsumeBoundKind, ExecutionConfig, ExecutionMode, ExecutionResult, ExecutionSource,
+    ExecutionStats, PageResult, QueryPaginationResumeData, QueryPaginationState, QueryStream,
+    RowMatchBudget, RowsProgressFn, StreamConsumeOpts,
 };
 
 pub(crate) use task_scopes::{
@@ -152,3 +163,5 @@ pub(crate) use template_env::{
     ensure_mutating_operation, normalize_cml_env_scope_entity_refs,
     normalize_cml_scope_entity_ref_value, populate_template_path_env,
 };
+
+pub(crate) mod hydration_trace;

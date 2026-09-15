@@ -68,7 +68,7 @@ pub enum RuntimeError {
     #[error("Replay store error: {message}")]
     ReplayStoreError { message: String },
 
-    #[error("Derived get `{capability}`: no row where {match_field} == {identity:?}")]
+    #[error("zero rows — Derived get `{capability}`: no row where {match_field} == {identity:?}")]
     DerivedGetNotFound {
         capability: String,
         match_field: String,

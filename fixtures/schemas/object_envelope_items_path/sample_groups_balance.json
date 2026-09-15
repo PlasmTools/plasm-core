@@ -1,0 +1,18 @@
+{
+  "you_owe_others": 12.5,
+  "others_owe_you": 3.0,
+  "breakdown": [
+    {
+      "group_id": 1,
+      "group_name": "Trip",
+      "you_owe_others": 10.0,
+      "others_owe_you": 0.0
+    },
+    {
+      "group_id": 2,
+      "group_name": "Rent",
+      "you_owe_others": 2.5,
+      "others_owe_you": 3.0
+    }
+  ]
+}

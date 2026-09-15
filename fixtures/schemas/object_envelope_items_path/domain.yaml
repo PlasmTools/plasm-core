@@ -1,0 +1,23 @@
+version: 1
+entry_id: object_envelope_items_path
+http_backend: http://127.0.0.1:9
+auth: {scheme: none}
+values:
+  group_id: {type: integer, description: Group identity}
+  group_name: {type: string, description: Group name}
+  owing: {type: number, description: Amount owed}
+entities:
+  BalanceRow:
+    description: One row from a collection-object breakdown envelope
+    id_field: group_id
+    fields:
+      group_id: {value_ref: group_id, required: true}
+      group_name: {value_ref: group_name, required: true}
+      you_owe_others: {value_ref: owing, required: false}
+      others_owe_you: {value_ref: owing, required: false}
+capabilities:
+  balance_query:
+    description: List balance rows from a vendor collection object
+    entity: BalanceRow
+    kind: query
+    provides: [group_id, group_name, you_owe_others, others_owe_you]

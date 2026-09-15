@@ -42,8 +42,8 @@ pub const PLASM_PROGRAM_PARAM_DESCRIPTION: &str = include_str!("assets/program_p
 pub const PLASM_PROGRAM_PARAM_MAX_BYTES: usize = 1600;
 
 /// Max bytes for [`PLASM_TOOL_DESCRIPTION`].
-/// Raised for entity-head cardinality + Meaning-arrow legend (entity-semantics A+B).
-pub const PLASM_TOOL_DESCRIPTION_MAX_BYTES: usize = 5200;
+/// Measured `plasm_tool.txt` is 5792 B; cap holds `<>` hole-fill + Get-identity + RA-14 union.
+pub const PLASM_TOOL_DESCRIPTION_MAX_BYTES: usize = 5800;
 
 /// Host-truncation prefixes that must still carry program-authoring mandates.
 pub const PLASM_TOOL_DESCRIPTION_PREFIX_BYTES: usize = 2048;

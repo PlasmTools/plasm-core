@@ -6,7 +6,7 @@ pub(crate) struct MatrixRow {
     pub program: &'static str,
     /// Use `compile_plasm_expression` for this row (single expression / comma roots).
     pub surface_line: bool,
-    /// Federated session: primary `linear` + secondary `pokeapi`.
+    /// Federated session: primary `langmatrix` + secondary views catalog.
     pub federated: bool,
     pub features: &'static [&'static str],
     /// Minimum `PlasmPlanRunResult::node_results` length after live run.

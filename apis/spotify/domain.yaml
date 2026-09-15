@@ -168,6 +168,7 @@ capabilities:
     - release_date
     - popularity
   album_tracks:
+    receiver: {kind: entity, entity: Album}
     description: List tracks belonging to an album.
     kind: action
     entity: Album
@@ -202,6 +203,7 @@ capabilities:
     - popularity
     - genres
   artist_albums:
+    receiver: {kind: entity, entity: Artist}
     description: List albums released by an artist.
     kind: action
     entity: Artist
@@ -226,6 +228,7 @@ capabilities:
       type: side_effect
       description: List albums released by an artist.
   artist_related:
+    receiver: {kind: entity, entity: Artist}
     description: Get artists related to a given artist.
     kind: action
     entity: Artist
@@ -233,6 +236,7 @@ capabilities:
       type: side_effect
       description: Get artists related to a given artist.
   artist_top_tracks:
+    receiver: {kind: entity, entity: Artist}
     description: Get an artist's most popular tracks.
     kind: action
     entity: Artist
@@ -266,6 +270,7 @@ capabilities:
     - explicit
     - popularity
   track_get_audio_features:
+    receiver: {kind: entity, entity: Track}
     description: 'Retrieve audio analysis features for a track. Populates the Track entity''s audio projection
       fields (danceability, energy, valence, tempo, key, mode, etc.) via additive merge — the catalog
       fields from track_get are preserved. Same Spotify track ID. Pattern: GET /audio-features/{id} —
@@ -289,6 +294,7 @@ capabilities:
     - mode
     - time_signature
   playlist_get:
+    receiver: {kind: none}
     description: Retrieve a single playlist.
     kind: get
     entity: Playlist
@@ -300,6 +306,7 @@ capabilities:
     - collaborative
     - snapshot_id
   playlist_tracks:
+    receiver: {kind: entity, entity: Playlist}
     description: List tracks contained in a playlist.
     kind: action
     entity: Playlist
@@ -342,6 +349,7 @@ capabilities:
           value_ref: nv_wire_bool
           required: false
   user_get:
+    receiver: {kind: none}
     description: Retrieve a user profile.
     kind: get
     entity: User
@@ -349,6 +357,7 @@ capabilities:
     - id
     - display_name
   user_playlists:
+    receiver: {kind: entity, entity: User}
     description: List playlists owned by a user.
     kind: action
     entity: User
@@ -366,6 +375,7 @@ capabilities:
       type: side_effect
       description: List playlists owned by a user.
   user_create_playlist:
+    receiver: {kind: entity, entity: User}
     description: Create a new playlist for a user.
     kind: action
     entity: User

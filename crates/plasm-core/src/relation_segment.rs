@@ -94,80 +94,83 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    fn github_issue_label_map() -> (Arc<crate::CGS>, SymbolMap) {
+    fn langitem_tag_map() -> (Arc<crate::CGS>, SymbolMap) {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let cgs =
-            Arc::new(load_schema_dir(&root.join("../../apis/github")).expect("github apis/github"));
-        let exp = TeachingExposureSession::new(cgs.as_ref(), "github", &["Issue"]);
+        let cgs = Arc::new(
+            load_schema_dir(&root.join("../../fixtures/schemas/plasm_language_matrix"))
+                .expect("plasm_language_matrix"),
+        );
+        let exp = TeachingExposureSession::new(cgs.as_ref(), "langmatrix", &["LangItem"]);
         let map = exp.symbol_map_arc();
         let owned = (*map).clone();
         (cgs, owned)
     }
 
-    fn issue_relations(cgs: &crate::CGS) -> &IndexMap<RelationName, RelationSchema> {
-        &cgs.entities.get("Issue").expect("Issue").relations
+    fn langitem_relations(cgs: &crate::CGS) -> &IndexMap<RelationName, RelationSchema> {
+        &cgs.entities.get("LangItem").expect("LangItem").relations
     }
 
     #[test]
     fn wire_and_r_symbol_resolve() {
-        let (cgs, map) = github_issue_label_map();
-        let rels = issue_relations(&cgs);
+        let (cgs, map) = langitem_tag_map();
+        let rels = langitem_relations(&cgs);
         let ctx = RelationSegmentContext {
             map: &map,
-            entity: "Issue",
+            entity: "LangItem",
             relations: rels,
             binding_label: None,
             allow_lhs_coercion: false,
         };
         assert!(matches!(
-            resolve_relation_segment(&ctx, "labels"),
-            RelationSegmentOutcome::Wire(w) if w == "labels"
+            resolve_relation_segment(&ctx, "tags"),
+            RelationSegmentOutcome::Wire(w) if w == "tags"
         ));
-        let r_sym = map.ident_sym_relation_for("github", "Issue", "labels");
+        let r_sym = map.ident_sym_relation_for("langmatrix", "LangItem", "tags");
         assert!(matches!(
             resolve_relation_segment(&ctx, r_sym.as_str()),
-            RelationSegmentOutcome::Wire(w) if w == "labels"
+            RelationSegmentOutcome::Wire(w) if w == "tags"
         ));
     }
 
     #[test]
     fn lhs_coercion_ignores_wrong_p_token() {
-        let (cgs, map) = github_issue_label_map();
-        let rels = issue_relations(&cgs);
+        let (cgs, map) = langitem_tag_map();
+        let rels = langitem_relations(&cgs);
         let ctx = RelationSegmentContext {
             map: &map,
-            entity: "Issue",
+            entity: "LangItem",
             relations: rels,
-            binding_label: Some(ProgramBindingLabel("labels")),
+            binding_label: Some(ProgramBindingLabel("tags")),
             allow_lhs_coercion: true,
         };
         assert!(matches!(
             resolve_relation_segment(&ctx, "p99"),
-            RelationSegmentOutcome::Wire(w) if w == "labels"
+            RelationSegmentOutcome::Wire(w) if w == "tags"
         ));
     }
 
     #[test]
     fn bare_homograph_p_without_lhs_is_wrong_role() {
-        let (cgs, map) = github_issue_label_map();
-        let rels = issue_relations(&cgs);
-        let labels_wire = map.ident_sym_cap_param_for("github", "Issue", "issue_query", "labels");
+        let (cgs, map) = langitem_tag_map();
+        let rels = langitem_relations(&cgs);
+        let tags_wire =
+            map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_query", "tags");
         assert_eq!(
-            labels_wire, "labels",
-            "labels filter param teaches as catalog wire name"
+            tags_wire, "tags",
+            "tags filter param teaches as catalog wire name"
         );
         let ctx = RelationSegmentContext {
             map: &map,
-            entity: "Issue",
+            entity: "LangItem",
             relations: rels,
             binding_label: None,
             allow_lhs_coercion: false,
         };
-        match resolve_relation_segment(&ctx, labels_wire.as_str()) {
+        match resolve_relation_segment(&ctx, tags_wire.as_str()) {
             RelationSegmentOutcome::Wire(w) => {
-                assert_eq!(w, "labels");
+                assert_eq!(w, "tags");
             }
-            other => panic!("expected Wire(labels) for homograph filter wire, got {other:?}"),
+            other => panic!("expected Wire(tags) for homograph filter wire, got {other:?}"),
         }
     }
 }

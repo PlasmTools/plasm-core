@@ -3,10 +3,9 @@
 /**
  * In-process Plasm engine for NAPI.
  *
- * **Mutex law (full cutover):** every method acquires `inner` only via
- * `lock().await`. Never use `blocking_lock` — mixing sync `blocking_lock` with
- * async NAPI entrypoints deadlocks under parallel JS tool calls (e.g. concurrent
- * `plasm` dry-runs) on the Tokio runtime that services napi-rs async.
+ * **Mutex law (full cutover):** `inner` / `sessions` are `std::sync::Mutex`
+ * held only for short critical sections. Never hold them across JS host-transport
+ * awaits. Occupancy is `Ready | Live` — concurrent live callers fail closed.
  */
 export declare class PlasmEngine {
   constructor()

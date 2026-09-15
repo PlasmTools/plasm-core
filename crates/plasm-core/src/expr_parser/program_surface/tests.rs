@@ -141,6 +141,22 @@ fn split_assignment_skips_effect_arrow() {
 fn rejects_domain_symbol_labels_for_assignment_split() {
     assert!(split_assignment_for_binding("e1 = foo").is_none());
     assert!(split_assignment_for_binding("repo = x").is_some());
+    assert!(
+        split_assignment_for_binding(r#"LangItem | where owner="alice" | take 1"#).is_none(),
+        "where-equality is not a program binding"
+    );
+    assert_eq!(
+        classify_top_level_assignment(r#"LangItem | where owner="alice" | take 1"#),
+        None
+    );
+    assert_eq!(
+        classify_top_level_assignment("e1 = foo()"),
+        Some(TopLevelAssignment::InvalidLabel { label: "e1" })
+    );
+    assert!(matches!(
+        classify_top_level_assignment("items = LangItem"),
+        Some(TopLevelAssignment::Binding { label: "items", .. })
+    ));
 }
 
 #[test]
@@ -300,6 +316,36 @@ fn validate_rejects_multiple_bare_root_lines() {
     ])
     .expect_err("multiple return lines");
     assert!(err.contains("comma-separated"), "{err}");
+    assert!(err.contains("one return line"), "{err}");
+}
+
+#[test]
+fn validate_allows_comma_separated_final_roots() {
+    validate_program_statement_order(&[
+        "a = e1".to_string(),
+        "b = e2".to_string(),
+        "a, b".to_string(),
+    ])
+    .expect("taught multi-root return line");
+}
+
+#[test]
+fn validate_domain_symbol_assignment_is_label_reject_not_return_root() {
+    let err = validate_program_statement_order(&[
+        "tok = sess.access_token".to_string(),
+        "p1 = e4{access_token=tok, query=\"a@x.com\"}".to_string(),
+        "p2 = e4{access_token=tok, query=\"b@x.com\"}".to_string(),
+        "p1, p2".to_string(),
+    ])
+    .expect_err("p# binding name");
+    assert!(
+        err.contains("Binding names must be labels") && err.contains("p1"),
+        "{err}"
+    );
+    assert!(
+        !err.contains("Only one return line"),
+        "must name the reserved label, not the return seat: {err}"
+    );
 }
 
 #[test]

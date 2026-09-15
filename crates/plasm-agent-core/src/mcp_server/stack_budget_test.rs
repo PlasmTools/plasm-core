@@ -130,14 +130,14 @@ fn mcp_plasm_context_survives_two_mib_worker_stack() {
             .expect("rt");
         rt.block_on(async {
             let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../apis/appworld/supervisor");
-            let st = host_from_schema_dir("supervisor", "Supervisor", &dir);
+                .join("../../fixtures/schemas/plasm_language_matrix");
+            let st = host_from_schema_dir("langmatrix", "LangItem", &dir);
             dispatch_plasm_context(
                 st,
                 "stack-budget-session",
-                "supervisor",
-                "Supervisor",
-                "show supervisor profile",
+                "langmatrix",
+                "LangItem",
+                "list language items",
             )
             .await;
         });
@@ -154,11 +154,11 @@ fn mcp_plasm_context_matrix_survives_two_mib_worker_stack() {
         rt.block_on(async {
             let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("../../fixtures/schemas/plasm_language_matrix");
-            let st = host_from_schema_dir("github", "GitHub", &dir);
+            let st = host_from_schema_dir("langmatrix", "Langmatrix", &dir);
             dispatch_plasm_context(
                 st,
                 "stack-budget-matrix",
-                "github",
+                "langmatrix",
                 "LangItem",
                 "list items",
             )

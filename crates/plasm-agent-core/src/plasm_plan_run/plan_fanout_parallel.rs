@@ -8,7 +8,8 @@ use std::sync::Arc;
 use plasm_core::expr_parser::ParsedExpr;
 use plasm_core::PreflightToken;
 use plasm_runtime::{
-    CachedEntity, ExecutionResult, ExecutionSource, ExecutionStats, OperationAck, OperationLedger,
+    CachedEntity, ExecutionResult, ExecutionSource, ExecutionStats, OperationAck,
+    OperationInvocationOutcome, OperationInvocationStatus, OperationLedger, ResultCoverage,
 };
 
 use super::plan_bounded_parallel::{bounded_parallel_map_partition, BoundedParallelConfig};
@@ -50,6 +51,7 @@ pub(crate) struct PlanLineJob {
     pub expr_label: String,
     pub trace_line_index: usize,
     pub parsed: ParsedExpr,
+    pub source_identity: Option<String>,
 }
 
 pub(crate) struct PlanLineJobResult {
@@ -58,11 +60,14 @@ pub(crate) struct PlanLineJobResult {
     pub trace_line_index: usize,
     pub parsed: ParsedExpr,
     pub result: ExecutionResult,
+    pub source_identity: Option<String>,
 }
 
 pub(crate) struct PlanLineJobFailure {
+    pub index: usize,
     pub parsed: ParsedExpr,
     pub message: String,
+    pub source_identity: Option<String>,
 }
 
 pub(crate) struct FanoutJobBatch {
@@ -78,6 +83,7 @@ pub(crate) struct PlanLineExecutionFold {
     pub source: ExecutionSource,
     pub displays: Vec<String>,
     pub operations: OperationLedger,
+    pub coverage: ResultCoverage,
 }
 
 #[derive(Clone, Copy)]
@@ -120,6 +126,7 @@ pub(crate) fn fold_plan_line_results(
     let mut out_stats = ExecutionStats::default();
     let mut operations = OperationLedger::empty();
     let mut source = ExecutionSource::Cache;
+    let mut coverage = ResultCoverage::combine_all(results.iter().map(|r| r.result.coverage));
     for r in results {
         source = combine_execution_source(source, r.result.source);
         merge_execution_stats(&mut out_stats, &r.result.stats, stats);
@@ -131,6 +138,9 @@ pub(crate) fn fold_plan_line_results(
         }
     }
     truncate_to_read_cap(&mut entities, read_cap);
+    if let Some(cap) = read_cap {
+        coverage = plasm_runtime::coverage_after_explicit_take(coverage, cap, entities.len());
+    }
     PlanLineExecutionFold {
         entities,
         request_fingerprints,
@@ -138,6 +148,7 @@ pub(crate) fn fold_plan_line_results(
         source,
         displays,
         operations,
+        coverage,
     }
 }
 
@@ -155,6 +166,8 @@ pub(crate) struct RowFanoutPolicy {
     pub collect_displays: bool,
     pub read_cap: Option<usize>,
     pub concurrency: Option<usize>,
+    /// Row application retains successful siblings when individual rows fail.
+    pub best_effort: bool,
 }
 
 impl RowFanoutPolicy {
@@ -166,6 +179,7 @@ impl RowFanoutPolicy {
             collect_displays: false,
             read_cap,
             concurrency: None,
+            best_effort: false,
         }
     }
 
@@ -181,6 +195,19 @@ impl RowFanoutPolicy {
             } else {
                 Some(1)
             },
+            best_effort: true,
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn state_step() -> Self {
+        Self {
+            preflight: PlanLinePreflight::PerJob,
+            stats: ExecutionStatsFold::Telemetry,
+            collect_displays: true,
+            read_cap: None,
+            concurrency: Some(1),
+            best_effort: false,
         }
     }
 }
@@ -194,6 +221,7 @@ pub(crate) fn empty_execution_fold() -> PlanLineExecutionFold {
         source: ExecutionSource::Cache,
         displays: Vec::new(),
         operations: OperationLedger::empty(),
+        coverage: ResultCoverage::Unknown,
     }
 }
 
@@ -216,6 +244,7 @@ pub(crate) fn push_verified_row_job(
         expr_label,
         trace_line_index: plan_subline_index(node_index, row_index),
         parsed,
+        source_identity: None,
     });
     Ok(())
 }
@@ -232,6 +261,24 @@ pub(crate) fn push_row_job(
         expr_label,
         trace_line_index: plan_subline_index(node_index, row_index),
         parsed,
+        source_identity: None,
+    });
+}
+
+pub(crate) fn push_row_job_with_source(
+    jobs: &mut Vec<PlanLineJob>,
+    node_index: usize,
+    row_index: usize,
+    expr_label: String,
+    parsed: ParsedExpr,
+    source_identity: Option<String>,
+) {
+    jobs.push(PlanLineJob {
+        index: row_index,
+        expr_label,
+        trace_line_index: plan_subline_index(node_index, row_index),
+        parsed,
+        source_identity,
     });
 }
 
@@ -268,7 +315,14 @@ pub(crate) async fn execute_row_fanout(
         policy.collect_displays,
     );
     merge_failed_job_operations(&mut fold.operations, scoped_es, &batch.failures);
+    stamp_fanout_outcomes(&mut fold.operations, &batch.completed, &batch.failures);
     if batch.failures.is_empty() {
+        return Ok(fold);
+    }
+    if policy.best_effort {
+        // At least one read/application row could not contribute its result.
+        // A caller must not infer completeness from the surviving siblings.
+        fold.coverage = ResultCoverage::Partial;
         return Ok(fold);
     }
     let message = batch
@@ -281,11 +335,63 @@ pub(crate) async fn execute_row_fanout(
     Err(format!("{message}\n{wire}"))
 }
 
+fn stamp_fanout_outcomes(
+    operations: &mut OperationLedger,
+    completed: &[PlanLineJobResult],
+    failures: &[PlanLineJobFailure],
+) {
+    for result in completed {
+        let Some(ack) = result.result.operations.entries().first() else {
+            continue;
+        };
+        let identity = ack.identity();
+        if let Some(merged) = operations.get_mut(&identity) {
+            merged.outcomes.push(OperationInvocationOutcome {
+                source_index: result.index,
+                source_identity: result.source_identity.clone(),
+                status: OperationInvocationStatus::Completed,
+                error: None,
+            });
+        }
+    }
+    for failure in failures {
+        let Some(identity) = OperationAck::try_from_mutating_expr(
+            &failure.parsed.expr,
+            None,
+            ExecutionSource::Live,
+            0,
+            1,
+        )
+        .map(|ack| ack.identity()) else {
+            continue;
+        };
+        if let Some(merged) = operations.get_mut(&identity) {
+            merged.outcomes.push(OperationInvocationOutcome {
+                source_index: failure.index,
+                source_identity: failure.source_identity.clone(),
+                status: OperationInvocationStatus::Failed,
+                error: Some(failure.message.clone()),
+            });
+        }
+    }
+    let identities = operations
+        .entries()
+        .iter()
+        .map(OperationAck::identity)
+        .collect::<Vec<_>>();
+    for identity in identities {
+        if let Some(ack) = operations.get_mut(&identity) {
+            ack.outcomes.sort_by_key(|outcome| outcome.source_index);
+        }
+    }
+}
+
 fn fold_to_execution_result(fold: &PlanLineExecutionFold) -> ExecutionResult {
     ExecutionResult {
         count: fold.entities.len(),
         entities: fold.entities.clone(),
         has_more: false,
+        coverage: fold.coverage,
         pagination_resume: None,
         paging_handle: None,
         source: fold.source,
@@ -377,6 +483,8 @@ pub(crate) async fn run_plan_line_jobs_parallel(
         let plan_shared = plan_shared.clone();
         async move {
             let parsed = job.parsed.clone();
+            let index = job.index;
+            let source_identity = job.source_identity.clone();
             match run_plan_line_job(
                 &st,
                 &scoped_es,
@@ -389,7 +497,12 @@ pub(crate) async fn run_plan_line_jobs_parallel(
             .await
             {
                 Ok(result) => Ok(result),
-                Err(message) => Err(PlanLineJobFailure { parsed, message }),
+                Err(message) => Err(PlanLineJobFailure {
+                    index,
+                    source_identity,
+                    parsed,
+                    message,
+                }),
             }
         }
     })
@@ -428,6 +541,7 @@ async fn run_plan_line_job(
         expr_label,
         trace_line_index,
         parsed,
+        source_identity,
     } = job;
     let (parsed, result, _artifact) = match preflight {
         PlanLinePreflight::CallerVerified => run_parsed_plasm_line(
@@ -469,12 +583,14 @@ async fn run_plan_line_job(
         trace_line_index,
         parsed,
         result,
+        source_identity,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     fn test_entity(id: &str) -> CachedEntity {
         CachedEntity {
@@ -484,6 +600,7 @@ mod tests {
             last_updated: 0,
             version: 0,
             completeness: plasm_runtime::EntityCompleteness::Summary,
+            unavailable_fields: Default::default(),
         }
     }
 
@@ -496,10 +613,12 @@ mod tests {
                 plasm_core::EntityName::new("E".to_string()),
                 id,
             ))),
+            source_identity: None,
             result: ExecutionResult {
                 count: 1,
                 entities: vec![test_entity(id)],
                 has_more: false,
+                coverage: ResultCoverage::Unknown,
                 pagination_resume: None,
                 paging_handle: None,
                 source: ExecutionSource::Live,
@@ -539,7 +658,7 @@ mod tests {
 
     #[test]
     fn fold_plan_line_results_truncates_at_read_cap() {
-        let results = vec![
+        let mut results = vec![
             PlanLineJobResult {
                 index: 0,
                 expr_label: "a".into(),
@@ -548,6 +667,7 @@ mod tests {
                     plasm_core::EntityName::new("E".to_string()),
                     "1",
                 ))),
+                source_identity: None,
                 result: ExecutionResult {
                     count: 1,
                     entities: vec![CachedEntity {
@@ -557,8 +677,10 @@ mod tests {
                         last_updated: 0,
                         version: 0,
                         completeness: plasm_runtime::EntityCompleteness::Summary,
+                        unavailable_fields: Default::default(),
                     }],
                     has_more: false,
+                    coverage: ResultCoverage::Unknown,
                     pagination_resume: None,
                     paging_handle: None,
                     source: ExecutionSource::Live,
@@ -575,6 +697,7 @@ mod tests {
                     plasm_core::EntityName::new("E".to_string()),
                     "2",
                 ))),
+                source_identity: None,
                 result: ExecutionResult {
                     count: 1,
                     entities: vec![CachedEntity {
@@ -584,8 +707,10 @@ mod tests {
                         last_updated: 0,
                         version: 0,
                         completeness: plasm_runtime::EntityCompleteness::Summary,
+                        unavailable_fields: Default::default(),
                     }],
                     has_more: false,
+                    coverage: ResultCoverage::Unknown,
                     pagination_resume: None,
                     paging_handle: None,
                     source: ExecutionSource::Live,
@@ -595,9 +720,34 @@ mod tests {
                 },
             },
         ];
+        results[0].result.coverage = ResultCoverage::Complete;
+        results[1].result.coverage = ResultCoverage::Complete;
         let folded =
             fold_plan_line_results(&results, Some(1), ExecutionStatsFold::Telemetry, false);
         assert_eq!(folded.entities.len(), 1);
+        assert_eq!(
+            folded.coverage,
+            ResultCoverage::Complete,
+            "satisfied relation take is Complete"
+        );
+        let mixed = vec![
+            {
+                let mut r = test_job_result(0, "a");
+                r.result.coverage = ResultCoverage::Complete;
+                r
+            },
+            {
+                let mut r = test_job_result(1, "b");
+                r.result.coverage = ResultCoverage::Partial;
+                r
+            },
+        ];
+        let mixed_fold = fold_plan_line_results(&mixed, None, ExecutionStatsFold::Telemetry, false);
+        assert_eq!(
+            mixed_fold.coverage,
+            ResultCoverage::Partial,
+            "independently bounded reads must not flatten to Complete"
+        );
         assert_eq!(
             folded.request_fingerprints,
             vec![
@@ -627,6 +777,7 @@ mod tests {
             count: 0,
             entities: vec![],
             has_more: false,
+            coverage: ResultCoverage::Unknown,
             pagination_resume: None,
             paging_handle: None,
             source,
@@ -641,6 +792,7 @@ mod tests {
                 failed,
                 source,
                 description: format!("desc-{capability}"),
+                outcomes: Vec::new(),
             }),
         }
     }
@@ -654,6 +806,7 @@ mod tests {
             expr_label: capability.into(),
             trace_line_index: index,
             parsed: ParsedExpr::from_expr(plasm_core::Expr::invoke(invoke)),
+            source_identity: None,
             result,
         }
     }
@@ -720,6 +873,7 @@ mod tests {
             failed: 1,
             source: ExecutionSource::Live,
             description: "desc-langitem_delete".into(),
+            outcomes: Vec::new(),
         });
         let delete = &fold.operations.entries()[0];
         assert_eq!(delete.completed, 2);
@@ -743,5 +897,82 @@ mod tests {
         assert_eq!(fold.operations.entries()[0].source, ExecutionSource::Replay);
         let wire = crate::output::http_execute_results_value(&fold_to_execution_result(&fold));
         assert_eq!(wire["operations"][0]["source"], "replay");
+    }
+
+    proptest! {
+        #[test]
+        fn mutating_fanout_outcomes_account_for_each_source_once(
+            row_count in 1usize..32,
+            failed_indices in proptest::collection::btree_set(0usize..32, 0..32),
+        ) {
+            let failed_indices: std::collections::BTreeSet<_> = failed_indices
+                .into_iter()
+                .filter(|index| *index < row_count)
+                .collect();
+            let completed = (0..row_count)
+                .filter(|index| !failed_indices.contains(index))
+                .map(|index| {
+                    let mut result = mutating_job(
+                        index,
+                        "langitem_delete",
+                        write_result("langitem_delete", 1, 0, ExecutionSource::Live),
+                    );
+                    result.expr_label = format!("delete-{index}");
+                    result.source_identity = Some(format!("item_id={index}"));
+                    result
+                })
+                .collect::<Vec<_>>();
+            let failures = failed_indices
+                .iter()
+                .map(|index| {
+                    let job = mutating_job(
+                        *index,
+                        "langitem_delete",
+                        write_result("langitem_delete", 0, 1, ExecutionSource::Live),
+                    );
+                    PlanLineJobFailure {
+                        index: *index,
+                        parsed: job.parsed,
+                        message: format!("rejected-{index}"),
+                        source_identity: Some(format!("item_id={index}")),
+                    }
+                })
+                .collect::<Vec<_>>();
+            let mut fold = fold_plan_line_results(
+                &completed,
+                None,
+                ExecutionStatsFold::Telemetry,
+                false,
+            );
+            for _ in &failures {
+                fold.operations.merge_ack(OperationAck {
+                    entry_id: "langmatrix".into(),
+                    capability: "langitem_delete".into(),
+                    entity: "LangItem".into(),
+                    logical_invocations: 1,
+                    completed: 0,
+                    failed: 1,
+                    source: ExecutionSource::Live,
+                    description: "desc-langitem_delete".into(),
+                    outcomes: Vec::new(),
+                });
+            }
+            stamp_fanout_outcomes(&mut fold.operations, &completed, &failures);
+
+            let ack = &fold.operations.entries()[0];
+            prop_assert_eq!(ack.logical_invocations, row_count);
+            prop_assert_eq!(ack.completed, row_count - failed_indices.len());
+            prop_assert_eq!(ack.failed, failed_indices.len());
+            prop_assert_eq!(ack.outcomes.len(), row_count);
+            for (expected_index, outcome) in ack.outcomes.iter().enumerate() {
+                let expected_identity = format!("item_id={expected_index}");
+                prop_assert_eq!(outcome.source_index, expected_index);
+                prop_assert_eq!(
+                    outcome.source_identity.as_deref(),
+                    Some(expected_identity.as_str())
+                );
+                prop_assert_eq!(outcome.error.is_some(), failed_indices.contains(&expected_index));
+            }
+        }
     }
 }

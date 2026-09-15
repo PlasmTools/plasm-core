@@ -39,6 +39,7 @@ pub fn berry_entity(name: &str) -> plasm_runtime::CachedEntity {
         last_updated: 1,
         version: 1,
         completeness: EntityCompleteness::Complete,
+        unavailable_fields: Default::default(),
     }
 }
 
@@ -59,6 +60,7 @@ pub fn type_entity_with_relation(relation: &str, target: Ref) -> plasm_runtime::
         last_updated: 1,
         version: 1,
         completeness: EntityCompleteness::Complete,
+        unavailable_fields: Default::default(),
     }
 }
 

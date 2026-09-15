@@ -28,7 +28,7 @@ pub(in crate::plasm_dag) fn resolve_surface_dag_node<'a>(
     }
     None
 }
-/// Row keys projected by the upstream surface capability (`provides`), when narrower than the entity.
+/// Row keys admitted on a surface binding: RA-12 taught read projection, else mutator `provides`.
 pub(in crate::plasm_dag) fn logical_row_field_paths_for_surface_node(
     session: &ExecuteSession,
     node: &DagNode,
@@ -55,11 +55,13 @@ pub(in crate::plasm_dag) fn logical_row_field_paths_for_surface_node(
     let Some(cap) = capability_for_surface_expr(cgs.as_ref(), &parsed.expr)? else {
         return Ok(None);
     };
-    let provides = cgs.effective_provides(cap);
-    if provides.is_empty() {
+    // RA-12: read `| select` / `| where` / `| summarize by` must admit the taught
+    // entity field set (`effective_ordered_response_fields`), not sheared `provides`.
+    let fields = cgs.effective_ordered_response_fields(cap);
+    if fields.is_empty() {
         return Ok(None);
     }
-    let mut paths = logical_row_field_paths_from_names(&provides);
+    let mut paths = logical_row_field_paths_from_names(&fields);
     if matches!(&node.source, DagNodeSource::RelationTraversal { .. }) {
         if let Some(ent) = cgs.get_entity(qe.entity.as_str()) {
             paths.extend(logical_row_field_paths_for_entity(ent));

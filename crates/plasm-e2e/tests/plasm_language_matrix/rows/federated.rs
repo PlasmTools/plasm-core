@@ -194,6 +194,30 @@ done"#,
         expect_live_error: None,
     },
     MatrixRow {
+        id: "lang_apply_get_multirow",
+        program: r#"items = LangItem | where owner="alice" | take 3
+details = items => LangItem(_.id)
+details"#,
+        surface_line: false,
+        federated: false,
+        features: &["row_apply_get", "pipe_where", "pipe_take", "dry_live_parity"],
+        min_node_results: 2,
+        expect_markdown_substrings: &["```tsv", "details"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_apply_query_multirow",
+        program: r#"items = LangItem | where owner="alice" | take 2
+peers = items => LangItem{owner=_.owner}
+peers"#,
+        surface_line: false,
+        federated: false,
+        features: &["row_apply_query", "pipe_where", "pipe_take", "dry_live_parity"],
+        min_node_results: 2,
+        expect_markdown_substrings: &["```tsv", "peers"],
+        expect_live_error: None,
+    },
+    MatrixRow {
         id: "lang_for_each_update",
         program: "items = LangItem(\"i1\") | select id, title, owner\nsync = items => LangItem(\"i1\").update(score=3, title=_.title, owner=_.owner)\nsync",
         surface_line: false,

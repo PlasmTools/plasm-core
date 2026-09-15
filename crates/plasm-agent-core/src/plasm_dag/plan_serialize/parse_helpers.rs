@@ -244,6 +244,38 @@ pub(in crate::plasm_dag) fn parse_plan_value_expr(
     if raw.starts_with("<<") {
         let body = plasm_core::expr_parser::parse_tagged_heredoc_literal(raw)
             .map_err(|e| format!("heredoc literal: {e}"))?;
+        if plasm_core::contains_minijinja_markers(&body) {
+            let compiled = plasm_core::CompiledProgramString::compile(body)
+                .map_err(|e| format!("plain template: {e}"))?;
+            let mut inputs = Vec::new();
+            let mut input_bindings = Vec::new();
+            for root in compiled.roots() {
+                if plasm_core::is_minijinja_template_builtin(root) {
+                    continue;
+                }
+                if !state.contains(root) {
+                    return Err(plasm_core::plp::plp12_per_row_apply(format!(
+                        "plain template references `{root}` which is not an in-scope program binding"
+                    )));
+                }
+                inputs.push(crate::plasm_plan::PlanDataInput {
+                    node: root.clone(),
+                    alias: root.clone(),
+                    cardinality: crate::plasm_plan::InputCardinality::Auto,
+                });
+                input_bindings.push(plasm_core::PlanInputBinding {
+                    from: root.clone(),
+                    to: root.clone(),
+                });
+            }
+            return Ok((
+                PlanValue::Template {
+                    template: compiled,
+                    input_bindings,
+                },
+                dedupe_inputs(inputs),
+            ));
+        }
         return Ok((PlanValue::Literal { value: json!(body) }, Vec::new()));
     }
     let value = parse_literal(raw)?;

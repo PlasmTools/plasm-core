@@ -1,4 +1,3 @@
-use plasm_runtime::OperationLedger;
 //! PreferFromParentGet relation materialization (mixed embed + scoped GET fan-out).
 
 use super::*;
@@ -108,6 +107,7 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
             count,
             entities: entities.clone(),
             has_more: false,
+            coverage: plasm_runtime::ResultCoverage::Unknown,
             pagination_resume: None,
             paging_handle: None,
             source: ExecutionSource::Cache,
@@ -119,7 +119,7 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
                 ..Default::default()
             },
             request_fingerprints: vec![compute_fingerprint(node, source_rows)],
-        operations: OperationLedger::empty(),
+            operations: plasm_runtime::OperationLedger::empty(),
         };
         let parsed_preimage = evidence_plan::parsed_expr_for_plan_node(node);
         let artifact = archive_plasm_result_snapshot(
@@ -191,6 +191,7 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
         ..Default::default()
     };
     let mut source = ExecutionSource::Cache;
+    let mut operations = plasm_runtime::OperationLedger::empty();
     let mut scoped_jobs = Vec::new();
     for (row_index, resolution) in resolutions.iter().enumerate() {
         // EmbeddedRefs rows were captured in the snapshot; only ScopedQuery rows fan out to HTTP.
@@ -266,7 +267,7 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
     }
     if !scoped_jobs.is_empty() {
         let policy = super::plan_fanout_parallel::RowFanoutPolicy::relation_scoped(read_cap);
-        let results = super::plan_fanout_parallel::run_plan_line_jobs_parallel(
+        let batch = super::plan_fanout_parallel::run_plan_line_jobs_parallel(
             st,
             &scoped_es,
             session_id,
@@ -282,15 +283,39 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
             &mut source,
             &mut stats,
             &mut request_fingerprints,
+            &mut operations,
             &mut per_row,
-            &results,
+            &batch.completed,
             policy.stats,
         );
+        if !batch.failures.is_empty() {
+            let message = batch
+                .failures
+                .iter()
+                .map(|f| f.message.as_str())
+                .collect::<Vec<_>>()
+                .join("; ");
+            let entities = super::plan_fanout_parallel::flatten_per_row_entities(per_row);
+            let full_result = execution_result_from_relation_entities(
+                entities,
+                source,
+                stats,
+                request_fingerprints,
+                operations,
+            );
+            let wire = crate::output::http_execute_results_value(&full_result);
+            return Err(format!("{message}\n{wire}"));
+        }
     }
     let mut entities = super::plan_fanout_parallel::flatten_per_row_entities(per_row);
     crate::plan_read_bounds::truncate_to_read_cap(&mut entities, read_cap);
-    let full_result =
-        execution_result_from_relation_entities(entities, source, stats, request_fingerprints);
+    let full_result = execution_result_from_relation_entities(
+        entities,
+        source,
+        stats,
+        request_fingerprints,
+        operations,
+    );
     archive_materialize_relation_result_hydrated(
         st,
         es,

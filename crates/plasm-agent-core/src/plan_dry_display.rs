@@ -166,6 +166,9 @@ pub enum PlanDryOp {
         columns: Vec<String>,
         template_chars: usize,
     },
+    Union {
+        other: String,
+    },
     ForEach {
         source: String,
         binding: String,
@@ -347,6 +350,7 @@ pub(crate) fn human_ux_headline_for_op(op: &PlanDryOp) -> String {
         PlanDryOp::Dedupe { keys } => format!("Dedupe on {}", keys.join(", ")),
         PlanDryOp::With { columns } => format!("Add columns {}", columns.join(", ")),
         PlanDryOp::Render { .. } => "Render text".into(),
+        PlanDryOp::Union { other } => format!("Union {other}"),
         PlanDryOp::ForEach { .. } => "For each row".into(),
         PlanDryOp::IterateUntil { .. } => "Iterate until".into(),
         PlanDryOp::Relation { .. } => "Follow relation".into(),
@@ -387,6 +391,7 @@ pub(crate) fn human_ux_summary_for_op(op: &PlanDryOp) -> String {
         PlanDryOp::Dedupe { keys } => format!("Dedupe on {}", keys.join(", ")),
         PlanDryOp::With { columns } => format!("Add {}", columns.join(", ")),
         PlanDryOp::Render { columns, .. } => format!("Render {}", columns.join(", ")),
+        PlanDryOp::Union { other } => format!("Union {other}"),
         PlanDryOp::Relation {
             relation, target, ..
         } => format!("Via {relation} → {target}"),
@@ -431,6 +436,7 @@ pub(crate) fn render_plan_dry_op(op: &PlanDryOp) -> String {
             columns,
             template_chars,
         } => format!("render [{}] ({} chars)", columns.join(", "), template_chars),
+        PlanDryOp::Union { other } => format!("union {other}"),
         PlanDryOp::ForEach {
             source,
             binding,
@@ -543,6 +549,9 @@ fn compact_op_from_compute(
         } => PlanDryOp::Render {
             columns: columns.iter().map(|c| c.as_str().to_string()).collect(),
             template_chars: template.chars().count(),
+        },
+        ComputeOp::Union { other } => PlanDryOp::Union {
+            other: other.as_str().to_string(),
         },
     }
 }
@@ -737,6 +746,7 @@ fn render_predicate_op(op: PlanPredicateOp) -> &'static str {
         PlanPredicateOp::Gte => ">=",
         PlanPredicateOp::Contains => "~",
         PlanPredicateOp::In => " in ",
+        PlanPredicateOp::NotIn => " not in ",
         PlanPredicateOp::Exists => " exists ",
     }
 }

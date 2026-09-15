@@ -1,4 +1,4 @@
-version: 10
+version: 12
 entry_id: file_system
 auth:
   scheme: none
@@ -25,6 +25,8 @@ entities:
         value_ref: nv_str
   File:
     id_field: path
+    primary_query: file_query
+    primary_read: file_get
     description: A file stored in the AppWorld file system.
     discovery:
       names:
@@ -295,6 +297,36 @@ capabilities:
     output:
       type: side_effect
       description: Writes a compressed archive and returns its path.
+  file_query:
+    description: List files under a directory, optionally narrowed by path substring.
+    kind: query
+    entity: File
+    discovery:
+      operation_terms:
+      - list
+      - find
+      - show
+      - ls
+      target_terms:
+      - file
+      - files
+      - csv
+      - document
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: directory_path
+      value_ref: nv_path
+      required: false
+    - name: substring
+      value_ref: nv_str
+      required: false
+    - name: recursive
+      value_ref: nv_bool
+      required: false
+    provides:
+    - path
   file_get:
     description: Show file content by path (entity id is the path).
     kind: get
@@ -623,6 +655,15 @@ prerequisites:
       bindings:
       - input:
           lane: payload
+          path:
+          - access_token
+        output: token
+    file_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
           path:
           - access_token
         output: token

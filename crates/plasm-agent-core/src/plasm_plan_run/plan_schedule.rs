@@ -77,7 +77,7 @@ pub(crate) fn comp_step_parallel_safe(payload: &PlasmStepPayload) -> bool {
         PlasmStepPayload::Invoke(p) => p.effect_class == EffectClass::Read,
         PlasmStepPayload::Pure(_) | PlasmStepPayload::Map(_) | PlasmStepPayload::Derive(_) => true,
         PlasmStepPayload::FlatMapRelation(_) => true,
-        PlasmStepPayload::FlatMapEffect(p) => p.effect_class == EffectClass::Read,
+        PlasmStepPayload::FlatMapApply(p) => p.effect_class == EffectClass::Read,
         PlasmStepPayload::UnfoldUntil(_) => false,
     }
 }

@@ -1,0 +1,19 @@
+doc_get:
+  method: GET
+  path:
+  - { type: literal, value: doc }
+  query:
+    type: object
+    fields:
+    - [id, { type: var, name: id }]
+
+doc_create:
+  method: POST
+  path:
+  - { type: literal, value: doc }
+  body:
+    type: object
+    fields:
+    - [access_token, { type: var, name: access_token }]
+    - [path, { type: var, name: path }]
+    - [body, { type: var, name: body }]

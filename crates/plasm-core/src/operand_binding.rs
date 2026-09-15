@@ -18,6 +18,24 @@ pub struct IdentityCodec {
 }
 
 impl IdentityCodec {
+    /// Lawful identity scalar types for `id_field` / `key_vars` (and dry-plan row identity).
+    ///
+    /// [`FieldType::EntityRef`] is a foreign-key shape — never a primary identity slot.
+    /// Keep in sync with CGS validate (`UnsupportedIdentityType`).
+    pub fn is_lawful_identity_type(field_type: &crate::FieldType) -> bool {
+        matches!(
+            field_type,
+            crate::FieldType::String
+                | crate::FieldType::Uuid
+                | crate::FieldType::DigitId
+                | crate::FieldType::Select
+                | crate::FieldType::Integer
+                | crate::FieldType::Number
+                | crate::FieldType::Boolean
+                | crate::FieldType::Date
+        )
+    }
+
     pub fn compile(cgs: &crate::CGS, target: IdentityTarget<'_>) -> Result<Self, String> {
         let entity = cgs
             .get_entity(target.entity.as_str())
@@ -36,20 +54,13 @@ impl IdentityCodec {
             None => entity.key_vars.first().unwrap_or(&entity.id_field).as_str(),
         };
         let field_type = crate::parent_entity_field_type(cgs, entity, field)?;
-        match field_type {
-            crate::FieldType::String
-            | crate::FieldType::Uuid
-            | crate::FieldType::DigitId
-            | crate::FieldType::Select
-            | crate::FieldType::Integer
-            | crate::FieldType::Number
-            | crate::FieldType::Boolean
-            | crate::FieldType::Date => Ok(Self { field_type }),
-            _ => Err(format!(
+        if !Self::is_lawful_identity_type(&field_type) {
+            return Err(format!(
                 "{}.{field} has unsupported identity type {field_type:?}",
                 target.entity
-            )),
+            ));
         }
+        Ok(Self { field_type })
     }
 
     pub fn encode(&self, value: &serde_json::Value) -> Result<EntityId, String> {
@@ -591,6 +602,32 @@ mod tests {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/schemas/digit_id_identity");
         crate::loader::load_schema_dir(&path).expect("digit_id_identity fixture")
+    }
+
+    fn entity_ref_as_identity_cgs_unvalidated() -> crate::CGS {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/entity_ref_as_identity");
+        crate::loader::load_schema_dir_unvalidated(&path).expect("entity_ref_as_identity fixture")
+    }
+
+    #[test]
+    fn identity_codec_rejects_entity_ref_primary_key() {
+        // Catalog authoring heresy: id_field typed as entity_ref to self.
+        // Dry staging / Get binding must refuse — same failure as amazon Product.product_id.
+        let cgs = entity_ref_as_identity_cgs_unvalidated();
+        let entity = crate::EntityName::from("BadProduct");
+        let err = IdentityCodec::compile(
+            &cgs,
+            IdentityTarget {
+                entity: &entity,
+                field: None,
+            },
+        )
+        .expect_err("entity_ref id_field is not a lawful identity scalar");
+        assert!(
+            err.contains("unsupported identity type") && err.contains("EntityRef"),
+            "expected EntityRef identity rejection, got: {err}"
+        );
     }
 
     #[test]

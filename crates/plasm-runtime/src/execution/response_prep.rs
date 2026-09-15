@@ -360,6 +360,27 @@ pub(crate) fn wire_id_matches(maybe: &serde_json::Value, want: &plasm_core::Valu
     }
 }
 
+fn collect_concat_array_source(
+    response: &serde_json::Value,
+    source: &ConcatArraySource,
+) -> Option<Vec<serde_json::Value>> {
+    let walked = walk_json_path(response, &source.path)?;
+    match source.from_each.as_deref() {
+        None => walked.as_array().cloned(),
+        Some(field) => {
+            let outer = walked.as_array()?;
+            let mut acc = Vec::new();
+            for it in outer {
+                let Some(o) = it.as_object() else { continue };
+                if let Some(serde_json::Value::Array(a)) = o.get(field) {
+                    acc.extend(a.iter().cloned());
+                }
+            }
+            Some(acc)
+        }
+    }
+}
+
 pub(crate) fn walk_json_path<'a>(
     v: &'a serde_json::Value,
     path: &[String],
@@ -443,6 +464,23 @@ pub(crate) fn apply_response_preprocess(
                 if let Some(serde_json::Value::Array(a)) = o.get(from_each) {
                     acc.extend(a.iter().cloned());
                 }
+            }
+            serde_json::Value::Object(
+                std::iter::once((key, serde_json::Value::Array(acc))).collect(),
+            )
+        }
+        ResponsePreprocess::ConcatArrays { sources } => {
+            let mut acc: Vec<serde_json::Value> = Vec::new();
+            let mut any = false;
+            for source in sources {
+                let Some(rows) = collect_concat_array_source(&response, source) else {
+                    continue;
+                };
+                any = true;
+                acc.extend(rows);
+            }
+            if !any {
+                return response;
             }
             serde_json::Value::Object(
                 std::iter::once((key, serde_json::Value::Array(acc))).collect(),

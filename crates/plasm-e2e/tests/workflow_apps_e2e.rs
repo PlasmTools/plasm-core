@@ -680,7 +680,7 @@ async fn workflow_apps_e2e_async() {
         "plasm",
         json!({
             "logical_session_ref": ls,
-            "program": "items = e1.limit(5)[id,title]\nwide = items <<PLASM_RUN_UI_E2E_WIDE\n{% for r in rows %}{% for i in range(500) %}w{% endfor %}\n{% endfor %}\nPLASM_RUN_UI_E2E_WIDE\nwide",
+            "program": "items = e1.limit(5)[id,title]\nwide = <<PLASM_RUN_UI_E2E_WIDE\n{% for r in items %}{% for i in range(500) %}w{% endfor %}\n{% endfor %}\nPLASM_RUN_UI_E2E_WIDE\nwide",
         }),
         10,
     )

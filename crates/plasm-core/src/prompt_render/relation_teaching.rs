@@ -105,10 +105,37 @@ pub(crate) fn receiver_for_dotted_suffix(
         })
 }
 
+/// StaticSingleton receivers only — never query `eN{…}` (PLP-4 rejects `eN{…}.r#`).
+fn relation_singleton_receiver_candidates(
+    es: &str,
+    ent: &EntityDef,
+    cgs: &CGS,
+    map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
+) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let push = |out: &mut Vec<String>, seen: &mut HashSet<String>, s: String| {
+        if seen.insert(s.clone()) {
+            out.push(s);
+        }
+    };
+    if let Some(cmp) = compound_get_expr_line(es, ent, cgs, map, catalog_entry_id) {
+        push(&mut out, &mut seen, cmp);
+    }
+    push(
+        &mut out,
+        &mut seen,
+        unary_entity_id_teaching_expr_line(es, ent, map, catalog_entry_id),
+    );
+    push(&mut out, &mut seen, es.to_string());
+    out
+}
+
 /// Receiver for relation nav / bare recv: must **parse and type-check alone**.
 ///
 /// Test-only helper for [`incoming_relation_nav_bases_to_entity`]; production teaching uses
-/// [`receiver_for_dotted_suffix`].
+/// [`try_build_relation_nav_exemplar`].
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn relation_nav_anchor_expr(
@@ -121,7 +148,7 @@ fn relation_nav_anchor_expr(
     line_valid_cache_seed: u64,
     map_arc: Option<&std::sync::Arc<SymbolMap>>,
 ) -> Option<String> {
-    nav_receiver_candidates(es, ent, cgs, map, catalog_entry_id, false)
+    relation_singleton_receiver_candidates(es, ent, cgs, map, catalog_entry_id)
         .into_iter()
         .find(|recv| {
             domain_line_work_valid_cached(
@@ -268,6 +295,95 @@ pub(crate) fn relation_nav_meaning_result_gloss(
     }
 }
 
+/// Taught program-stratum fanout seat (domain-general CTE name; RA-4 bind then apply).
+pub(crate) const RELATION_FANOUT_TEACHING_LABEL: &str = "rows";
+
+/// Bind half of the fanout pair: `rows = <taught list query>`.
+pub(crate) fn relation_fanout_bind_expr(query_head: &str) -> String {
+    format!("{RELATION_FANOUT_TEACHING_LABEL} = {query_head}")
+}
+
+/// Apply half of the fanout pair: `rows => _.r#`.
+pub(crate) fn relation_fanout_teaching_expr(rel_sym: &str) -> String {
+    format!("{RELATION_FANOUT_TEACHING_LABEL} => _.{rel_sym}")
+}
+
+fn strip_teaching_projection_suffix(expr: &str) -> &str {
+    let t = expr.trim();
+    match super::tsv_emit::parse_trailing_projection_bracket(t) {
+        Some(br) => t.strip_suffix(br.as_str()).map(str::trim).unwrap_or(t),
+        None => t,
+    }
+}
+
+/// First taught list-query head for `es` (brace query preferred; projection stripped).
+fn taught_list_query_for_entity(
+    teaching_rows: &[EntityTeachingExprRow],
+    es: &str,
+) -> Option<(String, Option<String>)> {
+    let prefix_brace = format!("{es}{{");
+    let mut bare: Option<(String, Option<String>)> = None;
+    for row in teaching_rows {
+        let expr = row.teaching_expr.expression.trim();
+        if expr.contains(" => ") || split_top_level_eq_is_bind(expr) {
+            continue;
+        }
+        let head = strip_teaching_projection_suffix(expr);
+        let gloss = {
+            let g = row.teaching_expr.result_type.trim();
+            (!g.is_empty()).then(|| g.to_string())
+        };
+        if head.starts_with(&prefix_brace) {
+            return Some((head.to_string(), gloss));
+        }
+        if head == es && bare.is_none() {
+            bare = Some((head.to_string(), gloss));
+        }
+    }
+    bare
+}
+
+fn split_top_level_eq_is_bind(expr: &str) -> bool {
+    crate::expr_parser::split_assignment_for_binding(expr).is_some()
+}
+
+/// Synthesize the same list-query head query teaching would emit (no projection).
+#[allow(clippy::too_many_arguments)]
+fn synthesized_list_query_head(
+    es: &str,
+    ent: &EntityDef,
+    cgs: &CGS,
+    map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
+    line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
+    line_valid_cache_seed: u64,
+    map_arc: Option<&std::sync::Arc<SymbolMap>>,
+) -> Option<String> {
+    let mut query_caps: Vec<_> = cgs.find_capabilities(ent.name.as_str(), CapabilityKind::Query);
+    query_caps.sort_by(|a, b| a.name.cmp(&b.name));
+    for cap in &query_caps {
+        for qline in [
+            query_expr_maximal(cap, es, cgs, map, catalog_entry_id),
+            query_expr_scope_only(cap, es, cgs, map, catalog_entry_id),
+            query_expr_filters_only(cap, es, cgs, map, catalog_entry_id),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if domain_line_work_valid_cached(
+                line_valid_cache,
+                line_valid_cache_seed,
+                cgs,
+                &qline,
+                map_arc,
+            ) {
+                return Some(qline);
+            }
+        }
+    }
+    None
+}
+
 /// Build a validated relation-nav exemplar (`recv.r#` or entity-ref hop) when admissible.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn try_build_relation_nav_exemplar(
@@ -288,22 +404,22 @@ pub(crate) fn try_build_relation_nav_exemplar(
         }
     }
     let suffix = format!(".{rel_sym}");
-    let recv = receiver_for_dotted_suffix(
-        es,
-        ent,
-        cgs,
-        map,
-        catalog_entry_id,
-        &suffix,
-        line_valid_cache,
-        line_valid_cache_seed,
-        map_arc,
-        false,
-    )?;
+    let recv = relation_singleton_receiver_candidates(es, ent, cgs, map, catalog_entry_id)
+        .into_iter()
+        .find(|recv| {
+            let full = format!("{recv}{suffix}");
+            domain_line_work_valid_cached(
+                line_valid_cache,
+                line_valid_cache_seed,
+                cgs,
+                &full,
+                map_arc,
+            )
+        })?;
     Some(format!("{recv}{suffix}"))
 }
 
-/// Push one relation-nav teaching row after building a validated exemplar.
+/// Push StaticSingleton `eN(<id>).r#` and, for declared relations, `rows = <query>` then `rows => _.r#`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn try_emit_relation_nav_teaching_row(
     gloss_emit: &mut Option<GlossScratch<'_>>,
@@ -322,20 +438,6 @@ pub(crate) fn try_emit_relation_nav_teaching_row(
     line_valid_cache_seed: u64,
     map_arc: Option<&std::sync::Arc<SymbolMap>>,
 ) -> bool {
-    let Some(rel_expr) = try_build_relation_nav_exemplar(
-        es,
-        ent,
-        rel_schema,
-        rel_sym,
-        cgs,
-        map,
-        catalog_entry_id,
-        line_valid_cache,
-        line_valid_cache_seed,
-        map_arc,
-    ) else {
-        return false;
-    };
     let cardinality_many = rel_schema
         .map(|r| r.cardinality == Cardinality::Many)
         .unwrap_or(false);
@@ -346,23 +448,92 @@ pub(crate) fn try_emit_relation_nav_teaching_row(
         cardinality_many,
     )
     .unwrap_or_default();
-    let result_gloss = relation_nav_meaning_result_gloss(&rel_expr, map, target_gloss);
-    try_push_teaching_example(
-        gloss_emit,
-        teaching_rows,
-        collect_meta,
-        cgs,
-        &rel_expr,
-        Some(result_gloss),
-        rel_desc,
-        rel_schema,
-        None,
-        false,
-        line_valid_cache,
-        line_valid_cache_seed,
-        map_arc,
-        None,
-    )
+    let gloss_key = format!("{es}(<id>).{rel_sym}");
+    let result_gloss = relation_nav_meaning_result_gloss(&gloss_key, map, target_gloss);
+    let singleton_already =
+        super::tsv_emit::relation_sym_shown_in_query_teaching_rows(teaching_rows, rel_sym);
+    let singleton_ok = !singleton_already
+        && try_build_relation_nav_exemplar(
+            es,
+            ent,
+            rel_schema,
+            rel_sym,
+            cgs,
+            map,
+            catalog_entry_id,
+            line_valid_cache,
+            line_valid_cache_seed,
+            map_arc,
+        )
+        .is_some_and(|rel_expr| {
+            try_push_teaching_example(
+                gloss_emit,
+                teaching_rows,
+                collect_meta,
+                cgs,
+                &rel_expr,
+                Some(result_gloss.clone()),
+                rel_desc.clone(),
+                rel_schema,
+                None,
+                false,
+                line_valid_cache,
+                line_valid_cache_seed,
+                map_arc,
+                None,
+            )
+        });
+    let fanout_ok = rel_schema.is_some_and(|rel| {
+        if !relation_nav_admissible(rel, cgs) {
+            return false;
+        }
+        let Some((query_head, query_gloss)) = taught_list_query_for_entity(teaching_rows, es)
+        else {
+            return false;
+        };
+        let bind = relation_fanout_bind_expr(&query_head);
+        let bind_already = teaching_rows
+            .iter()
+            .any(|r| r.teaching_expr.expression == bind);
+        let bind_ok = bind_already
+            || try_push_teaching_example(
+                gloss_emit,
+                teaching_rows,
+                collect_meta,
+                cgs,
+                &bind,
+                query_gloss,
+                None,
+                None,
+                None,
+                false,
+                line_valid_cache,
+                line_valid_cache_seed,
+                map_arc,
+                None,
+            );
+        if !bind_ok {
+            return false;
+        }
+        let fanout = relation_fanout_teaching_expr(rel_sym);
+        try_push_teaching_example(
+            gloss_emit,
+            teaching_rows,
+            collect_meta,
+            cgs,
+            &fanout,
+            Some(result_gloss),
+            rel_desc,
+            rel_schema,
+            None,
+            false,
+            line_valid_cache,
+            line_valid_cache_seed,
+            map_arc,
+            None,
+        )
+    });
+    singleton_ok || fanout_ok
 }
 
 /// Append one validated relation-hop row to an expand/federate edge-delta TSV body.
@@ -485,7 +656,15 @@ pub(crate) fn render_relation_edge_delta_rows(
         if !r_sym.starts_with('r') {
             continue;
         }
-        let Some(plasm_expr) = try_build_relation_nav_exemplar(
+        let description = {
+            let d = rel_schema.description.as_str().trim();
+            if d.is_empty() {
+                String::new()
+            } else {
+                truncate_inline_desc(d, 120)
+            }
+        };
+        if let Some(plasm_expr) = try_build_relation_nav_exemplar(
             &es,
             ent,
             Some(rel_schema),
@@ -496,31 +675,66 @@ pub(crate) fn render_relation_edge_delta_rows(
             &mut line_valid_cache,
             0,
             map_arc,
-        ) else {
-            continue;
-        };
-        if !seen_expr.insert(plasm_expr.clone()) {
-            continue;
-        }
-        let description = {
-            let d = rel_schema.description.as_str().trim();
-            if d.is_empty() {
-                String::new()
-            } else {
-                truncate_inline_desc(d, 120)
+        ) {
+            if seen_expr.insert(plasm_expr.clone()) {
+                append_relation_nav_edge_delta_row(
+                    &mut out,
+                    &plasm_expr,
+                    rel_schema,
+                    &r_sym,
+                    &description,
+                    map_arc,
+                    source.entry_id.as_str(),
+                    &mut seen_r_gloss,
+                    &empty_heading,
+                );
             }
-        };
-        append_relation_nav_edge_delta_row(
-            &mut out,
-            &plasm_expr,
-            rel_schema,
-            &r_sym,
-            &description,
-            map_arc,
-            source.entry_id.as_str(),
-            &mut seen_r_gloss,
-            &empty_heading,
-        );
+        }
+        if relation_nav_admissible(rel_schema, cgs) {
+            if let Some(query_head) = synthesized_list_query_head(
+                &es,
+                ent,
+                cgs,
+                map_arc.map(|m| m.as_ref()),
+                source.entry_id.as_str(),
+                &mut line_valid_cache,
+                0,
+                map_arc,
+            ) {
+                let bind = relation_fanout_bind_expr(&query_head);
+                if domain_line_work_valid_cached(&mut line_valid_cache, 0, cgs, &bind, map_arc)
+                    && seen_expr.insert(bind.clone())
+                {
+                    append_relation_nav_edge_delta_row(
+                        &mut out,
+                        &bind,
+                        rel_schema,
+                        &r_sym,
+                        &description,
+                        map_arc,
+                        source.entry_id.as_str(),
+                        &mut seen_r_gloss,
+                        &empty_heading,
+                    );
+                }
+                let fanout = relation_fanout_teaching_expr(&r_sym);
+                if domain_line_work_valid_cached(&mut line_valid_cache, 0, cgs, &fanout, map_arc)
+                    && seen_expr.insert(fanout.clone())
+                {
+                    append_relation_nav_edge_delta_row(
+                        &mut out,
+                        &fanout,
+                        rel_schema,
+                        &r_sym,
+                        &description,
+                        map_arc,
+                        source.entry_id.as_str(),
+                        &mut seen_r_gloss,
+                        &empty_heading,
+                    );
+                }
+            }
+        }
     }
     out
 }

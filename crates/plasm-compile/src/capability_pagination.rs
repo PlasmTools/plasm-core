@@ -168,42 +168,17 @@ mod tests {
     }
 
     #[test]
-    fn appworld_gmail_list_caps_have_pagination_blocks() {
-        let cgs = load_schema("../../apis/appworld/gmail");
+    fn pagination_matrix_list_caps_have_pagination_blocks() {
+        let cgs = load_schema("../../fixtures/schemas/plasm_pagination_matrix");
         let warnings = paginated_list_missing_cml_pagination_warnings(&cgs);
         assert!(
             warnings.is_empty(),
-            "gmail list caps must use composable pagination:: {warnings:?}"
+            "pagination matrix list caps must use composable pagination:: {warnings:?}"
         );
         let errs = pagination_contract_validation_errors(&cgs);
         assert!(
             errs.is_empty(),
-            "gmail page_number contracts must validate: {errs:?}"
-        );
-    }
-
-    #[test]
-    fn appworld_amazon_list_caps_have_pagination_blocks() {
-        let cgs = load_schema("../../apis/appworld/amazon");
-        let warnings = paginated_list_missing_cml_pagination_warnings(&cgs);
-        assert!(
-            warnings.is_empty(),
-            "amazon list caps must use composable pagination:: {warnings:?}"
-        );
-        let errs = pagination_contract_validation_errors(&cgs);
-        assert!(
-            errs.is_empty(),
-            "amazon page_number contracts must validate: {errs:?}"
-        );
-    }
-
-    #[test]
-    fn appworld_venmo_pagination_contract_is_valid() {
-        let cgs = load_schema("../../apis/appworld/venmo");
-        let errs = pagination_contract_validation_errors(&cgs);
-        assert!(
-            errs.is_empty(),
-            "venmo page_number contracts must validate: {errs:?}"
+            "pagination matrix contracts must validate: {errs:?}"
         );
     }
 }

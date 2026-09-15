@@ -13,6 +13,7 @@ pub enum PlpId {
     Continuation,
     IngressParity,
     AgentPayload,
+    PerRowApply,
 }
 
 impl PlpId {
@@ -25,6 +26,7 @@ impl PlpId {
             Self::Continuation => "PLP-4",
             Self::IngressParity => "PLP-5",
             Self::AgentPayload => "PLP-6",
+            Self::PerRowApply => "PLP-12",
         }
     }
 }
@@ -71,6 +73,11 @@ pub fn plp6_agent_payload(msg: impl Display) -> String {
     surface_err(PlpId::AgentPayload, msg)
 }
 
+#[inline]
+pub fn plp12_per_row_apply(msg: impl Display) -> String {
+    surface_err(PlpId::PerRowApply, msg)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -81,5 +88,7 @@ mod tests {
         assert!(plp2_heredoc("x").starts_with("PLP-2:"));
         assert!(plp4_continuation("x").starts_with("PLP-4:"));
         assert!(plp4_program("n0", "bad tail").contains("Plasm program `n0`"));
+        assert_eq!(PlpId::PerRowApply.as_str(), "PLP-12");
+        assert!(plp12_per_row_apply("x").starts_with("PLP-12:"));
     }
 }

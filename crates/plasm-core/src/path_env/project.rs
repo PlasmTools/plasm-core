@@ -181,42 +181,11 @@ pub fn create_binds_from_anchor_identity(
     anchor: &EntityDef,
     anchor_ref: Option<&Ref>,
 ) -> bool {
-    if cap.kind != CapabilityKind::Create {
-        return false;
-    }
-    let Some(mapping) = &cap.mapping else {
-        return false;
-    };
-    let vars = identity_env_var_names(&mapping.template.0);
-    if vars.is_empty() {
-        return false;
-    }
-    // Same law as pack prove for Create: no invent sole-alias — wire names only.
-    let policy = SoleAliasPolicy::Forbidden;
-    if !vars
-        .iter()
-        .all(|pv| is_identity_projectable(anchor, &vars, pv, policy))
-    {
-        return false;
-    }
-    match anchor_ref {
-        None => true,
-        Some(reference) => {
-            let empty = HashSet::new();
-            let ctx = IdentityProjectionCtx::Entity(anchor);
-            let identity = ResolvedIdentity::from_ref(reference, ctx);
-            project_identity_onto_vars(
-                reference,
-                ctx,
-                &identity,
-                &vars,
-                policy,
-                &empty,
-                cap.name.as_str(),
-            )
-            .is_ok()
-        }
-    }
+    cap.kind == CapabilityKind::Create
+        && cap.receiver_entity() == Some(&anchor.name)
+        && anchor_ref.is_none_or(|reference| {
+            reference.entity_type == anchor.name && !reference.is_pathless_nullary()
+        })
 }
 
 #[cfg(test)]
@@ -281,7 +250,10 @@ mod tests {
     #[test]
     fn create_bind_accepts_id_field_path() {
         let anchor = pet_entity();
-        let cap = create_cap(&["name"]);
+        let mut cap = create_cap(&["name"]);
+        cap.inputs.receiver = Some(crate::CapabilityReceiver::Entity {
+            entity: anchor.name.clone(),
+        });
         assert!(create_binds_from_anchor_identity(&cap, &anchor, None));
         let reference = Ref::new("Pet", "fluffy");
         assert!(create_binds_from_anchor_identity(

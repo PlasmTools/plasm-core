@@ -88,7 +88,9 @@ impl ExecutionEngine {
                     crate::spans::projection_hydrate(entity_type, cap_to_ids.len());
                 async {
                     // For each provider capability, invoke it for all entity IDs that need it.
-                    let concurrency = self.config.hydrate_concurrency.max(1);
+                    let concurrency = self
+                        .config
+                        .effective_hydrate_concurrency(cgs.entry_id.as_deref());
 
                     for (cap_name, ids) in cap_to_ids {
                         let Some(cap) = cgs.get_capability(&cap_name) else {
@@ -145,15 +147,7 @@ impl ExecutionEngine {
 
                         let branch_seed = {
                             let snap = mat.snapshot();
-                            SessionMaterialization {
-                                graph: snap.into_graph(),
-                                responses: mat.responses.clone(),
-                                query_index: mat.query_index.clone(),
-                                inherited_capability_params: mat
-                                    .inherited_capability_params
-                                    .clone(),
-                                ..SessionMaterialization::default()
-                            }
+                            SessionMaterialization::seed_read_branch(mat, snap.into_graph())
                         };
 
                         let mut stream = stream::iter(exprs.into_iter().map(|(_id, expr)| {

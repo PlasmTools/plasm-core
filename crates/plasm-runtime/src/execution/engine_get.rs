@@ -25,27 +25,28 @@ impl ExecutionEngine {
         mode: ExecutionMode,
         ambient: &ViewAmbientContext,
     ) -> Result<ExecutionResult, RuntimeError> {
-        // Satisfy from cache only when we already hold a detail payload.
-        if let Some(entity) = mat.get(&get.reference) {
-            if entity.completeness == EntityCompleteness::Complete {
-                return Ok(ExecutionResult {
-                    entities: vec![entity.clone()],
-                    count: 1,
-                    has_more: false,
-                    pagination_resume: None,
-                    paging_handle: None,
-                    source: ExecutionSource::Cache,
-                    stats: ExecutionStats {
-                        duration_ms: 0,
-                        network_requests: 0,
-                        cache_hits: 1,
-                        cache_misses: 0,
-                        ..Default::default()
-                    },
-                    request_fingerprints: Vec::new(),
+        // Satisfy from cache only when we already hold a detail payload (RA-11: skip after write).
+        if let Some(entity) = mat.consult_complete_get(&get.reference) {
+            let cached = entity.clone();
+            stamp_get_capability_params(mat, cgs, get, ambient, &cached);
+            return Ok(ExecutionResult {
+                entities: vec![cached],
+                count: 1,
+                has_more: false,
+                coverage: ResultCoverage::Complete,
+                pagination_resume: None,
+                paging_handle: None,
+                source: ExecutionSource::Cache,
+                stats: ExecutionStats {
+                    duration_ms: 0,
+                    network_requests: 0,
+                    cache_hits: 1,
+                    cache_misses: 0,
+                    ..Default::default()
+                },
+                request_fingerprints: Vec::new(),
                 operations: OperationLedger::empty(),
-                });
-            }
+            });
         }
 
         let get = get_with_session_params(get, cgs, mat);
@@ -61,11 +62,13 @@ impl ExecutionEngine {
             )
             .await?;
         mat.insert(cached.clone())?;
+        stamp_get_capability_params(mat, cgs, &get, ambient, &cached);
 
         Ok(ExecutionResult {
             entities: vec![cached],
             count: 1,
             has_more: false,
+            coverage: ResultCoverage::Complete,
             pagination_resume: None,
             paging_handle: None,
             source,
@@ -81,7 +84,7 @@ impl ExecutionEngine {
                 ..Default::default()
             },
             request_fingerprints: Vec::new(),
-        operations: OperationLedger::empty(),
+            operations: OperationLedger::empty(),
         })
     }
 
@@ -93,26 +96,25 @@ impl ExecutionEngine {
         mat: &mut SessionMaterialization,
         mode: ExecutionMode,
     ) -> Result<ExecutionResult, RuntimeError> {
-        if let Some(entity) = mat.get(&get.reference) {
-            if entity.completeness == EntityCompleteness::Complete {
-                return Ok(ExecutionResult {
-                    entities: vec![entity.clone()],
-                    count: 1,
-                    has_more: false,
-                    pagination_resume: None,
-                    paging_handle: None,
-                    source: ExecutionSource::Cache,
-                    stats: ExecutionStats {
-                        duration_ms: 0,
-                        network_requests: 0,
-                        cache_hits: 1,
-                        cache_misses: 0,
-                        ..Default::default()
-                    },
-                    request_fingerprints: Vec::new(),
+        if let Some(entity) = mat.consult_complete_get(&get.reference) {
+            return Ok(ExecutionResult {
+                entities: vec![entity.clone()],
+                count: 1,
+                has_more: false,
+                coverage: ResultCoverage::Complete,
+                pagination_resume: None,
+                paging_handle: None,
+                source: ExecutionSource::Cache,
+                stats: ExecutionStats {
+                    duration_ms: 0,
+                    network_requests: 0,
+                    cache_hits: 1,
+                    cache_misses: 0,
+                    ..Default::default()
+                },
+                request_fingerprints: Vec::new(),
                 operations: OperationLedger::empty(),
-                });
-            }
+            });
         }
 
         let capability = cgs
@@ -138,6 +140,7 @@ impl ExecutionEngine {
             });
         }
         let get = get_with_session_params(get, cgs, mat);
+        let ambient = ViewAmbientContext::default();
         let (cached, source) = self
             .fetch_http_transport_get_decoded(
                 &get,
@@ -147,15 +150,17 @@ impl ExecutionEngine {
                 &capability_template,
                 true,
                 Some(mat),
-                &ViewAmbientContext::default(),
+                &ambient,
             )
             .await?;
         mat.insert(cached.clone())?;
+        stamp_get_capability_params(mat, cgs, &get, &ambient, &cached);
 
         Ok(ExecutionResult {
             entities: vec![cached],
             count: 1,
             has_more: false,
+            coverage: ResultCoverage::Complete,
             pagination_resume: None,
             paging_handle: None,
             source,
@@ -171,7 +176,7 @@ impl ExecutionEngine {
                 ..Default::default()
             },
             request_fingerprints: Vec::new(),
-        operations: OperationLedger::empty(),
+            operations: OperationLedger::empty(),
         })
     }
 
@@ -264,9 +269,11 @@ impl ExecutionEngine {
                     get.reference.entity_type
                 ),
             })?;
+        let catalog_key =
+            SessionMaterialization::provide_catalog_key(cgs, get.catalog_entry_id.as_deref());
         let mut overlay_map = cache
             .as_ref()
-            .map(|m| m.capability_params_for(&get.reference))
+            .map(|m| m.capability_params_for_get(&get.reference, &catalog_key))
             .unwrap_or_default();
         for (k, v) in &ambient.capability_params {
             overlay_map.entry(k.clone()).or_insert_with(|| v.clone());
@@ -291,11 +298,26 @@ impl ExecutionEngine {
         }
 
         let compiled = compile_operation_dispatch(capability_template, &env)?;
+        if hydration_trace::active() {
+            hydration_trace::emit(
+                "dispatch",
+                serde_json::json!({
+                    "entity":get.reference.entity_type.as_str(), "capability":capability.name.as_str(),
+                    "request_fingerprint":crate::replay::RequestFingerprint::from_operation(&compiled).to_hex()
+                }),
+            );
+        }
         let (response, source) = with_dispatch_entity(
             Some(get.reference.entity_type.as_str()),
             self.execute_with_replay(&compiled, mode, cache.as_deref_mut()),
         )
         .await?;
+        if hydration_trace::active() {
+            hydration_trace::emit(
+                "transport_value",
+                serde_json::json!({"source":source, "shape":hydration_trace::shape(&response)}),
+            );
+        }
         let response = self
             .apply_auxiliary_http_merge_response(
                 capability_template,
@@ -323,12 +345,23 @@ impl ExecutionEngine {
             rid,
             Some(&identity_ambient),
         );
+        if hydration_trace::active() {
+            hydration_trace::emit("decode_input", hydration_trace::shape(&response));
+        }
         let decoded_entities = decode_entities_with_cgs(&decoder, &response, Some(cgs))?;
+        if hydration_trace::active() {
+            hydration_trace::emit(
+                "decode_output",
+                serde_json::json!({"rows":decoded_entities.len(),
+                "identity_matches":decoded_entities.first().map(|e| e.reference == get.reference),
+                "fields":decoded_entities.first().map(|e| e.fields.keys().map(|k| k.as_str()).collect::<Vec<_>>())}),
+            );
+        }
 
         let decoded = decoded_entities
             .first()
             .ok_or_else(|| RuntimeError::CacheError {
-                message: format!("Entity not found: {}", get.reference),
+                message: format!("zero rows — Entity not found: {}", get.reference),
             })?;
 
         let timestamp = current_timestamp();

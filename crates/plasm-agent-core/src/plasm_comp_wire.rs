@@ -16,7 +16,7 @@ pub fn plasm_comp_artifact_from_comp(comp: PlasmComp) -> Result<PlasmCompArtifac
     for (id, step) in &comp.steps {
         let needs_gate = match step {
             plasm_core::PlasmStepPayload::Invoke(p) => p.approval.is_some(),
-            plasm_core::PlasmStepPayload::FlatMapEffect(p) => p.approval.is_some(),
+            plasm_core::PlasmStepPayload::FlatMapApply(p) => p.approval.is_some(),
             plasm_core::PlasmStepPayload::UnfoldUntil(p) => p.approval.is_some(),
             _ => false,
         };

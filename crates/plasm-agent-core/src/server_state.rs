@@ -163,7 +163,9 @@ impl PlasmHostState {
         Ok(view)
     }
 
-    /// Exact selected IDs for routed requests; explicit execution names its entities directly.
+    /// Routed requests start from selected IDs; [`selected_capability_surface`] then
+    /// admits every authored mutator on those seeded domains plus read-family /
+    /// identity-scope close. Explicit execution names its entities directly.
     pub(crate) fn capability_surface_for_wave(
         &self,
         cgs: &plasm_core::CGS,

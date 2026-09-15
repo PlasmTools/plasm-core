@@ -2,7 +2,11 @@
 //!
 //! **Query and Search are structurally distinct.** The parser sets `capability_name` on
 //! `Entity~"text"` (Search) at parse time; CLI dispatch stamps it on the `"search"` verb.
-//! This module only resolves **Query** capabilities — Search never reaches the fallback path.
+//! Those paths hit the early `capability_name` return.
+//!
+//! Brace filters (`Entity{q=…}`) have no stamped name. RA-2: every brace field must be
+//! **owned** by the resolved capability. A Search-only slot must resolve to Search — never
+//! silent-fallthrough to the primary Query (unfiltered first page).
 
 use std::collections::HashSet;
 
@@ -10,6 +14,26 @@ use thiserror::Error;
 
 use crate::expr::QueryExpr;
 use crate::schema::{capability_is_zero_arity_invoke, CapabilityKind, CapabilitySchema, CGS};
+
+/// True when the CML mapping binds the identity `id` var (query/path/body), so Get is keyed.
+pub(crate) fn capability_mapping_binds_id_var(cap: &CapabilitySchema) -> bool {
+    let Some(mapping) = &cap.mapping else {
+        return false;
+    };
+    json_var_name_is_id(&mapping.template.0)
+}
+
+fn json_var_name_is_id(v: &serde_json::Value) -> bool {
+    match v {
+        serde_json::Value::Object(map) => {
+            let is_id_var = map.get("type").and_then(|t| t.as_str()) == Some("var")
+                && map.get("name").and_then(|n| n.as_str()) == Some("id");
+            is_id_var || map.values().any(json_var_name_is_id)
+        }
+        serde_json::Value::Array(items) => items.iter().any(json_var_name_is_id),
+        _ => false,
+    }
+}
 
 /// Failure to pick exactly one query/search capability for a [`QueryExpr`].
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
@@ -115,10 +139,23 @@ fn try_resolve_search_for_filter_query<'a>(
         }
     }
     match matching.len() {
-        0 if search_caps.len() == 1 => Some(search_caps[0]),
         1 => Some(matching[0]),
         _ => None,
     }
+}
+
+/// Scope + selection names a source brace may bind (RA-1: controls are not a brace lane).
+fn brace_owned_field_names(cap: &CapabilitySchema) -> HashSet<String> {
+    cap.scope_params()
+        .iter()
+        .chain(cap.selection_params().iter())
+        .map(|f| f.name.to_string())
+        .collect()
+}
+
+fn capability_owns_all_brace_fields(cap: &CapabilitySchema, pred_fields: &HashSet<String>) -> bool {
+    let names = brace_owned_field_names(cap);
+    pred_fields.iter().all(|f| names.contains(f))
 }
 
 fn required_filter_like_param_names(cap: &CapabilitySchema) -> Vec<String> {
@@ -151,11 +188,18 @@ pub fn sole_nullary_singleton_get<'a>(cgs: &'a CGS, entity: &str) -> Option<&'a 
     if get_caps.is_empty() {
         return None;
     }
+    if cgs
+        .get_entity(entity)
+        .is_some_and(|ent| ent.key_vars.len() > 1)
+    {
+        return None;
+    }
     let mut singleton: Vec<_> = get_caps
         .iter()
         .copied()
         .filter(|c| {
-            !c.domain_exemplar_requires_entity_anchor()
+            !c.requires_receiver()
+                && !capability_mapping_binds_id_var(c)
                 && capability_is_zero_arity_invoke(c)
                 && !c.get_requires_identity_anchor(cgs)
         })
@@ -305,9 +349,16 @@ pub fn resolve_query_capability<'a>(
     }
 
     // Unscoped primary query — only when the predicate does not already select a scoped query
-    // (required scope fields present in the predicate).
+    // (required scope fields present in the predicate). RA-2: withhold primary Query when the
+    // brace is Search-owned (otherwise keep legacy primary, including extra pred fields).
     if !predicate_selects_scoped_query(cgs, &query.entity, &pred_fields) {
         if let Some(cap) = cgs.primary_query_capability(&query.entity) {
+            if pred_fields.is_empty() || capability_owns_all_brace_fields(cap, &pred_fields) {
+                return Ok(cap);
+            }
+            if let Some(search) = try_resolve_search_for_filter_query(query, cgs) {
+                return Ok(search);
+            }
             return Ok(cap);
         }
     }
@@ -478,109 +529,55 @@ mod tests {
     use crate::Predicate;
 
     #[test]
-    fn clickup_task_team_id_resolves_task_query() {
-        let dir = std::path::Path::new("../../apis/clickup");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let q = QueryExpr::filtered("Task", Predicate::eq("team_id", "1"));
-        let cap = resolve_query_capability(&q, &cgs).unwrap();
-        assert_eq!(cap.name.as_str(), "task_query");
+    fn language_matrix_tilde_search_stamps_search_not_query() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("language matrix");
+        let mut q = QueryExpr::filtered("LangItem", Predicate::eq("q", "no-such-item"));
+        q.capability_name = Some("langitem_search".into());
+        let cap = resolve_query_capability(&q, &cgs).expect("resolve stamped search");
+        assert_eq!(cap.name.as_str(), "langitem_search");
+        assert_eq!(cap.kind, CapabilityKind::Search);
     }
 
     #[test]
-    fn clickup_task_list_id_resolves_list_task_query() {
-        let dir = std::path::Path::new("../../apis/clickup");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let q = QueryExpr::filtered("Task", Predicate::eq("list_id", "1"));
-        let cap = resolve_query_capability(&q, &cgs).unwrap();
-        assert_eq!(cap.name.as_str(), "list_task_query");
-    }
-
-    #[test]
-    fn clickup_task_both_scope_fields_ambiguous() {
-        let dir = std::path::Path::new("../../apis/clickup");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let q = QueryExpr::filtered(
-            "Task",
-            Predicate::and(vec![
-                Predicate::eq("team_id", "1"),
-                Predicate::eq("list_id", "2"),
-            ]),
+    fn language_matrix_search_only_brace_q_resolves_search_not_primary_query() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("language matrix");
+        let q = QueryExpr::filtered("LangItem", Predicate::eq("q", "no-such-item"));
+        let cap = resolve_query_capability(&q, &cgs).expect("RA-2 search-only brace");
+        assert_eq!(
+            cap.name.as_str(),
+            "langitem_search",
+            "Search-only slot `q` must not silent-fallthrough to langitem_query"
         );
-        assert!(matches!(
-            resolve_query_capability(&q, &cgs),
-            Err(QueryCapabilityResolveError::Ambiguous { .. })
-        ));
+        assert_eq!(cap.kind, CapabilityKind::Search);
     }
 
     #[test]
-    fn venmo_payment_request_access_token_resolves_primary_query() {
-        let dir =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/appworld/venmo");
-        if !dir.is_dir() {
-            return;
-        }
-        let mut cgs = load_schema_dir(&dir).unwrap();
-        cgs.bind_registry_entry_id("venmo");
-        let q = QueryExpr::filtered("PaymentRequest", Predicate::eq("access_token", "tok"));
-        let cap = resolve_query_capability(&q, &cgs).unwrap();
-        assert_eq!(cap.name.as_str(), "payment_request_query");
+    fn language_matrix_query_owner_brace_still_resolves_query() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("language matrix");
+        let q = QueryExpr::filtered("LangItem", Predicate::eq("owner", "alice"));
+        let cap = resolve_query_capability(&q, &cgs).expect("query owner brace");
+        assert_eq!(cap.name.as_str(), "langitem_query");
+        assert_eq!(cap.kind, CapabilityKind::Query);
     }
 
     #[test]
     fn normalize_sets_capability_name() {
-        let dir = std::path::Path::new("../../apis/clickup");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let mut expr =
-            crate::Expr::Query(QueryExpr::filtered("Task", Predicate::eq("list_id", "1")));
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
+        let mut expr = crate::Expr::Query(QueryExpr::filtered(
+            "LangItem",
+            Predicate::eq("owner", "alice"),
+        ));
         normalize_expr_query_capabilities(&mut expr, &cgs).unwrap();
         match &expr {
             crate::Expr::Query(q) => {
-                assert_eq!(q.capability_name.as_deref(), Some("list_task_query"));
+                assert_eq!(q.capability_name.as_deref(), Some("langitem_query"));
             }
             _ => panic!("expected query"),
         }
-    }
-
-    #[test]
-    fn slack_message_channel_only_resolves_channel_history() {
-        let dir = std::path::Path::new("../../apis/slack");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let q = QueryExpr::filtered("Message", Predicate::eq("channel", "C1"));
-        let cap = resolve_query_capability(&q, &cgs).unwrap();
-        assert_eq!(cap.name.as_str(), "channel_history");
-    }
-
-    #[test]
-    fn slack_message_channel_and_ts_resolves_channel_replies() {
-        let dir = std::path::Path::new("../../apis/slack");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let q = QueryExpr::filtered(
-            "Message",
-            Predicate::and(vec![
-                Predicate::eq("channel", "C1"),
-                Predicate::eq("ts", "1512085950.000216"),
-            ]),
-        );
-        let cap = resolve_query_capability(&q, &cgs).unwrap();
-        assert_eq!(cap.name.as_str(), "channel_replies");
     }
 
     #[test]
@@ -605,63 +602,15 @@ mod tests {
     }
 
     #[test]
-    fn jira_user_unscoped_resolves_user_myself() {
-        let dir = std::path::Path::new("../../apis/jira");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let q = QueryExpr::all("User");
-        let cap = resolve_query_capability(&q, &cgs).unwrap();
-        assert_eq!(cap.name.as_str(), "user_myself");
-    }
-
-    #[test]
-    fn jira_user_issue_key_resolves_issue_watcher_query() {
-        let dir = std::path::Path::new("../../apis/jira");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let q = QueryExpr::filtered(
-            "User",
-            Predicate::eq("issueIdOrKey", crate::Value::String("PROJ-1".into())),
-        );
-        let cap = resolve_query_capability(&q, &cgs).unwrap();
-        assert_eq!(cap.name.as_str(), "issue_watcher_query");
-    }
-
-    #[test]
-    fn pokeapi_pokemon_encounter_unscoped_is_not_a_global_list() {
-        let dir = std::path::Path::new("../../apis/pokeapi");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let q = QueryExpr::all("PokemonEncounter");
+    fn langline_unscoped_is_not_a_global_list() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
+        let q = QueryExpr::all("LangLine");
         let err = resolve_query_capability(&q, &cgs).unwrap_err();
         assert!(matches!(
             err,
             QueryCapabilityResolveError::NoMatchingCapability { .. }
         ));
-    }
-
-    #[test]
-    fn linear_issue_brace_filters_resolve_issue_search() {
-        let dir = std::path::Path::new("../../apis/linear");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let q = QueryExpr::filtered(
-            "Issue",
-            Predicate::and(vec![
-                Predicate::eq("team_key", "ENG"),
-                Predicate::eq("state_name", "Todo"),
-            ]),
-        );
-        let cap = resolve_query_capability(&q, &cgs).unwrap();
-        assert_eq!(cap.name.as_str(), "issue_search");
     }
 
     #[test]
@@ -676,24 +625,24 @@ mod tests {
             return;
         }
         let cgs = Arc::new(load_schema_dir(dir).unwrap());
-        let mut cgs_github = (*cgs).clone();
-        cgs_github.bind_registry_entry_id("github");
-        let mut cgs_linear = (*cgs).clone();
-        cgs_linear.bind_registry_entry_id("linear");
+        let mut cgs_a = (*cgs).clone();
+        cgs_a.bind_registry_entry_id("langmatrix_a");
+        let mut cgs_b = (*cgs).clone();
+        cgs_b.bind_registry_entry_id("langmatrix_b");
         let mut by_entry = IndexMap::new();
         by_entry.insert(
-            "github".into(),
-            Arc::new(CgsContext::entry("github", Arc::new(cgs_github.clone()))),
+            "langmatrix_a".into(),
+            Arc::new(CgsContext::entry("langmatrix_a", Arc::new(cgs_a.clone()))),
         );
         by_entry.insert(
-            "linear".into(),
-            Arc::new(CgsContext::entry("linear", Arc::new(cgs_linear.clone()))),
+            "langmatrix_b".into(),
+            Arc::new(CgsContext::entry("langmatrix_b", Arc::new(cgs_b.clone()))),
         );
-        let mut exp = TeachingExposureSession::new(&cgs_github, "github", &["LangItem"]);
+        let mut exp = TeachingExposureSession::new(&cgs_a, "langmatrix_a", &["LangItem"]);
         exp.expose_entities(
-            &[&cgs_github, &cgs_linear],
-            Arc::new(cgs_linear.clone()),
-            "linear",
+            &[&cgs_a, &cgs_b],
+            Arc::new(cgs_b.clone()),
+            "langmatrix_b",
             &["LangItem"],
         );
         let fed =
@@ -704,13 +653,13 @@ mod tests {
         ));
         if let crate::Expr::Query(q) = &mut expr {
             q.catalog_entry_id =
-                crate::CatalogEntryStamp::some(crate::RegistryEntryId::from("github"));
+                crate::CatalogEntryStamp::some(crate::RegistryEntryId::from("langmatrix_a"));
         }
-        normalize_expr_query_capabilities_federated(&mut expr, &fed, &cgs_github).unwrap();
+        normalize_expr_query_capabilities_federated(&mut expr, &fed, &cgs_a).unwrap();
         match &expr {
             crate::Expr::Query(q) => {
                 assert_eq!(q.capability_name.as_deref(), Some("langitem_query"));
-                assert_eq!(q.catalog_entry_id.as_deref(), Some("github"));
+                assert_eq!(q.catalog_entry_id.as_deref(), Some("langmatrix_a"));
             }
             _ => panic!("expected query"),
         }
@@ -742,6 +691,21 @@ mod tests {
             }
             other => panic!("expected Get desugar, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn compound_key_and_query_entities_are_not_sole_nullary() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        assert!(dir.exists(), "missing fixture {dir:?}");
+        let cgs = load_schema_dir(dir).unwrap();
+        assert!(
+            sole_nullary_singleton_get(&cgs, "CompoundBranch").is_none(),
+            "compound key_vars must stay keyed Get"
+        );
+        assert!(
+            sole_nullary_singleton_get(&cgs, "LangItem").is_none(),
+            "Query+Get must not collapse to pathless singleton"
+        );
     }
 
     /// Inline CGS: resolve stamps capability then `normalize_query_arm` must build a

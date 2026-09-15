@@ -1,7 +1,7 @@
 //! Row suffix stream decomposition and lowering.
 
 use super::super::binding_continuation;
-use super::super::pipeline::compile_surface_nodes;
+use super::super::pipeline::{compile_row_expr_nodes, compile_surface_nodes};
 use super::super::prelude::*;
 use super::super::relation::try_split_single_hop_surface_chain;
 use super::super::schema_validate::{
@@ -247,7 +247,27 @@ pub(in crate::plasm_dag) fn lower_suffix_stream(
             continue;
         }
 
-        let node = row_suffix_to_compute(session, state, &out, suffix, &cur_id, &nid, full_rhs)?;
+        let suffix_owned;
+        let suffix_ref = if let RowSuffix::Filter { body } = suffix {
+            let scratch = compile_state_with_nodes(state, &out);
+            let (rewritten, mut prefix) =
+                compile_membership_filter_rhs(session, &scratch, binding_id, i, body)?;
+            out.append(&mut prefix);
+            suffix_owned = RowSuffix::Filter { body: rewritten };
+            &suffix_owned
+        } else if let RowSuffix::Union { rhs } = suffix {
+            let scratch = compile_state_with_nodes(state, &out);
+            let (rewritten, mut prefix) = compile_union_rhs(session, &scratch, binding_id, i, rhs)?;
+            out.append(&mut prefix);
+            suffix_owned = RowSuffix::Union { rhs: rewritten };
+            &suffix_owned
+        } else {
+            suffix
+        };
+
+        let scratch = compile_state_with_nodes(state, &out);
+        let node =
+            row_suffix_to_compute(session, &scratch, &out, suffix_ref, &cur_id, &nid, full_rhs)?;
         out.push(node);
         cur_id = nid;
     }
@@ -273,4 +293,69 @@ pub(in crate::plasm_dag) fn lower_suffix_stream(
     }
 
     Ok(out)
+}
+
+/// Compile parenthesized RA-13 membership RHS pipelines; rewrite them to synthetic bindings.
+fn compile_membership_filter_rhs(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    binding_id: &str,
+    suffix_i: usize,
+    body: &str,
+) -> Result<(String, Vec<DagNode>), String> {
+    let clauses = plasm_core::split_where_and_clauses(body)?;
+    let mut out_clauses = Vec::new();
+    let mut prefix = Vec::new();
+    let mut mem_i = 0usize;
+    for clause in clauses {
+        match plasm_core::parse_membership_clause(clause)? {
+            Some(m) => {
+                let label = match m.rhs {
+                    plasm_core::MembershipRhs::Binding(name) => name,
+                    plasm_core::MembershipRhs::Pipe(inner) => {
+                        let node = parse_expr_node(&inner)
+                            .map_err(|e| format!("membership RHS `{inner}`: {e}"))?;
+                        if node.apply.is_some() {
+                            return Err(
+                                "membership RHS cannot take `=>`; bind the pipeline first".into()
+                            );
+                        }
+                        let id = format!("__plasm_{binding_id}_s{suffix_i}_mem{mem_i}");
+                        mem_i += 1;
+                        let scratch = compile_state_with_nodes(state, &prefix);
+                        let (mut nodes, out_id) =
+                            compile_row_expr_nodes(session, &scratch, &id, &inner, &node.row)?;
+                        prefix.append(&mut nodes);
+                        out_id
+                    }
+                };
+                let op = if m.anti { "not in" } else { "in" };
+                out_clauses.push(format!("{} {op} {label}", m.field));
+            }
+            None => out_clauses.push(clause.to_string()),
+        }
+    }
+    Ok((out_clauses.join(", "), prefix))
+}
+
+/// Compile RA-14 `| union` RHS pipelines; rewrite them to synthetic bindings.
+fn compile_union_rhs(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    binding_id: &str,
+    suffix_i: usize,
+    rhs: &str,
+) -> Result<(String, Vec<DagNode>), String> {
+    match plasm_core::parse_closed_rowset_ref(rhs, "union")? {
+        plasm_core::MembershipRhs::Binding(name) => Ok((name, Vec::new())),
+        plasm_core::MembershipRhs::Pipe(inner) => {
+            let node = parse_expr_node(&inner).map_err(|e| format!("union RHS `{inner}`: {e}"))?;
+            if node.apply.is_some() {
+                return Err("union RHS cannot take `=>`; bind the pipeline first".into());
+            }
+            let id = format!("__plasm_{binding_id}_s{suffix_i}_un0");
+            let (nodes, out_id) = compile_row_expr_nodes(session, state, &id, &inner, &node.row)?;
+            Ok((out_id, nodes))
+        }
+    }
 }

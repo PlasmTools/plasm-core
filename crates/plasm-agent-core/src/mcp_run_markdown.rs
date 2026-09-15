@@ -66,10 +66,23 @@ impl ArtifactAccessMode {
         }
     }
 
-    pub fn row_limit_note(self, shown: usize, total: usize) -> String {
-        format!(
-            "\n\n_Showing {shown} of {total} rows — use {} on the snapshot URI for the full result._\n",
-            self.artifact_read_instruction()
+    /// Preview line: shown/snapshot relationship plus expression coverage.
+    pub fn coverage_preview_note(
+        self,
+        shown: usize,
+        snapshot_rows: usize,
+        coverage: plasm_runtime::ResultCoverage,
+        snapshot_uri: Option<&str>,
+        continue_handle: Option<&str>,
+    ) -> String {
+        format_coverage_preview_note(
+            shown,
+            snapshot_rows,
+            coverage,
+            true,
+            snapshot_uri,
+            continue_handle,
+            self,
         )
     }
 
@@ -191,20 +204,59 @@ pub(crate) fn mcp_preview_markdown_needed(
     artifact_backed_over_cap || full_char_count > policy.markdown_preview_chars
 }
 
-pub(crate) fn mcp_in_band_row_limit_note(
+pub(crate) fn mcp_coverage_preview_note(
     shown: usize,
-    total: usize,
+    snapshot_rows: usize,
+    coverage: plasm_runtime::ResultCoverage,
     has_snapshot: bool,
+    snapshot_uri: Option<&str>,
+    continue_handle: Option<&str>,
     artifact_access: ArtifactAccessMode,
 ) -> String {
-    if shown >= total {
-        return String::new();
-    }
+    format_coverage_preview_note(
+        shown,
+        snapshot_rows,
+        coverage,
+        has_snapshot,
+        snapshot_uri,
+        continue_handle,
+        artifact_access,
+    )
+}
+
+/// Pure formatter: shown/snapshot relationship + mandatory expression coverage sentence.
+///
+/// Live [`ExecutionResult`](plasm_runtime::ExecutionResult) paths always pass a concrete
+/// [`ResultCoverage`](plasm_runtime::ResultCoverage) — never `Option` / `None` shim.
+#[must_use]
+pub(crate) fn format_coverage_preview_note(
+    shown: usize,
+    snapshot_rows: usize,
+    coverage: plasm_runtime::ResultCoverage,
+    has_snapshot: bool,
+    snapshot_uri: Option<&str>,
+    continue_handle: Option<&str>,
+    artifact_access: ArtifactAccessMode,
+) -> String {
+    let mut line = format!(
+        "Showing {shown} of {snapshot_rows} snapshot rows. Result coverage: {}.",
+        coverage.as_str()
+    );
     if has_snapshot {
-        artifact_access.row_limit_note(shown, total)
-    } else {
-        format!("\n\n_Showing {shown} of {total} rows (no run snapshot stored)._\n")
+        if let Some(uri) = snapshot_uri {
+            line.push_str(&format!(
+                " Full snapshot: {} `{uri}`.",
+                artifact_access.artifact_read_instruction()
+            ));
+        }
+    } else if shown < snapshot_rows {
+        line.push_str(" (no run snapshot stored)");
     }
+    if let Some(handle) = continue_handle {
+        // Presentation paging is orthogonal to expression incompleteness.
+        line.push_str(&format!(" Continue (presentation paging): `{handle}`."));
+    }
+    format!("\n\n_{line}_\n")
 }
 
 /// One-line Markdown after an in-band result when the run snapshot must be fetched separately.
@@ -275,17 +327,26 @@ pub(crate) fn return_label_for_step(name: Option<&str>, node_id: Option<&str>) -
         .unwrap_or_else(|| "result".to_string())
 }
 
-pub(crate) fn slim_result_section_header(level: &str, label: &str, row_count: usize) -> String {
-    format!("{level}{label} ({row_count} rows)\n\n")
+pub(crate) fn slim_result_count_label(result: &ExecutionResult) -> String {
+    format!("{} rows", result.count)
+}
+
+pub(crate) fn slim_result_section_header_label(
+    level: &str,
+    label: &str,
+    count_label: &str,
+) -> String {
+    format!("{level}{label} ({count_label})\n\n")
 }
 
 pub(crate) fn mcp_compact_markdown_single(
     label: &str,
-    entity_rows: usize,
+    count_label: &str,
     omitted: &OmittedReferenceOnlyFields,
     lossy_summary_fields: &LossySummaryFieldNames,
 ) -> String {
-    let mut out = slim_result_section_header("## ", &format!("{label} (preview)"), entity_rows);
+    let mut out =
+        slim_result_section_header_label("## ", &format!("{label} (preview)"), count_label);
     out.push_str(MCP_MARKDOWN_PREVIEW_SINGLE_PROLOGUE);
     if !omitted.is_empty() {
         out.push_str("**Fidelity:** full values for ");
@@ -303,7 +364,7 @@ pub(crate) fn mcp_compact_markdown_single(
 pub(crate) fn mcp_compact_markdown_multi_line(
     total_steps: usize,
     total_entity_rows: usize,
-    per_step: &[(String, usize)],
+    per_step: &[(String, String)],
     omitted: &OmittedReferenceOnlyFields,
     lossy_summary_union: &LossySummaryFieldNames,
     truncated_step_uris: &[(usize, &RunArtifactHandle)],
@@ -317,9 +378,13 @@ pub(crate) fn mcp_compact_markdown_multi_line(
     out.push_str("**Total entity rows (sum):** ");
     out.push_str(&total_entity_rows.to_string());
     out.push_str("\n\n");
-    for (i, (label, nrows)) in per_step.iter().enumerate() {
+    for (i, (label, count_label)) in per_step.iter().enumerate() {
         let step_no = i + 1;
-        out.push_str(&slim_result_section_header("### ", label, *nrows));
+        out.push_str(&slim_result_section_header_label(
+            "### ",
+            label,
+            count_label,
+        ));
         if let Some((_, h)) = truncated_step_uris.iter().find(|(s, _)| *s == step_no) {
             out.push_str(&mcp_inline_run_snapshot_line(h, artifact_access));
             out.push('\n');
@@ -367,6 +432,91 @@ mod tests {
     use crate::run_artifacts::{artifact_http_path, plasm_run_resource_uri, RunArtifactId};
 
     #[test]
+    fn coverage_preview_describes_snapshot_and_expression() {
+        let note = ArtifactAccessMode::ResourcesRead.coverage_preview_note(
+            10,
+            25,
+            plasm_runtime::ResultCoverage::Partial,
+            Some("plasm://r/1"),
+            Some("l_page1"),
+        );
+        assert!(note.contains("Showing 10 of 25 snapshot rows"), "{note}");
+        assert!(note.contains("Result coverage: partial."), "{note}");
+        assert!(note.contains("Full snapshot:"), "{note}");
+        assert!(note.contains("plasm://r/1"), "{note}");
+        assert!(
+            note.contains("Continue (presentation paging): `l_page1`"),
+            "{note}"
+        );
+
+        let complete = ArtifactAccessMode::ResourcesRead.coverage_preview_note(
+            10,
+            80,
+            plasm_runtime::ResultCoverage::Complete,
+            Some("plasm://r/2"),
+            None,
+        );
+        assert!(
+            complete.contains("Showing 10 of 80 snapshot rows"),
+            "{complete}"
+        );
+        assert!(
+            complete.contains("Result coverage: complete."),
+            "{complete}"
+        );
+        assert!(!complete.contains("Continue:"), "{complete}");
+    }
+
+    #[test]
+    fn coverage_preview_always_includes_coverage_sentence() {
+        for cov in [
+            plasm_runtime::ResultCoverage::Complete,
+            plasm_runtime::ResultCoverage::Partial,
+            plasm_runtime::ResultCoverage::Unknown,
+        ] {
+            let full = format_coverage_preview_note(
+                3,
+                3,
+                cov,
+                false,
+                None,
+                None,
+                ArtifactAccessMode::ResourcesRead,
+            );
+            assert!(
+                full.contains(&format!("Result coverage: {}.", cov.as_str())),
+                "Full/empty path missing coverage: {full}"
+            );
+            let capped = format_coverage_preview_note(
+                2,
+                10,
+                cov,
+                false,
+                None,
+                None,
+                ArtifactAccessMode::ResourcesRead,
+            );
+            assert!(
+                capped.contains(&format!("Result coverage: {}.", cov.as_str())),
+                "Capped path missing coverage: {capped}"
+            );
+            let snap = format_coverage_preview_note(
+                0,
+                40,
+                cov,
+                true,
+                Some("plasm://r/x"),
+                None,
+                ArtifactAccessMode::ResourcesRead,
+            );
+            assert!(
+                snap.contains(&format!("Result coverage: {}.", cov.as_str())),
+                "SnapshotOnly path missing coverage: {snap}"
+            );
+        }
+    }
+
+    #[test]
     fn mcp_preview_markdown_needed_on_row_cap_with_snapshot() {
         let policy = McpResultTransportPolicy::default();
         assert!(mcp_preview_markdown_needed(true, 100, &policy));
@@ -383,8 +533,12 @@ mod tests {
     #[test]
     fn mcp_compact_markdown_single_preview_has_no_must_read_banner() {
         let omitted = OmittedReferenceOnlyFields::from_vec_sorted_dedup(vec!["body".into()]);
-        let s =
-            mcp_compact_markdown_single("sorted", 2, &omitted, &LossySummaryFieldNames::default());
+        let s = mcp_compact_markdown_single(
+            "sorted",
+            "2 rows",
+            &omitted,
+            &LossySummaryFieldNames::default(),
+        );
         assert!(s.starts_with("## sorted (preview)"));
         assert!(!s.contains("MUST"), "preview: {s}");
         assert!(!s.contains("Optional full JSON"), "preview: {s}");
@@ -398,7 +552,10 @@ mod tests {
         let s = mcp_compact_markdown_multi_line(
             2,
             5,
-            &[("first".into(), 3), ("second".into(), 2)],
+            &[
+                ("first".into(), "3 rows".into()),
+                ("second".into(), "2 rows".into()),
+            ],
             &omitted,
             &LossySummaryFieldNames::default(),
             &[(1, &h)],
@@ -424,7 +581,6 @@ mod tests {
             http_path: artifact_http_path("a", "b", &run_id),
             payload_len: 1,
             request_fingerprints: vec![],
-        operations: plasm_runtime::OperationLedger::empty(),
         }
     }
 
@@ -458,7 +614,6 @@ mod tests {
             http_path: artifact_http_path("ph", "sess", &run_id),
             payload_len: 100,
             request_fingerprints: vec!["abc".into()],
-        operations: plasm_runtime::OperationLedger::empty(),
         };
         let omitted = OmittedReferenceOnlyFields::default();
         let out = mcp_prepend_artifact_followup_markdown("## Result\n".into(), true, &[], &omitted);
@@ -485,7 +640,6 @@ mod tests {
             http_path: artifact_http_path("ph", "sess", &run_id),
             payload_len: 100,
             request_fingerprints: vec![],
-        operations: plasm_runtime::OperationLedger::empty(),
         };
         let omitted = OmittedReferenceOnlyFields::from_vec_sorted_dedup(vec!["body".into()]);
         let out =
@@ -510,7 +664,7 @@ mod tests {
         use indexmap::IndexMap;
         use plasm_compile::DecodedRelation;
         use plasm_core::{EntityKey, Ref, Value};
-        use plasm_runtime::{ OperationLedger,
+        use plasm_runtime::{
             CachedEntity, EntityCompleteness, ExecutionResult, ExecutionSource, ExecutionStats,
         };
 
@@ -532,6 +686,7 @@ mod tests {
             entities: vec![entity],
             count: 1,
             has_more: false,
+            coverage: plasm_runtime::ResultCoverage::Unknown,
             pagination_resume: None,
             paging_handle: None,
             source: ExecutionSource::Live,
@@ -543,7 +698,7 @@ mod tests {
                 ..Default::default()
             },
             request_fingerprints: vec![],
-        operations: plasm_runtime::OperationLedger::empty(),
+            operations: plasm_runtime::OperationLedger::empty(),
         };
         let formatted = mcp_format_execute_result_table_or_tsv(&result, None, None);
         let body = &formatted.tsv_body;

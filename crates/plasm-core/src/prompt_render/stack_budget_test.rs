@@ -44,7 +44,7 @@ fn teaching_first_wave_render_survives_two_mib_worker_stack_lang_item() {
             return;
         }
         let cgs = load_schema_dir(&dir).expect("plasm_language_matrix");
-        let exposure = TeachingExposureSession::new(&cgs, "matrix", &["LangItem"]);
+        let exposure = TeachingExposureSession::new(&cgs, "langmatrix", &["LangItem"]);
         let pipeline = PromptPipelineConfig::default();
         let out = pipeline.render_teaching_first_wave_for_session(&cgs, &exposure, None);
         assert!(

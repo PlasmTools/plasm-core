@@ -58,7 +58,11 @@ export function createDefaultHostTransport(options?: HostTransportOptions): Host
           }
         }
         if (request.requireHostAuth && !headers.get("authorization")?.trim()) {
-          throw new Error("Scoped host authentication is not configured");
+          span.setAttribute("plasm.transport.status", 401);
+          return {
+            status: 401,
+            body: JSON.stringify({ error: "Scoped host authentication is not configured" }),
+          };
         }
         if (request.body != null && !headers.has("content-type")) {
           headers.set("content-type", "application/json; charset=utf-8");
@@ -73,7 +77,17 @@ export function createDefaultHostTransport(options?: HostTransportOptions): Host
           init.body = request.body;
         }
 
-        const response = await fetchImpl(request.url, init);
+        let response: Response;
+        try {
+          response = await fetchImpl(request.url, init);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          span.setAttribute("plasm.transport.status", 599);
+          return {
+            status: 599,
+            body: JSON.stringify({ error: message }),
+          };
+        }
         const text = await response.text();
         const nextUrl = response.headers.get("link")?.match(/<([^>]+)>;\s*rel="?next"?/i)?.[1];
 

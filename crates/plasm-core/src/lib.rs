@@ -121,6 +121,7 @@ pub mod prerequisites;
 pub mod program_string_template;
 pub mod prompt_pipeline;
 pub mod prompt_render;
+pub mod query_defaults;
 pub mod query_resolve;
 pub mod relation_nav;
 pub mod relation_segment;
@@ -128,8 +129,10 @@ pub mod relation_validation_expr;
 pub mod resolved_identity;
 pub mod result_gloss;
 pub mod row_composition;
+pub mod row_membership;
 pub mod row_plan;
 pub mod row_predicate;
+pub mod row_union;
 pub mod rowset;
 pub mod schema;
 pub mod schema_overlay;
@@ -139,6 +142,7 @@ pub mod step_semantics;
 pub mod string_unescape;
 pub mod summary_render;
 pub mod symbol_tuning;
+pub mod taught_seat;
 pub mod teaching_term;
 pub mod template_ref;
 pub mod temporal;
@@ -230,7 +234,8 @@ pub use path_env::{
 };
 pub use phrase_ident::{
     is_identifier_phrase, lower_program_phrase_idents_in_expr,
-    lower_program_phrase_idents_in_expr_federated, PhraseIdentFieldContext,
+    lower_program_phrase_idents_in_expr_federated, quoted_literal_hint,
+    unquote_single_string_literal, PhraseIdentFieldContext,
 };
 pub use plan_commit::{PlanCommitId, PlanCommitRef};
 pub use plasm_monad::{
@@ -238,7 +243,7 @@ pub use plasm_monad::{
     plasm_bind_step, plasm_map_step, plasm_parallel_return, plasm_pure_step, AggregateFunction,
     AggregateSpec, ArithOp, BindingName, CompEquivDiff, CompEquivResult, ComputeOp,
     ComputeTemplate, DeriveKind, DerivePayload, DeriveTemplate, EffectBarrier, EffectClass,
-    EffectTemplate, FieldPath, FlatMapEffectPayload, FlatMapRelationPayload, InputCardinality,
+    EffectTemplate, FieldPath, FlatMapApplyPayload, FlatMapRelationPayload, InputCardinality,
     InvokePayload, MapPayload, OutputName, PlanDataInput, PlanExprIr, PlanExprTemplate,
     PlanInputBinding, PlanPredicate, PlanPredicateOp, PlanQualifiedEntityKey,
     PlanRelationTraversal, PlanResultUse, PlasmBindGraph, PlasmComp, PlasmCompArtifact,
@@ -271,6 +276,9 @@ pub use prompt_render::TeachingPromptSource;
 pub use prompt_render::PLASM_TOOL_DESCRIPTION;
 pub use prompt_render::ROW_COMPUTE_EXEMPLAR_THRESHOLD;
 pub use prompt_render::TSV_TEACHING_TABLE_HEADER;
+pub use query_defaults::{
+    apply_required_selection_defaults, apply_required_selection_defaults_in_expr,
+};
 pub use query_resolve::{
     normalize_expr_query_capabilities, normalize_expr_query_capabilities_federated,
     required_scope_param_names, resolve_query_capability, sole_nullary_singleton_get,
@@ -280,6 +288,10 @@ pub use resolved_identity::{IdentityProjectionCtx, ResolvedIdentity};
 pub use row_composition::{
     resolve_relation_target_id, row_identity_from_parts, row_identity_from_ref, IdEncoding,
     PreflightToken, ResolutionHint, RowIdentity, RowProvenance, RowState, RowSuffix,
+};
+pub use row_membership::{
+    parse_closed_rowset_ref, parse_membership_clause, split_where_and_clauses, MembershipRhs,
+    RowMembership,
 };
 pub use row_plan::{
     fold_compute_ops, parse_with_body, CatalogFilter, CollectCardinality, CollectReason,
@@ -292,6 +304,7 @@ pub use row_predicate::{
     entity_def_for_row_predicate, parse_row_predicate_list, row_predicate_from_expr,
     type_check_row_predicate, RowComparison, RowPredicate, RowPredicateTypeCtx,
 };
+pub use row_union::union_rowsets;
 pub use rowset::{
     normalize_query_expr_to_rowset, BackendSelection, BackendSelectionBinding, InvocationControls,
     ParentScope, ResolvedRowset, RowSource, RowTerminal, RowTransform,
@@ -313,9 +326,7 @@ pub use wire_coercion::{
 };
 pub mod relation_materialize;
 pub mod view_embed_proof;
-pub use capability_input::{
-    validate_capability_invocation_input, validate_capability_invocation_input_with_path_vars,
-};
+pub use capability_input::validate_capability_invocation_input;
 pub use expr_surface_render::{
     render_expr_surface, render_expr_surface_federated, wire_surface_from_teaching_line,
     wire_surface_from_teaching_session_line,
@@ -326,10 +337,13 @@ pub use money::{
 };
 pub use program_string_template::{
     contains_dollar_interpolation, contains_minijinja_markers,
-    find_dollar_interpolation_in_minijinja_body, for_each_interpolation_path, interpolation_paths,
-    interpolation_roots, is_shared_minijinja_filter, register_shared_minijinja_filters,
-    reject_dollar_interpolation, render_program_string, validate_interpolation_syntax,
-    ProgramStringError, DEFAULT_MAX_INTERPOLATED_LEN, SHARED_MINIJINJA_FILTERS,
+    find_dollar_interpolation_in_minijinja_body, flatten_row_fields_into_ctx,
+    for_each_interpolation_path, interpolation_paths, interpolation_roots,
+    is_minijinja_template_builtin, is_shared_minijinja_filter, register_shared_minijinja_filters,
+    reject_dollar_interpolation, render_minijinja, render_program_string,
+    shared_minijinja_environment, template_binding_mj_value, unified_template_context,
+    validate_interpolation_syntax, CompiledProgramString, ProgramStringError,
+    DEFAULT_MAX_INTERPOLATED_LEN, MINIJINJA_TEMPLATE_BUILTINS, SHARED_MINIJINJA_FILTERS,
 };
 pub use relation_materialize::{
     extract_from_parent_get_value, flatten_from_parent_get_source_rows,
@@ -343,24 +357,23 @@ pub use relation_segment::{
 };
 pub use relation_validation_expr::relation_validation_expr;
 pub use schema::{
-    body_value_without_mapping_path_vars, capability_is_zero_arity_action,
-    capability_is_zero_arity_invoke, capability_mapping_is_view_transport,
-    capability_method_label_kebab, capability_template_all_var_names, flow_control_param_names,
-    is_flow_control_param_name, template_domain_exemplar_requires_entity_anchor,
-    template_invoke_requires_explicit_anchor_id, AgentPresentation, ArrayItemsSchema,
-    AttachmentMediaKind, AuthScheme, BackendSelectionSchema, CapabilityInputs, CapabilityKind,
-    CapabilityManifest, CapabilityMapping, CapabilitySchema, CapabilityTemplateJson, Cardinality,
-    CgsCapabilityIndex, CrossFieldRule, CrossFieldRuleType, DataClassDimension, DataClassName,
-    DataClassSchema, DataClassSeverity, DiscoveryCapabilityHints, DiscoveryEntityHints,
-    DiscoveryRelationHints, EmbedOnMissPolicy, EntityDef, FieldDeriveRule, FieldSchema,
-    FieldValueKind, IdFormat, InputFieldSchema, InputFieldWire, InputSchema, InputType,
-    InputValidation, InputVariantSchema, InvocationControlsSchema, JsonPathSegment,
-    NamedValueSchema, OauthDefaultScopeSet, OauthExtension, OauthRequirements, OauthScopeEntry,
-    OutputSchema, OutputType, ParentScopeSchema, RelationMaterialization, RelationSchema,
-    RelationScopedFallback, ResourceSchema, ScopeAggregateKeyPolicy, ScopeRequirement,
-    SinkClassName, ValueDomainKey, ValueDomainSlot, ViewDefinition, ViewNodeSpec,
-    ViewOutputBinding, ViewParamBinding, ViewRelationBinding, ViewRelationOutputSpec,
-    ViewScopeInject, ViewScopeParam, WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
+    capability_is_zero_arity_action, capability_is_zero_arity_invoke,
+    capability_mapping_is_view_transport, capability_method_label_kebab,
+    capability_template_all_var_names, flow_control_param_names, is_flow_control_param_name,
+    AgentPresentation, ArrayItemsSchema, AttachmentMediaKind, AuthScheme, BackendSelectionSchema,
+    CapabilityInputs, CapabilityKind, CapabilityManifest, CapabilityMapping, CapabilityReceiver,
+    CapabilitySchema, CapabilityTemplateJson, Cardinality, CgsCapabilityIndex, CrossFieldRule,
+    CrossFieldRuleType, DataClassDimension, DataClassName, DataClassSchema, DataClassSeverity,
+    DiscoveryCapabilityHints, DiscoveryEntityHints, DiscoveryRelationHints, EmbedOnMissPolicy,
+    EntityDef, FieldDeriveRule, FieldSchema, FieldValueKind, IdFormat, InputFieldSchema,
+    InputFieldWire, InputSchema, InputType, InputValidation, InputVariantSchema,
+    InvocationControlsSchema, JsonPathSegment, NamedValueSchema, OauthDefaultScopeSet,
+    OauthExtension, OauthRequirements, OauthScopeEntry, OutputSchema, OutputType,
+    ParentScopeSchema, RelationMaterialization, RelationSchema, RelationScopedFallback,
+    ResourceSchema, ScopeAggregateKeyPolicy, ScopeRequirement, SinkClassName, ValueDomainKey,
+    ValueDomainSlot, ViewDefinition, ViewNodeSpec, ViewOutputBinding, ViewParamBinding,
+    ViewRelationBinding, ViewRelationOutputSpec, ViewScopeInject, ViewScopeParam,
+    WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
 };
 pub use schema_overlay::{
     build_decode_scope_key, build_schema_overlay, overlay_bind_cache_suffix, overlay_collect_rows,
@@ -406,8 +419,8 @@ pub use typed_invoke::{InvokeInputPayload, TypedInvokeInput};
 pub use typed_literal::{TypedComparisonValue, TypedLiteral, TypedLiteralError};
 pub use typed_row::TypedFieldValue;
 pub use value::{
-    CompOp, FieldType, PlasmInputRef, TemporalWireFormat, Value, ValueTableCellBudget,
-    ValueWireFormat, PLASM_ATTACHMENT_KEY,
+    CompOp, FieldType, GetScalarExtract, PlasmInputRef, TemporalWireFormat, Value,
+    ValueTableCellBudget, ValueWireFormat, PLASM_ATTACHMENT_KEY,
 };
 pub use value_domain::{
     compile_pattern, parse_type_name, validate_constraints_on_number,

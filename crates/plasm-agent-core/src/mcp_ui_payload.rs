@@ -183,6 +183,7 @@ const UI_STEP_INLINE_KEYS: &[&str] = &[
     "column_schema",
     "lossy_summary_fields",
     "artifact_complete",
+    "coverage",
     "dict_ref",
 ];
 

@@ -205,6 +205,9 @@ pub(crate) fn render_compute_template(compute: &ComputeTemplate) -> String {
                 .join(", "),
             template.chars().count()
         ),
+        ComputeOp::Union { other } => {
+            format!("union {} | {}", compute.source, other.as_str())
+        }
     }
 }
 
@@ -378,6 +381,7 @@ pub(crate) fn render_predicate_op(op: crate::plasm_plan::PlanPredicateOp) -> &'s
         crate::plasm_plan::PlanPredicateOp::Gte => ">=",
         crate::plasm_plan::PlanPredicateOp::Contains => "~",
         crate::plasm_plan::PlanPredicateOp::In => " in ",
+        crate::plasm_plan::PlanPredicateOp::NotIn => " not in ",
         crate::plasm_plan::PlanPredicateOp::Exists => " exists ",
     }
 }

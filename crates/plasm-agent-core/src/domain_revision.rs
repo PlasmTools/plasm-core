@@ -158,8 +158,8 @@ mod tests {
 
     #[test]
     fn plan_commit_policy_hot_ahead_reuses_pins_when_inputs_unchanged() {
-        let outbound = HashMap::from([("github".into(), "kv".into())]);
-        let session_entries = ["github".into()];
+        let outbound = HashMap::from([("langmatrix".into(), "kv".into())]);
+        let session_entries = ["langmatrix".into()];
         assert_eq!(
             plan_commit_persist_policy(
                 DomainRevision::new(3),
@@ -179,8 +179,8 @@ mod tests {
 
     #[test]
     fn plan_commit_policy_hot_ahead_materializes_when_federation_grew() {
-        let session_entries = ["github".into(), "linear".into()];
-        let durable_entries = ["github".into()];
+        let session_entries = ["langmatrix_a".into(), "langmatrix_b".into()];
+        let durable_entries = ["langmatrix_a".into()];
         assert_eq!(
             plan_commit_persist_policy(
                 DomainRevision::new(2),

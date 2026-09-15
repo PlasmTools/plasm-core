@@ -83,6 +83,16 @@ pub(crate) async fn materialize_for_each_node(
     let scoped_es =
         entry_scoped_execute_session(es, Some(&for_each.effect_template.qualified_entity))?;
     let source_rows = materialized_rows(es, st, session_id, materialized, &for_each.source).await?;
+    let source_identities = materialized
+        .get(&for_each.source)
+        .map(|source| {
+            source
+                .row_identities
+                .iter()
+                .map(|identity| identity.as_ref().map(|value| value.reference.to_string()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     let mut input_rows =
         materialized_result_use_inputs(materialized, &for_each_cross_uses(for_each), None)?;
     let wire_coercion_by_alias = wire_coercion_by_alias_from_inputs(es, &mut input_rows)?;
@@ -106,12 +116,13 @@ pub(crate) async fn materialize_for_each_node(
             .get(row_index)
             .cloned()
             .unwrap_or_else(|| "<ir>".to_string());
-        super::super::plan_fanout_parallel::push_row_job(
+        super::super::plan_fanout_parallel::push_row_job_with_source(
             &mut jobs,
             node_index,
             row_index,
             expr_label,
             parsed_expr,
+            source_identities.get(row_index).cloned().flatten(),
         );
     }
     let fold = super::super::plan_fanout_parallel::execute_row_fanout(

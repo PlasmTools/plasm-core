@@ -241,6 +241,7 @@ capabilities:
     kind: update
     entity: Page
   page_trash:
+    receiver: {kind: entity, entity: Page}
     description: 'Move a page to trash (in_trash: true). Use page_update to restore.'
     kind: action
     entity: Page
@@ -248,6 +249,7 @@ capabilities:
       type: side_effect
       description: 'Move a page to trash (in_trash: true). Use page_update to restore.'
   page_get_markdown:
+    receiver: {kind: entity, entity: Page}
     description: 'Retrieve full page content as Enhanced Markdown in a single call.
       Populates the Page entity''s markdown and truncated fields via additive merge
       — the page''s structural metadata (url, timestamps, etc.) is preserved. Requires
@@ -261,6 +263,7 @@ capabilities:
     - markdown
     - truncated
   page_update_markdown:
+    receiver: {kind: entity, entity: Page}
     description: "Update page content using Enhanced Markdown. Supports:\n  update_content\
       \  — targeted search-and-replace (recommended)\n  replace_content — replace\
       \ entire page content\nPopulates the Page entity's markdown and truncated fields\

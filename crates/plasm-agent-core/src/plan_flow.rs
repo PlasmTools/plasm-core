@@ -86,6 +86,24 @@ impl NodeFlowFacts {
         }
         out
     }
+
+    pub fn join(&mut self, other: &NodeFlowFacts) {
+        self.residual.join(&other.residual);
+        for (path, facts) in &other.columns {
+            self.columns.entry(path.clone()).or_default().join(facts);
+        }
+    }
+
+    /// RA-14: either input row may appear in the result, so every column and the
+    /// residual receive the join of both inputs' `row_join`.
+    pub fn union_join(&mut self, other: &NodeFlowFacts) {
+        self.join(other);
+        let both = self.row_join();
+        self.residual = both.clone();
+        for facts in self.columns.values_mut() {
+            facts.join(&both);
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -648,6 +666,11 @@ impl<'a, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, P> {
             | ComputeOp::DedupeBy { .. }
             | ComputeOp::With { .. } => {
                 out = source_facts.clone();
+            }
+            ComputeOp::Union { other } => {
+                let right = self.facts.get(other.as_str()).cloned().unwrap_or_default();
+                out = source_facts.clone();
+                out.union_join(&right);
             }
             ComputeOp::GroupBy { aggregates, .. } | ComputeOp::Aggregate { aggregates, .. } => {
                 for agg in aggregates {

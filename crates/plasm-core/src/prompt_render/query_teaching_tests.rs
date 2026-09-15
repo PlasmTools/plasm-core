@@ -47,7 +47,6 @@ fn assert_meaning_cells_no_legacy_opt_prefix(tsv: &str) {
 /// assert every concrete (non-placeholder, non-metadata) `plasm_expr` cell round-trips the parser.
 #[test]
 fn teaching_tsv_exemplars_round_trip_parser() {
-    use crate::expr_parser::parse_with_cgs_layers_program;
     use crate::PromptPipelineConfig;
 
     let dir = matrix_fixture_dir();
@@ -94,13 +93,19 @@ fn teaching_tsv_exemplars_round_trip_parser() {
         } else {
             expr.to_string()
         };
-        let stack = [crate::CgsLayer::unset(&cgs)];
-        parse_with_cgs_layers_program(&expr_for_check, &stack, sym_map.clone(), None, false)
-            .unwrap_or_else(|e| {
-                panic!(
-                    "teaching exemplar must round-trip the parser: `{expr}` (check `{expr_for_check}`) -> {e:?}"
-                )
-            });
+        let mut cache = HashMap::new();
+        let seed = prompt_line_valid_cache_seed_cgs(&cgs);
+        assert!(
+            super::line_validate::domain_line_validate_cached(
+                &mut cache,
+                seed,
+                &cgs,
+                &expr_for_check,
+                Some(&sym_map),
+            )
+            .is_some(),
+            "teaching exemplar must validate (Expr or program-stratum fanout): `{expr}` (check `{expr_for_check}`)"
+        );
         checked += 1;
     }
     assert!(
@@ -132,33 +137,29 @@ fn prompt_matrix_tsv_optional_legend_is_compact() {
 }
 
 #[test]
-fn proof_document_teaching_optional_legend_is_compact() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/proof");
-    if !dir.is_dir() {
-        return;
-    }
-    let cgs = load_schema_dir(&dir).expect("proof");
-    let tsv = super::render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(Some("Document")));
+fn prompt_matrix_teaching_optional_legend_is_compact() {
+    let dir = matrix_fixture_dir();
+    let cgs = load_schema_dir(&dir).expect("plasm_prompt_matrix");
+    let tsv = super::render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
     assert_meaning_cells_no_legacy_opt_prefix(&tsv);
     assert!(
         tsv.contains("optional"),
-        "proof invoke rows with optional tails should mark optionality in Meaning"
+        "invoke rows with optional tails should mark optionality in Meaning"
     );
 }
 
 #[test]
-fn github_pr_merge_zero_arity_invoke_omits_optional_meaning_when_schema_loads() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/github");
-    if !dir.is_dir() {
-        return;
-    }
-    let cgs = load_schema_dir(&dir).expect("github");
+fn langitem_ping_zero_arity_invoke_omits_optional_meaning() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/plasm_language_matrix");
+    let mut cgs = load_schema_dir(&dir).expect("plasm_language_matrix");
+    cgs.bind_registry_entry_id("langmatrix");
     let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
     let mut cache = HashMap::new();
     let mut gloss = None;
     let block = collect_entity_teaching_block(
         &cgs,
-        "PullRequest",
+        "LangItem",
         Some(&map),
         None,
         true,
@@ -166,32 +167,32 @@ fn github_pr_merge_zero_arity_invoke_omits_optional_meaning_when_schema_loads() 
         prompt_line_valid_cache_seed_cgs(&cgs),
         &mut gloss,
         None,
-        None,
+        Some("langmatrix"),
     );
-    let merge = block
+    let ping = block
         .teaching_rows
         .iter()
-        .find(|r| r.meta.source_capability.as_deref() == Some("pr_merge"))
-        .expect("expected pr_merge teaching row on PullRequest");
+        .find(|r| r.meta.source_capability.as_deref() == Some("langitem_ping"))
+        .expect("expected langitem_ping teaching row on LangItem");
     assert!(
-        merge.teaching_expr.expression.contains("()"),
-        "expected zero-arity merge teaching row: {:?}",
-        merge.teaching_expr.expression
+        ping.teaching_expr.expression.contains("()"),
+        "expected zero-arity ping teaching row: {:?}",
+        ping.teaching_expr.expression
     );
     assert!(
-        merge.teaching_expr.legend.optional_params.is_empty(),
-        "zero-arity merge must not gloss optional when expr lists no optional params: {:?}",
-        merge.teaching_expr.legend.optional_params
+        ping.teaching_expr.legend.optional_params.is_empty(),
+        "zero-arity ping must not gloss optional when expr lists no optional params: {:?}",
+        ping.teaching_expr.legend.optional_params
     );
     let tsv = super::render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
-    let ms = map.method_sym_for("", "PullRequest", "pr_merge");
-    let merge_line = tsv
+    let ms = map.method_sym_for("langmatrix", "LangItem", "langitem_ping");
+    let ping_line = tsv
         .lines()
         .find(|l| l.contains(&format!(".{ms}()")))
         .unwrap_or_else(|| panic!("expected .{ms}() in full language card"));
     assert!(
-        merge_line.contains("Merge a pull request"),
-        "rendered merge Meaning must include capability prose: {merge_line}"
+        ping_line.to_ascii_lowercase().contains("ping"),
+        "rendered ping Meaning must include capability prose: {ping_line}"
     );
 }
 
@@ -370,7 +371,7 @@ fn prompt_matrix_tsv_teaching_surface_invariants() {
     );
 }
 
-/// Prompt-size guard replacing the deleted full `apis/github` insta snapshot.
+/// Prompt-size guard for the full `plasm_prompt_matrix` language-card TSV.
 #[test]
 fn prompt_matrix_full_tsv_size_within_baseline() {
     let dir = matrix_fixture_dir();
@@ -390,17 +391,15 @@ fn prompt_matrix_full_tsv_size_within_baseline() {
 }
 
 #[test]
-fn seeded_pokemon_teaching_includes_bare_query_row() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
-    if !dir.is_dir() {
-        return;
-    }
-    let mut cgs = load_schema_dir(&dir).expect("pokeapi");
-    cgs.bind_registry_entry_id("pokeapi");
+fn seeded_langitem_teaching_includes_bare_query_row() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/plasm_language_matrix");
+    let mut cgs = load_schema_dir(&dir).expect("plasm_language_matrix");
+    cgs.bind_registry_entry_id("langmatrix");
     let delta = crate::capability_exposure::explicit_entity_capability_surface(
         &cgs,
-        "pokeapi",
-        &["Pokemon".to_string()],
+        "langmatrix",
+        &["LangItem".to_string()],
     )
     .expect("explicit fixture capability exposure");
     assert!(
@@ -408,17 +407,17 @@ fn seeded_pokemon_teaching_includes_bare_query_row() {
             .required
             .capabilities
             .iter()
-            .any(|c| c.capability.as_str() == "pokemon_query"),
-        "seeded Pokemon must expose pokemon_query on surface"
+            .any(|c| c.capability.as_str() == "langitem_query"),
+        "seeded LangItem must expose langitem_query on surface"
     );
-    let map =
-        symbol_map_for_prompt(&cgs, FocusSpec::SeedsExact(&["Pokemon"]), true).expect("symbol map");
-    let pokemon_es = map.entity_sym_for("", "Pokemon");
+    let map = symbol_map_for_prompt(&cgs, FocusSpec::SeedsExact(&["LangItem"]), true)
+        .expect("symbol map");
+    let item_es = map.entity_sym_for("langmatrix", "LangItem");
     let mut line_valid_cache = HashMap::new();
     let mut gloss_emit_none = None;
     let block = collect_entity_teaching_block(
         &cgs,
-        "Pokemon",
+        "LangItem",
         Some(&map),
         None,
         false,
@@ -426,15 +425,22 @@ fn seeded_pokemon_teaching_includes_bare_query_row() {
         prompt_line_valid_cache_seed_cgs(&cgs),
         &mut gloss_emit_none,
         Some(&delta.required),
-        Some("pokeapi"),
+        Some("langmatrix"),
     );
-    let bare_query = block
-        .teaching_rows
-        .iter()
-        .any(|r| r.teaching_expr.expression.as_str() == pokemon_es.as_str());
+    let bare_query = block.teaching_rows.iter().any(|r| {
+        let expr = r.teaching_expr.expression.trim();
+        let stripped = match parse_trailing_projection_bracket(expr) {
+            Some(br) => expr
+                .strip_suffix(br.as_str())
+                .map(str::trim)
+                .unwrap_or(expr),
+            None => expr,
+        };
+        stripped == item_es.as_str()
+    });
     assert!(
         bare_query,
-        "seeded Pokemon with pokemon_query on surface must teach bare query row `{pokemon_es}`; exprs={:?}",
+        "seeded LangItem with langitem_query on surface must teach bare query row `{item_es}`; exprs={:?}",
         block
             .teaching_rows
             .iter()
@@ -567,22 +573,20 @@ fn simple_string_id_identity_row_uses_id_hole() {
 }
 
 #[test]
-fn linear_workflow_state_scoped_query_validates_with_homograph_p() {
-    use crate::loader::load_schema_dir_unvalidated;
+fn langitem_search_scoped_query_validates_with_homograph_p() {
     use crate::prompt_render::line_validate::{
         domain_line_validate_cached, prompt_line_valid_cache_seed_cgs,
     };
     use crate::symbol_tuning::{symbol_map_for_prompt, FocusSpec};
 
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/linear");
-    if !dir.is_dir() {
-        return;
-    }
-    let cgs = load_schema_dir_unvalidated(&dir).expect("linear");
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/plasm_language_matrix");
+    let mut cgs = load_schema_dir(&dir).expect("plasm_language_matrix");
+    cgs.bind_registry_entry_id("langmatrix");
     let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("map");
-    let es = map.entity_sym_for("", "WorkflowState");
+    let es = map.entity_sym_for("langmatrix", "LangItem");
     let p_team =
-        map.ident_sym_cap_param_for("", "WorkflowState", "workflow_state_query", "team_key");
+        map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_search", "team_key");
     assert_eq!(
         p_team, "team_key",
         "team_key scope param teaches as catalog wire name"
@@ -592,10 +596,10 @@ fn linear_workflow_state_scoped_query_validates_with_homograph_p() {
     let seed = prompt_line_valid_cache_seed_cgs(&cgs);
     assert!(
         domain_line_validate_cached(&mut cache, seed, &cgs, &expr, Some(&map)).is_some(),
-        "WorkflowState scoped query must validate with homograph p#: {expr}"
+        "LangItem scoped search must validate with homograph p#: {expr}"
     );
     assert!(
-        super::domain_example_line_count(&cgs, "WorkflowState", Some(map.as_ref())) > 0,
-        "WorkflowState must synthesize teaching lines"
+        super::domain_example_line_count(&cgs, "LangItem", Some(map.as_ref())) > 0,
+        "LangItem must synthesize teaching lines"
     );
 }

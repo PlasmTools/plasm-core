@@ -124,6 +124,7 @@ impl PlanLineExecuteShared {
                 transport_origin: http_backend_for_root.clone(),
                 ui_origin: http_backend_for_root,
                 catalog_bind,
+                login_access_token_tail: ExecuteSessionMaterial::empty_login_access_token_tail(),
             })),
             cancel: self.cancel.clone(),
             graph_page_spill: self.graph_page_spill.clone(),

@@ -351,6 +351,7 @@ capabilities:
     - version
     - last_updated
   ruleset_entrypoint_update:
+    receiver: {kind: entity, entity: RulesetEntrypoint}
     description: Point a phase entrypoint at a different ruleset—requires zone WAF
       edit on the token.
     kind: action

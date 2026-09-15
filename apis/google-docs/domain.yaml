@@ -95,6 +95,7 @@ capabilities:
           required: false
           sink_class: external_publish
   documents_batchUpdate:
+    receiver: {kind: entity, entity: Document}
     description: Apply one or more structured updates (BatchUpdateDocumentRequest) to a document.
     kind: action
     entity: Document

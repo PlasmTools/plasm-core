@@ -62,7 +62,7 @@ Each entry in `comp.steps` is a tagged serde object (`kind` discriminant). Wire 
 | `map` | Row compute (filter, sort, group, derived columns, …) | `compute` (`ComputeTemplate`) |
 | `derive` | Per-row map over a source | `derive` (`DeriveTemplate`: `source`, `item_binding`, `inputs`, `value`) |
 | `flat_map_relation` | Relation fanout (`>>=`) | `relation` (`PlanRelationTraversal`: `source`, `relation`, `target`, `ir`, `binding_proofs`, `materialize`) |
-| `flat_map_effect` | `for_each` side effects | `source`, `item_binding`, `effect_template`, `projection`, `predicates`, `approval` |
+| `flat_map_apply` | Typed Get, Query, Search, or operation applied once per source row | `source`, `item_binding`, `effect_template`, `projection`, `predicates`, `approval` |
 
 Input wiring for templates uses **`bind.holes`** (prior step outputs); row sources for map/derive/relation/effect use **`bind.primary`**. TypeScript mirror: [`apps/plan-dag/src/comp-types.ts`](https://github.com/PlasmTools/plasm-core/blob/main/apps/plan-dag/src/comp-types.ts).
 
@@ -479,19 +479,18 @@ For multi-line `program` fields in JSON (HTTP execute, MCP `plasm` / `plasm_run`
 
 ---
 
-## Row-to-Text Templates, `.content`, and Minijinja
+## Templates (one law — PLP-12)
 
-**Surface:** `source[field,…] <<TAG` newline body newline closing `TAG`, or `source <<TAG` when columns can be inferred. Comma-separated **in-scope binding labels** before `<<TAG` (`label1,label2 <<TAG`) merge additional bindings into the Minijinja context (first label remains the primary `rows` source). The compiler projects each source row to the selected fields, then evaluates the template.
+**`=>` applies once per row. A plain template evaluates once.** There is no collection-wide template application and no implicit `rows` list in per-row rendering. A program binding actually named `rows` remains an ordinary binding.
 
-**Template engine:** bodies are **Minijinja** templates. The projected source rows are bound as **`rows`**: a JSON array of objects, one entry per source row, with keys taken from the projected **wire field names**. When the render source is a simple in-scope binding label, the **same array is also bound under that label** (e.g. `report = sorted <<TAG` → iterate `{% for r in sorted %}` or `{% for r in rows %}`). **Cross-binding** (`report = a,b <<TAG`): each listed label is also bound by name — singleton/get rows as a **row object** for `{{ a.field }}`; plural rows as an **array** for `{% for r in b %}`. The body is evaluated **once** over the whole list (not a per-row map). Typical patterns:
+| Form | Evaluation | Result |
+|---|---|---|
+| `body = <<TAG … TAG` | Once, named program bindings (no implicit current row) | String; pass `param=body` |
+| `rendered = items => <<TAG … TAG` | Once per input row | 0/1/N render records `{content}` |
+| `items => _.m1(param=<<TAG … TAG)` | Template once per invocation, that row’s scope | Existing operation result |
+| Minijinja `{% for item in items %}` | Explicit iteration inside **one** template evaluation | Part of that template’s single string |
 
-- `{{ rows | length }}`
-- `{% for r in rows %}{{ r.sha }} — {{ r.message }}{% endfor %}`
-- Per-field access matching your projection list; nullable fields: `{{ r.power or "—" }}` or `{{ r.power | default("—", true) }}`.
-
-Free-form text **without** loops works only where the body does **not** accidentally contain Jinja fragments (`{{`, `{%`, `{#`). Use **`{% raw %}…{% endraw %}`** for passages that must contain those sequences literally. The output string may be **any** textual format—plain text, markdown, HTML fragments, CSV-like lines, JSON **text**, etc.—not markdown-specific.
-
-**Program value shape:** the bound result is one row equivalent to `{"content": "<rendered string>"}`. When a later dotted-call parameter is typed as **String** (or similar scalar text), pass **`binding.content`**, not **`binding`**, so the type checker receives a string rather than an object.
+A referenced name that is both a current-row field and a program binding is a compile-time ambiguity error. Missing names are template errors. `.content` is defined only on per-row render records, and only when Γ proves a singleton. Whole-collection text is a plain template, not `a,b => <<TAG`.
 
 ---
 

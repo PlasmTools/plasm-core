@@ -43,6 +43,7 @@ pub struct CatalogRuntime {
 struct CatalogGeneration {
     registry: Arc<CgsRegistry>,
     compiled_by_entry: Arc<HashMap<String, Arc<plasm_compile::CompiledCatalog>>>,
+    prerequisite_deployments: plasm_core::prerequisites::DeploymentBindings,
 }
 
 fn compile_fixed_generation(registry: Arc<CgsRegistry>) -> CatalogGeneration {
@@ -63,6 +64,7 @@ fn compile_fixed_generation(registry: Arc<CgsRegistry>) -> CatalogGeneration {
     CatalogGeneration {
         registry,
         compiled_by_entry: Arc::new(compiled_by_entry),
+        prerequisite_deployments: plasm_core::prerequisites::DeploymentBindings::default(),
     }
 }
 
@@ -78,6 +80,8 @@ impl CatalogRuntime {
                 CatalogGeneration {
                     registry: loaded.registry,
                     compiled_by_entry: loaded.compiled_by_entry,
+                    prerequisite_deployments: read_optional_deployment_bindings(path)
+                        .unwrap_or_else(|error| panic!("cannot load deployment bindings: {error}")),
                 }
             }
             CatalogBootstrap::Fixed => compile_fixed_generation(initial),
@@ -139,7 +143,7 @@ impl CatalogRuntime {
 
     /// Request-local catalog view. Shared execution stores stay attached to the host.
     pub async fn pinned_view(&self, generation: &str) -> anyhow::Result<Self> {
-        let (catalogs, compiled_catalogs, _) = self
+        let (catalogs, compiled_catalogs, prerequisite_deployments) = self
             .discovery_store()
             .await?
             .load_generation(generation)
@@ -152,6 +156,7 @@ impl CatalogRuntime {
         let generation_view = CatalogGeneration {
             registry: Arc::new(CgsRegistry::from_pairs(pairs)),
             compiled_by_entry: Arc::new(compiled_by_entry),
+            prerequisite_deployments,
         };
         let mut view = self.clone();
         view.swap = Arc::new(ArcSwap::new(Arc::new(generation_view)));
@@ -203,4 +208,20 @@ impl CatalogRuntime {
             CatalogBootstrap::Fixed => None,
         }
     }
+
+    /// Explicit prerequisite deployments pinned with this catalog generation (RA-17).
+    pub fn prerequisite_deployments(&self) -> plasm_core::prerequisites::DeploymentBindings {
+        self.swap.load_full().prerequisite_deployments.clone()
+    }
+}
+
+fn read_optional_deployment_bindings(
+    dir: &Path,
+) -> Result<plasm_core::prerequisites::DeploymentBindings, String> {
+    let path = dir.join("deployment-bindings.json");
+    if !path.is_file() {
+        return Ok(plasm_core::prerequisites::DeploymentBindings::default());
+    }
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    serde_json::from_slice(&bytes).map_err(|e| format!("invalid deployment-bindings.json: {e}"))
 }

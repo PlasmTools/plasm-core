@@ -526,7 +526,7 @@ pub(crate) fn graph_summary(
     }
     if has_foreach_fanout_risk {
         warnings.push(
-            "Mutating for_each may fan out over every source row; keep the upstream source bounded when cost or latency matters"
+            "Mutating for_each writes once per source row (N rows → N remote effects). Filter or otherwise bound the source to the intended set before fanout"
                 .to_string(),
         );
     }

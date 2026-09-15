@@ -89,6 +89,7 @@ fn run_artifact_doc(
         entities,
         source: ExecutionSource::Live,
         stats: ExecutionStats::default(),
+        operations: plasm_runtime::OperationLedger::empty(),
     }
 }
 

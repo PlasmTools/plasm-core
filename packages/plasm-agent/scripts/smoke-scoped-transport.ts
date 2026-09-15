@@ -29,11 +29,13 @@ const missing = createDefaultHostTransport({
   bearer: "",
   fetchImpl: async () => { throw new Error("must not dispatch"); },
 });
-await assert.rejects(missing({
+const denied = await missing({
   method: "GET",
   url: "https://example.test/records/a",
   headers: {},
   rejectRedirects: true,
   requireHostAuth: true,
-}), /Scoped host authentication is not configured/);
+});
+assert.equal(denied.status, 401);
+assert.match(denied.body, /Scoped host authentication is not configured/);
 console.log("Scoped transport host injection and redirect policy passed (no network).");

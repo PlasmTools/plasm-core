@@ -10,6 +10,7 @@ mod invoke_cardinality;
 mod password_domain;
 mod plan_serialize;
 mod prelude;
+mod prerequisite_seats;
 mod relation;
 mod row_suffix;
 mod scalar_extract;

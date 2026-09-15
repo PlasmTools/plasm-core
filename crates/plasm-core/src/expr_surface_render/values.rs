@@ -9,6 +9,14 @@ pub(crate) fn render_surface_value(v: &Value) -> String {
         Value::String(s) | Value::PhraseIdent(s) => render_bare_or_quoted_string(s),
         Value::StringTemplate(value) => render_bare_or_quoted_string(value.source()),
         Value::PlasmInputRef(_) => "$".to_string(),
+        Value::GetScalarExtract(g) => {
+            format!(
+                "{}({}).{}",
+                g.entity,
+                render_surface_value(&g.identity),
+                g.wire
+            )
+        }
         Value::UnionCtor {
             ctor_label,
             ctor_fields,

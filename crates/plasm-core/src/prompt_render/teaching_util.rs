@@ -1,10 +1,10 @@
 //! Shared teaching-table string helpers and placeholders.
 
-/// Identity-get hole in teaching exemplars: `e#(<id>)` / compound `wire=<id>`.
-pub(crate) const TEACHING_ID_HOLE: &str = "<id>";
+pub(crate) use crate::taught_seat::{TEACHING_ID_HOLE, TEACHING_PARAM_VALUE_PLACEHOLDER};
 
-/// Generic capability / filter param hole: `wire=<wire>` (never bare `$`).
-pub(crate) const TEACHING_PARAM_VALUE_PLACEHOLDER: &str = "<wire>";
+/// Quoted Select/MultiSelect hole on query/search filters — not a first-member
+/// exemplar (`T_enum_query_hole`). Signals the same quoting law as search `"<query>"`.
+pub(crate) const TEACHING_SELECT_MEMBER_LITERAL: &str = "\"<member>\"";
 
 /// First closed-enum member as a quoted teaching exemplar (Select / MultiSelect).
 /// TSV-derivable from `NamedValueSchema.allowed_values` — not a task scalar.
@@ -57,16 +57,19 @@ pub(crate) fn teaching_expr_for_validation(expr: &str) -> String {
     if !expr.contains('<') {
         return expr.to_string();
     }
-    let s = expr.replace(TEACHING_SEARCH_QUERY_LITERAL, "\"q\"");
+    // Replace quoted holes before the generic `<ident>` walk so `"<member>"`
+    // becomes `$` (same stand-in as `<wire>`), not the string `"$"`.
+    let s = expr
+        .replace(TEACHING_SEARCH_QUERY_LITERAL, "\"q\"")
+        .replace(TEACHING_SELECT_MEMBER_LITERAL, "$");
     let bytes = s.as_bytes();
     let mut out = String::with_capacity(s.len());
     let mut i = 0usize;
     while i < bytes.len() {
         if bytes[i] == b'<' {
             if let Some(rel) = s[i + 1..].find('>') {
-                let inner = &s[i + 1..i + 1 + rel];
-                if !inner.is_empty() && inner.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-                {
+                let candidate = &s[i..i + 2 + rel];
+                if crate::taught_seat::is_teaching_angle_hole(candidate) {
                     out.push('$');
                     i = i + 2 + rel;
                     continue;
@@ -104,6 +107,10 @@ mod tests {
     fn validation_proxy_rewrites_angle_holes() {
         assert_eq!(teaching_expr_for_validation(r#"e7(<id>)"#), "e7($)");
         assert_eq!(teaching_expr_for_validation(r#"e7~"<query>""#), r#"e7~"q""#);
+        assert_eq!(
+            teaching_expr_for_validation(r#"e1{status="<member>"}"#),
+            "e1{status=$}"
+        );
         assert_eq!(
             teaching_expr_for_validation("e1{title=<wire>}.m2(body=<wire>)"),
             "e1{title=$}.m2(body=$)"

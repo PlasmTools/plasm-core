@@ -448,6 +448,7 @@ capabilities:
           value_ref: nv_message_update_categories
           required: false
   message_move:
+    receiver: {kind: entity, entity: Message}
     kind: action
     entity: Message
     description: Move a message into another folder.
@@ -462,6 +463,7 @@ capabilities:
           value_ref: nv_message_move_destination_folder_id
           required: true
   message_send:
+    receiver: {kind: entity, entity: Message}
     kind: action
     entity: Message
     description: Send a draft message.
@@ -490,6 +492,7 @@ capabilities:
       value_ref: nv_attachment_query_message_id
       required: true
   attachment_get:
+    receiver: {kind: entity, entity: Attachment}
     kind: action
     entity: Attachment
     description: Fetch attachment content for a known attachment on a message.

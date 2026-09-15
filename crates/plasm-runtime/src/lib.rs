@@ -108,6 +108,7 @@ pub mod evm;
 pub mod execution;
 pub mod graph_page_spill;
 pub mod hosted_oauth_kv;
+pub mod http_auth_failure;
 pub mod http_config;
 pub mod http_resilience;
 pub mod http_trace;
@@ -182,6 +183,9 @@ pub use hosted_oauth_kv::{
     runtime_error_is_oauth_invalid_grant, ApplyTokenError, HostedBearerResolution,
     OAuthTokenEndpointError, OutboundOAuthKvParseError, OutboundOAuthKvV1,
     HOSTED_OAUTH_EXPIRY_SKEW_SECS, OUTBOUND_OAUTH_KV_VERSION,
+};
+pub use http_auth_failure::{
+    format_http_status_error, request_error_from_host_http, OutboundAuthorizationFact,
 };
 pub use http_resilience::{HttpResiliencePolicy, ResilientHttpTransport};
 pub use http_transport::{

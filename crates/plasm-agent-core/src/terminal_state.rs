@@ -151,7 +151,7 @@ description: Operates the remote Plasm HTTP terminal with server-owned routed co
 
 `plasm search "intent"` returns a standalone JSON routing receipt. It does not
 open or extend execution. Business capabilities, prerequisites, binding edges and
-unsupported work remain separate in that receipt.
+requirement coverage (supporting IDs or unresolved reasons) remain separate in that receipt.
 
 The active local pointer is `.plasm/hosts/<slug>/current`. Context mirrors under
 `.plasm/s/<id>/out/NNNN-context/` contain `routing.json` and `teaching.md`. Read

@@ -160,6 +160,9 @@ fn hole_value_has_label(
                 .labels
                 .contains(label)
         }),
+        plasm_core::Value::GetScalarExtract(extract) => {
+            hole_value_has_label(&extract.identity, uses_result, facts, label)
+        }
         plasm_core::Value::Null
         | plasm_core::Value::Bool(_)
         | plasm_core::Value::Integer(_)

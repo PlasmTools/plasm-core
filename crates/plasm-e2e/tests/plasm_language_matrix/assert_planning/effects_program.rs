@@ -15,6 +15,34 @@ pub(crate) fn assert_planning_effects_program(
     comp: &serde_json::Value,
 ) -> Result<Option<()>, String> {
     match row.id {
+        "lang_take_one_field_bind"
+        | "lang_take_one_field_argument"
+        | "lang_take_one_field_bound_argument"
+        | "lang_take_one_field_empty_bind"
+        | "lang_take_one_field_empty_argument" => {
+            if !computes
+                .iter()
+                .any(|c| matches!(c.op, ComputeOp::Limit { count: 1 }))
+            {
+                return Err("bounded scalar extract must retain its Limit(1) proof".into());
+            }
+            if matches!(
+                row.id,
+                "lang_take_one_field_bind"
+                    | "lang_take_one_field_empty_bind"
+                    | "lang_take_one_field_bound_argument"
+            ) {
+                let value = comp.get("steps").and_then(|s| s.get("value"));
+                if value.and_then(|s| s.get("kind")).and_then(|k| k.as_str()) != Some("derive") {
+                    return Err(format!("bounded field must lower to scalar derive: {comp}"));
+                }
+            }
+            if row.id.ends_with("argument") && !comp_has_invoke_plan_kind(comp, "action") {
+                return Err(format!(
+                    "field argument must retain its dependent invoke: {comp}"
+                ));
+            }
+        }
         "lang_utf8_minijinja_content_stitch" => {
             let has_create_node = comp_has_invoke_plan_kind(comp, "create");
             if !has_create_node {
@@ -138,6 +166,33 @@ pub(crate) fn assert_planning_effects_program(
                 return Err("expected array arg after heredoc close in comp IR".into());
             }
         }
+        "lang_quoted_binding_field_literal" => {
+            let Some(Expr::Invoke(InvokeExpr {
+                capability, input, ..
+            })) = surfaces.iter().find(|e| matches!(e, Expr::Invoke(_)))
+            else {
+                return Err("PLP-11: expected update invoke with quoted title literal".into());
+            };
+            if capability.as_str() != "langitem_update" {
+                return Err(format!("expected langitem_update, got {capability}"));
+            }
+            let payload = format!("{input:?}");
+            if !payload.contains("item.title") {
+                return Err(format!(
+                    "PLP-11: update must assign the quoted literal `item.title`, got {payload}"
+                ));
+            }
+            if payload.contains("BindingSymbol") || payload.contains("PlasmInputRef") {
+                return Err(format!(
+                    "PLP-11: quoted `item.title` must stay a literal, not a binding, got {payload}"
+                ));
+            }
+            if !json_value_contains_substring(comp, "item.title") {
+                return Err(format!(
+                    "PLP-11: compiled plan must retain literal `item.title`: {comp}"
+                ));
+            }
+        }
         "lang_bind_method_invoke_field_ref" => {
             let Some(Expr::Invoke(InvokeExpr { capability, .. })) =
                 surfaces.iter().find(|e| matches!(e, Expr::Invoke(_)))
@@ -152,6 +207,55 @@ pub(crate) fn assert_planning_effects_program(
                     "expected bound method invoke field-ref lowered from peer binding (PLP-1)"
                         .into(),
                 );
+            }
+        }
+        "lang_take_one_method_invoke" | "lang_take_one_method_invoke_empty" => {
+            if !computes
+                .iter()
+                .any(|c| matches!(c.op, ComputeOp::Limit { count: 1 }))
+            {
+                return Err("take-1 method invoke must retain its Limit(1) proof".into());
+            }
+            let Some(Expr::Invoke(InvokeExpr { capability, .. })) =
+                surfaces.iter().find(|e| matches!(e, Expr::Invoke(_)))
+            else {
+                return Err("expected update invoke from take-1 method continuation".into());
+            };
+            if capability.as_str() != "langitem_update" {
+                return Err(format!("expected langitem_update, got {capability}"));
+            }
+            if !comp_has_invoke_plan_kind(comp, "action") {
+                return Err(format!(
+                    "take-1 method invoke must lower to an action invoke: {comp}"
+                ));
+            }
+        }
+        "lang_rows_each_method_invoke" | "lang_per_row_arg_template" => {
+            assert_for_each_action_node(dry, comp)?;
+            if !json_value_contains_substring(comp, "langitem_update") {
+                return Err(format!(
+                    "row-identity `=> _.update` must retain langitem_update: {comp}"
+                ));
+            }
+        }
+        "lang_render_aggregate_report" => {
+            assert_for_each_action_node(dry, comp)?;
+            if !json_value_contains_substring(comp, "langitem_update") {
+                return Err(format!(
+                    "aggregate report must retain per-row langitem_update: {comp}"
+                ));
+            }
+            if computes
+                .iter()
+                .any(|c| matches!(c.op, ComputeOp::Render { .. }))
+            {
+                return Err(
+                    "aggregate `{% for item in done %}` is a plain template, not per-row Render"
+                        .into(),
+                );
+            }
+            if !json_value_contains_substring(comp, "done") {
+                return Err("aggregate plain template must depend on named binding `done`".into());
             }
         }
         "lang_derive_map_parallel" => {
@@ -224,6 +328,49 @@ pub(crate) fn assert_planning_effects_program(
                 ));
             }
         }
+        "lang_get_singleton_field_scalar" | "lang_get_singleton_field_password" => {
+            if computes
+                .iter()
+                .any(|c| matches!(c.op, ComputeOp::Project { .. }))
+            {
+                return Err(
+                    "inline Get `.wire` must be scalar Derive, not Project / `| select`".into(),
+                );
+            }
+            let steps = comp.get("steps").and_then(|s| s.as_object());
+            let has_derive = steps.is_some_and(|steps| {
+                steps
+                    .values()
+                    .any(|step| step.get("kind").and_then(|k| k.as_str()) == Some("derive"))
+            });
+            if !has_derive {
+                return Err(format!(
+                    "expected derive step for inline Get scalar extract, got {comp:?}"
+                ));
+            }
+        }
+        "lang_get_singleton_field_argument" => {
+            if !comp_has_invoke_plan_kind(comp, "action") {
+                return Err(format!(
+                    "expected update invoke for Get-extract argument, got {comp:?}"
+                ));
+            }
+        }
+        "lang_get_singleton_field_empty" => {
+            let has_derive = comp
+                .get("steps")
+                .and_then(|s| s.as_object())
+                .is_some_and(|steps| {
+                    steps
+                        .values()
+                        .any(|step| step.get("kind").and_then(|k| k.as_str()) == Some("derive"))
+                });
+            if !has_derive {
+                return Err(format!(
+                    "empty Get extract must still lower to derive, got {comp:?}"
+                ));
+            }
+        }
         "lang_bind_singleton_field_scalar" => {
             if computes
                 .iter()
@@ -248,6 +395,11 @@ pub(crate) fn assert_planning_effects_program(
         "lang_bind_limit1_continuation" => {
             if !comp_has_relation_named(comp, "tags") {
                 return Err("expected relation node for `=> _.tags` after `| take 1`".to_string());
+            }
+        }
+        "lang_bind_filter_continuation" => {
+            if !comp_has_relation_named(comp, "tags") {
+                return Err("expected relation node for `=> _.tags` after `| where`".to_string());
             }
         }
         "lang_relation_many_from_plural_query" => {

@@ -9,6 +9,10 @@ use crate::api_error_detail::{
 };
 use crate::auth::ResolvedAuth;
 use crate::error::RuntimeError;
+use crate::http_auth_failure::{
+    authorization_fact_from_resolved, format_http_status_error, outbound_authorization_fact,
+    OutboundAuthorizationFact,
+};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as B64_ENGINE, Engine as _};
 use plasm_compile::{
@@ -118,6 +122,36 @@ pub trait HttpTransport: Send + Sync {
         url: &str,
         auth: Option<ResolvedAuth>,
     ) -> Result<(serde_json::Value, Option<String>), RuntimeError>;
+
+    /// One compiled HTTP round-trip without retry.
+    ///
+    /// Default classifies [`RuntimeError::RequestError`] status via
+    /// [`http_failure_is_retryable`]. [`ReqwestHttpTransport`] overrides this to
+    /// keep header-aware `Retry-After` / rate-limit hints.
+    async fn compiled_http_attempt(
+        &self,
+        base_url: &str,
+        request: &CompiledRequest,
+        auth: Option<ResolvedAuth>,
+    ) -> Result<HttpAttemptResult, RuntimeError> {
+        match self.send_compiled_http(base_url, request, auth).await {
+            Ok((json, link)) => Ok(HttpAttemptResult::Success(json, link)),
+            Err(e) => Ok(classify_inner_transport_error(e)),
+        }
+    }
+
+    /// One absolute GET round-trip without retry. Same default classification as
+    /// [`HttpTransport::compiled_http_attempt`].
+    async fn absolute_get_attempt(
+        &self,
+        url: &str,
+        auth: Option<ResolvedAuth>,
+    ) -> Result<HttpAttemptResult, RuntimeError> {
+        match self.get_json_absolute(url, auth).await {
+            Ok((json, link)) => Ok(HttpAttemptResult::Success(json, link)),
+            Err(e) => Ok(classify_inner_transport_error(e)),
+        }
+    }
 }
 
 /// Default transport using [`reqwest::Client`].
@@ -168,6 +202,7 @@ impl ReqwestHttpTransport {
         } else {
             &self.client
         };
+        let authorization = outbound_authorization_fact(request, auth.as_ref());
         let req_builder = build_compiled_reqwest(client, &url, request, auth)?;
         let method = compiled_method_label(&request.method);
         let response = req_builder
@@ -175,7 +210,8 @@ impl ReqwestHttpTransport {
             .instrument(http_span)
             .await
             .map_err(RuntimeError::from)?;
-        let parsed = read_http_response(response, method).await?;
+        let mut parsed = read_http_response(response, method).await?;
+        parsed.authorization = authorization;
         Ok(evaluate_parsed_response(parsed))
     }
 
@@ -186,12 +222,14 @@ impl ReqwestHttpTransport {
         auth: Option<ResolvedAuth>,
     ) -> Result<HttpAttemptResult, RuntimeError> {
         let http_span = crate::spans::http_absolute_get(url.len());
+        let authorization = authorization_fact_from_resolved(auth.as_ref());
         let response = apply_resolved_auth(self.client.get(url), auth)
             .send()
             .instrument(http_span)
             .await
             .map_err(RuntimeError::from)?;
-        let parsed = read_http_response(response, "GET").await?;
+        let mut parsed = read_http_response(response, "GET").await?;
+        parsed.authorization = authorization;
         Ok(evaluate_parsed_response(parsed))
     }
 }
@@ -366,6 +404,23 @@ pub fn compiled_template_headers(
 
 #[async_trait]
 impl HttpTransport for ReqwestHttpTransport {
+    async fn compiled_http_attempt(
+        &self,
+        base_url: &str,
+        request: &CompiledRequest,
+        auth: Option<ResolvedAuth>,
+    ) -> Result<HttpAttemptResult, RuntimeError> {
+        ReqwestHttpTransport::compiled_http_attempt(self, base_url, request, auth).await
+    }
+
+    async fn absolute_get_attempt(
+        &self,
+        url: &str,
+        auth: Option<ResolvedAuth>,
+    ) -> Result<HttpAttemptResult, RuntimeError> {
+        ReqwestHttpTransport::absolute_get_attempt(self, url, auth).await
+    }
+
     async fn send_compiled_http(
         &self,
         base_url: &str,
@@ -524,7 +579,7 @@ fn add_multipart_part(
     }
 
     let text = match &spec.content {
-        Value::PlasmInputRef(_) | Value::StringTemplate(_) => {
+        Value::PlasmInputRef(_) | Value::GetScalarExtract(_) | Value::StringTemplate(_) => {
             return Err(RuntimeError::ConfigurationError {
                 message: format!(
                     "multipart part `{}`: compile-time Plasm input refs are not valid HTTP wire values",
@@ -675,6 +730,8 @@ pub struct HttpParsedResponse {
     pub retry_after: Option<Duration>,
     /// `X-RateLimit-Remaining` when present (GitHub and similar APIs).
     pub rate_limit_remaining: Option<u32>,
+    /// Outbound Authorization fact (secret-safe) for HTTP-1 401 diagnostics.
+    pub authorization: OutboundAuthorizationFact,
 }
 
 /// Outcome of one HTTP attempt before the resilience retry loop commits to success or failure.
@@ -796,9 +853,12 @@ fn parse_retry_after_header(headers: &reqwest::header::HeaderMap) -> Option<Dura
 }
 
 /// Classify a non-success status for automatic retry (safe methods only at the transport layer).
+///
+/// `500` is included with the gateway class: an idempotent GET/HEAD/OPTIONS may be
+/// repeated after a transient application 500. `401` / `404` stay terminal.
 #[must_use]
 pub fn http_status_is_retryable(status: u16) -> bool {
-    matches!(status, 408 | 429 | 502 | 503 | 504)
+    matches!(status, 408 | 429 | 500 | 502 | 503 | 504)
 }
 
 /// Read response body and metadata from a completed reqwest response.
@@ -837,6 +897,7 @@ pub async fn read_http_response(
         bytes,
         retry_after,
         rate_limit_remaining,
+        authorization: OutboundAuthorizationFact::absent(),
     })
 }
 
@@ -851,8 +912,10 @@ pub fn evaluate_parsed_response(parsed: HttpParsedResponse) -> HttpAttemptResult
         bytes,
         retry_after,
         rate_limit_remaining,
+        authorization,
     } = parsed;
 
+    trace_hydration_http_response(status, bytes.len());
     let status_code = status;
     let is_success = (200..300).contains(&status_code);
 
@@ -867,7 +930,14 @@ pub fn evaluate_parsed_response(parsed: HttpParsedResponse) -> HttpAttemptResult
             }
         } else {
             HttpAttemptResult::Failed(RuntimeError::RequestError {
-                message: format!("{method} {url} — HTTP {status_code} with empty body"),
+                message: compose_http_failure_message(
+                    method,
+                    &url,
+                    status_code,
+                    "empty body",
+                    true,
+                    &authorization,
+                ),
                 attempts: 1,
                 status: Some(status_code),
                 body: None,
@@ -921,7 +991,14 @@ pub fn evaluate_parsed_response(parsed: HttpParsedResponse) -> HttpAttemptResult
         }
         (false, Ok(json)) => {
             let detail = summarize_json_api_error_for_http(&json);
-            let message = format!("{method} {url} — HTTP {status_code} from API: {detail}");
+            let message = compose_http_failure_message(
+                method,
+                &url,
+                status_code,
+                detail.as_str(),
+                false,
+                &authorization,
+            );
             if http_failure_is_retryable(
                 status_code,
                 retry_after,
@@ -956,7 +1033,14 @@ pub fn evaluate_parsed_response(parsed: HttpParsedResponse) -> HttpAttemptResult
                 "non-success response body is not JSON; using bounded text summary"
             );
             let detail = summarize_text_error_body(&bytes, content_type.as_deref());
-            let message = format!("{method} {url} — HTTP {status_code} from API: {detail}");
+            let message = compose_http_failure_message(
+                method,
+                &url,
+                status_code,
+                detail.as_str(),
+                false,
+                &authorization,
+            );
             if http_failure_is_retryable(
                 status_code,
                 retry_after,
@@ -977,6 +1061,57 @@ pub fn evaluate_parsed_response(parsed: HttpParsedResponse) -> HttpAttemptResult
                 })
             }
         }
+    }
+}
+
+fn compose_http_failure_message(
+    method: &str,
+    url: &str,
+    status: u16,
+    detail: &str,
+    empty_body: bool,
+    authorization: &OutboundAuthorizationFact,
+) -> String {
+    if status == 401 {
+        return format_http_status_error(method, url, status, detail, authorization, None);
+    }
+    if empty_body {
+        format!("{method} {url} — HTTP {status} with empty body")
+    } else {
+        format!("{method} {url} — HTTP {status} from API: {detail}")
+    }
+}
+
+/// Map an inner [`HttpTransport`] error to one attempt outcome for the resilience loop.
+///
+/// Host-callback / test doubles surface non-2xx as [`RuntimeError::RequestError`]
+/// with `status` set. Safe-method retry still belongs in
+/// [`crate::http_resilience::ResilientHttpTransport`], not in the inner client.
+#[must_use]
+pub fn classify_inner_transport_error(err: RuntimeError) -> HttpAttemptResult {
+    match &err {
+        RuntimeError::RequestError {
+            status: Some(status),
+            message,
+            ..
+        } if http_failure_is_retryable(*status, None, None, Some(message.as_str())) => {
+            HttpAttemptResult::Retryable {
+                status: *status,
+                retry_after: None,
+                message: message.clone(),
+            }
+        }
+        RuntimeError::RateLimited {
+            status,
+            retry_after,
+            message,
+            ..
+        } => HttpAttemptResult::Retryable {
+            status: *status,
+            retry_after: *retry_after,
+            message: message.clone(),
+        },
+        _ => HttpAttemptResult::Failed(err),
     }
 }
 
@@ -1090,7 +1225,7 @@ fn strip_null_fields(value: serde_json::Value) -> serde_json::Value {
 
 fn plasm_value_to_json(value: &Value) -> Result<serde_json::Value, RuntimeError> {
     match value {
-        Value::PlasmInputRef(_) | Value::StringTemplate(_) => {
+        Value::PlasmInputRef(_) | Value::GetScalarExtract(_) | Value::StringTemplate(_) => {
             Err(RuntimeError::ConfigurationError {
                 message: "unbound program operand reached HTTP body encoding".into(),
             })
@@ -1164,7 +1299,9 @@ mod http_outcome_tests {
     #[test]
     fn retryable_status_classification() {
         assert!(http_status_is_retryable(429));
+        assert!(http_status_is_retryable(500));
         assert!(http_status_is_retryable(503));
+        assert!(!http_status_is_retryable(401));
         assert!(!http_status_is_retryable(404));
     }
 
@@ -1179,10 +1316,113 @@ mod http_outcome_tests {
             bytes: br#"{"message":"slow down"}"#.to_vec(),
             retry_after: Some(Duration::from_secs(2)),
             rate_limit_remaining: None,
+            authorization: OutboundAuthorizationFact::absent(),
         };
         match evaluate_parsed_response(parsed) {
             HttpAttemptResult::Retryable { status, .. } => assert_eq!(status, 429),
             other => panic!("expected retryable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn evaluate_500_plain_text_is_retryable() {
+        let parsed = HttpParsedResponse {
+            status: 500,
+            url: "https://api.example.com/records".into(),
+            method: "GET",
+            link: None,
+            content_type: Some("text/plain".into()),
+            bytes: b"Internal Server Error".to_vec(),
+            retry_after: None,
+            rate_limit_remaining: None,
+            authorization: OutboundAuthorizationFact::absent(),
+        };
+        match evaluate_parsed_response(parsed) {
+            HttpAttemptResult::Retryable { status, .. } => assert_eq!(status, 500),
+            other => panic!("expected retryable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_inner_request_error_500_is_retryable() {
+        let outcome = classify_inner_transport_error(RuntimeError::RequestError {
+            message: "HTTP 500: Internal Server Error".into(),
+            attempts: 1,
+            status: Some(500),
+            body: None,
+        });
+        match outcome {
+            HttpAttemptResult::Retryable { status, .. } => assert_eq!(status, 500),
+            other => panic!("expected retryable 500, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_inner_request_error_401_is_terminal() {
+        let outcome = classify_inner_transport_error(RuntimeError::RequestError {
+            message: "HTTP 401".into(),
+            attempts: 1,
+            status: Some(401),
+            body: None,
+        });
+        match outcome {
+            HttpAttemptResult::Failed(_) => {}
+            other => panic!("expected terminal 401, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn evaluate_401_json_is_terminal() {
+        let parsed = HttpParsedResponse {
+            status: 401,
+            url: "https://api.example.com/records".into(),
+            method: "GET",
+            link: None,
+            content_type: Some("application/json".into()),
+            bytes: br#"{"message":"access token is missing, invalid or expired"}"#.to_vec(),
+            retry_after: None,
+            rate_limit_remaining: None,
+            authorization: OutboundAuthorizationFact::absent(),
+        };
+        match evaluate_parsed_response(parsed) {
+            HttpAttemptResult::Failed(RuntimeError::RequestError { message, .. }) => {
+                assert!(
+                    message.contains("GET path=/records query=(none)"),
+                    "{message}"
+                );
+                assert!(message.contains("Authorization: absent"), "{message}");
+            }
+            other => panic!("expected terminal 401, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn evaluate_401_bearer_present_names_wire_hides_token() {
+        const JWT: &str = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.signatureTAIL";
+        let parsed = HttpParsedResponse {
+            status: 401,
+            url: "https://api.example.com/users?query=alice".into(),
+            method: "GET",
+            link: None,
+            content_type: Some("application/json".into()),
+            bytes: br#"{"message":"Invalid credentials"}"#.to_vec(),
+            retry_after: None,
+            rate_limit_remaining: None,
+            authorization: OutboundAuthorizationFact::from_header(Some(&format!("Bearer {JWT}"))),
+        };
+        match evaluate_parsed_response(parsed) {
+            HttpAttemptResult::Failed(RuntimeError::RequestError { message, .. }) => {
+                assert!(
+                    message.contains("GET path=/users query=query=alice"),
+                    "{message}"
+                );
+                assert!(
+                    message.contains("Authorization: present (Bearer tail …TAIL)"),
+                    "{message}"
+                );
+                assert!(!message.contains(JWT), "full JWT leaked: {message}");
+            }
+            other => panic!("expected terminal 401, got {other:?}"),
         }
     }
 
@@ -1197,6 +1437,7 @@ mod http_outcome_tests {
             bytes: br#"{"message":"API rate limit exceeded for user ID 1"}"#.to_vec(),
             retry_after: Some(Duration::from_secs(60)),
             rate_limit_remaining: Some(0),
+            authorization: OutboundAuthorizationFact::absent(),
         };
         match evaluate_parsed_response(parsed) {
             HttpAttemptResult::Retryable {
@@ -1222,6 +1463,7 @@ mod http_outcome_tests {
             bytes: br#"{"message":"Forbidden: insufficient scope"}"#.to_vec(),
             retry_after: None,
             rate_limit_remaining: None,
+            authorization: OutboundAuthorizationFact::absent(),
         };
         match evaluate_parsed_response(parsed) {
             HttpAttemptResult::Failed(_) => {}
@@ -1545,5 +1787,17 @@ mod synthetic_attachment_tests {
     fn rejects_html_like_bodies() {
         let html = b"<!DOCTYPE html><html><body>x</body></html>";
         assert!(synthetic_json_from_non_json_success_body(html, Some("text/html")).is_none());
+    }
+}
+
+/// Record a host-transport response within an active hydration diagnostic scope.
+/// Hosts returning decoded HTTP responses should call this before status handling.
+/// No-op outside a hydration attempt selected by the tracing subscriber.
+pub fn trace_hydration_http_response(status: u16, bytes: usize) {
+    if crate::execution::hydration_trace::active() {
+        crate::execution::hydration_trace::emit(
+            "http_response",
+            serde_json::json!({"status":status, "bytes":bytes}),
+        );
     }
 }

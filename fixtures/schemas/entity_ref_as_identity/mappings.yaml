@@ -1,0 +1,9 @@
+bad_product_query:
+  method: GET
+  path:
+  - type: literal
+    value: products
+  query:
+    type: object
+    fields:
+    - [access_token, { type: var, name: access_token }]

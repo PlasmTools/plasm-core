@@ -211,7 +211,7 @@ capabilities:
 
 **Field / lane wire types:** the vocabulary is kernel names (`string`, `integer`, `number`, `boolean`, `array`, `json`, `entity_ref`, `blob`, `money`) or core profiles (`enum`, `multi_enum`, `rfc3339`, `iso8601_date`, `unix_ms`, `unix_sec`, `uuid`, …) on a **`values:`** row, not inline `field_type` on the slot. For **`entity_ref`**, set **`target: EntityName`** on the value row. For **`blob`**, see [reference.md — Blob / binary](reference.md). For **`array`**, the value row has **`type: array`** and **`items: { value_ref: <element_key> }`**. **`enum` / `multi_enum`** require non-empty **`enum:`** on the value row.
 
-**Temporal profiles:** use `type: rfc3339` / `iso8601_date` / `unix_ms` / `unix_sec` directly — no separate `value_format` key.
+**Temporal profiles:** use `type: rfc3339` / `iso8601_date` / `unix_ms` / `unix_sec` directly — no separate `value_format` key. Do **not** put evaluation `now` or harness calendar dates in `values:` descriptions — the language card states `evaluation_now` (PLP-9) when temporal slots are taught.
 
 ### CGS field typing checklist (strict)
 

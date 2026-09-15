@@ -42,7 +42,9 @@ pub(in crate::plasm_dag) fn infer_render_columns_for_node(
                 })?;
                 infer_render_columns_for_node(session, state, staged, parent)
             }
-            ComputeOp::With { .. } => Ok(schema.fields.iter().map(|f| f.name.clone()).collect()),
+            ComputeOp::With { .. } | ComputeOp::Union { .. } => {
+                Ok(schema.fields.iter().map(|f| f.name.clone()).collect())
+            }
             ComputeOp::Render { .. } => Err(
                 "cannot infer columns from a row-to-text template result; bind a row-producing query/relation/projection, or write explicit `[field,...] <<TAG` columns before the template".into(),
             ),

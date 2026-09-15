@@ -1,0 +1,82 @@
+version: 1
+entry_id: relation_get_scoped_token
+auth:
+  scheme: none
+http_backend: http://127.0.0.1:9
+entities:
+  TokenNote:
+    id_field: note_id
+    description: Authenticated note whose comments are a query-scoped relation (unary Get parent).
+    fields:
+      note_id:
+        required: true
+        value_ref: nv_note_id
+      title:
+        required: true
+        value_ref: nv_title
+    relations:
+      comments:
+        description: Comments on this note.
+        target: TokenNoteComment
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: token_note_comment_query
+          param: note_id
+  TokenNoteComment:
+    id_field: comment_id
+    description: Comment listed only through a token-gated scoped query.
+    fields:
+      comment_id:
+        required: true
+        value_ref: nv_comment_id
+      note_id:
+        required: true
+        value_ref: nv_note_id
+      body:
+        required: true
+        value_ref: nv_title
+capabilities:
+  token_note_get:
+    description: Get a note by id; Bearer access_token required.
+    kind: get
+    entity: TokenNote
+    provides:
+    - note_id
+    - title
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_tok
+          required: true
+  token_note_comment_query:
+    description: List comments on a note; Bearer access_token required with note_id.
+    kind: query
+    entity: TokenNoteComment
+    scope:
+    - name: note_id
+      value_ref: nv_note_id
+      required: true
+    selection:
+    - name: access_token
+      value_ref: nv_tok
+      required: true
+    provides:
+    - comment_id
+    - note_id
+    - body
+values:
+  nv_tok:
+    type: string
+    description: Bearer token.
+  nv_note_id:
+    type: string
+    description: Note identity.
+  nv_comment_id:
+    type: string
+    description: Comment identity.
+  nv_title:
+    type: string
+    description: Display text.

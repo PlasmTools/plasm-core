@@ -1,0 +1,79 @@
+version: 1
+entry_id: relation_scoped_token
+auth:
+  scheme: none
+http_backend: http://127.0.0.1:9
+entities:
+  TokenFolder:
+    id_field: folder_id
+    description: Query-only authenticated folder whose files are a query-scoped relation.
+    fields:
+      folder_id:
+        required: true
+        value_ref: nv_folder_id
+      name:
+        required: true
+        value_ref: nv_name
+    relations:
+      files:
+        description: Files in this folder.
+        target: TokenFile
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: token_file_query
+          param: folder_id
+  TokenFile:
+    id_field: file_id
+    description: File listed only through a token-gated scoped query.
+    fields:
+      file_id:
+        required: true
+        value_ref: nv_file_id
+      folder_id:
+        required: true
+        value_ref: nv_folder_id
+      name:
+        required: true
+        value_ref: nv_name
+capabilities:
+  token_folder_query:
+    description: List folders; Bearer access_token required.
+    kind: query
+    entity: TokenFolder
+    selection:
+    - name: access_token
+      value_ref: nv_tok
+      required: true
+    provides:
+    - folder_id
+    - name
+  token_file_query:
+    description: List files in a folder; Bearer access_token required with folder_id.
+    kind: query
+    entity: TokenFile
+    scope:
+    - name: folder_id
+      value_ref: nv_folder_id
+      required: true
+    selection:
+    - name: access_token
+      value_ref: nv_tok
+      required: true
+    provides:
+    - file_id
+    - folder_id
+    - name
+values:
+  nv_tok:
+    type: string
+    description: Bearer token.
+  nv_folder_id:
+    type: string
+    description: Folder identity.
+  nv_file_id:
+    type: string
+    description: File identity.
+  nv_name:
+    type: string
+    description: Display name.

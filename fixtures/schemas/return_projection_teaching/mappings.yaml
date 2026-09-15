@@ -1,0 +1,41 @@
+notice_query:
+  method: GET
+  path:
+  - type: literal
+    value: notices
+
+notice_get:
+  method: GET
+  path:
+  - type: literal
+    value: notices
+  - type: var
+    name: id
+
+notice_search:
+  method: GET
+  path:
+  - type: literal
+    value: notices
+  - type: literal
+    value: search
+  query:
+    type: object
+    fields:
+    - - query
+      - type: var
+        name: query
+
+transaction_query:
+  method: GET
+  path:
+  - type: literal
+    value: transactions
+
+transaction_get:
+  method: GET
+  path:
+  - type: literal
+    value: transactions
+  - type: var
+    name: id

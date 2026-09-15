@@ -223,6 +223,7 @@ mod tests {
             operations: vec![],
             operation_handle_next: 1,
             symbol_ledger_bytes: Vec::new(),
+            prerequisite_deployments: Default::default(),
         };
         store.write().await.insert(
             format!("mcp:execute:session:{ph}:{sid}"),

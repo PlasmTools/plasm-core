@@ -65,6 +65,55 @@ where
         .collect::<Result<Vec<T>, _>>()
 }
 
+/// Run every item. Job `Err` values are retained beside successes (HTTP-2 partial failure).
+/// The outer `Err` is only for the concurrency permit itself.
+pub(crate) async fn bounded_parallel_map_partition<I, Fut, T, E>(
+    items: Vec<I>,
+    cfg: BoundedParallelConfig,
+    f: impl Fn(I) -> Fut + Send + Sync + Clone,
+) -> Result<(Vec<T>, Vec<E>), String>
+where
+    Fut: std::future::Future<Output = Result<T, E>> + Send,
+    I: Send + 'static,
+    T: Send + 'static,
+    E: Send + 'static,
+{
+    if items.is_empty() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+    if items.len() == 1 {
+        let item = items.into_iter().next().expect("one item");
+        return match f(item).await {
+            Ok(ok) => Ok((vec![ok], Vec::new())),
+            Err(err) => Ok((Vec::new(), vec![err])),
+        };
+    }
+
+    let semaphore = Arc::new(Semaphore::new(cfg.concurrency));
+    let f = Arc::new(f);
+    let outcomes: Vec<Result<Result<T, E>, String>> = stream::iter(items)
+        .map(move |item| {
+            let f = Arc::clone(&f);
+            let semaphore = Arc::clone(&semaphore);
+            async move {
+                let _permit = semaphore.acquire_owned().await.map_err(|e| e.to_string())?;
+                Ok(f(item).await)
+            }
+        })
+        .buffer_unordered(cfg.concurrency)
+        .collect()
+        .await;
+    let mut completed = Vec::new();
+    let mut failures = Vec::new();
+    for outcome in outcomes {
+        match outcome? {
+            Ok(ok) => completed.push(ok),
+            Err(err) => failures.push(err),
+        }
+    }
+    Ok((completed, failures))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

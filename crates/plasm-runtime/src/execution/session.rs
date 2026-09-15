@@ -30,6 +30,27 @@ pub struct ExecuteSessionMaterial {
     pub ui_origin: Option<String>,
     /// MCP connect binding wire values for the active catalog row (merged as `bind_<wire>` CML env).
     pub catalog_bind: Option<indexmap::IndexMap<String, String>>,
+    /// Secret-safe tail of the last action-`provides` `access_token` (HTTP-1 login compare).
+    pub login_access_token_tail: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+}
+
+impl ExecuteSessionMaterial {
+    #[must_use]
+    pub fn empty_login_access_token_tail() -> std::sync::Arc<std::sync::Mutex<Option<String>>> {
+        std::sync::Arc::new(std::sync::Mutex::new(None))
+    }
+
+    pub fn note_login_access_token(&self, token: &str) {
+        let tail = crate::http_auth_failure::credential_tail(
+            crate::http_auth_failure::token_secret(token),
+        );
+        if tail.is_empty() {
+            return;
+        }
+        if let Ok(mut guard) = self.login_access_token_tail.lock() {
+            *guard = Some(tail);
+        }
+    }
 }
 
 pub(crate) fn compiled_capability_template(
@@ -84,12 +105,16 @@ pub async fn collect_query_stream(
     let mut any_live = false;
     let mut last_has_more = false;
     let mut last_resume: Option<QueryPaginationResumeData> = None;
+    let mut coverage = ResultCoverage::Unknown;
+    let mut operations = OperationLedger::empty();
     while let Some(item) = stream.next().await {
         let page = item?;
         last_has_more = page.has_more;
+        coverage = page.coverage;
         if page.pagination_resume.is_some() {
             last_resume = page.pagination_resume.clone();
         }
+        operations.merge(&page.operations);
         total_net += page.stats.network_requests;
         if page.stats.network_requests > 0 {
             any_live = true;
@@ -123,6 +148,7 @@ pub async fn collect_query_stream(
         entities,
         count,
         has_more: last_has_more,
+        coverage,
         pagination_resume: last_resume,
         paging_handle: None,
         source: if any_live {
@@ -132,7 +158,7 @@ pub async fn collect_query_stream(
         },
         stats,
         request_fingerprints: Vec::new(),
-    operations: OperationLedger::empty(),
+        operations,
     })
 }
 

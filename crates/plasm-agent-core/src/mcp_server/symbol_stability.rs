@@ -1,4 +1,4 @@
-//! Symbol stability regression tests (GitHub catalog, append-only `m#` invariants).
+//! Symbol stability regression tests (language matrix, append-only `m#` invariants).
 
 #[cfg(test)]
 mod tests {
@@ -19,20 +19,25 @@ mod tests {
     use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
     use uuid::Uuid;
 
-    fn github_fixture_dir() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/github")
+    use crate::test_support::block_on_worker_stack;
+
+    const ENTRY: &str = "langmatrix";
+
+    fn matrix_fixture_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix")
     }
 
-    fn github_host() -> Option<PlasmHostState> {
-        let dir = github_fixture_dir();
+    fn matrix_host() -> Option<PlasmHostState> {
+        let dir = matrix_fixture_dir();
         if !dir.is_dir() {
             return None;
         }
         let cgs = Arc::new(load_schema_dir(&dir).ok()?);
         let reg = CgsRegistry::from_pairs(vec![(
-            "github".into(),
-            "GitHub".into(),
-            vec!["github".into()],
+            ENTRY.into(),
+            "Langmatrix".into(),
+            vec![ENTRY.into()],
             cgs.clone(),
         )]);
         let engine = ExecutionEngine::new(ExecutionConfig::default()).ok()?;
@@ -48,19 +53,19 @@ mod tests {
         }))
     }
 
-    fn label_branch_workflow_seeds() -> Vec<CapabilitySeed> {
+    fn item_tag_branch_workflow_seeds() -> Vec<CapabilitySeed> {
         vec![
             CapabilitySeed {
-                entry_id: "github".into(),
-                entity: "Repository".into(),
+                entry_id: ENTRY.into(),
+                entity: "LangItem".into(),
             },
             CapabilitySeed {
-                entry_id: "github".into(),
-                entity: "Issue".into(),
+                entry_id: ENTRY.into(),
+                entity: "LangTag".into(),
             },
             CapabilitySeed {
-                entry_id: "github".into(),
-                entity: "Branch".into(),
+                entry_id: ENTRY.into(),
+                entity: "CompoundBranch".into(),
             },
         ]
     }
@@ -69,7 +74,7 @@ mod tests {
     struct SymbolSnapshot {
         fingerprint: String,
         domain_revision: u32,
-        branch_create_m: String,
+        create_m: String,
         m_token_capability: Option<(String, String)>,
     }
 
@@ -79,39 +84,38 @@ mod tests {
             .as_ref()
             .expect("teaching_exposure required for symbol stability tests");
         let map = exp.symbol_map_arc();
-        let branch_create_m = map.method_sym_for("github", "Repository", "repo_branch_create");
+        let create_m = map.method_sym_for(ENTRY, "LangItem", "langitem_create");
         let m_token_capability = map
             .resolve_method_symbol_triple(m_token)
             .map(|(entry, domain, cap)| (format!("{entry}.{domain}.{cap}"), cap.to_string()));
         SymbolSnapshot {
             fingerprint: symbol_map_fingerprint_hex(exp),
             domain_revision: es.domain_revision,
-            branch_create_m,
+            create_m,
             m_token_capability,
         }
     }
 
-    fn github_branch_create_program(exp: &TeachingExposureSession) -> String {
+    fn langitem_create_program(exp: &TeachingExposureSession) -> String {
         let map = exp.symbol_map_arc();
-        let e = map.entity_sym_for("github", "Repository");
-        let owner = map.ident_sym_entity_field_for("github", "Repository", "owner");
-        let repo = map.ident_sym_entity_field_for("github", "Repository", "repo");
-        let m = map.method_sym_for("github", "Repository", "repo_branch_create");
-        let p_name =
-            map.ident_sym_cap_param_for("github", "Repository", "repo_branch_create", "name");
-        let p_sha =
-            map.ident_sym_cap_param_for("github", "Repository", "repo_branch_create", "sha");
+        let e = map.entity_sym_for(ENTRY, "LangItem");
+        let m = map.method_sym_for(ENTRY, "LangItem", "langitem_create");
+        let p_title = map.ident_sym_cap_param_for(ENTRY, "LangItem", "langitem_create", "title");
+        let p_owner = map.ident_sym_cap_param_for(ENTRY, "LangItem", "langitem_create", "owner");
+        let p_score = map.ident_sym_cap_param_for(ENTRY, "LangItem", "langitem_create", "score");
+        let p_tags = map.ident_sym_cap_param_for(ENTRY, "LangItem", "langitem_create", "tags");
         format!(
-            "{e}({owner}=\"o\", {repo}=\"r\").{m}({p_name}=\"feat/label-color-guide\", {p_sha}=\"deadbeef\")"
+            r#"created = {e}.{m}({p_title}="Document tags", {p_owner}="alice", {p_score}=1, {p_tags}=["bug", "docs"])
+created"#
         )
     }
 
-    fn branch_create_binding(exp: &TeachingExposureSession) -> (String, String) {
+    fn create_binding(exp: &TeachingExposureSession) -> (String, String) {
         let map = exp.symbol_map_arc();
-        let m = map.method_sym_for("github", "Repository", "repo_branch_create");
+        let m = map.method_sym_for(ENTRY, "LangItem", "langitem_create");
         let cap = map
             .resolve_method_symbol_triple(m.as_str())
-            .expect("branch-create m resolves")
+            .expect("langitem_create m resolves")
             .2
             .to_string();
         (m, cap)
@@ -125,8 +129,8 @@ mod tests {
         let text =
             crate::plasm_plan_run::render_plasm_plan_dry_text_for_session(dry, None, Some(es));
         assert!(
-            text.contains("branch-create") || text.contains("repo_branch_create"),
-            "expected branch-create capability in dry plan:\n{text}"
+            text.contains("langitem_create") || text.contains("create e"),
+            "expected langitem_create (or create-kind) in dry plan:\n{text}"
         );
     }
 
@@ -162,21 +166,27 @@ mod tests {
         evaluate_plasm_comp_dry(es, &bundle).expect("dry-run")
     }
 
-    /// Mirrors reported workflow: open → branch-create dry-run → read-only plasm calls → reuse mutator `m#`.
-    #[tokio::test]
-    async fn symbol_stability_github_branch_create_survives_intermediate_plasm_reads() {
-        let Some(st) = github_host() else {
+    /// Mirrors reported workflow: open → create dry-run → intermediate plasm calls → reuse mutator `m#`.
+    #[test]
+    fn symbol_stability_langitem_create_survives_intermediate_plasm_reads() {
+        block_on_worker_stack(
+            symbol_stability_langitem_create_survives_intermediate_plasm_reads_inner,
+        );
+    }
+
+    async fn symbol_stability_langitem_create_survives_intermediate_plasm_reads_inner() {
+        let Some(st) = matrix_host() else {
             return;
         };
         let st = Arc::new(st);
         let logical_id = Uuid::new_v4();
-        let intent = "create branch feat/label-color-guide from commit sha and list issues";
+        let intent = "create a lang item with title and tags and list tags";
 
         let out = apply_capability_seeds(
             st.as_ref(),
             None,
             None,
-            label_branch_workflow_seeds(),
+            item_tag_branch_workflow_seeds(),
             None,
             None,
             Some(logical_id),
@@ -191,67 +201,72 @@ mod tests {
             .expect("execute session");
         let exp = es.teaching_exposure.as_ref().expect("exposure");
         let map = exp.symbol_map_arc();
-        let m_branch = map.method_sym_for("github", "Repository", "repo_branch_create");
-        let binding_after_open = branch_create_binding(exp);
+        let m_create = map.method_sym_for(ENTRY, "LangItem", "langitem_create");
+        let binding_after_open = create_binding(exp);
 
-        let snap0 = snapshot_session(&es, &m_branch);
+        let snap0 = snapshot_session(&es, &m_create);
         assert_eq!(
             snap0.m_token_capability.as_ref().map(|(_, c)| c.as_str()),
-            Some("repo_branch_create"),
-            "branch-create m# must resolve to repo_branch_create at open"
+            Some("langitem_create"),
+            "create m# must resolve to langitem_create at open"
         );
 
-        let branch_program = github_branch_create_program(exp);
-        let branch_dry = compile_dry(st.as_ref(), &es, "branch_create", &branch_program);
-        assert_surface_capability(&branch_dry, &es, "repo_branch_create");
+        let create_program = langitem_create_program(exp);
+        let create_dry = compile_dry(st.as_ref(), &es, "langitem_create", &create_program);
+        assert_surface_capability(&create_dry, &es, "langitem_create");
 
-        let snap1 = snapshot_session(&es, &m_branch);
+        let snap1 = snapshot_session(&es, &m_create);
         assert_eq!(snap0.fingerprint, snap1.fingerprint);
-        assert_eq!(snap0.branch_create_m, snap1.branch_create_m);
-        assert_eq!(binding_after_open, branch_create_binding(exp));
+        assert_eq!(snap0.create_m, snap1.create_m);
+        assert_eq!(binding_after_open, create_binding(exp));
 
-        // Intermediate plasm compiles (pc4/pc5 analog) — no plasm_context between.
-        let _repo_read = compile_dry(
+        let _item_read = compile_dry(
             st.as_ref(),
             &es,
-            "repo_read_between",
-            &github_branch_create_program(exp),
+            "item_read_between",
+            &langitem_create_program(exp),
         );
 
-        let snap2 = snapshot_session(&es, &m_branch);
+        let snap2 = snapshot_session(&es, &m_create);
         assert_eq!(
             snap0.fingerprint, snap2.fingerprint,
             "symbol_map_fingerprint must not change across intermediate plasm reads"
         );
         assert_eq!(
             snap0.m_token_capability, snap2.m_token_capability,
-            "m# binding for branch-create must remain stable"
+            "m# binding for langitem_create must remain stable"
         );
-        assert_eq!(binding_after_open, branch_create_binding(exp));
+        assert_eq!(binding_after_open, create_binding(exp));
 
-        let branch_dry_again =
-            compile_dry(st.as_ref(), &es, "branch_create_retry", &branch_program);
-        assert_surface_capability(&branch_dry_again, &es, "repo_branch_create");
+        let create_dry_again =
+            compile_dry(st.as_ref(), &es, "langitem_create_retry", &create_program);
+        assert_surface_capability(&create_dry_again, &es, "langitem_create");
 
         let err = compile_plasm_expression(
             st.engine.prompt_pipeline(),
             Some(st.sessions.symbol_map_cross_cache()),
             &es,
             "wrong_mutator",
-            &branch_program,
+            &create_program,
         );
         assert!(err.is_ok(), "same m# token must still compile as mutator");
     }
 
-    /// Intent-scored expand adds org_public_repos_query append-only; existing branch-create m# must not move.
-    #[tokio::test]
-    async fn symbol_stability_extend_intent_adds_query_without_reassigning_branch_create_m() {
-        let Some(st) = github_host() else {
+    /// Intent-scored expand may add langitem_query append-only; existing create `m#` must not move.
+    #[test]
+    fn symbol_stability_extend_intent_adds_query_without_reassigning_create_m() {
+        block_on_worker_stack(
+            symbol_stability_extend_intent_adds_query_without_reassigning_create_m_inner,
+        );
+    }
+
+    async fn symbol_stability_extend_intent_adds_query_without_reassigning_create_m_inner() {
+        let Some(st) = matrix_host() else {
             return;
         };
         let st = Arc::new(st);
         let logical_id = Uuid::new_v4();
-        let seeds = label_branch_workflow_seeds();
+        let seeds = item_tag_branch_workflow_seeds();
 
         let out = apply_capability_seeds(
             st.as_ref(),
@@ -261,7 +276,7 @@ mod tests {
             None,
             None,
             Some(logical_id),
-            "create branch for label guide",
+            "create a lang item with title",
         )
         .await
         .expect("open");
@@ -276,7 +291,7 @@ mod tests {
                 .as_ref()
                 .expect("exposure")
                 .symbol_map_arc()
-                .method_sym_for("github", "Repository", "repo_branch_create"),
+                .method_sym_for(ENTRY, "LangItem", "langitem_create"),
         );
 
         let out_extend = apply_capability_seeds(
@@ -287,7 +302,7 @@ mod tests {
             None,
             None,
             Some(logical_id),
-            "list public organization repositories and org repos query",
+            "list language items and langitem query",
         )
         .await
         .expect("extend");
@@ -296,49 +311,55 @@ mod tests {
             .get_execute_session(&out_extend.prompt_hash, &out_extend.session_id)
             .await
             .expect("session after extend");
-        let m_branch = es2
+        let m_create = es2
             .teaching_exposure
             .as_ref()
             .expect("exposure")
             .symbol_map_arc()
-            .method_sym_for("github", "Repository", "repo_branch_create");
-        let snap_after = snapshot_session(&es2, &m_branch);
+            .method_sym_for(ENTRY, "LangItem", "langitem_create");
+        let snap_after = snapshot_session(&es2, &m_create);
 
         assert_eq!(
-            snap_before.branch_create_m, snap_after.branch_create_m,
-            "branch-create m# must not shift on intent-scored extend"
+            snap_before.create_m, snap_after.create_m,
+            "langitem_create m# must not shift on intent-scored extend"
         );
         assert_eq!(
             snap_before.m_token_capability, snap_after.m_token_capability,
-            "branch-create capability binding must be unchanged"
+            "langitem_create capability binding must be unchanged"
         );
 
         let exp = es2.teaching_exposure.as_ref().expect("exposure");
-        let org_query_m =
-            exp.symbol_map_arc()
-                .method_sym_for("github", "Repository", "org_public_repos_query");
-        if org_query_m.starts_with('m') {
+        let query_m = exp
+            .symbol_map_arc()
+            .method_sym_for(ENTRY, "LangItem", "langitem_query");
+        if query_m.starts_with('m') {
             let map = exp.symbol_map_arc();
             let triple = map
-                .resolve_method_symbol_triple(org_query_m.as_str())
-                .expect("org query m resolves");
-            assert_eq!(triple.2, "org_public_repos_query");
+                .resolve_method_symbol_triple(query_m.as_str())
+                .expect("langitem_query m resolves");
+            assert_eq!(triple.2, "langitem_query");
             assert_ne!(
-                org_query_m, snap_after.branch_create_m,
-                "new query cap must not steal branch-create slot"
+                query_m, snap_after.create_m,
+                "query cap must not steal langitem_create slot"
             );
         }
     }
 
     /// Fresh logical session may assign different m# (wave-structure); document cross-session hazard.
-    #[tokio::test]
-    async fn symbol_stability_new_session_may_differ_but_ledger_restores_numbering() {
-        let Some(st) = github_host() else {
+    #[test]
+    fn symbol_stability_new_session_may_differ_but_ledger_restores_numbering() {
+        block_on_worker_stack(
+            symbol_stability_new_session_may_differ_but_ledger_restores_numbering_inner,
+        );
+    }
+
+    async fn symbol_stability_new_session_may_differ_but_ledger_restores_numbering_inner() {
+        let Some(st) = matrix_host() else {
             return;
         };
         let st = Arc::new(st);
-        let seeds = label_branch_workflow_seeds();
-        let intent = "label documentation branch workflow";
+        let seeds = item_tag_branch_workflow_seeds();
+        let intent = "lang item tag documentation workflow";
 
         let out_a = apply_capability_seeds(
             st.as_ref(),
@@ -362,7 +383,7 @@ mod tests {
             .as_ref()
             .expect("exposure")
             .symbol_map_arc()
-            .method_sym_for("github", "Repository", "repo_branch_create");
+            .method_sym_for(ENTRY, "LangItem", "langitem_create");
 
         let logical_b = Uuid::new_v4();
         let out_b = apply_capability_seeds(
@@ -387,9 +408,8 @@ mod tests {
             .as_ref()
             .expect("exposure")
             .symbol_map_arc()
-            .method_sym_for("github", "Repository", "repo_branch_create");
+            .method_sym_for(ENTRY, "LangItem", "langitem_create");
 
-        // Cross-session numbering may diverge (wave-structure); both must still resolve correctly.
         for (label, m_sym, es) in [("a", m_a.as_str(), &es_a), ("b", m_b.as_str(), &es_b)] {
             let map = es
                 .teaching_exposure
@@ -399,10 +419,9 @@ mod tests {
             let triple = map
                 .resolve_method_symbol_triple(m_sym)
                 .unwrap_or_else(|| panic!("session {label} {m_sym} must resolve"));
-            assert_eq!(triple.2, "repo_branch_create");
+            assert_eq!(triple.2, "langitem_create");
         }
 
-        // Extend on session b with same logical id restores append-only ledger from first open.
         let out_b_extend = apply_capability_seeds(
             st.as_ref(),
             None,
@@ -411,7 +430,7 @@ mod tests {
             None,
             None,
             Some(logical_b),
-            "continue label branch workflow",
+            "continue lang item tag workflow",
         )
         .await
         .expect("extend b");
@@ -425,16 +444,22 @@ mod tests {
             .as_ref()
             .expect("exposure")
             .symbol_map_arc()
-            .method_sym_for("github", "Repository", "repo_branch_create");
+            .method_sym_for(ENTRY, "LangItem", "langitem_create");
         assert_eq!(
             m_b, m_b2,
-            "extend on same logical session must preserve branch-create m#"
+            "extend on same logical session must preserve langitem_create m#"
         );
     }
 
-    #[tokio::test]
-    async fn symbol_stability_mutator_query_mismatch_includes_fingerprint_in_parse_error() {
-        let Some(st) = github_host() else {
+    #[test]
+    fn symbol_stability_mutator_query_mismatch_includes_fingerprint_in_parse_error() {
+        block_on_worker_stack(
+            symbol_stability_mutator_query_mismatch_includes_fingerprint_in_parse_error_inner,
+        );
+    }
+
+    async fn symbol_stability_mutator_query_mismatch_includes_fingerprint_in_parse_error_inner() {
+        let Some(st) = matrix_host() else {
             return;
         };
         let st = Arc::new(st);
@@ -443,13 +468,13 @@ mod tests {
             None,
             None,
             vec![CapabilitySeed {
-                entry_id: "github".into(),
-                entity: "Repository".into(),
+                entry_id: ENTRY.into(),
+                entity: "LangItem".into(),
             }],
             None,
             None,
             Some(Uuid::new_v4()),
-            "list public organization repositories",
+            "list language items",
         )
         .await
         .expect("open");
@@ -460,13 +485,13 @@ mod tests {
             .expect("session");
         let exp = es.teaching_exposure.as_ref().expect("exposure");
         let map = exp.symbol_map_arc();
-        let m_query = map.method_sym_for("github", "Repository", "org_public_repos_query");
+        let m_query = map.method_sym_for(ENTRY, "LangItem", "langitem_query");
         if !m_query.starts_with('m') {
             return;
         }
 
-        let m_branch = map.method_sym_for("github", "Repository", "repo_branch_create");
-        let line = github_branch_create_program(exp).replace(&m_branch, &m_query);
+        let m_create = map.method_sym_for(ENTRY, "LangItem", "langitem_create");
+        let line = langitem_create_program(exp).replace(&m_create, &m_query);
         let err = compile_plasm_expression(
             st.engine.prompt_pipeline(),
             Some(st.sessions.symbol_map_cross_cache()),
@@ -476,7 +501,7 @@ mod tests {
         )
         .expect_err("query m# in mutator invoke position")
         .to_string();
-        let msg = if err.contains("not a mutator") {
+        let msg = if err.contains("not a mutator") || err.contains("is query") {
             append_symbol_stability_context_for_test(&es, &err, &line)
         } else {
             format_session_symbolic_parse_error(
@@ -501,39 +526,45 @@ mod tests {
             "parse error must include domain_revision: {msg}"
         );
         assert!(
-            msg.contains(&m_query) && msg.contains("org_public_repos_query"),
+            msg.contains(&m_query) && msg.contains("langitem_query"),
             "parse error must name resolved binding: {msg}"
         );
     }
 
-    fn repo_issue_label_seeds() -> Vec<CapabilitySeed> {
+    fn item_tag_line_seeds() -> Vec<CapabilitySeed> {
         vec![
             CapabilitySeed {
-                entry_id: "github".into(),
-                entity: "Repository".into(),
+                entry_id: ENTRY.into(),
+                entity: "LangItem".into(),
             },
             CapabilitySeed {
-                entry_id: "github".into(),
-                entity: "Issue".into(),
+                entry_id: ENTRY.into(),
+                entity: "LangTag".into(),
             },
             CapabilitySeed {
-                entry_id: "github".into(),
-                entity: "Label".into(),
+                entry_id: ENTRY.into(),
+                entity: "LangLine".into(),
             },
         ]
     }
 
-    /// Reported workflow: open Repository+Issue+Label, extend Branch — branch-create `m#` must not move.
-    #[tokio::test]
-    async fn symbol_stability_repo_issue_label_extend_branch_preserves_branch_create_m() {
-        let Some(st) = github_host() else {
+    /// Open LangItem+LangTag+LangLine, extend CompoundBranch — create `m#` must not move.
+    #[test]
+    fn symbol_stability_item_tag_line_extend_branch_preserves_create_m() {
+        block_on_worker_stack(
+            symbol_stability_item_tag_line_extend_branch_preserves_create_m_inner,
+        );
+    }
+
+    async fn symbol_stability_item_tag_line_extend_branch_preserves_create_m_inner() {
+        let Some(st) = matrix_host() else {
             return;
         };
         let st = Arc::new(st);
         let logical_id = Uuid::new_v4();
-        let intent = "create branch feat/label-color-guide and manage issue labels";
+        let intent = "create a lang item and manage tags";
 
-        let seeds_open = repo_issue_label_seeds();
+        let seeds_open = item_tag_line_seeds();
         let out = apply_capability_seeds(
             st.as_ref(),
             None,
@@ -556,12 +587,12 @@ mod tests {
             .as_ref()
             .expect("exposure")
             .symbol_map_arc()
-            .method_sym_for("github", "Repository", "repo_branch_create");
+            .method_sym_for(ENTRY, "LangItem", "langitem_create");
 
         let mut seeds_extend = seeds_open;
         seeds_extend.push(CapabilitySeed {
-            entry_id: "github".into(),
-            entity: "Branch".into(),
+            entry_id: ENTRY.into(),
+            entity: "CompoundBranch".into(),
         });
         let out_extend = apply_capability_seeds(
             st.as_ref(),
@@ -585,62 +616,66 @@ mod tests {
             .as_ref()
             .expect("exposure")
             .symbol_map_arc()
-            .method_sym_for("github", "Repository", "repo_branch_create");
+            .method_sym_for(ENTRY, "LangItem", "langitem_create");
 
         assert_eq!(
             m_before, m_after,
-            "repo_branch_create m# must stay stable when Branch entity is added on extend"
+            "langitem_create m# must stay stable when CompoundBranch is added on extend"
         );
-        let program = github_branch_create_program(es2.teaching_exposure.as_ref().expect("exp"));
+        let program = langitem_create_program(es2.teaching_exposure.as_ref().expect("exp"));
         let _ = compile_plasm_expression(
             st.engine.prompt_pipeline(),
             Some(st.sessions.symbol_map_cross_cache()),
             &es2,
-            "branch_after_extend",
+            "create_after_extend",
             &program,
         )
-        .expect("branch-create program must compile after Branch extend");
+        .expect("langitem_create program must compile after CompoundBranch extend");
     }
 
-    #[tokio::test]
-    async fn symbol_stability_compile_preserves_exposure_fingerprint() {
-        let dir = github_fixture_dir();
+    #[test]
+    fn symbol_stability_compile_preserves_exposure_fingerprint() {
+        block_on_worker_stack(symbol_stability_compile_preserves_exposure_fingerprint_inner);
+    }
+
+    async fn symbol_stability_compile_preserves_exposure_fingerprint_inner() {
+        let dir = matrix_fixture_dir();
         if !dir.is_dir() {
             return;
         }
-        let cgs = Arc::new(load_schema_dir(&dir).expect("github"));
+        let cgs = Arc::new(load_schema_dir(&dir).expect("plasm_language_matrix"));
         let mut ctxs = IndexMap::new();
         ctxs.insert(
-            "github".into(),
-            Arc::new(CgsContext::entry("github", cgs.clone())),
+            ENTRY.into(),
+            Arc::new(CgsContext::entry(ENTRY, cgs.clone())),
         );
-        let exp = TeachingExposureSession::new(cgs.as_ref(), "github", &["Repository", "Issue"]);
+        let exp = TeachingExposureSession::new(cgs.as_ref(), ENTRY, &["LangItem", "LangTag"]);
         let fp_before = symbol_map_fingerprint_hex(&exp);
         let es = ExecuteSession::new(
             "ph".into(),
             "sid".into(),
             cgs.clone(),
             ctxs,
-            "github".into(),
+            ENTRY.into(),
             String::new(),
             String::new(),
             None,
-            vec!["Repository".into(), "Issue".into()],
+            vec!["LangItem".into(), "LangTag".into()],
             Some(exp.clone()),
             None,
             cgs.catalog_cgs_hash_hex(),
-            Some("branch workflow".into()),
+            Some("lang item workflow".into()),
         );
         let cross = plasm_core::SymbolMapCrossRequestCache::new(8);
-        let program = github_branch_create_program(&exp);
+        let program = langitem_create_program(&exp);
         let _ = compile_plasm_expression(
             &plasm_core::PromptPipelineConfig::default(),
             Some(&cross),
             &es,
-            "branch",
+            "create",
             &program,
         )
-        .expect("branch create compiles against teaching exposure");
+        .expect("langitem_create compiles against teaching exposure");
         let fp_after = symbol_map_fingerprint_hex(es.teaching_exposure.as_ref().expect("exp"));
         assert_eq!(fp_before, fp_after);
     }

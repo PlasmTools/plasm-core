@@ -286,15 +286,14 @@ mod tests {
     }
 
     #[test]
-    fn clickup_catalog_il_round_trip_when_present() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/clickup");
-        if !dir.join("domain.yaml").is_file() {
-            return;
-        }
-        let cgs = load_schema_dir(&dir).expect("load clickup");
+    fn language_matrix_catalog_il_round_trip() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(&dir).expect("load plasm_language_matrix");
         let hash_before = cgs.catalog_cgs_hash_hex();
-        let bytes = cgs_to_catalog_il_bytes(&cgs).expect("encode clickup");
-        let decoded = load_catalog_il_verified(&bytes, &hash_before).expect("decode clickup");
+        let bytes = cgs_to_catalog_il_bytes(&cgs).expect("encode language matrix");
+        let decoded =
+            load_catalog_il_verified(&bytes, &hash_before).expect("decode language matrix");
         assert_eq!(decoded.catalog_cgs_hash_hex(), hash_before);
     }
 }

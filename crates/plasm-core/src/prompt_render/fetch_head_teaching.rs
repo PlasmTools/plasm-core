@@ -7,9 +7,9 @@ use crate::symbol_tuning::{ExposureSurface, IdentMetaKey, IdentMetadata, SymbolM
 use crate::{CapabilityKind, CapabilitySchema, CGS};
 
 use super::gloss_collect::GlossScratch;
-use super::invoke_teaching::{capability_legend_with_session_gloss, path_vars_empty};
+use super::invoke_teaching::{capability_legend_with_session_gloss, receiver_absent};
 use super::line_validate::{DomainLineValidCacheKey, DomainLineValidEntry};
-use super::query_teaching::{get_requires_identity_anchor, unary_entity_id_teaching_expr_line};
+use super::query_teaching::get_requires_identity_anchor;
 use super::row_producer::with_projection_bracket;
 use super::surface_filter::surface_allows_capability;
 use super::symbol_tokens::met_sym;
@@ -31,7 +31,6 @@ pub(crate) fn push_entity_fetch_heads(
     surface_filter: Option<&ExposureSurface>,
     catalog_entry_id: &str,
     ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
-    get_gloss: Option<String>,
     // Canonical `[p#,…]` projection when primary Get/Query teaches a field alphabet.
     projection_bracket: Option<&str>,
     line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
@@ -48,13 +47,11 @@ pub(crate) fn push_entity_fetch_heads(
             cgs,
             ename,
             es,
-            ent,
             map,
             map_arc,
             catalog_entry_id,
             ident_meta,
             cap,
-            get_gloss,
             projection_bracket,
             line_valid_cache,
             line_valid_cache_seed,
@@ -72,7 +69,7 @@ pub(crate) fn push_entity_fetch_heads(
         .into_iter()
         .filter(|cap| surface_allows_capability(surface_filter, catalog_entry_id, cap))
         .filter(|cap| {
-            path_vars_empty(cap)
+            receiver_absent(cap)
                 && crate::capability_is_zero_arity_invoke(cap)
                 && !get_requires_identity_anchor(cap, cgs, ent)
         })
@@ -123,13 +120,11 @@ fn push_sole_nullary_bare_head(
     cgs: &CGS,
     ename: &str,
     es: &str,
-    ent: &crate::schema::EntityDef,
     map: Option<&SymbolMap>,
     map_arc: Option<&std::sync::Arc<SymbolMap>>,
     catalog_entry_id: &str,
     ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
     cap: &CapabilitySchema,
-    get_gloss: Option<String>,
     projection_bracket: Option<&str>,
     line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
     line_valid_cache_seed: u64,
@@ -160,25 +155,6 @@ fn push_sole_nullary_bare_head(
             row.teaching_expr.arrow = super::ReturnArrow::Single;
         }
     }
-    if let Some(line_base) = (!ent.id_field.is_empty())
-        .then(|| unary_entity_id_teaching_expr_line(es, ent, map, catalog_entry_id))
-    {
-        let line = with_projection_bracket(line_base, projection_bracket);
-        let _ = try_push_teaching_example(
-            gloss_emit,
-            teaching_rows,
-            collect_meta,
-            cgs,
-            &line,
-            get_gloss,
-            None,
-            None,
-            Some(&cap.name),
-            true,
-            line_valid_cache,
-            line_valid_cache_seed,
-            map_arc,
-            None,
-        );
-    }
+    // Sole-nullary Get does not consume identity. Teaching `eN(<id>)` here is a
+    // polarity lie (pathless seat plus a keyed form that will not parse/run).
 }

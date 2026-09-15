@@ -82,7 +82,7 @@ entities:
         value_ref: nv_card_brand
       card_number:
         required: true
-        value_ref: nv_int
+        value_ref: nv_card_number
       expiry_year:
         required: false
         value_ref: nv_int
@@ -117,6 +117,7 @@ entities:
         value_ref: nv_task_status
 capabilities:
   supervisor_profile_get:
+    receiver: {kind: none}
     description: Show the task principal profile — email is the usual login username for per-app services.
     kind: get
     entity: Supervisor
@@ -171,6 +172,7 @@ capabilities:
     - expiry_year
     - expiry_month
   active_task_get:
+    receiver: {kind: none}
     description: Show the active task instruction text.
     kind: get
     entity: ActiveTask
@@ -240,6 +242,9 @@ values:
   nv_int:
     type: integer
     description: Integer field.
+  nv_card_number:
+    type: digit_id
+    description: Payment card primary account number.
   nv_instruction:
     type: string
     description: Natural-language AppWorld task instruction.

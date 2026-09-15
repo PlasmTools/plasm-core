@@ -21,6 +21,7 @@ pub enum JsonRowPredicateOp {
     Gte,
     Contains,
     In,
+    NotIn,
     Exists,
 }
 
@@ -89,6 +90,9 @@ pub fn json_predicate_matches(
             .zip(rhs.as_str())
             .is_some_and(|(l, r)| l.contains(r)),
         JsonRowPredicateOp::In => rhs
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| json_values_eq_loose(item, lhs))),
+        JsonRowPredicateOp::NotIn => !rhs
             .as_array()
             .is_some_and(|items| items.iter().any(|item| json_values_eq_loose(item, lhs))),
         JsonRowPredicateOp::Lt => compare_ordered(lhs, rhs, |l, r| l < r),

@@ -16,6 +16,19 @@ where
         .collect()
 }
 
+fn fallback_query_capability<'a>(
+    fallback: &RelationScopedFallback,
+    cgs: &'a CGS,
+) -> Option<&'a CapabilitySchema> {
+    match fallback {
+        RelationScopedFallback::QueryScoped { capability, .. }
+        | RelationScopedFallback::QueryScopedBindings { capability, .. } => {
+            cgs.get_capability(capability.as_str())
+        }
+        RelationScopedFallback::HydrateFromEmbedPath { .. } => None,
+    }
+}
+
 pub(crate) fn build_scoped_query_from_fallback(
     fallback: &RelationScopedFallback,
     parent: &CachedEntity,
@@ -123,13 +136,17 @@ pub(crate) fn partition_prefer_from_parent_get(
                     resolve_cached_targets_from_relation_refs(mat, &refs, expected_target)?;
             }
             RelationRowResolution::ScopedQuery => {
-                let q = build_scoped_query_from_fallback(
+                let mut q = build_scoped_query_from_fallback(
                     fallback,
                     parent,
                     parent_entity_def,
                     target_entity,
                     cgs,
                 )?;
+                if let Some(child_cap) = fallback_query_capability(fallback, cgs) {
+                    relation_inherit_for_scoped_query(cgs, mat, parent, child_cap, &q)?
+                        .apply_to_scoped_query(&mut q);
+                }
                 network_jobs.push((i, q));
             }
         }

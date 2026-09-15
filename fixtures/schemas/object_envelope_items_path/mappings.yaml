@@ -1,0 +1,8 @@
+balance_query:
+  method: GET
+  path:
+    - {type: literal, value: balance}
+    - {type: literal, value: groups}
+  # Vendor collection object is `{ you_owe_others, others_owe_you, breakdown }`, not a root array.
+  response:
+    items_path: [breakdown]

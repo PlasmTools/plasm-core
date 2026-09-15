@@ -235,6 +235,7 @@ mod tests {
             last_updated: 0,
             version: 0,
             completeness: plasm_runtime::EntityCompleteness::Complete,
+            unavailable_fields: Default::default(),
         };
         let detail = CachedEntity {
             reference: Ref::new("LangDetail", "det-i1"),
@@ -243,6 +244,7 @@ mod tests {
             last_updated: 0,
             version: 0,
             completeness: plasm_runtime::EntityCompleteness::Complete,
+            unavailable_fields: Default::default(),
         };
         let mut graph = SessionMaterialization::new();
         graph

@@ -66,6 +66,7 @@ pub(crate) struct RunUiStepFields {
     pub artifact: Option<RunArtifactHandle>,
     pub lossy_summary_fields: LossySummaryFieldNames,
     pub column_schema: Option<serde_json::Value>,
+    pub coverage: plasm_runtime::ResultCoverage,
 }
 
 /// Max inline entity rows emitted per step for MCP Run Explorer preview tables.
@@ -273,6 +274,7 @@ impl PlasmMetaIndex {
             step.insert("return_label".into(), json!(spec.return_label));
             step.insert("display".into(), json!(spec.display));
             step.insert("row_count".into(), json!(spec.row_count));
+            step.insert("coverage".into(), json!(spec.coverage.as_str()));
             if let Some(ref node_id) = spec.node_id {
                 step.insert("node_id".into(), json!(node_id));
             }
@@ -404,6 +406,7 @@ mod tests {
                 artifact: None,
                 lossy_summary_fields: LossySummaryFieldNames::default(),
                 column_schema: None,
+                coverage: plasm_runtime::ResultCoverage::Complete,
             }],
             &[],
             None,
@@ -413,6 +416,7 @@ mod tests {
             .and_then(|v| v.as_array())
             .expect("steps");
         assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0]["coverage"], json!("complete"));
         let preview = steps[0]["preview_entities"].as_array().expect("preview");
         assert_eq!(preview.len(), 2);
         assert_eq!(steps[0]["node_id"], json!("n1"));
@@ -503,11 +507,13 @@ mod tests {
                 artifact: Some(h),
                 lossy_summary_fields: LossySummaryFieldNames::default(),
                 column_schema: None,
+                coverage: plasm_runtime::ResultCoverage::Partial,
             }],
             &[],
             None,
         );
         let step = plasm["steps"][0].as_object().expect("step");
+        assert_eq!(step.get("coverage"), Some(&json!("partial")));
         assert!(step.contains_key("run_id"));
         assert!(step.contains_key("artifact_uri"));
         assert!(!step.contains_key("resource_index"));

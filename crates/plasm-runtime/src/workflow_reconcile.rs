@@ -15,7 +15,7 @@ use serde_json::Value as JsonValue;
 use crate::api_error_detail::workflow_conflict_from_http;
 use crate::execution::{
     compiled_conflict_rules, synthesized_get, CapabilityParamEnv, ExecutionEngine, ExecutionMode,
-    ExecutionResult, OperationLedger, StreamConsumeOpts,
+    ExecutionResult, OperationLedger, ResultCoverage, StreamConsumeOpts,
 };
 use crate::materialization::SessionMaterialization;
 use crate::RuntimeError;
@@ -331,6 +331,7 @@ pub fn skipped_write_result(entity: &str) -> ExecutionResult {
         )],
         count: 1,
         has_more: false,
+        coverage: ResultCoverage::Complete,
         pagination_resume: None,
         paging_handle: None,
         source: crate::execution::ExecutionSource::Cache,
@@ -413,6 +414,7 @@ mod tests {
             )],
             count: 1,
             has_more: false,
+            coverage: ResultCoverage::Complete,
             pagination_resume: None,
             paging_handle: None,
             source: crate::execution::ExecutionSource::Cache,

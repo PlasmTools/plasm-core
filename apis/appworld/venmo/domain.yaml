@@ -1,4 +1,4 @@
-version: 17
+version: 22
 entry_id: venmo
 data_classes:
   untrusted:
@@ -61,7 +61,10 @@ values:
     - denied
   nv_direction:
     type: enum
-    description: Transaction direction filter.
+    description: >-
+      Completed-transfer direction: sent = you paid them; received = they paid you.
+      Wire members are exactly sent and received — not outgoing or incoming,
+      and not payment-request polarity.
     enum:
     - sent
     - received
@@ -101,8 +104,8 @@ values:
     type: integer
     description: Notification primary key.
   nv_card_number:
-    type: integer
-    description: Card number digits as integer.
+    type: digit_id
+    description: Linked payment card primary account number.
   nv_cvv:
     type: integer
     description: Card CVV digits as integer.
@@ -148,6 +151,15 @@ values:
   nv_filter_date:
     type: iso8601_date
     description: Calendar date filter for min/max created_at (YYYY-MM-DD).
+  nv_file_path:
+    type: string
+    description: File-system path for download or save.
+  nv_file_access_token:
+    type: string
+    description: Bearer token authorizing the file-path argument, distinct from this service's login token.
+  nv_bool:
+    type: boolean
+    description: Boolean flag.
   prerequisite_principal_email:
     type: email
     description: Account holder email.
@@ -175,7 +187,7 @@ entities:
         value_ref: nv_token_type
   User:
     id_field: email
-    description: Venmo person directory entry for payees and requesters — not friendship management.
+    description: Venmo person — a payee or requester identity, not a friendship.
     discovery:
       names:
       - user
@@ -204,9 +216,7 @@ entities:
           param: user_email
   Friend:
     id_field: email
-    description: >-
-      Venmo friendship — peer identity for payees and payment-request counterparties
-      (email is the counterparty key used as `user_email` on send/request creates).
+    description: Venmo friendship — peer identity for a payee or payment-request counterparty.
     discovery:
       names:
       - friend
@@ -226,7 +236,7 @@ entities:
       email:
         value_ref: nv_email
         required: true
-        description: Friend peer email — the counterparty identity bound as `user_email` on pay/request creates.
+        description: Friend peer email — the counterparty identity.
       first_name:
         value_ref: nv_person_name
       last_name:
@@ -236,8 +246,10 @@ entities:
       friends_since:
         value_ref: nv_timestamp
   Balance:
-    id_field: venmo_balance
-    description: Inspect Venmo cash on hand, or move it to/from a linked payment card (deposit or withdraw).
+    id_field: access_token
+    implicit_request_identity: true
+    primary_read: balance_get
+    description: The authenticated user's Venmo cash on hand.
     discovery:
       names:
       - balance
@@ -247,6 +259,9 @@ entities:
       - deposit
       - cash out
     fields:
+      access_token:
+        value_ref: nv_access_token
+        required: true
       venmo_balance:
         value_ref: nv_amount
         required: true
@@ -282,7 +297,7 @@ entities:
   Transaction:
     id_field: transaction_id
     primary_query: transaction_query
-    description: Review completed transfers or send money you already owe — not for asking someone to pay you.
+    description: A completed Venmo peer transfer, not a payment request.
     discovery:
       names:
       - transaction
@@ -570,6 +585,33 @@ capabilities:
     - last_name
     - registered_at
     - friends_since
+  friend_get:
+    description: Show one Venmo friendship by peer email.
+    kind: get
+    entity: Friend
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - email
+    - first_name
+    - last_name
+    - registered_at
+    - friends_since
+    derive:
+      source: friend_query
+      match_field: email
+      projection:
+        email: email
+        first_name: first_name
+        last_name: last_name
+        registered_at: registered_at
+        friends_since: friends_since
+    output: {type: entity, entity_type: Friend}
   friend_add:
     description: Add a Venmo user as a friend (befriend).
     kind: action
@@ -690,7 +732,31 @@ capabilities:
     - transfer_type
     - amount
     - payment_card_digits
-    - created_at
+      - created_at
+  bank_transfer_receipt_download:
+    receiver: {kind: entity, entity: BankTransfer}
+    description: Download a card-to-balance or balance-to-card transfer receipt to a file-system path.
+    kind: action
+    entity: BankTransfer
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: download_to_file_path
+          value_ref: nv_file_path
+          required: false
+        - name: overwrite
+          value_ref: nv_bool
+          required: false
+        - name: file_system_access_token
+          value_ref: nv_file_access_token
+          required: false
+    output:
+      type: side_effect
+      description: Writes the bank-transfer receipt to the given file path.
   transaction_query:
     description: 'List transactions by shelf — your sent/received history (optional filters) or friends social feed.
 
@@ -754,6 +820,30 @@ capabilities:
           value_ref: nv_access_token
           required: true
     provides: *id001
+  transaction_receipt_download:
+    receiver: {kind: entity, entity: Transaction}
+    description: Download a peer-transfer receipt to a file-system path.
+    kind: action
+    entity: Transaction
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: download_to_file_path
+          value_ref: nv_file_path
+          required: false
+        - name: overwrite
+          value_ref: nv_bool
+          required: false
+        - name: file_system_access_token
+          value_ref: nv_file_access_token
+          required: false
+    output:
+      type: side_effect
+      description: Writes the transaction receipt to the given file path.
   transaction_create:
     description: Send your money to another Venmo user (you pay them).
     kind: create
@@ -859,6 +949,7 @@ capabilities:
     provides:
     - payment_request_id
   payment_request_approve:
+    receiver: {kind: entity, entity: PaymentRequest}
     description: Approve and pay a received payment request (you pay them).
     kind: action
     entity: PaymentRequest
@@ -883,6 +974,7 @@ capabilities:
       type: side_effect
       description: Approves the payment request and transfers the requested money.
   payment_request_deny:
+    receiver: {kind: entity, entity: PaymentRequest}
     description: Deny a received payment request.
     kind: action
     entity: PaymentRequest
@@ -915,6 +1007,7 @@ capabilities:
         - name: private
           value_ref: nv_private
   payment_request_remind:
+    receiver: {kind: entity, entity: PaymentRequest}
     description: Send a reminder notification about a pending payment request you sent.
     kind: action
     entity: PaymentRequest
@@ -955,6 +1048,7 @@ capabilities:
         - name: private
           value_ref: nv_private
   transaction_like:
+    receiver: {kind: entity, entity: Transaction}
     description: Like a transaction.
     kind: action
     entity: Transaction
@@ -969,6 +1063,7 @@ capabilities:
       type: side_effect
       description: Records a like on the transaction.
   transaction_unlike:
+    receiver: {kind: entity, entity: Transaction}
     description: Unlike a transaction.
     kind: action
     entity: Transaction
@@ -1128,6 +1223,7 @@ capabilities:
           value_ref: nv_access_token
           required: true
   notification_mark:
+    receiver: {kind: entity, entity: Notification}
     description: Mark one notification as read or unread.
     kind: action
     entity: Notification
@@ -1261,6 +1357,15 @@ prerequisites:
           path:
           - access_token
         output: token
+    friend_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
     friend_add:
     - id: session
       contract: appworld.session
@@ -1315,6 +1420,23 @@ prerequisites:
           path:
           - access_token
         output: token
+    bank_transfer_receipt_download:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    - id: file_session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - file_system_access_token
+        output: token
     transaction_query:
     - id: session
       contract: appworld.session
@@ -1332,6 +1454,23 @@ prerequisites:
           lane: arguments
           path:
           - access_token
+        output: token
+    transaction_receipt_download:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    - id: file_session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - file_system_access_token
         output: token
     transaction_create:
     - id: session

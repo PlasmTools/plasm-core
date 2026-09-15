@@ -5,6 +5,7 @@ auth: {scheme: none}
 values:
   identifier: {type: string, description: A row identifier}
   parent_reference: {type: entity_ref, target: Parent, description: The owning parent}
+  cohort_id_scalar: {type: integer, description: A scalar identifier that is not an entity_ref}
 entities:
   Parent:
     description: An owning record
@@ -22,10 +23,40 @@ entities:
     fields:
       id: {value_ref: identifier, required: true}
       parent_id: {value_ref: parent_reference, required: true}
+  Friend:
+    description: An unrelated peer with no identity hole on Child
+    id_field: id
+    fields:
+      id: {value_ref: identifier, required: true}
+  Cohort:
+    description: A grouping whose identity is a scalar integer, not an entity_ref target
+    id_field: cohort_id
+    fields:
+      cohort_id: {value_ref: cohort_id_scalar, required: true}
+  Member:
+    description: A member listed with an optional scalar cohort_id hole
+    id_field: id
+    fields:
+      id: {value_ref: identifier, required: true}
 capabilities:
   parent_get:
     entity: Parent
     kind: get
+    provides: [id]
+  parent_query:
+    description: List owning records
+    entity: Parent
+    kind: query
+    provides: [id]
+  parent_create:
+    description: Create an owning record
+    kind: action
+    entity: Parent
+    payload:
+      input_type:
+        type: object
+        fields:
+          - {name: id, value_ref: identifier, required: true}
     provides: [id]
   child_query:
     description: List records owned by a parent
@@ -34,6 +65,17 @@ capabilities:
     scope:
       - {name: parent_id, value_ref: parent_reference, required: true}
     provides: [id]
+  child_settle:
+    description: Record a settlement on a child, optionally scoped to a parent
+    kind: action
+    entity: Child
+    payload:
+      input_type:
+        type: object
+        fields:
+          - {name: id, value_ref: identifier, required: true}
+          - {name: parent_id, value_ref: parent_reference, required: false}
+    provides: [id]
   child_with_parent_query:
     description: List child records with their owning parent
     entity: ChildWithParent
@@ -41,3 +83,20 @@ capabilities:
     scope:
       - {name: parent_id, value_ref: parent_reference, required: true}
     provides: [id, parent_id]
+  friend_query:
+    description: List unrelated peers
+    entity: Friend
+    kind: query
+    provides: [id]
+  cohort_get:
+    description: Show one cohort by scalar id
+    entity: Cohort
+    kind: get
+    provides: [cohort_id]
+  member_query:
+    description: List members — optional scalar cohort_id is not an entity_ref
+    entity: Member
+    kind: query
+    scope:
+      - {name: cohort_id, value_ref: cohort_id_scalar, required: false}
+    provides: [id]

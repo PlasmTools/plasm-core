@@ -141,7 +141,7 @@ pub(crate) fn comp_has_invoke_plan_kind(comp: &serde_json::Value, plan_kind: &st
 
 pub(crate) fn matches_for_each_action_node(nr: &serde_json::Value) -> bool {
     (nr.get("kind").and_then(|k| k.as_str()) == Some("for_each")
-        || nr.get("kind").and_then(|k| k.as_str()) == Some("flat_map_effect"))
+        || nr.get("kind").and_then(|k| k.as_str()) == Some("flat_map_apply"))
         && nr.pointer("/effect_template/kind").and_then(|k| k.as_str()) == Some("action")
 }
 
@@ -160,6 +160,29 @@ pub(crate) fn assert_for_each_action_node(
         );
     }
     Ok(())
+}
+
+pub(crate) fn assert_row_apply_node(
+    dry: &DryPlasmPlanEvaluation,
+    comp: &serde_json::Value,
+    expected_kind: &str,
+) -> Result<(), String> {
+    let matches = |node: &serde_json::Value| {
+        matches!(
+            node.get("kind").and_then(|kind| kind.as_str()),
+            Some("for_each" | "flat_map_apply")
+        ) && node
+            .pointer("/effect_template/kind")
+            .and_then(|kind| kind.as_str())
+            == Some(expected_kind)
+    };
+    if dry.node_results.iter().any(matches) || comp_steps_values(comp).iter().any(|n| matches(n)) {
+        Ok(())
+    } else {
+        Err(format!(
+            "expected row application with body kind {expected_kind}"
+        ))
+    }
 }
 
 #[allow(clippy::too_many_lines)]

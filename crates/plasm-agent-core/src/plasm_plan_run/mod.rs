@@ -49,6 +49,7 @@ use plasm_trace::TraceCompWire;
 use std::collections::{BTreeMap, BTreeSet};
 
 mod compute_eval;
+mod coverage_fold;
 mod dry;
 pub mod evidence_plan;
 mod executable_plan;
@@ -71,6 +72,10 @@ mod alloc_bench_test;
 
 pub(crate) use compute_eval::NodeInputHoleIndex;
 pub(crate) use compute_eval::*;
+pub(crate) use coverage_fold::{
+    coverage_for_iterate_until, coverage_from_compute_collections, coverage_of_declared_source,
+    membership_binding_labels,
+};
 pub(crate) use executable_plan::*;
 pub(crate) use materialize::*;
 pub(crate) use relation_hydrate::finalize_typed_relation_materialized_node;
@@ -436,3 +441,6 @@ mod tests {
     mod materialize_tests;
     mod support;
 }
+
+#[cfg(test)]
+mod observation_honesty_tests;

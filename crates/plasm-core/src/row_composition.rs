@@ -62,18 +62,44 @@ impl RowIdentity {
 /// Ordered suffix segment after a path head (Get/Query/label).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RowSuffix {
-    Relation { wire: String },
-    Limit { count: u32 },
-    Project { fields: Vec<String> },
-    Sort { args: String },
-    Filter { body: String },
-    Aggregate { args: String },
-    GroupBy { args: String },
-    Dedupe { keys: String },
-    Distinct { keys: Option<String> },
-    With { body: String },
+    Relation {
+        wire: String,
+    },
+    Limit {
+        count: u32,
+    },
+    Project {
+        fields: Vec<String>,
+    },
+    Sort {
+        args: String,
+    },
+    Filter {
+        body: String,
+    },
+    Aggregate {
+        args: String,
+    },
+    GroupBy {
+        args: String,
+    },
+    Dedupe {
+        keys: String,
+    },
+    Distinct {
+        keys: Option<String>,
+    },
+    With {
+        body: String,
+    },
+    /// RA-14: closed rowset on the right (`binding` or `(pipe)`).
+    Union {
+        rhs: String,
+    },
     Singleton,
-    PageSize { n: u32 },
+    PageSize {
+        n: u32,
+    },
 }
 
 impl From<&CollectMeta> for RowSuffix {
@@ -94,6 +120,7 @@ impl RowSuffix {
                 | Self::GroupBy { .. }
                 | Self::Dedupe { .. }
                 | Self::Distinct { .. }
+                | Self::Union { .. }
         )
     }
 }

@@ -1,0 +1,119 @@
+repo_get:
+  method: GET
+  path:
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  response: single
+commit_query:
+  method: GET
+  path:
+  - type: literal
+    value: repositories
+  - type: var
+    name: repository
+  - type: literal
+    value: commits
+  response: bare_list
+  query:
+    type: object
+    fields:
+    - - sha
+      - type: if
+        condition:
+          type: exists
+          var: sha
+        then_expr:
+          type: var
+          name: sha
+        else_expr:
+          type: const
+          value: null
+    - - path
+      - type: if
+        condition:
+          type: exists
+          var: path
+        then_expr:
+          type: var
+          name: path
+        else_expr:
+          type: const
+          value: null
+    - - author
+      - type: if
+        condition:
+          type: exists
+          var: by_author
+        then_expr:
+          type: var
+          name: by_author
+        else_expr:
+          type: const
+          value: null
+    - - committer
+      - type: if
+        condition:
+          type: exists
+          var: by_committer
+        then_expr:
+          type: var
+          name: by_committer
+        else_expr:
+          type: const
+          value: null
+    - - since
+      - type: if
+        condition:
+          type: exists
+          var: since
+        then_expr:
+          type: var
+          name: since
+        else_expr:
+          type: const
+          value: null
+    - - until
+      - type: if
+        condition:
+          type: exists
+          var: until
+        then_expr:
+          type: var
+          name: until
+        else_expr:
+          type: const
+          value: null
+  pagination:
+    params:
+      page:
+        counter: 1
+      per_page:
+        fixed: 30
+        role: page_size
+    strategy: page_number
+commit_get:
+  method: GET
+  path:
+  - type: literal
+    value: repos
+  - type: var
+    name: owner
+  - type: var
+    name: repo
+  - type: literal
+    value: commits
+  - type: var
+    name: sha
+  response: single
+user_get:
+  method: GET
+  path:
+  - type: literal
+    value: users
+  - type: var
+    name: id
+  response: single

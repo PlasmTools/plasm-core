@@ -1,10 +1,10 @@
-//! Matrix-backed homograph `p#` projection regression (no `apis/github` coupling).
+//! Matrix-backed homograph `p#` projection regression (language-matrix fixture only).
 
 use super::super::*;
 use super::test_support::assert_compile_rejects_query_filter_psym;
 use super::test_support::assert_compile_rejects_scalar_array_param;
 use super::test_support::assert_compile_rejects_unknown_cap_param;
-use super::test_support::github_symbol_map;
+use super::test_support::matrix_symbol_map;
 use crate::plasm_plan_run::evaluate_plasm_plan_dry;
 use plasm_core::{CgsContext, PromptPipelineConfig, SymbolMap, TeachingExposureSession};
 use std::path::PathBuf;
@@ -49,7 +49,7 @@ fn homograph_matrix_session() -> ExecuteSession {
 #[test]
 fn matrix_homograph_projection_resolves_entity_scoped_p_symbols() {
     let session = homograph_matrix_session();
-    let map = github_symbol_map(&session);
+    let map = matrix_symbol_map(&session);
     let row_a = map.entity_sym_for("langmatrix", "HomographRowA");
     let row_b = map.entity_sym_for("langmatrix", "HomographRowB");
     let p_headline = map.ident_sym_entity_field_for("langmatrix", "HomographRowA", "headline");
@@ -155,7 +155,7 @@ fn langitem_create_query_session() -> ExecuteSession {
 #[test]
 fn matrix_create_m_never_validates_against_query_cap() {
     let session = langitem_create_query_session();
-    let map = github_symbol_map(&session);
+    let map = matrix_symbol_map(&session);
     let item_e = map.entity_sym_for("langmatrix", "LangItem");
     let create_m = map.method_sym_for("langmatrix", "LangItem", "langitem_create");
     let query_m = map.method_sym_for("langmatrix", "LangItem", "langitem_query");
@@ -205,7 +205,7 @@ created"#,
 #[test]
 fn matrix_create_rejects_scalar_for_array_tags_param() {
     let session = langitem_create_query_session();
-    let map = github_symbol_map(&session);
+    let map = matrix_symbol_map(&session);
     let item_e = map.entity_sym_for("langmatrix", "LangItem");
     let create_m = map.method_sym_for("langmatrix", "LangItem", "langitem_create");
     let p_title = map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_create", "title");
@@ -224,7 +224,7 @@ created"#,
 #[test]
 fn matrix_create_accepts_bracket_array_for_tags_param() {
     let session = langitem_create_query_session();
-    let map = github_symbol_map(&session);
+    let map = matrix_symbol_map(&session);
     let item_e = map.entity_sym_for("langmatrix", "LangItem");
     let create_m = map.method_sym_for("langmatrix", "LangItem", "langitem_create");
     let p_title = map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_create", "title");
@@ -256,7 +256,7 @@ created"#,
 #[test]
 fn matrix_inline_heredoc_in_create_invoke_compiles() {
     let session = langitem_create_query_session();
-    let map = github_symbol_map(&session);
+    let map = matrix_symbol_map(&session);
     let item_e = map.entity_sym_for("langmatrix", "LangItem");
     let create_m = map.method_sym_for("langmatrix", "LangItem", "langitem_create");
     let p_title = map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_create", "title");
@@ -337,7 +337,7 @@ fn compound_branch_mutator_session() -> ExecuteSession {
 #[test]
 fn matrix_compound_get_accepts_opaque_key_symbols_with_mutators_exposed() {
     let session = compound_branch_mutator_session();
-    let map = github_symbol_map(&session);
+    let map = matrix_symbol_map(&session);
     let item_e = map.entity_sym_for("langmatrix", "LangItem");
     let branch_e = map.entity_sym_for("langmatrix", "CompoundBranch");
     let create_m = map.method_sym_for("langmatrix", "LangItem", "langitem_create");
@@ -396,7 +396,7 @@ branch"#,
 #[test]
 fn matrix_update_accepts_column_projection_array_from_plural_tags() {
     let session = compound_branch_mutator_session();
-    let map = github_symbol_map(&session);
+    let map = matrix_symbol_map(&session);
     let item_e = map.entity_sym_for("langmatrix", "LangItem");
     let tag_e = map.entity_sym_for("langmatrix", "LangTag");
     let create_m = map.method_sym_for("langmatrix", "LangItem", "langitem_create");
@@ -502,7 +502,7 @@ fn langitem_query_update_tags_session() -> ExecuteSession {
 #[test]
 fn matrix_homograph_rejects_cross_role_p_sym_bindings() {
     let session = langitem_query_update_tags_session();
-    let map = github_symbol_map(&session);
+    let map = matrix_symbol_map(&session);
     let item_e = map.entity_sym_for("langmatrix", "LangItem");
     let create_m = map.method_sym_for("langmatrix", "LangItem", "langitem_create");
     let update_m = map.method_sym_for("langmatrix", "LangItem", "langitem_update");

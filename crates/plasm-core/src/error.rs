@@ -56,6 +56,13 @@ pub enum TypeError {
     #[error("Input required for capability '{capability}' but not provided")]
     InputRequired { capability: String },
 
+    /// Agent omitted a required CGS parameter that has no authored default (RA-15).
+    #[error("required parameter `{parameter}` was omitted from `{expression}`")]
+    RequiredParameterOmitted {
+        parameter: String,
+        expression: String,
+    },
+
     #[error("Recursive type error in relation '{relation}': {source}")]
     RecursiveError {
         relation: String,
@@ -107,6 +114,17 @@ pub enum SchemaError {
 
     #[error("ID field '{id_field}' not found in entity '{entity}'")]
     MissingIdField { entity: String, id_field: String },
+
+    /// Identity slots (`id_field` / `key_vars`) must be scalar types [`IdentityCodec`] can encode.
+    /// `entity_ref` is for foreign keys — never a primary-key / compound-key slot.
+    #[error(
+        "{entity}.{field} has unsupported identity type {field_type} — use a scalar id type (string, integer, uuid, digit_id, …); entity_ref is only for foreign keys"
+    )]
+    UnsupportedIdentityType {
+        entity: String,
+        field: String,
+        field_type: String,
+    },
 
     #[error("Entity '{entity}' key_vars references unknown field '{field}'")]
     UnknownKeyVarField { entity: String, field: String },

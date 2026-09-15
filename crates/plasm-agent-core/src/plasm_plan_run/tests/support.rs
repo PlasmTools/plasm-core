@@ -79,94 +79,46 @@ pub(super) fn duplicate_product_create_session() -> ExecuteSession {
     )
 }
 
-pub(super) fn federated_github_linear_issue_session() -> Option<ExecuteSession> {
+pub(super) fn federated_langmatrix_item_session() -> Option<ExecuteSession> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let github_dir = root.join("../../apis/github");
-    let linear_dir = root.join("../../apis/linear");
-    if !github_dir.is_dir() || !linear_dir.is_dir() {
-        return None;
-    }
-    let cgs_github = Arc::new(load_schema(&github_dir).ok()?);
-    let cgs_linear = Arc::new(load_schema(&linear_dir).ok()?);
+    let matrix_dir = root.join("../../fixtures/schemas/plasm_language_matrix");
+    let mut cgs_a = load_schema(&matrix_dir).ok()?;
+    cgs_a.bind_registry_entry_id("langmatrix_a");
+    let mut cgs_b = load_schema(&matrix_dir).ok()?;
+    cgs_b.bind_registry_entry_id("langmatrix_b");
+    let cgs_a = Arc::new(cgs_a);
+    let cgs_b = Arc::new(cgs_b);
     let mut ctxs = indexmap::IndexMap::new();
     ctxs.insert(
-        "github".into(),
-        Arc::new(CgsContext::entry("github", cgs_github.clone())),
+        "langmatrix_a".into(),
+        Arc::new(CgsContext::entry("langmatrix_a", cgs_a.clone())),
     );
     ctxs.insert(
-        "linear".into(),
-        Arc::new(CgsContext::entry("linear", cgs_linear.clone())),
+        "langmatrix_b".into(),
+        Arc::new(CgsContext::entry("langmatrix_b", cgs_b.clone())),
     );
-    let layers: Vec<&plasm_core::CGS> = vec![cgs_github.as_ref(), cgs_linear.as_ref()];
-    let mut exp = TeachingExposureSession::new(cgs_github.as_ref(), "github", &["Issue"]);
-    exp.expose_entities(&layers, cgs_linear.clone(), "linear", &["Issue"]);
+    let layers: Vec<&plasm_core::CGS> = vec![cgs_a.as_ref(), cgs_b.as_ref()];
+    let mut exp = TeachingExposureSession::new(cgs_a.as_ref(), "langmatrix_a", &["LangItem"]);
+    exp.expose_entities(&layers, cgs_b.clone(), "langmatrix_b", &["LangItem"]);
     Some(ExecuteSession::new(
         "ph".into(),
         "p".into(),
-        cgs_github.clone(),
+        cgs_a.clone(),
         ctxs,
-        "github".into(),
+        "langmatrix_a".into(),
         String::new(),
         String::new(),
         None,
-        vec!["Issue".into()],
+        vec!["LangItem".into()],
         Some(exp),
         None,
-        cgs_github.catalog_cgs_hash_hex(),
+        cgs_a.catalog_cgs_hash_hex(),
         None,
     ))
 }
 
-/// Federated pokeapi (read) + linear (Issue create, Team) session for the federated-write smoke.
-pub(super) fn federated_pokeapi_linear_write_session() -> Option<ExecuteSession> {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let pokeapi_dir = root.join("../../apis/pokeapi");
-    let linear_dir = root.join("../../apis/linear");
-    if !pokeapi_dir.is_dir() || !linear_dir.is_dir() {
-        return None;
-    }
-    let cgs_pokeapi = Arc::new(load_schema(&pokeapi_dir).ok()?);
-    let cgs_linear = Arc::new(load_schema(&linear_dir).ok()?);
-    let mut ctxs = indexmap::IndexMap::new();
-    ctxs.insert(
-        "pokeapi".into(),
-        Arc::new(CgsContext::entry("pokeapi", cgs_pokeapi.clone())),
-    );
-    ctxs.insert(
-        "linear".into(),
-        Arc::new(CgsContext::entry("linear", cgs_linear.clone())),
-    );
-    let layers: Vec<&plasm_core::CGS> = vec![cgs_pokeapi.as_ref(), cgs_linear.as_ref()];
-    let mut exp = TeachingExposureSession::new(cgs_pokeapi.as_ref(), "pokeapi", &["Pokemon"]);
-    exp.expose_entities(&layers, cgs_linear.clone(), "linear", &["Issue", "Team"]);
-    Some(ExecuteSession::new(
-        "ph".into(),
-        "p".into(),
-        cgs_pokeapi.clone(),
-        ctxs,
-        "pokeapi".into(),
-        String::new(),
-        String::new(),
-        None,
-        vec!["Pokemon".into()],
-        Some(exp),
-        None,
-        cgs_pokeapi.catalog_cgs_hash_hex(),
-        None,
-    ))
-}
-
-pub(super) fn federated_github_linear_issue_team_session() -> Option<ExecuteSession> {
-    let mut session = federated_github_linear_issue_session()?;
-    let linear = session.contexts_by_entry.get("linear")?.cgs.clone();
-    let layers: Vec<&plasm_core::CGS> = session
-        .contexts_by_entry
-        .values()
-        .map(|c| c.cgs.as_ref())
-        .collect();
-    let exp = session.teaching_exposure.as_mut()?;
-    exp.expose_entities(&layers, linear, "linear", &["Team"]);
-    Some(session)
+pub(super) fn federated_langmatrix_item_team_session() -> Option<ExecuteSession> {
+    federated_langmatrix_item_session()
 }
 
 pub(super) fn language_matrix_session() -> ExecuteSession {

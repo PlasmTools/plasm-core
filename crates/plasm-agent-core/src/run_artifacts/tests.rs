@@ -123,6 +123,7 @@ async fn memory_insert_get_round_trip() {
         display_lines: vec![],
         request_fingerprints: vec![],
         entities: vec![],
+        coverage: plasm_runtime::ResultCoverage::Unknown,
         source: ExecutionSource::Live,
         stats: ExecutionStats {
             duration_ms: 0,
@@ -131,6 +132,7 @@ async fn memory_insert_get_round_trip() {
             cache_misses: 0,
             ..Default::default()
         },
+        operations: plasm_runtime::OperationLedger::empty(),
     };
     let n = store
         .insert(&"p".repeat(64), "s1", run_id, &doc)
@@ -140,6 +142,38 @@ async fn memory_insert_get_round_trip() {
     let bytes = store.get(&"p".repeat(64), "s1", run_id).await.expect("get");
     let v: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
     assert_eq!(v["run_id"], run_id.to_wire());
+}
+
+#[test]
+fn document_from_run_persists_coverage() {
+    let result = plasm_runtime::ExecutionResult {
+        entities: vec![],
+        count: 0,
+        has_more: false,
+        coverage: plasm_runtime::ResultCoverage::Partial,
+        pagination_resume: None,
+        paging_handle: None,
+        source: ExecutionSource::Live,
+        stats: ExecutionStats::default(),
+        request_fingerprints: vec![],
+        operations: plasm_runtime::OperationLedger::empty(),
+    };
+    let doc = document_from_run(DocumentFromRun {
+        run_id: sample_run_id(),
+        prompt_hash: "ph",
+        session_id: "sid",
+        entry_id: "matrix",
+        principal: None,
+        display_lines: vec!["LangItem".into()],
+        parsed_preimage: &sample_parsed_preimage(),
+        result: &result,
+        resource_index: Some(1),
+    });
+    assert_eq!(doc.coverage, plasm_runtime::ResultCoverage::Partial);
+    assert_eq!(
+        doc.agent_view().coverage,
+        plasm_runtime::ResultCoverage::Partial
+    );
 }
 
 #[tokio::test]
@@ -379,6 +413,7 @@ async fn fs_backend_resource_index_round_trip() {
         display_lines: vec![],
         request_fingerprints: vec![],
         entities: vec![],
+        coverage: plasm_runtime::ResultCoverage::Unknown,
         source: ExecutionSource::Live,
         stats: ExecutionStats {
             duration_ms: 0,
@@ -387,6 +422,7 @@ async fn fs_backend_resource_index_round_trip() {
             cache_misses: 0,
             ..Default::default()
         },
+        operations: plasm_runtime::OperationLedger::empty(),
     };
     store.insert(&ph, "s1", run_id, &doc).await.expect("insert");
     let by_idx = store
@@ -439,6 +475,7 @@ async fn init_from_env_url_precedes_dir() {
         display_lines: vec![],
         request_fingerprints: vec![],
         entities: vec![],
+        coverage: plasm_runtime::ResultCoverage::Unknown,
         source: ExecutionSource::Live,
         stats: ExecutionStats {
             duration_ms: 0,
@@ -447,6 +484,7 @@ async fn init_from_env_url_precedes_dir() {
             cache_misses: 0,
             ..Default::default()
         },
+        operations: plasm_runtime::OperationLedger::empty(),
     };
     store
         .insert(&ph, "sess", run_id, &doc)
@@ -477,6 +515,7 @@ fn project_artifact_payload_for_agent_slim_by_default() {
         display_lines: vec!["line".into()],
         request_fingerprints: vec!["fp1".into()],
         entities: vec![serde_json::json!({"id": 1})],
+        coverage: plasm_runtime::ResultCoverage::Unknown,
         source: ExecutionSource::Live,
         stats: ExecutionStats {
             duration_ms: 1,
@@ -485,6 +524,7 @@ fn project_artifact_payload_for_agent_slim_by_default() {
             cache_misses: 3,
             ..Default::default()
         },
+        operations: plasm_runtime::OperationLedger::empty(),
     };
     let payload = ArtifactPayload {
         metadata: ArtifactPayloadMetadata::json_default(),
@@ -520,6 +560,7 @@ fn project_artifact_payload_for_mcp_read_run_explorer_ui_is_full() {
         display_lines: vec!["line".into()],
         request_fingerprints: vec!["fp1".into()],
         entities: vec![serde_json::json!({"id": 1})],
+        coverage: plasm_runtime::ResultCoverage::Partial,
         source: ExecutionSource::Live,
         stats: ExecutionStats {
             duration_ms: 1,
@@ -528,6 +569,7 @@ fn project_artifact_payload_for_mcp_read_run_explorer_ui_is_full() {
             cache_misses: 3,
             ..Default::default()
         },
+        operations: plasm_runtime::OperationLedger::empty(),
     };
     let payload = ArtifactPayload {
         metadata: ArtifactPayloadMetadata::json_default(),
@@ -540,8 +582,14 @@ fn project_artifact_payload_for_mcp_read_run_explorer_ui_is_full() {
     .expect("ui read");
     let ui_doc: RunArtifactDocument = serde_json::from_slice(&ui.bytes).expect("full doc");
     assert_eq!(ui_doc.prompt_hash, doc.prompt_hash);
+    assert_eq!(ui_doc.coverage, plasm_runtime::ResultCoverage::Partial);
 
     let agent = project_artifact_payload_for_mcp_read(&payload, None).expect("agent read");
     let agent_v: serde_json::Value = serde_json::from_slice(&agent.bytes).expect("json");
     assert!(agent_v.get("prompt_hash").is_none());
+    assert_eq!(agent_v["coverage"], "partial");
+    assert_eq!(
+        doc.agent_view().coverage,
+        plasm_runtime::ResultCoverage::Partial
+    );
 }

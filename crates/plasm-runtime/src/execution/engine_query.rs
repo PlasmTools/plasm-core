@@ -107,6 +107,7 @@ impl ExecutionEngine {
                                 entities: vec![],
                                 count: 0,
                                 has_more: false,
+                                coverage: foreign_result.coverage,
                                 pagination_resume: None,
                                 paging_handle: None,
                                 source: ExecutionSource::Live,

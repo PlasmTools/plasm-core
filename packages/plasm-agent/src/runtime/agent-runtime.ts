@@ -1,4 +1,4 @@
-import { routingExplanationLines } from "../engine/routing.js";
+import { routingExplanationLines, routingRecoveryMarkdown } from "../engine/routing.js";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -14,6 +14,7 @@ import {
 import { createDefaultHostTransport } from "../engine/host-transport.js";
 import { mintLogicalSessionId, formatLogicalSessionWireRef } from "../runtime/logical-session.js";
 import { SessionManager, type AgentSessionState } from "../session-state.js";
+import { runIdFromArtifactRef } from "../tools/artifact-contract.js";
 import {
   formatPlasmContextMarkdown,
   formatPlasmDryRunMarkdown,
@@ -24,6 +25,7 @@ import { LocalArchiveStore } from "../archive/index.js";
 import { createArchiveStore } from "../archive/resolve-backend.js";
 import type { ProdArchiveStore } from "../archive/prod-archive-store.js";
 import { z } from "zod";
+import { pinnedArtifactImage } from "../tools/artifact-process.js";
 import { writeWorkspaceFile } from "../tools/workspace-files.js";
 import { activeTraceId, plasmSpans } from "../telemetry/plasm-spans.js";
 import { PlasmSpanAttributes } from "../instrumentation.js";
@@ -78,8 +80,26 @@ export interface PlasmRunInput {
 
 export interface PlasmReadRunArtifactInput {
   logicalSessionRef: string;
-  runId: string;
+  runId?: string;
+  artifactUri?: string;
   reasoning?: string;
+}
+
+function resolveReadRunId(input: PlasmReadRunArtifactInput): string {
+  const runId = input.runId?.trim() ?? "";
+  const uri = input.artifactUri?.trim() ?? "";
+  if (Boolean(runId) === Boolean(uri)) {
+    throw new Error("plasm_read_run_artifact: provide exactly one of run_id or artifact_uri");
+  }
+  const resolved = runIdFromArtifactRef(runId || uri);
+  if (!resolved) {
+    throw new Error(
+      uri
+        ? "plasm_read_run_artifact: artifact_uri must contain a pr… run_id"
+        : `plasm_read_run_artifact: invalid run_id \`${runId}\``,
+    );
+  }
+  return resolved;
 }
 
 function seedKey(seed: { api: string; entity: string }): string {
@@ -167,9 +187,17 @@ export class AgentRuntime {
     return this.workflowSession != null;
   }
 
+  /** Successful `plasm_run` write-node count this process (fused 0w reads stay 0). */
+  private committedWriteOps = 0;
+
   /** True after a run snapshot has been written under the artefact workspace. */
   hasMaterializedArtefact(): boolean {
     return this.artefactMaterialized;
+  }
+
+  /** Live write ops committed via `plasm_run` on this runtime. */
+  committedLiveWriteOps(): number {
+    return this.committedWriteOps;
   }
 
   /** Open-wave teaching TSV (empty before mint). */
@@ -263,15 +291,16 @@ export class AgentRuntime {
         intent, existing?.logicalSessionId,
       );
       const { routing, teaching } = packet;
+      const recoveryMarkdown = routingRecoveryMarkdown(routing);
       if (!routing.closure && routing.selection.status === "insufficient") {
         await this.recordToolTrace("tool", "plasm_context", started, {
           intent, session_mode: mode, routing: JSON.stringify(routing),
           logical_session_ref: existing?.logicalSessionRef,
         });
         return [
-          `**plasm_context:** ${routing.selection.status}`,
+          recoveryMarkdown ?? `**plasm_context:** ${routing.selection.status}`,
           existing ? `**logical_session_ref:** \`${existing.logicalSessionRef}\`` : "",
-          ...routingExplanationLines(routing.selection),
+          ...(recoveryMarkdown ? [] : routingExplanationLines(routing.selection)),
         ].filter(Boolean).join("\n\n");
       }
       if (!routing.closure || !teaching?.tsv.trim()) {
@@ -308,8 +337,15 @@ export class AgentRuntime {
         registry_generation: session.registryGeneration, routing: JSON.stringify(routing),
         trace_id: activeTraceId() ?? span.spanContext().traceId,
       });
-      return [formatPlasmContextMarkdown(session.logicalSessionRef, teaching.tsv, false),
-        ...routingExplanationLines(routing.selection)].join("\n\n");
+      const teachingMarkdown = formatPlasmContextMarkdown(session.logicalSessionRef, teaching.tsv, false);
+      if (recoveryMarkdown) {
+        return [
+          recoveryMarkdown,
+          "**Partial teaching** (does not claim complete coverage):",
+          teachingMarkdown,
+        ].join("\n\n");
+      }
+      return [teachingMarkdown, ...routingExplanationLines(routing.selection)].join("\n\n");
     });
   }
 
@@ -446,6 +482,11 @@ export class AgentRuntime {
           logicalSessionRef: session.logicalSessionRef,
         });
 
+        if (result.ok) {
+          const commit = session.planCommits.find((c) => c.ref === input.runRef);
+          this.committedWriteOps += commit?.writeCount ?? 0;
+        }
+
         const markdown = formatPlasmRunMarkdown(
           result.message,
           result.ok,
@@ -464,9 +505,10 @@ export class AgentRuntime {
     if (!this.archive || typeof this.archive.getRun !== "function") {
       throw new Error("plasm_read_run_artifact: archive store unavailable");
     }
-    const snap = await this.archive.getRun(input.runId.trim(), input.logicalSessionRef.trim());
+    const runId = resolveReadRunId(input);
+    const snap = await this.archive.getRun(runId, input.logicalSessionRef.trim());
     if (!snap) {
-      throw new Error(`plasm_read_run_artifact: unknown run_id \`${input.runId}\``);
+      throw new Error(`plasm_read_run_artifact: unknown run_id \`${runId}\``);
     }
     if (
       snap.logical_session_ref &&
@@ -480,7 +522,9 @@ export class AgentRuntime {
     this.artefactMaterialized = true;
     return [
       `**run_id:** \`${snap.run_id}\``,
-      "Materialized under artefact workspace for **plasm_artefact_transform**.",
+      pinnedArtifactImage()
+        ? "Materialized under artefact workspace for **plasm_artefact_transform**."
+        : "Materialized under artefact workspace.",
       "",
       "```json",
       JSON.stringify(snap.native_snapshot ?? snap, null, 2),

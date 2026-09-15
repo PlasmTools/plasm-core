@@ -3,15 +3,54 @@ parent_get:
   path:
     - {type: literal, value: parents}
     - {type: var, name: id}
+parent_query:
+  method: GET
+  path:
+    - {type: literal, value: parents}
+parent_create:
+  method: POST
+  path:
+    - {type: literal, value: parents}
+  body:
+    type: object
+    fields:
+      - - id
+        - type: var
+          name: id
 child_query:
   method: GET
   path:
     - {type: literal, value: parents}
     - {type: var, name: parent_id}
     - {type: literal, value: children}
+child_settle:
+  method: POST
+  path:
+    - {type: literal, value: children}
+    - {type: var, name: id}
+    - {type: literal, value: settle}
+  body:
+    type: object
+    fields:
+      - - parent_id
+        - type: var
+          name: parent_id
 child_with_parent_query:
   method: GET
   path:
     - {type: literal, value: parents}
     - {type: var, name: parent_id}
     - {type: literal, value: children}
+friend_query:
+  method: GET
+  path:
+    - {type: literal, value: friends}
+cohort_get:
+  method: GET
+  path:
+    - {type: literal, value: cohorts}
+    - {type: var, name: cohort_id}
+member_query:
+  method: GET
+  path:
+    - {type: literal, value: members}

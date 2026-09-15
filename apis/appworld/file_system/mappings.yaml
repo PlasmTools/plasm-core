@@ -147,6 +147,34 @@ directory_compress:
         then_expr: { type: var, name: overwrite }
         else_expr: { type: const, value: null }
 
+file_query:
+  method: GET
+  path:
+  - { type: literal, value: file_system }
+  - { type: literal, value: directory }
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - - directory_path
+      - type: if
+        condition: { type: exists, var: directory_path }
+        then_expr: { type: var, name: directory_path }
+        else_expr: { type: const, value: null }
+    - - substring
+      - type: if
+        condition: { type: exists, var: substring }
+        then_expr: { type: var, name: substring }
+        else_expr: { type: const, value: null }
+    - - entry_type
+      - type: const
+        value: files
+    - - recursive
+      - type: if
+        condition: { type: exists, var: recursive }
+        then_expr: { type: var, name: recursive }
+        else_expr: { type: const, value: null }
+
 file_get:
   method: GET
   path:

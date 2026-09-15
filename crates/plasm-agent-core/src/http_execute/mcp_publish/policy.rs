@@ -57,6 +57,9 @@ pub(crate) struct StepFormatOutcome {
 pub(crate) struct ResolvedStepPublish {
     pub label: String,
     pub row_count: usize,
+    pub count_label: String,
+    pub coverage: plasm_runtime::ResultCoverage,
+    pub continue_handle: Option<String>,
     pub mode: StepInBandMode,
     pub artifact: Option<crate::run_artifacts::RunArtifactHandle>,
     pub format: Option<StepFormatOutcome>,
@@ -70,6 +73,13 @@ impl ResolvedStepPublish {
                 step.node_id.as_deref(),
             ),
             row_count: step.result.count,
+            count_label: crate::mcp_run_markdown::slim_result_count_label(&step.result),
+            coverage: step.result.coverage,
+            continue_handle: step
+                .result
+                .paging_handle
+                .as_ref()
+                .map(|h| h.as_str().to_string()),
             mode: StepInBandMode::resolve(step, policy),
             artifact: step.artifact.clone(),
             format: None,
@@ -117,7 +127,7 @@ pub(crate) struct PublishPlan {
     pub resolved: Vec<ResolvedStepPublish>,
     pub artifact_snapshot_preview: bool,
     pub total_entity_rows: usize,
-    pub per_step_compact: Vec<(String, usize)>,
+    pub per_step_compact: Vec<(String, String)>,
     pub artifact_access: crate::mcp_run_markdown::ArtifactAccessMode,
 }
 
@@ -133,7 +143,7 @@ impl PublishPlan {
         let total_entity_rows = resolved.iter().map(|r| r.row_count).sum();
         let per_step_compact = resolved
             .iter()
-            .map(|r| (r.label.clone(), r.row_count))
+            .map(|r| (r.label.clone(), r.count_label.clone()))
             .collect();
         Self {
             resolved,
