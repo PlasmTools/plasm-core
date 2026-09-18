@@ -115,6 +115,7 @@ pub mod release_version;
 mod session_credentials;
 pub(crate) mod tool_model_service;
 pub mod traced_pg;
+pub mod workflow_intent;
 pub use plan_dry_display::PlanDryVerdict;
 mod approval_gate;
 mod flow_catalog;

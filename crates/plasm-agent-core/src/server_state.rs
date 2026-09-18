@@ -180,6 +180,7 @@ impl PlasmHostState {
             Some(closure) => closure
                 .business
                 .iter()
+                .chain(&closure.input_sources)
                 .chain(&closure.prerequisites)
                 .filter(|c| c.catalog == entry)
                 .map(|c| c.capability.clone())

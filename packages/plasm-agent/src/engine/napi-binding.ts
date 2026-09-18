@@ -57,7 +57,7 @@ export interface PlasmEngine {
   ): Promise<TeachingExposureResult>;
   dryRun(program: string, executeSessionRef?: string): Promise<DryRunResult>;
   activateDiscovery(deploymentId: string, bindingsJson: string): Promise<string>;
-  routeIntent(intent: string, logicalSessionId?: string): Promise<RoutingPacket>;
+  routeIntent(intent: string, logicalSessionId?: string, userRequests?: string[]): Promise<RoutingPacket>;
   runPlan(planCommitRef: string, logicalSessionId?: string): Promise<{ ok: boolean; message: string; rowsJson?: string; metaJson?: string; artifactsJson?: string }>;
   runPlanLive?(
     planCommitRef: string,
@@ -87,7 +87,7 @@ type NativePlasmEngine = {
     fusedCleanRead?: boolean;
   }>;
   activateDiscovery(deploymentId: string, bindingsJson: string): Promise<string>;
-  routeIntent(intent: string, logicalSessionId?: string): Promise<string>;
+  routeIntent(intent: string, logicalSessionId?: string, userRequests?: string[]): Promise<string>;
   runPlan(planCommitRef: string, logicalSessionId?: string): Promise<{
     ok: boolean;
     message: string;
@@ -176,8 +176,8 @@ export class NapiPlasmEngine implements PlasmEngine {
     return this.native.activateDiscovery(deploymentId, bindingsJson);
   }
 
-  async routeIntent(intent: string, logicalSessionId?: string): Promise<RoutingPacket> {
-    const raw = await this.native.routeIntent(intent, logicalSessionId);
+  async routeIntent(intent: string, logicalSessionId?: string, userRequests?: string[]): Promise<RoutingPacket> {
+    const raw = await this.native.routeIntent(intent, logicalSessionId, userRequests);
     return routingPacketSchema.parse(JSON.parse(raw));
   }
 

@@ -20,6 +20,7 @@ import { AgentRuntime, type AgentRuntimeConfig } from "../runtime/agent-runtime.
 import { createHarnessTools, renderSkillIndex } from "../tools/harness-tools.js";
 import { gateArtefactTransform } from "../tools/format.js";
 import { createPlasmTools } from "../tools/plasm-tools.js";
+import { DiscoveryIntent } from "./discovery-intent.js";
 import { buildDefaultSystemLiturgy } from "../prompts/index.js";
 import { runEveToolLoop, type AgentStepEvent } from "../telemetry/eve-tool-loop.js";
 import type { EveChannelKind } from "../telemetry/eve-agent-runs.js";
@@ -143,6 +144,7 @@ export class PlasmAgent {
   private readonly taskLedgerStore = new TaskLedgerStore();
   private lastReviewRecords: TaskLedgerReviewRecord[] = [];
   private reviewInstruction = "";
+  private readonly discoveryIntent = new DiscoveryIntent();
   private readonly agentName: string;
   private conversation: ModelMessage[] = [];
 
@@ -244,7 +246,10 @@ export class PlasmAgent {
     }
 
     const system = await this.loadInstructions();
-    const plasmTools = createPlasmTools(this.runtime);
+    this.discoveryIntent.addRequest(prompt, options.resetConversation ?? false);
+    const plasmTools = createPlasmTools(this.runtime, (request) =>
+      this.discoveryIntent.forCapabilityRequest(request),
+    );
     const harnessTools = createHarnessTools({
       skills: this.skillsMode === "index" ? this.loadedSkills : undefined,
       subagents: this.subagentRegistry,

@@ -232,6 +232,7 @@ async fn route_http_intent(
     service
         .route_turn(RouteTurn {
             new_generation: &generation,
+            user_requests: &[],
             intent: &body.intent,
             logical_session,
             allowed: &allowed,
@@ -294,6 +295,7 @@ async fn post_terminal_discover(
         text.push_str("```tsv\napi\tentity\tdescription\trole\n");
         for (references, role) in [
             (&closure.business, "business"),
+            (&closure.input_sources, "input_source"),
             (&closure.prerequisites, "prerequisite"),
         ] {
             for reference in references {
@@ -393,7 +395,12 @@ async fn apply_routed_http_context(
         .expect("validated capability closure");
     let registry = routed.catalog.snapshot();
     let mut seeds = Vec::new();
-    for reference in closure.business.iter().chain(&closure.prerequisites) {
+    for reference in closure
+        .business
+        .iter()
+        .chain(&closure.input_sources)
+        .chain(&closure.prerequisites)
+    {
         let context = registry.load_context(&reference.catalog)?;
         let capability = context
             .cgs

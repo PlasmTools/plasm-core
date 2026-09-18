@@ -15,7 +15,7 @@ pub fn render_prerequisite_bindings(
     catalogs: &BTreeMap<String, &CGS>,
     symbols: &dyn SymbolRender,
 ) -> Result<String, String> {
-    if closure.edges.is_empty() {
+    if closure.edges.is_empty() && closure.input_sources.is_empty() {
         return Ok(String::new());
     }
     let renderer = BindingRenderer {
@@ -27,6 +27,13 @@ pub fn render_prerequisite_bindings(
         "Declared prerequisites".into(),
         "Write acquisition calls using the ordinary capability syntax in the teaching table. Bind their returned fields into the indicated existing inputs. Acquisition calls participate in normal plan review and execution.".into(),
     ];
+    if !closure.input_sources.is_empty() {
+        lines.push("Possible input sources".into());
+        lines.push("Before an operation requiring an entity identity, inspect the listed source capabilities. Use an existing entity when it satisfies the request; otherwise a listed create capability may establish one. This is a state-dependent choice, not approval to create.".into());
+        for source in &closure.input_sources {
+            lines.push(format!("  {}", renderer.capability(source)?));
+        }
+    }
     for acquisition in &closure.acquisitions {
         let provider = catalogs
             .get(&acquisition.provider_catalog)
@@ -40,6 +47,12 @@ pub fn render_prerequisite_bindings(
                 .clone()
                 .map_or_else(|| renderer.capability(&acquisition.capability), Ok)?
         ));
+        if renderer.acquisition_returns_collection(&acquisition.capability)? {
+            lines.push(
+                "  This acquisition returns candidate rows; select or fan out a row before binding its fields."
+                    .into(),
+            );
+        }
         for (port, argument) in &acquisition.arguments {
             let input = provider
                 .inputs
@@ -115,6 +128,16 @@ impl BindingRenderer<'_> {
             &method,
             self.catalogs.get(&reference.catalog).copied(),
             &self.identity_wire(&reference.catalog, cap),
+        ))
+    }
+
+    fn acquisition_returns_collection(&self, reference: &CapabilityRef) -> Result<bool, String> {
+        Ok(matches!(
+            self.schema(reference)?
+                .output_schema
+                .as_ref()
+                .map(|output| &output.output_type),
+            Some(crate::schema::OutputType::Collection { .. })
         ))
     }
 
@@ -243,8 +266,9 @@ impl BindingRenderer<'_> {
     fn output(&self, reference: &CapabilityRef, field: &str) -> Result<String, String> {
         let cap = self.schema(reference)?;
         let entity = match cap.output_schema.as_ref().map(|o| &o.output_type) {
-            Some(crate::schema::OutputType::Entity { entity_type }) => entity_type,
-            _ => return Err("provider has no single entity output".into()),
+            Some(crate::schema::OutputType::Entity { entity_type })
+            | Some(crate::schema::OutputType::Collection { entity_type, .. }) => entity_type,
+            _ => return Err("provider has no declared entity output".into()),
         };
         Ok(self
             .symbols

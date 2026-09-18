@@ -12,7 +12,7 @@
 //! the binding — it does not silently send the parent token.
 
 use crate::schema::{CapabilitySchema, InputFieldSchema, InputFieldWire, InputType};
-use crate::{FieldType, NamedValueSchema, CGS};
+use crate::{CapabilityKind, FieldType, NamedValueSchema, CGS};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -140,6 +140,11 @@ pub struct PrerequisiteEdge {
 pub struct PrerequisiteClosure {
     pub acquisitions: Vec<Acquisition>,
     pub business: Vec<CapabilityRef>,
+    /// Lawful producers for required entity identities. These are possible
+    /// workflow branches, not selected business effects: an agent may read an
+    /// existing entity or create one before it can fill the consumer input.
+    #[serde(default)]
+    pub input_sources: Vec<CapabilityRef>,
     pub prerequisites: Vec<CapabilityRef>,
     pub edges: Vec<PrerequisiteEdge>,
 }
@@ -218,8 +223,15 @@ impl PrerequisiteCatalog {
                 }
             }
             let output_entity = match cap.output_schema.as_ref().map(|o| &o.output_type) {
-                Some(crate::schema::OutputType::Entity { entity_type }) => entity_type.as_str(),
-                _ => return Err(format!("provider {id} must produce one declared entity")),
+                Some(crate::schema::OutputType::Entity { entity_type })
+                | Some(crate::schema::OutputType::Collection { entity_type, .. }) => {
+                    entity_type.as_str()
+                }
+                _ => {
+                    return Err(format!(
+                        "provider {id} must produce a declared entity or collection"
+                    ))
+                }
             };
             for (port, input) in &provider.inputs {
                 same_type(
@@ -726,6 +738,30 @@ pub fn prerequisite_closure(
     business: &[CapabilityRef],
     allowed: &BTreeSet<String>,
 ) -> Result<PrerequisiteClosure, String> {
+    prerequisite_closure_with_source_authorization(
+        catalogs,
+        bindings,
+        business,
+        allowed,
+        |reference| allowed.contains(&reference.catalog),
+    )
+}
+
+/// Resolve explicit prerequisites and optional identity sources under the
+/// caller's capability policy. Mandatory deployment prerequisites still use
+/// the catalog allowlist and therefore fail closed when their policy is
+/// incomplete; optional source alternatives that are not permitted are simply
+/// not offered.
+pub fn prerequisite_closure_with_source_authorization<F>(
+    catalogs: &BTreeMap<String, &CGS>,
+    bindings: &DeploymentBindings,
+    business: &[CapabilityRef],
+    allowed: &BTreeSet<String>,
+    source_permitted: F,
+) -> Result<PrerequisiteClosure, String>
+where
+    F: Fn(&CapabilityRef) -> bool,
+{
     let mut binding_index = BTreeMap::new();
     for binding in &bindings.bindings {
         let key = (binding.consumer.clone(), binding.requirement.clone());
@@ -733,6 +769,7 @@ pub fn prerequisite_closure(
             return Err("duplicate deployment prerequisite binding".into());
         }
     }
+    let input_sources = input_source_capabilities(catalogs, business, &source_permitted)?;
     let mut walker = ClosureWalker {
         catalogs,
         bindings: binding_index,
@@ -746,17 +783,115 @@ pub fn prerequisite_closure(
     for selected in business {
         walker.visit(selected, None, &BTreeMap::new())?;
     }
+    for source in &input_sources {
+        walker.visit(source, None, &BTreeMap::new())?;
+    }
     let selected: BTreeSet<_> = business.iter().cloned().collect();
+    let sources: BTreeSet<_> = input_sources.iter().cloned().collect();
     Ok(PrerequisiteClosure {
         acquisitions: walker.acquisitions,
         business: selected.iter().cloned().collect(),
+        input_sources: sources.iter().cloned().collect(),
         prerequisites: walker
             .order
             .into_iter()
-            .filter(|id| !selected.contains(id))
+            .filter(|id| !selected.contains(id) && !sources.contains(id))
             .collect(),
         edges: walker.edges,
     })
+}
+
+/// Find lawful ways to obtain a required entity identity before the agent has
+/// committed to one workflow branch. This is structural data-flow closure: a
+/// consumer requiring `PaymentCard.id` may need either an existing-card query
+/// or the card constructor. It never names a product, task, or catalog.
+///
+/// Only query/search/create capabilities are sources. A Get needs the identity
+/// already, while update/delete/action do not establish a new usable identity.
+fn input_source_capabilities(
+    catalogs: &BTreeMap<String, &CGS>,
+    business: &[CapabilityRef],
+    source_permitted: &impl Fn(&CapabilityRef) -> bool,
+) -> Result<Vec<CapabilityRef>, String> {
+    let selected: BTreeSet<_> = business.iter().cloned().collect();
+    let mut sources = BTreeSet::new();
+    for consumer in business {
+        let cgs = *catalogs
+            .get(&consumer.catalog)
+            .ok_or("missing prerequisite catalog")?;
+        let cap = capability(cgs, &consumer.capability)?;
+        for value_ref in required_input_value_refs(cap) {
+            for entity in cgs.entities.values() {
+                let id = entity
+                    .fields
+                    .get(&entity.id_field)
+                    .ok_or("entity id field absent")?;
+                if id.kind.registry_key() != value_ref {
+                    continue;
+                }
+                for producer in cgs.capabilities.values().filter(|candidate| {
+                    candidate.domain == entity.name
+                        && matches!(
+                            candidate.kind,
+                            CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Create
+                        )
+                        && cgs
+                            .effective_provides(candidate)
+                            .iter()
+                            .any(|field| field == entity.id_field.as_str())
+                }) {
+                    let reference = CapabilityRef {
+                        catalog: consumer.catalog.clone(),
+                        capability: producer.name.to_string(),
+                    };
+                    if source_permitted(&reference) && !selected.contains(&reference) {
+                        sources.insert(reference);
+                    }
+                }
+            }
+        }
+    }
+    Ok(sources.into_iter().collect())
+}
+
+fn required_input_value_refs(capability: &CapabilitySchema) -> Vec<&crate::ValueDomainKey> {
+    fn collect<'a>(fields: &'a [InputFieldSchema], out: &mut Vec<&'a crate::ValueDomainKey>) {
+        for field in fields
+            .iter()
+            .filter(|field| field.required && field.default.is_none())
+        {
+            match &field.wire {
+                InputFieldWire::Registry(value_ref) => out.push(value_ref),
+                InputFieldWire::Inline(input) => collect_input(input, out),
+            }
+        }
+    }
+    fn collect_input<'a>(input: &'a InputType, out: &mut Vec<&'a crate::ValueDomainKey>) {
+        match input {
+            InputType::Object { fields, .. } => collect(fields, out),
+            InputType::Union { variants } => {
+                for variant in variants {
+                    collect(&variant.fields, out);
+                }
+            }
+            InputType::None | InputType::Value { .. } | InputType::Array { .. } => {}
+        }
+    }
+    let mut out = Vec::new();
+    for lane in [
+        &capability.inputs.scope.0,
+        &capability.inputs.selection.0,
+        &capability.inputs.controls.0,
+    ] {
+        collect(lane, &mut out);
+    }
+    for schema in [&capability.inputs.arguments, &capability.inputs.payload]
+        .into_iter()
+        .flatten()
+    {
+        collect_input(&schema.input_type, &mut out);
+    }
+    out
 }
 
 struct ClosureWalker<'a> {
@@ -1101,6 +1236,95 @@ mod tests {
     }
 
     #[test]
+    fn required_entity_identity_exposes_read_and_create_branches() {
+        let cgs = fixture();
+        let catalogs = BTreeMap::from([("matrix".into(), &cgs)]);
+        let business = CapabilityRef {
+            catalog: "matrix".into(),
+            capability: "operate".into(),
+        };
+        let closure = prerequisite_closure(
+            &catalogs,
+            &DeploymentBindings {
+                bindings: vec![DeploymentBinding {
+                    consumer: CapabilityRef {
+                        catalog: "matrix".into(),
+                        capability: "read".into(),
+                    },
+                    requirement: "scoped_access".into(),
+                    provider_catalog: "matrix".into(),
+                    provider: "value_source".into(),
+                }],
+            },
+            &[business],
+            &BTreeSet::from(["matrix".into()]),
+        )
+        .unwrap();
+        assert_eq!(
+            closure
+                .input_sources
+                .iter()
+                .map(|source| source.capability.as_str())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["create", "read"]),
+        );
+        assert!(
+            closure
+                .prerequisites
+                .iter()
+                .any(|source| source.capability == "acquire"),
+            "a source capability's declared prerequisites remain closed"
+        );
+        let exposure = crate::TeachingExposureSession::new(
+            &cgs,
+            "matrix",
+            &["BusinessRecord", "ProviderResult"],
+        );
+        let guidance = crate::prompt_render::render_prerequisite_bindings(
+            &closure,
+            &catalogs,
+            exposure.to_symbol_map().as_ref(),
+        )
+        .unwrap();
+        assert!(guidance.contains("Possible input sources"));
+        assert!(guidance.contains("state-dependent choice"));
+    }
+
+    #[test]
+    fn optional_identity_sources_respect_capability_policy() {
+        let cgs = fixture();
+        let catalogs = BTreeMap::from([("matrix".into(), &cgs)]);
+        let closure = prerequisite_closure_with_source_authorization(
+            &catalogs,
+            &DeploymentBindings {
+                bindings: vec![DeploymentBinding {
+                    consumer: CapabilityRef {
+                        catalog: "matrix".into(),
+                        capability: "read".into(),
+                    },
+                    requirement: "scoped_access".into(),
+                    provider_catalog: "matrix".into(),
+                    provider: "value_source".into(),
+                }],
+            },
+            &[CapabilityRef {
+                catalog: "matrix".into(),
+                capability: "operate".into(),
+            }],
+            &BTreeSet::from(["matrix".into()]),
+            |reference| reference.capability == "read",
+        )
+        .unwrap();
+        assert_eq!(
+            closure.input_sources,
+            vec![CapabilityRef {
+                catalog: "matrix".into(),
+                capability: "read".into(),
+            }]
+        );
+    }
+
+    #[test]
     fn get_acquisition_teaches_parens_id_not_slash_method() {
         let mut cgs = fixture();
         cgs.capabilities.get_mut("acquire").unwrap().kind = crate::CapabilityKind::Get;
@@ -1289,7 +1513,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_must_have_single_entity_output() {
+    fn provider_may_have_collection_output() {
         let mut cgs = fixture();
         cgs.capabilities
             .get_mut("acquire")
@@ -1301,11 +1525,56 @@ mod tests {
             entity_type: "ProviderResult".into(),
             max_count: Some(1),
         };
-        assert!(cgs
-            .prerequisites
-            .validate(&cgs)
-            .unwrap_err()
-            .contains("one declared entity"));
+        cgs.prerequisites.validate(&cgs).unwrap();
+    }
+
+    #[test]
+    fn collection_provider_teaches_row_selection_before_field_binding() {
+        let mut cgs = fixture();
+        cgs.capabilities
+            .get_mut("acquire")
+            .unwrap()
+            .output_schema
+            .as_mut()
+            .unwrap()
+            .output_type = crate::schema::OutputType::Collection {
+            entity_type: "ProviderResult".into(),
+            max_count: None,
+        };
+        let catalogs = BTreeMap::from([("matrix".into(), &cgs)]);
+        let business = CapabilityRef {
+            catalog: "matrix".into(),
+            capability: "read".into(),
+        };
+        let closure = prerequisite_closure(
+            &catalogs,
+            &DeploymentBindings {
+                bindings: vec![DeploymentBinding {
+                    consumer: business,
+                    requirement: "scoped_access".into(),
+                    provider_catalog: "matrix".into(),
+                    provider: "value_source".into(),
+                }],
+            },
+            &[CapabilityRef {
+                catalog: "matrix".into(),
+                capability: "read".into(),
+            }],
+            &BTreeSet::from(["matrix".into()]),
+        )
+        .unwrap();
+        let exposure = crate::TeachingExposureSession::new(
+            &cgs,
+            "matrix",
+            &["BusinessRecord", "ProviderResult"],
+        );
+        let guidance = crate::prompt_render::render_prerequisite_bindings(
+            &closure,
+            &catalogs,
+            exposure.to_symbol_map().as_ref(),
+        )
+        .unwrap();
+        assert!(guidance.contains("select or fan out a row"), "{guidance}");
     }
 
     #[test]

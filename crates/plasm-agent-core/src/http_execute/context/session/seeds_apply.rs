@@ -598,6 +598,8 @@ mod sufficiency_tests {
             .unwrap();
         let before_symbols = before.teaching_exposure.as_ref().unwrap().entities.clone();
         host.oss.discovery_route = Some(Arc::new(RoutingReceipt {
+            intent_evidence: None,
+            intent_analysis: String::new(),
             authorization: DiscoveryAuthorization::catalogs(["matrix".into()].into()),
             intent: "continue with existing tools".into(),
             pin_id: logical.to_string(),
@@ -617,8 +619,10 @@ mod sufficiency_tests {
                 requirement_coverage: if status == SelectionStatus::Insufficient {
                     vec![crate::discovery_service::RequirementCoverage {
                         requirement: "continue".into(),
-                        supporting_capability_ids: vec![],
-                        unresolved_reason: "Missing presented functionality".into(),
+                        assessment: crate::discovery_service::RequirementAssessment::Unresolved {
+                            useful_capabilities: vec![],
+                            missing: "Missing presented functionality".into(),
+                        },
                     }]
                 } else {
                     vec![]
@@ -626,6 +630,7 @@ mod sufficiency_tests {
             },
             closure: Some(plasm_core::prerequisites::PrerequisiteClosure {
                 business: vec![],
+                input_sources: vec![],
                 prerequisites: vec![],
                 acquisitions: vec![],
                 edges: vec![],

@@ -1,10 +1,14 @@
-//! One grounded capability selector followed by deterministic prerequisite closure.
+//! Staged workflow intent, requirement retrieval, and grounded capability coverage.
 
+#[path = "discovery_intent_pipeline.rs"]
+mod intent_pipeline;
 #[path = "discovery_selector_contract.rs"]
 pub mod selector_contract;
 
 use anyhow::{bail, Context, Result};
-use plasm_core::prerequisites::{prerequisite_closure, CapabilityRef, PrerequisiteClosure};
+use plasm_core::prerequisites::{
+    prerequisite_closure_with_source_authorization, CapabilityRef, PrerequisiteClosure,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::discovery_selection::{self as selection, validate_selection};
@@ -13,11 +17,16 @@ use crate::discovery_store::{
 };
 
 pub use crate::discovery_recovery::{CatalogAppDescription, DiscoveryRecovery, RECOVERY_GUIDANCE};
-pub use selection::{CapabilitySelection, RequirementCoverage, SelectionStatus, UnsupportedWork};
+pub use selection::{
+    CapabilitySelection, RequirementAssessment, RequirementCoverage, SelectionStatus,
+    UnsupportedWork,
+};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RoutingReceipt {
     pub authorization: DiscoveryAuthorization,
+    pub intent_evidence: Option<intent_pipeline::IntentEvidence>,
+    pub intent_analysis: String,
     pub intent: String,
     pub pin_id: String,
     pub retrieval: RetrievalReceipt,
@@ -31,6 +40,7 @@ pub struct RoutingReceipt {
 pub struct RouteTurn<'a> {
     pub new_generation: &'a str,
     pub intent: &'a str,
+    pub user_requests: &'a [String],
     pub logical_session: Option<&'a str>,
     pub allowed: &'a DiscoveryAuthorization,
     pub exposed: &'a [CapabilityRef],
@@ -58,7 +68,7 @@ impl DiscoveryService {
                 .map(std::path::PathBuf::from),
             store,
             client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(90))
+                .timeout(std::time::Duration::from_secs(300))
                 .build()?,
             api_key,
             model: std::env::var("PLASM_DISCOVERY_AUTO_SEED_MODEL")
@@ -95,6 +105,7 @@ impl DiscoveryService {
             .route(
                 &generation,
                 request.intent,
+                request.user_requests,
                 request.allowed,
                 request.exposed,
             )
@@ -107,95 +118,57 @@ impl DiscoveryService {
         &self,
         generation: &str,
         intent: &str,
+        user_requests: &[String],
         allowed: &DiscoveryAuthorization,
         exposed: &[CapabilityRef],
     ) -> Result<RoutingReceipt> {
-        let mut retrieval = self.store.retrieve(generation, intent, allowed).await?;
+        let intent_evidence = self.interpret_intent(intent, user_requests).await?;
+        let mut gathered = crate::workflow_intent::retrieval::retrieve(
+            &self.store,
+            generation,
+            &intent_evidence.workflow,
+            allowed,
+            64,
+        )
+        .await?;
+        // Operational focus is evidence for retrieval, never a new user instruction.
+        if !intent.trim().is_empty() {
+            gathered
+                .requirements
+                .push(crate::workflow_intent::retrieval::RequirementRetrieval {
+                    requirement_id: "focus".into(),
+                    query: intent.into(),
+                    retrieval: self.store.retrieve(generation, intent, allowed).await?,
+                    omitted_candidate_ids: Vec::new(),
+                });
+            gathered =
+                crate::workflow_intent::retrieval::fuse(generation, gathered.requirements, 64)?;
+        }
         self.store
-            .include_exposed(&mut retrieval, exposed, allowed)
+            .include_exposed(&mut gathered.selector, exposed, allowed)
             .await?;
-        let input = serde_json::json!({"intent":intent,"already_exposed":exposed,"candidates":retrieval.candidates});
-        let request_body = selector_contract::request(&self.model, intent, exposed, &retrieval)?;
-        let cache_key = selector_contract::request_cache_key(&request_body);
-        let (raw, status, from_cache) =
-            if let Some(envelope) = self.store.cached_selector_envelope(&cache_key).await? {
-                (
-                    selector_contract::wrap_cached_envelope(&envelope),
-                    reqwest::StatusCode::OK,
-                    true,
-                )
-            } else {
-                let response = self
-                    .client
-                    .post("https://openrouter.ai/api/v1/chat/completions")
-                    .bearer_auth(&self.api_key)
-                    .header(reqwest::header::CONTENT_TYPE, "application/json")
-                    .body(request_body.clone())
-                    .send()
-                    .await
-                    .context("capability selector transport failed")?;
-                let status = response.status();
-                let raw = response
-                    .text()
-                    .await
-                    .context("reading capability selector response")?;
-                (raw, status, false)
-            };
-        let decoded = if status.is_success() {
-            selector_contract::decode(&raw, &retrieval)
-        } else {
-            Err(anyhow::anyhow!("capability selector failed: HTTP {status}"))
-        };
-        let (selection, business) = match decoded {
-            Ok(valid) => {
-                if !from_cache {
-                    self.store
-                        .store_selector_envelope(
-                            &cache_key,
-                            &selector_contract::selection_envelope(&valid.0)?,
-                        )
-                        .await?;
-                }
-                valid
-            }
-            Err(error) => {
-                if let Some(directory) = &self.rejection_dir {
-                    let directory = directory.clone();
-                    let record = serde_json::json!({
-                        "contract_version": 8, "model": self.model, "generation": generation,
-                        "request_body": request_body,
-                        "input": input, "http_status": status.as_u16(),
-                        "instructions": selector_contract::INSTRUCTIONS, "schema": selector_contract::schema(&retrieval),
-                        "temperature": 0, "seed": selector_contract::SELECTOR_SEED,
-                        "retrieval": retrieval,
-                        "raw_response": raw, "error": format!("{error:#}")
-                    });
-                    let saved = tokio::task::spawn_blocking(move || {
-                        selector_contract::save_rejection(&directory, &record)
-                    })
-                    .await;
-                    match saved {
-                        Ok(Ok(path)) => {
-                            return Err(error.context(format!(
-                                "selector rejected; diagnostic {}",
-                                path.display()
-                            )))
-                        }
-                        Ok(Err(capture)) => {
-                            return Err(error.context(format!(
-                                "selector rejection capture failed: {capture:#}"
-                            )))
-                        }
-                        Err(capture) => {
-                            return Err(error.context(format!(
-                                "selector rejection capture task failed: {capture}"
-                            )))
-                        }
-                    }
-                }
-                return Err(error);
-            }
-        };
+        let mut intent_evidence = intent_evidence;
+        let issued = crate::workflow_intent::contract::assessment_request(
+            &self.model,
+            &intent_evidence.workflow,
+            &gathered.selector,
+            intent,
+        )?;
+        let (key, raw) = self.intent_response(&issued.body).await?;
+        let assessment = crate::workflow_intent::contract::decode_assessment(
+            &intent_evidence.workflow,
+            &gathered.selector,
+            &issued,
+            &raw,
+        )?;
+        self.store.store_selector_envelope(&key, &raw).await?;
+        let selection =
+            intent_pipeline::selection(&intent_evidence.workflow, &assessment, &gathered.selector)?;
+        let business = validate_selection(&selection, &gathered.selector)?;
+        intent_evidence.assessment = Some(assessment);
+        let intent_analysis = intent_evidence.render()?;
+        intent_evidence.requirements = gathered.requirements;
+        let retrieval = gathered.selector;
         let needs_catalogs = !business.is_empty()
             || !exposed.is_empty()
             || selection.status == SelectionStatus::Insufficient;
@@ -210,8 +183,14 @@ impl DiscoveryService {
                 .expect("catalogs required for prerequisite closure");
             let references = catalogs.iter().map(|(id, cgs)| (id.clone(), cgs)).collect();
             Some(
-                prerequisite_closure(&references, &bindings, &business, &allowed.catalogs)
-                    .map_err(anyhow::Error::msg)?,
+                prerequisite_closure_with_source_authorization(
+                    &references,
+                    &bindings,
+                    &business,
+                    &allowed.catalogs,
+                    |reference| allowed.permits(reference),
+                )
+                .map_err(anyhow::Error::msg)?,
             )
         } else {
             None
@@ -231,6 +210,8 @@ impl DiscoveryService {
         };
         Ok(RoutingReceipt {
             authorization: allowed.clone(),
+            intent_evidence: Some(intent_evidence),
+            intent_analysis,
             intent: intent.to_owned(),
             pin_id: String::new(),
             retrieval,
@@ -249,6 +230,7 @@ fn validate_closure_authorization(
         if closure
             .business
             .iter()
+            .chain(&closure.input_sources)
             .chain(&closure.prerequisites)
             .any(|cap| !allowed.permits(cap))
         {
@@ -264,7 +246,7 @@ mod tests {
     use crate::discovery_store::RetrievedCapability;
     use plasm_core::catalog_discovery::CapabilityDocument;
     use std::collections::BTreeSet;
-    fn receipt() -> RetrievalReceipt {
+    pub(super) fn receipt() -> RetrievalReceipt {
         RetrievalReceipt {
             generation: "generation".into(),
             lexical_count: 4,
@@ -294,6 +276,129 @@ mod tests {
     }
 
     #[test]
+    fn operational_recovery_is_required_and_selects_new_or_exposed_producer() {
+        use crate::workflow_intent::{
+            contract, IntentScope, InterpretationDraft, RequirementDraft, RequirementKind,
+            WorkflowIntent,
+        };
+        use serde_json::json;
+        let mut workflow = WorkflowIntent::open(
+            IntentScope::Workflow,
+            "u".into(),
+            "Update eligible records only".into(),
+        )
+        .unwrap();
+        workflow
+            .interpret(
+                1,
+                0,
+                InterpretationDraft {
+                    conditionals: vec![],
+                    dispositions: Default::default(),
+                    requirements: vec![RequirementDraft {
+                        uncertainty: None,
+                        kind: RequirementKind::Effect,
+                        statement: "Update eligible records only".into(),
+                        source_turn_ids: vec!["u0".into()],
+                    }],
+                    no_requirements_reason: None,
+                },
+            )
+            .unwrap();
+        workflow.set_links(1, 1, vec![]).unwrap();
+        let original = serde_json::to_value(&workflow).unwrap();
+        let focus = "Update failed because its credential expired. Find a credential renewal operation; retain the eligible-record constraint.";
+        for exposed in [false, true] {
+            let mut receipt = receipt();
+            receipt.candidates[0].document.text =
+                "Update eligible records using a valid credential".into();
+            receipt.candidates[1].document.text = "Renew an expired credential".into();
+            if exposed {
+                receipt.candidates[1]
+                    .admissions
+                    .insert("already_exposed".into());
+            }
+            let issued =
+                contract::assessment_request("fixture", &workflow, &receipt, focus).unwrap();
+            let body: serde_json::Value = serde_json::from_str(&issued.body).unwrap();
+            let input: serde_json::Value =
+                serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
+            assert_eq!(
+                input["operational_goal"],
+                json!({"id":"f0","statement":focus})
+            );
+            assert_eq!(input["workflow"], original);
+            let coverage = json!([
+                {"requirement":"r0","assessment":{"status":"supported","capability_ids":["c0"],"explanation":"Consumer"}},
+                {"requirement":"f0","assessment":{"status":"supported","capability_ids":["c1"],"explanation":"Renewal producer"}}
+            ]);
+            let envelope = |coverage| {
+                json!({"choices":[{"finish_reason":"stop","message":{"content":json!({"requirement_coverage":coverage}).to_string()}}]}).to_string()
+            };
+            assert!(contract::decode_assessment(
+                &workflow,
+                &receipt,
+                &issued,
+                &envelope(json!([coverage[0]]))
+            )
+            .is_err());
+            let decoded = contract::decode_assessment(
+                &workflow,
+                &receipt,
+                &issued,
+                &envelope(coverage.clone()),
+            )
+            .unwrap();
+            let selected = intent_pipeline::selection(&workflow, &decoded, &receipt).unwrap();
+            assert_eq!(
+                selected
+                    .additional_capability_ids
+                    .contains(&"cap-1".to_owned()),
+                !exposed
+            );
+            let business = validate_selection(&selected, &receipt).unwrap();
+            assert_eq!(
+                business.iter().any(|c| c.capability == "operation-1"),
+                !exposed
+            );
+            assert!(selected
+                .requirement_coverage
+                .iter()
+                .any(|entry| entry.requirement.starts_with("f0:")));
+            let mut missing = coverage.clone();
+            missing[1]["assessment"] = json!({"status":"unresolved","capability_ids":[],"explanation":"No allowed renewal operation"});
+            let decoded =
+                contract::decode_assessment(&workflow, &receipt, &issued, &envelope(missing))
+                    .unwrap();
+            assert_eq!(
+                intent_pipeline::selection(&workflow, &decoded, &receipt)
+                    .unwrap()
+                    .status,
+                SelectionStatus::Insufficient
+            );
+            let mut tampered = serde_json::to_value(&issued).unwrap();
+            tampered["operational_goal"] = json!("Change all records");
+            let tampered = serde_json::from_value(tampered).unwrap();
+            assert!(contract::decode_assessment(
+                &workflow,
+                &receipt,
+                &tampered,
+                &envelope(coverage.clone())
+            )
+            .is_err());
+            let other = contract::assessment_request(
+                "fixture",
+                &workflow,
+                &receipt,
+                "Inspect credential validity",
+            )
+            .unwrap();
+            assert_ne!(issued.body, other.body); // Provider cache keys include operational focus.
+            assert_eq!(serde_json::to_value(&workflow).unwrap(), original);
+        }
+    }
+
+    #[test]
     fn denied_prerequisite_prevents_ready_exposure() {
         let read = CapabilityRef {
             catalog: "matrix".into(),
@@ -305,6 +410,7 @@ mod tests {
         };
         let closure = PrerequisiteClosure {
             business: vec![read],
+            input_sources: vec![],
             prerequisites: vec![acquire],
             acquisitions: vec![],
             edges: vec![],
@@ -323,7 +429,7 @@ mod tests {
         let schema = &value["response_format"]["json_schema"]["schema"];
         assert_eq!(*schema, selector_contract::schema(&receipt()));
         assert!(schema["properties"].get("requirements").is_none());
-        assert_eq!(schema["properties"].as_object().unwrap().len(), 2);
+        assert_eq!(schema["properties"].as_object().unwrap().len(), 1);
     }
 
     #[test]
@@ -403,28 +509,70 @@ mod tests {
             .iter()
             .map(|c| c["id"].as_str().unwrap())
             .collect();
-        assert_eq!(ids, vec!["cap-0", "cap-1", "cap-2", "cap-3"]);
+        assert_eq!(ids, vec!["c0", "c1", "c2", "c3"]);
     }
 
     #[test]
     fn cached_envelope_round_trips_the_same_selection() {
         let receipt = receipt();
-        let envelope = selector_contract::selection_envelope(&CapabilitySelection {
-            status: SelectionStatus::Ready,
-            additional_capability_ids: vec!["cap-1".into(), "cap-0".into()],
-            requirement_coverage: vec![],
-        })
+        let selection = CapabilitySelection::from_coverage(
+            vec![crate::discovery_selection::RequirementCoverage {
+                requirement: "inspect records".into(),
+                assessment: RequirementAssessment::Supported {
+                    supported_by: vec!["cap-0".into(), "cap-1".into()],
+                },
+            }],
+            &receipt,
+        )
         .unwrap();
+        let envelope = selector_contract::selection_envelope(&selection, &receipt).unwrap();
         let raw = selector_contract::wrap_cached_envelope(&envelope);
-        let (selection, business) = selector_contract::decode(&raw, &receipt).unwrap();
+        let (cached, business) = selector_contract::decode(&raw, &receipt).unwrap();
         assert_eq!(
-            selection.additional_capability_ids,
-            vec!["cap-1".to_string(), "cap-0".to_string()]
+            cached.additional_capability_ids,
+            selection.additional_capability_ids
         );
         assert_eq!(business.len(), 2);
         assert_eq!(
             selector_contract::request_cache_key("body-a"),
             plasm_core::catalog_discovery::content_hash(b"body-a")
         );
+    }
+}
+
+#[cfg(test)]
+mod intent_selection_regression {
+    use super::*;
+    use crate::workflow_intent::contract;
+    use crate::workflow_intent::*;
+    use serde_json::json;
+    proptest::proptest! {
+        #[test]
+        fn workflow_alias_selection_preserves_wire_identity(order in proptest::collection::vec(proptest::prelude::any::<u64>(), 4)) {
+            let mut receipt = super::tests::receipt();
+            receipt.candidates.sort_by_key(|c| order[c.id.strip_prefix("cap-").unwrap().parse::<usize>().unwrap()]);
+            let mut workflow = WorkflowIntent::open(IntentScope::Workflow, "request".into(), "Read eligible records".into()).unwrap();
+            workflow.interpret(1, 0, InterpretationDraft {
+        conditionals: vec![],
+                dispositions: Default::default(),
+                requirements: vec![RequirementDraft { uncertainty: None, kind: RequirementKind::InformationNeed,
+                    statement: "Read eligible records".into(), source_turn_ids: vec!["u0".into()] }],
+                no_requirements_reason: None,
+            }).unwrap();
+            workflow.set_links(1, 1, vec![]).unwrap();
+            let issued = contract::assessment_request("fixture", &workflow, &receipt, "").unwrap();
+            let request: serde_json::Value = serde_json::from_str(&issued.body).unwrap();
+            let body: serde_json::Value = serde_json::from_str(request["messages"][1]["content"].as_str().unwrap()).unwrap();
+            for candidate in body["candidates"].as_array().unwrap() {
+                let raw = selector_contract::wrap_cached_envelope(&json!({"requirement_coverage":[{
+                    "requirement":"r0", "assessment":{"status":"supported","capability_ids":[candidate["id"]],"explanation":"Provides the records"}
+                }]}).to_string());
+                let assessment = contract::decode_assessment(&workflow, &receipt, &issued, &raw).unwrap();
+                let selection = intent_pipeline::selection(&workflow, &assessment, &receipt).unwrap();
+                let refs = crate::discovery_selection::validate_selection(&selection, &receipt).unwrap();
+                proptest::prop_assert_eq!(refs.len(), 1);
+                proptest::prop_assert_eq!(&refs[0].capability, candidate["reference"]["capability"].as_str().unwrap());
+            }
+        }
     }
 }

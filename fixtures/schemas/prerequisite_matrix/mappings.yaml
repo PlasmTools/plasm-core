@@ -12,3 +12,13 @@ read:
     type: object
     fields:
       - [credential, {type: var, name: credential}]
+create:
+  method: POST
+  path: [{type: literal, value: records}]
+operate:
+  method: POST
+  path: [{type: literal, value: operate}]
+  body:
+    type: object
+    fields:
+      - [id, {type: var, name: id}]

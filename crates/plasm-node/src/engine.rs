@@ -352,7 +352,12 @@ impl AgentEngine {
         }
         self.intent.push_str(intent);
         let mut grouped = std::collections::BTreeMap::<String, Vec<String>>::new();
-        for reference in closure.business.iter().chain(&closure.prerequisites) {
+        for reference in closure
+            .business
+            .iter()
+            .chain(&closure.input_sources)
+            .chain(&closure.prerequisites)
+        {
             grouped
                 .entry(reference.catalog.clone())
                 .or_default()
@@ -460,6 +465,7 @@ impl AgentEngine {
             &intent.into(),
             &plasm_core::prerequisites::PrerequisiteClosure {
                 business,
+                input_sources: vec![],
                 prerequisites: vec![],
                 acquisitions: vec![],
                 edges: vec![],
@@ -1248,6 +1254,7 @@ mod tests {
                 catalog: "matrix".into(),
                 capability: name.into(),
             }],
+            input_sources: vec![],
             prerequisites: vec![],
             acquisitions: vec![],
             edges: vec![],
@@ -1283,6 +1290,7 @@ mod tests {
         let before_empty = engine.exposure.as_ref().unwrap().entities.clone();
         let empty = PrerequisiteClosure {
             business: vec![],
+            input_sources: vec![],
             prerequisites: vec![],
             acquisitions: vec![],
             edges: vec![],

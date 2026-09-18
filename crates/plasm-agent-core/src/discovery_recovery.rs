@@ -1,7 +1,7 @@
 //! Host-visible recovery after partial or missed discovery coverage.
 //!
 //! Selector wire uses `requirement_coverage`. Hosts surface unresolved clauses
-//! derived from coverage entries with an `unresolved_reason`, and attach
+//! derived from unresolved assessments, and attach
 //! authorized catalog descriptions so agents can rediscover across available
 //! integrations without inventing catalog ids.
 //!
@@ -116,16 +116,20 @@ impl DiscoveryRecovery {
         if !self.requirement_coverage.is_empty() {
             lines.push("**Requirement coverage** (audit; not execution approval):".into());
             for entry in &self.requirement_coverage {
-                if entry.is_unresolved() {
+                if let Some(missing) = entry.assessment.missing() {
                     lines.push(format!(
-                        "- `{}` — unresolved: {}",
-                        entry.requirement, entry.unresolved_reason
+                        "- `{}` — unresolved: {}; useful: {}",
+                        entry.requirement,
+                        missing,
+                        entry.assessment.capability_ids().join(", ")
                     ));
+                } else if let crate::discovery_selection::RequirementAssessment::NoCapabilityNeeded { no_capability_needed } = &entry.assessment {
+                    lines.push(format!("- `{}` — local: {}", entry.requirement, no_capability_needed));
                 } else {
                     lines.push(format!(
                         "- `{}` — supporting: {}",
                         entry.requirement,
-                        entry.supporting_capability_ids.join(", ")
+                        entry.assessment.capability_ids().join(", ")
                     ));
                 }
             }
@@ -195,17 +199,42 @@ mod tests {
     fn covered(quote: &str, ids: &[&str]) -> RequirementCoverage {
         RequirementCoverage {
             requirement: quote.into(),
-            supporting_capability_ids: ids.iter().map(|s| (*s).to_owned()).collect(),
-            unresolved_reason: String::new(),
+            assessment: crate::discovery_service::RequirementAssessment::Supported {
+                supported_by: ids.iter().map(|s| (*s).to_owned()).collect(),
+            },
         }
     }
 
     fn unresolved(quote: &str, reason: &str) -> RequirementCoverage {
         RequirementCoverage {
             requirement: quote.into(),
-            supporting_capability_ids: vec![],
-            unresolved_reason: reason.into(),
+            assessment: crate::discovery_service::RequirementAssessment::Unresolved {
+                useful_capabilities: vec![],
+                missing: reason.into(),
+            },
         }
+    }
+
+    #[test]
+    fn partial_requirement_delivers_its_gap_and_useful_consumer() {
+        let coverage = vec![RequirementCoverage {
+            requirement: "perform effect using required input".into(),
+            assessment: crate::discovery_service::RequirementAssessment::Unresolved {
+                useful_capabilities: vec!["consumer".into()],
+                missing: "required input acquisition".into(),
+            },
+        }];
+        let recovery =
+            DiscoveryRecovery::from_insufficient(&coverage, &BTreeMap::new(), Vec::<String>::new());
+        assert_eq!(recovery.unresolved.len(), 1);
+        assert_eq!(recovery.requirement_coverage, coverage);
+        let markdown = recovery.render_markdown(SelectionStatus::Insufficient);
+        assert!(markdown.contains("unresolved: required input acquisition; useful: consumer"));
+        let stored = serde_json::to_value(&recovery).unwrap();
+        assert_eq!(
+            stored["requirement_coverage"][0]["assessment"]["useful_capabilities"],
+            serde_json::json!(["consumer"])
+        );
     }
 
     #[test]

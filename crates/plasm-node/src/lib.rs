@@ -304,6 +304,7 @@ impl PlasmEngine {
         &self,
         intent: String,
         logical_session_id: Option<String>,
+        user_requests: Option<Vec<String>>,
     ) -> Result<String> {
         let store = self.discovery_store.get().ok_or_else(|| {
             Error::from_reason(
@@ -318,6 +319,7 @@ impl PlasmEngine {
         let receipt = service
             .route_turn(RouteTurn {
                 new_generation: &generation,
+                user_requests: user_requests.as_deref().unwrap_or(&[]),
                 intent: &intent,
                 logical_session: logical_session_id.as_deref(),
                 allowed: &allowed,

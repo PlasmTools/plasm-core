@@ -35,6 +35,22 @@ capabilities:
       - {name: credential, value_ref: text, required: true}
     provides: [id]
     output: {type: collection, entity_type: BusinessRecord}
+  create:
+    entity: BusinessRecord
+    kind: create
+    description: Create a business record
+    provides: [id]
+    output: {type: entity, entity_type: BusinessRecord}
+  operate:
+    entity: BusinessRecord
+    kind: action
+    description: Act on a selected business record
+    payload:
+      input_type:
+        type: object
+        fields:
+          - {name: id, value_ref: text, required: true}
+    output: {type: side_effect, description: Changes the selected business record}
 prerequisites:
   contracts:
     scoped_value:

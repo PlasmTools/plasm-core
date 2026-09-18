@@ -17,19 +17,9 @@ function recoveryPayload(requirement: string, reason: string, supportingIds: str
   return {
     unresolved: [{ requirement, reason }],
     requirement_coverage: [
-      ...(supportingIds.length
-        ? [
-            {
-              requirement: "work on records",
-              supporting_capability_ids: supportingIds,
-              unresolved_reason: "",
-            },
-          ]
-        : []),
       {
         requirement,
-        supporting_capability_ids: [],
-        unresolved_reason: reason,
+        assessment: { useful_capabilities: supportingIds, missing: reason },
       },
     ],
     available_catalogs: [
@@ -43,16 +33,14 @@ function recoveryPayload(requirement: string, reason: string, supportingIds: str
 function covered(requirement: string, ids: string[]) {
   return {
     requirement,
-    supporting_capability_ids: ids,
-    unresolved_reason: "",
+    assessment: { supported_by: ids },
   };
 }
 
 function unresolved(requirement: string, reason: string) {
   return {
     requirement,
-    supporting_capability_ids: [] as string[],
-    unresolved_reason: reason,
+    assessment: { useful_capabilities: [] as string[], missing: reason },
   };
 }
 
@@ -98,6 +86,27 @@ const engine: PlasmEngine = {
 };
 const root = await mkdtemp(path.join(tmpdir(), "plasm-context-routing-"));
 try {
+  for (const entry of [
+    { requirement: "read", supporting_capability_ids: ["read"], unresolved_reason: "" },
+    { requirement: "read", assessment: { supported_by: ["read"], useful_capabilities: ["read"], missing: "input" } },
+    { requirement: "read", assessment: { supported_by: [] } },
+    { requirement: "read", assessment: { useful_capabilities: [], missing: " " } },
+    { requirement: "read", assessment: { useful_capabilities: ["read", "read"], missing: "input" } },
+  ]) {
+    const packet = ready();
+    assert.equal(routingPacketSchema.safeParse({
+      ...packet,
+      routing: { ...packet.routing, selection: { ...packet.routing.selection, requirement_coverage: [entry] } },
+    }).success, false, "invalid assessment must not decode");
+  }
+  const contradictory = ready();
+  assert.equal(routingPacketSchema.safeParse({
+    ...contradictory,
+    routing: { ...contradictory.routing, selection: {
+      ...contradictory.routing.selection,
+      requirement_coverage: [{ requirement: "read", assessment: { useful_capabilities: ["read"], missing: "input" } }],
+    } },
+  }).success, false, "a useful consumer does not make an unresolved requirement ready");
   const runtime = new AgentRuntime({ agentRoot: root, engine, archiveEnabled: false, hostTransport: null });
   const missing = ready();
   missing.routing.selection = {
@@ -124,29 +133,29 @@ try {
   const partial = ready();
   partial.routing.selection.status = "insufficient";
   partial.routing.selection.requirement_coverage = [
-    covered("work on records", ["read"]),
-    unresolved("make music", "Not in presented capabilities"),
+    { requirement: "make music", assessment: { useful_capabilities: ["read"], missing: "Not in presented capabilities" } },
   ];
   partial.routing.recovery = recoveryPayload("make music", "Not in presented capabilities", ["read"]);
   replies.push(partial);
-  const opened = await runtime.plasmContext({ intent: "work on records" });
+  partial.routing.intent_analysis = "Workflow interpretation: preserve the original selection scope";
+  const opened = await runtime.plasmContext({ intent: "work on records", userRequests: ["Only records owned by colleagues"] });
+  assert.match(opened, /preserve the original selection scope/);
   assert.match(opened, /selected read/);
   assert.match(opened, /Unresolved/);
   assert.match(opened, /`make music`/);
   assert.match(opened, /Requirement coverage/);
-  assert.match(opened, /supporting: read/);
+  assert.match(opened, /useful: read/);
   assert.match(opened, /Abstract records for relational work/);
   assert.match(opened, /extend with the same logical_session_ref/);
   assert.doesNotMatch(opened, /Unsupported/);
-  assert.deepEqual(calls[1], ["work on records", undefined]);
+  assert.deepEqual(calls[1], ["work on records", undefined, ["Only records owned by colleagues"]]);
   const ref = opened.match(/l_[A-Za-z0-9_-]{22}/)?.[0];
   assert.ok(ref);
   for (let n = 0; n < 2; n++) {
     const partialExtension = ready("write");
     partialExtension.routing.selection.status = "insufficient";
     partialExtension.routing.selection.requirement_coverage = [
-      covered("write records", ["write"]),
-      unresolved("make music", "Not presented"),
+      { requirement: "make music", assessment: { useful_capabilities: ["write"], missing: "Not presented" } },
     ];
     partialExtension.routing.recovery = recoveryPayload("make music", "Not presented", ["write"]);
     replies.push(partialExtension);

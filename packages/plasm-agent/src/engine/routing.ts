@@ -13,25 +13,26 @@ const closure = z.object({
   }).passthrough()),
 });
 
-const requirementCoverage = z
-  .object({
-    requirement: z.string().min(1),
-    supporting_capability_ids: z.array(z.string()),
-    unresolved_reason: z.string().default(""),
-  })
-  .strict()
-  .refine(
-    (entry) => {
-      const supporting = entry.supporting_capability_ids.length > 0;
-      const unresolved = entry.unresolved_reason.trim().length > 0;
-      return (supporting && !unresolved) || (!supporting && unresolved);
-    },
-    "requirement coverage must associate supporting IDs or an unresolved reason, not both or neither",
-  );
+const description = z.string().refine((value) => value.trim().length > 0, "expected nonempty description");
+const evidenceIds = z.array(z.string().min(1)).refine(
+  (ids) => new Set(ids).size === ids.length,
+  "duplicate capability evidence ID",
+);
+const requirementAssessment = z.union([
+  z.object({ no_capability_needed: description }).strict(),
+  z.object({ supported_by: evidenceIds.refine((ids) => ids.length > 0, "support requires capability evidence") }).strict(),
+  z.object({ useful_capabilities: evidenceIds, missing: description }).strict(),
+]);
+const requirementCoverage = z.object({
+  requirement: description,
+  assessment: requirementAssessment,
+}).strict();
 
 /** The Rust router owns validation; this decoder also rejects mismatched native packages. */
 export const routingPacketSchema = z.object({
   routing: z.object({
+    intent_analysis: z.string().optional(),
+    intent_evidence: z.unknown().optional(),
     intent: z.string(),    pin_id: z.string().uuid(),
     retrieval: z.object({
       generation: z.string(),
@@ -47,7 +48,7 @@ export const routingPacketSchema = z.object({
     }).strict().refine(
       (selection) =>
         selection.status ===
-        (selection.requirement_coverage.some((c) => c.unresolved_reason.trim().length > 0)
+        (selection.requirement_coverage.some((c) => "missing" in c.assessment)
           ? "insufficient"
           : "ready"),
       "routing status contradicts sufficiency",
@@ -55,7 +56,7 @@ export const routingPacketSchema = z.object({
     closure: closure.nullable(),
     recovery: z.object({
       unresolved: z.array(z.object({ requirement: z.string().min(1), reason: z.string().min(1) }).strict()),
-      requirement_coverage: z.array(requirementCoverage).optional().default([]),
+      requirement_coverage: z.array(requirementCoverage),
       available_catalogs: z.array(z.object({
         entry_id: z.string().min(1),
         description: z.string().min(1),
@@ -69,18 +70,18 @@ export type RoutingPacket = z.infer<typeof routingPacketSchema>;
 export type PrerequisiteClosure = z.infer<typeof closure>;
 
 export function routingExplanationLines(selection: RoutingPacket["routing"]["selection"]): string[] {
-  return selection.requirement_coverage
-    .filter((c) => c.unresolved_reason.trim().length > 0)
-    .map((work) => `Unresolved: ${work.requirement} — ${work.unresolved_reason}`);
+  return selection.requirement_coverage.flatMap((work) =>
+    "missing" in work.assessment
+      ? [`Unresolved: ${work.requirement} — ${work.assessment.missing}`]
+      : [],
+  );
 }
 
 /** Lead with unresolved needs + coverage audit + available integration descriptions. */
 export function routingRecoveryMarkdown(routing: RoutingPacket["routing"]): string | null {
   const recovery = routing.recovery;
   if (!recovery) return null;
-  const coverage = recovery.requirement_coverage?.length
-    ? recovery.requirement_coverage
-    : routing.selection.requirement_coverage;
+  const coverage = recovery.requirement_coverage;
   const lines = [
     `**plasm_context:** ${routing.selection.status}`,
     recovery.unresolved.length
@@ -89,9 +90,11 @@ export function routingRecoveryMarkdown(routing: RoutingPacket["routing"]): stri
     ...recovery.unresolved.map((work) => `- \`${work.requirement}\` — ${work.reason}`),
     coverage.length ? "**Requirement coverage** (audit; not execution approval):" : "",
     ...coverage.map((entry) =>
-      entry.unresolved_reason.trim()
-        ? `- \`${entry.requirement}\` — unresolved: ${entry.unresolved_reason}`
-        : `- \`${entry.requirement}\` — supporting: ${entry.supporting_capability_ids.join(", ")}`,
+      "missing" in entry.assessment
+        ? `- \`${entry.requirement}\` — unresolved: ${entry.assessment.missing}; useful: ${entry.assessment.useful_capabilities.join(", ")}`
+        : "no_capability_needed" in entry.assessment
+          ? `- ${entry.requirement} — local: ${entry.assessment.no_capability_needed}`
+          : `- \`${entry.requirement}\` — supporting: ${entry.assessment.supported_by.join(", ")}`,
     ),
     recovery.guidance,
     recovery.available_catalogs.length

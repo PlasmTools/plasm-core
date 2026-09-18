@@ -62,6 +62,7 @@ export interface DiscoverInput {
 
 export interface PlasmContextInput {
   intent: string;
+  userRequests?: string[];
   sessionMode?: "new" | "extend";
   logicalSessionRef?: string;
 }
@@ -288,7 +289,7 @@ export class AgentRuntime {
         throw new Error("logical_session_ref belongs on session_mode extend");
       }
       const packet = await this.engine.routeIntent(
-        intent, existing?.logicalSessionId,
+        intent, existing?.logicalSessionId, input.userRequests,
       );
       const { routing, teaching } = packet;
       const recoveryMarkdown = routingRecoveryMarkdown(routing);
@@ -298,6 +299,7 @@ export class AgentRuntime {
           logical_session_ref: existing?.logicalSessionRef,
         });
         return [
+          routing.intent_analysis,
           recoveryMarkdown ?? `**plasm_context:** ${routing.selection.status}`,
           existing ? `**logical_session_ref:** \`${existing.logicalSessionRef}\`` : "",
           ...(recoveryMarkdown ? [] : routingExplanationLines(routing.selection)),
@@ -340,12 +342,13 @@ export class AgentRuntime {
       const teachingMarkdown = formatPlasmContextMarkdown(session.logicalSessionRef, teaching.tsv, false);
       if (recoveryMarkdown) {
         return [
+          routing.intent_analysis,
           recoveryMarkdown,
           "**Partial teaching** (does not claim complete coverage):",
           teachingMarkdown,
         ].join("\n\n");
       }
-      return [teachingMarkdown, ...routingExplanationLines(routing.selection)].join("\n\n");
+      return [routing.intent_analysis, teachingMarkdown, ...routingExplanationLines(routing.selection)].filter(Boolean).join("\n\n");
     });
   }
 

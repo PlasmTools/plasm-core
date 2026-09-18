@@ -157,6 +157,7 @@ impl PlasmMcpHandler {
         let receipt = service
             .route_turn(RouteTurn {
                 new_generation: &generation,
+                user_requests: &[],
                 intent,
                 logical_session: logical_id.as_deref(),
                 allowed: &allowed,
@@ -218,7 +219,12 @@ impl PlasmMcpHandler {
             .expect("validated capability closure");
         let registry = routed_host.catalog.snapshot();
         let mut seeds = Vec::new();
-        for reference in closure.business.iter().chain(&closure.prerequisites) {
+        for reference in closure
+            .business
+            .iter()
+            .chain(&closure.input_sources)
+            .chain(&closure.prerequisites)
+        {
             let ctx = registry
                 .load_context(&reference.catalog)
                 .map_err(|e| CallToolError::from_message(e.to_string()))?;
@@ -411,6 +417,7 @@ impl PlasmMcpHandler {
                 text.push_str(&explanation);
             }
         }
+        text = format!("{}\n\n{text}", route.intent_analysis);
         for wave in &out.waves {
             if wave.teaching_prompt_chars_added > 0 {
                 let ls = self.logical_mutex(key, &ls_key).await;

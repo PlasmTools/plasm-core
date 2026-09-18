@@ -84,7 +84,10 @@ const plasmReadRunArtifactInputSchema = z
     { message: "provide exactly one of run_id or artifact_uri" },
   );
 
-export function createPlasmTools(runtime: AgentRuntime): ToolSet {
+export function createPlasmTools(
+  runtime: AgentRuntime,
+  discoveryIntent: (capabilityRequest: string) => { intent: string; userRequests?: string[] } = (intent) => ({ intent }),
+): ToolSet {
   const tools: ToolSet = {};
 
   tools.plasm_context = tool({
@@ -92,7 +95,7 @@ export function createPlasmTools(runtime: AgentRuntime): ToolSet {
     inputSchema: toolInput(plasmContextInputSchema),
     execute: async (args) =>
       runtime.plasmContext({
-        intent: args.intent,
+        ...discoveryIntent(args.intent),
         sessionMode: args.session_mode ?? "new",
         logicalSessionRef: args.logical_session_ref,
       }),
