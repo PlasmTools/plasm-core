@@ -35,21 +35,17 @@ zone_query:
           condition: { type: exists, var: type }
           then_expr: { type: var, name: type }
           else_expr: { type: const, value: null }
-      - - page
-        - type: if
-          condition: { type: exists, var: page }
-          then_expr: { type: var, name: page }
-          else_expr: { type: const, value: null }
-      - - per_page
-        - type: if
-          condition: { type: exists, var: per_page }
-          then_expr: { type: var, name: per_page }
-          else_expr: { type: const, value: null }
       - - sort_by
         - type: if
           condition: { type: exists, var: sort_by }
           then_expr: { type: var, name: sort_by }
           else_expr: { type: const, value: null }
+  pagination:
+    strategy: page_number
+    params:
+      page: {counter: 1}
+      per_page: {fixed: 50, role: page_size}
+
 
 zone_get:
   method: GET
@@ -68,18 +64,10 @@ ruleset_query:
     - { type: literal, value: rulesets }
   response:
     items: result
-  query:
-    type: object
-    fields:
-      - - per_page
-        - type: if
-          condition: { type: exists, var: per_page }
-          then_expr: { type: var, name: per_page }
-          else_expr: { type: const, value: null }
   pagination:
     params:
       cursor: {from_response: after}
-      per_page: {fixed: 50}
+      per_page: {fixed: 50, role: page_size}
     response_prefix: [result_info, cursors]
 
 ruleset_get:
@@ -140,16 +128,8 @@ waf_package_query:
     - { type: literal, value: packages }
   response:
     items: result
-  query:
-    type: object
-    fields:
-      - - page
-        - type: if
-          condition: { type: exists, var: page }
-          then_expr: { type: var, name: page }
-          else_expr: { type: const, value: null }
-      - - per_page
-        - type: if
-          condition: { type: exists, var: per_page }
-          then_expr: { type: var, name: per_page }
-          else_expr: { type: const, value: null }
+  pagination:
+    strategy: page_number
+    params:
+      page: {counter: 1}
+      per_page: {fixed: 50, role: page_size}

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
-pub const DISCOVERY_RENDERER_VERSION: u32 = 1;
+pub const DISCOVERY_RENDERER_VERSION: u32 = 2;
 pub const EMBEDDING_DIMENSIONS: usize = 1536;
 pub const EMBEDDING_MODEL: &str = "openai/text-embedding-3-small";
 
@@ -172,6 +172,17 @@ pub fn capability_documents(cgs: &crate::CGS) -> Result<Vec<CapabilityDocument>,
                         "Input {lane}.{}: {:?}; required={}",
                         field.name, value.field_type, field.required
                     ));
+                    render_value_evidence(
+                        cgs,
+                        &format!("Input {lane}.{}", field.name),
+                        value,
+                        &mut lines,
+                    )?;
+                    render_slot_description(
+                        &format!("Input {lane}.{}", field.name),
+                        field.description.as_deref(),
+                        &mut lines,
+                    );
                 }
             }
             for (lane, schema) in [
@@ -213,6 +224,17 @@ pub fn capability_documents(cgs: &crate::CGS) -> Result<Vec<CapabilityDocument>,
                     "Entity field {}: {:?}",
                     field.name, value.field_type
                 ));
+                render_value_evidence(
+                    cgs,
+                    &format!("Entity field {}", field.name),
+                    value,
+                    &mut lines,
+                )?;
+                render_slot_description(
+                    &format!("Entity field {}", field.name),
+                    Some(&field.description),
+                    &mut lines,
+                );
             }
             let mut related_entities = BTreeSet::new();
             for (wire, relation) in &entity.relations {
@@ -234,6 +256,51 @@ pub fn capability_documents(cgs: &crate::CGS) -> Result<Vec<CapabilityDocument>,
         .collect()
 }
 
+/// Semantic evidence from CGS only; JSON quoting preserves metadata line boundaries.
+fn render_slot_description(label: &str, description: Option<&str>, lines: &mut Vec<String>) {
+    if let Some(description) = description.filter(|text| !text.trim().is_empty()) {
+        lines.push(format!(
+            "{label} meaning: {}",
+            serde_json::json!(description)
+        ));
+    }
+}
+
+fn render_members(label: &str, members: Option<&[String]>, lines: &mut Vec<String>) {
+    if let Some(members) = members.filter(|members| !members.is_empty()) {
+        lines.push(format!("{label} members: {}", serde_json::json!(members)));
+    }
+}
+
+fn render_value_evidence(
+    cgs: &crate::CGS,
+    label: &str,
+    value: &crate::schema::NamedValueSchema,
+    lines: &mut Vec<String>,
+) -> Result<(), String> {
+    let mut value = value;
+    let mut label = label.to_string();
+    let mut seen = BTreeSet::new();
+    loop {
+        render_slot_description(&label, Some(&value.description), lines);
+        render_members(&label, value.allowed_values.as_deref(), lines);
+        let Some(items) = &value.array_items else {
+            break;
+        };
+        use crate::schema::ValueDomainSlot;
+        let key = items.value_domain_key().as_str();
+        if !seen.insert(key) {
+            return Err(format!("cyclic discovery array value domain: {key}"));
+        }
+        value = cgs
+            .named_value_for_slot(items)
+            .map_err(|error| error.to_string())?;
+        label.push_str("[]");
+        lines.push(format!("{label}: {:?}", value.field_type));
+    }
+    Ok(())
+}
+
 fn render_input_type(
     cgs: &crate::CGS,
     path: &str,
@@ -243,7 +310,13 @@ fn render_input_type(
     use crate::schema::{InputFieldWire, InputType};
     match ty {
         InputType::None => {}
-        InputType::Value { field_type, .. } => lines.push(format!("Input {path}: {field_type:?}")),
+        InputType::Value {
+            field_type,
+            allowed_values,
+        } => {
+            lines.push(format!("Input {path}: {field_type:?}"));
+            render_members(&format!("Input {path}"), allowed_values.as_deref(), lines);
+        }
         InputType::Object { fields, .. } => {
             for field in fields {
                 let path = format!("{path}.{}", field.name);
@@ -254,9 +327,15 @@ fn render_input_type(
                             "Input {path}: {:?}; required={}",
                             value.field_type, field.required
                         ));
+                        render_value_evidence(cgs, &format!("Input {path}"), value, lines)?;
                     }
                     InputFieldWire::Inline(ty) => render_input_type(cgs, &path, ty, lines)?,
                 }
+                render_slot_description(
+                    &format!("Input {path}"),
+                    field.description.as_deref(),
+                    lines,
+                );
             }
         }
         InputType::Array { element_type, .. } => {
@@ -282,6 +361,103 @@ fn render_input_type(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn role_fixture() -> crate::CGS {
+        crate::load_schema(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/discovery_value_roles"),
+        )
+        .expect("abstract discovery role fixture")
+    }
+
+    #[test]
+    fn value_role_documents_preserve_semantics_across_input_lanes_and_array_fields() {
+        let cgs = role_fixture();
+        let documents = capability_documents(&cgs).expect("documents");
+        let query = documents
+            .iter()
+            .find(|doc| doc.capability == "record_query")
+            .unwrap();
+        assert!(query
+            .text
+            .contains("Input scope.owner_email meaning: \"Owner of the collection being read\""));
+        assert!(query
+            .text
+            .contains("Input scope.owner_email meaning: \"Select whose collection is read\""));
+        assert!(query.text.contains(
+            "Input selection.relationship members: [\"colleague\",\"relative\",\"neighbor\"]"
+        ));
+        assert!(query
+            .text
+            .contains("Input controls.mode members: [\"fresh\",\"cached\"]"));
+        assert!(query
+            .text
+            .contains("Entity field roles[] members: [\"colleague\",\"relative\",\"neighbor\"]"));
+        let get = documents
+            .iter()
+            .find(|doc| doc.capability == "record_get")
+            .unwrap();
+        assert!(get.text.contains(
+            "Input arguments.owner_email meaning: \"Owner of the collection being read\""
+        ));
+        let create = documents
+            .iter()
+            .find(|doc| doc.capability == "record_create")
+            .unwrap();
+        assert!(create.text.contains(
+            "Input payload.relationships[] members: [\"colleague\",\"relative\",\"neighbor\"]"
+        ));
+        assert!(documents
+            .iter()
+            .all(|doc| !doc.text.contains("private-default@example.com")
+                && !doc.text.contains("fixture.invalid")));
+    }
+
+    #[test]
+    fn value_role_document_hash_changes_with_semantic_evidence() {
+        let mut cgs = role_fixture();
+        let before = capability_documents(&cgs).unwrap();
+        cgs.values.get_mut("owner").unwrap().description = "Different collection owner role".into();
+        let after = capability_documents(&cgs).unwrap();
+        let before = before
+            .iter()
+            .find(|doc| doc.capability == "record_query")
+            .unwrap();
+        let after = after
+            .iter()
+            .find(|doc| doc.capability == "record_query")
+            .unwrap();
+        assert_ne!(before.text_hash, after.text_hash);
+        assert_ne!(
+            embedding_cache_key(before, &EmbeddingProfile::default()),
+            embedding_cache_key(after, &EmbeddingProfile::default())
+        );
+        assert_eq!(after.text_hash, content_hash(after.text.as_bytes()));
+    }
+
+    #[test]
+    fn value_role_documents_reject_previous_renderer_artifacts() {
+        let cgs = role_fixture();
+        let artifact = CatalogDiscoveryArtifact {
+            entry_id: "role_fixture".into(),
+            cgs_hash: cgs.catalog_cgs_hash_hex(),
+            renderer_version: DISCOVERY_RENDERER_VERSION - 1,
+            profile: EmbeddingProfile::default(),
+            capabilities: vec![],
+            prerequisites: cgs.prerequisites.clone(),
+        };
+        assert_eq!(
+            artifact.validate(&cgs).unwrap_err(),
+            "unsupported discovery renderer version"
+        );
+    }
+
+    #[test]
+    fn value_role_evidence_quotes_multiline_metadata() {
+        let mut lines = Vec::new();
+        render_slot_description("Input owner", Some("owner\nsecond line"), &mut lines);
+        assert_eq!(lines, vec!["Input owner meaning: \"owner\\nsecond line\""]);
+    }
 
     #[test]
     fn rejects_invalid_vectors_before_import() {

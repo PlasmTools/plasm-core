@@ -139,6 +139,11 @@ pub(crate) async fn materialize_for_each_node(
         ),
     )
     .await?;
+    // Successful child calls cannot establish completeness of their input collection.
+    let source_coverage = materialized
+        .get(&for_each.source)
+        .map(|source| source.result.coverage)
+        .unwrap_or(plasm_runtime::ResultCoverage::Unknown);
     super::super::materialize::archive_materialize_for_each_fanout(
         st,
         es,
@@ -147,6 +152,7 @@ pub(crate) async fn materialize_for_each_node(
         for_each,
         fold,
         source_rows.len(),
+        source_coverage,
         expressions,
         trace,
     )

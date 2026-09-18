@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { MockLanguageModelV3 } from "ai/test";
 import {
@@ -36,7 +37,13 @@ const unused = async (): Promise<never> => {
 const engine: PlasmEngine = {
   loadCatalog: unused,
   activateDiscovery: unused,
-  routeIntent: unused,
+  routeIntent: async intent => ({
+    routing: { intent, pin_id: randomUUID(),
+      retrieval: { generation: "abstract-ledger-review-fixture", candidates: [] },
+      selection: { status: "ready", additional_capability_ids: [], requirement_coverage: [] },
+      closure: { business: [], prerequisites: [], acquisitions: [], edges: [] } },
+    teaching: { tsv: "plasm_expr\tMeaning\ne1\tAbstract fixture entity", delta_refs: [] },
+  }),
   synthesizeTeaching: unused,
   dryRun: unused,
   runPlan: unused,
@@ -330,6 +337,7 @@ try {
   });
   const controlLiturgy = await control.loadInstructions();
   assert.equal(controlLiturgy.includes(TASK_LEDGER_REVIEW_ACTOR_LITURGY), false);
+  await control.runtime.plasmContext({ intent: "Abstract fixture workflow", sessionMode: "new" });
   const controlResult = await control.generate(INSTRUCTION, {
     wrapTools: keepLedgerAndComplete,
     maxSteps: 4,
@@ -353,6 +361,7 @@ try {
     includeTaskLedgerReview: true,
     taskLedgerReviewModel: allowReview,
   });
+  await allowAgent.runtime.plasmContext({ intent: "Abstract fixture workflow", sessionMode: "new" });
   const allowResult = await allowAgent.generate(INSTRUCTION, {
     wrapTools: keepLedgerAndComplete,
     maxSteps: 6,
@@ -399,6 +408,7 @@ try {
     includeTaskLedgerReview: true,
     taskLedgerReviewModel: continueReview,
   });
+  await continueAgent.runtime.plasmContext({ intent: "Abstract fixture workflow", sessionMode: "new" });
   const continueResult = await continueAgent.generate(INSTRUCTION, {
     wrapTools: keepLedgerAndComplete,
     maxSteps: 6,

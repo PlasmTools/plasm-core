@@ -4,8 +4,28 @@ use std::collections::HashSet;
 
 use crate::execute_session::ExecuteSession;
 use crate::plasm_plan::{
-    EffectClass, Plan, ValidatedPlanNode, ValidatedPlanReturn, ValidatedPlanState,
+    ComputeOp, EffectClass, Plan, ValidatedPlanNode, ValidatedPlanReturn, ValidatedPlanState,
 };
+
+/// Labels of collection bindings a compute op consumes (union RHS, membership `in` / `not in`).
+#[must_use]
+pub(crate) fn collection_binding_labels(op: &ComputeOp) -> Vec<String> {
+    match op {
+        ComputeOp::Filter { predicates } => {
+            let mut labels = Vec::new();
+            for pred in predicates {
+                if let crate::plasm_plan::PlanValue::BindingSymbol { binding, .. } = &pred.value {
+                    if !labels.iter().any(|l| l == binding) {
+                        labels.push(binding.clone());
+                    }
+                }
+            }
+            labels
+        }
+        ComputeOp::Union { other } => vec![other.as_str().to_string()],
+        _ => Vec::new(),
+    }
+}
 
 pub(crate) fn push_unique(out: &mut Vec<String>, values: impl IntoIterator<Item = String>) {
     for value in values {
@@ -33,6 +53,7 @@ pub fn node_dependencies(node: &ValidatedPlanNode) -> Vec<String> {
         }
         ValidatedPlanNode::Compute(n) => {
             push_unique(&mut out, std::iter::once(n.compute.source.clone()));
+            push_unique(&mut out, collection_binding_labels(&n.compute.op));
         }
         ValidatedPlanNode::ForEach(n) => {
             push_unique(&mut out, std::iter::once(n.source.as_str().to_string()));

@@ -1,0 +1,21 @@
+pokemon_get:
+  method: GET
+  path:
+  - type: literal
+    value: pokemon
+  - type: var
+    name: name
+type_get:
+  method: GET
+  path:
+  - type: literal
+    value: type
+  - type: var
+    name: name
+ability_get:
+  method: GET
+  path:
+  - type: literal
+    value: ability
+  - type: var
+    name: name

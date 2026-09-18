@@ -263,7 +263,7 @@ mod tests {
     #[test]
     fn pokeapi_get_embed_decoders_are_leaf() {
         let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/schemas/pokeapi_mini");
+            .join("../../fixtures/schemas/embed_decoder_matrix");
         let cgs = load_schema_dir(&dir).expect("pokeapi");
         let decoder = create_entity_decoder_for_capability(
             "Pokemon",
@@ -285,7 +285,7 @@ mod tests {
     #[test]
     fn pokeapi_type_and_ability_get_embed_decoders_are_leaf() {
         let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/schemas/pokeapi_mini");
+            .join("../../fixtures/schemas/embed_reverse_matrix");
         let cgs = load_schema_dir(&dir).expect("pokeapi");
         for (entity, cap) in [("Type", "type_get"), ("Ability", "ability_get")] {
             let decoder =
@@ -311,7 +311,7 @@ mod tests {
         use plasm_core::Value;
 
         let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/schemas/pokeapi_mini");
+            .join("../../fixtures/schemas/embed_reverse_matrix");
         let cgs = load_schema_dir(&dir).expect("pokeapi");
         let decoder = create_entity_decoder_for_capability(
             "Type",

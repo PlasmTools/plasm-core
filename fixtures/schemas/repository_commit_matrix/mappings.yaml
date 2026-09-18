@@ -14,7 +14,9 @@ commit_query:
   - type: literal
     value: repositories
   - type: var
-    name: repository
+    name: owner
+  - type: var
+    name: repo
   - type: literal
     value: commits
   response: bare_list

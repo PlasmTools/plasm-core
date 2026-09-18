@@ -76,36 +76,34 @@ const tools = createEvalTerminalTools({
   discoveryCompleted: () => discovered,
 });
 
-const complete = tools[COMPLETE_TASK_TOOL_NAME] as {
-  execute: (args: Record<string, unknown>) => Promise<string>;
-};
-const submit = tools[SUBMIT_ANSWER_TOOL_NAME] as {
-  execute: (args: Record<string, unknown>) => Promise<string>;
-};
+const complete = tools[COMPLETE_TASK_TOOL_NAME]?.execute;
+const submit = tools[SUBMIT_ANSWER_TOOL_NAME]?.execute;
+assert.ok(complete);
+assert.ok(submit);
+const executionOptions = { toolCallId: "unit", messages: [], context: {} };
 
 await assert.rejects(
-  () => complete.execute({}),
+  async () => complete({}, executionOptions),
   (err: unknown) =>
     err instanceof Error && err.message === EVAL_TERMINAL_REQUIRES_DISCOVERY,
   "complete_task refusal must throw (tool-error), not return success text",
 );
 
 await assert.rejects(
-  () => submit.execute({ answer: "42" }),
+  async () => submit({ answer: "42" }, executionOptions),
   (err: unknown) =>
     err instanceof Error && err.message === EVAL_TERMINAL_REQUIRES_DISCOVERY,
   "submit_answer refusal must throw (tool-error), not return success text",
 );
 
 discovered = true;
-assert.equal(await complete.execute({}), "Task marked complete.");
-assert.equal(await submit.execute({ answer: "42" }), "Answer submitted.");
+assert.equal(await complete({}, executionOptions), "Task marked complete.");
+assert.equal(await submit({ answer: "42" }, executionOptions), "Answer submitted.");
 
 const ungated = createEvalTerminalTools();
-const ungatedComplete = ungated[COMPLETE_TASK_TOOL_NAME] as {
-  execute: (args: Record<string, unknown>) => Promise<string>;
-};
-assert.equal(await ungatedComplete.execute({}), "Task marked complete.");
+const ungatedComplete = ungated[COMPLETE_TASK_TOOL_NAME]?.execute;
+assert.ok(ungatedComplete);
+assert.equal(await ungatedComplete({}, executionOptions), "Task marked complete.");
 
 // --- Loop P1-1: discovery false + complete_task → NOT completed / NOT null grade ---
 

@@ -21,6 +21,7 @@ for (const rejectRedirects of [true, false]) {
     requireHostAuth: true,
   });
 }
+assert(calls[0] && calls[1]);
 assert.equal(calls[0].redirect, "error");
 assert.equal(calls[1].redirect, "follow");
 assert.equal(new Headers(calls[0].headers).get("authorization"), "Bearer synthetic-token");

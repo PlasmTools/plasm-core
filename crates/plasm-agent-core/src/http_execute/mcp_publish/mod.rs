@@ -191,7 +191,7 @@ mod tests {
     }
 
     #[test]
-    fn publish_over_cap_with_snapshot_uses_artifact_only_without_paging() {
+    fn publish_over_cap_with_snapshot_preserves_continuation() {
         let run_id = RunArtifactId::from_wire(&format!("pr{}", "a".repeat(64))).expect("wire");
         let handle = RunArtifactHandle {
             run_id,
@@ -232,9 +232,9 @@ mod tests {
             out.markdown
         );
         assert!(
-            !out.markdown
+            out.markdown
                 .contains("run_ref: \"l_AAAAAAAAQACAAAAAAAAAAQ_pg1\""),
-            "must not surface paging when snapshot holds the batch: {}",
+            "a stored snapshot must not hide continuation: {}",
             out.markdown
         );
         assert!(
@@ -248,8 +248,8 @@ mod tests {
             .and_then(|m| m.get("plasm"))
             .and_then(|p| p.get("paging"));
         assert!(
-            paging_meta.is_none(),
-            "paging meta should be omitted when artifact is complete: {:?}",
+            paging_meta.is_some(),
+            "a complete snapshot must preserve paging metadata: {:?}",
             out.tool_meta
         );
         let artifact_complete = out

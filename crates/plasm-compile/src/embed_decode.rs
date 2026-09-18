@@ -416,7 +416,8 @@ fn entity_at_embed_path_mut<'a>(
     cur
 }
 
-fn extract_id_from_source(
+/// Extract the wire identity using the same conventions for top-level and embedded rows.
+pub fn extract_id_from_source(
     source: &serde_json::Value,
     schema_id_field: Option<&str>,
 ) -> Result<String, DecodeError> {

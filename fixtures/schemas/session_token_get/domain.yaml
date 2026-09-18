@@ -31,6 +31,7 @@ capabilities:
     provides:
     - amount
   wallet_nudge:
+    receiver: {kind: entity, entity: Wallet}
     description: Advance the wallet measure one step.
     kind: action
     entity: Wallet

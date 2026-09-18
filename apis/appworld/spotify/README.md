@@ -17,3 +17,15 @@ OpenAPI: `openapi.json`. Backend: `http://127.0.0.1:9000` after `appworld serve 
   `playlist_library_query` on `Song` / `Album` / `Playlist`; liked shelves via `liked_song_query` /
   `liked_album_query` / `liked_playlist_query` on distinct `LikedSong` / `LikedAlbum` / `LikedPlaylist`
   entities; following via `following_artist_query`.
+
+## Unified saved library
+
+`Library{access_token=...}.songs` traverses the distinct Song identities across
+tracks saved directly and songs in saved albums and playlists. `Library.albums`
+and `Library.playlists` expose the saved collections. The composed view follows
+ordinary Album.songs and Playlist.songs relations; Song details supply genre and
+play_count. Independently liked items and recommendations are not included.
+
+`Song{shelf="library", access_token=...}` retains its narrower direct-save meaning.
+Library is a read projection; saves and removals remain operations on the
+corresponding Song, Album, or Playlist identities.

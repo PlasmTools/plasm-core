@@ -917,7 +917,7 @@ mod routed_terminal_tests {
                                 "authorization":{"catalogs":["matrix"],"capabilities":{}},
                                 "intent":payload["intent"],"pin_id":"pin",
                                 "retrieval":{"generation":"generation-one","candidates":[],"lexical_count":0,"vector_count":0,"lexical_truncated":false,"vector_truncated":false,"fusion_truncated":0,"relation_truncated":0},
-                                "selection":{"status":if insufficient {"insufficient"} else {"ready"},"additional_capability_ids":[],"requirement_coverage":if insufficient {json!([{"requirement":"unavailable","supporting_capability_ids":[],"unresolved_reason":"No supplied capability"}])} else {json!([])}},
+                                "selection":{"status":if insufficient {"insufficient"} else {"ready"},"additional_capability_ids":[],"requirement_coverage":if insufficient {json!([{"requirement":"unavailable","assessment":{"useful_capabilities":[],"missing":"No supplied capability"}}])} else {json!([])}},
                                 "closure":null
                             }
                         });

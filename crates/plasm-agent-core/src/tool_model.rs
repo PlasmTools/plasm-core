@@ -1740,7 +1740,7 @@ mod tests {
     #[test]
     fn notion_page_relation_created_by_targets_user() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/schemas/notion_schema_overlay");
+            .join("../../fixtures/schemas/notion_schema_overlay/bootstrap");
         let cgs = load_schema(&dir).expect("notion");
         let meta = CatalogEntryMeta {
             entry_id: "notion".into(),

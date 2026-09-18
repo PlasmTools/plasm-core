@@ -207,7 +207,15 @@ pub(crate) fn collect_all_embedded_relation_targets(
             if r.entity_type.as_str() != target_entity {
                 return None;
             }
-            out.push(graph.get(r)?.clone());
+            out.push(graph.get(r).cloned().unwrap_or_else(|| CachedEntity {
+                reference: r.clone(),
+                fields: Default::default(),
+                relations: Default::default(),
+                last_updated: 0,
+                version: 0,
+                completeness: plasm_runtime::EntityCompleteness::Summary,
+                unavailable_fields: Default::default(),
+            }));
         }
     }
     Some(out)
@@ -217,6 +225,102 @@ pub(crate) fn collect_all_embedded_relation_targets(
 mod tests {
     use super::*;
     use plasm_core::{EmbedOnMissPolicy, JsonPathSegment, RelationScopedFallback};
+
+    #[test]
+    fn shuttle_relation_refs_survive_concurrent_child_eviction() {
+        shuttle::check_random(
+            || {
+                let reference = Ref::new("Child", "c");
+                let child = CachedEntity {
+                    reference: reference.clone(),
+                    fields: Default::default(),
+                    relations: Default::default(),
+                    last_updated: 0,
+                    version: 0,
+                    completeness: plasm_runtime::EntityCompleteness::Complete,
+                    unavailable_fields: Default::default(),
+                };
+                let parent = CachedEntity {
+                    reference: Ref::new("Parent", "p"),
+                    fields: Default::default(),
+                    relations: IndexMap::from([("children".into(), vec![reference.clone()])]),
+                    last_updated: 0,
+                    version: 0,
+                    completeness: plasm_runtime::EntityCompleteness::Complete,
+                    unavailable_fields: Default::default(),
+                };
+                let mut graph = SessionMaterialization::new();
+                graph.merge_graph(vec![child.clone()]).unwrap();
+                let graph = shuttle::sync::Arc::new(shuttle::sync::Mutex::new(graph));
+                let writer_graph = graph.clone();
+                let writer_ref = reference.clone();
+                let writer = shuttle::thread::spawn(move || {
+                    writer_graph.lock().unwrap().remove(&writer_ref);
+                    shuttle::thread::yield_now();
+                    writer_graph
+                        .lock()
+                        .unwrap()
+                        .merge_graph(vec![child])
+                        .unwrap();
+                });
+                let reader = shuttle::thread::spawn(move || {
+                    for _ in 0..3 {
+                        let rows = collect_all_embedded_relation_targets(
+                            "children",
+                            "Child",
+                            &[parent.clone()],
+                            &graph.lock().unwrap(),
+                        )
+                        .unwrap();
+                        assert_eq!(rows.len(), 1);
+                        assert_eq!(rows[0].reference, reference);
+                        shuttle::thread::yield_now();
+                    }
+                });
+                writer.join().unwrap();
+                reader.join().unwrap();
+            },
+            500,
+        );
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn relation_refs_survive_arbitrary_child_cache_eviction(
+            present in proptest::collection::vec(proptest::bool::ANY, 0..40)
+        ) {
+            let refs: Vec<_> = (0..present.len()).map(|i| Ref::new("Child", i.to_string())).collect();
+            let parent = CachedEntity {
+                reference: Ref::new("Parent", "p"),
+                fields: Default::default(),
+                relations: IndexMap::from([("children".into(), refs.clone())]),
+                last_updated: 0, version: 0,
+                completeness: plasm_runtime::EntityCompleteness::Complete,
+                unavailable_fields: Default::default(),
+            };
+            let mut graph = SessionMaterialization::new();
+            for (reference, exists) in refs.iter().zip(&present) {
+                if *exists {
+                    graph.merge_graph(vec![CachedEntity {
+                        reference: reference.clone(),
+                        fields: Default::default(), relations: Default::default(),
+                        last_updated: 9, version: 0,
+                        completeness: plasm_runtime::EntityCompleteness::Complete,
+                        unavailable_fields: Default::default(),
+                    }]).unwrap();
+                }
+            }
+            let rows = collect_all_embedded_relation_targets("children", "Child", &[parent.clone()], &graph).unwrap();
+            proptest::prop_assert_eq!(rows.iter().map(|r| r.reference.clone()).collect::<Vec<_>>(), refs);
+            for (row, exists) in rows.iter().zip(&present) {
+                proptest::prop_assert_eq!(row.completeness, if *exists { plasm_runtime::EntityCompleteness::Complete } else { plasm_runtime::EntityCompleteness::Summary });
+            }
+            proptest::prop_assert!(collect_all_embedded_relation_targets("missing", "Child", &[parent.clone()], &graph).is_none());
+            if !present.is_empty() {
+                proptest::prop_assert!(collect_all_embedded_relation_targets("children", "Other", &[parent], &graph).is_none());
+            }
+        }
+    }
 
     #[test]
     fn wire_row_embeds_declared_relation_from_graph() {

@@ -48,11 +48,6 @@ pub fn load_language_matrix_views_cgs() -> Arc<plasm_core::CGS> {
 }
 
 pub fn views_execute_session(cgs: Arc<plasm_core::CGS>) -> ExecuteSession {
-    let mut ctxs = IndexMap::new();
-    ctxs.insert(
-        VIEWS_MATRIX_ENTRY_ID.into(),
-        Arc::new(CgsContext::entry(VIEWS_MATRIX_ENTRY_ID, cgs.clone())),
-    );
     let wave: &[&str] = &[
         "LangItem",
         "LangLine",
@@ -65,6 +60,16 @@ pub fn views_execute_session(cgs: Arc<plasm_core::CGS>) -> ExecuteSession {
         "LangWorkSnapshot",
         "LangWorkSnapshotEmpty",
     ];
+    execute_session_for_entities(cgs, wave)
+}
+
+/// Build an execute session for an abstract view fixture's taught entity set.
+pub fn execute_session_for_entities(cgs: Arc<plasm_core::CGS>, wave: &[&str]) -> ExecuteSession {
+    let mut ctxs = IndexMap::new();
+    ctxs.insert(
+        VIEWS_MATRIX_ENTRY_ID.into(),
+        Arc::new(CgsContext::entry(VIEWS_MATRIX_ENTRY_ID, cgs.clone())),
+    );
     let exp = TeachingExposureSession::new(cgs.as_ref(), VIEWS_MATRIX_ENTRY_ID, wave);
     ExecuteSession::new(
         "matrix_views_ph".into(),

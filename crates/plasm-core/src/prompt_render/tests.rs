@@ -1800,7 +1800,7 @@ fn prompt_matrix_symbolic_prompt_uses_wire_names_in_projection_brackets() {
 }
 
 #[test]
-fn prompt_matrix_zone_entity_ref_value_domain_gloss_includes_id_primitive() {
+fn prompt_matrix_zone_identity_gloss_is_scalar_with_reference_scope() {
     let dir = fixtures_schemas_dir("plasm_prompt_matrix");
     let cgs = load_schema_dir(&dir).unwrap();
     let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
@@ -1810,9 +1810,12 @@ fn prompt_matrix_zone_entity_ref_value_domain_gloss_includes_id_primitive() {
     let g = map
         .value_domain_gloss_for_v_sym(&v)
         .expect("value-domain gloss");
+    assert_eq!(g, "string", "identity fields teach their scalar wire type");
+    let scope = cgs.get_capability("ruleset_query").unwrap().scope_params();
+    let zone = scope.iter().find(|p| p.name == "zone_id").unwrap();
     assert!(
-        g.starts_with("ref:Zone · string ·"),
-        "expected ref:Zone · string · … value-domain gloss, got {g:?}"
+        matches!(&zone.named_value(&cgs).unwrap().field_type, crate::FieldType::EntityRef { target, .. } if target.as_str() == "Zone"),
+        "the operation scope still accepts a Zone reference"
     );
 }
 

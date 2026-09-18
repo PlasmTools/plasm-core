@@ -174,13 +174,19 @@ impl serde::Serialize for CompiledProgramString {
 }
 impl<'de> serde::Deserialize<'de> for CompiledProgramString {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(serde::Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Wire {
-            __plasm_string_template: String,
+        // Derived struct decoding also accepts positional sequences. Inside
+        // untagged Value that consumes ["literal"] as a template expression.
+        // A map decoder requires the explicit tag without accepting array data.
+        let mut wire = BTreeMap::<String, String>::deserialize(deserializer)?;
+        if wire.len() != 1 {
+            return Err(serde::de::Error::custom(
+                "string template expects exactly one tag",
+            ));
         }
-        let wire = Wire::deserialize(deserializer)?;
-        Self::compile(wire.__plasm_string_template).map_err(serde::de::Error::custom)
+        let source = wire.remove("__plasm_string_template").ok_or_else(|| {
+            serde::de::Error::custom("string template expects __plasm_string_template")
+        })?;
+        Self::compile(source).map_err(serde::de::Error::custom)
     }
 }
 
@@ -575,5 +581,37 @@ mod tests {
         scope.insert("type_md".into(), Value::Object(md));
         let out = render_program_string("# {{ type_md.content }}", &scope).unwrap();
         assert_eq!(out, "# Pokémon");
+    }
+}
+
+#[cfg(test)]
+mod wire_shape_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    #[test]
+    fn template_wire_requires_tagged_object() {
+        assert!(
+            serde_json::from_value::<CompiledProgramString>(serde_json::json!(["literal"]))
+                .is_err()
+        );
+        let template: CompiledProgramString =
+            serde_json::from_value(serde_json::json!({"__plasm_string_template":"{{ row.name }}"}))
+                .unwrap();
+        assert_eq!(template.source(), "{{ row.name }}");
+        let input = serde_json::json!(["=", ["fibery/id"], "$my-id"]);
+        let value: Value = serde_json::from_value(input.clone()).unwrap();
+        assert_eq!(serde_json::to_value(value).unwrap(), input);
+    }
+
+    proptest! {
+        #[test]
+        fn literal_string_arrays_round_trip_without_becoming_templates(
+            rows in proptest::collection::vec(proptest::collection::vec(".*", 0..4), 0..8)
+        ) {
+            let json = serde_json::to_value(rows).unwrap();
+            let value: Value = serde_json::from_value(json.clone()).unwrap();
+            prop_assert_eq!(serde_json::to_value(value).unwrap(), json);
+        }
     }
 }

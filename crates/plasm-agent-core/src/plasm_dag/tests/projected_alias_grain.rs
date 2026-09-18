@@ -131,3 +131,18 @@ bad"#,
         "expected row-field diagnostic, got {err}"
     );
 }
+
+#[test]
+fn parenthesized_union_left_operand_compiles() {
+    compile_grain("grouped_left", r#"
+sent = Transfer
+recv = Transfer
+peers = (sent | select email = receiver_email) | union (recv | select email = sender_email) | distinct
+peers
+"#).expect("closed row expressions must work on either side of union");
+}
+
+#[test]
+fn nested_parenthesized_row_binding_preserves_schema() {
+    compile_grain("grouped_binding", "sent = Transfer\npeers = ((sent)) | select email = receiver_email\npeers").expect("grouping a row binding preserves its schema");
+}

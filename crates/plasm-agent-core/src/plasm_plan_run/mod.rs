@@ -74,7 +74,6 @@ pub(crate) use compute_eval::NodeInputHoleIndex;
 pub(crate) use compute_eval::*;
 pub(crate) use coverage_fold::{
     coverage_for_iterate_until, coverage_from_compute_collections, coverage_of_declared_source,
-    membership_binding_labels,
 };
 pub(crate) use executable_plan::*;
 pub(crate) use materialize::*;
@@ -444,3 +443,5 @@ mod tests {
 
 #[cfg(test)]
 mod observation_honesty_tests;
+
+use crate::plan_node_graph::collection_binding_labels;

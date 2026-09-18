@@ -237,7 +237,29 @@ impl HttpTransport for JsCallbackHttpTransport {
         let mut req = self.build_request(method, url, auth, body, content_type, template_headers);
         req.reject_redirects = request.credential.is_some();
         req.require_host_auth = require_host_auth;
-        self.invoke_and_parse(req).await
+        let authorization = req.headers.as_ref().and_then(|headers| {
+            headers
+                .iter()
+                .find(|(key, _)| key.eq_ignore_ascii_case("authorization"))
+                .map(|(_, value)| value.clone())
+        });
+        let resp = self.invoke(req).await?;
+        plasm_runtime::http_transport::trace_compiled_http_boundary(
+            request,
+            method,
+            resp.status,
+            resp.body.as_bytes(),
+            None,
+            &plasm_runtime::http_auth_failure::OutboundAuthorizationFact::from_header(
+                authorization.as_deref(),
+            ),
+        );
+        Self::parse_response(
+            method,
+            &compiled_http_url(base_url, request),
+            authorization.as_deref(),
+            resp,
+        )
     }
 
     async fn get_json_absolute(

@@ -22,7 +22,7 @@ mod matrix_symbol_resolution;
 
 mod homograph_matrix;
 
-mod tau3_cli_chain;
+mod mutation_chain;
 
 mod iterate_seed_identity;
 
@@ -341,22 +341,14 @@ by_team"#,
 }
 
 #[test]
-fn derive_map_rejects_surface_entity_ctor() {
-    let session = test_session();
-    let err = compile_plasm_dag_to_plan(
-        &PromptPipelineConfig::default(),
-        None,
-        &session,
-        "derive-reject-entity-ctor",
-        r#"hits = LangItem
-bad = hits => LangItem(id=_.id)
-bad"#,
-    )
-    .expect_err("entity ctor on => must not compile as derive literal");
-    assert!(
-        err.contains("derive map does not accept") || err.contains("unsupported `=>` applicator"),
-        "{err}"
-    );
+fn apply_named_identity_is_a_get_not_a_derive_literal() {
+    let plan = compile_plasm_dag_to_plan(
+        &PromptPipelineConfig::default(), None, &test_session(), "named-get-apply",
+        "hits = LangItem\nout = hits => LangItem(id=_.id)\nout",
+    ).expect("named identity repair form lowers to Get");
+    let node = plan["nodes"].as_array().unwrap().iter().find(|n| n["id"] == "out").unwrap();
+    assert_eq!(node["kind"], "for_each");
+    assert_eq!(node["effect_template"]["ir_template"]["expr"]["op"], "get");
 }
 
 #[test]
@@ -461,6 +453,26 @@ fn apply_lowers_row_constructors_reads_relations_and_operations() {
                 "get-apply",
                 "rows = LangItem\nout = rows => LangItem(_.id)\nout".to_string(),
                 "for_each",
+            ),
+            (
+                "get-relation-apply",
+                "rows = LangItem\nout = rows => LangItem(_.id).lines\nout".to_string(),
+                "relation",
+            ),
+            (
+                "get-opaque-relation-apply",
+                format!("rows = LangItem\nout = rows => LangItem(_.id).{opaque_lines}\nout"),
+                "relation",
+            ),
+            (
+                "bound-get-relation-apply",
+                "rows = LangItem\nparents = rows => LangItem(_.id)\nout = parents => _.lines\nout".to_string(),
+                "relation",
+            ),
+            (
+                "query-relation-apply",
+                "rows = LangItem\nout = rows => LangItem{owner=_.owner}.lines\nout".to_string(),
+                "relation",
             ),
             (
                 "query-apply",
@@ -642,7 +654,7 @@ issue.content"#,
 }
 
 #[test]
-fn derive_map_rejects_session_symbol_entity_ctor() {
+fn apply_rejects_non_identity_named_get_slot() {
     let session = test_session();
     let err = compile_plasm_dag_to_plan(
         &PromptPipelineConfig::default(),
@@ -653,9 +665,9 @@ fn derive_map_rejects_session_symbol_entity_ctor() {
 bad = hits => e1(p5=_.id)
 bad"#,
     )
-    .expect_err("e1(...) on => must not compile as derive literal");
+    .expect_err("a non-identity slot must not be accepted as Get identity");
     assert!(
-        err.contains("derive map does not accept") || err.contains("unsupported `=>` applicator"),
+        err.contains("only accepted when") && err.contains("identity field"),
         "{err}"
     );
 }
@@ -2464,12 +2476,11 @@ fn bracket_render_accepts_bare_label_singleton_on_source() {
     )
     .expect("compile");
     let nodes = plan["nodes"].as_array().expect("nodes");
-    let prefix = nodes
-        .iter()
-        .find(|n| n["id"].as_str() == Some("__plasm_render_src_mail"))
-        .expect("render prefix");
-    assert_eq!(prefix["compute"]["op"]["kind"], "limit");
     let render = nodes.iter().find(|n| n["id"] == "mail").expect("mail");
+    let source = render["compute"]["source"].as_str().expect("render source");
+    let prefix = nodes.iter().find(|n| n["id"] == source).expect("render source node");
+    assert_eq!(prefix["compute"]["op"]["kind"], "limit");
+    assert_eq!(prefix["compute"]["op"]["count"], 1);
     assert_eq!(render["compute"]["op"]["kind"], "render");
     assert!(
         render["compute"]["page_size"].is_null(),
@@ -2883,7 +2894,7 @@ fn dag_render_rejects_inference_from_prior_render_output() {
 fn compiles_continuation_from_projection_anchor() {
     let session = repository_commit_session();
     let source = r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
-trimmed = repo[id]
+trimmed = repo | select id
 commits = trimmed.commits
 commits"#;
     let plan = compile_plasm_dag_to_plan(
@@ -3394,7 +3405,9 @@ report"#;
         "expected primary source in uses_result: {uses:?}"
     );
     let op = &report["compute"]["op"];
-    assert_eq!(op["render_bindings"].as_array().map(|a| a.len()), Some(1));
+    assert_eq!(op["columns"], json!(["id"]));
+    assert!(op["render_bindings"].as_array().is_none_or(|bindings| bindings.is_empty()),
+        "row-local id must not become a cross-binding collection");
     let plan_value = crate::plasm_plan::parse_plan_value(&plan).expect("parse plan");
     crate::plasm_plan::validate_plan_artifact(&plan_value).expect("validate plan");
 }

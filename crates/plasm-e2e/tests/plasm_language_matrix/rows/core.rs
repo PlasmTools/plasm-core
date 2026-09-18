@@ -618,13 +618,15 @@ peers"#,
     MatrixRow {
         id: "lang_union_rowset_paren",
         program: r#"alice = LangItem | where owner = "alice" | select owner
-peers = alice | union (LangItem | where owner = "bob" | select owner)
+grouped = ((alice))
+peers = (grouped | select owner) | union (LangItem | where owner = "bob" | select owner)
 kept = LangItem | where owner in peers
 kept"#,
         surface_line: false,
         federated: false,
         features: &[
             "pipe_union_rowset",
+            "parenthesized_row_expression",
             "pipe_where_in_rowset",
             "pipe_select",
             "bindings_assignment",

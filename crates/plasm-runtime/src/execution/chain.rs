@@ -29,6 +29,22 @@ impl ExecutionEngine {
             )
             .await?;
 
+        self.execute_chain_materialized(chain, source_result, cgs, mat, mode, consume, opts)
+            .await
+    }
+
+    /// Navigate an already observed rowset without repeating its source request.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn execute_chain_materialized(
+        &self,
+        chain: &plasm_core::ChainExpr,
+        source_result: ExecutionResult,
+        cgs: &CGS,
+        mat: &mut SessionMaterialization,
+        mode: ExecutionMode,
+        consume: StreamConsumeOpts,
+        opts: ExecuteOptions,
+    ) -> Result<ExecutionResult, RuntimeError> {
         if source_result.entities.is_empty() {
             return Ok(ExecutionResult {
                 entities: vec![],
@@ -357,7 +373,9 @@ impl ExecutionEngine {
                 .find_capability(&target_entity_name, plasm_core::CapabilityKind::Get)
                 .map(|c| c.name.to_string())
                 .unwrap_or_else(|| "get".to_string());
-            let concurrency = self.config.effective_hydrate_concurrency(cgs.entry_id.as_deref());
+            let concurrency = self
+                .config
+                .effective_hydrate_concurrency(cgs.entry_id.as_deref());
             let mut stream = stream::iter(to_fetch.into_iter().map(|reference| {
                 let inherit = inherit_by_id
                     .get(reference.primary_slot_str().as_str())
@@ -446,7 +464,9 @@ impl ExecutionEngine {
         let graph_hits = per_parent.iter().map(|v| v.len()).sum::<usize>();
 
         if !network_jobs.is_empty() {
-            let concurrency = self.config.effective_hydrate_concurrency(cgs.entry_id.as_deref());
+            let concurrency = self
+                .config
+                .effective_hydrate_concurrency(cgs.entry_id.as_deref());
             let branch_seed = {
                 let snap = mat.snapshot();
                 SessionMaterialization::seed_read_branch(mat, snap.into_graph())
@@ -834,7 +854,9 @@ impl ExecutionEngine {
             });
         }
 
-        let concurrency = self.config.effective_hydrate_concurrency(cgs.entry_id.as_deref());
+        let concurrency = self
+            .config
+            .effective_hydrate_concurrency(cgs.entry_id.as_deref());
         let mut all_entities: Vec<CachedEntity> = Vec::new();
         let total_network = source_result.stats.network_requests;
         let total_cache_hits = source_result.stats.cache_hits;
@@ -1044,7 +1066,9 @@ impl ExecutionEngine {
                 .find_capability(target_entity, plasm_core::CapabilityKind::Get)
                 .map(|c| c.name.to_string())
                 .unwrap_or_else(|| "get".to_string());
-            let concurrency = self.config.effective_hydrate_concurrency(cgs.entry_id.as_deref());
+            let concurrency = self
+                .config
+                .effective_hydrate_concurrency(cgs.entry_id.as_deref());
             let mut stream = stream::iter(to_fetch.into_iter().map(|reference| {
                 let inherit = inherit_by_ref.get(&reference).cloned().unwrap_or_default();
                 let get = synthesized_get(reference.clone(), &inherit);
@@ -1054,6 +1078,14 @@ impl ExecutionEngine {
                 async move {
                     self.fetch_get_decoded(&get, cgs, mode, None, false, None, &ambient)
                         .await
+                        .and_then(|(entity, source)| {
+                            if entity.reference != reference {
+                                return Err(RuntimeError::ConfigurationError {
+                                    message: format!("relation GET identity mismatch: requested {reference}, returned {}", entity.reference),
+                                });
+                            }
+                            Ok((entity, source))
+                        })
                         .map_err(|e| {
                             wrap_synthesized_get_error(
                                 cap_name.as_str(),

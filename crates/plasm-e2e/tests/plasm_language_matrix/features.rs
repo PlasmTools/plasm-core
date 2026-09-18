@@ -3,6 +3,7 @@
 /// Every tag listed here must appear on at least one passing matrix row (`features` column).
 pub(crate) const REQUIRED_FEATURE_TAGS: &[&str] = &[
     "bounded_singleton_field_extract",
+    "parenthesized_row_expression",
     "bounded_singleton_method_invoke",
     "row_identity_method_invoke",
     "entity_query",

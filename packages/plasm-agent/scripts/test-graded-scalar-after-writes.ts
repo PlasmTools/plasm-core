@@ -27,6 +27,8 @@ assert.match(SUBMIT_ANSWER_TOOL_DESCRIPTION, /verbatim/);
 assert.match(SUBMIT_ANSWER_TOOL_DESCRIPTION, /monetary value/);
 assert.match(SUBMIT_ANSWER_TOOL_DESCRIPTION, /only the numeric part/);
 assert.match(SUBMIT_ANSWER_TOOL_DESCRIPTION, /no currency symbols or comma groupings/);
+assert.match(SUBMIT_ANSWER_TOOL_DESCRIPTION, /exactly one bare scalar/);
+assert.match(SUBMIT_ANSWER_TOOL_DESCRIPTION, /do not provide a breakdown/);
 assert.match(SUBMIT_ANSWER_TOOL_DESCRIPTION, /Not a done-summary, not a table, not surrounding prose/);
 assert.match(SUBMIT_ANSWER_TOOL_DESCRIPTION, /use complete_task instead/);
 assert.match(SUBMIT_ANSWER_TOOL_DESCRIPTION, /empty or missing answer is invalid/i);

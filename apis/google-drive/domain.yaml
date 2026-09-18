@@ -1,4 +1,4 @@
-version: 5
+version: 6
 http_backend: https://www.googleapis.com/drive/v3
 data_classes:
   untrusted:
@@ -1343,7 +1343,7 @@ values:
     description: Shortcut target metadata when this file is a shortcut.
   nv_file_size:
     type: string
-    description: Size in bytes as returned by the API (string on wire).
+    description: File size in bytes.
   nv_files_copy_input:
     type: json
     description: Copy request body.

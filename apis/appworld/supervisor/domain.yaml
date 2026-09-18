@@ -76,22 +76,22 @@ entities:
     fields:
       owner_name:
         required: true
-        value_ref: nv_str
+        value_ref: nv_person_name
       card_name:
         required: false
-        value_ref: nv_card_brand
+        value_ref: nv_card_name
       card_number:
         required: true
         value_ref: nv_card_number
       expiry_year:
         required: false
-        value_ref: nv_int
+        value_ref: nv_year
       expiry_month:
         required: false
-        value_ref: nv_int
+        value_ref: nv_month
       cvv_number:
         required: false
-        value_ref: nv_int
+        value_ref: nv_cvv
   ActiveTask:
     id_field: instruction
     description: Currently active AppWorld task metadata.
@@ -171,6 +171,8 @@ capabilities:
     - card_number
     - expiry_year
     - expiry_month
+    - cvv_number
+    output: {type: collection, entity_type: PaymentCard}
   active_task_get:
     receiver: {kind: none}
     description: Show the active task instruction text.
@@ -222,17 +224,12 @@ values:
     enum:
     - Home
     - Work
-  nv_card_brand:
-    type: enum
-    description: Payment-card network or bank label on the supervisor profile.
-    enum:
-    - Visa
-    - MasterCard
-    - American Express
-    - Discover
-    - HSBC
-    - Wells Fargo
-    - Chase
+  nv_person_name:
+    type: string
+    description: Cardholder display name.
+  nv_card_name:
+    type: string
+    description: Payment card display name.
   nv_account_name:
     type: string
     description: App key in the password list (e.g. simple_note, gmail, venmo) — not a login id.
@@ -245,6 +242,15 @@ values:
   nv_card_number:
     type: digit_id
     description: Payment card primary account number.
+  nv_cvv:
+    type: integer
+    description: Card CVV digits as integer.
+  nv_month:
+    type: integer
+    description: Card expiry month.
+  nv_year:
+    type: integer
+    description: Card expiry year.
   nv_instruction:
     type: string
     description: Natural-language AppWorld task instruction.
@@ -271,6 +277,16 @@ prerequisites:
         account: nv_account_name
       outputs:
         password: nv_password
+    appworld.payment_card:
+      version: 1
+      inputs: {}
+      outputs:
+        card_name: nv_card_name
+        owner_name: nv_person_name
+        card_number: nv_card_number
+        expiry_year: nv_year
+        expiry_month: nv_month
+        cvv_number: nv_cvv
   providers:
     principal:
       contract: appworld.principal
@@ -288,4 +304,14 @@ prerequisites:
           - account_name
       outputs:
         password: password
+    payment_card:
+      contract: appworld.payment_card
+      capability: payment_card_query
+      outputs:
+        card_name: card_name
+        owner_name: owner_name
+        card_number: card_number
+        expiry_year: expiry_year
+        expiry_month: expiry_month
+        cvv_number: cvv_number
   requirements: {}

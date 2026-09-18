@@ -285,13 +285,22 @@ fn prompt_matrix_tsv_teaching_surface_invariants() {
         "2-column TSV surface should remove compact `;;` gloss separators"
     );
 
-    // Capability-param `zone_id`: shared `ref:Zone` v# row carries type; wire gloss only for point-of-use prose.
+    // Identity-backed wires teach their scalar identity domain. Reference-valued
+    // operation scope remains a separate schema contract (checked below).
+    let zone_domain = map.value_sym_for_wire("", "Ruleset", "zone_id").unwrap();
+    assert_eq!(
+        map.value_domain_gloss_for_v_sym(&zone_domain),
+        Some("string")
+    );
     assert!(
-        tsv.lines().any(|l| {
-            let c: Vec<&str> = l.split('\t').collect();
-            c.len() == 2 && c[0].starts_with('v') && c[1].contains("ref:Zone")
-        }),
-        "expected ref:Zone value-domain row for ruleset_query zone_id filter"
+        tsv.lines()
+            .any(|line| line.starts_with(&format!("{zone_domain}\t"))),
+        "identity value domain must be present in teaching"
+    );
+    assert!(
+        matches!(&cgs.get_capability("ruleset_query").unwrap().scope_params()
+        .iter().find(|p| p.name == "zone_id").unwrap().named_value(&cgs).unwrap().field_type,
+        crate::FieldType::EntityRef { target, .. } if target.as_str() == "Zone")
     );
 
     // Action/mutator invoke references scope.

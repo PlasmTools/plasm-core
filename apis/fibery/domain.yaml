@@ -1,4 +1,4 @@
-version: 3
+version: 4
 http_backend: https://YOUR_ACCOUNT.fibery.io
 data_classes:
   untrusted:
@@ -1103,7 +1103,7 @@ values:
     description: Fibery space (API app) name.
   nv_fibery_field_name:
     type: string
-    description: Fibery field wire name.
+    description: Name of the field to read or modify.
   nv_fibery_field_type:
     type: string
     description: Fibery field type id.
@@ -1136,7 +1136,7 @@ values:
     description: View layout type (board, grid, document, etc.).
   nv_fibery_webhook_id:
     type: string
-    description: Webhook subscription id (integer on wire, string in expressions).
+    description: Identifies the webhook subscription to manage.
   nv_fibery_webhook_url:
     type: string
     description: Webhook callback URL.
@@ -1164,7 +1164,7 @@ values:
     - md
     - html
     - json
-    description: Document wire format.
+    description: Format of the document content.
   nv_fibery_document_markdown:
     type: markdown
     description: Rich-text document body.

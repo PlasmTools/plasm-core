@@ -265,7 +265,12 @@ async fn live_materialize_io(
                 .as_ref()
                 .map(|q| q.entity.as_str())
                 .unwrap_or_else(|| surface.id.as_str());
-            if let Some(cap) = host_page {
+            // Backend acquisition is bounded by host_page above. Do not apply that
+            // implicit budget a second time to an already-materialized collection:
+            // it hides rows from downstream algebra and mislabels a page Complete.
+            // Presentation previews belong to the renderer; only an explicit
+            // page_size requests a synthetic cursor over these acquired rows.
+            if let Some(cap) = surface.page_size {
                 crate::plan_read_bounds::cap_execution_result_page(
                     &scoped_es,
                     &mut result,

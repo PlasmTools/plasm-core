@@ -439,3 +439,139 @@ contact_relationship_query:
   auth: *request_auth
   response:
     items: results
+
+# Account lifecycle: registration, recovery and authenticated account management.
+account_get:
+  method: GET
+  path:
+  - type: literal
+    value: phone
+  - type: literal
+    value: account
+  auth:
+    scheme: bearer
+    token:
+      type: var
+      name: access_token
+  response: single
+account_create:
+  method: POST
+  path:
+  - type: literal
+    value: phone
+  - type: literal
+    value: account
+  body:
+    type: object
+    fields:
+    - - first_name
+      - type: var
+        name: first_name
+    - - last_name
+      - type: var
+        name: last_name
+    - - phone_number
+      - type: var
+        name: phone_number
+    - - password
+      - type: var
+        name: password
+account_update:
+  method: PATCH
+  path:
+  - type: literal
+    value: phone
+  - type: literal
+    value: account
+  auth:
+    scheme: bearer
+    token:
+      type: var
+      name: access_token
+  body:
+    type: object
+    fields:
+    - - first_name
+      - type: if
+        condition:
+          type: exists
+          var: first_name
+        then_expr:
+          type: var
+          name: first_name
+        else_expr:
+          type: const
+          value: null
+    - - last_name
+      - type: if
+        condition:
+          type: exists
+          var: last_name
+        then_expr:
+          type: var
+          name: last_name
+        else_expr:
+          type: const
+          value: null
+account_delete:
+  method: DELETE
+  path:
+  - type: literal
+    value: phone
+  - type: literal
+    value: account
+  auth:
+    scheme: bearer
+    token:
+      type: var
+      name: access_token
+send_password_reset_code:
+  method: POST
+  path:
+  - type: literal
+    value: phone
+  - type: literal
+    value: send_password_reset_code
+  body:
+    type: object
+    fields:
+    - - phone_number
+      - type: var
+        name: phone_number
+reset_password:
+  method: POST
+  path:
+  - type: literal
+    value: phone
+  - type: literal
+    value: reset_password
+  body:
+    type: object
+    fields:
+    - - phone_number
+      - type: var
+        name: phone_number
+    - - password_reset_code
+      - type: var
+        name: password_reset_code
+    - - new_password
+      - type: var
+        name: new_password
+
+# Complete read and management operations.
+voice_message_get:
+  method: GET
+  path:
+  - type: literal
+    value: phone
+  - type: literal
+    value: messages
+  - type: literal
+    value: voice
+  - type: var
+    name: id
+  auth:
+    scheme: bearer
+    token:
+      type: var
+      name: access_token

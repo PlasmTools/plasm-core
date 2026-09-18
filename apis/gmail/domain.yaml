@@ -1,4 +1,4 @@
-version: 15
+version: 16
 http_backend: https://gmail.googleapis.com
 data_classes:
   untrusted:
@@ -335,7 +335,7 @@ capabilities:
     - id
     - threadId
   message_search:
-    description: Gmail full-text search (same endpoint as message list). Use Message~"text" or message
+    description: Search messages using Gmail full-text search. Use Message~"text" or message
       search --q; combine. with labelIds/includeSpamTrash as needed.
     kind: search
     entity: Message
@@ -1163,7 +1163,7 @@ values:
     description: Message whose threading headers to load for reply composition.
   nv_attachment_data:
     type: blob
-    description: Attachment payload as base64url (wire); treat as opaque bytes, not short text.
+    description: Attachment contents encoded as base64url.
   nv_attachment_get_message_id:
     type: entity_ref
     target: Message
@@ -1179,7 +1179,7 @@ values:
     description: Number of bytes in the attachment data.
   nv_draft_create_raw:
     type: blob
-    description: RFC 2822 / MIME message bytes, base64url-encoded on the wire (draft body).
+    description: Draft message including headers and body, formatted as RFC 2822 / MIME and encoded as base64url.
   nv_draft_create_thread_id:
     type: entity_ref
     target: Thread
@@ -1196,7 +1196,7 @@ values:
     description: Immutable draft ID.
   nv_draft_update_raw:
     type: blob
-    description: RFC 2822 / MIME message bytes, base64url-encoded on the wire (replaces draft body).
+    description: Replacement draft message including headers and body, formatted as RFC 2822 / MIME and encoded as base64url.
   nv_label_id:
     type: string
     description: Immutable label ID.
@@ -1313,7 +1313,7 @@ values:
       etc.).
   nv_message_send_raw:
     type: blob
-    description: RFC 2822 / MIME message bytes, base64url-encoded on the wire (Gmail `users.messages.send`).
+    description: Message to send, including headers and body, formatted as RFC 2822 / MIME and encoded as base64url.
   nv_message_send_simple_from:
     type: string
     description: RFC 5322 From (must match mailbox or send-as; use profile_get emailAddress when unsure).

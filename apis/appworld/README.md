@@ -63,3 +63,27 @@ Closed vocabularies that OpenAPI types as plain `string` but AppWorld fixes at r
 | `gmail` | — (no OpenAPI enums) | `user_query`, `category_sizes_get`, `profile_get` |
 
 Doctrine skips only account lifecycle (signup / verify / password-reset / delete account). Remaining OpenAPI surface for eval intents is mapped.
+
+## OpenAPI completeness and conformance gate
+
+From the OSS root, run the existing Hermit validator for every catalog:
+
+```bash
+cargo build -p plasm-cli --bin plasm-cgs
+for catalog in apis/appworld/*/openapi.json; do
+  target/debug/plasm-cgs validate "${catalog%/openapi.json}" --spec "$catalog" --require-complete || exit 1
+done
+```
+
+`--require-complete` fails on missing OpenAPI operation mappings before starting
+Hermit. Conditional paths and declared enum route selectors count toward the
+inventory. It does not prove every branch is reachable or every response field
+is exposed; the subsequent Hermit execution and semantic review remain required.
+Do not treat an inventory pass as full integration acceptance. Spec-response
+mocks may generate inconsistent identities across related requests; report
+those failures rather than weakening runtime identity checks.
+
+Catalog descriptions must name domain objects, selection semantics and accepted
+values. Storage terms such as “primary key” do not tell an agent which object to
+select. Distinguish genuinely different identifiers (for example full file paths
+and numeric file references) in domain terms. Keep transport bookkeeping in CML.

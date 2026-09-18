@@ -17,7 +17,10 @@
       "@plasm_lang/vercel-agent/stub-runtime": [
         "./src/stubs/stub-runtime.ts"
       ]
-    }
+    },
+    "noUncheckedIndexedAccess": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true
   },
   "include": [
     "src/**/*.ts",

@@ -87,6 +87,7 @@ fn run_artifact_doc(
         display_lines: vec![],
         request_fingerprints: vec![],
         entities,
+        coverage: plasm_runtime::ResultCoverage::Unknown,
         source: ExecutionSource::Live,
         stats: ExecutionStats::default(),
         operations: plasm_runtime::OperationLedger::empty(),

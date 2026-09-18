@@ -61,6 +61,7 @@ fn prepare_cgs_for_catalog(api_dir: &Path, entry_id: &str) -> Result<CGS> {
         .map_err(|e| anyhow::anyhow!("load_schema {}: {e}", api_dir.display()))?;
     validate_cgs_capability_templates(&cgs)
         .map_err(|e| anyhow::anyhow!("validate {entry_id}: {e}"))?;
+    plasm_compile::validate_catalog_openapi_pagination(&cgs, api_dir)?;
     validate_cgs_views(&cgs).map_err(|e| anyhow::anyhow!("validate views {entry_id}: {e}"))?;
 
     if let Some(ref eid) = cgs.entry_id {
@@ -825,10 +826,13 @@ mod tests {
         let all_consumers: Vec<_> = catalogs
             .iter()
             .flat_map(|(catalog, cgs)| {
-                cgs.prerequisites.requirements.keys().map(move |capability| CapabilityRef {
-                    catalog: catalog.clone(),
-                    capability: capability.clone(),
-                })
+                cgs.prerequisites
+                    .requirements
+                    .keys()
+                    .map(move |capability| CapabilityRef {
+                        catalog: catalog.clone(),
+                        capability: capability.clone(),
+                    })
             })
             .collect();
         prerequisite_closure(&refs, &bindings, &all_consumers, &allowed).unwrap();

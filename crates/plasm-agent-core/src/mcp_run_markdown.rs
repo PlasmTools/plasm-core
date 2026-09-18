@@ -253,8 +253,8 @@ pub(crate) fn format_coverage_preview_note(
         line.push_str(" (no run snapshot stored)");
     }
     if let Some(handle) = continue_handle {
-        // Presentation paging is orthogonal to expression incompleteness.
-        line.push_str(&format!(" Continue (presentation paging): `{handle}`."));
+        // A handle may continue backend acquisition or page a stored snapshot.
+        line.push_str(&format!(" Continue: `{handle}`."));
     }
     format!("\n\n_{line}_\n")
 }
@@ -444,10 +444,7 @@ mod tests {
         assert!(note.contains("Result coverage: partial."), "{note}");
         assert!(note.contains("Full snapshot:"), "{note}");
         assert!(note.contains("plasm://r/1"), "{note}");
-        assert!(
-            note.contains("Continue (presentation paging): `l_page1`"),
-            "{note}"
-        );
+        assert!(note.contains("Continue: `l_page1`"), "{note}");
 
         let complete = ArtifactAccessMode::ResourcesRead.coverage_preview_note(
             10,

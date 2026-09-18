@@ -65,9 +65,6 @@ fn append_paging_if_needed(
     resolved: &ResolvedStepPublish,
     step_index: usize,
 ) {
-    if resolved.artifact.is_some() {
-        return;
-    }
     let Some(handle) = &step.result.paging_handle else {
         return;
     };

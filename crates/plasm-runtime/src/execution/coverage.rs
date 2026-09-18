@@ -177,18 +177,18 @@ pub fn page_result(
     }
 }
 
-/// Coverage after an explicit take over a source collection.
-///
-/// Satisfied take (`got >= take`) is Complete even when the source was Partial.
-/// An unsatisfied take inherits the source: only a Complete source proves those
-/// fewer rows are the full expression result.
+/// Coverage after taking rows from an already materialized collection.
+/// A satisfied cardinality bound does not prove an uncertain upstream collection
+/// was exhausted, or that unseen rows cannot change a prior global computation.
+/// Streaming expression bounds have their own consume-stop proof; this helper
+/// never manufactures that proof from row count. A zero take is always empty.
 #[must_use]
 pub fn coverage_after_explicit_take(
     source: ResultCoverage,
     take: usize,
-    got: usize,
+    _got: usize,
 ) -> ResultCoverage {
-    if got >= take {
+    if take == 0 {
         ResultCoverage::Complete
     } else {
         source
@@ -290,11 +290,20 @@ mod tests {
         assert_eq!(ResultCoverage::combine_all([]), ResultCoverage::Unknown);
     }
 
+    proptest::proptest! {
+        #[test]
+        fn materialized_take_cannot_erase_upstream_uncertainty(take in 1usize..100, got in 0usize..200, partial in proptest::bool::ANY) {
+            let source=if partial {ResultCoverage::Partial} else {ResultCoverage::Unknown};
+            proptest::prop_assert_eq!(coverage_after_explicit_take(source,take,got),source);
+            proptest::prop_assert_eq!(coverage_after_explicit_take(source,0,0),ResultCoverage::Complete);
+        }
+    }
+
     #[test]
-    fn take_satisfied_is_complete_over_partial_source() {
+    fn take_preserves_uncertain_source_even_when_satisfied() {
         assert_eq!(
             coverage_after_explicit_take(ResultCoverage::Partial, 5, 5),
-            ResultCoverage::Complete
+            ResultCoverage::Partial
         );
         assert_eq!(
             coverage_after_explicit_take(ResultCoverage::Partial, 5, 3),

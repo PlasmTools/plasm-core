@@ -28,7 +28,7 @@ const usage = {
   outputTokens: { total: 2, text: 2, reasoning: 0 },
 };
 
-function finish(reason: "tool-calls" | "length" | "stop") {
+function finish(reason: "tool-calls" | "length" | "stop" | "other") {
   return {
     type: "finish" as const,
     finishReason: { unified: reason, raw: undefined },
@@ -92,6 +92,9 @@ assert.equal(
   "ordinary execute error-text is not InvalidToolInput",
 );
 
+assert.equal(stepHasInvalidToolInput([], [{ type: "tool-error", error: new Error("backend request failed") }]),
+  false, "execute failures must not be treated as argument validation failures");
+
 const validLedger = {
   action: "write" as const,
   record: {
@@ -103,20 +106,46 @@ const validLedger = {
 
 let callCount = 0;
 const truncatedThenRepairModel = new MockLanguageModelV3({
-  doStream: async () => {
+  doStream: async (options) => {
     const index = callCount++;
+    if (index === 1) {
+      const previousCall = options.prompt
+        .filter(message => message.role === "assistant")
+        .flatMap(message => message.content)
+        .find(part => part.type === "tool-call" && part.toolCallId === "ledger-trunc");
+      assert.equal(
+        previousCall?.type === "tool-call" ? previousCall.input : undefined,
+        '{"action": "write", "record":',
+        "retry must retain the actual malformed input, never substitute an empty object",
+      );
+      const validSibling = options.prompt
+        .filter(message => message.role === "assistant")
+        .flatMap(message => message.content)
+        .find(part => part.type === "tool-call" && part.toolCallId === "ledger-read");
+      assert.deepEqual(
+        validSibling?.type === "tool-call" ? validSibling.input : undefined,
+        { action: "read" },
+        "a valid sibling call must retain its parsed input",
+      );
+    }
     return {
       stream: new ReadableStream({
         start(controller) {
           if (index === 0) {
-            // Witness shape: truncated task_ledger JSON + finishReason length.
+            // Witness shape: truncated task_ledger JSON + mapped finishReason other.
             controller.enqueue({
               type: "tool-call",
               toolCallId: "ledger-trunc",
               toolName: TASK_LEDGER_TOOL_NAME,
               input: '{"action": "write", "record":',
             });
-            controller.enqueue(finish("length"));
+            controller.enqueue({
+              type: "tool-call",
+              toolCallId: "ledger-read",
+              toolName: TASK_LEDGER_TOOL_NAME,
+              input: '{"action":"read"}',
+            });
+            controller.enqueue(finish("other"));
           } else if (index === 1) {
             controller.enqueue({
               type: "tool-call",
@@ -161,8 +190,8 @@ assert.ok(callCount >= 3, `loop must continue after truncated JSON (calls=${call
 assert.equal(repaired.stopReason, "completed", "successful complete_task after repair");
 assert.deepEqual(
   repaired.stepFinishReasons.slice(0, 3),
-  ["length", "tool-calls", "tool-calls"],
-  "per-step finishReason must be preserved (length vs tool-calls)",
+  ["other", "tool-calls", "tool-calls"],
+  "per-step finishReason must be preserved (other vs tool-calls)",
 );
 assert.ok(
   repaired.messages.some(
@@ -252,4 +281,36 @@ assert.equal(
 );
 assert.deepEqual(midBudget.stepFinishReasons, ["length", "stop"]);
 
-console.log("ok: invalid-tool-input-retry");
+
+let providerCalls = 0;
+const providerFailureThenTerminal = new MockLanguageModelV3({
+  doStream: async (options) => {
+    const index = providerCalls++;
+    if (index === 1) {
+      const feedback = options.prompt.filter(m => m.role === "user").map(m => JSON.stringify(m.content)).join("\n");
+      assert(feedback.includes("provider stream failed"), "provider error must not be described as a model JSON mistake");
+      assert(!feedback.includes(INVALID_TOOL_INPUT_REPAIR_DIAGNOSTIC), "do not append contradictory JSON repair feedback");
+    }
+    return {stream:new ReadableStream({start(controller) {
+      if (index === 0) {
+        controller.enqueue({type:"text-start",id:"provider-text"});
+        controller.enqueue({type:"text-delta",id:"provider-text",delta:"working"});
+        controller.enqueue({type:"text-end",id:"provider-text"});
+        controller.enqueue({type:"tool-call",toolCallId:"provider-cut",toolName:"task_ledger",input:'{"action":"write","record":'});
+        controller.enqueue({type:"error",error:new Error("Upstream provider unavailable (502)")});
+        controller.enqueue(finish("other"));
+      } else {
+        controller.enqueue({type:"tool-call",toolCallId:"finish",toolName:"complete_task",input:"{}"});
+        controller.enqueue(finish("tool-calls"));
+      }
+      controller.close();
+    }})};
+  }
+});
+const providerResult = await runEveToolLoop({model:providerFailureThenTerminal,system:"system",
+  tools:{...createTaskLedgerTool(new TaskLedgerStore()),...createEvalTerminalTools()},
+  messages:[{role:"user",content:"perform task"}],maxSteps:3,agentName:"test-provider-error",telemetry:{isEnabled:false}});
+assert.equal(providerResult.stopReason,"completed");
+assert.deepEqual(providerResult.stepFinishReasons,["error","tool-calls"]);
+
+console.log("ok: invalid-tool-input-retry (including provider stream errors)");

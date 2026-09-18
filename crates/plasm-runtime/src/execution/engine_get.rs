@@ -95,8 +95,11 @@ impl ExecutionEngine {
         cgs: &CGS,
         mat: &mut SessionMaterialization,
         mode: ExecutionMode,
+        required_relation: Option<&str>,
     ) -> Result<ExecutionResult, RuntimeError> {
-        if let Some(entity) = mat.consult_complete_get(&get.reference) {
+        if let Some(entity) = mat.consult_complete_get(&get.reference).filter(|entity| {
+            required_relation.is_none_or(|name| entity.relations.contains_key(name))
+        }) {
             return Ok(ExecutionResult {
                 entities: vec![entity.clone()],
                 count: 1,
@@ -117,12 +120,23 @@ impl ExecutionEngine {
             });
         }
 
-        let capability = cgs
-            .find_capability(&get.reference.entity_type, plasm_core::CapabilityKind::Get)
-            .ok_or_else(|| RuntimeError::CapabilityNotFound {
-                capability: "get".to_string(),
-                entity: get.reference.entity_type.to_string(),
-            })?;
+        let capability = match get.capability_name.as_deref() {
+            Some(name) => cgs.get_capability(name),
+            None => {
+                cgs.find_capability(&get.reference.entity_type, plasm_core::CapabilityKind::Get)
+            }
+        }
+        .filter(|cap| {
+            cap.kind == plasm_core::CapabilityKind::Get && cap.domain == get.reference.entity_type
+        })
+        .ok_or_else(|| RuntimeError::CapabilityNotFound {
+            capability: get
+                .capability_name
+                .as_ref()
+                .map(ToString::to_string)
+                .unwrap_or_else(|| "get".into()),
+            entity: get.reference.entity_type.to_string(),
+        })?;
         if capability.derived.is_some() {
             return Err(RuntimeError::ConfigurationError {
                 message: format!(
@@ -148,6 +162,7 @@ impl ExecutionEngine {
                 mode,
                 capability,
                 &capability_template,
+                true,
                 true,
                 Some(mat),
                 &ambient,
@@ -257,6 +272,7 @@ impl ExecutionEngine {
         capability: &CapabilitySchema,
         capability_template: &CapabilityTemplate,
         inject_execute_session_env: bool,
+        validate_identity: bool,
         mut cache: Option<&mut SessionMaterialization>,
         ambient: &ViewAmbientContext,
     ) -> Result<(CachedEntity, ExecutionSource), RuntimeError> {
@@ -364,6 +380,17 @@ impl ExecutionEngine {
                 message: format!("zero rows — Entity not found: {}", get.reference),
             })?;
 
+        if validate_identity
+            && !get.reference.primary_slot_str().is_empty()
+            && decoded.reference != get.reference
+        {
+            return Err(RuntimeError::ConfigurationError {
+                message: format!(
+                    "view GET identity mismatch: requested {}, returned {}",
+                    get.reference, decoded.reference
+                ),
+            });
+        }
         let timestamp = current_timestamp();
         let cached = if let Some(session) = cache {
             cache_decoded_entity_tree(
@@ -475,6 +502,7 @@ impl ExecutionEngine {
             capability,
             &capability_template,
             inject_execute_session_env,
+            false,
             cache,
             ambient,
         )

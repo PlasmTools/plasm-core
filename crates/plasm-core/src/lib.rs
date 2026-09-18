@@ -372,7 +372,7 @@ pub use schema::{
     ParentScopeSchema, RelationMaterialization, RelationSchema, RelationScopedFallback,
     ResourceSchema, ScopeAggregateKeyPolicy, ScopeRequirement, SinkClassName, ValueDomainKey,
     ValueDomainSlot, ViewDefinition, ViewNodeSpec, ViewOutputBinding, ViewParamBinding,
-    ViewRelationBinding, ViewRelationOutputSpec, ViewScopeInject, ViewScopeParam,
+    ViewRelationBinding, ViewRelationOutputSpec, ViewScopeInject, ViewScopeParam, ViewTraversal,
     WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
 };
 pub use schema_overlay::{

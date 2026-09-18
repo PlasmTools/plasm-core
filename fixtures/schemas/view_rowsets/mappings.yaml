@@ -1,0 +1,31 @@
+item_query:
+  method: GET
+  path: [{type: literal, value: items}]
+  headers: &headers
+    type: object
+    fields:
+    - [Authorization, {type: var, name: access_token}]
+item_get:
+  method: GET
+  path: [{type: literal, value: items}, {type: var, name: id}]
+  headers: *headers
+collection_query:
+  method: GET
+  path: [{type: literal, value: collections}]
+  headers: *headers
+  pagination:
+    params:
+      page_index: {counter: 0}
+      page_limit: {fixed: 2, role: page_size}
+    strategy: page_number
+collection_get:
+  method: GET
+  path: [{type: literal, value: collections}, {type: var, name: id}]
+  headers: *headers
+library_query:
+  transport: view
+  view: library
+
+collection_clear:
+  method: DELETE
+  path: [{type: literal, value: collections}, {type: var, name: id}, {type: literal, value: items}]

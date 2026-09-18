@@ -21,11 +21,11 @@ use plasm_agent_core::server_state::CatalogBootstrap;
 use plasm_agent_core::PlasmCompBundle;
 use plasm_core::discovery::{CgsRegistry, RegistryEntryPair};
 use plasm_core::prompt_render::{teaching_tsv_from_wrapped_prompt, TeachingFenceSlice};
-use plasm_core::PlanCommitRef;
 use plasm_core::{
     capability_method_label_kebab, ExposureEntityKey, InputSchema, NamedValueSchema, OutputSchema,
     PromptPipelineConfig, SymbolMapCrossRequestCache, TeachingExposureSession, CGS,
 };
+use plasm_core::{PagingHandle, PlanCommitRef};
 use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode, HttpTransport};
 use std::path::Path;
 use std::sync::Arc;
@@ -573,18 +573,34 @@ impl AgentEngine {
         if trimmed.is_empty() {
             return Err(anyhow!("missing `plan_commit_ref`"));
         }
-        let commit_ref = PlanCommitRef::parse(trimmed)
-            .ok_or_else(|| anyhow!("invalid plan_commit_ref `{trimmed}`"))?;
         let es = self.ensure_execute_session()?;
-        let committed = resolve_committed_plan(&es, &commit_ref).map_err(|e| {
-            anyhow!(
-                "unknown or expired plan_commit_ref `{trimmed}` — call `plasm` (dry-run) first: {e:?}"
+        let (bundle, dry) = if let Some(commit_ref) = PlanCommitRef::parse(trimmed) {
+            let committed = resolve_committed_plan(&es, &commit_ref).map_err(|e| {
+                anyhow!("unknown or expired run_ref `{trimmed}` — call `plasm` first: {e:?}")
+            })?;
+            let bundle = PlasmCompBundle::new(committed.artifact.clone())
+                .map_err(|e| anyhow!("invalid committed plan artifact: {e}"))?;
+            let dry = dry_for_committed_plasm_run(&es, &bundle, &committed)
+                .map_err(|e| anyhow!("dry evaluation for committed plan: {e}"))?;
+            (bundle, dry)
+        } else if let Ok(handle) = PagingHandle::parse(trimmed) {
+            let program = format!("page({handle})");
+            let bundle = compile_plasm_expression(
+                &self.pipeline,
+                Some(&self.sym_cross),
+                &es,
+                "plasm_node_page",
+                &program,
             )
-        })?;
-        let bundle = PlasmCompBundle::new(committed.artifact.clone())
-            .map_err(|e| anyhow!("invalid committed plan artifact: {e}"))?;
-        let dry = dry_for_committed_plasm_run(&es, &bundle, &committed)
-            .map_err(|e| anyhow!("dry evaluation for committed plan: {e}"))?;
+            .map_err(|e| anyhow!("paging plan: {e}"))?;
+            let dry = evaluate_plasm_comp_dry(&es, &bundle)
+                .map_err(|e| anyhow!("dry evaluation for paging: {e}"))?;
+            (bundle, dry)
+        } else {
+            return Err(anyhow!(
+                "invalid run_ref `{trimmed}`: expected a returned commit ref or paging handle"
+            ));
+        };
 
         let host = self.build_host_state(transport)?;
         let live = Box::pin(run_plasm_comp(
@@ -1369,5 +1385,93 @@ mod tests {
             "parallel dry_run hung ({:?})",
             started.elapsed()
         );
+    }
+    #[tokio::test]
+    async fn native_paging_preserves_all_backend_rows() {
+        use async_trait::async_trait;
+        use plasm_compile::CompiledRequest;
+        struct Pages;
+        #[async_trait]
+        impl HttpTransport for Pages {
+            async fn send_compiled_http(
+                &self,
+                _: &str,
+                request: &CompiledRequest,
+                _: Option<plasm_runtime::auth::ResolvedAuth>,
+            ) -> Result<(serde_json::Value, Option<String>), plasm_runtime::RuntimeError>
+            {
+                let offset = request
+                    .query
+                    .as_ref()
+                    .and_then(Value::as_object)
+                    .and_then(|q| q.get("offset"))
+                    .and_then(Value::as_number)
+                    .unwrap_or(0.0) as usize;
+                let rows: Vec<_> = (offset..(offset + 20).min(48))
+                    .map(|n| serde_json::json!({"id":n.to_string(),"n":n}))
+                    .collect();
+                Ok((serde_json::json!({"results":rows}), None))
+            }
+            async fn get_json_absolute(
+                &self,
+                _: &str,
+                _: Option<plasm_runtime::auth::ResolvedAuth>,
+            ) -> Result<(serde_json::Value, Option<String>), plasm_runtime::RuntimeError>
+            {
+                panic!("unexpected absolute GET")
+            }
+        }
+        let mut cgs = plasm_core::load_schema_dir(
+            &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/plasm_pagination_matrix"),
+        )
+        .unwrap();
+        cgs.bind_registry_entry_id("paging");
+        let compiled = Arc::new(plasm_compile::compile_cgs_capability_templates(&cgs).unwrap());
+        let mut engine = AgentEngine::from_generation(
+            [("paging".into(), cgs)].into(),
+            [("paging".into(), compiled)].into(),
+            "paging-session".into(),
+        );
+        engine
+            .expose_seeds(
+                "list rows",
+                &[CapabilitySeed {
+                    entry_id: "paging".into(),
+                    entity: "ItemOffset".into(),
+                }],
+            )
+            .unwrap();
+        let dry = engine.dry_run("e1").unwrap();
+        let first = engine
+            .run_plan_live(&dry.plan_commit_ref, Arc::new(Pages))
+            .await
+            .unwrap();
+        let meta: serde_json::Value =
+            serde_json::from_str(first.meta_json.as_deref().unwrap()).unwrap();
+        let next = meta["plasm"]["paging"][0]["next_run_ref"]
+            .as_str()
+            .expect("snapshot must preserve backend continuation");
+        let second = engine.run_plan_live(next, Arc::new(Pages)).await.unwrap();
+        let a: serde_json::Value =
+            serde_json::from_str(first.rows_json.as_deref().unwrap()).unwrap();
+        let b: serde_json::Value =
+            serde_json::from_str(second.rows_json.as_deref().unwrap()).unwrap();
+        let rows: Vec<_> = a["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .chain(b["rows"].as_array().unwrap())
+            .collect();
+        assert_eq!(rows.len(), 48);
+        let ids: std::collections::BTreeSet<_> =
+            rows.iter().map(|r| r["id"].as_str().unwrap()).collect();
+        assert_eq!(
+            ids.len(),
+            48,
+            "no dropped or repeated rows across native paging"
+        );
+        assert_eq!(a["coverage"], "partial");
+        assert_eq!(b["coverage"], "complete");
     }
 }

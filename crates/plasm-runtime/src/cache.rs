@@ -163,10 +163,7 @@ impl CachedEntity {
     {
         for field in fields {
             let name = field.into();
-            let present_non_null = self
-                .fields
-                .get(name.as_str())
-                .is_some_and(|v| !v.is_null());
+            let present_non_null = self.fields.get(name.as_str()).is_some_and(|v| !v.is_null());
             if !present_non_null {
                 self.unavailable_fields.insert(name);
             }
@@ -413,11 +410,7 @@ impl CachedEntity {
             self.unavailable_fields
                 .extend(other.unavailable_fields.iter().cloned());
             for field in self.fields.keys() {
-                if self
-                    .fields
-                    .get(field)
-                    .is_some_and(|v| !v.is_null())
-                {
+                if self.fields.get(field).is_some_and(|v| !v.is_null()) {
                     self.unavailable_fields.remove(field);
                 }
             }

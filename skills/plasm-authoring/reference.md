@@ -182,6 +182,21 @@ Symbolic teaching table / TSV teaching attaches **`entities.<Name>.description`*
 
 **Compositional catalogs — never cross-annotate:** CGS strings are **local** to this `entry_id`. Federation stitches catalogs at session time; authors must **not** hard-wire foreign catalog or entity names into `description` / value glosses / instructional discovery prose. Teach **semantic roles** this surface owns (“login username is the account holder’s email, never a payment counterparty”; “`account_name` is an app key, not a login id”). Product docs may describe multi-catalog rites; **`domain.yaml` must not**.
 
+**Discovery evidence roles:** A read capability that resolves a selection qualifier
+(relationship, ownership, status, or another domain classification) must describe
+that evidentiary purpose, not just list or search the underlying records.
+Use `discovery.target_terms` for ordinary domain vocabulary associated with the
+classification, grounded in the API's supported semantics. An address-book read,
+for example, can identify friends, coworkers and relatives from recorded contact
+relationships. Keep this vocabulary on the relevant read capability; do not
+attach task recipes or unrelated workflows. A typed enum or array alone does
+not establish that its vocabulary appears in the indexed capability document:
+inspect the generated document as part of the authoring audit. Renderer v2 includes registry value descriptions,
+finite enum members (including array element domains), and slot descriptions
+for input/field evidence. Examples, defaults, and transport mappings remain
+excluded. After semantic evidence changes, repack discovery artifacts and
+regenerate embeddings; renderer/cache identity prevents old evidence reuse.
+
 **Discovery seed graph roles (semantic auto-seed):** Prefer relation-edge roles; entity class is a weak fallback. Precedence: `relations.*.discovery.seed_nav` → `entities.*.discovery.seed_class` → unset (no special prune).
 
 | Field | Values | When to author |
@@ -248,6 +263,9 @@ By default, each field is read from a top-level JSON key matching the field name
 **Search filters vs row fields (agents):** Teaching-row `inputs:` / `opt:` keys are fetch filters only. If agents should aggregate on a dimension (`group_by`, `.sort`, row `.filter`, `[fields]`) that also appears as a search filter parameter, that field must be listed in capability **`provides:`** with wire backing (entity field + decode path) — filter-only params are not row columns at plan time.
 
 **`description` on entities and capabilities:** Optional but recommended when it helps agents. Write **short domain prose** framed for agents choosing tools and traversing the graph, not for humans reading vendor API reference. The same rule applies to `output.description` for `side_effect` actions: state the **domain effect** (e.g. "message moves to Trash"), not the transport shape ("PATCH, empty body", "returns 204"). **Exception:** `auth.token_url` and similar machine OAuth fields may contain a provider token URL.
+
+Parameter and value descriptions must explain the domain role and accepted selection value. Do not substitute “primary key”, “database ID”, or transport bookkeeping for that explanation. Where two identifiers coexist, state which selects the object for an operation (for example a full file path versus a numeric file reference). Preserve necessary domain distinctions such as an issue's identifier versus its issue number.
+
 
 #### Gloss: do not restate typed structure
 
@@ -571,6 +589,7 @@ Expose **next hops as relations** (`relation_outputs:` → decoded `Ref` edges o
     - `kind: literal` `value: <JSON>` — fixed predicate/env fragment, or
     - **`kind: node_field`** `node:` `field:` — take a field from the **first row** of an earlier node (declaration order = dependency order; forward refs rejected at load), or
     - **`kind: computed`** `template:` — Minijinja string evaluated against outer scope plus prior node first-row fields (same filters as output templates; node ids are also top-level template keys, e.g. `{{ sprint_row.id }}`).
+  - Alternatively, a read node declares **`traverse: {node: <earlier node>, relation: <declared relation>}`** instead of `capability` / `bind` / `when`. It traverses every source row through ordinary relation materialization. GET-embedded relations observe missing parent embeds before extracting children; an unestablished relation is an error, not an empty collection. Dependency order and target entity are validated. Inner collection reads consume all pages within runtime safety bounds.
   - **`output:`** — maps entity field names to:
     - `kind: scope` `param:` — copy a scope parameter into the row
     - `kind: node_row_count` `node:` — integer count
@@ -600,6 +619,7 @@ Load validates: outer is `kind: get`; source is same-catalog `kind: query`; matc
     - `kind: first_node_row_where`
     - `kind: node_rows_where`
     - `kind: node_all_rows`
+    - `kind: node_union_rows`, `nodes: [<node>, ...]` — identity union of nonempty, compatible typed node rowsets for a many-relation. Removes duplicate Refs in first occurrence order. All contributing coverage proofs are retained; partial/unknown inputs cannot become Complete through union.
     - `kind: node_single_row`
 
 **Executable many-relations (required):** Every `entities.*.relations` edge with `cardinality: many` that agents can traverse (teaching `.r#`, discovery hints, semantic auto-seed) **must** declare `materialize:`. For view-backed hops that mirror `relation_outputs:`, use **`view_embed`** — do not rely on omitting `materialize` and hoping runtime cached embed works.
@@ -1720,3 +1740,15 @@ CGS owns invocation shape. CML path, query, header, and body variables never det
 - Receiver identity supplies matching CGS scope fields and same-entity EntityRef scope slots. Explicit payload fields remain distinct and are validated regardless of their eventual HTTP location.
 
 A mapping rewrite that moves the same identity from a path segment into a body must preserve the Plasm program and teaching. Test this through live requests, not merely matching compiler/card text. `semantic_receiver_transport_invariance_live` is the abstract fixture witness.
+
+### Compile-time pagination completeness
+
+Catalog packing and `plasm-cgs schema validate` check an adjacent `openapi.json`.
+A GET query/search mapped to an operation declaring a recognized pagination pair
+must declare a CML `pagination:` driver, including when paging parameters were
+omitted from both CGS and CML. Missing drivers are compilation errors, not warnings.
+`plasm-cgs validate --spec` applies the same compiler check to the spec loaded by
+Hermit. A single `limit` parameter alone is not proof of pagination.
+Selected reads also expose read capabilities of embedded `from_parent_get`
+relation targets, recursively, so their navigation receives executable symbols;
+this closure does not expose mutations of the target entities.

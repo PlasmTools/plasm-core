@@ -71,6 +71,7 @@ fn execution_result_from_view_row(
     stats: ExecutionStats,
     fingerprints: Vec<String>,
     any_live: bool,
+    coverage: ResultCoverage,
 ) -> ExecutionResult {
     let cached = CachedEntity::from_decoded(
         row_ref,
@@ -83,7 +84,7 @@ fn execution_result_from_view_row(
         entities: vec![cached],
         count: 1,
         has_more: false,
-        coverage: ResultCoverage::Complete,
+        coverage,
         pagination_resume: None,
         paging_handle: None,
         source: if any_live {
@@ -126,6 +127,7 @@ fn finalize_view_dag_execution(
         stats,
         fingerprints,
         any_live,
+        ResultCoverage::combine_all(node_results.values().map(|r| r.coverage)),
     ))
 }
 
@@ -164,6 +166,7 @@ fn finalize_view_dag_with_proof(
         stats,
         fingerprints,
         any_live,
+        ResultCoverage::combine_all(node_results.values().map(|r| r.coverage)),
     );
     let cached = &execution.entities[0];
     let proof = ViewRunProof {
@@ -368,6 +371,16 @@ fn walk_view_nodes_sync<R: ViewNodeRunner>(
             walk.record_skipped(node.id.clone());
             continue;
         }
+        if let Some(traverse) = &node.traverse {
+            let source = walk.node_results.get(&traverse.node).ok_or_else(|| {
+                RuntimeError::ConfigurationError {
+                    message: format!("missing traversal source `{}`", traverse.node),
+                }
+            })?;
+            let result = runner.run_traversal_node(&run_ctx, node, source)?;
+            walk.record(node.id.clone(), result, None);
+            continue;
+        }
         let prepared = loaded.prepare_node(node, &walk.node_fields)?;
         let is_write = matches!(prepared, PreparedViewNode::Create { .. });
         let res = dispatch_prepared_sync(runner, &run_ctx, node, prepared, &walk.node_fields)?;
@@ -386,6 +399,16 @@ async fn walk_view_nodes_async<R: ViewNodeRunnerAsync + ?Sized>(
     for node in &loaded.view.nodes {
         if !view_node_should_run(node.when.as_ref(), &walk.node_results) {
             walk.record_skipped(node.id.clone());
+            continue;
+        }
+        if let Some(traverse) = &node.traverse {
+            let source = walk.node_results.get(&traverse.node).ok_or_else(|| {
+                RuntimeError::ConfigurationError {
+                    message: format!("missing traversal source `{}`", traverse.node),
+                }
+            })?;
+            let result = runner.run_traversal_node(&run_ctx, node, source).await?;
+            walk.record(node.id.clone(), result, None);
             continue;
         }
         let prepared = loaded.prepare_node(node, &walk.node_fields)?;

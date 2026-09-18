@@ -19,6 +19,32 @@ pub(in crate::plasm_dag) fn try_lower_row_suffix_expression(
     expr: &str,
 ) -> Result<Option<Vec<DagNode>>, String> {
     let expr_trim = expr.trim();
+    if expr_trim.starts_with('(') && expr_trim.ends_with(')') {
+        let plasm_core::MembershipRhs::Pipe(inner) =
+            plasm_core::parse_closed_rowset_ref(expr_trim, "row expression")?
+        else {
+            unreachable!("parenthesized closed rowset is a pipeline")
+        };
+        let node = parse_expr_node(&inner)?;
+        let (nodes, output) = compile_row_expr_nodes(session, state, id, expr_trim, &node.row)?;
+        if output != id {
+            let (fields, schema) =
+                passthrough_identity_projection_fields(session, state, &[], &output)?;
+            return Ok(Some(vec![DagNode {
+                id: id.to_string(),
+                expr: expr_trim.to_string(),
+                singleton: state.get(&output).is_some_and(|node| node.singleton),
+                page_size: None,
+                source: DagNodeSource::Compute {
+                    source: output,
+                    op: ComputeOp::Project { fields },
+                    schema,
+                    collection_alias: None,
+                },
+            }]));
+        }
+        return Ok(Some(nodes));
+    }
     let expanded = ExpandedProgramSurface::new(session, state.pipeline, expr_trim);
     let (head, suffixes) = decompose_row_suffix_stream(session, state, expanded.as_str())?;
     if suffixes.is_empty() {

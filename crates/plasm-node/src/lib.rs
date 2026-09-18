@@ -65,7 +65,7 @@ pub struct JsRunPlanResult {
 }
 
 fn map_err(err: anyhow::Error) -> Error {
-    Error::from_reason(err.to_string())
+    Error::from_reason(format!("{err:#}"))
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {

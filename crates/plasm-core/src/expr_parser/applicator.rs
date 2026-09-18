@@ -221,6 +221,13 @@ pub(crate) fn method_call_at_depth_zero(t: &str) -> bool {
 
 /// Split `pipe_or_primary => applicator` at top level; parse applicator when present.
 pub fn split_apply_expr(raw: &str) -> Result<(String, Option<Applicator>), String> {
+    if let Some((prefix, _)) = super::split_token_top_level(raw, "<<")? {
+        if !prefix.trim().is_empty() && super::split_token_top_level(prefix, "=>")?.is_none() {
+            return Err(
+                "row-to-text rendering requires `source => <<TAG`, not `source <<TAG`".into(),
+            );
+        }
+    }
     match super::split_token_top_level(raw, "=>")? {
         None => Ok((raw.trim().to_string(), None)),
         Some((left, right)) => {
@@ -251,6 +258,20 @@ pub fn split_apply_expr(raw: &str) -> Result<(String, Option<Applicator>), Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn postfix_heredoc_requires_render_arrow_without_rejecting_literals() {
+        let error = split_apply_expr("rows <<TEXT\nbody\nTEXT").unwrap_err();
+        assert!(error.contains("=>"));
+        for source in [
+            "<<TEXT\nbody\nTEXT",
+            "rows => <<TEXT\n{{ title }}\nTEXT",
+            "Entity.create(title=<<TEXT\nbody\nTEXT\n)",
+            "Entity.create(title=\"literal <<TEXT\")",
+        ] {
+            split_apply_expr(source).unwrap_or_else(|error| panic!("{source}: {error}"));
+        }
+    }
 
     #[test]
     fn derive_not_stolen_by_message_field() {

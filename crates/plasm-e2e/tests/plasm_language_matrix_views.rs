@@ -368,6 +368,59 @@ fn matrix_views_view_embed_relation_traversal() {
     });
 }
 
+#[test]
+fn matrix_views_query_parent_fanout_preserves_embeds() {
+    block_on_views_live(async {
+        let base = hermit_lang_matrix::language_matrix_hermit_base_url()
+            .await
+            .clone();
+        let cgs = load_language_matrix_views_cgs();
+        for program in [
+            "parent = LangTriageContext{item_id=\"i1\"}\ntags = parent => _.tags\ntags",
+            "parent = LangTriageContext{item_id=\"i1\"}\ntags = parent.tags\ntags",
+            "parent = LangTriageContext{item_id=\"i1\"} | take 1\ntags = parent => _.tags\ntags",
+        ] {
+            let es = Arc::new(views_execute_session(cgs.clone()));
+            let bundle = compile_plasm_program(
+                &PromptPipelineConfig::default(),
+                None,
+                es.as_ref(),
+                "view_parent_fanout",
+                program,
+            )
+            .expect("compile view parent relation");
+            evaluate_plasm_comp_dry(es.as_ref(), &bundle).expect("preflight view parent relation");
+            let st = Arc::new(views_matrix_host_state(
+                ExecutionEngine::new(ExecutionConfig {
+                    base_url: Some(base.clone()),
+                    ..Default::default()
+                })
+                .unwrap(),
+                cgs.clone(),
+            ));
+            let live = run_plasm_comp(
+                es.as_ref(),
+                st.as_ref(),
+                es.prompt_hash.as_str(),
+                "view_parent_fanout",
+                &bundle,
+                true,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("live query-produced parent relation");
+            assert!(
+                live.run_markdown.as_deref().unwrap_or("").contains("label"),
+                "child detail projection must survive: {:?}",
+                live.run_markdown
+            );
+        }
+    });
+}
+
 /// Parameterless dashboard view: nonempty assigned items via view_embed.
 #[test]
 fn matrix_views_parameterless_dashboard_view_embed_nonempty() {
@@ -548,4 +601,135 @@ fn matrix_views_parse_rejects_unmaterialized_many_relation_before_normalize() {
         "expected ManyRelationUnmaterialized, got {:?}",
         err.kind
     );
+}
+
+#[test]
+fn matrix_views_rowsets_taught_navigation_compiles_and_preflights() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/view_rowsets");
+    let cgs = Arc::new(plasm_core::loader::load_schema_dir(&dir).unwrap());
+    let session = language_matrix_views::execute_session_for_entities(
+        cgs,
+        &["Library", "Item", "Collection"],
+    );
+    for program in [
+        "items = Library{access_token=\"test-token\"}.items\nitems",
+        "library = Library{access_token=\"test-token\"}\nitems = library.items\nitems",
+    ] {
+        let bundle = compile_plasm_program(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "rowset_view",
+            program,
+        )
+        .expect("ordinary taught query and relation navigation");
+        evaluate_plasm_comp_dry(&session, &bundle).expect("dry composed rowset view");
+    }
+}
+
+#[test]
+fn matrix_views_query_only_parent_relations_live() {
+    block_on_views_live(async {
+        let app =
+            axum::Router::new().fallback(axum::routing::get(|uri: axum::http::Uri| async move {
+                let body = match uri.path() {
+                    "/items" => serde_json::json!([{"id":"i1","title":"one"}]),
+                    "/collections" if uri.query().unwrap_or("").contains("page_index=1") => {
+                        serde_json::json!([])
+                    }
+                    "/collections" => serde_json::json!([{"id":"c1"},{"id":"c2"}]),
+                    "/collections/c1" => {
+                        serde_json::json!({"id":"c1","items":[{"id":"i1"},{"id":"i2"}]})
+                    }
+                    "/collections/c2" => {
+                        serde_json::json!({"id":"c2","items":[{"id":"i2"},{"id":"i3"}]})
+                    }
+                    "/items/i1" => serde_json::json!({"id":"i1","title":"one"}),
+                    "/items/i2" => serde_json::json!({"id":"i2","title":"two"}),
+                    "/items/i3" => serde_json::json!({"id":"i3","title":"three"}),
+                    other => panic!("unexpected fixture request {other}"),
+                };
+                axum::Json(body)
+            }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/view_rowsets");
+        let cgs = Arc::new(plasm_core::loader::load_schema_dir(&dir).unwrap());
+        for program in [
+            "library = Library{access_token=\"test-token\"}\nitems = library => _.items\nitems",
+            "library = Library{access_token=\"test-token\"}\nitems = library.items\nitems",
+            "library = Library{access_token=\"test-token\"} | take 1\nitems = library => _.items\nitems",
+            "library = Library{access_token=\"test-token\"} | take 1\nitems = library.items\nitems",
+            "library = Library{access_token=\"test-token\"}\ncopy = library | select access_token\nitems = copy => _.items\nitems",
+            "library = Library{access_token=\"test-token\"} | select access_token\nitems = library => _.items\nitems",
+        ] {
+            let es = language_matrix_views::execute_session_for_entities(cgs.clone(), &["Library", "Item", "Collection"]);
+            let bundle = compile_plasm_program(&PromptPipelineConfig::default(), None, &es, "query_only_view", program).unwrap_or_else(|e| panic!("compile {program}: {e}"));
+            evaluate_plasm_comp_dry(&es, &bundle).unwrap();
+            let st = views_matrix_host_state(ExecutionEngine::new(ExecutionConfig { base_url: Some(base.clone()), ..Default::default() }).unwrap(), cgs.clone());
+            let live = run_plasm_comp(&es, &st, es.prompt_hash.as_str(), "query_only_view", &bundle, true, None, None, None, None).await
+                .expect("query-only view relation must execute");
+            let children = live.return_steps.iter().find(|s| s.node_id.as_deref() == Some("items")).expect("returned child relation");
+            let titles: std::collections::BTreeSet<_> = children.result.entities.iter().map(|e| e.fields.get("title").unwrap().to_value().as_str().unwrap().to_string()).collect();
+            assert_eq!(titles, std::collections::BTreeSet::from(["one".into(), "two".into(), "three".into()]));
+            assert_eq!(children.result.entities.len(), 3, "overlapping child IDs must deduplicate");
+        }
+        for program in [
+            "library = Library{access_token=\"test-token\"} | where access_token = \"absent\"\nitems = library => _.items\nitems",
+        ] {
+            let es = language_matrix_views::execute_session_for_entities(cgs.clone(), &["Library", "Item", "Collection"]);
+            let bundle = compile_plasm_program(&PromptPipelineConfig::default(), None, &es, "empty_query_view", program).unwrap();
+            evaluate_plasm_comp_dry(&es, &bundle).unwrap();
+            let st = views_matrix_host_state(ExecutionEngine::new(ExecutionConfig { base_url: Some(base.clone()), ..Default::default() }).unwrap(), cgs.clone());
+            let live = run_plasm_comp(&es, &st, es.prompt_hash.as_str(), "empty_query_view", &bundle, true, None, None, None, None).await
+                .expect("empty view fanout must succeed");
+            let children = live.return_steps.iter().find(|s| s.node_id.as_deref() == Some("items")).expect("returned empty relation");
+            assert_eq!(children.result.count, 0, "empty parent set must not read all cached children");
+            assert!(children.result.entities.is_empty());
+        }
+        let es = language_matrix_views::execute_session_for_entities(
+            cgs.clone(),
+            &["Library", "Item", "Collection"],
+        );
+        let program = "library = Library{access_token=\"test-token\"} | where access_token = \"absent\" | take 1\nitems = library.items\nitems";
+        let bundle = compile_plasm_program(
+            &PromptPipelineConfig::default(),
+            None,
+            &es,
+            "empty_singleton_view",
+            program,
+        )
+        .unwrap();
+        evaluate_plasm_comp_dry(&es, &bundle).unwrap();
+        let st = views_matrix_host_state(
+            ExecutionEngine::new(ExecutionConfig {
+                base_url: Some(base),
+                ..Default::default()
+            })
+            .unwrap(),
+            cgs,
+        );
+        let error = run_plasm_comp(
+            &es,
+            &st,
+            es.prompt_hash.as_str(),
+            "empty_singleton_view",
+            &bundle,
+            true,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect_err("empty bounded receiver must fail rather than read cached parents");
+        assert!(
+            error.contains("zero rows") || error.contains("0 rows"),
+            "unexpected singleton error: {error}"
+        );
+        server.abort();
+    });
 }

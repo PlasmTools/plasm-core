@@ -46,6 +46,7 @@ export const SUBMIT_ANSWER_TOOL_DESCRIPTION =
   "End the task when the instruction asked for a reportable value. " +
   "`answer` is that value exactly as requested — a number, name, or other exact string. " +
   "Pass it verbatim. When the answer is a monetary value, submit only the numeric part — no currency symbols or comma groupings. " +
+  "When the instruction asks how much, how many, a total, a count, or another single value, submit exactly one bare scalar; do not provide a breakdown, labels, units, or multiple values. " +
   "Not a done-summary, not a table, not surrounding prose. " +
   "Do not call this when the instruction asked for no value (use complete_task instead). " +
   "An empty or missing answer is invalid and does not finish the task. " +

@@ -73,7 +73,9 @@ export const EVAL_TERMINAL_COMPLETION =
   "Call plasm_context before claiming unsupported access or ending the task. " +
   "After observations establish every requested effect, end through complete_task " +
   "when the instruction asked for no reportable value, or submit_answer with that " +
-  "value when it did. Intermediate results alone are not completion.";
+  "value when it did. A request for a single number, amount, count, name, or other " +
+  "value requires that exact one value only: never a labelled breakdown, explanation, " +
+  "unit, or table. Intermediate results alone are not completion.";
 
 /**
  * Replace exactly one named slot. Missing or duplicate is a hard error —

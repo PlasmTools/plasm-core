@@ -432,6 +432,33 @@ pub(crate) async fn run_executable_plan_phased(
             artifact: mat.artifact.clone(),
         });
     }
+    // Returning a row does not hide effects executed by other plan nodes.
+    // Keep their receipts separate from the requested row projection.
+    for (node_ref, mat) in &materialized {
+        if return_node_ids.contains(node_ref) || mat.result.operations.is_empty() {
+            continue;
+        }
+        let mut receipt = mat.result.as_ref().clone();
+        receipt.entities.clear();
+        receipt.count = 0;
+        receipt.has_more = false;
+        receipt.pagination_resume = None;
+        receipt.paging_handle = None;
+        steps.push(PublishedResultStep {
+            name: None,
+            node_id: Some(node_ref.as_str().to_string()),
+            entry_id: Some(mat.qualified_entity.entry_id.clone()),
+            entity: Some(mat.qualified_entity.entity.clone()),
+            cgs: es
+                .contexts_by_entry
+                .get(&mat.qualified_entity.entry_id)
+                .map(|ctx| ctx.cgs.clone()),
+            display: mat.display.clone(),
+            projection: None,
+            result: Arc::new(receipt),
+            artifact: mat.artifact.clone(),
+        });
+    }
     let out = crate::http_execute::publish_with_shared_meta_index(
         es.cgs.as_ref().into(),
         meta_index_for_publish,

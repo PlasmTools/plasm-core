@@ -1,4 +1,4 @@
-version: 9
+version: 10
 entry_id: simple_note
 auth:
   scheme: none
@@ -8,9 +8,34 @@ data_classes:
     description: User-authored note text.
     severity: untrusted
 entities:
+  Account:
+    id_field: email
+    description: The signed-in simple note account, including private account details
+      and registration, verification, recovery and deletion.
+    discovery:
+      names:
+      - account
+      - signup
+      - sign up
+      - registration
+      - password reset
+      - account verification
+    fields:
+      first_name:
+        value_ref: account_name
+      last_name:
+        value_ref: account_name
+      email:
+        value_ref: account_email
+      registered_at:
+        value_ref: account_timestamp
+      last_logged_in:
+        value_ref: account_timestamp
+      verified:
+        value_ref: account_verified
   AuthSession:
     id_field: access_token
-    description: Login session for Simple Note (Bearer token).
+    description: Authenticated session for Simple Note.
     discovery:
       names:
       - login
@@ -71,6 +96,161 @@ entities:
         required: false
         value_ref: nv_datetime
 capabilities:
+  account_get:
+    description: Show the signed-in simple note account.
+    kind: query
+    entity: Account
+    provides:
+    - first_name
+    - last_name
+    - email
+    - registered_at
+    - last_logged_in
+    - verified
+    scope:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+  account_create:
+    description: Sign up a new simple note account.
+    kind: action
+    receiver:
+      kind: none
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: first_name
+          description: Given name of the account holder.
+          value_ref: account_name
+          required: true
+        - name: last_name
+          description: Family name of the account holder.
+          value_ref: account_name
+          required: true
+        - name: email
+          value_ref: account_email
+          required: true
+        - name: password
+          value_ref: account_password
+          required: true
+    output:
+      type: side_effect
+      description: Creates the simple note account for this email.
+  account_update:
+    description: Update the signed-in account holder's name.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: first_name
+          description: Given name of the account holder.
+          value_ref: account_name
+          required: false
+        - name: last_name
+          description: Family name of the account holder.
+          value_ref: account_name
+          required: false
+    output:
+      type: side_effect
+      description: Updates the account holder's display name.
+    receiver:
+      kind: none
+  account_delete:
+    description: Delete the signed-in simple note account.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Deletes the signed-in simple note account.
+    receiver:
+      kind: none
+  send_verification_code:
+    description: Email a verification code to confirm an simple note account.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: email
+          value_ref: account_email
+          required: true
+    output:
+      type: side_effect
+      description: Sends an account verification code to the email.
+    receiver:
+      kind: none
+  verify_account:
+    description: Confirm an simple note account with a verification code.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: email
+          value_ref: account_email
+          required: true
+        - name: verification_code
+          value_ref: account_verification_code
+          required: true
+    output:
+      type: side_effect
+      description: Marks the account as verified.
+    receiver:
+      kind: none
+  send_password_reset_code:
+    description: Email a password-reset code for an simple note account.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: email
+          value_ref: account_email
+          required: true
+    output:
+      type: side_effect
+      description: Sends a password-reset code to the email.
+    receiver:
+      kind: none
+  reset_password:
+    description: Set a new simple note password using a reset code.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: email
+          value_ref: account_email
+          required: true
+        - name: password_reset_code
+          value_ref: account_password_reset_code
+          required: true
+        - name: new_password
+          value_ref: account_password
+          required: true
+    output:
+      type: side_effect
+      description: Replaces the account password.
+    receiver:
+      kind: none
   login:
     description: Authenticate as this Simple Note account holder with their email and password.
     kind: action
@@ -244,6 +424,28 @@ capabilities:
           value_ref: nv_email
           required: true
 values:
+  account_name:
+    type: string
+    description: Account holder first or last name.
+  account_email:
+    type: email
+    description: Email identifying the account being registered, verified, or recovered.
+  account_password:
+    type: string
+    description: Password for account registration or recovery.
+    min_length: 5
+  account_verification_code:
+    type: string
+    description: Code delivered to the account owner to confirm account ownership.
+  account_password_reset_code:
+    type: string
+    description: Code delivered to the account owner to authorize a password change.
+  account_timestamp:
+    type: rfc3339
+    description: Account registration or last login time.
+  account_verified:
+    type: boolean
+    description: Whether account ownership has been verified.
   nv_str:
     type: string
     description: Free-form string.
@@ -261,7 +463,7 @@ values:
     description: Bearer access token from login.
   nv_note_id:
     type: integer
-    description: Note primary key.
+    description: Identifies the note to read or act on.
   nv_title:
     type: string
     description: Note title.
@@ -323,6 +525,33 @@ prerequisites:
       outputs:
         token: access_token
   requirements:
+    account_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: scope
+          path:
+          - access_token
+        output: token
+    account_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    account_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
     login:
     - id: principal
       contract: appworld.principal

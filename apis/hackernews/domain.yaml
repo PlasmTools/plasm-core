@@ -1,4 +1,4 @@
-version: 5
+version: 6
 auth:
   scheme: none
 http_backend: https://hacker-news.firebaseio.com
@@ -114,7 +114,7 @@ entities:
           - wildcard: true
   MaxItemId:
     id_field: id
-    description: Current largest item id reported by maxitem.json (a bare JSON integer on the wire). Hydrate the referenced.
+    description: Identifies the most recently allocated item. Read that item for its contents.
       row with item_get when you need the full record.
     fields:
       id:
@@ -288,7 +288,7 @@ values:
     description: Story or job title when applicable.
   nv_item_type:
     type: string
-    description: Wire kind such as story, comment, job, poll, or pollopt.
+    description: 'Kind of item: story, comment, job, poll, or poll option.'
   nv_item_url:
     type: string
     description: Outbound link for link posts when present.

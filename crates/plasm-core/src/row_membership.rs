@@ -167,7 +167,9 @@ pub fn parse_closed_rowset_ref(rhs: &str, lane: &str) -> Result<MembershipRhs, S
 
 fn looks_like_literal_list(inner: &str) -> bool {
     let t = inner.trim();
-    t.starts_with('"') || t.starts_with('\'') || t.contains(',') && !t.contains('|')
+    t.starts_with('"')
+        || t.starts_with('\'')
+        || split_top_level(t, ',').is_ok_and(|parts| parts.len() > 1) && !t.contains('|')
 }
 
 fn literal_list_reject(lane: &str, rhs: &str) -> String {
@@ -257,5 +259,9 @@ mod tests {
             .expect("membership");
         assert_eq!(m.field, "pin");
         assert_eq!(m.rhs, MembershipRhs::Binding("peers".into()));
+    }
+    #[test]
+    fn closed_query_internal_commas_are_not_a_literal_list() {
+        assert!(parse_closed_rowset_ref(r#"(Records{scope="a", other="b"})"#, "union").is_ok());
     }
 }

@@ -210,8 +210,21 @@ impl ReqwestHttpTransport {
             .instrument(http_span)
             .await
             .map_err(RuntimeError::from)?;
+        let server_date = response
+            .headers()
+            .get(reqwest::header::DATE)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
         let mut parsed = read_http_response(response, method).await?;
         parsed.authorization = authorization;
+        trace_compiled_http_boundary(
+            request,
+            parsed.method,
+            parsed.status,
+            &parsed.bytes,
+            server_date.as_deref(),
+            &parsed.authorization,
+        );
         Ok(evaluate_parsed_response(parsed))
     }
 
@@ -862,6 +875,34 @@ pub fn http_status_is_retryable(status: u16) -> bool {
 }
 
 /// Read response body and metadata from a completed reqwest response.
+/// Selectable, credential-safe request/response correlation for all compiled HTTP operations.
+/// Body digests establish equality without recording payloads or credentials.
+pub fn trace_compiled_http_boundary(
+    request: &CompiledRequest,
+    method: &str,
+    status: u16,
+    body: &[u8],
+    server_date: Option<&str>,
+    authorization: &OutboundAuthorizationFact,
+) {
+    if !tracing::enabled!(target: "plasm_runtime::http_boundary", tracing::Level::TRACE) {
+        return;
+    }
+    tracing::trace!(target: "plasm_runtime::http_boundary",
+        request_fingerprint = %crate::replay::RequestFingerprint::from_request(request).to_hex(),
+        method,
+        path = request.url_path(),
+        status,
+        server_date = ?server_date,
+        body_bytes = body.len(),
+        body_digest = %blake3::hash(body).to_hex(),
+        authorization_present = authorization.present,
+        authorization_scheme = ?authorization.scheme,
+        authorization_tail = ?authorization.token_tail,
+        "compiled_http_response"
+    );
+}
+
 pub async fn read_http_response(
     response: reqwest::Response,
     method: &'static str,

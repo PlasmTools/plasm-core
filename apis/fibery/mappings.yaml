@@ -6,6 +6,21 @@
 # Command envelope: POST /api/commands with { "command": "…", "args": {…} } unless noted.
 # Views use JSON-RPC at /api/views/json-rpc. History and search use dedicated REST paths.
 
+# Fibery entity queries page inside `args.query`; the cursor is a row offset.
+# Runtime pagination must own these values so a rowset read never silently stops
+# at the server's first page.
+_fibery_query_offset_limit: &fibery_query_offset_limit
+  location: body
+  body_merge_path: [args, query]
+  strategy: offset
+  params:
+    q/offset:
+      counter: 0
+      step: 100
+    q/limit:
+      fixed: 100
+      role: page_size
+
 # ── Discovery ────────────────────────────────────────────────────────────────
 
 schema_query:
@@ -164,6 +179,7 @@ entity_query:
                         value: 100
   response:
     items: result
+  pagination: *fibery_query_offset_limit
 
 entity_get:
   method: POST

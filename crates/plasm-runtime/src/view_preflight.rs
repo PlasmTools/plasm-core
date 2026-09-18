@@ -82,6 +82,135 @@ pub(crate) struct PreflightViewNodeRunner<'a> {
 }
 
 impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
+    fn run_traversal_node(
+        &self,
+        ctx: &ViewRunContext<'_>,
+        node: &plasm_core::schema::ViewNodeSpec,
+        source: &ExecutionResult,
+    ) -> Result<ExecutionResult, RuntimeError> {
+        use plasm_core::{CapabilityKind, RelationMaterialization};
+        let view = self.cgs.views.get(ctx.view_name).expect("loaded view");
+        let traverse = node.traverse.as_ref().expect("traversal");
+        let source_name = self
+            .cgs
+            .view_node_entity(view, &traverse.node)
+            .map_err(|message| RuntimeError::ConfigurationError { message })?;
+        let target = self
+            .cgs
+            .view_node_entity(view, &node.id)
+            .map_err(|message| RuntimeError::ConfigurationError { message })?;
+        let relation = &self
+            .cgs
+            .get_entity(source_name.as_str())
+            .expect("source")
+            .relations[traverse.relation.as_str()];
+        let mut mat = SessionMaterialization::new();
+        mat.stamp_provided_session_params(
+            SessionMaterialization::provide_catalog_key(self.cgs, None),
+            ctx.scope.clone(),
+        );
+        if matches!(
+            relation.materialize,
+            Some(RelationMaterialization::FromParentGet { .. })
+        ) {
+            let parent = GetExpr::new(source_name.as_str(), "1");
+            preflight_compile_expr(
+                &plasm_core::Expr::Get(parent),
+                self.cgs,
+                self.compiled,
+                self.ambient,
+                &mat,
+            )?;
+        }
+        let result = match &relation.materialize {
+            Some(RelationMaterialization::QueryScoped { capability, param }) => {
+                let cap = self
+                    .cgs
+                    .get_capability(capability.as_str())
+                    .expect("validated relation capability");
+                let mut values = ctx.scope.clone();
+                values.insert(param.to_string(), Value::String("1".into()));
+                let predicate = Predicate::and(
+                    values
+                        .iter()
+                        .map(|(k, v)| Predicate::eq(k.as_str(), v.clone()))
+                        .collect(),
+                );
+                let mut query = QueryExpr::filtered(target.as_str(), predicate);
+                query.capability_name = Some(cap.name.clone());
+                preflight_compile_expr(
+                    &plasm_core::Expr::Query(query),
+                    self.cgs,
+                    self.compiled,
+                    self.ambient,
+                    &mat,
+                )?;
+                stub_query_result(cap, self.cgs, &values)?
+            }
+            Some(RelationMaterialization::QueryScopedBindings {
+                capability,
+                bindings,
+            }) => {
+                let cap = self
+                    .cgs
+                    .get_capability(capability.as_str())
+                    .expect("validated relation capability");
+                let mut values = ctx.scope.clone();
+                for param in bindings.keys() {
+                    values.insert(param.to_string(), Value::String("1".into()));
+                }
+                let predicate = Predicate::and(
+                    values
+                        .iter()
+                        .map(|(k, v)| Predicate::eq(k.as_str(), v.clone()))
+                        .collect(),
+                );
+                let mut query = QueryExpr::filtered(target.as_str(), predicate);
+                query.capability_name = Some(cap.name.clone());
+                preflight_compile_expr(
+                    &plasm_core::Expr::Query(query),
+                    self.cgs,
+                    self.compiled,
+                    self.ambient,
+                    &mat,
+                )?;
+                stub_query_result(cap, self.cgs, &values)?
+            }
+            _ => {
+                let cap = self
+                    .cgs
+                    .find_capability(&target, CapabilityKind::Get)
+                    .ok_or_else(|| RuntimeError::CapabilityNotFound {
+                        capability: "get".into(),
+                        entity: target.to_string(),
+                    })?;
+                let mut bound = BTreeMap::new();
+                for (key, value) in ctx.scope {
+                    bound.insert(
+                        key.clone(),
+                        crate::view_plan::scalar_string_from_value(value)?,
+                    );
+                }
+                let target_def = self.cgs.get_entity(target.as_str()).expect("target");
+                bound.insert(target_def.id_field.to_string(), "1".into());
+                bound.insert("id".into(), "1".into());
+                let result = stub_get_result(cap, self.cgs, &bound)?;
+                let get = GetExpr::from_ref(result.entities[0].reference.clone());
+                preflight_compile_expr(
+                    &plasm_core::Expr::Get(get),
+                    self.cgs,
+                    self.compiled,
+                    self.ambient,
+                    &mat,
+                )?;
+                result
+            }
+        };
+        let mut result = result;
+        result.coverage = source.coverage;
+        Ok(result)
+    }
+
     fn run_query_node(
         &self,
         ctx: &ViewRunContext<'_>,

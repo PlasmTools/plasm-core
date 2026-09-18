@@ -83,6 +83,7 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
     let value_kind = binding_value_kind(source);
     match source {
         DagNodeSource::Surface {
+            view_singleton,
             parsed,
             kind,
             qualified_entity,
@@ -98,7 +99,7 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
                 || read_list
                 || mutation_result
                 || matches!(parsed.expr, Expr::Query(_) | Expr::Chain(_));
-            let row_cardinality = if read_get || mutation_result {
+            let row_cardinality = if read_get || mutation_result || *view_singleton {
                 RowCardinalityProof::StaticSingleton
             } else if read_list {
                 RowCardinalityProof::StaticPlural
@@ -268,6 +269,28 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
                 value_kind,
                 continuation: ContinuationCapability::Terminal,
                 anchor: ContinuationAnchor::None,
+            }
+        }
+        DagNodeSource::ForEach {
+            qualified_entity,
+            effect_kind,
+            ..
+        } if matches!(
+            effect_kind,
+            PlanNodeKind::Get | PlanNodeKind::Query | PlanNodeKind::Search | PlanNodeKind::Create
+        ) =>
+        {
+            ProgramBindingContract {
+                label: label.to_string(),
+                row_entity: qualified_entity.clone(),
+                result_shape: crate::plasm_plan::ResultShape::List,
+                row_cardinality: RowCardinalityProof::StaticPlural,
+                value_kind,
+                continuation: ContinuationCapability::RelationDot {
+                    segments: SegmentPolicy::SingleSegment,
+                    method_invoke: true,
+                },
+                anchor: ContinuationAnchor::BindingLabel,
             }
         }
         DagNodeSource::Derive { .. }
@@ -513,6 +536,7 @@ mod tests {
             dotted_receiver: None,
         }));
         let create_src = DagNodeSource::Surface {
+            view_singleton: false,
             parsed: create_parsed,
             kind: PlanNodeKind::Create,
             qualified_entity: qe.clone(),
@@ -538,6 +562,7 @@ mod tests {
             catalog_entry_id: CatalogEntryStamp::none(),
         }));
         let ack_src = DagNodeSource::Surface {
+            view_singleton: false,
             parsed: ack_parsed,
             kind: PlanNodeKind::Action,
             qualified_entity: qe,

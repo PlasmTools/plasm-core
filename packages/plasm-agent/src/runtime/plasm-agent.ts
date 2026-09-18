@@ -99,7 +99,7 @@ export interface AgentGenerateOptions {
 
 export interface AgentTurnResult {
   text: string;
-  steps: unknown[];
+  steps: Awaited<ReturnType<typeof runEveToolLoop>>["steps"];
   usage: Awaited<ReturnType<typeof runEveToolLoop>>["usage"];
   /** Number of tools registered for this turn (not invocations). */
   toolsAvailable: number;
@@ -110,7 +110,7 @@ export interface AgentTurnResult {
   messages: ModelMessage[];
   stopReason: Awaited<ReturnType<typeof runEveToolLoop>>["stopReason"];
   /** Per-model-step finish reasons from the tool loop. */
-  stepFinishReasons: string[];
+  stepFinishReasons: Awaited<ReturnType<typeof runEveToolLoop>>["stepFinishReasons"];
   /** Per-generation output ceiling applied to the model (if configured). */
   maxOutputTokens?: number;
   /** Steps whose finishReason was `length`. */

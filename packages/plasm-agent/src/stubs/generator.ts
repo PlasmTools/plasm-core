@@ -326,7 +326,7 @@ export async function readStubProvenance(stubPath: string): Promise<StubProvenan
   try {
     const raw = await readFile(stubPath, "utf8");
     const match = raw.match(PROVENANCE_RE);
-    if (!match) return null;
+    if (!match?.[1] || !match[2]) return null;
     const generatedMatch = raw.match(/generated_at=([^\s*]+)/);
     return {
       catalogCgsHash: match[1],

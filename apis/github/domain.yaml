@@ -1,4 +1,4 @@
-version: 35
+version: 36
 http_backend: https://api.github.com
 data_classes:
   untrusted:
@@ -4711,7 +4711,7 @@ values:
   nv_github_scope_repository:
     type: entity_ref
     target: Repository
-    description: Repository owner/name used as HTTP scope for repository-scoped capabilities.
+    description: Repository to work in, written as owner/name.
   nv_github_updated_at:
     type: rfc3339
     description: Timestamp when a GitHub resource was last updated.
@@ -4773,7 +4773,7 @@ values:
     description: Sub-issue to attach (numeric issue id).
   nv_issue_sub_issue_remove_sub_issue_id:
     type: integer
-    description: Numeric database id of the sub-issue to remove.
+    description: Numeric id of the sub-issue to remove, as returned in issue details; this differs from its issue number.
   nv_issue_sub_issue_reprioritize_after_id:
     type: integer
     description: Place the sub-issue after this sibling id.
@@ -4782,7 +4782,7 @@ values:
     description: Place the sub-issue before this sibling id.
   nv_issue_sub_issue_reprioritize_sub_issue_id:
     type: integer
-    description: Numeric database id of the sub-issue to reposition.
+    description: Numeric id of the sub-issue to reposition, as returned in issue details; this differs from its issue number.
   nv_issue_sub_issues_percent_completed:
     type: number
   nv_issue_update_locked:

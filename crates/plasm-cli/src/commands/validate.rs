@@ -44,7 +44,11 @@ impl CheckResult {
 const VALIDATION_PAGINATION_MAX_ITEMS: usize = 12;
 
 /// Run exhaustive validation of a CGS against a hermit mock.
-pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn execute(
+    schema: &str,
+    spec: &str,
+    require_complete: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     println!("Loading schema: {}", schema);
     let cgs = common::load_cgs(Path::new(schema))?;
     println!(
@@ -59,6 +63,21 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
         return Err(format!("Spec file not found: {spec}").into());
     }
 
+    let external = beavuck_hermit::spec_loader::load(spec_path);
+    let external = serde_json::to_value(external)?;
+    let missing = plasm_compile::uncovered_openapi_operations(&cgs, &external);
+    if !missing.is_empty() {
+        let message = format!(
+            "{} OpenAPI operations have no catalog mapping:\n{}",
+            missing.len(),
+            missing.join("\n")
+        );
+        if require_complete {
+            return Err(message.into());
+        }
+        println!("{message}");
+    }
+    plasm_compile::validate_cgs_openapi_pagination(&cgs, &external)?;
     let (base_url, _server) = start_hermit(spec_path).await?;
     println!("  Mock serving at {}", base_url);
 
@@ -262,6 +281,9 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
                                     )
                                 });
                             let paginated = target_q.is_some_and(query_mapping_has_pagination);
+                            if let Some(cap) = target_q {
+                                rel_query = build_relation_probe_query(rel_query, cap, &cgs);
+                            }
                             if paginated {
                                 rel_query = rel_query.with_pagination(QueryPagination::default());
                             }
@@ -471,6 +493,9 @@ fn fake_value_for_input_field(f: &InputFieldSchema, cgs: &CGS) -> Option<Value> 
             if nv.domain.profile == Some(plasm_core::value_domain::ProfileId::Email) {
                 return Some(Value::String("contract@example.com".into()));
             }
+            if nv.domain.profile == Some(plasm_core::value_domain::ProfileId::E164) {
+                return Some(Value::String("+12025550123".into()));
+            }
             Some(fake_value_for_type(
                 &nv.field_type,
                 nv.allowed_values.as_deref(),
@@ -534,6 +559,76 @@ fn build_required_predicate(
         0 => None,
         1 => Some(comparisons.into_iter().next().unwrap()),
         _ => Some(Predicate::and(comparisons)),
+    }
+}
+
+fn build_relation_probe_query(
+    mut query: QueryExpr,
+    cap: &plasm_core::CapabilitySchema,
+    cgs: &CGS,
+) -> QueryExpr {
+    let pivots = query
+        .predicate
+        .as_ref()
+        .map(Predicate::referenced_fields)
+        .unwrap_or_default();
+    let mut predicates: Vec<_> = cap
+        .query_surface_fields()
+        .filter(|field| field.required || pivots.contains(&field.name))
+        .filter_map(|field| {
+            fake_value_for_input_field(field, cgs)
+                .map(|value| Predicate::eq(field.name.clone(), value))
+        })
+        .collect();
+    query.predicate = match predicates.len() {
+        0 => None,
+        1 => predicates.pop(),
+        _ => Some(Predicate::and(predicates)),
+    };
+    query
+}
+
+#[cfg(test)]
+mod relation_probe_tests {
+    use super::*;
+
+    #[test]
+    fn validation_probe_uses_e164_value() {
+        let cgs = plasm_core::loader::load_schema_dir(
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/validation_probe_params"),
+        )
+        .unwrap();
+        let field = cgs
+            .get_capability("probe_query")
+            .unwrap()
+            .query_surface_fields()
+            .find(|field| field.name == "phone_number")
+            .unwrap();
+        assert_eq!(
+            fake_value_for_input_field(field, &cgs),
+            Some(Value::String("+12025550123".into()))
+        );
+    }
+
+    #[test]
+    fn relation_probe_binds_required_auth_and_typed_scope() {
+        let cgs = plasm_core::loader::load_schema_dir(
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/validation_probe_params"),
+        )
+        .unwrap();
+        let cap = cgs.get_capability("probe_query").unwrap();
+        let query = QueryExpr::filtered("ProbeRecord", Predicate::eq("owner_email", "1"))
+            .with_capability("probe_query");
+        let query = build_relation_probe_query(query, cap, &cgs);
+        assert_eq!(
+            query.predicate,
+            Some(Predicate::and(vec![
+                Predicate::eq("owner_email", "contract@example.com"),
+                Predicate::eq("access_token", "plasm-test"),
+            ]))
+        );
     }
 }
 

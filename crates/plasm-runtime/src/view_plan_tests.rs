@@ -262,6 +262,22 @@ pub struct FixtureViewNodeRunner {
 }
 
 impl ViewNodeRunner for FixtureViewNodeRunner {
+    fn run_traversal_node(
+        &self,
+        _ctx: &ViewRunContext<'_>,
+        node: &plasm_core::schema::ViewNodeSpec,
+        source: &ExecutionResult,
+    ) -> Result<ExecutionResult, crate::RuntimeError> {
+        let mut result = self.results.get(&node.id).cloned().ok_or_else(|| {
+            crate::RuntimeError::ConfigurationError {
+                message: format!("fixture missing traversal `{}`", node.id),
+            }
+        })?;
+        result.coverage =
+            crate::execution::ResultCoverage::combine_all([source.coverage, result.coverage]);
+        Ok(result)
+    }
+
     fn run_query_node(
         &self,
         _ctx: &ViewRunContext<'_>,
@@ -316,4 +332,69 @@ fn binds_to_predicate_empty_bind_is_true() {
     let node_fields = indexmap::IndexMap::new();
     let pred = binds_to_predicate(&indexmap::IndexMap::new(), &scope, &node_fields).expect("pred");
     assert_eq!(pred, Predicate::True);
+}
+
+proptest::proptest! {
+    #[test]
+    fn view_rowsets_identity_union_and_coverage_are_invariant(
+        direct in proptest::collection::vec(0u8..12, 0..20),
+        nested in proptest::collection::vec(0u8..12, 0..20),
+        coverage in 0u8..3,
+        reverse in proptest::bool::ANY,
+    ) {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/view_rowsets");
+        let cgs = plasm_core::loader::load_schema_dir(&dir).unwrap();
+        let source_coverage = match coverage {
+            0 => ResultCoverage::Complete,
+            1 => ResultCoverage::Partial,
+            _ => ResultCoverage::Unknown,
+        };
+        let make_rows = |ids: &[u8]| {
+            let mut ids = ids.to_vec();
+            if reverse { ids.reverse(); }
+            let mut result = stub_item_node_result("unused", "unused");
+            result.entities = ids.into_iter().map(|id| {
+                CachedEntity::from_decoded(
+                    plasm_core::Ref::new("Item", id.to_string()),
+                    indexmap::IndexMap::from([
+                        ("id".into(), Value::String(id.to_string())),
+                        ("title".into(), Value::String(format!("item {id}"))),
+                    ]),
+                    indexmap::IndexMap::new(), current_timestamp(), EntityCompleteness::Complete,
+                )
+            }).collect();
+            result.count = result.entities.len();
+            result.coverage = ResultCoverage::Complete;
+            result
+        };
+        let mut collections = make_rows(&[]);
+        collections.coverage = source_coverage;
+        let runner = FixtureViewNodeRunner {
+            results: indexmap::IndexMap::from([
+                ("direct".into(), make_rows(&direct)),
+                ("collections".into(), collections),
+                ("nested".into(), make_rows(&nested)),
+            ]),
+        };
+        let (proof, result) = run_view_dag_sync(
+            &runner, "library",
+            indexmap::IndexMap::from([("access_token".into(), Value::String("tok".into()))]),
+            &cgs, &ViewAmbientContext::default(),
+        ).unwrap();
+        proptest::prop_assert_eq!(result.coverage, source_coverage);
+        let DecodedRelation::Specified(refs) = &proof.relation_refs["items"] else { panic!("union relation must be specified") };
+        let actual: std::collections::BTreeSet<_> = refs.iter().map(|r| r.primary_slot_str().to_string()).collect();
+        let expected: std::collections::BTreeSet<_> = direct.iter().chain(&nested).map(u8::to_string).collect();
+        proptest::prop_assert_eq!(&actual, &expected);
+        proptest::prop_assert_eq!(refs.len(), actual.len());
+        let mut direct_order = direct.clone();
+        let mut nested_order = nested.clone();
+        if reverse { direct_order.reverse(); nested_order.reverse(); }
+        let mut seen = std::collections::BTreeSet::new();
+        let expected_order: Vec<_> = direct_order.into_iter().chain(nested_order)
+            .filter(|id| seen.insert(*id)).map(|id| id.to_string()).collect();
+        let actual_order: Vec<_> = refs.iter().map(|r| r.primary_slot_str().to_string()).collect();
+        proptest::prop_assert_eq!(actual_order, expected_order);
+    }
 }

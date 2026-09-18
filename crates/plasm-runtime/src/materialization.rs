@@ -211,6 +211,11 @@ pub struct SessionMaterialization {
     pub(crate) recorded_read_reuse: RecordedReadReuse,
     /// Whether *this* store ran a mutator. Independent of inherited [`Self::recorded_read_reuse`].
     pub(crate) branch_local_write: BranchLocalWrite,
+    /// View and post-write row observations made by this branch, replacing prior membership.
+    /// Forks do not inherit this set: inherited rows are not new observations.
+    pub(crate) observed_snapshot_rows: std::collections::HashSet<Ref>,
+    /// Snapshot identities in the inherited graph; inherited rows are not fresh observations.
+    pub(crate) snapshot_row_refs: std::collections::HashSet<Ref>,
     /// Capability params from the fetch that produced each row. Inherited by synthesized GETs.
     pub(crate) inherited_capability_params: std::collections::HashMap<Ref, IndexMap<String, Value>>,
     /// Catalog-keyed fields from action-with-`provides` (e.g. AuthSession login `access_token`).
@@ -234,6 +239,8 @@ impl SessionMaterialization {
             query_index: hot.query_index.clone(),
             recorded_read_reuse: hot.recorded_read_reuse,
             branch_local_write: BranchLocalWrite::None,
+            observed_snapshot_rows: Default::default(),
+            snapshot_row_refs: hot.snapshot_row_refs.clone(),
             inherited_capability_params: hot.inherited_capability_params.clone(),
             provided_session_params: hot.provided_session_params.clone(),
             prerequisite_deployments: hot.prerequisite_deployments.clone(),
@@ -320,6 +327,16 @@ impl SessionMaterialization {
         self.graph.merge(entities)
     }
 
+    /// Preserve an authoritative observation through branch absorption. Inherited
+    /// copies must not union removed members back into the refreshed relation.
+    pub(crate) fn publish_fresh_row(&mut self, row: CachedEntity) -> Result<(), RuntimeError> {
+        let reference = row.reference.clone();
+        self.graph.overwrite(row)?;
+        self.snapshot_row_refs.insert(reference.clone());
+        self.observed_snapshot_rows.insert(reference);
+        Ok(())
+    }
+
     pub fn invalidate_after_mutation(&mut self, entity_type: &str) {
         self.query_index.invalidate_entity_type(entity_type);
         self.responses.invalidate_entity_type(entity_type);
@@ -395,9 +412,35 @@ impl SessionMaterialization {
             self.provided_session_params = branch.provided_session_params;
             self.recorded_read_reuse = RecordedReadReuse::Invalidated;
             self.branch_local_write = BranchLocalWrite::Recorded;
+            self.observed_snapshot_rows
+                .extend(branch.observed_snapshot_rows);
+            self.snapshot_row_refs = branch.snapshot_row_refs;
             return Ok(merged);
         }
-        let merged = self.graph.merge_from_graph(&branch.graph)?;
+        let mut ordinary_refs: Vec<_> = branch
+            .graph
+            .all_references()
+            .into_iter()
+            .filter(|reference| {
+                !branch.snapshot_row_refs.contains(*reference)
+                    && !self.snapshot_row_refs.contains(*reference)
+            })
+            .cloned()
+            .collect();
+        ordinary_refs.sort_by_key(|reference| reference.to_string());
+        let ordinary_rows = ordinary_refs
+            .iter()
+            .filter_map(|reference| branch.graph.get(reference).cloned())
+            .collect();
+        let mut merged = self.graph.merge(ordinary_rows)?;
+        // A view or post-write read is one observed snapshot, not additive pages of an edge.
+        // Preserve that replacement through optimistic branch commit.
+        for reference in branch.observed_snapshot_rows {
+            if let Some(row) = branch.graph.get(&reference) {
+                self.publish_fresh_row(row.clone())?;
+                merged += 1;
+            }
+        }
         self.responses.merge_from(branch.responses);
         self.query_index.merge_from(branch.query_index);
         if matches!(branch.recorded_read_reuse, RecordedReadReuse::Invalidated) {

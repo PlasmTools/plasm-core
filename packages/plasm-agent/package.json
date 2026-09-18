@@ -44,6 +44,7 @@
     "README.md"
   ],
   "scripts": {
+    "test:discovery-intent": "node --import tsx scripts/test-discovery-intent.ts",
     "typecheck": "tsc --noEmit",
     "plasm-agent": "node scripts/run-plasm-cli.mjs",
     "build:engine": "npm run build --prefix ../plasm-engine",
@@ -68,6 +69,7 @@
     "test:run-ref-not-terminal": "node scripts/run-plasm-cli.mjs scripts/test-run-ref-not-terminal.ts",
     "test:invalid-tool-input-retry": "node scripts/run-plasm-cli.mjs scripts/test-invalid-tool-input-retry.ts",
     "test:generation-length-continue": "node scripts/run-plasm-cli.mjs scripts/test-generation-length-continue.ts",
+    "test:empty-generation-continue": "node scripts/run-plasm-cli.mjs scripts/test-empty-generation-continue.ts",
     "test:eval-max-output-tokens": "node scripts/run-plasm-cli.mjs scripts/test-eval-max-output-tokens.ts",
     "test:artifact-not-terminal": "node scripts/run-plasm-cli.mjs scripts/test-artifact-not-terminal.ts",
     "test:mutator-seat-liturgy": "node scripts/run-plasm-cli.mjs scripts/test-mutator-seat-liturgy.ts",

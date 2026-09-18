@@ -23,6 +23,10 @@ pub(crate) fn entity_row_schema_incomplete(
     entity_type: &str,
     entity: &CachedEntity,
 ) -> bool {
+    if entity.completeness == plasm_runtime::EntityCompleteness::Summary && entity.fields.is_empty()
+    {
+        return true;
+    }
     let Some(def) = cgs.get_entity(entity_type) else {
         return false;
     };
@@ -54,7 +58,15 @@ async fn fetch_entity_get_by_ref(
     get_capability: Option<&str>,
     trace: Option<&PlasmTraceContext>,
     plan_shared: Option<&PlanLineExecuteShared>,
-) -> Result<CachedEntity, String> {
+) -> Result<
+    (
+        CachedEntity,
+        plasm_runtime::ExecutionStats,
+        Vec<String>,
+        plasm_runtime::ExecutionSource,
+    ),
+    String,
+> {
     let scoped = entry_scoped_execute_session(es, Some(target))?;
     if reference.primary_slot_str().is_empty() {
         return Err(format!(
@@ -84,12 +96,26 @@ async fn fetch_entity_get_by_ref(
         plan_shared,
     )
     .await?;
-    result.entities.into_iter().next().ok_or_else(|| {
+    let entity = result.entities.into_iter().next().ok_or_else(|| {
         format!(
             "relation hydrate GET returned no `{}` row",
             reference.entity_type
         )
-    })
+    })?;
+    Ok((
+        entity,
+        result.stats,
+        result.request_fingerprints,
+        result.source,
+    ))
+}
+
+#[derive(Default)]
+struct RelationHydration {
+    entities: Vec<CachedEntity>,
+    stats: plasm_runtime::ExecutionStats,
+    request_fingerprints: Vec<String>,
+    source: Option<plasm_runtime::ExecutionSource>,
 }
 
 struct HydrateWork {
@@ -99,7 +125,7 @@ struct HydrateWork {
 
 /// GET-hydrate any relation targets whose cached/embed rows omit declared CGS fields.
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn hydrate_relation_entities_if_needed(
+async fn hydrate_relation_entities_if_needed(
     st: &PlasmHostState,
     es: &ExecuteSession,
     session_id: &str,
@@ -108,14 +134,17 @@ pub(crate) async fn hydrate_relation_entities_if_needed(
     trace: Option<&PlasmTraceContext>,
     max_hydrate: Option<usize>,
     plan_shared: Option<Arc<PlanLineExecuteShared>>,
-) -> Result<Vec<CachedEntity>, String> {
+) -> Result<RelationHydration, String> {
     let scoped = entry_scoped_execute_session(es, Some(target))?;
     let cgs = scoped.cgs.as_ref();
     let entity_type = target.entity.as_str();
     let mut entities = entities;
     truncate_to_read_cap(&mut entities, max_hydrate);
     if !relation_entities_need_hydration(cgs, entity_type, &entities) {
-        return Ok(entities);
+        return Ok(RelationHydration {
+            entities,
+            ..Default::default()
+        });
     }
 
     let mut out: Vec<Option<CachedEntity>> = entities.iter().cloned().map(Some).collect();
@@ -129,7 +158,10 @@ pub(crate) async fn hydrate_relation_entities_if_needed(
         }
     }
     if work.is_empty() {
-        return Ok(entities);
+        return Ok(RelationHydration {
+            entities,
+            ..Default::default()
+        });
     }
     {
         let mut cache = scoped.lock_graph_cache().await;
@@ -144,6 +176,8 @@ pub(crate) async fn hydrate_relation_entities_if_needed(
     let target = target.clone();
     let trace_ctx = trace.cloned();
     let plan_shared = plan_shared.clone();
+    // Preserve the plan's batch bound. The shared outbound limiter enforces
+    // conditional backend caps across this batch and independent branches.
     let cfg = BoundedParallelConfig::for_plan_http(None);
     let hydrated = bounded_parallel_map(work, cfg, move |item| {
         let st = st.clone();
@@ -168,14 +202,26 @@ pub(crate) async fn hydrate_relation_entities_if_needed(
         }
     })
     .await?;
-    for (index, entity) in hydrated {
+    let mut summary = RelationHydration::default();
+    for (index, (entity, stats, fingerprints, source)) in hydrated {
         out[index] = Some(entity);
+        super::plan_fanout_parallel::merge_execution_stats(
+            &mut summary.stats,
+            &stats,
+            super::plan_fanout_parallel::ExecutionStatsFold::Telemetry,
+        );
+        summary.request_fingerprints.extend(fingerprints);
+        summary.source = Some(match summary.source {
+            Some(prior) => super::plan_fanout_parallel::combine_execution_source(prior, source),
+            None => source,
+        });
     }
-
-    out.into_iter()
+    summary.entities = out
+        .into_iter()
         .enumerate()
         .map(|(i, slot)| slot.ok_or_else(|| format!("relation hydrate missing row at index {i}")))
-        .collect()
+        .collect::<Result<_, _>>()?;
+    Ok(summary)
 }
 
 /// Rebuild agent row JSON from typed entities after hydration.
@@ -247,7 +293,7 @@ pub(crate) async fn finalize_typed_relation_materialized_node(
     let scoped = entry_scoped_execute_session(es, Some(target))?;
     let cgs = scoped.cgs.as_ref();
     let entity_type = target.entity.as_str();
-    let hydrated = hydrate_relation_entities_if_needed(
+    let hydration = hydrate_relation_entities_if_needed(
         st,
         es,
         session_id,
@@ -258,6 +304,23 @@ pub(crate) async fn finalize_typed_relation_materialized_node(
         plan_shared.clone(),
     )
     .await?;
+    let hydrated = hydration.entities;
+    let mut stats = mat.result.stats.clone();
+    if hydration.source.is_some() {
+        super::plan_fanout_parallel::merge_execution_stats(
+            &mut stats,
+            &hydration.stats,
+            super::plan_fanout_parallel::ExecutionStatsFold::Telemetry,
+        );
+    }
+    let mut fingerprints = mat.result.request_fingerprints.clone();
+    fingerprints.extend(hydration.request_fingerprints);
+    let source = hydration
+        .source
+        .map(|source| {
+            super::plan_fanout_parallel::combine_execution_source(mat.result.source, source)
+        })
+        .unwrap_or(mat.result.source);
     let entity_rows = relation_rows_from_entities(&hydrated, cgs);
     let rows = match mat.row_source.inline_rows() {
         Some(prior) if !prior.is_empty() && prior.len() == hydrated.len() => {
@@ -273,9 +336,9 @@ pub(crate) async fn finalize_typed_relation_materialized_node(
         coverage: mat.result.coverage,
         pagination_resume: mat.result.pagination_resume.clone(),
         paging_handle: mat.result.paging_handle.clone(),
-        source: mat.result.source,
-        stats: mat.result.stats.clone(),
-        request_fingerprints: mat.result.request_fingerprints.clone(),
+        source,
+        stats,
+        request_fingerprints: fingerprints,
         operations: mat.result.operations.clone(),
     });
     mat.row_source = super::inline_row_source(&rows);

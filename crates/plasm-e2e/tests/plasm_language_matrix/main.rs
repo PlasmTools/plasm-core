@@ -31,6 +31,8 @@ use harness::{matrix_live_run_row, plasm_language_matrix_live_runs_async};
 use program::matrix_program_for_row;
 use rows::{all_rows, find_row, row_count};
 
+mod relation_fanout;
+
 #[tokio::test]
 async fn isolation_sidecar_serves_vault_and_lanes() {
     let base = hermit_lang_matrix::language_matrix_hermit_base_url()

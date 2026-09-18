@@ -1,0 +1,33 @@
+version: 1
+http_backend: http://127.0.0.1:9
+auth: {scheme: none}
+entities:
+  SecuredRecord:
+    id_field: id
+    fields:
+      id: {required: true, value_ref: nv_id}
+      label: {required: true, value_ref: nv_label}
+capabilities:
+  record_get:
+    kind: get
+    entity: SecuredRecord
+    arguments:
+      input_type:
+        type: object
+        fields:
+          - {name: access_token, value_ref: nv_token, required: true}
+    provides: [id, label]
+    derive:
+      source: record_query
+      match_field: id
+      projection: {id: id, label: label}
+  record_query:
+    kind: query
+    entity: SecuredRecord
+    selection:
+      - {name: access_token, value_ref: nv_token, required: true}
+    provides: [id, label]
+values:
+  nv_id: {type: string}
+  nv_label: {type: string}
+  nv_token: {type: string}

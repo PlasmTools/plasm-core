@@ -374,3 +374,76 @@ async fn cursor_strategy_fetches_to_exhaustion() {
         .expect("execute");
     assert_eq!(ids(&result).len(), 45);
 }
+
+#[path = "common/language_matrix.rs"]
+mod language_matrix;
+
+#[test]
+fn row_algebra_reads_matches_beyond_the_first_backend_pages() {
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Runtime::new().unwrap().block_on(async {
+                use plasm_agent::plasm_compile::compile_plasm_program;
+                use plasm_agent::plasm_plan_run::run_plasm_comp;
+                for (program, expected) in [
+                    ("rows = Item\nrows | where n >= 40 | select id, n", 5),
+                    ("rows = Item\nrows | select id, n", 45),
+                    ("rows = Item | take 3\nrows | select id, n", 3),
+                ] {
+                    let (base, recorded) = spawn_stub().await;
+                    let mut cgs = load_matrix_cgs();
+                    cgs.http_backend = base.clone();
+                    let cgs = Arc::new(cgs);
+                    let session = language_matrix::matrix_execute_session(cgs.clone());
+                    let host = language_matrix::matrix_host_state(
+                        ExecutionEngine::new(ExecutionConfig {
+                            base_url: Some(base),
+                            hydrate: false,
+                            ..Default::default()
+                        })
+                        .unwrap(),
+                        cgs,
+                    );
+                    let bundle = compile_plasm_program(
+                        &Default::default(),
+                        None,
+                        &session,
+                        "algebra",
+                        program,
+                    )
+                    .expect("compile algebra");
+                    let result = Box::pin(run_plasm_comp(
+                        &session,
+                        &host,
+                        &session.prompt_hash,
+                        "algebra",
+                        &bundle,
+                        true,
+                        None,
+                        None,
+                        None,
+                        None,
+                    ))
+                    .await
+                    .expect("execute algebra");
+                    let output = &result.return_steps[0].result;
+                    assert_eq!(output.entities.len(), expected, "{program}");
+                    assert_eq!(
+                        output.coverage,
+                        plasm_runtime::ResultCoverage::Complete,
+                        "{program}"
+                    );
+                    let requests = recorded.requests.lock().unwrap();
+                    assert_eq!(
+                        requests.len(),
+                        if expected == 3 { 1 } else { 3 },
+                        "bounded take versus exhaustive algebra: {program}"
+                    );
+                }
+            });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

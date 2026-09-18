@@ -6,10 +6,15 @@ use crate::plasm_plan::{Plan, PlanDataInput, PlanResultUse};
 pub(in crate::plasm_dag) fn collect_template_uses_from_expr(
     expr: &Expr,
     row_binding: Option<&str>,
+    known_nodes: &BTreeSet<String>,
 ) -> Vec<PlanResultUse> {
+    let aliases = known_nodes
+        .iter()
+        .map(|node| (node.as_str(), node.as_str()))
+        .collect::<Vec<_>>();
     let ctx = plasm_core::TemplateRefContext {
         row_binding,
-        input_aliases: &[],
+        input_aliases: &aliases,
     };
     let mut acc = Vec::new();
     collect_expr_for_template_uses(&mut acc, expr, &ctx);
@@ -22,7 +27,7 @@ pub(in crate::plasm_dag) fn relation_plan_uses_result(
     parsed: &plasm_core::expr_parser::ParsedExpr,
 ) -> Vec<PlanResultUse> {
     let mut uses = vec![result_use(source_label, "source")];
-    for u in collect_template_uses_from_expr(&parsed.expr, None) {
+    for u in collect_template_uses_from_expr(&parsed.expr, None, &BTreeSet::new()) {
         let node = u.node.as_str();
         let alias = u.r#as.as_str();
         if node == source_label || (node == "source" && alias == "source") {
@@ -89,7 +94,10 @@ fn collect_operands<T: plasm_core::operand_binding::BindOperands>(
                     .paths()
                     .iter()
                     .any(|path| path.len() > 1 && path.first() == Some(root));
-                if self.ctx.row_binding.is_none() || dotted {
+                if self.ctx.classify_root(root) == plasm_core::template_ref::RefKind::InputAlias
+                    || self.ctx.row_binding.is_none()
+                    || dotted
+                {
                     self.acc.push(result_use(root, root));
                 }
             }

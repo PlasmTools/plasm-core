@@ -4994,12 +4994,21 @@ mod tests {
         let cgs = load_schema_dir(&root).expect("plasm_language_matrix");
         let cgs_arc = std::sync::Arc::new(cgs.clone());
         let layers = [&cgs];
-        let delta = crate::capability_exposure::explicit_entity_capability_surface(
+        let mut delta = crate::capability_exposure::explicit_entity_capability_surface(
             &cgs,
             "langmatrix",
             &["LangItem".to_string()],
         )
         .expect("explicit fixture capability exposure");
+        // Model a genuinely deferred target, independently of eager embedded-read closure.
+        delta
+            .required
+            .entities
+            .retain(|k| k.entity.as_str() == "LangItem");
+        delta
+            .required
+            .capabilities
+            .retain(|k| k.domain.as_str() == "LangItem");
         let mut exp = TeachingExposureSession::new_with_intent_delta(
             &cgs,
             "langmatrix",

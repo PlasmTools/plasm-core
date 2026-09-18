@@ -1,0 +1,9 @@
+probe_query:
+  method: GET
+  path: [{type: literal, value: records}]
+  query:
+    type: object
+    fields: [[owner_email, {type: var, name: owner_email}]]
+  headers:
+    type: object
+    fields: [[Authorization, {type: var, name: access_token}]]

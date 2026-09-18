@@ -81,6 +81,9 @@ enum Commands {
         /// OpenAPI spec file to serve as mock backend
         #[arg(long)]
         spec: String,
+        /// Reject OpenAPI operations without a catalog mapping before running Hermit
+        #[arg(long)]
+        require_complete: bool,
     },
 }
 
@@ -124,6 +127,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             relations_only,
             direction,
         } => commands::er_diagram::execute(&schema, output, relations_only, direction).await,
-        Commands::Validate { schema, spec } => commands::validate::execute(&schema, &spec).await,
+        Commands::Validate {
+            schema,
+            spec,
+            require_complete,
+        } => commands::validate::execute(&schema, &spec, require_complete).await,
     }
 }

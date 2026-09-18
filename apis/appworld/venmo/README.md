@@ -14,3 +14,9 @@ cargo run -q -p plasm-cli --bin plasm-cgs -- schema validate apis/appworld/venmo
 ```
 
 The pinned source specification is `openapi.json`.
+
+Friend lists belong to an owner: omit `owner_email` to read the account holder's
+own friends, or supply it to read that person's friends. To find a peer within
+the account holder's list, use `query` and confirm the returned email, or use the
+peer-identity Get. `owner_email` maps to AppWorld's query parameter `user_email`;
+add/remove operations act on the peer rather than the list owner.

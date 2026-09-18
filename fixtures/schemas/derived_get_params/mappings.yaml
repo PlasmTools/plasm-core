@@ -1,0 +1,6 @@
+record_query:
+  method: GET
+  path: [{type: literal, value: records}]
+  headers:
+    type: object
+    fields: [[Authorization, {type: var, name: access_token}]]

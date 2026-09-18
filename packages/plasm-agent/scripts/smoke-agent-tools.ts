@@ -3,20 +3,19 @@
  * Deterministic tool-chain smoke (no LLM): context → dry-run → live run.
  */
 import { createPlasmAgent } from "../agent/agent.js";
+import { runRefsInText } from "../src/telemetry/eve-tool-loop.js";
 
 const INTENT = "list execute_tiny products";
 
 function extractRunRef(markdown: string): string {
-  const match = markdown.match(/\b(pc\d+)\b/);
-  if (!match) {
-    throw new Error(`run_ref not found in dry-run output:\n${markdown}`);
-  }
-  return match[1];
+  const ref = runRefsInText(markdown)[0];
+  if (!ref) throw new Error(`run_ref not found:\n${markdown}`);
+  return ref;
 }
 
 function extractLogicalSessionRef(markdown: string): string {
-  const match = markdown.match(/^`([^`]+)`/m);
-  if (!match) {
+  const match = markdown.match(/\*\*logical_session_ref:\*\*\s*`([^`]+)`/i);
+  if (!match?.[1]) {
     throw new Error(`logical_session_ref not found in context output:\n${markdown}`);
   }
   return match[1];

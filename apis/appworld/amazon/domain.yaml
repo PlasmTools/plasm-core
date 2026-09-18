@@ -1,4 +1,4 @@
-version: 15
+version: 16
 entry_id: amazon
 auth:
   scheme: none
@@ -16,7 +16,7 @@ data_classes:
 entities:
   AuthSession:
     id_field: access_token
-    description: Login session for Amazon (Bearer token).
+    description: Authenticated session for Amazon.
     discovery:
       names:
       - login
@@ -352,23 +352,23 @@ entities:
         value_ref: nv_card_id
       card_name:
         required: false
-        value_ref: nv_str
+        value_ref: nv_card_name
       owner_name:
         required: false
-        value_ref: nv_str
+        value_ref: nv_person_name
       card_number:
         required: false
         value_ref: nv_card_number
         data_class: pii_payment
       expiry_year:
         required: false
-        value_ref: nv_int
+        value_ref: nv_year
       expiry_month:
         required: false
-        value_ref: nv_int
+        value_ref: nv_month
       cvv_number:
         required: false
-        value_ref: nv_int
+        value_ref: nv_cvv
         data_class: pii_payment
   ProductReview:
     id_field: review_id
@@ -1404,6 +1404,8 @@ capabilities:
     - card_number
     - expiry_year
     - expiry_month
+    - cvv_number
+    output: {type: collection, entity_type: PaymentCard}
   payment_card_get:
     description: Show one saved payment card.
     kind: get
@@ -1435,23 +1437,23 @@ capabilities:
           value_ref: nv_access_token
           required: true
         - name: card_name
-          value_ref: nv_str
+          value_ref: nv_card_name
           required: true
         - name: owner_name
-          value_ref: nv_str
+          value_ref: nv_person_name
           required: true
         - name: card_number
           value_ref: nv_card_number
           required: true
           sink_class: external_order
         - name: expiry_year
-          value_ref: nv_int
+          value_ref: nv_year
           required: true
         - name: expiry_month
-          value_ref: nv_int
+          value_ref: nv_month
           required: true
         - name: cvv_number
-          value_ref: nv_int
+          value_ref: nv_cvv
           required: true
           sink_class: external_order
     provides:
@@ -1940,41 +1942,41 @@ values:
     description: Long text body.
   nv_product_id:
     type: integer
-    description: Product primary key.
+    description: Identifies the product to read or act on.
   nv_product_ref:
     type: entity_ref
     target: Product
-    description: Reference to a Product by primary key.
+    description: Identifies the reference to a product by to read or act on.
   nv_order_id:
     type: integer
-    description: Order primary key.
+    description: Identifies the order to read or act on.
   nv_address_id:
     type: integer
-    description: Address primary key.
+    description: Identifies the address to read or act on.
   nv_card_id:
     type: integer
-    description: Payment card primary key.
+    description: Identifies the payment card to read or act on.
   nv_review_id:
     type: integer
-    description: Product review primary key.
+    description: Identifies the product review to read or act on.
   nv_return_id:
     type: integer
-    description: Product return primary key.
+    description: Identifies the product return to read or act on.
   nv_deliverer_id:
     type: integer
-    description: Return deliverer primary key.
+    description: Identifies the return deliverer to read or act on.
   nv_question_id:
     type: integer
-    description: Product question primary key.
+    description: Identifies the product question to read or act on.
   nv_question_answer_id:
     type: integer
-    description: Product question answer primary key.
+    description: Identifies the product question answer to read or act on.
   nv_seller_id:
     type: integer
-    description: Seller primary key.
+    description: Identifies the seller to read or act on.
   nv_prime_subscription_id:
     type: integer
-    description: Prime subscription primary key.
+    description: Identifies the prime subscription to read or act on.
   nv_prime_duration:
     type: enum
     description: Prime subscription billing duration.
@@ -2022,6 +2024,21 @@ values:
   nv_card_number:
     type: digit_id
     description: Linked payment card primary account number.
+  nv_card_name:
+    type: string
+    description: Payment card display name.
+  nv_person_name:
+    type: string
+    description: Cardholder display name.
+  nv_cvv:
+    type: integer
+    description: Card CVV digits as integer.
+  nv_month:
+    type: integer
+    description: Card expiry month.
+  nv_year:
+    type: integer
+    description: Card expiry year.
   nv_datetime:
     type: rfc3339
     description: ISO datetime string.
@@ -2053,6 +2070,16 @@ prerequisites:
       inputs: {}
       outputs:
         token: nv_access_token
+    appworld.payment_card:
+      version: 1
+      inputs: {}
+      outputs:
+        card_name: nv_card_name
+        owner_name: nv_person_name
+        card_number: nv_card_number
+        expiry_year: nv_year
+        expiry_month: nv_month
+        cvv_number: nv_cvv
   providers:
     session:
       contract: appworld.session
@@ -2440,6 +2467,21 @@ prerequisites:
           path:
           - access_token
         output: token
+    - id: payment_card
+      contract: appworld.payment_card
+      bindings:
+      - input: {lane: payload, path: [card_name]}
+        output: card_name
+      - input: {lane: payload, path: [owner_name]}
+        output: owner_name
+      - input: {lane: payload, path: [card_number]}
+        output: card_number
+      - input: {lane: payload, path: [expiry_year]}
+        output: expiry_year
+      - input: {lane: payload, path: [expiry_month]}
+        output: expiry_month
+      - input: {lane: payload, path: [cvv_number]}
+        output: cvv_number
     payment_card_update:
     - id: session
       contract: appworld.session

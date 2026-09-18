@@ -189,7 +189,8 @@ pub struct RowMatchBudget {
 pub struct StreamConsumeOpts {
     /// Fetch every page until the API reports completion (bounded by a runtime safety cap).
     pub fetch_all: bool,
-    /// Maximum number of entities to return in total across all pages.
+    /// Item budget across pages. Expression takes are exact; host paging retains
+    /// a complete backend page so continuation cannot skip its remaining rows.
     pub max_items: Option<usize>,
     /// When set with [`Self::max_items`], perform at most **one** upstream HTTP page while still
     /// clamping page size to `max_items` (LLM paging batches). When unset, `max_items` alone spans

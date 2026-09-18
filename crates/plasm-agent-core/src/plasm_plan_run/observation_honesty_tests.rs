@@ -134,7 +134,40 @@ async fn best_effort_fanout_case(count: usize, fail_at: usize) {
         .get_execute_session(&opened.prompt_hash, &opened.session_id)
         .await
         .unwrap();
-    let program = "src = e1{group_id=\"source\"}\ncreated = src => e1.m1(group_id=\"dest\", description=_.description)\ncreated";
+    if count > crate::plan_read_bounds::DEFAULT_HOST_PAGE_SIZE {
+        // No fanout/aggregate consumer forces fetch-all here. The backend returns
+        // one complete body larger than the presentation budget.
+        let projection =
+            "src = e1{group_id=\"source\"}\nselected = src | select description\nselected";
+        let bundle = crate::plasm_compile::compile_plasm_expression(
+            host.engine.prompt_pipeline(),
+            Some(host.sessions.symbol_map_cross_cache()),
+            &session,
+            projection,
+            projection,
+        )
+        .unwrap();
+        let projected = Box::pin(ExecutePipeline::run_program(
+            &session,
+            &host,
+            &opened.prompt_hash,
+            &opened.session_id,
+            &bundle,
+            ExecutionIntent::Live,
+            None,
+            None,
+            None,
+        ))
+        .await
+        .unwrap();
+        assert_eq!(
+            projected.return_steps[0].result.entities.len(),
+            count,
+            "an acquired collection must not be silently repaged before or after projection"
+        );
+        assert!(!projected.return_steps[0].result.has_more);
+    }
+    let program = "src = e1{group_id=\"source\"}\nselected = src | select description\ncreated = selected => e1.m1(group_id=\"dest\", description=_.description)\ncreated";
     let bundle = crate::plasm_compile::compile_plasm_expression(
         host.engine.prompt_pipeline(),
         Some(host.sessions.symbol_map_cross_cache()),
@@ -256,11 +289,7 @@ async fn case(count: usize, fail_at: usize) {
         .map(|i| format!("x{i} = e1.m1(group_id=\"g1\", description=\"item{i}\")"))
         .collect::<Vec<_>>()
         .join("\n")
-        + "\n"
-        + &(0..count)
-            .map(|i| format!("x{i}"))
-            .collect::<Vec<_>>()
-            .join(", ");
+        + "\nx0";
     let bundle = crate::plasm_compile::compile_plasm_expression(
         host.engine.prompt_pipeline(),
         Some(host.sessions.symbol_map_cross_cache()),
@@ -281,6 +310,21 @@ async fn case(count: usize, fail_at: usize) {
         None,
     ))
     .await;
+    if fail_at >= count {
+        let result = result.expect("all writes succeed");
+        let completed: usize = result
+            .return_steps
+            .iter()
+            .flat_map(|step| step.result.operations.entries())
+            .map(|ack| ack.completed)
+            .sum();
+        assert_eq!(
+            completed, count,
+            "unreturned writes must have receipts exactly once"
+        );
+        assert_eq!(store.lock().unwrap().rows.len(), count);
+        return;
+    }
     let error = result.expect_err("plan should abort at injected failure");
     let marker = "Confirmed operations before failure (not rolled back): ";
     if fail_at > 0 {
@@ -349,4 +393,14 @@ proptest! {
   let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
   rt.block_on(Box::pin(best_effort_fanout_case(count, fail_seed % count)));
  }
+}
+
+#[tokio::test]
+async fn successful_plan_publishes_unreturned_write_receipts() {
+    Box::pin(case(3, usize::MAX)).await;
+}
+
+#[tokio::test]
+async fn materialized_collection_over_default_page_retains_all_writes() {
+    Box::pin(best_effort_fanout_case(31, 30)).await;
 }

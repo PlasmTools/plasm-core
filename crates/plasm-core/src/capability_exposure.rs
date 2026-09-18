@@ -213,6 +213,52 @@ pub fn selected_capability_surface(
     let capabilities = close_seeded_entity_mutator_capability_ids(cgs, capabilities);
     let capabilities = close_read_family_capability_ids(cgs, &capabilities);
     let capabilities = close_identity_scope_target_capability_ids(cgs, &capabilities);
+    // Embedded parent-Get relations are part of the selected read's executable
+    // result. Admit target reads so relation navigation is usable on the first
+    // wave; do not admit target mutations. Iterate to close nested embeds.
+    let mut capabilities = capabilities;
+    loop {
+        let mut target_reads = capabilities.clone();
+        for name in &capabilities {
+            let Some(cap) = cgs.capabilities.get(name.as_str()) else {
+                continue;
+            };
+            if !matches!(
+                cap.kind,
+                CapabilityKind::Get | CapabilityKind::Query | CapabilityKind::Search
+            ) {
+                continue;
+            }
+            let Some(entity) = cgs.entities.get(cap.domain.as_str()) else {
+                continue;
+            };
+            for relation in entity.relations.values() {
+                if !matches!(
+                    relation.materialize,
+                    Some(crate::RelationMaterialization::FromParentGet { .. })
+                ) {
+                    continue;
+                }
+                for target in cgs.capabilities.values() {
+                    if target.domain == relation.target_resource
+                        && matches!(
+                            target.kind,
+                            CapabilityKind::Get | CapabilityKind::Query | CapabilityKind::Search
+                        )
+                    {
+                        let name = target.name.to_string();
+                        if !target_reads.contains(&name) {
+                            target_reads.push(name);
+                        }
+                    }
+                }
+            }
+        }
+        if target_reads.len() == capabilities.len() {
+            break;
+        }
+        capabilities = target_reads;
+    }
     let mut surface = ExposureSurface::default();
     for name in &capabilities {
         let cap = cgs
@@ -310,6 +356,49 @@ mod tests {
     fn auth_bearer_search_dir() -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/schemas/auth_bearer_search")
+    }
+
+    #[test]
+    fn selected_parent_read_exposes_embedded_relation_targets_without_writes() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = plasm_core_fixture_load(&root);
+        let read = cgs
+            .capabilities
+            .values()
+            .find(|c| c.domain.as_str() == "LangItem" && c.kind == CapabilityKind::Get)
+            .unwrap();
+        let delta = selected_capability_surface(&cgs, "fixture", &[read.name.to_string()]).unwrap();
+        assert!(delta
+            .required
+            .entities
+            .iter()
+            .any(|e| e.entity.as_str() == "LangSummary"));
+        assert!(delta.required.slots.iter().any(|s| matches!(s, ExposureSlotKey::Relation { source, relation } if source.entity.as_str() == "LangItem" && relation.as_str() == "summary")));
+        for key in &delta.required.capabilities {
+            if key.domain.as_str() != "LangItem" {
+                assert!(matches!(
+                    cgs.capabilities.get(key.capability.as_str()).unwrap().kind,
+                    CapabilityKind::Get | CapabilityKind::Query | CapabilityKind::Search
+                ));
+            }
+        }
+        let exposure = crate::TeachingExposureSession::new_with_intent_delta(
+            &cgs,
+            "fixture",
+            &["LangItem"],
+            delta,
+        );
+        let map = exposure.symbol_map_arc();
+        assert!(map
+            .ident_sym_relation_for("fixture", "LangItem", "summary")
+            .starts_with('r'));
+        assert!(map
+            .entity_sym_for("fixture", "LangSummary")
+            .starts_with('e'));
+    }
+    fn plasm_core_fixture_load(path: &std::path::Path) -> CGS {
+        crate::load_schema_dir(path).unwrap()
     }
 
     #[test]

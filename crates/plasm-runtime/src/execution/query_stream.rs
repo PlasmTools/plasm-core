@@ -392,7 +392,11 @@ impl ExecutionEngine {
                 let mut truncated = false;
                 if let Some(cap) = consume.max_items {
                     let remain = cap.saturating_sub(accumulated_total);
-                    if decoded_entities.len() > remain {
+                    // Host paging stops between backend pages. Discarding the tail would
+                    // make an opaque backend cursor skip rows on continuation.
+                    if decoded_entities.len() > remain
+                        && consume.bound_kind != ConsumeBoundKind::HostPage
+                    {
                         decoded_entities.truncate(remain);
                         truncated = true;
                     }
@@ -556,15 +560,37 @@ impl ExecutionEngine {
                     .max_items
                     .is_some_and(|m| accumulated_total >= m)
                 {
+                    let driver_has_more = if consume.bound_kind == ConsumeBoundKind::HostPage {
+                        Some(driver.advance_after_page(
+                            &normalized,
+                            full_page_len,
+                            link_next.as_deref(),
+                            last_id.as_deref(),
+                        )?)
+                    } else {
+                        None
+                    };
+                    let pagination_resume = if driver_has_more == Some(true) {
+                        Some(QueryPaginationResumeData {
+                            query: query.clone(),
+                            capability_name: capability.name.to_string(),
+                            env: env.clone(),
+                            template: capability_template.clone(),
+                            config: pconf.clone(),
+                            state: driver.snapshot(),
+                        })
+                    } else {
+                        None
+                    };
                     let mut page = page_result(
                         yield_entities,
                         pages,
                         &consume,
                         ConsumeStop::ItemCapHit {
                             truncated_page: false,
-                            driver_has_more: None,
+                            driver_has_more,
                         },
-                        None,
+                        pagination_resume,
                         page_stats,
                     );
                     if hydrate_field_partial { page.coverage = page.coverage.combine(ResultCoverage::Partial); }

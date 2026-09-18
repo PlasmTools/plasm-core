@@ -415,7 +415,7 @@ fn matrix_update_accepts_column_projection_array_from_plural_tags() {
     let p_item_id = map.ident_sym_entity_field_for("langmatrix", "LangItem", "id");
     let source = format!(
         r#"created = {item_e}.{create_m}({p_create_title}="matrix item", {p_create_score}=1, {p_create_owner}="bot")
-tags = from {tag_e}{{{p_tag_item}=created.{p_item_id}}} | select {p_tag_label}
+tags = {tag_e}{{{p_tag_item}=created.{p_item_id}}} | select {p_tag_label}
 updated = {item_e}({p_item_id}=created.{p_item_id}).{update_m}({p_update_tags}=tags.{p_tag_label})
 updated"#,
         item_e = item_e,

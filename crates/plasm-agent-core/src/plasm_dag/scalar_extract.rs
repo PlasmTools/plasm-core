@@ -69,7 +69,7 @@ pub(in crate::plasm_dag) fn compile_catalog_singleton_field_dot(
     parsed: ParsedExpr,
     wire: String,
 ) -> Result<Vec<DagNode>, String> {
-    let uses = collect_template_uses_from_expr(&parsed.expr, None);
+    let uses = collect_template_uses_from_expr(&parsed.expr, None, &state.program_node_id_set());
     let (kind, qualified_entity, effect_class, result_shape) =
         infer_surface_contract(session, &parsed.expr)?;
     let singleton = matches!(kind, PlanNodeKind::Get) || matches!(parsed.expr, Expr::Get(_));
@@ -83,6 +83,7 @@ pub(in crate::plasm_dag) fn compile_catalog_singleton_field_dot(
         singleton: true,
         page_size: None,
         source: DagNodeSource::Surface {
+            view_singleton: false,
             parsed,
             kind,
             qualified_entity,

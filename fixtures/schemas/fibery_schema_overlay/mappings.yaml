@@ -1,0 +1,218 @@
+schema_query:
+  method: POST
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: commands
+  body:
+    type: object
+    fields:
+    - - command
+      - type: const
+        value: fibery.schema/query
+  response:
+    items: result
+    items_path:
+    - result
+    - fibery/types
+entity_query:
+  method: POST
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: commands
+  body:
+    type: object
+    fields:
+    - - command
+      - type: const
+        value: fibery.entity/query
+    - - args
+      - type: var
+        name: input
+  response:
+    items: result
+entity_get:
+  method: POST
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: commands
+  body:
+    type: object
+    fields:
+    - - command
+      - type: const
+        value: fibery.entity/query
+    - - args
+      - type: object
+        fields:
+        - - query
+          - type: object
+            fields:
+            - - q/from
+              - type: var
+                name: database
+            - - q/select
+              - type: const
+                value:
+                - fibery/id
+                - fibery/public-id
+            - - q/where
+              - type: const
+                value:
+                - '='
+                - - fibery/id
+                - $entity-id
+            - - q/limit
+              - type: const
+                value: 1
+        - - params
+          - type: object
+            fields:
+            - - $entity-id
+              - type: var
+                name: id
+  response:
+    items: result
+    single: true
+user_get_me:
+  method: POST
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: commands
+  body:
+    type: object
+    fields:
+    - - command
+      - type: const
+        value: fibery.entity/query
+    - - args
+      - type: object
+        fields:
+        - - query
+          - type: object
+            fields:
+            - - q/from
+              - type: const
+                value: fibery/user
+            - - q/select
+              - type: const
+                value:
+                - fibery/id
+                - user/name
+                - user/email
+            - - q/where
+              - type: const
+                value:
+                - '='
+                - - fibery/id
+                - $my-id
+            - - q/limit
+              - type: const
+                value: 1
+        - - params
+          - type: object
+            fields: []
+  response:
+    items_path:
+    - result
+    - '0'
+    single: true
+entity_create:
+  method: POST
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: commands
+  body:
+    type: object
+    fields:
+    - - command
+      - type: const
+        value: fibery.entity/create
+    - - args
+      - type: object
+        fields:
+        - - type
+          - type: var
+            name: database
+        - - entity
+          - type: var
+            name: input
+  response:
+    items: result
+    single: true
+entity_update:
+  method: POST
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: commands
+  body:
+    type: object
+    fields:
+    - - command
+      - type: const
+        value: fibery.entity/update
+    - - args
+      - type: object
+        fields:
+        - - type
+          - type: var
+            name: database
+        - - entity
+          - type: var
+            name: input
+  response:
+    items: result
+    single: true
+entity_delete:
+  method: POST
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: commands
+  body:
+    type: object
+    fields:
+    - - command
+      - type: const
+        value: fibery.entity/delete
+    - - args
+      - type: object
+        fields:
+        - - type
+          - type: var
+            name: database
+        - - entity
+          - type: object
+            fields:
+            - - fibery/id
+              - type: var
+                name: id
+  response: single
+view_query:
+  method: POST
+  path:
+  - type: literal
+    value: views
+  body:
+    type: object
+    fields:
+    - - method
+      - type: const
+        value: query-views
+    - - params
+      - type: object
+        fields: []
+  response:
+    items: result

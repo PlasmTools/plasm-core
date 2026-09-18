@@ -61,3 +61,9 @@ pub use validate_templates::{
     pagination_config_for_capability, validate_cgs_capability_templates, validate_cgs_views,
     CompiledCatalog,
 };
+
+pub mod openapi_pagination;
+pub use openapi_pagination::{
+    uncovered_openapi_operations, validate_catalog_openapi_pagination,
+    validate_cgs_openapi_pagination,
+};

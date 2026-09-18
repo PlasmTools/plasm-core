@@ -6,10 +6,14 @@ import {
   type ModelMessage,
   type TelemetryOptions,
   type ToolSet,
+  type FinishReason,
+  type StepResult,
 } from "ai";
-import type { Context } from "@ai-sdk/provider-utils";
 
-import { applyArtifactLedger, gateUnreadArtifactTerminals } from "../tools/artifact-contract.js";
+import {
+  applyArtifactLedger,
+  gateUnreadArtifactTerminals,
+} from "../tools/artifact-contract.js";
 import { successfulEvalTerminalInStep } from "../tools/format.js";
 import { ensureOtelIntegration } from "../instrumentation.js";
 import {
@@ -24,7 +28,8 @@ import {
 export interface AgentStepEvent {
   toolCalls?: Array<{ toolName: string }>;
   text?: string;
-  finishReason?: string;
+  finishReason?: FinishReason;
+  rawFinishReason?: string;
   usage?: LanguageModelUsage;
   /** Accumulated turn messages after this step's response delta. */
   messages?: ModelMessage[];
@@ -55,7 +60,7 @@ export function messagesForStep(
   prepare: EvePrepareMessages | undefined,
   ctx: EveStepContext,
 ): ModelMessage[] {
-  if (!prepare) return messages as ModelMessage[];
+  if (!prepare) return [...messages];
   return prepare(messages, ctx);
 }
 
@@ -85,7 +90,11 @@ export interface EveToolLoopOptions {
    * Later steps stay auto unless a reviewed `run_ref` or required
    * run snapshot is still unread, or initial discovery is still pending.
    */
-  toolChoice?: "auto" | "required" | "none" | { type: "tool"; toolName: string };
+  toolChoice?:
+    | "auto"
+    | "required"
+    | "none"
+    | { type: "tool"; toolName: string };
   /**
    * Eval lifecycle gate: while true, the loop forces `plasm_context` and
    * refuses prose-only exit until a valid discovery response exists (or a
@@ -118,12 +127,12 @@ export type EveToolLoopStopReason =
 
 export interface EveToolLoopResult {
   text: string;
-  steps: unknown[];
+  steps: StepResult<ToolSet>[];
   usage: LanguageModelUsage;
   messages: ModelMessage[];
   stopReason: EveToolLoopStopReason;
-  /** Per-model-step finish reasons (provider unified values). */
-  stepFinishReasons: string[];
+  /** Per-model-step finish reasons; raw provider `error` overrides mapped `other`. */
+  stepFinishReasons: FinishReason[];
   /**
    * Per-generation output ceiling passed to the model (reasoning + text + tool
    * JSON share this). Undefined when the caller omitted `modelOptions.maxOutputTokens`.
@@ -193,11 +202,12 @@ export function stepHasInvalidToolInput(
   toolResults?: ReadonlyArray<Record<string, unknown>>,
 ): boolean {
   for (const result of toolResults ?? []) {
-    if (result.type === "tool-error") return true;
     if (result.invalid === true) return true;
     const err = result.error;
-    if (typeof err === "string" && textLooksLikeInvalidToolInput(err)) return true;
-    if (err instanceof Error && textLooksLikeInvalidToolInput(err.message)) return true;
+    if (typeof err === "string" && textLooksLikeInvalidToolInput(err))
+      return true;
+    if (err instanceof Error && textLooksLikeInvalidToolInput(err.message))
+      return true;
     const output = result.output;
     if (output && typeof output === "object") {
       const out = output as { type?: unknown; value?: unknown };
@@ -217,7 +227,6 @@ export function stepHasInvalidToolInput(
     for (const part of content) {
       if (!part || typeof part !== "object") continue;
       const rec = part as Record<string, unknown>;
-      if (rec.type === "tool-error") return true;
       if (rec.invalid === true) return true;
       const output = rec.output;
       if (output && typeof output === "object") {
@@ -230,7 +239,10 @@ export function stepHasInvalidToolInput(
           return true;
         }
       }
-      if (typeof rec.error === "string" && textLooksLikeInvalidToolInput(rec.error)) {
+      if (
+        typeof rec.error === "string" &&
+        textLooksLikeInvalidToolInput(rec.error)
+      ) {
         return true;
       }
     }
@@ -342,7 +354,7 @@ export function runRefsInText(text: string): string[] {
     re.lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = re.exec(text)) !== null) {
-      found.add(match[1]);
+      if (match[1]) found.add(match[1]);
     }
   }
   return [...found];
@@ -356,7 +368,11 @@ function partText(part: unknown): string {
   if (typeof rec.result === "string") return rec.result;
   if (typeof rec.output === "string") return rec.output;
   const output = rec.output;
-  if (output && typeof output === "object" && typeof (output as { value?: unknown }).value === "string") {
+  if (
+    output &&
+    typeof output === "object" &&
+    typeof (output as { value?: unknown }).value === "string"
+  ) {
     return (output as { value: string }).value;
   }
   return "";
@@ -386,13 +402,24 @@ function runRefFromToolInput(input: unknown): string | null {
 
 function toolResultText(
   content: ModelMessage["content"],
-): { toolName: string; text: string; toolCallId: string }[] {
-  if (typeof content === "string") return [{ toolName: "", text: content, toolCallId: "" }];
+): { toolName: string; text: string; toolCallId: string; failed: boolean }[] {
+  if (typeof content === "string")
+    return [{ toolName: "", text: content, toolCallId: "", failed: false }];
   if (!Array.isArray(content)) return [];
   return content.map((part) => {
-    const rec = part && typeof part === "object" ? (part as Record<string, unknown>) : {};
+    const rec =
+      part && typeof part === "object" ? (part as Record<string, unknown>) : {};
     const toolName = typeof rec.toolName === "string" ? rec.toolName : "";
-    return { toolName, text: partText(part), toolCallId: toolCallIdOf(rec) };
+    return {
+      toolName,
+      text: partText(part),
+      toolCallId: toolCallIdOf(rec),
+      failed:
+        rec.type === "tool-error" ||
+        rec.invalid === true ||
+        (rec.error !== undefined && rec.error !== null) ||
+        outputLooksLikeToolError(rec.output),
+    };
   });
 }
 
@@ -423,9 +450,17 @@ export function applyRunRefLedger(
   const consumed = consumedRunRefs(messages);
   for (const message of messages) {
     if (message.role !== "tool") continue;
-    for (const { toolName, text, toolCallId } of toolResultText(message.content)) {
+    for (const {
+      toolName,
+      text,
+      toolCallId,
+      failed: taggedError,
+    } of toolResultText(message.content)) {
       if (toolName === "plasm_run") {
-        const failed = /\*\*plasm_run\*\* error/i.test(text) || /pending transport/i.test(text);
+        const failed =
+          taggedError ||
+          /\*\*plasm_run\*\* error/i.test(text) ||
+          /pending transport/i.test(text);
         if (!failed) {
           const handled =
             (toolCallId && consumed.get(toolCallId)) ||
@@ -442,7 +477,10 @@ export function applyRunRefLedger(
   }
 }
 
-function addUsage(a: LanguageModelUsage, b: LanguageModelUsage): LanguageModelUsage {
+function addUsage(
+  a: LanguageModelUsage,
+  b: LanguageModelUsage,
+): LanguageModelUsage {
   const sum = (x: number | undefined, y: number | undefined) =>
     x === undefined || y === undefined ? undefined : x + y;
   return {
@@ -450,13 +488,28 @@ function addUsage(a: LanguageModelUsage, b: LanguageModelUsage): LanguageModelUs
     outputTokens: sum(a.outputTokens, b.outputTokens),
     totalTokens: sum(a.totalTokens, b.totalTokens),
     inputTokenDetails: {
-      noCacheTokens: sum(a.inputTokenDetails.noCacheTokens, b.inputTokenDetails.noCacheTokens),
-      cacheReadTokens: sum(a.inputTokenDetails.cacheReadTokens, b.inputTokenDetails.cacheReadTokens),
-      cacheWriteTokens: sum(a.inputTokenDetails.cacheWriteTokens, b.inputTokenDetails.cacheWriteTokens),
+      noCacheTokens: sum(
+        a.inputTokenDetails.noCacheTokens,
+        b.inputTokenDetails.noCacheTokens,
+      ),
+      cacheReadTokens: sum(
+        a.inputTokenDetails.cacheReadTokens,
+        b.inputTokenDetails.cacheReadTokens,
+      ),
+      cacheWriteTokens: sum(
+        a.inputTokenDetails.cacheWriteTokens,
+        b.inputTokenDetails.cacheWriteTokens,
+      ),
     },
     outputTokenDetails: {
-      textTokens: sum(a.outputTokenDetails.textTokens, b.outputTokenDetails.textTokens),
-      reasoningTokens: sum(a.outputTokenDetails.reasoningTokens, b.outputTokenDetails.reasoningTokens),
+      textTokens: sum(
+        a.outputTokenDetails.textTokens,
+        b.outputTokenDetails.textTokens,
+      ),
+      reasoningTokens: sum(
+        a.outputTokenDetails.reasoningTokens,
+        b.outputTokenDetails.reasoningTokens,
+      ),
     },
   };
 }
@@ -465,7 +518,9 @@ function addUsage(a: LanguageModelUsage, b: LanguageModelUsage): LanguageModelUs
  * Eve-compatible tool loop: one `ai.eve.turn` parent span per step, `streamText`
  * child spans via AI SDK OTEL (`OpenTelemetry` + runtime context).
  */
-export async function runEveToolLoop(options: EveToolLoopOptions): Promise<EveToolLoopResult> {
+export async function runEveToolLoop(
+  options: EveToolLoopOptions,
+): Promise<EveToolLoopResult> {
   if (!Number.isSafeInteger(options.maxSteps) || options.maxSteps < 1) {
     throw new Error("maxSteps must be a positive integer");
   }
@@ -481,8 +536,8 @@ export async function runEveToolLoop(options: EveToolLoopOptions): Promise<EveTo
   let finalText = "";
   let lastUsage: LanguageModelUsage | undefined;
   let stopReason: EveToolLoopResult["stopReason"] = "budget_exhausted";
-  const aggregatedSteps: unknown[] = [];
-  const stepFinishReasons: string[] = [];
+  const aggregatedSteps: StepResult<ToolSet>[] = [];
+  const stepFinishReasons: FinishReason[] = [];
   const outstandingRunRefs = new Set<string>();
   const outstandingArtifacts = new Set<string>();
   let forceTool = false;
@@ -505,7 +560,8 @@ export async function runEveToolLoop(options: EveToolLoopOptions): Promise<EveTo
       runtimeContext,
     );
 
-    const discoveryPending = options.requireInitialDiscovery === true && !discoverySatisfied;
+    const discoveryPending =
+      options.requireInitialDiscovery === true && !discoverySatisfied;
 
     const stepResult = await withEveTurnSpan(
       {
@@ -532,55 +588,104 @@ export async function runEveToolLoop(options: EveToolLoopOptions): Promise<EveTo
             : forceTool
               ? ("required" as const)
               : undefined;
+        let providerStreamErrorCount = 0;
+        let providerStreamError: unknown;
         const streamResult = streamText({
+          onError: ({ error }) => {
+            providerStreamErrorCount += 1;
+            providerStreamError ??= error;
+          },
           model: options.model,
           system: options.system,
           tools: stepTools,
-          messages: messagesForStep(messages, options.prepareMessages, { stepIndex }),
+          messages: messagesForStep(messages, options.prepareMessages, {
+            stepIndex,
+          }),
           stopWhen: stepCountIs(1),
-          runtimeContext: runtimeContext as Context,
+          runtimeContext,
           experimental_telemetry: telemetry,
-          ...(stepToolChoice !== undefined ? { toolChoice: stepToolChoice } : {}),
+          ...(stepToolChoice !== undefined
+            ? { toolChoice: stepToolChoice }
+            : {}),
           ...(options.modelOptions?.temperature !== undefined
             ? { temperature: options.modelOptions.temperature }
             : {}),
           ...(options.modelOptions?.maxOutputTokens !== undefined
             ? { maxOutputTokens: options.modelOptions.maxOutputTokens }
             : {}),
-          ...(options.modelOptions?.topP !== undefined ? { topP: options.modelOptions.topP } : {}),
-          ...(options.modelOptions?.topK !== undefined ? { topK: options.modelOptions.topK } : {}),
+          ...(options.modelOptions?.topP !== undefined
+            ? { topP: options.modelOptions.topP }
+            : {}),
+          ...(options.modelOptions?.topK !== undefined
+            ? { topK: options.modelOptions.topK }
+            : {}),
         });
-        const [text, finishReason, steps, usage, response] = await Promise.all([
-          streamResult.text,
-          streamResult.finishReason,
-          streamResult.steps,
-          streamResult.usage,
-          streamResult.response,
-        ]);
+        const [text, finishReason, rawFinishReason, steps, usage, response] =
+          await Promise.all([
+            streamResult.text,
+            streamResult.finishReason,
+            streamResult.rawFinishReason,
+            streamResult.steps,
+            streamResult.usage,
+            streamResult.response,
+          ]).catch((error: unknown) => {
+            // No-output rejection otherwise hides HTTP payment/auth failures.
+            throw providerStreamError ?? error;
+          });
 
-        return { text, finishReason, steps, usage, response };
+        // OpenAI-compatible providers can preserve raw `error` while mapping
+        // it to unified `other` and emitting no SDK error event.
+        const providerFailed =
+          providerStreamErrorCount > 0 ||
+          finishReason === "error" ||
+          rawFinishReason === "error";
+        const effectiveFinishReason: FinishReason = providerFailed
+          ? "error"
+          : finishReason;
+        return {
+          text,
+          finishReason: effectiveFinishReason,
+          rawFinishReason,
+          providerFailed,
+          steps,
+          usage,
+          response,
+        };
       },
     );
 
-    const lastStep = stepResult.steps.at(-1) as
-      | {
-          toolCalls?: Array<{
-            toolName: string;
-            input?: unknown;
-            args?: unknown;
-            toolCallId?: string;
-          }>;
-          toolResults?: Array<Record<string, unknown>>;
-        }
-      | undefined;
+    const lastStep = stepResult.steps.at(-1);
     const stepCalls = lastStep?.toolCalls ?? [];
     const stepToolResults = lastStep?.toolResults ?? [];
 
     finalText = stepResult.text;
-    lastUsage = lastUsage ? addUsage(lastUsage, stepResult.usage) : stepResult.usage;
+    lastUsage = lastUsage
+      ? addUsage(lastUsage, stepResult.usage)
+      : stepResult.usage;
     aggregatedSteps.push(...stepResult.steps);
     stepFinishReasons.push(stepResult.finishReason);
-    const delta = stepResult.response.messages;
+    // The SDK response-message projection replaces invalid non-object inputs
+    // with {}. Keep the emitted input from its tool-call record so persisted
+    // history and the next provider request describe the actual failed call.
+    const invalidInputs = new Map(
+      stepCalls.flatMap((call) =>
+        "invalid" in call && call.invalid === true
+          ? [[call.toolCallId, call.input] as const]
+          : [],
+      ),
+    );
+    const delta = stepResult.response.messages.map((message) => {
+      if (message.role !== "assistant" || !Array.isArray(message.content))
+        return message;
+      return {
+        ...message,
+        content: message.content.map((part) =>
+          part.type === "tool-call" && invalidInputs.has(part.toolCallId)
+            ? { ...part, input: invalidInputs.get(part.toolCallId) }
+            : part,
+        ),
+      };
+    });
     messages = [...messages, ...delta];
 
     // Valid plasm_context response (or pre-opened session) — not a mere tool name.
@@ -595,6 +700,7 @@ export async function runEveToolLoop(options: EveToolLoopOptions): Promise<EveTo
       toolCalls: stepCalls.length > 0 ? stepCalls : undefined,
       text: stepResult.text,
       finishReason: stepResult.finishReason,
+      rawFinishReason: stepResult.rawFinishReason,
       usage: stepResult.usage,
       messages,
     });
@@ -606,7 +712,11 @@ export async function runEveToolLoop(options: EveToolLoopOptions): Promise<EveTo
     const invalidToolInput = stepHasInvalidToolInput(delta, stepToolResults);
     // Invalid/truncated tool JSON is a recoverable observation, not loop exit.
     // Append a clear repair diagnostic; do not host-fill the truncated payload.
-    if (invalidToolInput && stepIndex < options.maxSteps) {
+    if (
+      !stepResult.providerFailed &&
+      invalidToolInput &&
+      stepIndex < options.maxSteps
+    ) {
       messages = [
         ...messages,
         { role: "user", content: INVALID_TOOL_INPUT_REPAIR_DIAGNOSTIC },
@@ -617,14 +727,45 @@ export async function runEveToolLoop(options: EveToolLoopOptions): Promise<EveTo
       toolResults: stepToolResults,
       messages: delta,
     });
-    const hasValidatedTerminal = Boolean(terminal && outstandingArtifacts.size === 0);
+    const hasValidatedTerminal = Boolean(
+      terminal && outstandingArtifacts.size === 0,
+    );
     if (hasValidatedTerminal) {
       stopReason = "completed";
       break;
     }
+    if (stepResult.providerFailed && stepIndex < options.maxSteps) {
+      messages = [
+        ...messages,
+        {
+          role: "user",
+          content:
+            "Host: provider stream failed during generation. Successful tool results above are preserved; do not repeat their effects. Incomplete tool arguments were not executed. Continue from the observed results with a complete next call. This generation counted toward the step budget.",
+        },
+      ];
+      continue;
+    }
     if (stepResult.finishReason !== "tool-calls") {
       // Invalid/truncated tool JSON: repair path already appended; never execute bad args.
       if (invalidToolInput && stepIndex < options.maxSteps) {
+        continue;
+      }
+      // Providers can finish reasoning with `stop` and emit no usable response.
+      // This is not a task decision; preserve history and consume normal budget.
+      if (
+        stepResult.finishReason === "stop" &&
+        stepResult.text.trim().length === 0 &&
+        stepCalls.length === 0 &&
+        stepIndex < options.maxSteps
+      ) {
+        messages = [
+          ...messages,
+          {
+            role: "user",
+            content:
+              "Host: the previous generation ended without text or a tool call. Continue the same task from the observed results with a usable response. Prior successful tool results are preserved; do not repeat their effects. No task completion was recorded. This generation counted toward the step budget.",
+          },
+        ];
         continue;
       }
       // Output-token ceiling hit with unfinished work: continue, do not grade as done.
@@ -681,6 +822,7 @@ export async function runEveToolLoop(options: EveToolLoopOptions): Promise<EveTo
     stopReason,
     stepFinishReasons,
     maxOutputTokens: options.modelOptions?.maxOutputTokens,
-    lengthTruncationCount: stepFinishReasons.filter((r) => r === "length").length,
+    lengthTruncationCount: stepFinishReasons.filter((r) => r === "length")
+      .length,
   };
 }

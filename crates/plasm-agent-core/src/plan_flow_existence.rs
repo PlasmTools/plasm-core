@@ -455,12 +455,14 @@ mod tests {
             scope: vec![],
             nodes: vec![
                 ViewNodeSpec {
+                    traverse: None,
                     id: "check".into(),
                     capability: "workitem_query".into(),
                     bind: indexmap::IndexMap::new(),
                     when: None,
                 },
                 ViewNodeSpec {
+                    traverse: None,
                     id: "write".into(),
                     capability: "workitem_create".into(),
                     bind: indexmap::IndexMap::new(),

@@ -543,16 +543,18 @@ pub fn render_parse_error_with_feedback(
         ParseErrorKind::ExpectedIdentifier
         | ParseErrorKind::ExpectedOperator
         | ParseErrorKind::ExpectedValue => {
-            let base = match style {
-                FeedbackStyle::CanonicalDev => {
-                    "Fix spelling so identifiers, `=`, `{{}}`, `.`, and parentheses match the expression examples in the prompt."
-                        .to_string()
-                }
-                FeedbackStyle::SymbolicLlm { map: _ } => {
-                    "Fix spelling so `e#` / `m#` / `r#`, wire field names, `=`, `{{}}`, `.`, and parentheses match the example lines in the prompt."
-                        .to_string()
-                }
+            let expected = match err.kind {
+                ParseErrorKind::ExpectedIdentifier => "identifier",
+                ParseErrorKind::ExpectedOperator => "operator",
+                _ => "value",
             };
+            let offset = err.offset.min(work.len());
+            let prefix = work.get(..offset).unwrap_or("");
+            let line = prefix.bytes().filter(|b| *b == b'\n').count() + 1;
+            let column = prefix.rsplit('\n').next().unwrap_or("").chars().count() + 1;
+            let found = work.get(offset..).and_then(|tail| tail.chars().next())
+                .map(|c| format!("`{c}`")).unwrap_or_else(|| "end of input".into());
+            let base = format!("Expected {expected} at byte {offset} (line {line}, column {column}); found {found}. Revise the expression at this position.");
             let structured_slot = infer_param_lhs_name(work, err.offset)
                 .map(|n| resolve_wire_param_name_for_feedback(n, &style))
                 .map(|wire| wire_param_is_structured_or_multiline(cgs, &full_entity_refs, wire.as_str()))
@@ -2576,6 +2578,19 @@ mod tests {
     }
 
     #[test]
+    fn structural_parse_error_identifies_offset_and_expected_token() {
+        let work = "(items | select id)";
+        let err = expr_parser::ParseError {
+            kind: expr_parser::ParseErrorKind::ExpectedIdentifier,
+            offset: 0,
+        };
+        let feedback = render_parse_error(&err, work, &crate::CGS::new());
+        assert!(feedback.correction.contains("Expected identifier"));
+        assert!(feedback.correction.contains("byte 0"));
+        assert!(!feedback.correction.contains("Fix spelling"));
+    }
+
+    #[test]
     fn parse_error_expected_identifier_generic_when_markdown_like_without_resolved_slot() {
         let cgs = crate::CGS::new();
         let work = "Issue(1).update(description=## Scope, x=1)";
@@ -2599,7 +2614,16 @@ mod tests {
     #[test]
     fn parse_error_expected_identifier_suggests_raw_block_when_markdown_slot_resolves() {
         let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
-        let cgs = loader::load_schema_dir(dir).expect("plasm_language_matrix");
+        let mut cgs = loader::load_schema_dir(dir).expect("plasm_language_matrix");
+        // The receiver's action input slots must carry the presentation profile.
+        // Its read-side entity title remains an ordinary string.
+        for name in ["nv_langitem_create_title", "nv_langitem_update_title"] {
+            cgs.values
+                .get_mut(name)
+                .expect("title input domain")
+                .domain
+                .profile = Some(crate::value_domain::ProfileId::Markdown);
+        }
         let work = "LangItem(1).update(title=## Scope, x=1)";
         let err = expr_parser::ParseError {
             kind: expr_parser::ParseErrorKind::ExpectedIdentifier,

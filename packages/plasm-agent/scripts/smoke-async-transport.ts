@@ -3,16 +3,17 @@
  * Smoke: async host transport (Promise return) through NAPI live run.
  */
 import { createPlasmAgent } from "../agent/agent.js";
+import { runRefsInText } from "../src/telemetry/eve-tool-loop.js";
 
 function extractPlanCommitRef(markdown: string): string {
-  const match = markdown.match(/\b(pc\d+)\b/);
-  if (!match) throw new Error(`plan_commit_ref not found:\n${markdown}`);
-  return match[1];
+  const ref = runRefsInText(markdown)[0];
+  if (!ref) throw new Error(`run_ref not found:\n${markdown}`);
+  return ref;
 }
 
 function extractLogicalSessionRef(markdown: string): string {
-  const match = markdown.match(/^`([^`]+)`/m);
-  if (!match) throw new Error(`logical_session_ref not found:\n${markdown}`);
+  const match = markdown.match(/\*\*logical_session_ref:\*\*\s*`([^`]+)`/i);
+  if (!match?.[1]) throw new Error(`logical_session_ref not found:\n${markdown}`);
   return match[1];
 }
 

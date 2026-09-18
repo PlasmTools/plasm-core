@@ -1,4 +1,4 @@
-version: 18
+version: 20
 entry_id: splitwise
 auth:
   scheme: none
@@ -11,9 +11,43 @@ data_classes:
     description: Settlement payment recorded between group members.
     severity: critical
 entities:
+  NotificationSummary:
+    id_field: access_token
+    implicit_request_identity: true
+    description: Notification totals for the signed-in account.
+    fields:
+      access_token:
+        value_ref: nv_access_token
+      notifications_count:
+        value_ref: notification_count
+  Account:
+    id_field: email
+    description: The signed-in splitwise account, including private account details
+      and registration, verification, recovery and deletion.
+    discovery:
+      names:
+      - account
+      - signup
+      - sign up
+      - registration
+      - password reset
+      - account verification
+    fields:
+      first_name:
+        value_ref: account_name
+      last_name:
+        value_ref: account_name
+      email:
+        value_ref: account_email
+      registered_at:
+        value_ref: account_timestamp
+      last_logged_in:
+        value_ref: account_timestamp
+      verified:
+        value_ref: account_verified
   AuthSession:
     id_field: access_token
-    description: Login session for Splitwise (Bearer token).
+    description: Authenticated session for Splitwise.
     discovery:
       names:
       - login
@@ -202,6 +236,18 @@ entities:
       created_at:
         required: false
         value_ref: nv_datetime
+      author_name:
+        value_ref: nv_str
+        path:
+        - user
+        - name
+        description: Name of the person who wrote this comment.
+      author_email:
+        value_ref: nv_email
+        path:
+        - user
+        - email
+        description: Email of the person who wrote this comment.
   PaymentComment:
     id_field: payment_comment_id
     description: Comment on a settlement payment.
@@ -223,6 +269,18 @@ entities:
       created_at:
         required: false
         value_ref: nv_datetime
+      author_name:
+        value_ref: nv_str
+        path:
+        - user
+        - name
+        description: Name of the person who wrote this comment.
+      author_email:
+        value_ref: nv_email
+        path:
+        - user
+        - email
+        description: Email of the person who wrote this comment.
   Notification:
     id_field: notification_id
     description: Inbox notification for the authenticated Splitwise user.
@@ -409,6 +467,213 @@ entities:
         required: false
         value_ref: nv_balance_breakdown
 capabilities:
+  expense_comment_get:
+    kind: get
+    entity: ExpenseComment
+    description: Read the selected ExpenseComment and its details.
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - expense_comment_id
+    - expense_id
+    - comment
+    - created_at
+    - author_name
+    - author_email
+  payment_comment_get:
+    kind: get
+    entity: PaymentComment
+    description: Read the selected PaymentComment and its details.
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - payment_comment_id
+    - payment_id
+    - comment
+    - created_at
+    - author_name
+    - author_email
+  notification_count:
+    kind: get
+    entity: NotificationSummary
+    description: Count account notifications, optionally by read status.
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: read
+          value_ref: notification_read_filter
+          required: false
+    provides:
+    - notifications_count
+  account_get:
+    description: Show the signed-in splitwise account.
+    kind: query
+    entity: Account
+    provides:
+    - first_name
+    - last_name
+    - email
+    - registered_at
+    - last_logged_in
+    - verified
+    scope:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+  account_create:
+    description: Sign up a new splitwise account.
+    kind: action
+    receiver:
+      kind: none
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: first_name
+          description: Given name of the account holder.
+          value_ref: account_name
+          required: true
+        - name: last_name
+          description: Family name of the account holder.
+          value_ref: account_name
+          required: true
+        - name: email
+          value_ref: account_email
+          required: true
+        - name: password
+          value_ref: account_password
+          required: true
+    output:
+      type: side_effect
+      description: Creates the splitwise account for this email.
+  account_update:
+    description: Update the signed-in account holder's name.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: first_name
+          description: Given name of the account holder.
+          value_ref: account_name
+          required: false
+        - name: last_name
+          description: Family name of the account holder.
+          value_ref: account_name
+          required: false
+    output:
+      type: side_effect
+      description: Updates the account holder's display name.
+    receiver:
+      kind: none
+  account_delete:
+    description: Delete the signed-in splitwise account.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Deletes the signed-in splitwise account.
+    receiver:
+      kind: none
+  send_verification_code:
+    description: Email a verification code to confirm an splitwise account.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: email
+          value_ref: account_email
+          required: true
+    output:
+      type: side_effect
+      description: Sends an account verification code to the email.
+    receiver:
+      kind: none
+  verify_account:
+    description: Confirm an splitwise account with a verification code.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: email
+          value_ref: account_email
+          required: true
+        - name: verification_code
+          value_ref: account_verification_code
+          required: true
+    output:
+      type: side_effect
+      description: Marks the account as verified.
+    receiver:
+      kind: none
+  send_password_reset_code:
+    description: Email a password-reset code for an splitwise account.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: email
+          value_ref: account_email
+          required: true
+    output:
+      type: side_effect
+      description: Sends a password-reset code to the email.
+    receiver:
+      kind: none
+  reset_password:
+    description: Set a new splitwise password using a reset code.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: email
+          value_ref: account_email
+          required: true
+        - name: password_reset_code
+          value_ref: account_password_reset_code
+          required: true
+        - name: new_password
+          value_ref: account_password
+          required: true
+    output:
+      type: side_effect
+      description: Replaces the account password.
+    receiver:
+      kind: none
   login:
     description: Login to Splitwise; returns access_token for Bearer auth.
     kind: action
@@ -685,7 +950,7 @@ capabilities:
     - deleted
     - created_at
   expense_create:
-    description: Create a shared expense with payer and debtors.
+    description: "Record an obligation: payer paid; each debtor owes payer. For 'I owe Alex', payer=Alex and debtor=me. Not a money transfer. Omit debt_amounts for equal shares."
     kind: create
     entity: Expense
     payload:
@@ -699,17 +964,18 @@ capabilities:
           value_ref: nv_body
           required: true
         - name: paid_amount
-          value_ref: nv_number
+          value_ref: nv_expense_paid_amount
           required: true
         - name: payer_email
-          value_ref: nv_email
+          value_ref: nv_expense_payer_email
           required: true
         - name: debtor_emails
-          value_ref: nv_email_list
+          value_ref: nv_expense_debtor_emails
           required: true
         - name: debt_amounts
           value_ref: nv_number_list
           required: false
+          description: Omit for equal division among debtor_emails; explicit amounts define an unequal split.
         - name: group_id
           value_ref: nv_group_ref
           required: false
@@ -730,13 +996,13 @@ capabilities:
           value_ref: nv_body
           required: false
         - name: paid_amount
-          value_ref: nv_number
+          value_ref: nv_expense_paid_amount
           required: false
         - name: payer_email
-          value_ref: nv_email
+          value_ref: nv_expense_payer_email
           required: false
         - name: debtor_emails
-          value_ref: nv_email_list
+          value_ref: nv_expense_debtor_emails
           required: false
         - name: debt_amounts
           value_ref: nv_number_list
@@ -1056,6 +1322,8 @@ capabilities:
     - expense_id
     - comment
     - created_at
+    - author_name
+    - author_email
   expense_comment_create:
     description: Post a comment on an expense.
     kind: create
@@ -1117,6 +1385,8 @@ capabilities:
     - payment_id
     - comment
     - created_at
+    - author_name
+    - author_email
   payment_comment_create:
     description: Post a comment on a payment.
     kind: create
@@ -1353,6 +1623,34 @@ capabilities:
           required: true
     provides: [email, direction, total, breakdown]
 values:
+  notification_count:
+    type: number
+    description: Number of notifications matching the selected read status.
+  notification_read_filter:
+    type: boolean
+    description: True for read notifications, false for unread; omit to count both.
+  account_name:
+    type: string
+    description: Account holder first or last name.
+  account_email:
+    type: email
+    description: Email identifying the account being registered, verified, or recovered.
+  account_password:
+    type: string
+    description: Password for account registration or recovery.
+    min_length: 5
+  account_verification_code:
+    type: string
+    description: Code delivered to the account owner to confirm account ownership.
+  account_password_reset_code:
+    type: string
+    description: Code delivered to the account owner to authorize a password change.
+  account_timestamp:
+    type: rfc3339
+    description: Account registration or last login time.
+  account_verified:
+    type: boolean
+    description: Whether account ownership has been verified.
   nv_person_balance_direction:
     type: enum
     enum: [you_owe_them, they_owe_you, no_balance]
@@ -1386,17 +1684,31 @@ values:
     description: Long text body.
   nv_group_id:
     type: integer
-    description: Group primary key.
+    description: Identifies the group to read or act on.
   nv_group_ref:
     type: entity_ref
     target: Group
-    description: Group primary key.
+    description: Identifies the group to read or act on.
   nv_expense_id:
     type: integer
-    description: Expense primary key.
+    description: Identifies the expense to read or act on.
   nv_payment_id:
     type: integer
-    description: Payment primary key.
+    description: Identifies the payment to read or act on.
+  nv_expense_payer_email:
+    type: email
+    description: "Email of the person who already paid and is owed by every debtor. For 'I owe Alex', use Alex here."
+  nv_expense_debtor_email:
+    type: email
+    description: "Email of a person who owes the payer a share. For 'I owe Alex', use me here; may include payer for their own share."
+  nv_expense_debtor_emails:
+    type: array
+    items:
+      value_ref: nv_expense_debtor_email
+    description: "People who owe payer shares; include payer only when assigning their own share. For 'I owe Alex', this is [me]."
+  nv_expense_paid_amount:
+    type: number
+    description: Total amount already paid by the expense payer, to be divided into debtor shares.
   nv_email_list:
     type: array
     items:
@@ -1424,13 +1736,13 @@ values:
     description: Receipt file path for upload — absolute /home/… (or resolved ~/… with a subpath). Relative paths and bare ~ are rejected.
   nv_expense_comment_id:
     type: integer
-    description: Expense comment primary key.
+    description: Identifies the expense comment to read or act on.
   nv_payment_comment_id:
     type: integer
-    description: Payment comment primary key.
+    description: Identifies the payment comment to read or act on.
   nv_notification_id:
     type: integer
-    description: Notification primary key.
+    description: Identifies the notification to read or act on.
   nv_comment:
     type: string
     description: Text body of an expense or payment comment.
@@ -1525,6 +1837,60 @@ prerequisites:
       outputs:
         token: access_token
   requirements:
+    expense_comment_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    payment_comment_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    notification_count:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    account_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: scope
+          path:
+          - access_token
+        output: token
+    account_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    account_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
     login:
     - id: principal
       contract: appworld.principal

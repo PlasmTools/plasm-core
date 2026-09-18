@@ -79,8 +79,8 @@ pub(crate) async fn materialize_synthetic_node(
         ValidatedPlanNode::Compute(compute) => compute
             .compute
             .page_size
-            .unwrap_or(crate::plan_read_bounds::DEFAULT_HOST_PAGE_SIZE),
-        _ => crate::plan_read_bounds::DEFAULT_HOST_PAGE_SIZE,
+            .unwrap_or(full_entities.len().max(1)),
+        _ => full_entities.len().max(1),
     };
     let (entities, has_more, paging_handle) = if full_entities.len() > page_size {
         let first = full_entities[..page_size].to_vec();
@@ -728,6 +728,20 @@ async fn materialize_cached_embed_or_error(
 
 /// Archive snapshot + build a for_each `MaterializedNode`.
 #[allow(clippy::too_many_arguments)]
+fn for_each_execution_result(
+    fold: super::plan_fanout_parallel::PlanLineExecutionFold,
+    source_row_count: usize,
+    source_coverage: plasm_runtime::ResultCoverage,
+) -> plasm_runtime::ExecutionResult {
+    let mut result = execution_result_from_fanout_fold(fold);
+    result.coverage = if source_row_count == 0 {
+        source_coverage
+    } else {
+        result.coverage.combine(source_coverage)
+    };
+    result
+}
+
 pub(crate) async fn archive_materialize_for_each_fanout(
     st: &PlasmHostState,
     es: &ExecuteSession,
@@ -736,10 +750,11 @@ pub(crate) async fn archive_materialize_for_each_fanout(
     for_each: &ValidatedForEachNode,
     fold: super::plan_fanout_parallel::PlanLineExecutionFold,
     source_row_count: usize,
+    source_coverage: plasm_runtime::ResultCoverage,
     snapshot_expressions: Vec<String>,
     trace: Option<&PlasmTraceContext>,
 ) -> Result<MaterializedNode, String> {
-    let mut result = execution_result_from_fanout_fold(fold.clone());
+    let mut result = for_each_execution_result(fold.clone(), source_row_count, source_coverage);
     stamp_for_each_operations(&mut result, scoped_es.cgs.as_ref(), for_each);
     let for_each_node = ValidatedPlanNode::ForEach(for_each.clone());
     let parsed_preimage = evidence_plan::parsed_expr_for_plan_node(&for_each_node);
@@ -895,4 +910,34 @@ fn stamp_for_each_operations(
             ack.description,
             result.source,
         ));
+}
+
+#[cfg(test)]
+mod for_each_coverage_tests {
+    use super::*;
+    use plasm_runtime::ResultCoverage::{Complete, Partial, Unknown};
+
+    #[test]
+    fn successful_children_do_not_complete_partial_source() {
+        for (rows, source, expected) in [
+            (25, Partial, Partial),
+            (25, Unknown, Unknown),
+            (25, Complete, Complete),
+            (0, Complete, Complete),
+            (0, Partial, Partial),
+        ] {
+            let mut fold = super::super::plan_fanout_parallel::empty_execution_fold();
+            fold.coverage = Complete;
+            fold.stats.network_requests = rows;
+            let result = for_each_execution_result(fold, rows, source);
+            assert_eq!(
+                crate::output::http_execute_results_value(&result)["coverage"],
+                expected.as_str()
+            );
+            assert_eq!(
+                result.stats.network_requests, rows,
+                "coverage must not change successful invocation evidence"
+            );
+        }
+    }
 }

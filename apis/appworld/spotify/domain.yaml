@@ -1,4 +1,4 @@
-version: 23
+version: 28
 entry_id: spotify
 auth:
   scheme: none
@@ -14,9 +14,86 @@ data_classes:
     description: Outbound premium subscription that charges a payment card.
     severity: critical
 entities:
+  SongMembership:
+    implicit_request_identity: true
+    id_field: song_id
+    description: Your personal library, rating and following status for a song.
+    fields:
+      song_id:
+        value_ref: nv_song_id
+      liked:
+        value_ref: nv_bool
+      reviewed:
+        value_ref: nv_bool
+      in_song_library:
+        value_ref: nv_bool
+      downloaded:
+        value_ref: nv_bool
+  AlbumMembership:
+    implicit_request_identity: true
+    id_field: album_id
+    description: Your personal library, rating and following status for a album.
+    fields:
+      album_id:
+        value_ref: nv_album_id
+      liked:
+        value_ref: nv_bool
+      reviewed:
+        value_ref: nv_bool
+      in_album_library:
+        value_ref: nv_bool
+  PlaylistMembership:
+    implicit_request_identity: true
+    id_field: playlist_id
+    description: Your personal library, rating and following status for a playlist.
+    fields:
+      playlist_id:
+        value_ref: nv_playlist_id
+      liked:
+        value_ref: nv_bool
+      reviewed:
+        value_ref: nv_bool
+      in_playlist_library:
+        value_ref: nv_bool
+  ArtistMembership:
+    implicit_request_identity: true
+    id_field: artist_id
+    description: Your personal library, rating and following status for a artist.
+    fields:
+      artist_id:
+        value_ref: nv_artist_id
+      following:
+        value_ref: nv_bool
+  Account:
+    id_field: email
+    description: The signed-in spotify account, including private account details and
+      registration, verification, recovery and deletion.
+    discovery:
+      names:
+      - account
+      - signup
+      - sign up
+      - registration
+      - password reset
+      - account verification
+    fields:
+      first_name:
+        value_ref: account_name
+      last_name:
+        value_ref: account_name
+      email:
+        value_ref: account_email
+      registered_at:
+        value_ref: account_timestamp
+      last_logged_in:
+        value_ref: account_timestamp
+      verified:
+        value_ref: account_verified
+      is_premium:
+        value_ref: account_premium
   AuthSession:
     id_field: access_token
-    description: Login session for Spotify (Bearer token).
+    description: Authenticated session for Spotify.
     discovery:
       names:
       - login
@@ -29,18 +106,45 @@ entities:
       token_type:
         required: false
         value_ref: nv_str
+  Library:
+    id_field: access_token
+    implicit_request_identity: true
+    primary_query: library_query
+    description: The user's saved music collections. Songs include directly saved tracks and tracks in saved albums and playlists, deduplicated by Song identity. Independently liked items, catalog results, and recommendations are excluded.
+    discovery:
+      names: [library, music library, library songs, saved music, song album and playlist libraries]
+    fields:
+      access_token:
+        required: true
+        value_ref: nv_access_token
+    relations:
+      songs:
+        description: All distinct songs across directly saved tracks, saved albums, and saved playlists. Genre and play counts come from Song details.
+        target: Song
+        cardinality: many
+        materialize: {kind: view_embed, view: library}
+      albums:
+        description: Albums saved in the user's library.
+        target: Album
+        cardinality: many
+        materialize: {kind: view_embed, view: library}
+      playlists:
+        description: Playlists saved in the user's library.
+        target: Playlist
+        cardinality: many
+        materialize: {kind: view_embed, view: library}
   Song:
     id_field: song_id
     primary_query: song_library_query
-    description: A Spotify track on the catalog or library shelf. Not the liked-songs shelf (use LikedSong) and not the playback queue (use Player / QueueEntry).
+    description: A Spotify track on the catalog or directly saved song shelf. The Library.songs relation also includes tracks in saved albums and playlists. Not the liked-songs shelf (use LikedSong) and not the playback queue (use Player / QueueEntry).
     discovery:
       names:
       - song
       - songs
       - track
       - music
-      - song library
-      - library songs
+      - directly saved songs
+      - saved tracks
     fields:
       song_id:
         required: true
@@ -75,6 +179,16 @@ entities:
       shareable_link:
         required: false
         value_ref: nv_str
+    relations:
+      artists:
+        description: Artists credited on this recording.
+        target: Artist
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: artists
+          - wildcard: true
   LikedSong:
     id_field: song_id
     primary_query: liked_song_query
@@ -164,6 +278,15 @@ entities:
         required: false
         value_ref: nv_str
     relations:
+      artists:
+        description: Artists credited on this recording.
+        target: Artist
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: artists
+          - wildcard: true
       songs:
         description: Songs on this album.
         target: Song
@@ -445,6 +568,21 @@ entities:
         required: false
         value_ref: nv_review_text
         data_class: untrusted
+      author_name:
+        value_ref: nv_str
+        path:
+        - user
+        - name
+        description: Name of the person who wrote this review.
+      author_email:
+        value_ref: nv_email
+        path:
+        - user
+        - email
+        description: Email of the person who wrote this review.
+      created_at:
+        value_ref: nv_datetime
+        description: When this review was written.
   AlbumReview:
     id_field: album_review_id
     description: User review of an album.
@@ -470,6 +608,21 @@ entities:
         required: false
         value_ref: nv_review_text
         data_class: untrusted
+      author_name:
+        value_ref: nv_str
+        path:
+        - user
+        - name
+        description: Name of the person who wrote this review.
+      author_email:
+        value_ref: nv_email
+        path:
+        - user
+        - email
+        description: Email of the person who wrote this review.
+      created_at:
+        value_ref: nv_datetime
+        description: When this review was written.
   PlaylistReview:
     id_field: playlist_review_id
     description: User review of a playlist.
@@ -495,6 +648,21 @@ entities:
         required: false
         value_ref: nv_review_text
         data_class: untrusted
+      author_name:
+        value_ref: nv_str
+        path:
+        - user
+        - name
+        description: Name of the person who wrote this review.
+      author_email:
+        value_ref: nv_email
+        path:
+        - user
+        - email
+        description: Email of the person who wrote this review.
+      created_at:
+        value_ref: nv_datetime
+        description: When this review was written.
   PaymentCard:
     id_field: payment_card_id
     description: Saved payment card.
@@ -509,23 +677,23 @@ entities:
         value_ref: nv_payment_card_id
       card_name:
         required: false
-        value_ref: nv_str
+        value_ref: nv_card_name
       owner_name:
         required: false
-        value_ref: nv_str
+        value_ref: nv_person_name
       card_number:
         required: false
         value_ref: nv_card_number
         data_class: pii_payment
       expiry_year:
         required: false
-        value_ref: nv_int
+        value_ref: nv_year
       expiry_month:
         required: false
-        value_ref: nv_int
+        value_ref: nv_month
       cvv_number:
         required: false
-        value_ref: nv_int
+        value_ref: nv_cvv
         data_class: pii_payment
   PremiumPlan:
     id_field: monthly
@@ -568,6 +736,413 @@ entities:
         required: false
         value_ref: nv_number
 capabilities:
+  song_review_get:
+    kind: get
+    entity: SongReview
+    description: Read the selected SongReview and its details.
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - song_review_id
+    - song_id
+    - rating
+    - title
+    - text
+    - author_name
+    - author_email
+    - created_at
+  album_review_get:
+    kind: get
+    entity: AlbumReview
+    description: Read the selected AlbumReview and its details.
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - album_review_id
+    - album_id
+    - rating
+    - title
+    - text
+    - author_name
+    - author_email
+    - created_at
+  playlist_review_get:
+    kind: get
+    entity: PlaylistReview
+    description: Read the selected PlaylistReview and its details.
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - playlist_review_id
+    - playlist_id
+    - rating
+    - title
+    - text
+    - author_name
+    - author_email
+    - created_at
+  payment_card_get:
+    kind: get
+    entity: PaymentCard
+    description: Read the selected PaymentCard and its details.
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - payment_card_id
+    - card_name
+    - owner_name
+    - card_number
+    - expiry_year
+    - expiry_month
+    - cvv_number
+    output: {type: collection, entity_type: PaymentCard}
+  song_review_query:
+    kind: query
+    entity: SongReview
+    description: Read reviews of a song, optionally filtered by author, text or rating.
+    scope:
+    - name: song_id
+      value_ref: nv_song_id
+      required: true
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    selection:
+    - name: query
+      value_ref: nv_str
+      required: false
+    - name: user_email
+      value_ref: nv_email
+      required: false
+    - name: min_rating
+      value_ref: nv_rating
+      required: false
+    - name: max_rating
+      value_ref: nv_rating
+      required: false
+    controls:
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+    provides:
+    - song_review_id
+    - song_id
+    - rating
+    - title
+    - text
+    - author_name
+    - author_email
+    - created_at
+  album_review_query:
+    kind: query
+    entity: AlbumReview
+    description: Read reviews of a album, optionally filtered by author, text or rating.
+    scope:
+    - name: album_id
+      value_ref: nv_album_id
+      required: true
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    selection:
+    - name: query
+      value_ref: nv_str
+      required: false
+    - name: user_email
+      value_ref: nv_email
+      required: false
+    - name: min_rating
+      value_ref: nv_rating
+      required: false
+    - name: max_rating
+      value_ref: nv_rating
+      required: false
+    controls:
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+    provides:
+    - album_review_id
+    - album_id
+    - rating
+    - title
+    - text
+    - author_name
+    - author_email
+    - created_at
+  playlist_review_query:
+    kind: query
+    entity: PlaylistReview
+    description: Read reviews of a playlist, optionally filtered by author, text or
+      rating.
+    scope:
+    - name: playlist_id
+      value_ref: nv_playlist_id
+      required: true
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    selection:
+    - name: query
+      value_ref: nv_str
+      required: false
+    - name: user_email
+      value_ref: nv_email
+      required: false
+    - name: min_rating
+      value_ref: nv_rating
+      required: false
+    - name: max_rating
+      value_ref: nv_rating
+      required: false
+    controls:
+    - name: sort_by
+      value_ref: nv_str
+      required: false
+    provides:
+    - playlist_review_id
+    - playlist_id
+    - rating
+    - title
+    - text
+    - author_name
+    - author_email
+    - created_at
+  song_membership_get:
+    kind: get
+    entity: SongMembership
+    description: Check your personal status for the selected song.
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - liked
+    - reviewed
+    - in_song_library
+    - downloaded
+  album_membership_get:
+    kind: get
+    entity: AlbumMembership
+    description: Check your personal status for the selected album.
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - liked
+    - reviewed
+    - in_album_library
+  playlist_membership_get:
+    kind: get
+    entity: PlaylistMembership
+    description: Check your personal status for the selected playlist.
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - liked
+    - reviewed
+    - in_playlist_library
+  artist_membership_get:
+    kind: get
+    entity: ArtistMembership
+    description: Check your personal status for the selected artist.
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - following
+  account_get:
+    description: Show the signed-in spotify account.
+    kind: query
+    entity: Account
+    provides:
+    - first_name
+    - last_name
+    - email
+    - registered_at
+    - last_logged_in
+    - verified
+    - is_premium
+    scope:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+  account_create:
+    description: Sign up a new spotify account.
+    kind: action
+    receiver:
+      kind: none
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: first_name
+          description: Given name of the account holder.
+          value_ref: account_name
+          required: true
+        - name: last_name
+          description: Family name of the account holder.
+          value_ref: account_name
+          required: true
+        - name: email
+          value_ref: account_email
+          required: true
+        - name: password
+          value_ref: account_password
+          required: true
+    output:
+      type: side_effect
+      description: Creates the spotify account for this email.
+  account_update:
+    description: Update the signed-in account holder's name.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: first_name
+          description: Given name of the account holder.
+          value_ref: account_name
+          required: false
+        - name: last_name
+          description: Family name of the account holder.
+          value_ref: account_name
+          required: false
+    output:
+      type: side_effect
+      description: Updates the account holder's display name.
+    receiver:
+      kind: none
+  account_delete:
+    description: Delete the signed-in spotify account.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Deletes the signed-in spotify account.
+    receiver:
+      kind: none
+  send_verification_code:
+    description: Email a verification code to confirm an spotify account.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: email
+          value_ref: account_email
+          required: true
+    output:
+      type: side_effect
+      description: Sends an account verification code to the email.
+    receiver:
+      kind: none
+  verify_account:
+    description: Confirm an spotify account with a verification code.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: email
+          value_ref: account_email
+          required: true
+        - name: verification_code
+          value_ref: account_verification_code
+          required: true
+    output:
+      type: side_effect
+      description: Marks the account as verified.
+    receiver:
+      kind: none
+  send_password_reset_code:
+    description: Email a password-reset code for an spotify account.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: email
+          value_ref: account_email
+          required: true
+    output:
+      type: side_effect
+      description: Sends a password-reset code to the email.
+    receiver:
+      kind: none
+  reset_password:
+    description: Set a new spotify password using a reset code.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: email
+          value_ref: account_email
+          required: true
+        - name: password_reset_code
+          value_ref: account_password_reset_code
+          required: true
+        - name: new_password
+          value_ref: account_password
+          required: true
+    output:
+      type: side_effect
+      description: Replaces the account password.
+    receiver:
+      kind: none
   login:
     description: Login to Spotify; returns access_token for Bearer auth.
     kind: action
@@ -954,7 +1529,7 @@ capabilities:
       type: side_effect
       description: Unlikes the playlist.
   player_current_wire:
-    description: Show the current song on the music player wire (no liked-shelf membership).
+    description: Show the current song on the music player, including the current song and playback position.
     kind: get
     entity: Player
     arguments:
@@ -1318,10 +1893,20 @@ capabilities:
     - rating
     - like_count
     - shareable_link
+  library_query:
+    description: Read the user's saved music library, with songs across saved tracks, albums and playlists, plus the saved albums and playlists themselves.
+    kind: query
+    entity: Library
+    discovery:
+      operation_terms: [read, list, browse, search]
+      target_terms: [library, music library, saved songs, album library, playlist library]
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides: [access_token]
   song_library_query:
-    description: 'List songs by shelf — catalog (optional query/genre filters), library saves, or personalized recommendations.
-
-      '
+    description: List song summaries by shelf. Song details supply genre and play statistics. Use row filtering and ordering after hydration; Library and recommendation collections can be filtered by genre and sorted after reading their song details.
     kind: query
     entity: Song
     discovery:
@@ -1335,7 +1920,8 @@ capabilities:
       - song
       - songs
       - track
-      - song library
+      - directly saved songs
+      - saved tracks
       - recommendations
     selection:
     - name: access_token
@@ -1348,25 +1934,14 @@ capabilities:
     - name: query
       value_ref: nv_str
       required: false
-    - name: genre
-      value_ref: nv_genre
-      required: false
-    controls:
-    - name: sort_by
-      value_ref: nv_str
-      required: false
+    # Common list fields across catalog, library, and recommendations shelves.
+    # Genre and play statistics are supplied by song_get hydration.
     provides:
     - song_id
     - title
     - album_id
     - album_title
     - duration
-    - genre
-    - release_date
-    - play_count
-    - rating
-    - like_count
-    - shareable_link
   song_library_add:
     receiver: {kind: entity, entity: Song}
     description: Add a song to the user's library.
@@ -1398,9 +1973,7 @@ capabilities:
       type: side_effect
       description: Removes this song from the library.
   album_library_query:
-    description: 'List albums by shelf — catalog (optional query/genre filters) or saved library.
-
-      '
+    description: List albums by shelf. Use row filtering and ordering; the saved library does not support catalog genre/sort controls.
     kind: query
     entity: Album
     discovery:
@@ -1422,13 +1995,6 @@ capabilities:
       required: true
       description: catalog | library
     - name: query
-      value_ref: nv_str
-      required: false
-    - name: genre
-      value_ref: nv_genre
-      required: false
-    controls:
-    - name: sort_by
       value_ref: nv_str
       required: false
     provides:
@@ -1782,22 +2348,22 @@ capabilities:
           value_ref: nv_access_token
           required: true
         - name: card_name
-          value_ref: nv_str
+          value_ref: nv_card_name
           required: true
         - name: owner_name
-          value_ref: nv_str
+          value_ref: nv_person_name
           required: true
         - name: card_number
           value_ref: nv_card_number
           required: true
         - name: expiry_year
-          value_ref: nv_int
+          value_ref: nv_year
           required: true
         - name: expiry_month
-          value_ref: nv_int
+          value_ref: nv_month
           required: true
         - name: cvv_number
-          value_ref: nv_int
+          value_ref: nv_cvv
           required: true
     provides:
     - payment_card_id
@@ -1925,6 +2491,49 @@ capabilities:
 # OpenAPI SongPlayerResponse has no liked flag. Compose player wire + liked_songs list;
 # is_liked := current song_id appears in the liked shelf (Player membership, not LikedSong.is_liked).
 views:
+  library:
+    description: Saved music collections with distinct songs across saved tracks, albums and playlists.
+    capability: library_query
+    entity: Library
+    scope:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    nodes:
+    - id: direct_songs
+      capability: song_library_query
+      bind:
+        access_token: {kind: scope, param: access_token}
+        shelf: {kind: literal, value: library}
+    - id: albums
+      capability: album_library_query
+      bind:
+        access_token: {kind: scope, param: access_token}
+        shelf: {kind: literal, value: library}
+    - id: playlists
+      capability: playlist_library_query
+      bind:
+        access_token: {kind: scope, param: access_token}
+        shelf: {kind: literal, value: library}
+    - id: album_songs
+      traverse: {node: albums, relation: songs}
+    - id: playlist_songs
+      traverse: {node: playlists, relation: songs}
+    output:
+      access_token: {kind: scope, param: access_token}
+    relation_outputs:
+    - relation: songs
+      target: Song
+      cardinality: many
+      binding: {kind: node_union_rows, nodes: [direct_songs, album_songs, playlist_songs]}
+    - relation: albums
+      target: Album
+      cardinality: many
+      binding: {kind: node_all_rows, node: albums}
+    - relation: playlists
+      target: Playlist
+      cardinality: many
+      binding: {kind: node_all_rows, node: playlists}
   player_current:
     description: Current playback with liked-shelf membership for the song on the cursor.
     capability: player_current
@@ -1986,6 +2595,31 @@ views:
         template: "{{ (song_id ~ '') in liked_by_song_id }}"
 
 values:
+  account_name:
+    type: string
+    description: Account holder first or last name.
+  account_email:
+    type: email
+    description: Email identifying the account being registered, verified, or recovered.
+  account_password:
+    type: string
+    description: Password for account registration or recovery.
+    min_length: 5
+  account_verification_code:
+    type: string
+    description: Code delivered to the account owner to confirm account ownership.
+  account_password_reset_code:
+    type: string
+    description: Code delivered to the account owner to authorize a password change.
+  account_timestamp:
+    type: rfc3339
+    description: Account registration or last login time.
+  account_verified:
+    type: boolean
+    description: Whether account ownership has been verified.
+  account_premium:
+    type: boolean
+    description: Whether the account has premium membership.
   nv_str:
     type: string
     description: Free-form string.
@@ -2031,31 +2665,31 @@ values:
     description: Playlist list shelf — catalog browse/filter or saved library.
   nv_song_id:
     type: integer
-    description: Song primary key.
+    description: Identifies the song to read or act on.
   nv_album_id:
     type: integer
-    description: Album primary key.
+    description: Identifies the album to read or act on.
   nv_artist_id:
     type: integer
-    description: Artist primary key.
+    description: Identifies the artist to read or act on.
   nv_playlist_id:
     type: integer
-    description: Playlist primary key.
+    description: Identifies the playlist to read or act on.
   nv_song_review_id:
     type: integer
-    description: Song review primary key.
+    description: Identifies the song review to read or act on.
   nv_album_review_id:
     type: integer
-    description: Album review primary key.
+    description: Identifies the album review to read or act on.
   nv_playlist_review_id:
     type: integer
-    description: Playlist review primary key.
+    description: Identifies the playlist review to read or act on.
   nv_payment_card_id:
     type: integer
-    description: Payment card primary key.
+    description: Identifies the payment card to read or act on.
   nv_premium_subscription_id:
     type: integer
-    description: Premium subscription primary key.
+    description: Identifies the premium subscription to read or act on.
   nv_premium_duration:
     type: enum
     description: Premium subscription billing duration.
@@ -2100,6 +2734,21 @@ values:
   nv_card_number:
     type: digit_id
     description: Linked payment card primary account number.
+  nv_card_name:
+    type: string
+    description: Payment card display name.
+  nv_person_name:
+    type: string
+    description: Cardholder display name.
+  nv_cvv:
+    type: integer
+    description: Card CVV digits as integer.
+  nv_month:
+    type: integer
+    description: Card expiry month.
+  nv_year:
+    type: integer
+    description: Card expiry year.
   nv_like_count:
     type: integer
     description: Community/social popularity tally for this item — how many users have liked it, not whether the current user
@@ -2135,6 +2784,16 @@ prerequisites:
       inputs: {}
       outputs:
         token: nv_access_token
+    appworld.payment_card:
+      version: 1
+      inputs: {}
+      outputs:
+        card_name: nv_card_name
+        owner_name: nv_person_name
+        card_number: nv_card_number
+        expiry_year: nv_year
+        expiry_month: nv_month
+        cvv_number: nv_cvv
   providers:
     session:
       contract: appworld.session
@@ -2142,6 +2801,132 @@ prerequisites:
       outputs:
         token: access_token
   requirements:
+    song_review_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    album_review_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    playlist_review_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    payment_card_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    song_review_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: scope
+          path:
+          - access_token
+        output: token
+    album_review_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: scope
+          path:
+          - access_token
+        output: token
+    playlist_review_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: scope
+          path:
+          - access_token
+        output: token
+    song_membership_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    album_membership_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    playlist_membership_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    artist_membership_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    account_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: scope
+          path:
+          - access_token
+        output: token
+    account_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    account_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
     login:
     - id: principal
       contract: appworld.principal
@@ -2360,6 +3145,14 @@ prerequisites:
           lane: arguments
           path:
           - access_token
+        output: token
+    library_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path: [access_token]
         output: token
     player_current:
     - id: session
@@ -2703,6 +3496,21 @@ prerequisites:
           path:
           - access_token
         output: token
+    - id: payment_card
+      contract: appworld.payment_card
+      bindings:
+      - input: {lane: payload, path: [card_name]}
+        output: card_name
+      - input: {lane: payload, path: [owner_name]}
+        output: owner_name
+      - input: {lane: payload, path: [card_number]}
+        output: card_number
+      - input: {lane: payload, path: [expiry_year]}
+        output: expiry_year
+      - input: {lane: payload, path: [expiry_month]}
+        output: expiry_month
+      - input: {lane: payload, path: [cvv_number]}
+        output: cvv_number
     payment_card_update:
     - id: session
       contract: appworld.session

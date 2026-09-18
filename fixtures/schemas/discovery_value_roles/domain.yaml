@@ -1,0 +1,55 @@
+version: 1
+entry_id: role_fixture
+auth: {scheme: none}
+http_backend: http://fixture.invalid
+values:
+  id: {type: string, description: Record identity}
+  owner: {type: email, description: Owner of the collection being read}
+  role:
+    type: enum
+    description: Recorded relationship to the account holder
+    enum: [colleague, relative, neighbor]
+  roles:
+    type: array
+    description: Recorded relationship labels
+    items: {value_ref: role}
+  mode: {type: enum, description: Read consistency mode, enum: [fresh, cached]}
+entities:
+  Record:
+    id_field: id
+    description: Relationship-classified record
+    fields:
+      id: {value_ref: id, required: true}
+      roles: {value_ref: roles, required: false}
+capabilities:
+  record_query:
+    kind: query
+    entity: Record
+    description: Find records by relationship
+    scope:
+    - {name: owner_email, value_ref: owner, required: false, description: Select whose collection is read}
+    selection:
+    - {name: relationship, value_ref: role, required: false}
+    controls:
+    - {name: mode, value_ref: mode, required: false}
+    provides: [id, roles]
+  record_get:
+    kind: get
+    entity: Record
+    description: Read a record
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - {name: owner_email, value_ref: owner, required: false, default: private-default@example.com}
+    provides: [id, roles]
+  record_create:
+    kind: create
+    entity: Record
+    description: Create a relationship record
+    payload:
+      input_type:
+        type: object
+        fields:
+        - {name: relationships, value_ref: roles, required: true}
+    provides: [id]

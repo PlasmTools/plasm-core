@@ -1,4 +1,4 @@
-version: 11
+version: 13
 entry_id: phone
 auth:
   scheme: none
@@ -11,9 +11,32 @@ data_classes:
     description: Outbound SMS or voice message delivered to a phone number.
     severity: critical
 entities:
+  Account:
+    id_field: phone_number
+    description: The signed-in phone account, including private account details and
+      registration, verification, recovery and deletion.
+    discovery:
+      names:
+      - account
+      - signup
+      - sign up
+      - registration
+      - password reset
+      - account verification
+    fields:
+      first_name:
+        value_ref: account_name
+      last_name:
+        value_ref: account_name
+      registered_at:
+        value_ref: account_timestamp
+      last_logged_in:
+        value_ref: account_timestamp
+      phone_number:
+        value_ref: account_phone
   AuthSession:
     id_field: access_token
-    description: Login session for Phone (Bearer token). Username is the task principal's e164 phone number from Supervisor — not an email.
+    description: Authenticated session for Phone. Username is the task principal's e164 phone number from Supervisor — not an email.
     discovery:
       names:
       - login
@@ -28,7 +51,7 @@ entities:
         value_ref: nv_str
   Contact:
     id_field: contact_id
-    description: Phone address-book contact.
+    description: Person in the account holder's address book, classified by their relationship to the account holder.
     discovery:
       names:
       - contact
@@ -117,6 +140,30 @@ entities:
       sent_at:
         required: false
         value_ref: nv_datetime
+      sender_name:
+        value_ref: nv_str
+        path:
+        - sender
+        - name
+        description: Sender name.
+      sender_phone_number:
+        value_ref: nv_phone
+        path:
+        - sender
+        - phone_number
+        description: Sender phone number.
+      receiver_name:
+        value_ref: nv_str
+        path:
+        - receiver
+        - name
+        description: Receiver name.
+      receiver_phone_number:
+        value_ref: nv_phone
+        path:
+        - receiver
+        - phone_number
+        description: Receiver phone number.
   VoiceMessage:
     id_field: voice_message_id
     primary_query: voice_message_query
@@ -132,6 +179,30 @@ entities:
       sent_at:
         required: false
         value_ref: nv_datetime
+      sender_name:
+        value_ref: nv_str
+        path:
+        - sender
+        - name
+        description: Sender name.
+      sender_phone_number:
+        value_ref: nv_phone
+        path:
+        - sender
+        - phone_number
+        description: Sender phone number.
+      receiver_name:
+        value_ref: nv_str
+        path:
+        - receiver
+        - name
+        description: Receiver name.
+      receiver_phone_number:
+        value_ref: nv_phone
+        path:
+        - receiver
+        - phone_number
+        description: Receiver phone number.
   Profile:
     id_field: phone_number
     description: Public phone profile lookup.
@@ -171,6 +242,144 @@ entities:
         required: true
         value_ref: nv_str
 capabilities:
+  voice_message_get:
+    kind: get
+    entity: VoiceMessage
+    description: Read the selected VoiceMessage and its details.
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - voice_message_id
+    - message
+    - sent_at
+    - sender_name
+    - sender_phone_number
+    - receiver_name
+    - receiver_phone_number
+  account_get:
+    description: Show the signed-in phone account.
+    kind: query
+    entity: Account
+    provides:
+    - first_name
+    - last_name
+    - registered_at
+    - last_logged_in
+    - phone_number
+    scope:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+  account_create:
+    description: Sign up a new phone account.
+    kind: action
+    receiver:
+      kind: none
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: first_name
+          description: Given name of the account holder.
+          value_ref: account_name
+          required: true
+        - name: last_name
+          description: Family name of the account holder.
+          value_ref: account_name
+          required: true
+        - name: phone_number
+          value_ref: account_phone
+          required: true
+        - name: password
+          value_ref: account_password
+          required: true
+    output:
+      type: side_effect
+      description: Creates the phone account for this phone number.
+  account_update:
+    description: Update the signed-in account holder's name.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: first_name
+          description: Given name of the account holder.
+          value_ref: account_name
+          required: false
+        - name: last_name
+          description: Family name of the account holder.
+          value_ref: account_name
+          required: false
+    output:
+      type: side_effect
+      description: Updates the account holder's display name.
+    receiver:
+      kind: none
+  account_delete:
+    description: Delete the signed-in phone account.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Deletes the signed-in phone account.
+    receiver:
+      kind: none
+  send_password_reset_code:
+    description: Send a password-reset code for an phone account.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: phone_number
+          value_ref: account_phone
+          required: true
+    output:
+      type: side_effect
+      description: Sends a password-reset code to the phone number.
+    receiver:
+      kind: none
+  reset_password:
+    description: Set a new phone password using a reset code.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: phone_number
+          value_ref: account_phone
+          required: true
+        - name: password_reset_code
+          value_ref: account_password_reset_code
+          required: true
+        - name: new_password
+          value_ref: account_password
+          required: true
+    output:
+      type: side_effect
+      description: Replaces the account password.
+    receiver:
+      kind: none
   login:
     description: Login to Phone with username=e164 phone (Supervisor me.phone_number) and account password; returns access_token for Bearer auth. Do not use email.
     kind: action
@@ -206,9 +415,26 @@ capabilities:
       type: side_effect
       description: Ends the Phone session for this token.
   contact_query:
-    description: Search contacts by name/relationship.
+    description: Find people by name or their relationship to the account holder, and identify how known people are related to the account holder.
     kind: query
     entity: Contact
+    discovery:
+      operation_terms:
+      - find
+      - identify
+      - classify
+      - filter
+      target_terms:
+      - address book
+      - contact relationships
+      - friends
+      - coworkers
+      - family members
+      - relatives
+      - roommates
+      - partners
+      - managers
+      - subordinates
     selection:
     - name: access_token
       value_ref: nv_access_token
@@ -422,7 +648,8 @@ capabilities:
           value_ref: nv_access_token
           required: true
   text_message_query:
-    description: List text messages by shelf — browse/search (optional filters) or datetime window with a contact.
+    description: List text messages by shelf — browse/search (optional filters) or datetime
+      window with a contact.
     kind: query
     entity: TextMessage
     selection:
@@ -459,6 +686,10 @@ capabilities:
     - text_message_id
     - message
     - sent_at
+    - sender_name
+    - sender_phone_number
+    - receiver_name
+    - receiver_phone_number
   text_message_get:
     description: Show one text message.
     kind: get
@@ -474,6 +705,10 @@ capabilities:
     - text_message_id
     - message
     - sent_at
+    - sender_name
+    - sender_phone_number
+    - receiver_name
+    - receiver_phone_number
   text_message_send:
     description: Send a text message to a phone number.
     kind: action
@@ -507,7 +742,8 @@ capabilities:
           value_ref: nv_access_token
           required: true
   voice_message_query:
-    description: List voice messages by shelf — browse/search (optional filters) or datetime window with a contact.
+    description: List voice messages by shelf — browse/search (optional filters) or
+      datetime window with a contact.
     kind: query
     entity: VoiceMessage
     selection:
@@ -544,6 +780,10 @@ capabilities:
     - voice_message_id
     - message
     - sent_at
+    - sender_name
+    - sender_phone_number
+    - receiver_name
+    - receiver_phone_number
   voice_message_send:
     description: Send a voice message to a phone number.
     kind: action
@@ -624,6 +864,31 @@ capabilities:
     provides:
     - label
 values:
+  account_name:
+    type: string
+    description: Account holder first or last name.
+  account_email:
+    type: email
+    description: Email identifying the account being registered, verified, or recovered.
+  account_password:
+    type: string
+    description: Password for account registration or recovery.
+    min_length: 5
+  account_verification_code:
+    type: string
+    description: Code delivered to the account owner to confirm account ownership.
+  account_password_reset_code:
+    type: string
+    description: Code delivered to the account owner to authorize a password change.
+  account_timestamp:
+    type: rfc3339
+    description: Account registration or last login time.
+  account_verified:
+    type: boolean
+    description: Whether account ownership has been verified.
+  account_phone:
+    type: string
+    description: Account owner phone number.
   nv_str:
     type: string
     description: Free-form string.
@@ -647,16 +912,16 @@ values:
     description: Message body text.
   nv_contact_id:
     type: integer
-    description: Contact primary key.
+    description: Identifies the contact to read or act on.
   nv_alarm_id:
     type: integer
-    description: Alarm primary key.
+    description: Identifies the alarm to read or act on.
   nv_text_id:
     type: integer
-    description: Text message primary key.
+    description: Identifies the text message to read or act on.
   nv_voice_id:
     type: integer
-    description: Voice message primary key.
+    description: Identifies the voice message to read or act on.
   nv_weekday:
     type: enum
     description: Calendar weekday for alarm repeat.
@@ -687,7 +952,7 @@ values:
     description: Days an alarm repeats.
   nv_contact_relationship:
     type: enum
-    description: Relationship label for a phone contact.
+    description: How the contact is related to the account holder; a relationship category rather than a person's name.
     enum:
     - brother
     - child
@@ -755,6 +1020,42 @@ prerequisites:
       outputs:
         token: access_token
   requirements:
+    voice_message_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    account_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: scope
+          path:
+          - access_token
+        output: token
+    account_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    account_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
     login:
     - id: principal
       contract: appworld.principal

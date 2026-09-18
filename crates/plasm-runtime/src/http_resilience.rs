@@ -68,7 +68,7 @@ impl ResilientHttpTransport {
         }
     }
 
-    fn semaphore_acquire_timeout() -> Duration {
+    pub(crate) fn semaphore_acquire_timeout() -> Duration {
         static TIMEOUT: OnceLock<Duration> = OnceLock::new();
         *TIMEOUT.get_or_init(|| {
             std::env::var("PLASM_HTTP_SEMAPHORE_ACQUIRE_TIMEOUT_MS")

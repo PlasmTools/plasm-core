@@ -138,9 +138,10 @@ export function extractGradedScalarFromObservation(
   if (fences.length === 0) return null;
   const body = fences[fences.length - 1]?.[1] ?? "";
   const lines = body.split("\n").map((ln) => ln.trim()).filter(Boolean);
-  if (lines.length < 2) return null;
-  const headers = lines[0].split("\t").map((h) => h.trim());
-  const cells = lines[1].split("\t").map((c) => c.trim());
+  const [header, row] = lines;
+  if (header === undefined || row === undefined) return null;
+  const headers = header.split("\t").map((h) => h.trim());
+  const cells = row.split("\t").map((c) => c.trim());
   if (taskPrefersLabelAnswer(task)) {
     return labelFromRow(cells);
   }

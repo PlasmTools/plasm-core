@@ -23,6 +23,8 @@ impl ExecutionEngine {
     ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
         let base_url = self.effective_http_base_for_request();
         let auth = self.resolve_compiled_http_auth(request).await?;
+        let destination = crate::http_transport::compiled_http_url(base_url.as_ref(), request);
+        let _permit = self.acquire_backend_http_permit(&destination).await?;
         annotate_http_401_login_tail(
             self.transport
                 .send_compiled_http(base_url.as_ref(), request, auth)
@@ -78,6 +80,7 @@ impl ExecutionEngine {
         url: &str,
     ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
         let auth = self.resolve_auth_http().await?;
+        let _permit = self.acquire_backend_http_permit(url).await?;
         annotate_http_401_login_tail(self.transport.get_json_absolute(url, auth).await)
     }
 }

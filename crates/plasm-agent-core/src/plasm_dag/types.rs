@@ -60,6 +60,8 @@ pub(in crate::plasm_dag) struct DagNode {
 #[allow(clippy::large_enum_variant)]
 pub(in crate::plasm_dag) enum DagNodeSource {
     Surface {
+        /// A composed read view emits exactly one projection row on success.
+        view_singleton: bool,
         parsed: plasm_core::expr_parser::ParsedExpr,
         kind: PlanNodeKind,
         qualified_entity: QualifiedEntityKey,

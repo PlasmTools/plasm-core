@@ -29,6 +29,9 @@ use crate::{
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CompiledCatalog {
+    /// Registry identity supplied by the validated CGS, never by artifact bytes.
+    #[serde(skip)]
+    entry_id: Option<String>,
     cgs_hash: String,
     capabilities: BTreeMap<String, CapabilityTemplate>,
     conflict_rules: BTreeMap<String, Vec<plasm_core::ConflictRule>>,
@@ -50,12 +53,17 @@ impl CompiledCatalog {
                 message: format!("decode compiled request recipes: {error}"),
             })?;
         let compiled = Self {
+            entry_id: cgs.entry_id.clone(),
             cgs_hash: artifact.cgs_hash,
             capabilities: artifact.capabilities,
             conflict_rules: artifact.conflict_rules,
         };
         compiled.validate_against(cgs)?;
         Ok(compiled)
+    }
+
+    pub fn entry_id(&self) -> Option<&str> {
+        self.entry_id.as_deref()
     }
 
     pub fn cgs_hash(&self) -> &str {
@@ -145,6 +153,7 @@ pub fn compile_cgs_capability_templates(
 ) -> Result<CompiledCatalog, CmlError> {
     let capabilities = compile_capability_templates(cgs)?;
     let compiled = CompiledCatalog {
+        entry_id: cgs.entry_id.clone(),
         cgs_hash: cgs.catalog_cgs_hash_hex(),
         capabilities,
         conflict_rules: cgs
@@ -205,7 +214,7 @@ fn compile_capability_templates(
         {
             return Err(CmlError::InvalidTemplate { message: format!("capability `{name}`: credential binding requires a create or action capability") });
         }
-        validate_capability_params_wired_in_cml(name, cap, &template)?;
+        validate_capability_params_wired_in_cml(cgs, name, cap, &template)?;
         validate_capability_path_vars_projectable(cgs, cap)?;
         capabilities.insert(name.to_string(), template);
     }
@@ -261,6 +270,7 @@ pub(crate) fn forbid_pagination_dual_wire(
 
 /// Every declared capability parameter must appear in the CML template (or pagination keys).
 fn validate_capability_params_wired_in_cml(
+    cgs: &plasm_core::CGS,
     name: &str,
     cap: &CapabilitySchema,
     template: &CapabilityTemplate,
@@ -283,6 +293,28 @@ fn validate_capability_params_wired_in_cml(
     }
     if wired.contains("input") {
         return Ok(());
+    }
+
+    // A compound entity scope is consumed through its expanded identity keys.
+    // Require every key: consuming only part of an identity is not a wired scope.
+    for scope in cap.scope_params() {
+        let Ok(value) = scope.named_value(cgs) else {
+            continue;
+        };
+        let plasm_core::FieldType::EntityRef { target, .. } = &value.field_type else {
+            continue;
+        };
+        let Some(entity) = cgs.get_entity(target) else {
+            continue;
+        };
+        if entity.key_vars.len() > 1
+            && entity
+                .key_vars
+                .iter()
+                .all(|key| wired.contains(key.as_str()))
+        {
+            wired.insert(scope.name.to_string());
+        }
     }
 
     let mut missing: Vec<&str> = params
@@ -387,6 +419,15 @@ pub fn validate_cgs_views(cgs: &plasm_core::CGS) -> Result<(), CmlError> {
                     message: format!("view `{view_key}` has duplicate node id `{}`", node.id),
                 });
             }
+            if node.traverse.is_some() {
+                if !node.capability.is_empty() || !node.bind.is_empty() || node.when.is_some() {
+                    return Err(CmlError::InvalidTemplate { message: format!("view `{view_key}` traversal `{}` cannot also declare capability, bind, or when", node.id) });
+                }
+                cgs.view_node_entity(view, &node.id)
+                    .map_err(|message| CmlError::InvalidTemplate { message })?;
+                prior_nodes.insert(node.id.clone());
+                continue;
+            }
             let node_cap = cgs
                 .get_capability(node.capability.as_str())
                 .ok_or_else(|| CmlError::InvalidTemplate {
@@ -477,19 +518,35 @@ pub fn validate_cgs_views(cgs: &plasm_core::CGS) -> Result<(), CmlError> {
         }
 
         for spec in &view.relation_outputs {
-            let node = match &spec.binding {
+            if let ViewRelationBinding::NodeUnionRows { nodes } = &spec.binding {
+                if nodes.is_empty() || spec.cardinality != plasm_core::Cardinality::Many {
+                    return Err(CmlError::InvalidTemplate { message: format!("view `{view_key}` identity union needs nonempty nodes and a many relation") });
+                }
+            }
+            let nodes: Vec<&str> = match &spec.binding {
                 ViewRelationBinding::FirstNodeRowWhere { node, .. }
                 | ViewRelationBinding::NodeRowsWhere { node, .. }
                 | ViewRelationBinding::NodeAllRows { node }
-                | ViewRelationBinding::NodeSingleRow { node } => node,
+                | ViewRelationBinding::NodeSingleRow { node } => vec![node],
+                ViewRelationBinding::NodeUnionRows { nodes } => {
+                    nodes.iter().map(String::as_str).collect()
+                }
             };
-            if !all_node_ids.contains(node) {
-                return Err(CmlError::InvalidTemplate {
-                    message: format!(
-                        "view `{view_key}` relation `{}` references unknown node `{node}`",
-                        spec.relation
-                    ),
-                });
+            for node in nodes {
+                if !all_node_ids.contains(node) {
+                    return Err(CmlError::InvalidTemplate {
+                        message: format!(
+                            "view `{view_key}` relation `{}` references unknown node `{node}`",
+                            spec.relation
+                        ),
+                    });
+                }
+                let entity = cgs
+                    .view_node_entity(view, node)
+                    .map_err(|message| CmlError::InvalidTemplate { message })?;
+                if entity != spec.target {
+                    return Err(CmlError::InvalidTemplate { message: format!("view `{view_key}` relation `{}` expects {}, node `{node}` produces {entity}", spec.relation, spec.target) });
+                }
             }
             if cgs.get_entity(spec.target.as_str()).is_none() {
                 return Err(CmlError::InvalidTemplate {
@@ -592,12 +649,13 @@ mod tests {
         let cap = cgs.get_capability("repo_get").expect("repo_get");
         let mut env = CmlEnv::new();
         env.insert("repo".to_string(), Value::String("plasm-core".into()));
-        let splat_err = apply_entity_ref_scope_splat(&mut env, &cgs, cap).expect_err("splat");
-        assert!(
-            splat_err.to_string().contains("cannot normalize")
-                || splat_err.to_string().contains("key_vars"),
-            "{splat_err}"
-        );
+        apply_entity_ref_scope_splat(&mut env, &cgs, cap)
+            .expect("Get has no entity-ref scope to expand");
+        let template = parse_capability_template(&cap.require_mapping().expect("mapping").template)
+            .expect("template");
+        let error = compile_operation(&template, &env)
+            .expect_err("missing owner must not produce a request");
+        assert!(error.to_string().contains("owner"), "{error}");
     }
 
     #[test]
@@ -758,6 +816,21 @@ mod tests {
     }
 
     #[test]
+    fn compound_scope_requires_all_expanded_identity_keys_on_the_wire() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = plasm_core::load_schema_dir(
+            &root.join("../../fixtures/schemas/repository_commit_matrix"),
+        )
+        .expect("fixture");
+        validate_cgs_capability_templates(&cgs).expect("compound scope is wired through both keys");
+        let cap = &cgs.capabilities["commit_query"];
+        let template = parse_capability_template(&serde_json::json!({"method":"GET", "path":[{"type":"var", "name":"owner"}], "response":"bare_list"})).expect("template");
+        let err = validate_capability_params_wired_in_cml(&cgs, "commit_query", cap, &template)
+            .unwrap_err();
+        assert!(err.to_string().contains("repository"), "{err}");
+    }
+
+    #[test]
     fn language_matrix_templates_validate() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let cgs =
@@ -853,6 +926,24 @@ mod tests {
         )
         .expect_err("unknown bind");
         assert!(err.to_string().contains("bind.evil_origin"));
+    }
+
+    #[test]
+    fn compiled_catalog_entry_identity_is_bound_from_cgs_not_artifact() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mut cgs =
+            plasm_core::load_schema_dir(&root.join("../../fixtures/schemas/prerequisite_matrix"))
+                .unwrap();
+        cgs.bind_registry_entry_id("trusted");
+        let compiled = compile_cgs_capability_templates(&cgs).unwrap();
+        assert_eq!(compiled.entry_id(), Some("trusted"));
+        let mut artifact = serde_json::to_value(&compiled).unwrap();
+        assert!(artifact.get("entry_id").is_none());
+        artifact["entry_id"] = serde_json::json!("invented");
+        let decoded =
+            CompiledCatalog::decode_artifact(&serde_json::to_vec(&artifact).unwrap(), &cgs)
+                .unwrap();
+        assert_eq!(decoded.entry_id(), Some("trusted"));
     }
 
     #[test]

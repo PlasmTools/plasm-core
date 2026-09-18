@@ -144,7 +144,7 @@ pub(crate) fn binding_rows_for_compute(
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
 ) -> Result<BTreeMap<String, Vec<serde_json::Value>>, String> {
     let mut out = binding_rows_for_render(compute, materialized)?;
-    for label in membership_binding_labels(&compute.op) {
+    for label in collection_binding_labels(&compute.op) {
         if out.contains_key(&label) {
             continue;
         }
@@ -169,7 +169,7 @@ pub(crate) fn resolve_filter_predicates_with_materialized(
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
 ) -> Result<Vec<crate::plasm_plan::PlanPredicate>, String> {
     let mut binding_rows = BTreeMap::new();
-    for label in membership_binding_labels(&ComputeOp::Filter {
+    for label in collection_binding_labels(&ComputeOp::Filter {
         predicates: predicates.to_vec(),
     }) {
         let node_id = PlanNodeId::new(label.clone())?;

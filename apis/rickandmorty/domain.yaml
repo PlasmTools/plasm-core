@@ -1,4 +1,4 @@
-version: 3
+version: 4
 auth:
   scheme: none
 http_backend: https://rickandmortyapi.com
@@ -238,7 +238,7 @@ values:
     description: Sub-species or special type descriptor if any.
   nv_character_url:
     type: string
-    description: API endpoint URL for this character record.
+    description: URL identifying this character.
   nv_episode_air_date:
     type: string
     description: Original broadcast date of the episode.
@@ -256,7 +256,7 @@ values:
     description: Episode title.
   nv_episode_url:
     type: string
-    description: API endpoint URL for this episode record.
+    description: URL identifying this episode.
   nv_location_created:
     type: rfc3339
     description: ISO date when this record was first created.
@@ -274,6 +274,6 @@ values:
     description: Type of place (e.g. Planet, Space station, Microverse).
   nv_location_url:
     type: string
-    description: API endpoint URL for this location record.
+    description: URL identifying this location.
   nv_wire_str_short:
     type: string

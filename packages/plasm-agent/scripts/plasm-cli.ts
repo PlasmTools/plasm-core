@@ -41,6 +41,7 @@ function optionValue(flagName: string): string | undefined {
 function initTargetDir(): string {
   for (let i = 1; i < args.length; i++) {
     const arg = args[i];
+    if (arg === undefined) break;
     if (arg.startsWith("-")) {
       if (arg === "--template") i++;
       continue;

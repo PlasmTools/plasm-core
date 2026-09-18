@@ -1,4 +1,4 @@
-version: 11
+version: 13
 entry_id: todoist
 auth:
   scheme: none
@@ -8,9 +8,43 @@ data_classes:
     description: User-authored task or comment text.
     severity: untrusted
 entities:
+  NotificationSummary:
+    id_field: access_token
+    implicit_request_identity: true
+    description: Notification totals for the signed-in account.
+    fields:
+      access_token:
+        value_ref: nv_access_token
+      notifications_count:
+        value_ref: notification_count
+  Account:
+    id_field: email
+    description: The signed-in todoist account, including private account details and
+      registration, verification, recovery and deletion.
+    discovery:
+      names:
+      - account
+      - signup
+      - sign up
+      - registration
+      - password reset
+      - account verification
+    fields:
+      first_name:
+        value_ref: account_name
+      last_name:
+        value_ref: account_name
+      email:
+        value_ref: account_email
+      registered_at:
+        value_ref: account_timestamp
+      last_logged_in:
+        value_ref: account_timestamp
+      verified:
+        value_ref: account_verified
   AuthSession:
     id_field: access_token
-    description: Login session for Todoist (Bearer token).
+    description: Authenticated session for Todoist.
     discovery:
       names:
       - login
@@ -46,6 +80,9 @@ entities:
       description:
         required: false
         value_ref: nv_str
+      invite_code:
+        value_ref: nv_str
+        description: Code returned when inviting a collaborator to this project.
     relations:
       tasks:
         description: Tasks in this project.
@@ -152,6 +189,7 @@ entities:
         value_ref: nv_todoist_color
   TaskComment:
     id_field: task_comment_id
+    primary_read: task_comment_get
     description: Comment on a task.
     fields:
       task_comment_id:
@@ -174,6 +212,25 @@ entities:
       created_at:
         required: false
         value_ref: nv_comment_created_at
+      author_name:
+        required: true
+        value_ref: nv_str
+        description: Display name of the person who posted this comment.
+        path: [user, name]
+      author_email:
+        required: true
+        value_ref: nv_email
+        description: Email identity of the person who posted this comment.
+        path: [user, email]
+    relations:
+      author:
+        description: Person who posted this comment.
+        target: User
+        cardinality: one
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: user
   SubTask:
     id_field: sub_task_id
     description: Sub-task under a parent task.
@@ -273,6 +330,306 @@ entities:
         required: false
         value_ref: nv_datetime
 capabilities:
+  label_get:
+    kind: get
+    entity: Label
+    description: Read the selected Label and its details.
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides:
+    - label_id
+    - name
+    - color
+  section_update:
+    kind: update
+    entity: Section
+    description: Update the selected Section. Omitted properties retain their current
+      values.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: name
+          value_ref: nv_str
+          required: false
+        - name: order_index
+          value_ref: nv_int
+          required: false
+    output:
+      type: side_effect
+      description: Updates the selected Section properties.
+  label_update:
+    kind: update
+    entity: Label
+    description: Update the selected Label. Omitted properties retain their current
+      values.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: name
+          value_ref: nv_str
+          required: false
+        - name: color
+          value_ref: nv_todoist_color
+          required: false
+    output:
+      type: side_effect
+      description: Updates the selected Label properties.
+  sub_task_update:
+    kind: update
+    entity: SubTask
+    description: Update the selected SubTask. Omitted properties retain their current
+      values.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: title
+          value_ref: nv_str
+          required: false
+        - name: description
+          value_ref: nv_str
+          required: false
+        - name: due_date
+          value_ref: nv_datetime
+          required: false
+        - name: priority
+          value_ref: nv_int
+          required: false
+        - name: is_completed
+          value_ref: nv_bool
+          required: false
+        - name: order_index
+          value_ref: nv_int
+          required: false
+    output:
+      type: side_effect
+      description: Updates the selected SubTask properties.
+  project_invite_send:
+    kind: action
+    entity: Project
+    receiver:
+      kind: entity
+      entity: Project
+    description: Invite a person to collaborate on this project.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: email
+          value_ref: nv_email
+          required: true
+    provides:
+    - invite_code
+  project_collaborator_remove:
+    kind: action
+    entity: Project
+    receiver:
+      kind: entity
+      entity: Project
+    description: Remove a person from this project.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: email
+          value_ref: nv_email
+          required: true
+    output:
+      type: side_effect
+      description: Remove a person from this project.
+  notification_count:
+    kind: get
+    entity: NotificationSummary
+    description: Count account notifications, optionally by read status.
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: read
+          value_ref: notification_read_filter
+          required: false
+    provides:
+    - notifications_count
+  account_get:
+    description: Show the signed-in todoist account.
+    kind: query
+    entity: Account
+    provides:
+    - first_name
+    - last_name
+    - email
+    - registered_at
+    - last_logged_in
+    - verified
+    scope:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+  account_create:
+    description: Sign up a new todoist account.
+    kind: action
+    receiver:
+      kind: none
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: first_name
+          description: Given name of the account holder.
+          value_ref: account_name
+          required: true
+        - name: last_name
+          description: Family name of the account holder.
+          value_ref: account_name
+          required: true
+        - name: email
+          value_ref: account_email
+          required: true
+        - name: password
+          value_ref: account_password
+          required: true
+    output:
+      type: side_effect
+      description: Creates the todoist account for this email.
+  account_update:
+    description: Update the signed-in account holder's name.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: first_name
+          description: Given name of the account holder.
+          value_ref: account_name
+          required: false
+        - name: last_name
+          description: Family name of the account holder.
+          value_ref: account_name
+          required: false
+    output:
+      type: side_effect
+      description: Updates the account holder's display name.
+    receiver:
+      kind: none
+  account_delete:
+    description: Delete the signed-in todoist account.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Deletes the signed-in todoist account.
+    receiver:
+      kind: none
+  send_verification_code:
+    description: Email a verification code to confirm an todoist account.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: email
+          value_ref: account_email
+          required: true
+    output:
+      type: side_effect
+      description: Sends an account verification code to the email.
+    receiver:
+      kind: none
+  verify_account:
+    description: Confirm an todoist account with a verification code.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: email
+          value_ref: account_email
+          required: true
+        - name: verification_code
+          value_ref: account_verification_code
+          required: true
+    output:
+      type: side_effect
+      description: Marks the account as verified.
+    receiver:
+      kind: none
+  send_password_reset_code:
+    description: Email a password-reset code for an todoist account.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: email
+          value_ref: account_email
+          required: true
+    output:
+      type: side_effect
+      description: Sends a password-reset code to the email.
+    receiver:
+      kind: none
+  reset_password:
+    description: Set a new todoist password using a reset code.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: email
+          value_ref: account_email
+          required: true
+        - name: password_reset_code
+          value_ref: account_password_reset_code
+          required: true
+        - name: new_password
+          value_ref: account_password
+          required: true
+    output:
+      type: side_effect
+      description: Replaces the account password.
+    receiver:
+      kind: none
   login:
     description: Login to Todoist; returns access_token for Bearer auth.
     kind: action
@@ -321,6 +678,12 @@ capabilities:
     - name: query
       value_ref: nv_str
       required: false
+    provides:
+    - project_id
+    - name
+    - color
+    - is_inbox
+    - description
   project_get:
     description: Show one project.
     kind: get
@@ -332,6 +695,12 @@ capabilities:
         - name: access_token
           value_ref: nv_access_token
           required: true
+    provides:
+    - project_id
+    - name
+    - color
+    - is_inbox
+    - description
   project_create:
     description: Create a project.
     kind: create
@@ -639,7 +1008,7 @@ capabilities:
     description: List comments on a task.
     kind: query
     entity: TaskComment
-    provides: [task_comment_id, task_id, content, attachment_file_names, created_at]
+    provides: [task_comment_id, task_id, content, attachment_file_names, created_at, author_name, author_email]
     scope:
     - name: task_id
       value_ref: nv_task_id
@@ -648,6 +1017,18 @@ capabilities:
     - name: access_token
       value_ref: nv_access_token
       required: true
+  task_comment_get:
+    description: Show a task comment, including its author identity.
+    kind: get
+    entity: TaskComment
+    provides: [task_comment_id, task_id, content, attachment_file_names, created_at, author_name, author_email]
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
   task_comment_create:
     description: Post a comment on a task. Comment body param is content (not comment_text or body).
     kind: create
@@ -952,6 +1333,34 @@ capabilities:
       type: side_effect
       description: Updates the read status of every notification.
 values:
+  notification_count:
+    type: number
+    description: Number of notifications matching the selected read status.
+  notification_read_filter:
+    type: boolean
+    description: True for read notifications, false for unread; omit to count both.
+  account_name:
+    type: string
+    description: Account holder first or last name.
+  account_email:
+    type: email
+    description: Email identifying the account being registered, verified, or recovered.
+  account_password:
+    type: string
+    description: Password for account registration or recovery.
+    min_length: 5
+  account_verification_code:
+    type: string
+    description: Code delivered to the account owner to confirm account ownership.
+  account_password_reset_code:
+    type: string
+    description: Code delivered to the account owner to authorize a password change.
+  account_timestamp:
+    type: rfc3339
+    description: Account registration or last login time.
+  account_verified:
+    type: boolean
+    description: Whether account ownership has been verified.
   nv_assignee_id:
     type: integer
     description: Identifier of the Todoist user assigned to a task.
@@ -1046,7 +1455,7 @@ values:
     description: Absolute file-system path for attachment upload.
   nv_notification_id:
     type: integer
-    description: Notification primary key.
+    description: Identifies the notification to read or act on.
   nv_notification_type:
     type: enum
     description: Todoist notification kind.
@@ -1114,6 +1523,96 @@ prerequisites:
       outputs:
         token: access_token
   requirements:
+    label_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    section_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    label_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    sub_task_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    project_invite_send:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    project_collaborator_remove:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    notification_count:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path:
+          - access_token
+        output: token
+    account_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: scope
+          path:
+          - access_token
+        output: token
+    account_update:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
+    account_delete:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path:
+          - access_token
+        output: token
     login:
     - id: principal
       contract: appworld.principal
@@ -1321,6 +1820,15 @@ prerequisites:
       bindings:
       - input:
           lane: selection
+          path:
+          - access_token
+        output: token
+    task_comment_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
           path:
           - access_token
         output: token

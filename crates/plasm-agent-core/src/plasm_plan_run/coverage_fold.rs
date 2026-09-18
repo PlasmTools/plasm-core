@@ -16,31 +16,11 @@ use crate::plasm_plan::{ComputeOp, PlanNodeId};
 
 use super::MaterializedNode;
 
-/// Labels of collection bindings a compute op consumes (union RHS, membership `in` / `not in`).
-#[must_use]
-pub(crate) fn membership_binding_labels(op: &ComputeOp) -> Vec<String> {
-    match op {
-        ComputeOp::Filter { predicates } => {
-            let mut labels = Vec::new();
-            for pred in predicates {
-                if let crate::plasm_plan::PlanValue::BindingSymbol { binding, .. } = &pred.value {
-                    if !labels.iter().any(|l| l == binding) {
-                        labels.push(binding.clone());
-                    }
-                }
-            }
-            labels
-        }
-        ComputeOp::Union { other } => vec![other.as_str().to_string()],
-        _ => Vec::new(),
-    }
-}
-
 /// Fold coverage across the primary source and every collection dependency the op
 /// consumes (union RHS, membership `in` / `not in` bindings).
 ///
 /// Complete left ∪ partial/unknown right must not stamp Complete. Limit / take
-/// promotion is applied later by [`super::materialize_synthetic_node`].
+/// preserves upstream uncertainty in [`super::materialize_synthetic_node`].
 ///
 /// BindingSymbol labels absent from `materialized` contribute [`ResultCoverage::Unknown`]
 /// (residual string→node lookup; not a silent Complete).
@@ -50,13 +30,15 @@ pub(crate) fn coverage_from_compute_collections(
     op: &ComputeOp,
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
 ) -> plasm_runtime::ResultCoverage {
-    let dep_coverages = membership_binding_labels(op).into_iter().map(|label| {
-        PlanNodeId::new(label)
-            .ok()
-            .and_then(|id| materialized.get(&id))
-            .map(|m| m.result.coverage)
-            .unwrap_or(plasm_runtime::ResultCoverage::Unknown)
-    });
+    let dep_coverages = crate::plan_node_graph::collection_binding_labels(op)
+        .into_iter()
+        .map(|label| {
+            PlanNodeId::new(label)
+                .ok()
+                .and_then(|id| materialized.get(&id))
+                .map(|m| m.result.coverage)
+                .unwrap_or(plasm_runtime::ResultCoverage::Unknown)
+        });
     plasm_runtime::ResultCoverage::combine_all(
         std::iter::once(source_coverage).chain(dep_coverages),
     )
@@ -82,7 +64,7 @@ pub(crate) fn coverage_of_declared_source(
 /// Fold iterate_until seed (+ retained step) coverages.
 ///
 /// The step `take` bound is not a Limit row-take: until-success does not promote Partial /
-/// Unknown seed to Complete. Satisfied explicit Limit remains
+/// Unknown seed to Complete. Explicit Limit preserves input coverage through
 /// [`plasm_runtime::coverage_after_explicit_take`] on synthetic compute only.
 #[must_use]
 pub(crate) fn coverage_for_iterate_until(
@@ -205,10 +187,10 @@ mod coverage_collection_tests {
     }
 
     #[test]
-    fn limit_promotion_still_applies_after_combined_inputs() {
+    fn limit_preserves_uncertainty_after_combined_inputs() {
         assert_eq!(
             plasm_runtime::coverage_after_explicit_take(ResultCoverage::Partial, 3, 3),
-            ResultCoverage::Complete
+            ResultCoverage::Partial
         );
     }
 

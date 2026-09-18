@@ -6,7 +6,7 @@ use crate::execute_session::ExecuteSession;
 use crate::plasm_plan::{
     ComputeOp, EffectClass, FieldPath, PlanNodeKind, PlanNodeKind as SurfaceKind, PlanPredicate,
     ResultShape, ValidatedComputeNode, ValidatedPlanArtifact, ValidatedPlanNode,
-    ValidatedPlanReturn, ValidatedRelationTraversalNode, ValidatedSurfaceNode,
+    ValidatedRelationTraversalNode, ValidatedSurfaceNode,
 };
 use plasm_runtime::row_predicate::{JsonRowPredicate, JsonRowPredicateOp};
 use plasm_runtime::{CachedEntity, ExecutionResult, RowMatchBudget, TopKSpec};
@@ -114,7 +114,9 @@ pub fn cap_execution_result_page(
     entity_type: &str,
     logical_session_ref: Option<&str>,
 ) {
-    if cap == 0 || result.entities.len() <= cap {
+    // Keep the acquired backend page and its continuation intact. A presentation
+    // cursor must never replace the handle that fetches the next backend page.
+    if cap == 0 || result.entities.len() <= cap || result.paging_handle.is_some() {
         result.count = result.entities.len();
         return;
     }
@@ -143,7 +145,7 @@ pub fn apply_read_budgets(plan: &mut ValidatedPlanArtifact) {
         .enumerate()
         .map(|(i, n)| (n.id().as_str().to_string(), i))
         .collect();
-    let reachable = return_reachable_node_ids(plan, &by_id);
+    let reachable = crate::plan_node_graph::nodes_reachable_from_return(plan.artifact());
     for compute_idx in 0..plan.nodes().len() {
         if !reachable.contains(plan.nodes()[compute_idx].id().as_str()) {
             continue;
@@ -170,12 +172,15 @@ pub fn apply_read_budgets(plan: &mut ValidatedPlanArtifact) {
     apply_complete_demands(plan, &by_id, &reachable);
 }
 
-/// Aggregate/group_by/sort/dedupe over row sets — not project/filter/limit/render.
+/// Relational algebra consumes its source expression, not an implicit host page.
+/// Explicit limits remain bounded; presentation paging belongs after evaluation.
 #[must_use]
 pub(crate) fn compute_op_is_full_collection(op: &ComputeOp) -> bool {
     matches!(
         op,
         ComputeOp::Aggregate { .. }
+            | ComputeOp::Filter { .. }
+            | ComputeOp::Project { .. }
             | ComputeOp::GroupBy { .. }
             | ComputeOp::Sort { .. }
             | ComputeOp::DedupeBy { .. }
@@ -192,38 +197,43 @@ fn apply_complete_demands(
         .nodes()
         .iter()
         .filter(|n| reachable.contains(n.id().as_str()))
-        .filter_map(|n| {
-            let ValidatedPlanNode::Compute(c) = n else {
-                return None;
-            };
-            compute_op_is_full_collection(&c.compute.op).then(|| c.compute.source.clone())
+        .filter_map(|n| match n {
+            ValidatedPlanNode::Compute(c) if compute_op_is_full_collection(&c.compute.op) => {
+                Some(c.compute.source.clone())
+            }
+            ValidatedPlanNode::ForEach(f) => Some(f.source.as_str().to_string()),
+            _ => None,
         })
         .collect();
-    for source_id in complete_sources {
-        let mut current = source_id;
-        while let Some(&idx) = by_id.get(current.as_str()) {
-            match &mut plan.nodes_mut()[idx] {
-                ValidatedPlanNode::Surface(surface)
-                    if matches!(surface.kind, PlanNodeKind::Query | PlanNodeKind::Search) =>
-                {
-                    merge_budget_into_surface(surface, PushedReadBudget::Complete);
-                    break;
-                }
-                ValidatedPlanNode::Compute(c)
-                    if matches!(
-                        &c.compute.op,
-                        ComputeOp::Project { .. }
-                            | ComputeOp::Filter { .. }
-                            | ComputeOp::Limit { .. }
-                    ) =>
-                {
-                    current = c.compute.source.clone();
-                }
-                ValidatedPlanNode::Derive(d) => {
-                    current = d.source.as_str().to_string();
-                }
-                _ => break,
+    let mut pending: VecDeque<_> = complete_sources.into();
+    let mut seen = HashSet::new();
+    while let Some(current) = pending.pop_front() {
+        if !seen.insert(current.clone()) {
+            continue;
+        }
+        let Some(&idx) = by_id.get(current.as_str()) else {
+            continue;
+        };
+        let upstream = crate::plan_node_graph::node_dependencies(&plan.nodes()[idx]);
+        match &mut plan.nodes_mut()[idx] {
+            ValidatedPlanNode::Surface(surface)
+                if matches!(surface.kind, PlanNodeKind::Query | PlanNodeKind::Search) =>
+            {
+                merge_budget_into_surface(surface, PushedReadBudget::Complete);
             }
+            // An explicit take defines a bounded source expression. Downstream full
+            // demand must not expand that expression into the underlying collection.
+            ValidatedPlanNode::Compute(c) if matches!(c.compute.op, ComputeOp::Limit { .. }) => {}
+            ValidatedPlanNode::Compute(_)
+            | ValidatedPlanNode::Derive(_)
+            | ValidatedPlanNode::ForEach(_) => {
+                pending.extend(upstream);
+            }
+            ValidatedPlanNode::RelationTraversal(relation) => {
+                merge_budget_into_relation(relation, PushedReadBudget::Complete);
+                pending.extend(upstream);
+            }
+            _ => {}
         }
     }
 }
@@ -232,54 +242,6 @@ fn apply_complete_demands(
 enum LimitChainTarget {
     Surface(usize),
     Relation(usize),
-}
-
-fn return_reachable_node_ids(
-    plan: &ValidatedPlanArtifact,
-    by_id: &HashMap<String, usize>,
-) -> HashSet<String> {
-    let mut seeds: VecDeque<String> = match plan.return_value() {
-        ValidatedPlanReturn::Node(id) => VecDeque::from([id.as_str().to_string()]),
-        ValidatedPlanReturn::Parallel { parallel } => {
-            parallel.iter().map(|id| id.as_str().to_string()).collect()
-        }
-    };
-    let mut reachable = HashSet::new();
-    while let Some(id) = seeds.pop_front() {
-        if !reachable.insert(id.clone()) {
-            continue;
-        }
-        let Some(idx) = by_id.get(id.as_str()) else {
-            continue;
-        };
-        for upstream in upstream_node_ids(&plan.nodes()[*idx]) {
-            if reachable.contains(upstream.as_str()) {
-                continue;
-            }
-            seeds.push_back(upstream);
-        }
-    }
-    reachable
-}
-
-fn upstream_node_ids(node: &ValidatedPlanNode) -> Vec<String> {
-    match node {
-        ValidatedPlanNode::Compute(c) => vec![c.compute.source.clone()],
-        ValidatedPlanNode::Derive(d) => vec![d.source.as_str().to_string()],
-        ValidatedPlanNode::ForEach(f) => vec![f.source.as_str().to_string()],
-        ValidatedPlanNode::IterateUntil(f) => vec![f.source.as_str().to_string()],
-        ValidatedPlanNode::RelationTraversal(r) => vec![r.relation.source.as_str().to_string()],
-        ValidatedPlanNode::Surface(s) => s
-            .depends_on
-            .iter()
-            .map(|d| d.as_str().to_string())
-            .collect(),
-        ValidatedPlanNode::Data(d) => d
-            .depends_on
-            .iter()
-            .map(|dep| dep.as_str().to_string())
-            .collect(),
-    }
 }
 
 fn merge_budget_into_surface(surface: &mut ValidatedSurfaceNode, budget: PushedReadBudget) {
@@ -726,6 +688,77 @@ mod tests {
         );
     }
 
+    proptest::proptest! {
+        #[test]
+        fn global_collection_demand_reaches_every_union_branch(
+            branches in 2usize..8, bounded_first in proptest::bool::ANY,
+        ) {
+            use serde_json::json;
+            let schema = json!({"entity":"Product","fields":[{"name":"id","value_kind":"string","source":["id"]}]});
+            let mut nodes = Vec::new();
+            for n in 0..branches {
+                nodes.push(json!({"id":format!("q{n}"),"kind":"query",
+                    "qualified_entity":{"entry_id":"matrix","entity":"Product"},
+                    "expr":"Product","ir":{"expr":{"op":"query","entity":"Product"}},
+                    "effect_class":"read","result_shape":"list"}));
+            }
+            let mut source = "q0".to_string();
+            if bounded_first {
+                nodes.push(json!({"id":"bounded","kind":"compute","effect_class":"read","result_shape":"list",
+                    "depends_on":["q0"],"compute":{"source":"q0","op":{"kind":"limit","count":3},"schema":schema}}));
+                source = "bounded".into();
+            }
+            for n in 1..branches {
+                let id = format!("u{n}"); let other=format!("q{n}");
+                nodes.push(json!({"id":id,"kind":"compute","effect_class":"read","result_shape":"list",
+                    "depends_on":[source,other],"compute":{"source":source,"op":{"kind":"union","other":other},"schema":schema}}));
+                source=id;
+            }
+            nodes.push(json!({"id":"total","kind":"compute","effect_class":"read","result_shape":"single",
+                "depends_on":[source],"compute":{"source":source,"op":{"kind":"aggregate","aggregates":[{"name":"n","function":"count"}]},
+                    "schema":{"entity":"Product","fields":[{"name":"n","value_kind":"number","source":["n"]}]}}}));
+            let json=json!({"version":1,"kind":"program","name":"union-demand","nodes":nodes,"return":{"kind":"node","node":"total"}});
+            let mut plan=crate::plasm_plan::parse_and_validate_plan_json(&json).expect("abstract union plan");
+            apply_read_budgets(&mut plan);
+            for (n,node) in plan.nodes().iter().take(branches).enumerate() {
+                let ValidatedPlanNode::Surface(surface)=node else {panic!("query surface")};
+                let expected=if n==0 && bounded_first {PushedReadBudget::Limit(3)} else {PushedReadBudget::Complete};
+                proptest::prop_assert_eq!(&surface.pushed_read_budget,&Some(expected));
+            }
+        }
+    }
+
+    #[test]
+    fn filter_and_projection_consume_the_requested_collection() {
+        use serde_json::json;
+        for op in [
+            json!({"kind":"filter", "predicates":[]}),
+            json!({"kind":"project", "fields":{"id":["id"]}}),
+        ] {
+            let plan = json!({
+                "version":1,"kind":"program","name":"row-algebra",
+                "nodes":[
+                    {"id":"rows","kind":"query","qualified_entity":{"entry_id":"matrix","entity":"Product"},
+                     "expr":"Product","ir":{"expr":{"op":"query","entity":"Product"}},"effect_class":"read","result_shape":"list"},
+                    {"id":"out","kind":"compute","effect_class":"read","result_shape":"list","depends_on":["rows"],
+                     "compute":{"source":"rows","op":op,"schema":{"entity":"Product","fields":[{"name":"id","value_kind":"string","source":["id"]}]}}}
+                ],"return":{"kind":"node","node":"out"}
+            });
+            let mut validated =
+                crate::plasm_plan::parse_and_validate_plan_json(&plan).expect("abstract algebra");
+            apply_read_budgets(&mut validated);
+            let ValidatedPlanNode::Surface(surface) = &validated.nodes()[0] else {
+                panic!("surface")
+            };
+            assert_eq!(
+                surface.pushed_read_budget,
+                Some(PushedReadBudget::Complete),
+                "{op}"
+            );
+            assert_eq!(effective_host_page_size(surface), None);
+        }
+    }
+
     #[test]
     fn aggregate_consumer_pushes_complete_and_clears_host_page() {
         let plan = serde_json::json!({
@@ -797,6 +830,54 @@ mod tests {
             effective_host_page_size(surface),
             None,
             "Complete demand must clear DEFAULT_HOST_PAGE_SIZE"
+        );
+    }
+
+    #[test]
+    fn for_each_consumer_demands_full_collection() {
+        let plan = serde_json::json!({
+            "version": 1, "kind": "program", "name": "export-all",
+            "nodes": [
+                {"id":"items", "kind":"query", "qualified_entity":{"entry_id":"acme","entity":"Product"},
+                 "expr":"Product", "ir":{"expr":{"op":"query","entity":"Product"}},
+                 "effect_class":"read", "result_shape":"list"},
+                {"id":"writes", "kind":"for_each", "source":"items", "item_binding":"item",
+                 "depends_on":["items"], "uses_result":[{"node":"items","as":"item"}],
+                 "effect_class":"side_effect", "result_shape":"side_effect_ack",
+                 "effect_template":{"kind":"action", "qualified_entity":{"entry_id":"acme","entity":"Product"},
+                     "expr_template":"Product.create(title=\"copy\")",
+                     "ir_template":{"expr":{"op":"create","capability":"product_create","entity":"Product","input":{"title":"copy"}},"input_bindings":[]},
+                     "effect_class":"side_effect", "result_shape":"side_effect_ack"}}
+            ], "return":{"kind":"node","node":"writes"}
+        });
+        let mut validated =
+            crate::plasm_plan::parse_and_validate_plan_json(&plan).expect("validate");
+        apply_read_budgets(&mut validated);
+        let ValidatedPlanNode::Surface(surface) = &validated.nodes()[0] else {
+            panic!("surface")
+        };
+        assert_eq!(surface.pushed_read_budget, Some(PushedReadBudget::Complete));
+        assert_eq!(effective_host_page_size(surface), None);
+
+        let mut bounded = plan.clone();
+        bounded["nodes"].as_array_mut().unwrap().insert(1, serde_json::json!({
+            "id":"selected", "kind":"compute", "effect_class":"read", "result_shape":"list",
+            "depends_on":["items"], "compute":{"source":"items", "op":{"kind":"limit","count":3},
+                "schema":{"entity":"Product","fields":[{"name":"id","value_kind":"string","source":["id"]}]}}
+        }));
+        bounded["nodes"][2]["source"] = serde_json::json!("selected");
+        bounded["nodes"][2]["depends_on"] = serde_json::json!(["selected"]);
+        bounded["nodes"][2]["uses_result"] = serde_json::json!([{"node":"selected","as":"item"}]);
+        let mut validated =
+            crate::plasm_plan::parse_and_validate_plan_json(&bounded).expect("bounded validate");
+        apply_read_budgets(&mut validated);
+        let ValidatedPlanNode::Surface(surface) = &validated.nodes()[0] else {
+            panic!("surface")
+        };
+        assert_eq!(
+            surface.pushed_read_budget,
+            Some(PushedReadBudget::Limit(3)),
+            "explicit take remains bounded under fanout"
         );
     }
 

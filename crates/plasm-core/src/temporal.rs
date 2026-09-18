@@ -5,7 +5,8 @@
 //! resolves to the reference instant ([`temporal_reference_now`]: host UTC unless
 //! `PLASM_TEMPORAL_NOW` is set).
 //!
-//! **Eval override:** set `PLASM_TEMPORAL_NOW` to an RFC3339 or `YYYY-MM-DDTHH:MM:SS` UTC timestamp
+//! **Eval override:** set `PLASM_TEMPORAL_NOW` to an absolute date/time (naive means UTC;
+//! fractional seconds are accepted), RFC2822, or Unix seconds/milliseconds
 //! so relative phrases (`now`, `today`, `7 days ago`, …) anchor to a harness world clock (e.g.
 //! AppWorld task `specs.json` `datetime` on an out-of-process `plasm-mcp`).
 //!
@@ -253,7 +254,7 @@ pub fn temporal_predicate_alias_hint() -> &'static str {
 }
 
 fn datetime_from_integer(i: i64) -> Result<chrono::DateTime<chrono::Utc>, String> {
-    if i.abs() >= 1_000_000_000_000 {
+    if i.unsigned_abs() >= 1_000_000_000_000 {
         chrono::Utc
             .timestamp_millis_opt(i)
             .single()
@@ -285,26 +286,48 @@ fn utc_midnight(d: NaiveDate) -> chrono::DateTime<Utc> {
     d.and_hms_opt(0, 0, 0).expect("valid midnight").and_utc()
 }
 
-/// Parse `PLASM_TEMPORAL_NOW` / harness override strings (RFC3339, naive UTC, or Unix digits).
+/// Parse absolute timestamps consistently across clock overrides and Date inputs.
+/// Missing offsets mean UTC, never the host's local timezone. Fractional seconds
+/// are preserved. Relative phrases require a reference and are handled separately.
+fn parse_absolute_datetime(s: &str) -> Option<DateTime<Utc>> {
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        return Some(dt.with_timezone(&Utc));
+    }
+    if let Ok(dt) = DateTime::parse_from_rfc2822(s) {
+        return Some(dt.with_timezone(&Utc));
+    }
+    for separator in ["T", " "] {
+        let base = format!("%Y-%m-%d{separator}%H:%M:%S%.f");
+        for offset in ["%:z", "%z", " %:z", " %z"] {
+            if let Ok(dt) = DateTime::parse_from_str(s, &format!("{base}{offset}")) {
+                return Some(dt.with_timezone(&Utc));
+            }
+        }
+        if let Ok(dt) = NaiveDateTime::parse_from_str(s, &base) {
+            return Some(dt.and_utc());
+        }
+    }
+    NaiveDate::parse_from_str(s, "%Y-%m-%d")
+        .ok()
+        .map(utc_midnight)
+}
+
+/// Parse a clock override as an absolute datetime or signed Unix seconds/milliseconds.
+/// ISO dates resolve to midnight UTC; naive datetimes resolve to UTC, with optional
+/// fractional seconds. Relative phrases are not valid clock anchors.
 pub fn parse_temporal_now_env(raw: &str) -> Result<DateTime<Utc>, String> {
     let s = raw.trim();
     if s.is_empty() {
         return Err("PLASM_TEMPORAL_NOW must not be empty".into());
     }
-    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
-        return Ok(dt.with_timezone(&Utc));
+    if let Some(dt) = parse_absolute_datetime(s) {
+        return Ok(dt);
     }
-    if let Ok(ndt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
-        return Ok(ndt.and_utc());
-    }
-    if s.chars().all(|c| c.is_ascii_digit()) {
-        let n: i64 = s
-            .parse()
-            .map_err(|_| format!("PLASM_TEMPORAL_NOW: invalid integer timestamp `{s}`"))?;
+    if let Ok(n) = s.parse::<i64>() {
         return datetime_from_integer(n);
     }
     Err(format!(
-        "PLASM_TEMPORAL_NOW: invalid datetime `{s}` (expected RFC3339, YYYY-MM-DDTHH:MM:SS UTC, or Unix digits)"
+        "PLASM_TEMPORAL_NOW: invalid datetime `{s}` (expected an ISO date/datetime, RFC2822, or Unix seconds/milliseconds; missing timezone means UTC)"
     ))
 }
 
@@ -386,6 +409,9 @@ fn parse_to_utc_at_reference(
                     .parse()
                     .map_err(|_| format!("invalid integer timestamp: {t}"))?;
                 return datetime_from_integer(n);
+            }
+            if let Some(dt) = parse_absolute_datetime(t) {
+                return Ok(dt);
             }
             let normalized = normalize_natural_language_temporal_input(t);
             let lower = normalized.to_ascii_lowercase();
@@ -477,6 +503,59 @@ pub fn temporal_wire_format_from_name(name: &str) -> Result<TemporalWireFormat, 
 mod tests {
     use super::*;
     use chrono::{NaiveDate, Utc};
+
+    #[test]
+    fn absolute_temporal_inputs_share_clock_and_predicate_semantics() {
+        let expected = DateTime::parse_from_rfc3339("2023-05-31T18:34:21.999999Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        for raw in [
+            "2023-05-31T18:34:21.999999",
+            "2023-05-31 18:34:21.999999",
+            " 2023-05-31T18:34:21.999999Z ",
+            "2023-05-31T20:34:21.999999+02:00",
+            "2023-05-31 20:34:21.999999 +0200",
+        ] {
+            assert_eq!(parse_temporal_now_env(raw).unwrap(), expected, "{raw}");
+            assert_eq!(
+                parse_to_utc_at_reference(&Value::String(raw.into()), expected).unwrap(),
+                expected,
+                "{raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn absolute_temporal_fractional_precision_roundtrips() {
+        for nanos in [0, 1, 1_000, 123_456_789, 999_999_000, 999_999_999] {
+            let expected = Utc.timestamp_opt(1_685_558_061, nanos).unwrap();
+            for separator in ["T", " "] {
+                let raw = expected
+                    .format(&format!("%Y-%m-%d{separator}%H:%M:%S%.f"))
+                    .to_string();
+                assert_eq!(parse_temporal_now_env(&raw).unwrap(), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn absolute_temporal_clock_accepts_dates_and_rejects_invalid_anchors() {
+        assert_eq!(
+            parse_temporal_now_env("2023-05-31").unwrap(),
+            utc_midnight(NaiveDate::from_ymd_opt(2023, 5, 31).unwrap())
+        );
+        assert_eq!(parse_temporal_now_env("-1").unwrap().timestamp(), -1);
+        for raw in [
+            "",
+            "now",
+            "yesterday",
+            "2023-02-30T12:00:00",
+            "2023-05-31T25:00:00",
+            "-9223372036854775808",
+        ] {
+            assert!(parse_temporal_now_env(raw).is_err(), "{raw}");
+        }
+    }
 
     #[test]
     fn iso_string_to_unix_ms() {

@@ -1,0 +1,95 @@
+version: 1
+entry_id: view_rowsets
+http_backend: http://rowsets.test
+auth: {scheme: none}
+values:
+  key: {type: string, description: Resource identity.}
+  token: {type: string, description: Service access credential.}
+  title: {type: string, description: Resource title.}
+entities:
+  Item:
+    id_field: id
+    fields:
+      id: {required: true, value_ref: key}
+      title: {required: true, value_ref: title}
+  Collection:
+    id_field: id
+    fields:
+      id: {required: true, value_ref: key}
+    relations:
+      items:
+        target: Item
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path: [{key: items}, {wildcard: true}, {key: id}]
+  Library:
+    id_field: access_token
+    fields:
+      access_token: {required: true, value_ref: token}
+    relations:
+      items:
+        target: Item
+        cardinality: many
+        materialize: {kind: view_embed, view: library}
+capabilities:
+  item_query:
+    kind: query
+    entity: Item
+    selection: [{name: access_token, required: true, value_ref: token}]
+    provides: [id, title]
+  item_get:
+    kind: get
+    entity: Item
+    arguments:
+      input_type:
+        type: object
+        fields: [{name: access_token, required: true, value_ref: token}]
+    provides: [id, title]
+  collection_query:
+    kind: query
+    entity: Collection
+    selection: [{name: access_token, required: true, value_ref: token}]
+    provides: [id]
+  collection_get:
+    kind: get
+    entity: Collection
+    arguments:
+      input_type:
+        type: object
+        fields: [{name: access_token, required: true, value_ref: token}]
+    provides: [id]
+  collection_clear:
+    kind: action
+    entity: Collection
+    receiver: {kind: entity, entity: Collection}
+    output: {type: side_effect, description: Clear every item from the collection.}
+  library_query:
+    kind: query
+    entity: Library
+    selection: [{name: access_token, required: true, value_ref: token}]
+    provides: [access_token]
+views:
+  library:
+    description: All saved items, directly or through saved collections.
+    capability: library_query
+    entity: Library
+    scope: [{name: access_token, required: true, value_ref: token}]
+    nodes:
+    - id: direct
+      capability: item_query
+      bind:
+        access_token: {kind: scope, param: access_token}
+    - id: collections
+      capability: collection_query
+      bind:
+        access_token: {kind: scope, param: access_token}
+    - id: nested
+      traverse: {node: collections, relation: items}
+    output:
+      access_token: {kind: scope, param: access_token}
+    relation_outputs:
+    - relation: items
+      target: Item
+      cardinality: many
+      binding: {kind: node_union_rows, nodes: [direct, nested]}

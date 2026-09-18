@@ -1,0 +1,9 @@
+record_query:
+  method: GET
+  path: [{type: literal, value: records}]
+record_get:
+  method: GET
+  path: [{type: literal, value: records}, {type: var, name: id}]
+record_create:
+  method: POST
+  path: [{type: literal, value: records}]

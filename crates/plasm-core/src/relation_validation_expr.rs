@@ -67,9 +67,7 @@ pub fn relation_validation_expr(
                     source: Box::new(Expr::Query(root_query)),
                     selector: rel_name.to_string(),
                     catalog_entry_id: CatalogEntryStamp::none(),
-                    step: ChainStep::Explicit {
-                        expr: Box::new(Expr::Query(QueryExpr::all(rel.target_resource.clone()))),
-                    },
+                    step: ChainStep::AutoGet,
                 })
             })
         }

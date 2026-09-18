@@ -1,6 +1,7 @@
 //! Unit tests for execution (formerly inline in mod.rs).
 
 use super::*;
+
 use indexmap::IndexMap;
 use plasm_compile::decode_entities;
 use plasm_core::value_domain::ValueDomain;
@@ -10,6 +11,83 @@ use plasm_core::{
     QueryPagination, Ref, ResourceSchema, ValueDomainKey,
 };
 use std::collections::BTreeMap;
+
+#[tokio::test]
+async fn derived_get_preserves_bound_query_credentials() {
+    use crate::auth::ResolvedAuth;
+    use crate::http_transport::HttpTransport;
+    use async_trait::async_trait;
+    use plasm_compile::CompiledRequest;
+    use std::sync::{Arc, Mutex};
+
+    struct RecordingTransport(Arc<Mutex<Vec<String>>>);
+    #[async_trait]
+    impl HttpTransport for RecordingTransport {
+        async fn send_compiled_http(
+            &self,
+            _: &str,
+            request: &CompiledRequest,
+            _: Option<ResolvedAuth>,
+        ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+            let Some(Value::Object(headers)) = &request.headers else {
+                panic!("missing headers")
+            };
+            let Some(Value::String(token)) = headers.get("Authorization") else {
+                panic!("missing token")
+            };
+            self.0.lock().unwrap().push(token.clone());
+            Ok((serde_json::json!([{"id":"row-a","label":"alpha"}]), None))
+        }
+        async fn get_json_absolute(
+            &self,
+            _: &str,
+            _: Option<ResolvedAuth>,
+        ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+            panic!("unexpected absolute GET")
+        }
+    }
+    let cgs = plasm_core::loader::load_schema_dir(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/derived_get_params"),
+    )
+    .unwrap();
+    let tokens = Arc::new(Mutex::new(Vec::new()));
+    let engine = ExecutionEngine::new_with_transport(
+        ExecutionConfig {
+            base_url: Some("http://fixture.invalid".into()),
+            ..Default::default()
+        },
+        Arc::new(RecordingTransport(tokens.clone())),
+        None,
+    );
+    for token in ["bound-a", "bound-b"] {
+        let get = GetExpr::new("SecuredRecord", "row-a").with_capability("record_get");
+        let mut mat = SessionMaterialization::new();
+        mat.stamp_capability_params(
+            &get.reference,
+            IndexMap::from([("access_token".into(), Value::String(token.into()))]),
+        );
+        let out = engine
+            .execute(
+                &Expr::Get(get),
+                &cgs,
+                &mut mat,
+                None,
+                StreamConsumeOpts::default(),
+                ExecuteOptions {
+                    compiled_catalog: Some(Arc::new(
+                        plasm_compile::compile_cgs_capability_templates(&cgs).unwrap(),
+                    )),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.entities.len(), 1);
+        assert_eq!(out.entities[0].reference.primary_slot_str(), "row-a");
+    }
+    assert_eq!(*tokens.lock().unwrap(), ["bound-a", "bound-b"]);
+}
 
 fn create_test_cgs() -> CGS {
     let mut cgs = CGS::new();
@@ -2190,7 +2268,7 @@ fn pokemon_get_decoder_embed_decoders_are_leaf() {
     use plasm_core::loader::load_schema_dir;
 
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/schemas/pokeapi_mini");
+        .join("../../fixtures/schemas/embed_decoder_matrix");
     let cgs = load_schema_dir(&dir).expect("pokeapi");
     let decoder = create_entity_decoder_for_capability(
         "Pokemon",
@@ -2223,7 +2301,7 @@ fn pokemon_get_decode_on_release_stack_budget() {
     }
 
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/schemas/pokeapi_mini");
+        .join("../../fixtures/schemas/embed_decoder_matrix");
     let cgs = load_schema_dir(&dir).expect("pokeapi");
     let decoder = create_entity_decoder_for_capability(
         "Pokemon",
@@ -2415,4 +2493,179 @@ fn parent_row_relation_decoded_and_resolve_cached_targets() {
         resolved[0].get_field("label").map(|f| f.to_value()),
         Some(Value::String("urgent".into()))
     );
+}
+
+#[tokio::test]
+async fn host_page_resume_preserves_crossing_backend_page() {
+    use crate::{auth::ResolvedAuth, http_transport::HttpTransport};
+    use async_trait::async_trait;
+    use plasm_compile::CompiledRequest;
+    use std::sync::Arc;
+    struct Pages;
+    #[async_trait]
+    impl HttpTransport for Pages {
+        async fn send_compiled_http(
+            &self,
+            _: &str,
+            request: &CompiledRequest,
+            _: Option<ResolvedAuth>,
+        ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+            if request.url_path().contains("indexed/") {
+                let id = request.url_path().rsplit('/').next().unwrap().to_string();
+                return Ok((
+                    serde_json::json!({"id":id,"n":id.parse::<usize>().unwrap()}),
+                    None,
+                ));
+            }
+            let page = match &request.query {
+                Some(Value::Object(q)) => q
+                    .get("page_index")
+                    .and_then(Value::as_number)
+                    .unwrap_or(0.0) as usize,
+                _ => 0,
+            };
+            let rows: Vec<_> = (page * 20..((page + 1) * 20).min(48))
+                .map(|n| serde_json::json!({"id":n.to_string(),"n":n}))
+                .collect();
+            Ok((serde_json::json!({"results":rows}), None))
+        }
+        async fn get_json_absolute(
+            &self,
+            _: &str,
+            _: Option<ResolvedAuth>,
+        ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+            panic!("unexpected absolute GET")
+        }
+    }
+    let cgs = plasm_core::loader::load_schema_dir(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_pagination_matrix"),
+    )
+    .unwrap();
+    let engine = ExecutionEngine::new_with_transport(
+        ExecutionConfig {
+            base_url: Some("http://fixture.invalid".into()),
+            ..Default::default()
+        },
+        Arc::new(Pages),
+        None,
+    );
+    let opts = ExecuteOptions {
+        compiled_catalog: Some(Arc::new(
+            plasm_compile::compile_cgs_capability_templates(&cgs).unwrap(),
+        )),
+        ..Default::default()
+    };
+    let consume = StreamConsumeOpts {
+        max_items: Some(25),
+        bound_kind: ConsumeBoundKind::HostPage,
+        ..Default::default()
+    };
+    let mut mat = SessionMaterialization::new();
+    let first = engine
+        .execute(
+            &Expr::Query(QueryExpr::all("Item")),
+            &cgs,
+            &mut mat,
+            None,
+            consume.clone(),
+            opts.clone(),
+        )
+        .await
+        .unwrap();
+    let resume = first
+        .pagination_resume
+        .expect("bounded host read must offer continuation");
+    let second = engine
+        .execute_pagination_resume(resume, &cgs, &mut mat, None, consume, opts)
+        .await
+        .unwrap();
+    let ids: std::collections::BTreeSet<_> = first
+        .entities
+        .iter()
+        .chain(&second.entities)
+        .map(|e| e.reference.primary_slot_str())
+        .collect();
+    assert_eq!(
+        first.entities.len() + second.entities.len(),
+        48,
+        "no lost or duplicate rows"
+    );
+    assert_eq!(ids.len(), 48);
+    assert_eq!(first.coverage, ResultCoverage::Partial);
+    assert_eq!(second.coverage, ResultCoverage::Complete);
+
+    let mut mat = SessionMaterialization::new();
+    let taken = engine
+        .execute(
+            &Expr::Query(QueryExpr::all("Item")),
+            &cgs,
+            &mut mat,
+            None,
+            StreamConsumeOpts {
+                max_items: Some(3),
+                bound_kind: ConsumeBoundKind::ExpressionTake,
+                ..Default::default()
+            },
+            ExecuteOptions {
+                compiled_catalog: Some(Arc::new(
+                    plasm_compile::compile_cgs_capability_templates(&cgs).unwrap(),
+                )),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(taken.entities.len(), 3, "explicit expression take is exact");
+    assert_eq!(taken.coverage, ResultCoverage::Complete);
+}
+
+#[test]
+fn decoder_regression_fixtures_have_compilable_contracts() {
+    for (fixture, entities, capabilities) in [
+        (
+            "embed_decoder_matrix",
+            &["Pokemon", "Type", "Ability"][..],
+            &["pokemon_get"][..],
+        ),
+        (
+            "embed_reverse_matrix",
+            &["Type", "Ability", "Pokemon"][..],
+            &["type_get", "ability_get"][..],
+        ),
+        (
+            "fibery_schema_overlay",
+            &["Record", "Database", "User", "View"][..],
+            &[
+                "schema_query",
+                "entity_create",
+                "entity_update",
+                "entity_delete",
+                "user_get_me",
+                "view_query",
+            ][..],
+        ),
+        ("credential_matrix", &["Receipt"][..], &["acquire"][..]),
+        ("plasm_prompt_matrix", &["Ruleset"][..], &[][..]),
+    ] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas")
+            .join(fixture);
+        let cgs = plasm_core::loader::load_schema_dir(&path)
+            .unwrap_or_else(|error| panic!("{fixture}: {error}"));
+        for entity in entities {
+            assert!(
+                cgs.get_entity(entity).is_some(),
+                "{fixture}: missing entity {entity}"
+            );
+        }
+        for capability in capabilities {
+            assert!(
+                cgs.get_capability(capability).is_some(),
+                "{fixture}: missing capability {capability}"
+            );
+        }
+        plasm_compile::compile_cgs_capability_templates(&cgs)
+            .unwrap_or_else(|error| panic!("{fixture}: {error}"));
+    }
 }

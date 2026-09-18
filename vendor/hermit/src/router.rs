@@ -64,6 +64,7 @@ pub fn build(configs: Vec<RouteConfig>) -> Router {
 }
 
 pub fn build_with_bounds(configs: Vec<RouteConfig>, min_items: usize, max_items: usize) -> Router {
+    let configs = normalize_route_paths(configs);
     let mut by_path: HashMap<String, MethodRouter<Arc<AppState>>> = HashMap::new();
     for cfg in &configs {
         let mr = method_router_for(&cfg.method);
@@ -104,6 +105,7 @@ pub fn build_with_bounds(configs: Vec<RouteConfig>, min_items: usize, max_items:
 /// Request fields and path identities never manufacture response properties.
 /// This mode is intended for client/catalog response conformance checks.
 pub fn build_spec_responses(configs: Vec<RouteConfig>) -> Router {
+    let configs = normalize_route_paths(configs);
     let mut by_path: HashMap<String, MethodRouter<Arc<AppState>>> = HashMap::new();
     for cfg in &configs {
         let mr = match cfg.method {
@@ -172,6 +174,31 @@ fn register_collection_entry(
             item_generators.insert(cfg.axum_path.clone(), generator);
         }
     }
+}
+
+/// OpenAPI parameter names may differ between operations with equivalent
+/// wire paths. Axum requires one name for every shared routing segment.
+fn normalize_route_paths(configs: Vec<RouteConfig>) -> Vec<RouteConfig> {
+    configs
+        .into_iter()
+        .map(|mut config| {
+            config.axum_path = config
+                .axum_path
+                .split('/')
+                .enumerate()
+                .map(|(index, segment)| {
+                    if segment.starts_with('{') && segment.ends_with('}') {
+                        let wildcard = if segment.starts_with("{*") { "*" } else { "" };
+                        format!("{{{wildcard}p{index}}}")
+                    } else {
+                        segment.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("/");
+            config
+        })
+        .collect()
 }
 
 fn into_state_map(configs: Vec<RouteConfig>) -> HashMap<String, RouteConfig> {
@@ -546,6 +573,45 @@ mod tests {
     async fn response_json(response: axum::response::Response) -> Value {
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn equivalent_parameter_paths_dispatch_by_method() {
+        for reversed in [false, true] {
+            let mut configs = vec![
+                route(
+                    HttpMethod::Get,
+                    "/messages/{phone_number}",
+                    200,
+                    Some(json!({"source":"get"})),
+                ),
+                route(HttpMethod::Delete, "/messages/{message_id}", 204, None),
+            ];
+            if reversed {
+                configs.reverse();
+            }
+            for app in [build(configs.clone()), super::build_spec_responses(configs)] {
+                let get = send(
+                    app.clone(),
+                    Request::builder()
+                        .uri("/messages/123")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await;
+                assert_eq!(get.status(), StatusCode::OK);
+                let delete = send(
+                    app,
+                    Request::builder()
+                        .method(Method::DELETE)
+                        .uri("/messages/123")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await;
+                assert_eq!(delete.status(), StatusCode::NO_CONTENT);
+            }
+        }
     }
 
     #[tokio::test]

@@ -1945,12 +1945,24 @@ pub enum ViewParamBinding {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ViewNodeSpec {
     pub id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub capability: String,
+    /// Traverse a declared relation over every row of a prior node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub traverse: Option<ViewTraversal>,
     #[serde(default)]
     pub bind: IndexMap<String, ViewParamBinding>,
     /// Skip or run this node based on prior read node results.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub when: Option<crate::workflow_identity::ViewNodeWhen>,
+}
+
+/// Typed rowset traversal; uses the same materialization as ordinary relation navigation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ViewTraversal {
+    pub node: String,
+    pub relation: String,
 }
 
 /// Maps a field on the view's output [`EntityName`] to scope data or a prior node's rows.
@@ -2027,6 +2039,8 @@ pub enum ViewRelationBinding {
     },
     /// Every row returned by a query node.
     NodeAllRows { node: String },
+    /// Distinct identities across compatible node rowsets, in first occurrence order.
+    NodeUnionRows { nodes: Vec<String> },
     /// The single row from a GET node (exactly one entity in the node's execution result).
     NodeSingleRow { node: String },
 }
@@ -2628,6 +2642,48 @@ impl CGS {
         self.validate_core()
     }
 
+    /// Resolve a view node's entity, checking declaration-order traversal dependencies.
+    pub fn view_node_entity(
+        &self,
+        view: &ViewDefinition,
+        node_id: &str,
+    ) -> Result<EntityName, String> {
+        let index = view
+            .nodes
+            .iter()
+            .position(|n| n.id == node_id)
+            .ok_or_else(|| format!("unknown view node `{node_id}`"))?;
+        let node = &view.nodes[index];
+        if let Some(traverse) = &node.traverse {
+            if !view.nodes[..index].iter().any(|n| n.id == traverse.node) {
+                return Err(format!(
+                    "traversal `{node_id}` requires an earlier node `{}`",
+                    traverse.node
+                ));
+            }
+            let source = self.view_node_entity(view, &traverse.node)?;
+            let relation = self
+                .get_entity(source.as_str())
+                .and_then(|e| e.relations.get(traverse.relation.as_str()))
+                .ok_or_else(|| format!("unknown relation `{source}.{}`", traverse.relation))?;
+            if matches!(
+                relation.materialize,
+                Some(RelationMaterialization::Unavailable)
+            ) {
+                return Err(format!(
+                    "relation `{source}.{}` is unavailable",
+                    traverse.relation
+                ));
+            }
+            Ok(relation.target_resource.clone())
+        } else {
+            self.capabilities
+                .get(node.capability.as_str())
+                .map(|c| c.domain.clone())
+                .ok_or_else(|| format!("unknown capability `{}`", node.capability))
+        }
+    }
+
     fn validate_views(&self) -> Result<(), SchemaError> {
         use std::collections::HashSet;
         for (view_key, view) in &self.views {
@@ -2686,6 +2742,33 @@ impl CGS {
                         view: view_key.clone(),
                         node: node.id.clone(),
                     });
+                }
+                if let Some(traverse) = &node.traverse {
+                    if !node.capability.is_empty() || !node.bind.is_empty() || node.when.is_some() {
+                        return Err(SchemaError::ViewCapabilityMappingInvalid {
+                            view: view_key.clone(),
+                            capability: view.capability.clone(),
+                            detail: format!(
+                                "traversal node `{}` cannot also declare capability, bind, or when",
+                                node.id
+                            ),
+                        });
+                    }
+                    if traverse.node == node.id || !seen_ids.contains(traverse.node.as_str()) {
+                        return Err(SchemaError::ViewNodeBindForwardRef {
+                            view: view_key.clone(),
+                            node: node.id.clone(),
+                            ref_node: traverse.node.clone(),
+                        });
+                    }
+                    self.view_node_entity(view, &node.id).map_err(|detail| {
+                        SchemaError::ViewCapabilityMappingInvalid {
+                            view: view_key.clone(),
+                            capability: view.capability.clone(),
+                            detail,
+                        }
+                    })?;
+                    continue;
                 }
                 let nc = self
                     .capabilities
@@ -2860,6 +2943,35 @@ impl CGS {
                 }
                 let node_ok = |node_id: &str| view.nodes.iter().any(|n| n.id == node_id);
                 match &ro.binding {
+                    ViewRelationBinding::NodeUnionRows { nodes } => {
+                        if nodes.is_empty() || ro.cardinality != Cardinality::Many {
+                            return Err(SchemaError::ViewCapabilityMappingInvalid {
+                                view: view_key.clone(),
+                                capability: view.capability.clone(),
+                                detail:
+                                    "identity union needs at least one node and a many relation"
+                                        .into(),
+                            });
+                        }
+                        for node in nodes {
+                            let target = self.view_node_entity(view, node).map_err(|detail| {
+                                SchemaError::ViewCapabilityMappingInvalid {
+                                    view: view_key.clone(),
+                                    capability: view.capability.clone(),
+                                    detail,
+                                }
+                            })?;
+                            if target != ro.target {
+                                return Err(SchemaError::ViewRelationOutputTargetMismatch {
+                                    view: view_key.clone(),
+                                    relation: ro.relation.to_string(),
+                                    expected: ro.target.to_string(),
+                                    got: target.to_string(),
+                                });
+                            }
+                        }
+                    }
+
                     ViewRelationBinding::FirstNodeRowWhere { node, .. }
                     | ViewRelationBinding::NodeRowsWhere { node, .. }
                     | ViewRelationBinding::NodeAllRows { node }
@@ -2982,11 +3094,7 @@ impl CGS {
             let slots: Vec<&str> = if entity.key_vars.len() > 1 {
                 entity.key_vars.iter().map(|k| k.as_str()).collect()
             } else {
-                vec![entity
-                    .key_vars
-                    .first()
-                    .unwrap_or(&entity.id_field)
-                    .as_str()]
+                vec![entity.key_vars.first().unwrap_or(&entity.id_field).as_str()]
             };
             for field in slots {
                 // id_from / implicit path identity with no declared field → String default.
@@ -4661,7 +4769,7 @@ impl CGS {
             if cap.kind != CapabilityKind::Query {
                 continue;
             }
-            for p in cap.scope_params() {
+            for p in cap.query_surface_fields() {
                 let Ok(nv) = p.named_value(self) else {
                     continue;
                 };

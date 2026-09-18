@@ -1,0 +1,160 @@
+version: 1
+auth:
+  scheme: none
+http_backend: http://embed.test
+values:
+  nv_berry_name:
+    type: string
+    description: Unique berry name used as its identifier
+  nv_berry_url:
+    type: string
+    description: API endpoint URL for full berry details
+  wire_id:
+    type: integer
+entities:
+  Pokemon:
+    id_field: name
+    fields:
+      name:
+        value_ref: nv_berry_name
+        required: true
+      id:
+        value_ref: wire_id
+      url:
+        value_ref: nv_berry_url
+    relations:
+      types:
+        target: Type
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: types
+          - wildcard: true
+          - key: type
+      abilities:
+        target: Ability
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: abilities
+          - wildcard: true
+          - key: ability
+      species:
+        target: Species
+        cardinality: one
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: species
+      forms:
+        target: Form
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: forms
+          - wildcard: true
+      moves:
+        target: Move
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: moves
+          - wildcard: true
+          - key: move
+  Type:
+    id_field: name
+    fields:
+      name:
+        value_ref: nv_berry_name
+        required: true
+      id:
+        value_ref: wire_id
+      url:
+        value_ref: nv_berry_url
+  Ability:
+    id_field: name
+    fields:
+      name:
+        value_ref: nv_berry_name
+        required: true
+      id:
+        value_ref: wire_id
+      url:
+        value_ref: nv_berry_url
+  Species:
+    id_field: name
+    fields:
+      name:
+        value_ref: nv_berry_name
+        required: true
+      id:
+        value_ref: wire_id
+      url:
+        value_ref: nv_berry_url
+  Form:
+    id_field: name
+    fields:
+      name:
+        value_ref: nv_berry_name
+        required: true
+      id:
+        value_ref: wire_id
+      url:
+        value_ref: nv_berry_url
+  Move:
+    id_field: name
+    fields:
+      name:
+        value_ref: nv_berry_name
+        required: true
+      id:
+        value_ref: wire_id
+      url:
+        value_ref: nv_berry_url
+capabilities:
+  pokemon_get:
+    kind: get
+    entity: Pokemon
+    provides:
+    - name
+    - id
+    - url
+  type_get:
+    kind: get
+    entity: Type
+    provides:
+    - name
+    - id
+    - url
+  ability_get:
+    kind: get
+    entity: Ability
+    provides:
+    - name
+    - id
+    - url
+  species_get:
+    kind: get
+    entity: Species
+    provides:
+    - name
+    - id
+    - url
+  form_get:
+    kind: get
+    entity: Form
+    provides:
+    - name
+    - id
+    - url
+  move_get:
+    kind: get
+    entity: Move
+    provides:
+    - name
+    - id
+    - url

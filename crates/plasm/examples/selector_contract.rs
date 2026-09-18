@@ -2,6 +2,7 @@
 use anyhow::Result;
 use plasm_agent_core::discovery_service::selector_contract;
 use plasm_agent_core::discovery_store::RetrievalReceipt;
+use plasm_agent_core::workflow_intent::{contract as intent_contract, IntentScope, WorkflowIntent};
 use plasm_core::prerequisites::CapabilityRef;
 use serde::Deserialize;
 use serde_json::json;
@@ -10,6 +11,50 @@ use std::io::{self, Read};
 #[derive(Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 enum Command {
+    IntentOpen {
+        request_id: String,
+        text: String,
+        scope: IntentScope,
+    },
+    IntentAppend {
+        workflow: WorkflowIntent,
+        expected_revision: u64,
+        request_id: String,
+        text: String,
+    },
+    LinkageRequest {
+        model: String,
+        workflow: WorkflowIntent,
+    },
+    LinkageDecode {
+        workflow: WorkflowIntent,
+        issued: intent_contract::BoundRequest,
+        raw: String,
+    },
+    AuditRequest {
+        model: String,
+        workflow: WorkflowIntent,
+    },
+    AuditDecode {
+        workflow: WorkflowIntent,
+        issued: intent_contract::BoundRequest,
+        raw: String,
+    },
+    AssessmentRequest {
+        focus: String,
+        model: String,
+        workflow: WorkflowIntent,
+        retrieval: RetrievalReceipt,
+    },
+    AssessmentDecode {
+        workflow: WorkflowIntent,
+        retrieval: RetrievalReceipt,
+        issued: intent_contract::BoundRequest,
+        raw: String,
+    },
+    RetrievalQueries {
+        workflow: WorkflowIntent,
+    },
     Documents {
         schema_dir: std::path::PathBuf,
     },
@@ -28,6 +73,61 @@ enum Command {
 
 fn run(command: Command) -> Result<serde_json::Value> {
     match command {
+        Command::IntentOpen {
+            request_id,
+            text,
+            scope,
+        } => Ok(serde_json::to_value(WorkflowIntent::open(
+            scope, request_id, text,
+        )?)?),
+        Command::IntentAppend {
+            mut workflow,
+            expected_revision,
+            request_id,
+            text,
+        } => {
+            workflow.append(expected_revision, request_id, text)?;
+            Ok(serde_json::to_value(workflow)?)
+        }
+        Command::LinkageRequest { model, workflow } => {
+            Ok(json!(intent_contract::linkage_request(&model, &workflow)?))
+        }
+        Command::LinkageDecode {
+            workflow,
+            issued,
+            raw,
+        } => Ok(json!(intent_contract::decode_linkage(
+            &workflow, &issued, &raw
+        )?)),
+        Command::AuditRequest { model, workflow } => {
+            Ok(json!(intent_contract::audit_request(&model, &workflow)?))
+        }
+        Command::AuditDecode {
+            workflow,
+            issued,
+            raw,
+        } => Ok(serde_json::to_value(intent_contract::decode_audit(
+            &workflow, &issued, &raw,
+        )?)?),
+        Command::AssessmentRequest {
+            focus,
+            model,
+            workflow,
+            retrieval,
+        } => Ok(json!(intent_contract::assessment_request(
+            &model, &workflow, &retrieval, &focus
+        )?)),
+        Command::AssessmentDecode {
+            workflow,
+            retrieval,
+            issued,
+            raw,
+        } => Ok(serde_json::to_value(intent_contract::decode_assessment(
+            &workflow, &retrieval, &issued, &raw,
+        )?)?),
+        Command::RetrievalQueries { workflow } => Ok(serde_json::to_value(
+            intent_contract::retrieval_queries(&workflow)?,
+        )?),
         Command::Documents { schema_dir } => {
             let cgs =
                 plasm_core::loader::load_schema_dir(&schema_dir).map_err(anyhow::Error::msg)?;
@@ -45,10 +145,10 @@ fn run(command: Command) -> Result<serde_json::Value> {
             .map(serde_json::Value::String),
         Command::Decode {
             raw,
-            intent,
+            intent: _,
             retrieval,
         } => {
-            let (selection, business) = selector_contract::decode(&raw, &intent, &retrieval)?;
+            let (selection, business) = selector_contract::decode(&raw, &retrieval)?;
             Ok(json!({"selection":selection,"business":business}))
         }
     }

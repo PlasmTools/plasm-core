@@ -94,6 +94,13 @@ pub struct ViewRunProof {
 
 /// Executes one view DAG node synchronously (preflight / fixture runners).
 pub(crate) trait ViewNodeRunner {
+    fn run_traversal_node(
+        &self,
+        ctx: &ViewRunContext<'_>,
+        node: &ViewNodeSpec,
+        source: &ExecutionResult,
+    ) -> Result<ExecutionResult, RuntimeError>;
+
     fn run_query_node(
         &self,
         ctx: &ViewRunContext<'_>,
@@ -124,6 +131,13 @@ pub(crate) trait ViewNodeRunner {
 /// Executes one view DAG node asynchronously (live HTTP).
 #[async_trait::async_trait]
 pub(crate) trait ViewNodeRunnerAsync {
+    async fn run_traversal_node(
+        &mut self,
+        ctx: &ViewRunContext<'_>,
+        node: &ViewNodeSpec,
+        source: &ExecutionResult,
+    ) -> Result<ExecutionResult, RuntimeError>;
+
     async fn run_query_node(
         &mut self,
         ctx: &ViewRunContext<'_>,
@@ -516,6 +530,24 @@ fn rows_for_binding<'a>(
     node_results: &'a IndexMap<String, ExecutionResult>,
 ) -> Result<Vec<&'a CachedEntity>, RuntimeError> {
     match binding {
+        ViewRelationBinding::NodeUnionRows { nodes } => {
+            let mut seen = std::collections::HashSet::new();
+            let mut rows = Vec::new();
+            for node in nodes {
+                let result =
+                    node_results
+                        .get(node)
+                        .ok_or_else(|| RuntimeError::ConfigurationError {
+                            message: format!("unknown identity union node `{node}`"),
+                        })?;
+                for row in &result.entities {
+                    if seen.insert(row.reference.clone()) {
+                        rows.push(row);
+                    }
+                }
+            }
+            Ok(rows)
+        }
         ViewRelationBinding::FirstNodeRowWhere {
             node,
             where_field,
@@ -588,7 +620,9 @@ pub fn resolve_view_relation_maps(
                     Vec::new()
                 }
             }
-            ViewRelationBinding::NodeRowsWhere { .. } | ViewRelationBinding::NodeAllRows { .. } => {
+            ViewRelationBinding::NodeRowsWhere { .. }
+            | ViewRelationBinding::NodeAllRows { .. }
+            | ViewRelationBinding::NodeUnionRows { .. } => {
                 let rows = rows_for_binding(&spec.binding, node_results)?;
                 rows.into_iter()
                     .map(|row| cached_row_to_target_ref(target_ent, row))

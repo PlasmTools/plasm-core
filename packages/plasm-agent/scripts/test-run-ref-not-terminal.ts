@@ -69,6 +69,13 @@ applyRunRefLedger(continued, [
 ]);
 assert.deepEqual([...continued], ["pc2"], "continuation handle from plasm_run must stay pending");
 
+const failedRun = new Set<string>(["pc0"]);
+applyRunRefLedger(failedRun, [
+  { role: "assistant", content: [{ type: "tool-call", toolCallId: "failed-run", toolName: "plasm_run", input: {run_ref: "pc0"} }] },
+  { role: "tool", content: [{ type: "tool-result", toolCallId: "failed-run", toolName: "plasm_run", output: {type: "error-text", value: "backend unavailable"} }] },
+]);
+assert.deepEqual([...failedRun], ["pc0"], "structured execution failure cannot consume pending run_ref");
+
 let count = 0;
 const model = new MockLanguageModelV3({
   doStream: async () => {

@@ -306,7 +306,7 @@ fn lower_relation_continuation_inner(
     expr: &str,
     source_label: &str,
     tail: &str,
-    require_static_singleton: bool,
+    require_singleton: bool,
 ) -> Result<DagNode, String> {
     let segment = tail.split('.').next().unwrap_or(tail).trim();
     if segment.is_empty() || tail.contains('.') {
@@ -323,16 +323,16 @@ fn lower_relation_continuation_inner(
             format!("unknown binding `{source_label}` for relation continuation"),
         )
     })?;
-    if require_static_singleton
+    if require_singleton
         && !matches!(
             contract.row_cardinality,
-            RowCardinalityProof::StaticSingleton
+            RowCardinalityProof::StaticSingleton | RowCardinalityProof::BoundedSingleton { .. }
         )
     {
         return Err(plp::plp4_program(
             id,
             format!(
-                "relation continuation `{source_label}.{segment}` requires a statically singleton binding — use `{source_label} => _.r#` for plural relation fanout"
+                "relation continuation `{source_label}.{segment}` requires a singleton binding — use `{source_label} => _.r#` for plural relation fanout"
             ),
         ));
     }
@@ -344,13 +344,8 @@ fn lower_relation_continuation_inner(
             ),
         ));
     }
-    let parsed = parse_relation_continuation_expr(
-        session,
-        state,
-        &contract,
-        segment,
-        !require_static_singleton,
-    )?;
+    let parsed =
+        parse_relation_continuation_expr(session, state, &contract, segment, !require_singleton)?;
     let Expr::Chain(ref chain) = parsed.expr else {
         return Err(plp::plp4_program(
             id,

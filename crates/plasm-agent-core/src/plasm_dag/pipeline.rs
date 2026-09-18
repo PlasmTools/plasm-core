@@ -197,6 +197,75 @@ pub(in crate::plasm_dag) fn compile_node_expr(
     lower_expr_node(session, state, id, rhs_display, node)
 }
 
+/// Apply the root read/operation per row, then lower relation hops through the
+/// same traversal nodes used by ordinary bindings. A chain is not a unary leaf.
+fn lower_catalog_application(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    id: &str,
+    display: &str,
+    source: &str,
+    surface: &str,
+    parsed: plasm_core::expr_parser::ParsedExpr,
+) -> Result<Vec<DagNode>, String> {
+    if let Expr::Chain(chain) = &parsed.expr {
+        if !matches!(chain.step, plasm_core::ChainStep::AutoGet) {
+            return Err(format!(
+                "Plasm program `{id}`: bind the relation rows before applying an explicit continuation"
+            ));
+        }
+        let parent_id = format!("__plasm_{id}_apply_parent");
+        let mut parent = parsed.clone();
+        parent.expr = (*chain.source).clone();
+        parent.projection = None;
+        let mut nodes = lower_catalog_application(
+            session, state, &parent_id, display, source, surface, parent,
+        )?;
+        let staged = compile_state_with_nodes(state, &nodes);
+        let mut relation = binding_continuation::lower_relation_application(
+            session,
+            &staged,
+            id,
+            display,
+            &parent_id,
+            chain.selector.as_str(),
+        )?;
+        if let DagNodeSource::RelationTraversal {
+            parsed: lowered,
+            plan_relation,
+            ..
+        } = &mut relation.source
+        {
+            lowered.projection = parsed.projection.clone();
+            plan_relation.ir.projection = parsed.projection;
+        }
+        nodes.push(relation);
+        return Ok(nodes);
+    }
+    let uses =
+        collect_template_uses_from_expr(&parsed.expr, Some("_"), &state.program_node_id_set());
+    let (kind, qualified, _effect, _shape) = infer_surface_contract(session, &parsed.expr)?;
+    if !kind.is_template_allowed() {
+        return Err(format!(
+            "Plasm program `{id}` row application must be a catalog read or operation expression"
+        ));
+    }
+    Ok(vec![DagNode {
+        id: id.to_string(),
+        expr: display.to_string(),
+        singleton: false,
+        page_size: None,
+        source: DagNodeSource::ForEach {
+            source: source.to_string(),
+            parsed_template: expression_template(&parsed, &uses),
+            display_expr: surface.to_string(),
+            effect_kind: kind,
+            qualified_entity: qualified,
+            uses_result: uses,
+        },
+    }])
+}
+
 fn lower_expr_node(
     session: &ExecuteSession,
     state: &CompileState<'_>,
@@ -253,28 +322,15 @@ fn lower_expr_node(
                         true,
                         Some(id),
                     )?;
-                    let uses = collect_template_uses_from_expr(&parsed.expr, Some("_"));
-                    let (kind, qualified, _effect, _shape) =
-                        infer_surface_contract(session, &parsed.expr)?;
-                    if !kind.is_template_allowed() {
-                        return Err(format!(
-                            "Plasm program `{id}` row application must be a catalog read or operation expression"
-                        ));
-                    }
-                    vec![DagNode {
-                        id: id.to_string(),
-                        expr: display.to_string(),
-                        singleton: false,
-                        page_size: None,
-                        source: DagNodeSource::ForEach {
-                            source: source.to_string(),
-                            parsed_template: expression_template(&parsed, &uses),
-                            display_expr: surface.trim().to_string(),
-                            effect_kind: kind,
-                            qualified_entity: qualified,
-                            uses_result: uses,
-                        },
-                    }]
+                    lower_catalog_application(
+                        session,
+                        state,
+                        id,
+                        display,
+                        source,
+                        surface.trim(),
+                        parsed,
+                    )?
                 }
                 Applicator::Relation { wire } => {
                     vec![binding_continuation::lower_relation_application(
@@ -403,7 +459,8 @@ fn lower_iterate_until(
         true,
         Some(id),
     )?;
-    let uses = collect_template_uses_from_expr(&parsed.expr, Some("_"));
+    let uses =
+        collect_template_uses_from_expr(&parsed.expr, Some("_"), &state.program_node_id_set());
     let (kind, qualified, _effect, _shape) = infer_surface_contract(session, &parsed.expr)?;
     if !matches!(
         kind,
@@ -788,15 +845,36 @@ pub(in crate::plasm_dag) fn compile_surface_nodes(
         id,
         &mut parsed.expr,
     )?;
-    let uses = collect_template_uses_from_expr(&parsed.expr, None);
+    let uses = collect_template_uses_from_expr(&parsed.expr, None, &state.program_node_id_set());
     let (kind, qualified_entity, effect_class, result_shape) =
         infer_surface_contract(session, &parsed.expr)?;
+    let view_singleton = match &parsed.expr {
+        Expr::Query(query) => {
+            cgs_for_qualified_entity(session, &qualified_entity).is_some_and(|cgs| {
+                let cap = match query.capability_name.as_deref() {
+                    Some(name) => cgs.get_capability(name),
+                    None => cgs.primary_query_capability(query.entity.as_str()),
+                };
+                cap.and_then(|cap| cap.mapping.as_ref())
+                    .is_some_and(|mapping| {
+                        mapping
+                            .template
+                            .0
+                            .get("transport")
+                            .and_then(serde_json::Value::as_str)
+                            == Some("view")
+                    })
+            })
+        }
+        _ => false,
+    };
     let node = DagNode {
         id: id.to_string(),
         expr: expr.to_string(),
         singleton: matches!(parsed.expr, Expr::Get(_)),
         page_size: None,
         source: DagNodeSource::Surface {
+            view_singleton,
             parsed,
             kind,
             qualified_entity,

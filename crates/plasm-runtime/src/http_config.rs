@@ -89,8 +89,7 @@ mod tests {
     fn effective_hydrate_concurrency_respects_backend_cap() {
         let mut cfg = ExecutionConfig::default();
         cfg.hydrate_concurrency = 16;
-        cfg.backend_max_inflight
-            .insert("simple_note".into(), 1);
+        cfg.backend_max_inflight.insert("simple_note".into(), 1);
         assert_eq!(cfg.effective_hydrate_concurrency(Some("simple_note")), 1);
         assert_eq!(cfg.effective_hydrate_concurrency(Some("github")), 16);
         assert_eq!(cfg.effective_hydrate_concurrency(None), 16);

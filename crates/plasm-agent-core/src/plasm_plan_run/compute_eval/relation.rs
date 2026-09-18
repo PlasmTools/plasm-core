@@ -513,6 +513,7 @@ fn wire_id_from_row(
     id_from
         .and_then(|path| super::super::row_json::value_at_segments(row, path))
         .and_then(json_value_to_wire_id)
+        .or_else(|| plasm_compile::embed_decode::extract_id_from_source(row, Some(id_field)).ok())
 }
 
 pub(crate) fn json_rows_to_entities_with_refs(
@@ -577,7 +578,26 @@ pub(crate) fn resolve_embed_target_entities(
         parents,
         mat,
     ) {
-        Some(entities) => entities,
+        Some(mut entities) => {
+            // Prefer an already-observed full wire row for a missing cache child.
+            // Match its identity; unrelated fallback rows cannot enter the relation.
+            if let Some(rows) = wire_fallback_rows {
+                let fallback = json_rows_to_entities_with_refs(target_entity, rows, Some(cgs));
+                for entity in &mut entities {
+                    if entity.completeness == plasm_runtime::EntityCompleteness::Summary
+                        && entity.fields.is_empty()
+                    {
+                        if let Some(observed) = fallback
+                            .iter()
+                            .find(|row| row.reference == entity.reference)
+                        {
+                            *entity = observed.clone();
+                        }
+                    }
+                }
+            }
+            entities
+        }
         None => wire_fallback_rows
             .map(|rows| json_rows_to_entities_with_refs(target_entity, rows, Some(cgs)))
             .unwrap_or_default(),
@@ -625,18 +645,7 @@ pub(crate) async fn finalize_embed_relation_materialized_node(
         operations: plasm_runtime::OperationLedger::empty(),
     };
     let parsed_preimage = crate::plasm_plan_run::evidence_plan::parsed_expr_for_plan_node(node);
-    let artifact = archive_plasm_result_snapshot(
-        st,
-        es,
-        session_id,
-        Some(relation.relation.target.entry_id.as_str()),
-        artifact_labels,
-        &parsed_preimage,
-        &full_result,
-        trace,
-    )
-    .await?;
-    finalize_typed_relation_materialized_node(
+    let mut materialized = finalize_typed_relation_materialized_node(
         st,
         es,
         session_id,
@@ -652,19 +661,89 @@ pub(crate) async fn finalize_embed_relation_materialized_node(
                 &full_result.entities,
             ),
             result: Arc::new(full_result),
-            artifact: Some(artifact),
+            artifact: None,
         },
         trace,
         read_cap,
         None,
     )
-    .await
+    .await?;
+    let artifact = archive_plasm_result_snapshot(
+        st,
+        es,
+        session_id,
+        Some(relation.relation.target.entry_id.as_str()),
+        artifact_labels,
+        &parsed_preimage,
+        &materialized.result,
+        trace,
+    )
+    .await?;
+    materialized.artifact = Some(artifact);
+    Ok(materialized)
 }
 
 #[cfg(test)]
 mod parent_get_row_tests {
     use super::*;
     use plasm_core::JsonPathSegment;
+
+    #[test]
+    fn embedded_wire_identity_matches_detail_decoder() {
+        for row in [
+            serde_json::json!({"id": 8, "name": "Eight"}),
+            serde_json::json!(8),
+        ] {
+            assert_eq!(
+                wire_id_from_row(&row, "resource_id", None),
+                Some("8".into())
+            );
+        }
+        assert_eq!(
+            wire_id_from_row(
+                &serde_json::json!({"resource_id": 9, "id": 8}),
+                "resource_id",
+                None
+            ),
+            Some("9".into())
+        );
+    }
+
+    #[test]
+    fn missing_cached_child_uses_only_matching_observed_wire_row() {
+        let cgs = plasm_core::load_schema_dir(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/plasm_language_matrix"),
+        )
+        .unwrap();
+        let parent = CachedEntity {
+            reference: plasm_core::Ref::new("LangItem", "i1"),
+            fields: Default::default(),
+            relations: indexmap::IndexMap::from([(
+                "lines".into(),
+                vec![plasm_core::Ref::new("LangLine", "l1")],
+            )]),
+            last_updated: 0,
+            version: 0,
+            completeness: plasm_runtime::EntityCompleteness::Complete,
+            unavailable_fields: Default::default(),
+        };
+        let wire = [
+            serde_json::json!({"id":"l99","item_id":"i1","note":"unrelated"}),
+            serde_json::json!({"id":"l1","item_id":"i1","note":"observed"}),
+        ];
+        let rows = resolve_embed_target_entities(
+            "lines",
+            "LangLine",
+            &[parent],
+            &plasm_runtime::SessionMaterialization::new(),
+            Some(&wire),
+            &cgs,
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].reference, plasm_core::Ref::new("LangLine", "l1"));
+        assert_eq!(rows[0].payload_to_json()["note"], "observed");
+    }
 
     #[test]
     fn normalize_hoists_nested_pokemon_embed() {

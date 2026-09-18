@@ -533,3 +533,182 @@ fn hermit_shared_server_survives_caller_runtime_shutdown() {
         assert!(response.status().is_success());
     });
 }
+
+/// Production-catalog/spec integration: owner selection and peer mutation are distinct.
+#[test]
+fn venmo_friend_owner_role_preserves_openapi_wire_contract() {
+    use plasm_compile::{compile_operation, parse_capability_template, CmlEnv, CompiledOperation};
+    use plasm_core::Value;
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/appworld/venmo");
+    let cgs = plasm_core::load_schema(&directory).expect("Venmo production catalog");
+    let spec: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.join("openapi.json")).unwrap()).unwrap();
+    let list_parameters = spec["paths"]["/venmo/friends"]["get"]["parameters"]
+        .as_array()
+        .unwrap();
+    let owner_parameter = list_parameters
+        .iter()
+        .find(|parameter| parameter["name"] == "user_email")
+        .unwrap();
+    assert!(owner_parameter["description"]
+        .as_str()
+        .unwrap()
+        .contains("whose friends"));
+    let query = cgs.get_capability("friend_query").unwrap();
+    assert!(query
+        .inputs
+        .scope
+        .0
+        .iter()
+        .any(|field| field.name == "owner_email"));
+    assert!(!query
+        .inputs
+        .scope
+        .0
+        .iter()
+        .any(|field| field.name == "user_email"));
+    let owner_slot = query
+        .inputs
+        .scope
+        .0
+        .iter()
+        .find(|field| field.name == "owner_email")
+        .unwrap()
+        .named_value(&cgs)
+        .unwrap();
+    assert!(owner_slot.description.contains("whose Venmo friend list"));
+    let compile = |capability: &str, env: &CmlEnv| {
+        let template = parse_capability_template(
+            &cgs.get_capability(capability)
+                .unwrap()
+                .mapping
+                .as_ref()
+                .unwrap()
+                .template,
+        )
+        .unwrap();
+        let CompiledOperation::Http(request) = compile_operation(&template, env).unwrap() else {
+            panic!("HTTP mapping")
+        };
+        request
+    };
+    let mut env = CmlEnv::new();
+    env.insert(
+        "access_token".into(),
+        Value::String("role-test-token".into()),
+    );
+    let own = compile("friend_query", &env);
+    assert!(own.query.as_ref().is_none_or(|query| query
+        .as_object()
+        .is_some_and(|object| !object.contains_key("user_email"))));
+    env.insert(
+        "owner_email".into(),
+        Value::String("owner@example.com".into()),
+    );
+    let owned = compile("friend_query", &env);
+    assert_eq!(owned.path, "/venmo/friends");
+    assert_eq!(
+        owned.query.unwrap().as_object().unwrap().get("user_email"),
+        Some(&Value::String("owner@example.com".into()))
+    );
+    env.insert(
+        "user_email".into(),
+        Value::String("peer@example.com".into()),
+    );
+    assert_eq!(
+        compile("friend_add", &env).path,
+        "/venmo/friends/peer@example.com"
+    );
+    env.insert("id".into(), Value::String("peer@example.com".into()));
+    assert_eq!(
+        compile("friend_remove", &env).path,
+        "/venmo/friends/peer@example.com"
+    );
+    assert!(spec["paths"]["/venmo/friends/{user_email}"]["post"].is_object());
+    assert!(spec["paths"]["/venmo/friends/{user_email}"]["delete"].is_object());
+}
+
+/// Production catalog integration: externally specified authors/credits survive decoding.
+#[test]
+fn appworld_record_authorship_matches_openapi() {
+    use plasm_compile::{
+        decode_entities, entity_decoder_for_from_parent_get_target, path_expr_from_json_segments,
+        PathExpr,
+    };
+    use plasm_core::RelationMaterialization;
+    for (app, entity, relation, endpoint, wire, body, expected) in [
+        (
+            "spotify",
+            "Song",
+            "artists",
+            "/spotify/songs/{song_id}",
+            "artists",
+            serde_json::json!({"artists":[{"id":41,"name":"Credit A"},{"id":42,"name":"Credit B"}]}),
+            2,
+        ),
+        (
+            "spotify",
+            "Album",
+            "artists",
+            "/spotify/albums/{album_id}",
+            "artists",
+            serde_json::json!({"artists":[{"id":41,"name":"Credit A"}]}),
+            1,
+        ),
+        (
+            "todoist",
+            "TaskComment",
+            "author",
+            "/todoist/task_comments/{task_comment_id}",
+            "user",
+            serde_json::json!({"task_comment_id":7,"user":{"name":"Comment Author","email":"author@example.com"}}),
+            1,
+        ),
+    ] {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../apis/appworld")
+            .join(app);
+        let cgs = plasm_core::load_schema(&dir).unwrap();
+        let spec: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.join("openapi.json")).unwrap()).unwrap();
+        let schema = &spec["paths"][endpoint]["get"]["responses"]["200"]["content"]
+            ["application/json"]["schema"];
+        assert!(schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == wire));
+        let parent = cgs.get_entity(entity).unwrap();
+        let rel = parent.relations.get(relation).unwrap();
+        let Some(RelationMaterialization::FromParentGet { path }) = &rel.materialize else {
+            panic!("embedded identity required")
+        };
+        let target = cgs.get_entity(rel.target_resource.as_str()).unwrap();
+        let decoder = entity_decoder_for_from_parent_get_target(
+            target,
+            parent,
+            path_expr_from_json_segments(path).unwrap(),
+        );
+        let rows = decode_entities(&decoder, &body).unwrap();
+        assert_eq!(rows.len(), expected);
+        if app == "spotify" {
+            assert_eq!(
+                rows[0].fields["name"],
+                plasm_core::Value::String("Credit A".into())
+            );
+        }
+        if app == "todoist" {
+            let decoder =
+                entity_decoder_for_from_parent_get_target(parent, parent, PathExpr::empty());
+            let rows = decode_entities(&decoder, &body).unwrap();
+            assert_eq!(
+                rows[0].fields["author_email"],
+                plasm_core::Value::String("author@example.com".into())
+            );
+            assert_eq!(
+                rows[0].fields["author_name"],
+                plasm_core::Value::String("Comment Author".into())
+            );
+        }
+    }
+}

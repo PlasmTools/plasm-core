@@ -4,7 +4,7 @@ http_backend: https://example.test
 auth: {scheme: none}
 values:
   text: {type: string}
-  reference: {type: entity_ref, target: Receipt}
+  reference: {type: string, description: Opaque credential receipt identity.}
 entities:
   Receipt:
     id_field: reference

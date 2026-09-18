@@ -426,6 +426,15 @@
     {
       "consumer": {
         "catalog": "amazon",
+        "capability": "payment_card_create"
+      },
+      "requirement": "payment_card",
+      "provider_catalog": "supervisor",
+      "provider": "payment_card"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
         "capability": "payment_card_update"
       },
       "requirement": "session",
@@ -2208,6 +2217,15 @@
     {
       "consumer": {
         "catalog": "spotify",
+        "capability": "library_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
         "capability": "song_library_query"
       },
       "requirement": "session",
@@ -2393,6 +2411,15 @@
       "requirement": "session",
       "provider_catalog": "spotify",
       "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "payment_card_create"
+      },
+      "requirement": "payment_card",
+      "provider_catalog": "supervisor",
+      "provider": "payment_card"
     },
     {
       "consumer": {
@@ -3144,6 +3171,15 @@
     {
       "consumer": {
         "catalog": "venmo",
+        "capability": "payment_card_create"
+      },
+      "requirement": "payment_card",
+      "provider_catalog": "supervisor",
+      "provider": "payment_card"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
         "capability": "payment_card_update"
       },
       "requirement": "session",
@@ -3229,6 +3265,456 @@
       },
       "requirement": "session",
       "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "task_comment_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "file_system",
+        "capability": "account_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "file_system",
+        "capability": "account_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "file_system",
+        "capability": "account_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "phone",
+        "capability": "account_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "phone",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "phone",
+        "capability": "account_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "phone",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "phone",
+        "capability": "account_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "phone",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "phone",
+        "capability": "voice_message_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "phone",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "simple_note",
+        "capability": "account_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "simple_note",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "simple_note",
+        "capability": "account_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "simple_note",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "simple_note",
+        "capability": "account_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "simple_note",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "account_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "account_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "account_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "expense_comment_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "notification_count"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "payment_comment_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "account_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "account_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "account_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "album_membership_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "album_review_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "album_review_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "artist_membership_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "payment_card_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "playlist_membership_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "playlist_review_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "playlist_review_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "song_membership_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "song_review_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "song_review_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "account_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "account_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "account_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "label_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "label_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "notification_count"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "project_collaborator_remove"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "project_invite_send"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "section_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "sub_task_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "todoist",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "account_delete"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "account_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "account_update"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "notification_count"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "payment_card_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "transaction_comment_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "transaction_comment_like"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "transaction_comment_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "venmo",
+        "capability": "transaction_comment_unlike"
+      },
+      "requirement": "session",
+      "provider_catalog": "venmo",
       "provider": "session"
     }
   ]

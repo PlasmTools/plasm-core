@@ -1,4 +1,4 @@
-version: 8
+version: 9
 http_backend: https://discord.com/api/v10
 data_classes:
   untrusted:
@@ -885,7 +885,7 @@ entities:
     id_field: id
     primary_read: guild_emoji_get
     primary_query: guild_emoji_list
-    description: Custom emoji for a guild or for an application (same wire shape; scope depends on the operation).
+    description: Custom emoji belonging to a server or application.
     fields:
       id:
         required: true

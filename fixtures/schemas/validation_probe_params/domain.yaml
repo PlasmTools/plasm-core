@@ -1,0 +1,23 @@
+version: 1
+http_backend: http://127.0.0.1:9
+auth: {scheme: none}
+entities:
+  ProbeRecord:
+    id_field: id
+    fields:
+      id: {required: true, value_ref: nv_id}
+capabilities:
+  probe_query:
+    kind: query
+    entity: ProbeRecord
+    scope:
+      - {name: owner_email, value_ref: nv_email, required: true}
+    selection:
+      - {name: access_token, value_ref: nv_token, required: true}
+      - {name: phone_number, value_ref: nv_phone, required: false}
+    provides: [id]
+values:
+  nv_id: {type: string}
+  nv_email: {type: email}
+  nv_token: {type: string}
+  nv_phone: {type: e164}

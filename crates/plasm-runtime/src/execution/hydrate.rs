@@ -389,7 +389,7 @@ impl ExecutionEngine {
         if !mat.allows_recorded_read_reuse() {
             for entity in ordered_entities {
                 if mat.get(&entity.reference).is_some() {
-                    mat.overwrite(entity.clone())?;
+                    mat.publish_fresh_row(entity.clone())?;
                 }
             }
         }
@@ -2913,7 +2913,9 @@ mod tests {
                     raw_code: code.clone(),
                     raw_member: member.clone(),
                 });
-                if let Some(schedule) = &self.schedule { schedule.complete(&requested); }
+                if let Some(schedule) = &self.schedule {
+                    schedule.complete(&requested);
+                }
                 Ok((
                     serde_json::json!({
                         "note_id": returned_id,
@@ -3076,7 +3078,9 @@ mod tests {
             assert_eq!(b.raw_member, member);
         }
         assert_published_matches_fixture(&out, &["1", "2", "3"]);
-        assert!(mat.get(&plasm_core::Ref::new("LangSecuredNote", "99")).is_none());
+        assert!(mat
+            .get(&plasm_core::Ref::new("LangSecuredNote", "99"))
+            .is_none());
     }
 
     /// Concurrent hydrate with forced response reordering must not cross-wire fields.
@@ -3094,7 +3098,9 @@ mod tests {
             .map(|b| b.requested_path_id.as_str())
             .collect();
         assert_published_matches_fixture(&out, &["1", "2", "3"]);
-        assert!(mat.get(&plasm_core::Ref::new("LangSecuredNote", "99")).is_none());
+        assert!(mat
+            .get(&plasm_core::Ref::new("LangSecuredNote", "99"))
+            .is_none());
     }
 
     /// Wrong-identity inject: Plasm must reject the divergent body without contaminating
@@ -3131,7 +3137,8 @@ mod tests {
             "injected code must not land on retained id 2"
         );
         assert!(
-            mat.get(&plasm_core::Ref::new("LangSecuredNote", "99")).is_none(),
+            mat.get(&plasm_core::Ref::new("LangSecuredNote", "99"))
+                .is_none(),
             "divergent identity must not be inserted"
         );
     }

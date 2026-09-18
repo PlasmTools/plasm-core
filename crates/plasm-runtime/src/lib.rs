@@ -216,3 +216,6 @@ pub use row_predicate::{
 pub use runtime_error_render::step_error_from_runtime;
 pub use session_graph_cache::MutexGraphCacheSession;
 pub use top_k::TopKSpec;
+
+#[cfg(test)]
+mod view_rowset_tests;

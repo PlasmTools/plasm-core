@@ -42,6 +42,7 @@ impl PlanNodeEmitter for DagNodeSource {
         };
         match self {
             Self::Surface {
+                view_singleton: _,
                 parsed,
                 kind,
                 qualified_entity,

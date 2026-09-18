@@ -1,4 +1,4 @@
-version: 12
+version: 13
 entry_id: gmail
 auth:
   scheme: none
@@ -16,7 +16,7 @@ data_classes:
 entities:
   AuthSession:
     id_field: access_token
-    description: Login session for Gmail (Bearer token).
+    description: Authenticated session for Gmail.
     discovery:
       names:
       - login
@@ -480,7 +480,7 @@ capabilities:
       description: Sends an email to the given addresses.
   email_reply:
     receiver: {kind: entity, entity: Email}
-    description: Reply to this email (entity id) within its thread.
+    description: Reply to the selected email within its conversation.
     kind: action
     entity: Email
     payload:
@@ -1002,13 +1002,13 @@ values:
     description: Email body text.
   nv_thread_id:
     type: integer
-    description: Email thread primary key.
+    description: Identifies the email thread to read or act on.
   nv_email_id:
     type: integer
-    description: Email primary key.
+    description: Identifies the email to read or act on.
   nv_draft_id:
     type: integer
-    description: Draft primary key.
+    description: Identifies the draft to read or act on.
   nv_email_list:
     type: array
     items:
@@ -1028,7 +1028,7 @@ values:
     description: Filename of an attachment on a draft.
   nv_attachment_id:
     type: integer
-    description: Attachment primary key.
+    description: Identifies the attachment to read or act on.
   nv_file_path:
     type: string
     description: File-system path for download or save.
