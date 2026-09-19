@@ -670,7 +670,7 @@ mod tests {
     }
 
     #[test]
-    fn limited_projected_list_clears_unprojected_advisory() {
+    fn limited_projected_list_still_requires_review_for_collection_compute() {
         let s = test_session(vec!["Product"]);
         let mut nodes = vec![serde_json::json!({
             "id": "r1",
@@ -701,13 +701,9 @@ mod tests {
             "downstream project clears unprojected advisory: {:?}",
             dry.review
         );
-        assert!(!dry.review.needs_review(false));
-        assert!(
-            dry.fuse_clean_read(),
-            "limited projected read must fuse: gate={:?} flow={:?}",
-            dry.evaluate_gate().verdict,
-            dry.flow.verdict
-        );
+        assert!(dry.review.has_full_collection_compute);
+        assert!(dry.review.needs_review(false));
+        assert!(!dry.fuse_clean_read());
     }
 
     #[test]
@@ -948,7 +944,7 @@ mod tests {
     }
 
     #[test]
-    fn dry_review_ok_for_query_limit_project_without_plan_warnings() {
+    fn dry_review_requires_review_for_query_limit_project_collection_compute() {
         use crate::plan_dry_display::{build_plan_dry_compact_view, PlanDryVerdict};
 
         let s = test_session(vec!["Product", "Category"]);
@@ -981,12 +977,12 @@ mod tests {
         );
         assert_eq!(
             compact.verdict,
-            PlanDryVerdict::Ok,
+            PlanDryVerdict::Review,
             "review: {:?}",
             dry.review
         );
         assert!(
-            compact.warnings.is_none(),
+            compact.warnings.is_some(),
             "warnings: {:?}",
             compact.warnings
         );
@@ -997,7 +993,7 @@ mod tests {
     }
 
     #[test]
-    fn dry_review_default_page_bounds_bare_list_query() {
+    fn dry_review_bare_list_query_requires_review_and_unbounded_advisory() {
         use crate::plan_dry_display::{build_plan_dry_compact_view, PlanDryVerdict};
 
         let s = test_session(vec!["Product"]);
@@ -1025,15 +1021,10 @@ mod tests {
             Some(&s),
             None,
         );
-        assert_eq!(compact.verdict, PlanDryVerdict::Ok);
-        assert!(
-            compact.warnings.is_none()
-                || !compact
-                    .warnings
-                    .as_deref()
-                    .is_some_and(|w| w.contains("unbounded")),
-            "default host page should avoid unbounded warning: {:?}",
-            compact.warnings
-        );
+        assert_eq!(compact.verdict, PlanDryVerdict::Review);
+        assert!(compact
+            .warnings
+            .as_deref()
+            .is_some_and(|warnings| warnings.contains("unbounded read")));
     }
 }

@@ -351,8 +351,9 @@ fn plasm_context_tool_description_contract_append_vs_refresh() {
     let workflow = plasm_core::prompt_render::MCP_INITIALIZE_WORKFLOW;
     assert!(
         desc.contains("session_mode: \"extend\"")
-            && desc.to_ascii_lowercase().contains("intent-only"),
-        "expected intent-only extend guidance in plasm_context description"
+            && desc.contains("effect_slots")
+            && desc.contains("no partial language card"),
+        "expected explicit-slot coverage guidance in plasm_context description"
     );
     assert!(
         workflow.contains("session_mode"),
@@ -369,7 +370,7 @@ fn plasm_context_tool_description_contract_append_vs_refresh() {
 }
 
 #[test]
-fn plasm_context_input_schema_requires_intent_not_seeds_on_new() {
+fn plasm_context_input_schema_requires_intent_and_effect_slots_not_seeds() {
     let tools = default_plasm_tools();
     let ctx = tools
         .iter()
@@ -382,6 +383,7 @@ fn plasm_context_input_schema_requires_intent_not_seeds_on_new() {
         .expect("required array");
     assert!(required.iter().any(|x| x.as_str() == Some("session_mode")));
     assert!(required.iter().any(|x| x.as_str() == Some("intent")));
+    assert!(required.iter().any(|x| x.as_str() == Some("effect_slots")));
     assert!(!required.iter().any(|x| x.as_str() == Some("seeds")));
     assert!(!required
         .iter()
@@ -406,15 +408,22 @@ fn plasm_context_input_schema_requires_intent_not_seeds_on_new() {
             .and_then(|x| x.as_str()),
         Some("string")
     );
+    assert_eq!(
+        props
+            .get("effect_slots")
+            .and_then(|x| x.get("type"))
+            .and_then(|x| x.as_str()),
+        Some("array")
+    );
     assert!(
         !props.contains_key("ranked_capabilities"),
         "caller-supplied rankings must not bypass the capability selector"
     );
 }
 
-/// MCP hosts (e.g. Cursor) may validate `tools/call` args against the advertised JSON Schema
-/// from `tools/list`. Discovery accepts one `intent` string only; array-shaped `query` is a
-/// removed interface, not a compatibility path.
+/// MCP hosts may validate `tools/call` args against the advertised JSON Schema.
+/// Discovery accepts one original `intent` plus explicit effect slots; array-shaped
+/// legacy `query` remains a removed interface.
 
 #[test]
 fn plasm_input_schema_advertises_single_program_string() {
@@ -604,7 +613,29 @@ fn parse_plasm_context_session_mode_new_and_extend() {
 }
 
 #[test]
-fn context_tool_has_intent_and_typed_continuation_without_seed_selection() {
+fn parse_effect_slots_requires_non_empty_bounded_strings() {
+    use super::tool_parse::parse_effect_slots;
+
+    assert_eq!(
+        parse_effect_slots(
+            "plasm_context",
+            &serde_json::json!({"effect_slots":[" read records ", "publish them"]}),
+        )
+        .unwrap(),
+        vec!["read records", "publish them"]
+    );
+    for invalid in [
+        serde_json::json!({}),
+        serde_json::json!({"effect_slots":[]}),
+        serde_json::json!({"effect_slots":[""]}),
+        serde_json::json!({"effect_slots":[1]}),
+    ] {
+        assert!(parse_effect_slots("plasm_context", &invalid).is_err());
+    }
+}
+
+#[test]
+fn context_tool_has_intent_slots_and_typed_continuation_without_seed_selection() {
     let tools = super::tools::plasm_tools(
         crate::mcp_run_markdown::ArtifactAccessMode::ResourcesRead,
         false,
@@ -614,6 +645,7 @@ fn context_tool_has_intent_and_typed_continuation_without_seed_selection() {
         .find(|tool| tool.name == "plasm_context")
         .unwrap();
     let schema = serde_json::to_value(&tool.input_schema).unwrap();
+    assert_eq!(schema["properties"]["effect_slots"]["type"], "array");
     assert!(schema["properties"].get("seeds").is_none());
     assert!(schema["properties"].get("ranked_capabilities").is_none());
     assert!(schema["properties"].get("clarify_choices").is_none());

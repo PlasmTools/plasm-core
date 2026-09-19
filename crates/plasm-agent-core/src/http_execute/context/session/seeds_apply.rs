@@ -546,7 +546,8 @@ pub async fn apply_capability_seeds(
 #[cfg(test)]
 mod sufficiency_tests {
     use super::*;
-    use crate::discovery_service::{CapabilitySelection, RoutingReceipt, SelectionStatus};
+    use crate::discovery_matcher::{CapabilityMatchReceipt, EffectSlot};
+    use crate::discovery_service::RoutingReceipt;
     use crate::discovery_store::{DiscoveryAuthorization, RetrievalReceipt};
     use crate::http::{build_plasm_host_state, PlasmHostBootstrap};
     use crate::server_state::CatalogBootstrap;
@@ -554,11 +555,10 @@ mod sufficiency_tests {
 
     #[tokio::test]
     async fn empty_routed_extension_preserves_session_and_symbols() {
-        check_empty_extension(SelectionStatus::Ready).await;
-        check_empty_extension(SelectionStatus::Insufficient).await;
+        check_empty_extension().await;
     }
 
-    async fn check_empty_extension(status: SelectionStatus) {
+    async fn check_empty_extension() {
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = Arc::new(plasm_core::loader::load_schema_dir(&path).unwrap());
@@ -598,7 +598,6 @@ mod sufficiency_tests {
             .unwrap();
         let before_symbols = before.teaching_exposure.as_ref().unwrap().entities.clone();
         host.oss.discovery_route = Some(Arc::new(RoutingReceipt {
-            intent_evidence: None,
             intent_analysis: String::new(),
             authorization: DiscoveryAuthorization::catalogs(["matrix".into()].into()),
             intent: "continue with existing tools".into(),
@@ -613,20 +612,20 @@ mod sufficiency_tests {
                 fusion_truncated: 0,
                 relation_truncated: 0,
             },
-            selection: CapabilitySelection {
-                status,
+            matching: CapabilityMatchReceipt {
+                slots: vec![EffectSlot {
+                    id: "s0".into(),
+                    statement: "continue with existing tools".into(),
+                }],
+                matches: vec![],
+                complete: true,
+                unmatched_slot_ids: vec![],
                 additional_capability_ids: vec![],
-                requirement_coverage: if status == SelectionStatus::Insufficient {
-                    vec![crate::discovery_service::RequirementCoverage {
-                        requirement: "continue".into(),
-                        assessment: crate::discovery_service::RequirementAssessment::Unresolved {
-                            useful_capabilities: vec![],
-                            missing: "Missing presented functionality".into(),
-                        },
-                    }]
-                } else {
-                    vec![]
-                },
+            },
+            input_source_projection: vec![],
+            input_source_matching: crate::discovery_matcher::InputSourceMatchReceipt {
+                matches: vec![],
+                selected: vec![],
             },
             closure: Some(plasm_core::prerequisites::PrerequisiteClosure {
                 business: vec![],

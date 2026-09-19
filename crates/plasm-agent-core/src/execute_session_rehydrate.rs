@@ -644,7 +644,7 @@ mod tests {
     }
 
     #[test]
-    fn replay_wave_structure_differs_from_incremental_live_path() {
+    fn explicit_replay_preserves_only_requested_entities() {
         use crate::http_execute::replay_teaching_exposure_waves;
 
         let matrix_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -703,7 +703,7 @@ mod tests {
         );
         assert_eq!(
             exp.entity_catalog_entry_ids,
-            vec!["langmatrix_a", "langmatrix_b"]
+            ["langmatrix_a", "langmatrix_b"]
         );
         let (map, _): (Arc<plasm_core::SymbolMap>, _) = exp.symbol_map_arc_cross(None, None);
         assert!(map.resolve_session_entity_symbol("e2").is_some());

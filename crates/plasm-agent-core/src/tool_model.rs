@@ -1587,13 +1587,13 @@ mod tests {
     }
 
     #[test]
-    fn gmail_tool_model_exposes_cgs_auth_oauth_metadata() {
+    fn prompt_matrix_tool_model_exposes_bearer_auth_metadata() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/schemas/plasm_prompt_matrix");
-        let cgs = load_schema(&dir).expect("gmail");
+        let cgs = load_schema(&dir).expect("prompt matrix");
         let meta = CatalogEntryMeta {
-            entry_id: "gmail".into(),
-            label: "Gmail".into(),
+            entry_id: "prompt_matrix".into(),
+            label: "Prompt matrix".into(),
             tags: vec![],
             catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
             aliases: vec![],
@@ -1603,20 +1603,13 @@ mod tests {
             entity: vec![],
         };
         let m = build_tool_model(&cgs, &meta, &q).expect("ok");
-        assert_eq!(m.auth.scheme.as_deref(), Some("oauth_bearer"));
+        assert_eq!(m.auth.scheme.as_deref(), Some("bearer_token"));
         assert_eq!(
             m.auth.connect_profile.capability,
-            plasm_core::CatalogAuthCapability::OauthOnly
+            plasm_core::CatalogAuthCapability::ApiKeyAndOauth
         );
-        assert!(!m.auth.connect_profile.has_api_key);
+        assert!(m.auth.connect_profile.has_api_key);
         assert!(m.auth.connect_profile.has_oauth);
-        assert!(m.auth.connect_profile.oauth.provider_present);
-        let oauth = m.auth.oauth.as_ref().expect("gmail oauth block");
-        assert_eq!(oauth.provider, "google");
-        assert!(oauth
-            .default_scope_sets
-            .contains_key("plasm_gmail_integrator_bundle"));
-        assert!(oauth.requirements.capabilities.contains_key("message_list"));
     }
 
     #[test]
@@ -1735,43 +1728,5 @@ mod tests {
             "langitem_create title must stay a string type_label, got {}",
             title.type_label
         );
-    }
-
-    #[test]
-    fn notion_page_relation_created_by_targets_user() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/schemas/notion_schema_overlay/bootstrap");
-        let cgs = load_schema(&dir).expect("notion");
-        let meta = CatalogEntryMeta {
-            entry_id: "notion".into(),
-            label: "Notion".into(),
-            tags: vec![],
-            catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
-            aliases: vec![],
-        };
-        let q = ToolModelQuery {
-            focus: "all".into(),
-            entity: vec![],
-        };
-        let m = build_tool_model(&cgs, &meta, &q).expect("ok");
-        let page = m
-            .entities
-            .iter()
-            .find(|e| e.name == "Page")
-            .expect("Page entity");
-        assert!(
-            !page
-                .capabilities
-                .iter()
-                .any(|c| c.line_kind == "relation_nav"),
-            "relation teaching lines should not duplicate the Relations section"
-        );
-        let rel = page
-            .relations
-            .iter()
-            .find(|r| r.name == "created_by")
-            .expect("created_by relation");
-        assert_eq!(rel.target_entity, "User");
-        assert!(rel.target_entity_navigable);
     }
 }

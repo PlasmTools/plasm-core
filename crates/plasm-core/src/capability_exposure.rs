@@ -4,149 +4,8 @@ use crate::symbol_tuning::{
     ExposureCapabilityKey, ExposureEntityKey, ExposureSlotKey, ExposureSurface,
     ExposureSurfaceDelta,
 };
-use crate::{CapabilityKind, FieldType, CGS};
+use crate::{CapabilityKind, CGS};
 use std::collections::BTreeSet;
-
-/// When any Get / Query / Search is selected for an entity, admit the rest of that
-/// read family on the same row type. Identity Get and fuzzy Search are compositional
-/// — selecting one must not silently drop the other.
-fn close_read_family_capability_ids(cgs: &CGS, selected: &[String]) -> Vec<String> {
-    let mut out: Vec<String> = selected.to_vec();
-    let mut seen: BTreeSet<String> = selected.iter().cloned().collect();
-    let mut domains: BTreeSet<String> = BTreeSet::new();
-    for name in selected {
-        let Some(cap) = cgs.capabilities.get(name.as_str()) else {
-            continue;
-        };
-        if matches!(
-            cap.kind,
-            CapabilityKind::Get | CapabilityKind::Query | CapabilityKind::Search
-        ) {
-            domains.insert(cap.domain.to_string());
-        }
-    }
-    admit_read_family_for_domains(cgs, domains, &mut out, &mut seen);
-    out
-}
-
-fn admit_read_family_for_domains(
-    cgs: &CGS,
-    domains: impl IntoIterator<Item = String>,
-    out: &mut Vec<String>,
-    seen: &mut BTreeSet<String>,
-) {
-    for domain in domains {
-        if let Some(cap) = cgs.primary_get_capability(domain.as_str()) {
-            if seen.insert(cap.name.to_string()) {
-                out.push(cap.name.to_string());
-            }
-        }
-        for kind in [CapabilityKind::Query, CapabilityKind::Search] {
-            for cap in cgs.find_capabilities(domain.as_str(), kind) {
-                if seen.insert(cap.name.to_string()) {
-                    out.push(cap.name.to_string());
-                }
-            }
-        }
-    }
-}
-
-/// Foreign identity holes on taught Query/Search ParentScope or mutator args.
-///
-/// A hole is identity-typed only when its named value is `entity_ref` to another
-/// entity. Integer / string scalars that merely share a name with an `id_field`
-/// (or a "primary key" gloss) are not identity — that is catalog authoring, not
-/// exposure inference. BackendSelection credentials and Get arguments are
-/// skipped so token-identity Gets stay off this close.
-fn identity_scope_target_domains(cgs: &CGS, selected: &[String]) -> BTreeSet<String> {
-    let mut targets = BTreeSet::new();
-    for name in selected {
-        let Some(cap) = cgs.capabilities.get(name.as_str()) else {
-            continue;
-        };
-        let own = cap.domain.as_str();
-        match cap.kind {
-            CapabilityKind::Query | CapabilityKind::Search => {
-                collect_entity_ref_targets(cgs, own, cap.scope_params().iter(), &mut targets);
-            }
-            CapabilityKind::Create
-            | CapabilityKind::Update
-            | CapabilityKind::Delete
-            | CapabilityKind::Action => {
-                collect_entity_ref_targets(cgs, own, cap.invocation_object_fields(), &mut targets);
-            }
-            CapabilityKind::Get => {}
-        }
-    }
-    targets
-}
-
-fn collect_entity_ref_targets<'a, I>(
-    cgs: &CGS,
-    own_domain: &str,
-    fields: I,
-    targets: &mut BTreeSet<String>,
-) where
-    I: IntoIterator<Item = &'a crate::schema::InputFieldSchema>,
-{
-    for field in fields {
-        let Ok(nv) = field.named_value(cgs) else {
-            continue;
-        };
-        let FieldType::EntityRef { target, .. } = &nv.field_type else {
-            continue;
-        };
-        if target.as_str() != own_domain {
-            targets.insert(target.to_string());
-        }
-    }
-}
-
-/// Seeded entities — domains of the caller-selected capability IDs — teach every
-/// authored create / update / delete / action. Identity-scope close must not
-/// use this path; it only admits the target's read family.
-fn close_seeded_entity_mutator_capability_ids(cgs: &CGS, selected: &[String]) -> Vec<String> {
-    let mut out: Vec<String> = selected.to_vec();
-    let mut seen: BTreeSet<String> = selected.iter().cloned().collect();
-    let mut domains: BTreeSet<String> = BTreeSet::new();
-    for name in selected {
-        let Some(cap) = cgs.capabilities.get(name.as_str()) else {
-            continue;
-        };
-        domains.insert(cap.domain.to_string());
-    }
-    for domain in domains {
-        for kind in [
-            CapabilityKind::Create,
-            CapabilityKind::Update,
-            CapabilityKind::Delete,
-            CapabilityKind::Action,
-        ] {
-            for cap in cgs.find_capabilities(domain.as_str(), kind) {
-                if seen.insert(cap.name.to_string()) {
-                    out.push(cap.name.to_string());
-                }
-            }
-        }
-    }
-    out
-}
-
-/// When a taught Query/Search scope or mutator arg is `entity_ref` to another
-/// entity, admit that entity's Query/Get/Search so the hole is bindable from a
-/// rowset. One hop from the already-selected set — not a 2-hop neighbourhood,
-/// and not Friend-style admission of an unrelated peer.
-fn close_identity_scope_target_capability_ids(cgs: &CGS, selected: &[String]) -> Vec<String> {
-    let mut out: Vec<String> = selected.to_vec();
-    let mut seen: BTreeSet<String> = selected.iter().cloned().collect();
-    admit_read_family_for_domains(
-        cgs,
-        identity_scope_target_domains(cgs, selected),
-        &mut out,
-        &mut seen,
-    );
-    out
-}
 
 /// Domain-entity teaching slots (RA-12).
 ///
@@ -197,70 +56,20 @@ fn admit_output_entity_fields(
     }
 }
 
-/// Project selected IDs without intent scoring or implicit parent promotion.
-/// Seeded domains (owners of those IDs) teach every authored mutator — a
-/// selected Query must not silently drop an authored Update on the same entity.
-/// Read-family siblings (Get identity ↔ Query/Search list) are closed so an
-/// intent-selected Search cannot unteach an authored Get on the same entity.
-/// Identity-scope targets of taught Query/Search / mutator `entity_ref` holes
-/// receive the same read-family close so the hole has a lawful rowset fill;
-/// that close does not admit the target's mutators.
+/// Project exactly the selected capability IDs into the teaching surface.
+///
+/// The caller owns semantic selection and deterministic prerequisite closure.
+/// This module only renders that decision: it does not admit sibling reads,
+/// entity-wide mutators, or type-compatible producers that were not selected.
+/// Explicit entity exposure remains available through
+/// [`explicit_entity_capability_surface`].
 pub fn selected_capability_surface(
     cgs: &CGS,
     entry_id: &str,
     capabilities: &[String],
 ) -> Result<ExposureSurfaceDelta, String> {
-    let capabilities = close_seeded_entity_mutator_capability_ids(cgs, capabilities);
-    let capabilities = close_read_family_capability_ids(cgs, &capabilities);
-    let capabilities = close_identity_scope_target_capability_ids(cgs, &capabilities);
-    // Embedded parent-Get relations are part of the selected read's executable
-    // result. Admit target reads so relation navigation is usable on the first
-    // wave; do not admit target mutations. Iterate to close nested embeds.
-    let mut capabilities = capabilities;
-    loop {
-        let mut target_reads = capabilities.clone();
-        for name in &capabilities {
-            let Some(cap) = cgs.capabilities.get(name.as_str()) else {
-                continue;
-            };
-            if !matches!(
-                cap.kind,
-                CapabilityKind::Get | CapabilityKind::Query | CapabilityKind::Search
-            ) {
-                continue;
-            }
-            let Some(entity) = cgs.entities.get(cap.domain.as_str()) else {
-                continue;
-            };
-            for relation in entity.relations.values() {
-                if !matches!(
-                    relation.materialize,
-                    Some(crate::RelationMaterialization::FromParentGet { .. })
-                ) {
-                    continue;
-                }
-                for target in cgs.capabilities.values() {
-                    if target.domain == relation.target_resource
-                        && matches!(
-                            target.kind,
-                            CapabilityKind::Get | CapabilityKind::Query | CapabilityKind::Search
-                        )
-                    {
-                        let name = target.name.to_string();
-                        if !target_reads.contains(&name) {
-                            target_reads.push(name);
-                        }
-                    }
-                }
-            }
-        }
-        if target_reads.len() == capabilities.len() {
-            break;
-        }
-        capabilities = target_reads;
-    }
     let mut surface = ExposureSurface::default();
-    for name in &capabilities {
+    for name in capabilities {
         let cap = cgs
             .capabilities
             .get(name.as_str())
@@ -359,7 +168,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_parent_read_exposes_embedded_relation_targets_without_writes() {
+    fn selected_parent_read_does_not_admit_relation_target_capabilities() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = plasm_core_fixture_load(&root);
@@ -369,40 +178,20 @@ mod tests {
             .find(|c| c.domain.as_str() == "LangItem" && c.kind == CapabilityKind::Get)
             .unwrap();
         let delta = selected_capability_surface(&cgs, "fixture", &[read.name.to_string()]).unwrap();
-        assert!(delta
+        assert!(!delta
             .required
             .entities
             .iter()
             .any(|e| e.entity.as_str() == "LangSummary"));
-        assert!(delta.required.slots.iter().any(|s| matches!(s, ExposureSlotKey::Relation { source, relation } if source.entity.as_str() == "LangItem" && relation.as_str() == "summary")));
-        for key in &delta.required.capabilities {
-            if key.domain.as_str() != "LangItem" {
-                assert!(matches!(
-                    cgs.capabilities.get(key.capability.as_str()).unwrap().kind,
-                    CapabilityKind::Get | CapabilityKind::Query | CapabilityKind::Search
-                ));
-            }
-        }
-        let exposure = crate::TeachingExposureSession::new_with_intent_delta(
-            &cgs,
-            "fixture",
-            &["LangItem"],
-            delta,
-        );
-        let map = exposure.symbol_map_arc();
-        assert!(map
-            .ident_sym_relation_for("fixture", "LangItem", "summary")
-            .starts_with('r'));
-        assert!(map
-            .entity_sym_for("fixture", "LangSummary")
-            .starts_with('e'));
+        assert!(!delta.required.slots.iter().any(|s| matches!(s, ExposureSlotKey::Relation { source, relation } if source.entity.as_str() == "LangItem" && relation.as_str() == "summary")));
+        assert_eq!(capability_names(&delta), vec![read.name.as_str()]);
     }
     fn plasm_core_fixture_load(path: &std::path::Path) -> CGS {
         crate::load_schema_dir(path).unwrap()
     }
 
     #[test]
-    fn search_only_selection_admits_sibling_get() {
+    fn search_only_selection_does_not_admit_sibling_get() {
         let dir = auth_bearer_search_dir();
         if !dir.is_dir() {
             return;
@@ -421,8 +210,8 @@ mod tests {
             "Search must stay: {names:?}"
         );
         assert!(
-            names.contains(&"securednote_get"),
-            "Get identity must be admitted with Search: {names:?}"
+            !names.contains(&"securednote_get"),
+            "unselected Get must stay out: {names:?}"
         );
         assert!(
             !names.contains(&"authsession_login"),
@@ -431,7 +220,7 @@ mod tests {
     }
 
     #[test]
-    fn get_only_selection_admits_sibling_search() {
+    fn get_only_selection_does_not_admit_sibling_search() {
         let dir = auth_bearer_search_dir();
         if !dir.is_dir() {
             return;
@@ -450,8 +239,8 @@ mod tests {
             "Get must stay: {names:?}"
         );
         assert!(
-            names.contains(&"securednote_search"),
-            "Search must be admitted with Get: {names:?}"
+            !names.contains(&"securednote_search"),
+            "unselected Search must stay out: {names:?}"
         );
     }
 
@@ -479,7 +268,7 @@ mod tests {
     }
 
     #[test]
-    fn query_entity_ref_scope_admits_target_read_family() {
+    fn query_entity_ref_scope_does_not_admit_unselected_sources_or_siblings() {
         let cgs = load_schema_dir(&scoped_query_matrix_dir()).expect("scoped_query_matrix");
         let delta =
             selected_capability_surface(&cgs, "scoped_query_matrix", &["child_query".into()])
@@ -490,25 +279,15 @@ mod tests {
             names.contains(&"child_query"),
             "Child Query must stay: {names:?}"
         );
-        assert!(
-            names.contains(&"child_settle"),
-            "seeded Child must teach every authored mutator: {names:?}"
-        );
-        assert!(
-            names.contains(&"parent_query") && names.contains(&"parent_get"),
-            "Parent Query/Get must be first-wave so parent_id is bindable: {names:?}"
-        );
-        assert!(
-            entities.contains(&"Parent") && entities.contains(&"Child"),
-            "Parent entity must be exposed: {entities:?}"
-        );
+        assert_eq!(names, vec!["child_query"]);
+        assert_eq!(entities, vec!["Child"]);
         assert!(
             !names.contains(&"parent_create"),
-            "identity-scope close must not admit Parent mutators: {names:?}"
+            "unselected Parent mutator must stay out: {names:?}"
         );
         assert!(
             !names.contains(&"friend_query") && !entities.contains(&"Friend"),
-            "unrelated Friend must stay untaught (no prefer_from_parent, no entity_ref hole): {names:?} {entities:?}"
+            "unselected Friend must stay untaught: {names:?} {entities:?}"
         );
         assert!(
             !names.contains(&"member_query")
@@ -519,15 +298,15 @@ mod tests {
     }
 
     #[test]
-    fn query_selection_admits_seeded_entity_mutators_not_identity_scope_writes() {
+    fn query_selection_does_not_admit_seeded_entity_mutators() {
         let cgs = load_schema_dir(&scoped_query_matrix_dir()).expect("scoped_query_matrix");
         let delta =
             selected_capability_surface(&cgs, "scoped_query_matrix", &["child_query".into()])
                 .expect("child query");
         let names = capability_names(&delta);
         assert!(
-            names.contains(&"child_settle"),
-            "first wave must teach authored Child mutator child_settle: {names:?}"
+            !names.contains(&"child_settle"),
+            "unselected Child mutator must stay out: {names:?}"
         );
         assert!(
             !names.contains(&"parent_create"),
@@ -536,7 +315,7 @@ mod tests {
     }
 
     #[test]
-    fn mutator_entity_ref_arg_admits_target_read_family() {
+    fn mutator_entity_ref_arg_does_not_admit_unselected_target_reads() {
         let cgs = load_schema_dir(&scoped_query_matrix_dir()).expect("scoped_query_matrix");
         let delta =
             selected_capability_surface(&cgs, "scoped_query_matrix", &["child_settle".into()])
@@ -547,8 +326,8 @@ mod tests {
             "mutator must stay: {names:?}"
         );
         assert!(
-            names.contains(&"parent_query") && names.contains(&"parent_get"),
-            "mutator entity_ref arg must admit Parent read family: {names:?}"
+            !names.contains(&"parent_query") && !names.contains(&"parent_get"),
+            "unselected Parent reads must stay out: {names:?}"
         );
         assert!(
             !names.contains(&"parent_create") && !names.contains(&"friend_query"),

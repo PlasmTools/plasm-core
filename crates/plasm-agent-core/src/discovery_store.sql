@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS discovery_compiled_recipes (
     recipes bytea NOT NULL
 );
 CREATE INDEX IF NOT EXISTS discovery_capabilities_search ON discovery_capabilities USING gin(search);
+CREATE INDEX IF NOT EXISTS discovery_capabilities_qualifier_terms_search ON discovery_capabilities USING gin(to_tsvector('english', document->>'qualifier_terms'));
 CREATE TABLE IF NOT EXISTS discovery_generations (
     generation_id text PRIMARY KEY,
     bindings jsonb NOT NULL,

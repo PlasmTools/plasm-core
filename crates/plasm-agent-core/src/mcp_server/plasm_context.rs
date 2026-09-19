@@ -15,11 +15,14 @@ use crate::http_execute::{
 use crate::incoming_auth::tenant_scope;
 use crate::mcp_logical_ref::format_logical_session_wire_ref;
 use crate::session_identity::{
-    accumulated_intent_meta_preview, LogicalSessionId, PlasmContextSessionMode,
+    accumulated_intent_meta_preview, discovery_routing_intent, LogicalSessionId,
+    PlasmContextSessionMode,
 };
 use crate::trace_hub::PlasmContextTrace;
 
-use super::tool_parse::{parse_optional_principal, parse_plasm_context_session_mode};
+use super::tool_parse::{
+    parse_effect_slots, parse_optional_principal, parse_plasm_context_session_mode,
+};
 use super::transport::PlasmExecBinding;
 use super::{PlasmMcpHandler, MAX_MCP_EXEC_BINDINGS};
 use crate::discovery_service::{DiscoveryService, RouteTurn};
@@ -37,9 +40,10 @@ impl PlasmMcpHandler {
         let intent = v.get("intent").and_then(|x| x.as_str()).ok_or_else(|| {
             CallToolError::invalid_arguments(tname, Some("missing `intent`".into()))
         })?;
+        let effect_slots = parse_effect_slots(tname, v)?;
         let (session_mode, extend_ref) = parse_plasm_context_session_mode(tname, v)?;
         if v.get("seeds").is_some() || v.get("ranked_capabilities").is_some() {
-            return Err(CallToolError::invalid_arguments(tname, Some("plasm_context accepts intent and continuation fields; explicit seed selection has been removed".into())));
+            return Err(CallToolError::invalid_arguments(tname, Some("plasm_context accepts original intent, affirmative effect slots, and continuation fields; explicit seed selection has been removed".into())));
         }
         let principal = parse_optional_principal(v);
         let tcfg = self.tenant_mcp_cfg(runtime).await?;
@@ -65,6 +69,10 @@ impl PlasmMcpHandler {
         let logical_id = existing
             .as_ref()
             .map(|rec| rec.logical_session_id.as_uuid().to_string());
+        let routing_intent = existing
+            .as_ref()
+            .map(|rec| discovery_routing_intent(&rec.accumulated_intent, intent))
+            .unwrap_or_else(|| intent.trim().to_owned());
         let mut exposed = Vec::new();
         let mut session_pin = None;
         if let Some(rec) = &existing {
@@ -143,7 +151,7 @@ impl PlasmMcpHandler {
         {
             return Err(CallToolError::invalid_arguments(
                 tname,
-                Some("Discovery accepts intent; conversational choices belong to the agent".into()),
+                Some("Discovery accepts original intent plus affirmative effect slots; conversational choices belong to the agent".into()),
             ));
         }
         let store = self
@@ -157,8 +165,8 @@ impl PlasmMcpHandler {
         let receipt = service
             .route_turn(RouteTurn {
                 new_generation: &generation,
-                user_requests: &[],
-                intent,
+                intent: &routing_intent,
+                effect_slots: &effect_slots,
                 logical_session: logical_id.as_deref(),
                 allowed: &allowed,
                 exposed: &exposed,
@@ -169,11 +177,9 @@ impl PlasmMcpHandler {
             .map_err(|e| CallToolError::from_message(format!("routing error: {e}")))?;
         if receipt.closure.is_none() {
             let content = if let Some(recovery) = &receipt.recovery {
-                recovery.render_markdown(receipt.selection.status)
+                recovery.render_unmatched_markdown()
             } else {
-                let mut lines = vec![format!("**plasm_context:** {:?}", receipt.selection.status)];
-                lines.extend(receipt.selection.explanation_lines());
-                lines.join("\n\n")
+                "**plasm_context:** no additional capability matches.".into()
             };
             let mut meta = serde_json::Map::new();
             meta.insert(
@@ -194,13 +200,13 @@ impl PlasmMcpHandler {
         let rec = if existing.is_some() {
             self.plasm
                 .logical_sessions
-                .append_intent_turn(LogicalSessionId(logical_uuid), &receipt.intent)
+                .append_intent_turn(LogicalSessionId(logical_uuid), intent)
                 .await
                 .ok_or_else(|| CallToolError::from_message("logical session expired"))?
         } else {
             self.plasm
                 .logical_sessions
-                .register_routed_session(LogicalSessionId(logical_uuid), &scope, &receipt.intent)
+                .register_routed_session(LogicalSessionId(logical_uuid), &scope, intent)
                 .await
                 .map_err(CallToolError::from_message)?
         };
@@ -405,18 +411,10 @@ impl PlasmMcpHandler {
                 }
             }
         }
-        // Insufficient / partial coverage: unresolved + catalog recovery lead; teaching follows.
-        if let Some(recovery) = &route.recovery {
-            let mut combined = recovery.render_markdown(route.selection.status);
-            combined.push_str("\n\n**Partial teaching** (does not claim complete coverage):\n\n");
-            combined.push_str(&text);
-            text = combined;
-        } else {
-            for explanation in route.selection.explanation_lines() {
-                text.push_str("\n\n");
-                text.push_str(&explanation);
-            }
-        }
+        debug_assert!(
+            route.recovery.is_none(),
+            "complete route cannot carry recovery"
+        );
         text = format!("{}\n\n{text}", route.intent_analysis);
         for wave in &out.waves {
             if wave.teaching_prompt_chars_added > 0 {

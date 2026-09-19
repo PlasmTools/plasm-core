@@ -2950,10 +2950,9 @@ fn search_teaching_puts_required_selection_on_primary_tilde_row() {
     );
 }
 
-/// Get identity and Search fuzzy must both be taught when both are authored (File polarity twin).
-/// Intent routing may select only Search — exposure must still admit the sibling Get.
+/// Intent-selected Search stays exact even when the same entity also authors Get.
 #[test]
-fn get_and_search_coexist_teaches_identity_and_tilde() {
+fn selected_search_does_not_teach_unselected_get() {
     let dir = fixtures_schemas_dir("auth_bearer_search");
     if !dir.exists() {
         return;
@@ -2966,12 +2965,12 @@ fn get_and_search_coexist_teaches_identity_and_tilde() {
     )
     .expect("search-only selection");
     assert!(
-        delta
+        !delta
             .required
             .capabilities
             .iter()
             .any(|c| c.capability.as_str() == "securednote_get"),
-        "selecting Search must admit sibling Get; caps={:?}",
+        "unselected Get must stay out; caps={:?}",
         delta
             .required
             .capabilities
@@ -3002,32 +3001,19 @@ fn get_and_search_coexist_teaches_identity_and_tilde() {
     let has_get = note_lines
         .iter()
         .any(|l| l.contains("(<id>)") && !l.contains('~'));
-    assert!(
-        has_search && has_get,
-        "SecuredNote must teach unary Get e#(<id>) and Search ~ after Search-only selection; note_lines={note_lines:?}\n{prompt}"
-    );
+    assert!(has_search && !has_get, "Search-only selection must teach Search without sibling Get; note_lines={note_lines:?}\n{prompt}");
     assert!(
         note_lines
             .iter()
             .all(|l| l.contains('~') || !l.contains("{note_id=")),
         "File polarity: unary Get must not steal token-brace {{note_id=}}; note_lines={note_lines:?}\n{prompt}"
     );
-    let get_lines: Vec<&str> = note_lines
-        .iter()
-        .copied()
-        .filter(|l| l.contains("(<id>)") && !l.contains('~'))
-        .collect();
-    assert!(
-        get_lines.iter().all(|l| !l.contains("access_token=")),
-        "Get identity omits session-injected Bearer; do not mash access_token onto e#(<id>); get_lines={get_lines:?}"
-    );
 }
 
-/// Selecting Child Query (entity_ref `parent_id`) must first-wave teach Parent Query/Get
-/// so the hole is bindable, and every authored Child mutator. Friend, integer
-/// `cohort_id`, and Parent writes stay untaught.
+/// When routing explicitly selects an entity-ref source and a mutator, their
+/// rows compose without admitting unrelated capabilities.
 #[test]
-fn identity_scope_entity_ref_teaches_target_read_family() {
+fn selected_entity_ref_source_and_mutator_compose_without_siblings() {
     let dir = fixtures_schemas_dir("scoped_query_matrix");
     if !dir.exists() {
         return;
@@ -3036,7 +3022,12 @@ fn identity_scope_entity_ref_teaches_target_read_family() {
     let delta = crate::capability_exposure::selected_capability_surface(
         &cgs,
         "scoped_query_matrix",
-        &["child_query".into()],
+        &[
+            "child_query".into(),
+            "child_settle".into(),
+            "parent_query".into(),
+            "parent_get".into(),
+        ],
     )
     .expect("child query surface");
     let exp = TeachingExposureSession::new_with_intent_delta(

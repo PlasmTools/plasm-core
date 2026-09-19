@@ -166,6 +166,22 @@ pub fn normalize_accumulated_intent(turns: &[String]) -> String {
     joined
 }
 
+/// Build the semantic-discovery prompt from immutable workflow history and the
+/// current request. The first turn is never replaced by an agent paraphrase on
+/// extension; repeated identical requests are not duplicated.
+#[must_use]
+pub fn discovery_routing_intent(accumulated: &str, current: &str) -> String {
+    let accumulated = accumulated.trim();
+    let current = current.trim();
+    if accumulated.is_empty() || accumulated == current {
+        return current.to_owned();
+    }
+    if current.is_empty() {
+        return accumulated.to_owned();
+    }
+    normalize_accumulated_intent(&[accumulated.to_owned(), current.to_owned()])
+}
+
 fn normalize_intent_turn(raw: &str) -> Option<String> {
     let t = raw.trim();
     if t.is_empty() {
@@ -382,6 +398,18 @@ mod tests {
     fn normalize_accumulated_intent_joins_turns() {
         let turns = vec!["first".into(), "second".into()];
         assert_eq!(normalize_accumulated_intent(&turns), "first\nsecond");
+    }
+
+    #[test]
+    fn discovery_routing_intent_preserves_original_and_current() {
+        assert_eq!(
+            discovery_routing_intent("original constraint", "agent paraphrase"),
+            "original constraint\nagent paraphrase"
+        );
+        assert_eq!(
+            discovery_routing_intent("original constraint", "original constraint"),
+            "original constraint"
+        );
     }
 
     #[tokio::test]

@@ -249,10 +249,21 @@ impl MatrixPcNFixture {
 
     async fn rehydrated_session(&self) -> Arc<ExecuteSession> {
         self.st.sessions.purge_all().await;
-        self.st
-            .get_execute_session(&self.out.prompt_hash, &self.out.session_id)
+        let descriptor = self
+            .st
+            .oss
+            .execute_session_registry
+            .load(&self.out.prompt_hash, &self.out.session_id)
             .await
-            .expect("rehydrated execute session")
+            .expect("persisted execute-session descriptor");
+        Arc::new(
+            crate::execute_session_rehydrate::rehydrate_execute_session(
+                self.st.as_ref(),
+                &descriptor,
+            )
+            .await
+            .expect("rehydrated execute session"),
+        )
     }
 }
 
@@ -266,7 +277,10 @@ async fn mcp_apply_capability_seeds_federates_multi_catalog_and_dry_runs_distinc
         },
         CapabilitySeed {
             entry_id: "langmatrix_b".into(),
-            entity: "LangItem".into(),
+            // The views fixture exposes `LangDigest` as its independently
+            // readable projection.  Seeding the homonymous `LangItem` only
+            // exercises a relation target, not a queryable federated symbol.
+            entity: "LangDigest".into(),
         },
     ];
     let out = apply_capability_seeds(
@@ -298,8 +312,15 @@ async fn mcp_apply_capability_seeds_federates_multi_catalog_and_dry_runs_distinc
 
     let pipeline = st.engine.prompt_pipeline();
     let cross = st.sessions.symbol_map_cross_cache();
-    for (sym, entry_id) in [("e1", "langmatrix_a"), ("e2", "langmatrix_b")] {
-        let bundle = compile_plasm_expression(pipeline, Some(cross), &es, sym, sym)
+    let map = es
+        .teaching_exposure
+        .as_ref()
+        .expect("exposure")
+        .symbol_map_arc();
+    for (entry_id, entity) in [("langmatrix_a", "LangItem"), ("langmatrix_b", "LangDigest")] {
+        let sym = map.entity_sym_for(entry_id, entity);
+        let source = format!("{sym}(\"a\")");
+        let bundle = compile_plasm_expression(pipeline, Some(cross), &es, &sym, &source)
             .unwrap_or_else(|e| panic!("compile bundle {sym}: {e}"));
         let dry = evaluate_plasm_comp_dry(&es, &bundle).expect("dry-run");
         let qe = dry
@@ -312,13 +333,14 @@ async fn mcp_apply_capability_seeds_federates_multi_catalog_and_dry_runs_distinc
             })
             .unwrap_or_else(|| panic!("surface node with qualified_entity for {sym}"));
         assert_eq!(qe.entry_id, entry_id);
-        assert_eq!(qe.entity, "LangItem");
+        assert_eq!(qe.entity, entity);
     }
 
     let exp = es.teaching_exposure.as_ref().expect("exposure");
     let map = exp.symbol_map_arc();
     let r_sym = map.ident_sym_relation_for("langmatrix_a", "LangItem", "children");
-    let rel_program = format!("parent = e1(\"i1\")\nkids = parent.{r_sym}\nkids[id,title]");
+    let rel_program =
+        format!("parent = e1(\"i1\")\nkids = parent.{r_sym}\nkids | select id, title");
     let rel_bundle =
         compile_plasm_program(pipeline, Some(cross), &es, "federated_rel", &rel_program)
             .unwrap_or_else(|e| panic!("compile federated relation hop: {e}"));
@@ -335,7 +357,7 @@ async fn mcp_federated_post_async_finalize_compiles_e2_with_cross_cache() {
         },
         CapabilitySeed {
             entry_id: "langmatrix_b".into(),
-            entity: "LangItem".into(),
+            entity: "LangDigest".into(),
         },
     ];
     let out = apply_capability_seeds(
@@ -383,7 +405,14 @@ async fn mcp_federated_post_async_finalize_compiles_e2_with_cross_cache() {
 
     let pipeline = st.engine.prompt_pipeline();
     let cross = st.sessions.symbol_map_cross_cache();
-    let bundle = compile_plasm_expression(pipeline, Some(cross), &es, "e2", "e2")
+    let digest_sym = es
+        .teaching_exposure
+        .as_ref()
+        .expect("exposure")
+        .symbol_map_arc()
+        .entity_sym_for("langmatrix_b", "LangDigest");
+    let digest_source = format!("{digest_sym}(\"a\")");
+    let bundle = compile_plasm_expression(pipeline, Some(cross), &es, &digest_sym, &digest_source)
         .expect("compile e2 after async finalize");
     evaluate_plasm_comp_dry(&es, &bundle).expect("dry-run e2");
 }
@@ -1220,29 +1249,41 @@ async fn plasm_run_page_handle_through_handler() {
     let runtime = test_mcp_runtime(mcp_handler, "mcp-page-handle-e2e");
     let mcp_key = "mcp-page-handle-e2e";
 
-    let context_res = handler
-        .handle_mcp_tool_plasm_context(
-            mcp_key,
-            &runtime,
-            &json!({
-                "session_mode": "new",
-                "intent": "page handler e2e",
-                "seeds": [{"api": "langmatrix_a", "entity": "LangItem"}]
-            }),
+    let logical_uuid = Uuid::new_v4();
+    let opened = apply_capability_seeds(
+        st.as_ref(),
+        None,
+        None,
+        vec![CapabilitySeed {
+            entry_id: "langmatrix_a".into(),
+            entity: "LangItem".into(),
+        }],
+        None,
+        None,
+        Some(logical_uuid),
+        "page handler e2e",
+    )
+    .await
+    .expect("open execute context");
+    st.logical_sessions
+        .register_routed_session(
+            crate::session_identity::LogicalSessionId(logical_uuid),
+            "",
+            "page handler e2e",
         )
         .await
-        .expect("plasm_context");
-    let logical_session_ref = context_res
-        .meta
-        .as_ref()
-        .and_then(|m| m.get("plasm"))
-        .and_then(|p| p.get("logical_session_ref"))
-        .and_then(|v| v.as_str())
-        .expect("logical_session_ref in plasm_context meta");
-
-    let logical_uuid = crate::mcp_logical_ref::parse_logical_session_wire_ref(logical_session_ref)
-        .expect("parse logical_session_ref")
-        .as_uuid();
+        .expect("register logical session");
+    handler
+        .logical_mutex(mcp_key, &logical_uuid.to_string())
+        .await
+        .lock()
+        .await
+        .binding = Some(crate::mcp_transport_store::PlasmExecBinding {
+        prompt_hash: opened.prompt_hash,
+        session_id: opened.session_id,
+    });
+    let logical_session_ref =
+        crate::mcp_logical_ref::format_logical_session_wire_ref_from_uuid(logical_uuid);
     let binding = handler
         .resolve_binding_for_logical(mcp_key, logical_uuid)
         .await
@@ -1280,7 +1321,7 @@ async fn plasm_run_page_handle_through_handler() {
         request_fingerprints: vec![],
         coverage: plasm_runtime::ResultCoverage::Complete,
     };
-    let page_handle = es.register_synthetic_paging_continuation(cursor, Some(logical_session_ref));
+    let page_handle = es.register_synthetic_paging_continuation(cursor, Some(&logical_session_ref));
 
     let run_res = handler
         .handle_plasm_mcp_tool(
@@ -1321,28 +1362,41 @@ async fn plasm_read_run_artifact_matches_resources_read() {
         let mcp_handler = PlasmMcpHandler::new(Arc::clone(&st)).to_mcp_server_handler();
         let runtime = test_mcp_runtime(mcp_handler, "artifact-read-parity");
         let mcp_key = "artifact-read-parity";
-        let context_res = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            handler.handle_mcp_tool_plasm_context(
-                mcp_key,
-                &runtime,
-                &json!({
-                    "session_mode": "new",
-                    "intent": "artifact read parity",
-                    "seeds": [{"api": "langmatrix_a", "entity": "LangItem"}]
-                }),
-            ),
+        let logical_uuid = Uuid::new_v4();
+        let opened = apply_capability_seeds(
+            st.as_ref(),
+            None,
+            None,
+            vec![CapabilitySeed {
+                entry_id: "langmatrix_a".into(),
+                entity: "LangItem".into(),
+            }],
+            None,
+            None,
+            Some(logical_uuid),
+            "artifact read parity",
         )
         .await
-        .expect("plasm_context timed out")
-        .expect("plasm_context");
-        let logical_session_ref = context_res
-            .meta
-            .as_ref()
-            .and_then(|m| m.get("plasm"))
-            .and_then(|p| p.get("logical_session_ref"))
-            .and_then(|v| v.as_str())
-            .expect("logical_session_ref in plasm_context meta");
+        .expect("open execute context");
+        st.logical_sessions
+            .register_routed_session(
+                crate::session_identity::LogicalSessionId(logical_uuid),
+                "",
+                "artifact read parity",
+            )
+            .await
+            .expect("register logical session");
+        handler
+            .logical_mutex(mcp_key, &logical_uuid.to_string())
+            .await
+            .lock()
+            .await
+            .binding = Some(crate::mcp_transport_store::PlasmExecBinding {
+            prompt_hash: opened.prompt_hash,
+            session_id: opened.session_id,
+        });
+        let logical_session_ref =
+            crate::mcp_logical_ref::format_logical_session_wire_ref_from_uuid(logical_uuid);
         let run_res = tokio::time::timeout(
             std::time::Duration::from_secs(25),
             handler.handle_plasm_mcp_tool(
@@ -1350,7 +1404,7 @@ async fn plasm_read_run_artifact_matches_resources_read() {
                 &runtime,
                 &json!({
                     "logical_session_ref": logical_session_ref,
-                    "program": "e1"
+                    "program": "e1(\"a\")"
                 }),
                 "plasm",
                 true,
@@ -1368,7 +1422,7 @@ async fn plasm_read_run_artifact_matches_resources_read() {
         );
 
         let logical_uuid =
-            crate::mcp_logical_ref::parse_logical_session_wire_ref(logical_session_ref)
+            crate::mcp_logical_ref::parse_logical_session_wire_ref(&logical_session_ref)
                 .expect("parse logical_session_ref")
                 .as_uuid();
         let binding = handler
@@ -1446,7 +1500,7 @@ async fn plasm_read_run_artifact_matches_resources_read() {
 
         assert_eq!(tool_text, resource_text);
         assert!(
-            tool_text.contains("item-"),
+            tool_text.contains("trace-test"),
             "expected snapshot JSON rows: {tool_text}"
         );
     }

@@ -15,7 +15,14 @@ const plasmContextInputSchema = z.object({
     .string()
     .min(1)
     .describe(
-      "The current business need. Session continuity uses logical_session_ref.",
+      "The original user intent on new; the current business need on extend. The runtime preserves the original intent with every extension.",
+    ),
+  effect_slots: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .max(64)
+    .describe(
+      "Every affirmative effect or explicitly requested information outcome, one complete statement per slot. Preserve branch and ordering context; attach constraints to the effect they constrain.",
     ),
   session_mode: z
     .enum(["new", "extend"])
@@ -86,7 +93,6 @@ const plasmReadRunArtifactInputSchema = z
 
 export function createPlasmTools(
   runtime: AgentRuntime,
-  discoveryIntent: (capabilityRequest: string) => { intent: string; userRequests?: string[] } = (intent) => ({ intent }),
 ): ToolSet {
   const tools: ToolSet = {};
 
@@ -95,7 +101,8 @@ export function createPlasmTools(
     inputSchema: toolInput(plasmContextInputSchema),
     execute: async (args) =>
       runtime.plasmContext({
-        ...discoveryIntent(args.intent),
+        intent: args.intent,
+        effectSlots: args.effect_slots,
         sessionMode: args.session_mode ?? "new",
         logicalSessionRef: args.logical_session_ref,
       }),

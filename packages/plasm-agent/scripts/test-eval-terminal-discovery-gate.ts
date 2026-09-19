@@ -6,7 +6,9 @@
  * grade a blocked complete_task as completed / null.
  * P1-2: Prose-only stop before discovery is forced discovery (continues with
  * plasm_context until valid response or budget), not a mid-budget unterminated free pass.
- * P1-3: Malformed plasm_context (schema validation / non-execution) must not
+ * P1-3: Auto-choice compatibility leaves provider choice unset while retaining
+ * the mandatory discovery lifecycle gate.
+ * P1-4: Malformed plasm_context (schema validation / non-execution) must not
  * satisfy discovery — prose after the bad call must not get a free unterminated
  * mid-budget exit. Valid insufficient response clears the force (clarification OK).
  */
@@ -238,7 +240,66 @@ assert.deepEqual(
   { kind: "unterminated" },
 );
 
-// --- Loop P1-3: malformed plasm_context → discovery still forced; prose must not free-exit ---
+// --- Loop P1-3: auto-choice compatibility retains the lifecycle gate ---
+
+let autoChoiceCalls = 0;
+const autoChoices: unknown[] = [];
+const autoChoiceModel = new MockLanguageModelV3({
+  doStream: async (opts) => {
+    autoChoiceCalls += 1;
+    autoChoices.push(opts.toolChoice);
+    return {
+      stream: new ReadableStream({
+        start(controller) {
+          controller.enqueue({ type: "text-start", id: "text" });
+          controller.enqueue({
+            type: "text-delta",
+            id: "text",
+            delta: "Still no discovery.",
+          });
+          controller.enqueue({ type: "text-end", id: "text" });
+          controller.enqueue({
+            type: "finish",
+            finishReason: { unified: "stop", raw: undefined },
+            usage: {
+              inputTokens: { total: 8, noCache: 8, cacheRead: 0, cacheWrite: 0 },
+              outputTokens: { total: 2, text: 2, reasoning: 0 },
+            },
+          });
+          controller.close();
+        },
+      }),
+    };
+  },
+});
+
+const autoChoiceBeforeDiscovery = await runEveToolLoop({
+  model: autoChoiceModel,
+  system: "system",
+  tools: {
+    [INITIAL_DISCOVERY_TOOL_NAME]: tool({
+      inputSchema: toolInput(z.object({ intent: z.string() })),
+      execute: async () => "discovery markdown",
+    }),
+    ...createEvalTerminalTools({ discoveryCompleted: () => false }),
+  },
+  messages: [{ role: "user", content: "use auto choice" }],
+  maxSteps: 2,
+  agentName: "test-auto-choice-before-discovery",
+  telemetry: { isEnabled: false },
+  requireInitialDiscovery: true,
+  forceToolChoice: false,
+  discoveryCompleted: () => false,
+});
+
+assert.equal(autoChoiceCalls, 2, "lifecycle gate must continue until budget");
+assert.ok(
+  autoChoices.every((choice) => !isForcedDiscoveryChoice(choice)),
+  "provider tool choice must remain auto while discovery stays mandatory",
+);
+assert.equal(autoChoiceBeforeDiscovery.stopReason, "budget_exhausted");
+
+// --- Loop P1-4: malformed plasm_context → discovery still forced; prose must not free-exit ---
 
 let malformedCalls = 0;
 let discoveryExecutions = 0;

@@ -182,6 +182,7 @@ pub struct IntentDiscoveryRequest {
     #[serde(default)]
     pub principal: Option<String>,
     pub intent: String,
+    pub effect_slots: Vec<String>,
     #[serde(default)]
     pub allowed_entry_ids: Option<Vec<String>>,
 }
@@ -232,8 +233,8 @@ async fn route_http_intent(
     service
         .route_turn(RouteTurn {
             new_generation: &generation,
-            user_requests: &[],
             intent: &body.intent,
+            effect_slots: &body.effect_slots,
             logical_session,
             allowed: &allowed,
             exposed: &exposed,
@@ -273,19 +274,19 @@ async fn post_terminal_discover(
         Err(error) => return (StatusCode::SERVICE_UNAVAILABLE, error.to_string()).into_response(),
     };
     let mut text = if let Some(recovery) = &receipt.recovery {
-        let mut body = recovery.render_markdown(receipt.selection.status);
+        let mut body = recovery.render_unmatched_markdown();
         body.push_str("\n\n");
         body
+    } else if receipt.closure.is_some() {
+        "Discovery: matched affirmative effect slots.\n\n".to_owned()
     } else {
-        let mut body = format!("Discovery: {:?}\n\n", receipt.selection.status);
-        body.push_str(&receipt.selection.explanation_lines().join("\n\n"));
-        body.push_str("\n\n");
-        body
+        "Discovery: no additional capability matches.\n\n".to_owned()
     };
     if let Some(closure) = &receipt.closure {
-        if receipt.recovery.is_some() {
-            text.push_str("**Partial teaching** (does not claim complete coverage):\n\n");
-        }
+        debug_assert!(
+            receipt.recovery.is_none(),
+            "complete route cannot carry recovery"
+        );
         let registry = match st.catalog.pinned_view(&receipt.retrieval.generation).await {
             Ok(view) => view.snapshot(),
             Err(error) => {
@@ -495,14 +496,17 @@ mod requirement_outcome_protocol_tests {
 
     #[test]
     fn intent_round_trips_and_conversational_inputs_are_rejected() {
-        let request: IntentDiscoveryRequest =
-            serde_json::from_value(json!({"intent":"inspect records"})).unwrap();
+        let request: IntentDiscoveryRequest = serde_json::from_value(json!({
+            "intent":"inspect records",
+            "effect_slots":["Inspect records"]
+        }))
+        .unwrap();
         assert_eq!(request.intent, "inspect records");
         for invalid in [
-            json!({"intent":"inspect records","routing_ref":"receipt","clarify_choice":1}),
-            json!({"intent":"inspect records","routing_ref":"receipt","clarify_choices":1}),
-            json!({"intent":"inspect records","routing_ref":"receipt","clarify_choices":[1.5]}),
-            json!({"intent":"inspect records","routing_ref":"receipt","clarify_choices":[-1]}),
+            json!({"intent":"inspect records","effect_slots":["Inspect records"],"routing_ref":"receipt","clarify_choice":1}),
+            json!({"intent":"inspect records","effect_slots":["Inspect records"],"routing_ref":"receipt","clarify_choices":1}),
+            json!({"intent":"inspect records","effect_slots":["Inspect records"],"routing_ref":"receipt","clarify_choices":[1.5]}),
+            json!({"intent":"inspect records","effect_slots":["Inspect records"],"routing_ref":"receipt","clarify_choices":[-1]}),
         ] {
             assert!(serde_json::from_value::<IntentDiscoveryRequest>(invalid).is_err());
         }

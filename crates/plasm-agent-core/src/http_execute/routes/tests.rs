@@ -516,7 +516,7 @@ async fn program_parse_error_is_bad_request() {
     let doc: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let detail = doc.get("detail").and_then(|d| d.as_str()).unwrap_or("");
     assert!(
-        detail.contains("Fix spelling"),
+        detail.contains("Expected identifier"),
         "expected parse detail: {detail:?}"
     );
 }
@@ -787,7 +787,7 @@ async fn expand_domain_session_updates_session_entities() {
     .await
     .expect("expand");
     assert!(
-        first_wave.markdown.contains("```tsv"),
+        first_wave.markdown.contains("plasm_expr\tMeaning"),
         "expected fenced language card (default TSV render): {}",
         first_wave.markdown
     );

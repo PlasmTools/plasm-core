@@ -20,10 +20,10 @@ fn env_str_nonempty(key: &str) -> bool {
 }
 
 fn discovery_model_from_env() -> String {
-    std::env::var("PLASM_DISCOVERY_AUTO_SEED_MODEL")
+    std::env::var("PLASM_DISCOVERY_CAPABILITY_MATCH_MODEL")
         .ok()
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "openai/gpt-4.1-mini".into())
+        .unwrap_or_else(|| "typesafe/jev-1.13".into())
 }
 
 fn bootstrap_root() -> Option<PathBuf> {

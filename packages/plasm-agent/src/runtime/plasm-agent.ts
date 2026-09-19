@@ -20,7 +20,6 @@ import { AgentRuntime, type AgentRuntimeConfig } from "../runtime/agent-runtime.
 import { createHarnessTools, renderSkillIndex } from "../tools/harness-tools.js";
 import { gateArtefactTransform } from "../tools/format.js";
 import { createPlasmTools } from "../tools/plasm-tools.js";
-import { DiscoveryIntent } from "./discovery-intent.js";
 import { buildDefaultSystemLiturgy } from "../prompts/index.js";
 import { runEveToolLoop, type AgentStepEvent } from "../telemetry/eve-tool-loop.js";
 import type { EveChannelKind } from "../telemetry/eve-agent-runs.js";
@@ -87,8 +86,17 @@ export interface AgentGenerateOptions {
   wrapTools?: (tools: ToolSet) => ToolSet | Promise<ToolSet>;
   /** Force tool use for this generate (eval: block prose-only refusals). */
   toolChoice?: "auto" | "required" | "none" | { type: "tool"; toolName: string };
+  /**
+   * Allow lifecycle gates to force provider tool choice. Defaults true; false
+   * preserves those gates while leaving provider choice on auto.
+   */
+  forceToolChoice?: boolean;
   /** Override agent maxSteps for this generate only. */
   maxSteps?: number;
+  /** Optional wall-clock ceiling for each model generation. */
+  generationTimeoutMs?: number;
+  /** Optional cap on consecutive provider-generation failures. */
+  maxConsecutiveProviderFailures?: number;
   /** Workflow session run id (`wrun_*`) — links OTEL spans to Agent Runs. */
   sessionId?: string;
   turnId?: string;
@@ -115,6 +123,8 @@ export interface AgentTurnResult {
   maxOutputTokens?: number;
   /** Steps whose finishReason was `length`. */
   lengthTruncationCount: number;
+  /** Generations aborted by the configured wall-clock deadline. */
+  generationTimeoutCount: number;
   /** Successful live write-node count on this runtime (`plasm_run`). */
   committedWriteOps: number;
   /**
@@ -144,7 +154,6 @@ export class PlasmAgent {
   private readonly taskLedgerStore = new TaskLedgerStore();
   private lastReviewRecords: TaskLedgerReviewRecord[] = [];
   private reviewInstruction = "";
-  private readonly discoveryIntent = new DiscoveryIntent();
   private readonly agentName: string;
   private conversation: ModelMessage[] = [];
 
@@ -246,10 +255,7 @@ export class PlasmAgent {
     }
 
     const system = await this.loadInstructions();
-    this.discoveryIntent.addRequest(prompt, options.resetConversation ?? false);
-    const plasmTools = createPlasmTools(this.runtime, (request) =>
-      this.discoveryIntent.forCapabilityRequest(request),
-    );
+    const plasmTools = createPlasmTools(this.runtime);
     const harnessTools = createHarnessTools({
       skills: this.skillsMode === "index" ? this.loadedSkills : undefined,
       subagents: this.subagentRegistry,
@@ -330,6 +336,8 @@ export class PlasmAgent {
         : undefined,
       messages,
       maxSteps: options.maxSteps ?? this.maxSteps,
+      generationTimeoutMs: options.generationTimeoutMs,
+      maxConsecutiveProviderFailures: options.maxConsecutiveProviderFailures,
       agentName: this.agentName,
       channelKind: options.channelKind,
       sessionId: options.sessionId,
@@ -345,6 +353,7 @@ export class PlasmAgent {
       // Env-action evals: force plasm_context until attempted; terminals still
       // require hasOpenWorkflow via the harness gate (tool-error on refusal).
       requireInitialDiscovery: this.includeEvalTerminals,
+      forceToolChoice: options.forceToolChoice,
       discoveryCompleted: this.includeEvalTerminals
         ? () => this.runtime.hasOpenWorkflow()
         : undefined,
@@ -366,6 +375,7 @@ export class PlasmAgent {
       stepFinishReasons: result.stepFinishReasons,
       maxOutputTokens: result.maxOutputTokens,
       lengthTruncationCount: result.lengthTruncationCount,
+      generationTimeoutCount: result.generationTimeoutCount,
       committedWriteOps: this.runtime.committedLiveWriteOps(),
       reviewGenerateCount: reviewSeat?.generateCount ?? 0,
     };

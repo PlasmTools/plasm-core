@@ -86,6 +86,18 @@ export interface EveToolLoopOptions {
   onStepFinish?: (step: AgentStepEvent) => void | Promise<void>;
   modelOptions?: EveToolLoopModelOptions;
   /**
+   * Optional wall-clock ceiling for one model generation. An aborted generation
+   * without a started tool execution uses the normal provider-recovery path.
+   * If execution has started, the loop stops instead of risking replay of a
+   * side effect whose response was lost with the provider stream.
+   */
+  generationTimeoutMs?: number;
+  /**
+   * Optional cap on consecutive provider-generation failures. A successful
+   * generation resets it; this is not an extra step budget.
+   */
+  maxConsecutiveProviderFailures?: number;
+  /**
    * Optional tool choice for the first model step.
    * Later steps stay auto unless a reviewed `run_ref` or required
    * run snapshot is still unread, or initial discovery is still pending.
@@ -96,7 +108,7 @@ export interface EveToolLoopOptions {
     | "none"
     | { type: "tool"; toolName: string };
   /**
-   * Eval lifecycle gate: while true, the loop forces `plasm_context` and
+   * Eval lifecycle gate: while true, the loop requires `plasm_context` and
    * refuses prose-only exit until a valid discovery response exists (or a
    * session is already open via `discoveryCompleted`). Successful insufficient
    * responses count; malformed args / validation failure / non-execution do
@@ -104,6 +116,13 @@ export interface EveToolLoopOptions {
    * still require an open workflow.
    */
   requireInitialDiscovery?: boolean;
+  /**
+   * Whether lifecycle gates may force a provider tool choice (initial
+   * discovery or continuation with pending run refs/artifacts). Defaults true.
+   * Set false for reasoning endpoints that reject forced tool choice; the
+   * corresponding lifecycle gates still hold.
+   */
+  forceToolChoice?: boolean;
   /**
    * True once initial `plasm_context` has opened a workflow session.
    * Used with `requireInitialDiscovery` so a pre-opened session skips the force.
@@ -123,7 +142,9 @@ export type EveToolLoopStopReason =
   | "completed"
   | "budget_exhausted"
   | "unterminated"
-  | "error";
+  | "error"
+  /** The configured consecutive provider-failure allowance was exhausted. */
+  | "provider_exhausted";
 
 export interface EveToolLoopResult {
   text: string;
@@ -140,6 +161,8 @@ export interface EveToolLoopResult {
   maxOutputTokens?: number;
   /** Count of steps whose finishReason was `length` (generation truncated). */
   lengthTruncationCount: number;
+  /** Generations aborted by the configured wall-clock deadline. */
+  generationTimeoutCount: number;
 }
 
 /**
@@ -167,6 +190,9 @@ export const GENERATION_TRUNCATED_CONTINUE_DIAGNOSTIC =
  */
 export const GENERATION_TRUNCATED_AFTER_TOOLS_DIAGNOSTIC =
   "Host: generation truncated (finishReason=length) after successful tool execution — successful tool results above are preserved. Continue the same task from those results; do not assume the tools failed or never ran. Re-emit the next tool or terminal with complete arguments. Raising PLASM_EVAL_MAX_STEPS alone does not enlarge per-generation output. This truncated generation counted as one step toward the step budget.";
+
+export const GENERATION_TIMEOUT_CONTINUE_DIAGNOSTIC =
+  "Host: provider generation exceeded its wall-clock deadline. Prior successful tool results are preserved; incomplete tool arguments from this generation were not executed. Continue the same task from the observed results with a complete next call. This timed-out generation counted toward the step budget.";
 
 /** Select length-continue liturgy: empty/truncated vs post-success truncation. */
 export function generationTruncatedContinueDiagnostic(
@@ -524,6 +550,22 @@ export async function runEveToolLoop(
   if (!Number.isSafeInteger(options.maxSteps) || options.maxSteps < 1) {
     throw new Error("maxSteps must be a positive integer");
   }
+  if (
+    options.generationTimeoutMs !== undefined &&
+    (!Number.isSafeInteger(options.generationTimeoutMs) ||
+      options.generationTimeoutMs < 1)
+  ) {
+    throw new Error("generationTimeoutMs must be a positive integer when set");
+  }
+  if (
+    options.maxConsecutiveProviderFailures !== undefined &&
+    (!Number.isSafeInteger(options.maxConsecutiveProviderFailures) ||
+      options.maxConsecutiveProviderFailures < 1)
+  ) {
+    throw new Error(
+      "maxConsecutiveProviderFailures must be a positive integer when set",
+    );
+  }
   ensureOtelIntegration();
 
   const sessionId = options.sessionId ?? createEveSessionId();
@@ -541,6 +583,8 @@ export async function runEveToolLoop(
   const outstandingRunRefs = new Set<string>();
   const outstandingArtifacts = new Set<string>();
   let forceTool = false;
+  let consecutiveProviderFailures = 0;
+  let generationTimeoutCount = 0;
   // Session already open → discovery satisfied. Else wait for a valid plasm_context response.
   let discoverySatisfied =
     !options.requireInitialDiscovery || options.discoveryCompleted?.() === true;
@@ -581,16 +625,36 @@ export async function runEveToolLoop(
         );
         // Discovery force outranks caller toolChoice and run_ref force until a
         // valid plasm_context response exists (clarification allowed after).
-        const stepToolChoice = discoveryPending
+        // The lifecycle gate remains active when provider compatibility
+        // requires auto tool choice.
+        const stepToolChoice =
+          discoveryPending && options.forceToolChoice !== false
           ? ({ type: "tool", toolName: INITIAL_DISCOVERY_TOOL_NAME } as const)
           : stepIndex === 0 && options.toolChoice !== undefined
             ? options.toolChoice
-            : forceTool
+            : forceTool && options.forceToolChoice !== false
               ? ("required" as const)
               : undefined;
         let providerStreamErrorCount = 0;
         let providerStreamError: unknown;
+        let generationTimedOut = false;
+        let toolExecutionStarted = false;
+        const abortController = new AbortController();
+        const timeoutHandle =
+          options.generationTimeoutMs === undefined
+            ? undefined
+            : setTimeout(() => {
+                generationTimedOut = true;
+                abortController.abort(
+                  new Error(
+                    `provider generation exceeded ${options.generationTimeoutMs}ms`,
+                  ),
+                );
+              }, options.generationTimeoutMs);
         const streamResult = streamText({
+          onToolExecutionStart: () => {
+            toolExecutionStarted = true;
+          },
           onError: ({ error }) => {
             providerStreamErrorCount += 1;
             providerStreamError ??= error;
@@ -602,6 +666,7 @@ export async function runEveToolLoop(
             stepIndex,
           }),
           stopWhen: stepCountIs(1),
+          abortSignal: abortController.signal,
           runtimeContext,
           experimental_telemetry: telemetry,
           ...(stepToolChoice !== undefined
@@ -620,23 +685,52 @@ export async function runEveToolLoop(
             ? { topK: options.modelOptions.topK }
             : {}),
         });
-        const [text, finishReason, rawFinishReason, steps, usage, response] =
-          await Promise.all([
-            streamResult.text,
-            streamResult.finishReason,
-            streamResult.rawFinishReason,
-            streamResult.steps,
-            streamResult.usage,
-            streamResult.response,
-          ]).catch((error: unknown) => {
+        let text: string;
+        let finishReason: FinishReason;
+        let rawFinishReason: string | undefined;
+        let steps: StepResult<ToolSet>[];
+        let usage: LanguageModelUsage;
+        let response: { messages: ModelMessage[] };
+        try {
+          [text, finishReason, rawFinishReason, steps, usage, response] =
+            await Promise.all([
+              streamResult.text,
+              streamResult.finishReason,
+              streamResult.rawFinishReason,
+              streamResult.steps,
+              streamResult.usage,
+              streamResult.response,
+            ]);
+        } catch (error: unknown) {
+          if (!generationTimedOut) {
             // No-output rejection otherwise hides HTTP payment/auth failures.
             throw providerStreamError ?? error;
-          });
+          }
+          text = "";
+          finishReason = "error";
+          rawFinishReason = "generation_timeout";
+          steps = [];
+          usage = {
+            inputTokens: 0,
+            outputTokens: 0,
+            totalTokens: 0,
+            inputTokenDetails: {
+              noCacheTokens: 0,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+            },
+            outputTokenDetails: { textTokens: 0, reasoningTokens: 0 },
+          };
+          response = { messages: [] };
+        } finally {
+          if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+        }
 
         // OpenAI-compatible providers can preserve raw `error` while mapping
         // it to unified `other` and emitting no SDK error event.
         const providerFailed =
           providerStreamErrorCount > 0 ||
+          generationTimedOut ||
           finishReason === "error" ||
           rawFinishReason === "error";
         const effectiveFinishReason: FinishReason = providerFailed
@@ -647,6 +741,8 @@ export async function runEveToolLoop(
           finishReason: effectiveFinishReason,
           rawFinishReason,
           providerFailed,
+          generationTimedOut,
+          timedOutAfterToolExecution: generationTimedOut && toolExecutionStarted,
           steps,
           usage,
           response,
@@ -659,6 +755,7 @@ export async function runEveToolLoop(
     const stepToolResults = lastStep?.toolResults ?? [];
 
     finalText = stepResult.text;
+    if (stepResult.generationTimedOut) generationTimeoutCount += 1;
     lastUsage = lastUsage
       ? addUsage(lastUsage, stepResult.usage)
       : stepResult.usage;
@@ -709,6 +806,9 @@ export async function runEveToolLoop(
     forceTool = outstandingRunRefs.size > 0 || outstandingArtifacts.size > 0;
 
     stepIndex += 1;
+    consecutiveProviderFailures = stepResult.providerFailed
+      ? consecutiveProviderFailures + 1
+      : 0;
     const invalidToolInput = stepHasInvalidToolInput(delta, stepToolResults);
     // Invalid/truncated tool JSON is a recoverable observation, not loop exit.
     // Append a clear repair diagnostic; do not host-fill the truncated payload.
@@ -734,13 +834,22 @@ export async function runEveToolLoop(
       stopReason = "completed";
       break;
     }
+    const providerFailureBudgetExhausted =
+      stepResult.timedOutAfterToolExecution ||
+      (options.maxConsecutiveProviderFailures !== undefined &&
+        consecutiveProviderFailures >= options.maxConsecutiveProviderFailures);
+    if (stepResult.providerFailed && providerFailureBudgetExhausted) {
+      stopReason = "provider_exhausted";
+      break;
+    }
     if (stepResult.providerFailed && stepIndex < options.maxSteps) {
       messages = [
         ...messages,
         {
           role: "user",
-          content:
-            "Host: provider stream failed during generation. Successful tool results above are preserved; do not repeat their effects. Incomplete tool arguments were not executed. Continue from the observed results with a complete next call. This generation counted toward the step budget.",
+          content: stepResult.generationTimedOut
+            ? GENERATION_TIMEOUT_CONTINUE_DIAGNOSTIC
+            : "Host: provider stream failed during generation. Successful tool results above are preserved; do not repeat their effects. Incomplete tool arguments were not executed. Continue from the observed results with a complete next call. This generation counted toward the step budget.",
         },
       ];
       continue;
@@ -824,5 +933,6 @@ export async function runEveToolLoop(
     maxOutputTokens: options.modelOptions?.maxOutputTokens,
     lengthTruncationCount: stepFinishReasons.filter((r) => r === "length")
       .length,
+    generationTimeoutCount,
   };
 }

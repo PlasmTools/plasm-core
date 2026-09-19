@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { intentKey, LocalSessionStore } from "../src/session-state.js";
+import { discoveryRoutingIntent } from "../src/runtime/agent-runtime.js";
 
 const long = `${"Read owe_list.csv, ".repeat(40)}and federate Venmo plus Splitwise.`;
 assert.ok(long.length > 400, "fixture must exceed typical filename blow-up");
@@ -12,6 +13,14 @@ const key = intentKey(long);
 assert.equal(key.length, 64);
 assert.match(key, /^[0-9a-f]{64}$/);
 assert.notEqual(intentKey(long), intentKey(`${long}x`));
+assert.equal(
+  discoveryRoutingIntent("original qualifier", "agent paraphrase"),
+  "original qualifier\nagent paraphrase",
+);
+assert.equal(
+  discoveryRoutingIntent("original qualifier", "original qualifier"),
+  "original qualifier",
+);
 
 const root = mkdtempSync(path.join(tmpdir(), "plasm-session-key-"));
 const store = new LocalSessionStore(root);

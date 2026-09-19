@@ -6,6 +6,39 @@ use crate::session_identity::PlasmContextSessionMode;
 
 use super::*;
 
+pub(crate) fn parse_effect_slots(
+    tool: &str,
+    value: &serde_json::Value,
+) -> Result<Vec<String>, CallToolError> {
+    let slots = value
+        .get("effect_slots")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| {
+            CallToolError::invalid_arguments(tool, Some("missing `effect_slots` array".into()))
+        })?;
+    if !(1..=64).contains(&slots.len()) {
+        return Err(CallToolError::invalid_arguments(
+            tool,
+            Some("`effect_slots` must contain one to 64 statements".into()),
+        ));
+    }
+    slots
+        .iter()
+        .map(|slot| {
+            slot.as_str()
+                .map(str::trim)
+                .filter(|statement| !statement.is_empty())
+                .map(str::to_owned)
+                .ok_or_else(|| {
+                    CallToolError::invalid_arguments(
+                        tool,
+                        Some("every `effect_slots` item must be a non-empty string".into()),
+                    )
+                })
+        })
+        .collect()
+}
+
 pub(crate) fn parse_plasm_context_session_mode(
     tool: &str,
     v: &serde_json::Value,

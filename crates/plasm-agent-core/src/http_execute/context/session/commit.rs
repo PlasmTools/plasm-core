@@ -257,7 +257,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn commit_capability_only_delta_emits_compact_mutator_tsv() {
+    async fn commit_existing_capability_delta_is_a_surface_noop() {
         let cgs = matrix_cgs_arc();
         let entities = vec!["LangItem".to_string()];
         let intent = "create an item";
@@ -265,7 +265,7 @@ mod tests {
         let initial_delta = plasm_core::capability_exposure::selected_capability_surface(
             cgs.as_ref(),
             "matrix",
-            &["langitem_query".into()],
+            &["langitem_query".into(), mutator.into()],
         )
         .expect("selected query exposure");
         let mut exp = TeachingExposureSession::new_with_intent_delta(
@@ -341,14 +341,11 @@ mod tests {
         .await
         .expect("commit wave");
 
-        assert!(
-            !committed.surface_unchanged,
-            "selected capability must change exposure surface"
-        );
+        assert!(committed.surface_unchanged);
         let md = committed.markdown;
         assert!(
-            md.contains(mutator) || md.contains(".m"),
-            "compact delta must include invoke witness: {md}"
+            md.is_empty(),
+            "a no-op capability delta must not render teaching: {md}"
         );
         assert!(
             !md.contains("Active mutators"),

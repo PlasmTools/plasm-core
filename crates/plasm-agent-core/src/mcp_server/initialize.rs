@@ -37,7 +37,7 @@ pub(crate) fn mcp_initialize_result() -> InitializeResult {
             version: crate::release_version::RELEASE_VERSION.into(),
             title: Some("Plasm agent".into()),
             description: Some(
-                "**`session_mode: \"new\"`** once per workflow, then **`\"extend\"`** + **`logical_session_ref`**. **`plasm`** (plan) and **`plasm_run`** (execute) reuse the same ref. **`intent`** accumulates per turn — it does not select the session."
+                "**`session_mode: \"new\"`** once per workflow with immutable original **`intent`** and explicit **`effect_slots`**, then **`\"extend\"`** + **`logical_session_ref`** with current slots. **`plasm`** (plan) and **`plasm_run`** (execute) reuse the same ref. **`intent`** accumulates per turn — it does not select the session."
                     .into(),
             ),
             icons: vec![],

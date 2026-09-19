@@ -163,9 +163,9 @@ impl PlasmHostState {
         Ok(view)
     }
 
-    /// Routed requests start from selected IDs; [`selected_capability_surface`] then
-    /// admits every authored mutator on those seeded domains plus read-family /
-    /// identity-scope close. Explicit execution names its entities directly.
+    /// Routed requests expose exactly the business, input-source, and declared
+    /// prerequisite capability IDs in the discovery closure. Explicit execution
+    /// names its entities directly and retains entity-wide exposure.
     pub(crate) fn capability_surface_for_wave(
         &self,
         cgs: &plasm_core::CGS,
@@ -794,7 +794,11 @@ mod tests {
             );
         }
         for (suffix, content_type, body) in [
-            ("/context", "application/json", r#"{"intent":"read"}"#),
+            (
+                "/context",
+                "application/json",
+                r#"{"intent":"read","effect_slots":["Read records"]}"#,
+            ),
             ("", "text/plain", "e1{}"),
         ] {
             let response = router

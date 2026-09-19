@@ -62,7 +62,7 @@ export interface DiscoverInput {
 
 export interface PlasmContextInput {
   intent: string;
-  userRequests?: string[];
+  effectSlots: string[];
   sessionMode?: "new" | "extend";
   logicalSessionRef?: string;
 }
@@ -120,6 +120,13 @@ function mergeSeeds(
     out.push(seed);
   }
   return out;
+}
+
+/** Preserve the immutable first workflow request when an agent extends it. */
+export function discoveryRoutingIntent(original: string, current: string): string {
+  const first = original.trim();
+  const next = current.trim();
+  return first && first !== next ? `${first}\n${next}` : next;
 }
 
 function planArchiveEnabled(): boolean {
@@ -278,8 +285,12 @@ export class AgentRuntime {
 
   async plasmContext(input: PlasmContextInput): Promise<string> {
     const intent = input.intent.trim();
+    const effectSlots = input.effectSlots.map((slot) => slot.trim());
     const mode = input.sessionMode ?? "new";
     if (!intent) throw new Error("plasm_context requires intent");
+    if (effectSlots.length < 1 || effectSlots.length > 64 || effectSlots.some((slot) => !slot)) {
+      throw new Error("plasm_context requires one to 64 non-empty effect slots");
+    }
     return plasmSpans.toolContext({ intent }, async (span) => {
       const started = Date.now();
       const existing = mode === "extend"
@@ -288,21 +299,26 @@ export class AgentRuntime {
       if (mode === "new" && input.logicalSessionRef) {
         throw new Error("logical_session_ref belongs on session_mode extend");
       }
+      const routingIntent = existing
+        ? discoveryRoutingIntent(existing.intent, intent)
+        : intent;
       const packet = await this.engine.routeIntent(
-        intent, existing?.logicalSessionId, input.userRequests,
+        routingIntent,
+        effectSlots,
+        existing?.logicalSessionId,
       );
       const { routing, teaching } = packet;
       const recoveryMarkdown = routingRecoveryMarkdown(routing);
-      if (!routing.closure && routing.selection.status === "insufficient") {
+      if (!routing.closure && !routing.matching.complete) {
         await this.recordToolTrace("tool", "plasm_context", started, {
           intent, session_mode: mode, routing: JSON.stringify(routing),
           logical_session_ref: existing?.logicalSessionRef,
         });
         return [
           routing.intent_analysis,
-          recoveryMarkdown ?? `**plasm_context:** ${routing.selection.status}`,
+          recoveryMarkdown ?? "**plasm_context:** insufficient effect-slot coverage",
           existing ? `**logical_session_ref:** \`${existing.logicalSessionRef}\`` : "",
-          ...(recoveryMarkdown ? [] : routingExplanationLines(routing.selection)),
+          ...(recoveryMarkdown ? [] : routingExplanationLines(routing.matching)),
         ].filter(Boolean).join("\n\n");
       }
       if (!routing.closure || !teaching?.tsv.trim()) {
@@ -340,15 +356,8 @@ export class AgentRuntime {
         trace_id: activeTraceId() ?? span.spanContext().traceId,
       });
       const teachingMarkdown = formatPlasmContextMarkdown(session.logicalSessionRef, teaching.tsv, false);
-      if (recoveryMarkdown) {
-        return [
-          routing.intent_analysis,
-          recoveryMarkdown,
-          "**Partial teaching** (does not claim complete coverage):",
-          teachingMarkdown,
-        ].join("\n\n");
-      }
-      return [routing.intent_analysis, teachingMarkdown, ...routingExplanationLines(routing.selection)].filter(Boolean).join("\n\n");
+      if (recoveryMarkdown) throw new Error("complete routing unexpectedly carried recovery");
+      return [routing.intent_analysis, teachingMarkdown, ...routingExplanationLines(routing.matching)].filter(Boolean).join("\n\n");
     });
   }
 

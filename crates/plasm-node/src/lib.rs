@@ -298,13 +298,14 @@ impl PlasmEngine {
         Ok(generation)
     }
 
-    /// Intent-only new/extend; selection runs outside the execution mutex.
+    /// Original intent plus explicit affirmative effect slots; selection runs
+    /// outside the execution mutex.
     #[napi]
     pub async fn route_intent(
         &self,
         intent: String,
+        effect_slots: Vec<String>,
         logical_session_id: Option<String>,
-        user_requests: Option<Vec<String>>,
     ) -> Result<String> {
         let store = self.discovery_store.get().ok_or_else(|| {
             Error::from_reason(
@@ -319,8 +320,8 @@ impl PlasmEngine {
         let receipt = service
             .route_turn(RouteTurn {
                 new_generation: &generation,
-                user_requests: user_requests.as_deref().unwrap_or(&[]),
                 intent: &intent,
+                effect_slots: &effect_slots,
                 logical_session: logical_session_id.as_deref(),
                 allowed: &allowed,
                 exposed: &exposed,

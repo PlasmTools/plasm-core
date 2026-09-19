@@ -22,6 +22,24 @@ pub(crate) fn json_schema_non_empty_string_type(
     m
 }
 
+pub(crate) fn json_schema_non_empty_string_array(
+    description: &str,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut m = serde_json::Map::new();
+    m.insert("type".into(), serde_json::json!("array"));
+    m.insert("minItems".into(), serde_json::json!(1));
+    m.insert("maxItems".into(), serde_json::json!(64));
+    m.insert(
+        "items".into(),
+        serde_json::json!({"type":"string","minLength":1}),
+    );
+    m.insert(
+        "description".into(),
+        serde_json::Value::String(description.to_string()),
+    );
+    m
+}
+
 #[allow(dead_code)]
 pub(crate) fn json_schema_non_empty_object_array(
     description: &str,

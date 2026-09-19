@@ -194,7 +194,7 @@ mod tests {
     #[test]
     fn reject_relation_arrow_trap_bare_teaching_r_hash() {
         let err = reject_relation_arrow_trap("pika => e2.r3").unwrap_err();
-        assert!(err.contains("Relation reads use"), "{err}");
+        assert!(err.contains("Plural relation reads use"), "{err}");
     }
 
     #[test]

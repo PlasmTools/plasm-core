@@ -565,14 +565,14 @@ fn dry_run_rejects_query_node_resolving_search_capability() {
             "id": "n0",
             "kind": "query",
             "qualified_entity": { "entry_id": "langmatrix", "entity": "LangItem" },
-            "expr": "LangItem{team_key=ENG}",
+                "expr": "LangItem{q=ENG}",
             "ir": {
                 "expr": {
                     "op": "query",
                     "entity": "LangItem",
                     "predicate": {
                         "type": "comparison",
-                        "field": "team_key",
+                        "field": "q",
                         "op": "=",
                         "value": "ENG"
                     },
@@ -1011,10 +1011,10 @@ fn dry_run_text_renders_dependency_dag_snapshot() {
     insta::assert_snapshot!(
         text,
         @"
-    plan review · 3n 1r → returns: summary, cards · p7
-    warn: unbounded read
+    plan review · 3n 1r 0w → returns: summary, cards · p7
+    warn: narrow before aggregate/limit
 
-    01 products     query Query(Product all)
+    01 products     query Product
     02 summary      project name, sku ← products
     03 cards        derive map summary as product → {1} ← summary
     "
@@ -1067,16 +1067,16 @@ fn validation_rejects_ambiguous_auto_cross_node_input() {
 
 #[test]
 fn evaluate_plasm_plan_dry_reports_for_each_stage() {
-    let mut s = test_session();
-    // Active policy: require review for product_label so the approval_gate is emitted.
+    let mut s = language_matrix_session();
+    // Active policy: require review for langitem_update so the approval gate is emitted.
     s.flow_policy = crate::FlowPolicySnapshot::Active {
         revision: crate::PolicyRevision(1),
         policy: crate::FlowPolicy {
             capability_gates: vec![crate::plan_flow_policy::CapabilityGateRule {
                 pattern: crate::plan_flow_policy::CapabilityGatePattern {
-                    entry_id: Some("acme".into()),
-                    entity: Some("Product".into()),
-                    capability: "product_label".into(),
+                    entry_id: Some("langmatrix".into()),
+                    entity: Some("LangItem".into()),
+                    capability: "langitem_update".into(),
                 },
                 enforcement: crate::plan_flow_policy::OperatorDisposition::Approve,
             }],
@@ -1091,17 +1091,17 @@ fn evaluate_plasm_plan_dry_reports_for_each_stage() {
             {
                 "id": "find",
                 "kind": "query",
-                "qualified_entity": { "entry_id": "acme", "entity": "Product" },
-                "expr": "Product",
-                "ir": { "expr": { "op": "query", "entity": "Product" } },
+                "qualified_entity": { "entry_id": "langmatrix", "entity": "LangItem" },
+                "expr": "LangItem",
+                "ir": { "expr": { "op": "query", "entity": "LangItem" } },
                 "effect_class": "read",
                 "result_shape": "list"
             },
             {
                 "id": "label",
                 "kind": "for_each",
-                "effect_class": "side_effect",
-                "result_shape": "side_effect_ack",
+                "effect_class": "write",
+                "result_shape": "mutation_result",
                 "source": "find",
                 "item_binding": "product",
                 "depends_on": ["find"],
@@ -1109,19 +1109,19 @@ fn evaluate_plasm_plan_dry_reports_for_each_stage() {
                 "approval": "label_products",
                 "effect_template": {
                     "kind": "action",
-                    "qualified_entity": { "entry_id": "acme", "entity": "Product" },
-                    "expr_template": "Product({{ product.id }}).label(label=\"stale\")",
+                    "qualified_entity": { "entry_id": "langmatrix", "entity": "LangItem" },
+                    "expr_template": "LangItem({{ product.id }}).update(title=\"stale\")",
                     "ir_template": {
                         "expr": {
                             "op": "invoke",
-                            "capability": "product_label",
-                            "target": { "entity_type": "Product", "key": { "__plasm_hole": { "kind": "binding", "binding": "product", "path": ["id"] } } },
-                            "input": { "label": "stale" }
+                            "capability": "langitem_update",
+                            "target": { "entity_type": "LangItem", "key": { "__plasm_hole": { "kind": "binding", "binding": "product", "path": ["id"] } } },
+                            "input": { "title": "stale" }
                         },
                         "input_bindings": [{ "from": "product.id", "to": "id" }]
                     },
-                    "effect_class": "side_effect",
-                    "result_shape": "side_effect_ack"
+                    "effect_class": "write",
+                    "result_shape": "mutation_result"
                 }
             }
         ],
@@ -1133,7 +1133,7 @@ fn evaluate_plasm_plan_dry_reports_for_each_stage() {
     assert_eq!(dry.node_results[1]["simulation"]["kind"], "template_stage");
     assert_eq!(
         dry.node_results[1]["approval_gate"]["policy_key"],
-        "acme.Product.product_label"
+        "langmatrix.LangItem.langitem_update"
     );
 }
 
@@ -1349,8 +1349,8 @@ fn dry_run_text_renders_staged_read_map_body() {
     );
     assert!(!text.contains("=> {}"), "{text}");
     assert!(
-        text.starts_with("plan ok"),
-        "root list read is bounded by the default host page (paged-by-default): {text}"
+        text.starts_with("plan review"),
+        "the paged root is bounded, while the downstream collection projection remains reviewable: {text}"
     );
     assert!(
         !text.contains("unbounded read"),

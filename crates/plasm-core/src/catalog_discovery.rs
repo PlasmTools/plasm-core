@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
-pub const DISCOVERY_RENDERER_VERSION: u32 = 2;
+pub const DISCOVERY_RENDERER_VERSION: u32 = 6;
 pub const EMBEDDING_DIMENSIONS: usize = 1536;
 pub const EMBEDDING_MODEL: &str = "openai/text-embedding-3-small";
 

@@ -23,9 +23,8 @@ pub mod catalog_runtime;
 pub mod cli_builder;
 pub mod control_plane_http;
 pub mod discovery_embeddings;
+pub mod discovery_matcher;
 pub mod discovery_recovery;
-#[path = "discovery_selection.rs"]
-mod discovery_selection;
 pub mod discovery_service;
 pub mod discovery_store;
 pub mod dispatch;
@@ -115,7 +114,6 @@ pub mod release_version;
 mod session_credentials;
 pub(crate) mod tool_model_service;
 pub mod traced_pg;
-pub mod workflow_intent;
 pub use plan_dry_display::PlanDryVerdict;
 mod approval_gate;
 mod flow_catalog;

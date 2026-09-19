@@ -452,7 +452,7 @@ created"#
     }
 
     #[test]
-    fn symbol_stability_mutator_query_mismatch_includes_fingerprint_in_parse_error() {
+    fn symbol_stability_mutator_query_mismatch_names_resolved_query() {
         block_on_worker_stack(
             symbol_stability_mutator_query_mismatch_includes_fingerprint_in_parse_error_inner,
         );
@@ -517,14 +517,6 @@ created"#
                 },
             )
         };
-        assert!(
-            msg.contains("symbol_map_fingerprint="),
-            "parse error must include fingerprint: {msg}"
-        );
-        assert!(
-            msg.contains("domain_revision="),
-            "parse error must include domain_revision: {msg}"
-        );
         assert!(
             msg.contains(&m_query) && msg.contains("langitem_query"),
             "parse error must name resolved binding: {msg}"

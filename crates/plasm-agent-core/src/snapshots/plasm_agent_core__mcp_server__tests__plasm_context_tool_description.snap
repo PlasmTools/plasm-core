@@ -1,14 +1,15 @@
 ---
-source: plasm-oss/crates/plasm-agent-core/src/mcp_server/tests.rs
+source: crates/plasm-agent-core/src/mcp_server/tests.rs
 expression: context
 ---
 **Returns a language card** with a session symbol table, selected business capabilities, declared prerequisites and input bindings. Call before `plasm` / `plasm_run`; this tool performs no acquisition or business calls.
 
-**Intent-only lifecycle:**
-- `session_mode: "new"` + `intent`: describe every business requirement. Ready creates `logical_session_ref` and fresh symbols. Use once per workflow.
-- `session_mode: "extend"` + the same `logical_session_ref` + current `intent`: select against the pinned generation and exposed capabilities. Existing symbols and bindings remain unchanged; teaching appends the admitted delta.
-- `intent` does NOT select the session. Repair plan or parse errors with the same ref.
+**Required semantic input:**
+- `intent`: the immutable original task instruction for this turn. It does NOT select the session.
+- `effect_slots`: every affirmative effect and explicitly requested information outcome, one complete statement per slot. A slot states work, not a tool name. Preserve branch and ordering context. Attach selection constraints and prohibitions to the effect they constrain; never merge independent effects or omit a downstream step as "context."
 
-**Routing outcomes:** `ready` reports that the presented capabilities support the requested workflow. `insufficient` reports missing functionality within the presented set and can accompany useful teaching. Preserve useful capabilities and use intent-only extension when more are needed. You own conversation and execution: ask the user when needed, then write only the chosen program. Neither status authorizes execution or guarantees success. Routing errors are operational failures. Empty additions on extension preserve existing capabilities and bindings.
+Use `session_mode: "new"` once per workflow. Ready creates `logical_session_ref` and fresh symbols. For later needs use `session_mode: "extend"`, the same ref, current `intent`, and current `effect_slots`; existing symbols remain unchanged.
 
-Infrastructure dependencies come from declarations. Write the taught provider calls as ordinary Plasm programs and bind their outputs into the specified existing inputs. Submit programs to `plasm` for review and execute returned `run_ref` plans with `plasm_run`.
+Jev classifies each retrieved card against each supplied slot. `ready` requires at least one selected capability per slot before CGS input-source projection and prerequisite closure. `insufficient` identifies every empty slot and publishes no partial language card. Extend discovery when another operation or input source is needed; searching rows only searches data within taught capabilities. Empty additions on a complete extension preserve existing capabilities and bindings.
+
+Discovery neither chooses the intended record nor authorizes substitute work or execution. Ask the user when needed, then write only the chosen program. Bind declared provider outputs into specified inputs using ordinary Plasm, submit it to `plasm` for review, and execute returned `run_ref` plans with `plasm_run`.

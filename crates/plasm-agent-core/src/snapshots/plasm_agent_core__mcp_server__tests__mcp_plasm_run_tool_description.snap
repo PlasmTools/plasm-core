@@ -8,7 +8,7 @@ expression: "plasm_core::prompt_render::PLASM_RUN_TOOL_DESCRIPTION"
 
 **Review gate:** first live write executes the reviewed plan for that `pcN`. If the token is missing, expired, or from another plan, call **`plasm`** again.
 
-**Paging:** when a result says `more pages — call plasm_run with run_ref: "…"`, copy that handle into **`run_ref`** (same **`logical_session_ref`**). Use paging only when **no** snapshot was stored. `page(...)` is HTTP-execute program syntax only.
+**Paging:** when a result says `more pages — call plasm_run with run_ref: "…"`, copy that handle into **`run_ref`** (same **`logical_session_ref`**). A snapshot contains the acquired batch; it does not fetch further backend pages. Follow a returned continuation even when that batch has a snapshot. `page(...)` is HTTP-execute program syntax only.
 
 **Live results:** `## {return_label} ({n} rows)` header. Small results (≤25 rows): inline ` ```tsv ` when `result_delivery` is `inline`; `snapshot_only` / `(in artifact)` need the artifact read path (suffix below).
 

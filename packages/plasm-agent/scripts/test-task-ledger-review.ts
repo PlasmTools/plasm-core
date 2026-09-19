@@ -40,8 +40,16 @@ const engine: PlasmEngine = {
   routeIntent: async intent => ({
     routing: { intent, pin_id: randomUUID(),
       retrieval: { generation: "abstract-ledger-review-fixture", candidates: [] },
-      selection: { status: "ready", additional_capability_ids: [], requirement_coverage: [] },
-      closure: { business: [], prerequisites: [], acquisitions: [], edges: [] } },
+      matching: {
+        slots: [{ id: "s0", statement: intent }],
+        matches: [],
+        complete: true,
+        unmatched_slot_ids: [],
+        additional_capability_ids: [],
+      },
+      input_source_projection: [],
+      input_source_matching: { matches: [], selected: [] },
+      closure: { business: [], input_sources: [], prerequisites: [], acquisitions: [], edges: [] } },
     teaching: { tsv: "plasm_expr\tMeaning\ne1\tAbstract fixture entity", delta_refs: [] },
   }),
   synthesizeTeaching: unused,
@@ -337,7 +345,7 @@ try {
   });
   const controlLiturgy = await control.loadInstructions();
   assert.equal(controlLiturgy.includes(TASK_LEDGER_REVIEW_ACTOR_LITURGY), false);
-  await control.runtime.plasmContext({ intent: "Abstract fixture workflow", sessionMode: "new" });
+  await control.runtime.plasmContext({ intent: "Abstract fixture workflow", effectSlots: ["Run the abstract fixture workflow"], sessionMode: "new" });
   const controlResult = await control.generate(INSTRUCTION, {
     wrapTools: keepLedgerAndComplete,
     maxSteps: 4,
@@ -361,7 +369,7 @@ try {
     includeTaskLedgerReview: true,
     taskLedgerReviewModel: allowReview,
   });
-  await allowAgent.runtime.plasmContext({ intent: "Abstract fixture workflow", sessionMode: "new" });
+  await allowAgent.runtime.plasmContext({ intent: "Abstract fixture workflow", effectSlots: ["Run the abstract fixture workflow"], sessionMode: "new" });
   const allowResult = await allowAgent.generate(INSTRUCTION, {
     wrapTools: keepLedgerAndComplete,
     maxSteps: 6,
@@ -408,7 +416,7 @@ try {
     includeTaskLedgerReview: true,
     taskLedgerReviewModel: continueReview,
   });
-  await continueAgent.runtime.plasmContext({ intent: "Abstract fixture workflow", sessionMode: "new" });
+  await continueAgent.runtime.plasmContext({ intent: "Abstract fixture workflow", effectSlots: ["Run the abstract fixture workflow"], sessionMode: "new" });
   const continueResult = await continueAgent.generate(INSTRUCTION, {
     wrapTools: keepLedgerAndComplete,
     maxSteps: 6,

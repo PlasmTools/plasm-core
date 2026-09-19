@@ -423,6 +423,7 @@ async fn run_context_command(
     let payload = IntentDiscoveryRequest {
         principal: None,
         intent: intent.into(),
+        effect_slots: args.effect_slots,
         allowed_entry_ids: None,
     };
     let (status, _, body) = send_bytes(
@@ -452,8 +453,8 @@ async fn run_context_command(
     let reply: ContextReply = serde_json::from_slice(&body)?;
     let Some(context) = reply.context else {
         anyhow::ensure!(
-            reply.routing.selection.status != crate::discovery_service::SelectionStatus::Ready,
-            "Ready routing response is missing its execution context"
+            !reply.routing.matching.complete,
+            "matching routing response is missing its execution context"
         );
         // Preserve the full insufficiency receipt; no execution binding is opened or replaced.
         std::io::stdout().write_all(&body)?;
@@ -499,17 +500,10 @@ async fn run_context_command(
         .join("\n");
     teaching.push('\n');
     teaching.push_str(&reply.prerequisite_guidance);
-    if let Some(recovery) = &reply.routing.recovery {
-        let mut combined = recovery.render_markdown(reply.routing.selection.status);
-        combined.push_str("\n\n**Partial teaching** (does not claim complete coverage):\n\n");
-        combined.push_str(&teaching);
-        teaching = combined;
-    } else {
-        for explanation in reply.routing.selection.explanation_lines() {
-            teaching.push_str("\n\n");
-            teaching.push_str(&explanation);
-        }
-    }
+    debug_assert!(
+        reply.routing.recovery.is_none(),
+        "complete route cannot carry recovery"
+    );
     let artifact = mirror.write_file(&op_dir, "teaching.md", teaching.as_bytes())?;
     mirror.update_latest_pointer(&mirror.rel_dir_for_display(&op_dir))?;
     state.persist(server)?;
@@ -658,7 +652,10 @@ pub async fn run_terminal() -> Result<()> {
         }
         Cmd::Login => run_device_login(cli.profile.as_str(), &mut profile).await,
         Cmd::Doctor => run_doctor(cli.profile.as_str(), &profile).await,
-        Cmd::Search { intent } => {
+        Cmd::Search {
+            intent,
+            effect_slots,
+        } => {
             let utterance = intent.trim().to_string();
             if utterance.is_empty() {
                 return Err(anyhow!("search: intent text required"));
@@ -670,6 +667,7 @@ pub async fn run_terminal() -> Result<()> {
             let payload = serde_json::to_vec(&IntentDiscoveryRequest {
                 principal: None,
                 intent: utterance.clone(),
+                effect_slots,
                 allowed_entry_ids: None,
             })?;
             let (st, _, body) = send_bytes(
@@ -915,17 +913,20 @@ mod routed_terminal_tests {
                         let mut reply = json!({
                             "routing": {
                                 "authorization":{"catalogs":["matrix"],"capabilities":{}},
+                                "intent_analysis":"fixture",
                                 "intent":payload["intent"],"pin_id":"pin",
                                 "retrieval":{"generation":"generation-one","candidates":[],"lexical_count":0,"vector_count":0,"lexical_truncated":false,"vector_truncated":false,"fusion_truncated":0,"relation_truncated":0},
-                                "selection":{"status":if insufficient {"insufficient"} else {"ready"},"additional_capability_ids":[],"requirement_coverage":if insufficient {json!([{"requirement":"unavailable","assessment":{"useful_capabilities":[],"missing":"No supplied capability"}}])} else {json!([])}},
+                                "matching":{"slots":[{"id":"s0","statement":payload["effect_slots"][0]}],"matches":[],"complete":!insufficient,"unmatched_slot_ids":if insufficient { json!(["s0"]) } else { json!([]) },"additional_capability_ids":[]},
+                                "input_source_projection":[],
+                                "input_source_matching":{"matches":[],"selected":[]},
                                 "closure":null
                             }
                         });
                         if payload["intent"] == "wrong generation" {
                             reply["routing"]["retrieval"]["generation"] = json!("generation-two");
                         }
-                        if !missing {
-                            reply["routing"]["closure"] = json!({"business":[{"catalog":"matrix","capability":"read"}],"prerequisites":[],"acquisitions":[],"edges":[]});
+                        if !insufficient {
+                            reply["routing"]["closure"] = json!({"business":[{"catalog":"matrix","capability":"read"}],"input_sources":[],"prerequisites":[],"acquisitions":[],"edges":[]});
                             reply["context"] = json!({"prompt_hash":"ph","session_id":"sid","primary_entry_id":"matrix","principal":null,"waves":[{"mode":"new","entry_id":"matrix","entities":["Record"],"markdown_delta":"canonical teaching","reused_session":false,"teaching_prompt_chars_added":18}],"binding_updated":true,"new_symbol_space":true,"stale_execute_binding_recovered":false,"stale_binding_previous":null,"symbol_space_reset":false});
                             reply["prerequisite_guidance"] = json!("explicit provider binding");
                         }
@@ -937,10 +938,17 @@ mod routed_terminal_tests {
                 let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap(); });
                 let client = Client::new();
                 let profile = TerminalProfile::default();
-                let args = |new, intent: &str| crate::terminal_cli::ContextArgs { new, verbose:false, intent:Some(intent.into()) };
+                let args = |new, intent: &str| crate::terminal_cli::ContextArgs {
+                    new,
+                    verbose: false,
+                    intent: Some(intent.into()),
+                    effect_slots: vec![intent.into()],
+                };
                 run_context_command(&client, &server, &profile, args(true,"unavailable")).await.unwrap();
                 assert!(read_current_session_pointer(&server).unwrap().is_none());
                 run_context_command(&client, &server, &profile, args(true,"partial records")).await.unwrap();
+                assert!(read_current_session_pointer(&server).unwrap().is_none());
+                run_context_command(&client, &server, &profile, args(true,"available records")).await.unwrap();
                 let id = read_current_session_pointer(&server).unwrap().unwrap();
                 run_context_command(&client, &server, &profile, args(false,"more records")).await.unwrap();
                 run_context_command(&client, &server, &profile, args(false,"unavailable")).await.unwrap();
@@ -953,9 +961,9 @@ mod routed_terminal_tests {
                 assert_eq!(RoutedTerminalSession::load_from_disk(&server,&id).unwrap().generation,"generation-one");
                 let seen = seen.lock().unwrap();
                 assert!(seen.iter().all(|(_, body)| body.get("routing_ref").is_none() && body.get("clarify_choices").is_none()));
-                assert_eq!(seen[2].0,"/execute/ph/sid/context");
+                assert_eq!(seen[3].0,"/execute/ph/sid/context");
                 assert!(seen.iter().all(|(_,body)| body.get("seeds").is_none()));
-                assert_eq!(seen[4].0,"/execute/ph/sid?wait=true&mode=plan");
+                assert_eq!(seen[5].0,"/execute/ph/sid?wait=true&mode=plan");
                 task.abort();
             });
         });

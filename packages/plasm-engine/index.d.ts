@@ -12,8 +12,11 @@ export declare class PlasmEngine {
   loadCatalog(catalogDir: string): Promise<JsCatalogInfo>
   /** Activate the complete loaded manifest set using explicit deployment bindings. */
   activateDiscovery(deploymentId: string, bindingsJson: string): Promise<string>
-  /** Intent-only new/extend; selection runs outside the execution mutex. */
-  routeIntent(intent: string, logicalSessionId?: string | undefined | null, userRequests?: Array<string> | undefined | null): Promise<string>
+  /**
+   * Original intent plus explicit affirmative effect slots; selection runs
+   * outside the execution mutex.
+   */
+  routeIntent(intent: string, effectSlots: Array<string>, logicalSessionId?: string | undefined | null): Promise<string>
   exposeSeeds(intent: string, seeds: Array<JsSeed>): Promise<JsTeachingResult>
   introspectCatalog(entryId: string): Promise<string>
   dryRun(program: string, logicalSessionId?: string | undefined | null): Promise<JsDryRunResult>

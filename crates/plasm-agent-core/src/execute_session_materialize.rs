@@ -279,7 +279,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn materialize_is_idempotent_for_catalog_default_hosted_kv() {
+    async fn materialize_is_idempotent_without_hosted_kv_overlay() {
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/schemas/plasm_language_matrix");
         if !dir.is_dir() {
@@ -307,14 +307,13 @@ mod tests {
         let baseline = materialize_entry_context(&st, "langmatrix", None, None)
             .await
             .expect("baseline");
-        let kv = outbound_hosted_kv_from_cgs(baseline.effective_cgs.as_ref()).expect("hosted_kv");
-        let with_kv = materialize_entry_context(&st, "langmatrix", Some(kv.as_str()), None)
+        let repeated = materialize_entry_context(&st, "langmatrix", None, None)
             .await
-            .expect("with_kv");
+            .expect("repeated materialization");
         assert_eq!(
             baseline.effective_cgs.effective_catalog_cgs_hash_hex(),
-            with_kv.effective_cgs.effective_catalog_cgs_hash_hex(),
-            "re-applying catalog-default hosted_kv must not change effective digest"
+            repeated.effective_cgs.effective_catalog_cgs_hash_hex(),
+            "repeated materialization without an overlay must not change the effective digest"
         );
     }
 }

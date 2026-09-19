@@ -186,16 +186,21 @@ Symbolic teaching table / TSV teaching attaches **`entities.<Name>.description`*
 (relationship, ownership, status, or another domain classification) must describe
 that evidentiary purpose, not just list or search the underlying records.
 Use `discovery.target_terms` for ordinary domain vocabulary associated with the
-classification, grounded in the API's supported semantics. An address-book read,
-for example, can identify friends, coworkers and relatives from recorded contact
-relationships. Keep this vocabulary on the relevant read capability; do not
-attach task recipes or unrelated workflows. A typed enum or array alone does
-not establish that its vocabulary appears in the indexed capability document:
-inspect the generated document as part of the authoring audit. Renderer v2 includes registry value descriptions,
-finite enum members (including array element domains), and slot descriptions
-for input/field evidence. Examples, defaults, and transport mappings remain
-excluded. After semantic evidence changes, repack discovery artifacts and
-regenerate embeddings; renderer/cache identity prevents old evidence reuse.
+classification, grounded in the API's supported semantics. Keep this vocabulary
+on the relevant read capability; do not attach task recipes or unrelated workflows.
+
+**Do not author a second resolver graph.** Renderer v6 derives a selection
+correspondence when a capability's typed `selection` slot and one of its returned
+entity fields (or array elements) share the same classification-like semantic
+`value_ref` (`enum`, `multi_enum`, boolean, or `entity_ref`). That correspondence
+proves both category-to-entities lookup and entity-to-category evidence directly
+from the existing E/R and capability type structure. Use deliberate, specific
+value domains; a generic string slot is not resolver evidence. Descriptions and
+`discovery.target_terms` still supply truthful domain vocabulary. Inspect the
+generated document as part of the authoring audit. Examples,
+defaults, and transport mappings remain excluded. After semantic evidence changes,
+repack discovery artifacts and regenerate embeddings; renderer/cache identity
+prevents old evidence reuse.
 
 **Discovery seed graph roles (semantic auto-seed):** Prefer relation-edge roles; entity class is a weak fallback. Precedence: `relations.*.discovery.seed_nav` → `entities.*.discovery.seed_class` → unset (no special prune).
 

@@ -23,6 +23,7 @@ async function main(): Promise<void> {
 
   const contextMd = await agent.runtime.plasmContext({
     intent: "list execute_tiny products async transport",
+    effectSlots: ["List execute_tiny products"],
   });
   const logicalSessionRef = extractLogicalSessionRef(contextMd);
 

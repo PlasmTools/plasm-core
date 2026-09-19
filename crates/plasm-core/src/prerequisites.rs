@@ -140,13 +140,33 @@ pub struct PrerequisiteEdge {
 pub struct PrerequisiteClosure {
     pub acquisitions: Vec<Acquisition>,
     pub business: Vec<CapabilityRef>,
-    /// Lawful producers for required entity identities. These are possible
-    /// workflow branches, not selected business effects: an agent may read an
-    /// existing entity or create one before it can fill the consumer input.
+    /// Lawful producers selected to populate business inputs. These are not
+    /// themselves requested business effects.
     #[serde(default)]
     pub input_sources: Vec<CapabilityRef>,
     pub prerequisites: Vec<CapabilityRef>,
     pub edges: Vec<PrerequisiteEdge>,
+}
+
+/// A structurally lawful way for one read capability to populate a required
+/// business input. These edges are projected from CGS input/output types at
+/// routing time; catalogs do not author or maintain a second workflow graph.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InputSourceBinding {
+    pub consumer: CapabilityRef,
+    pub input: InputPath,
+    pub provider: CapabilityRef,
+    pub output_field: String,
+    /// The provider yields rows whose scalar field is collected into an array seat.
+    pub collect: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InputSourceCandidate {
+    pub provider: CapabilityRef,
+    pub bindings: Vec<InputSourceBinding>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -738,30 +758,55 @@ pub fn prerequisite_closure(
     business: &[CapabilityRef],
     allowed: &BTreeSet<String>,
 ) -> Result<PrerequisiteClosure, String> {
-    prerequisite_closure_with_source_authorization(
-        catalogs,
-        bindings,
-        business,
-        allowed,
-        |reference| allowed.contains(&reference.catalog),
-    )
+    let input_sources = input_source_capabilities(catalogs, business, &|reference| {
+        allowed.contains(&reference.catalog)
+    })?;
+    prerequisite_closure_with_input_sources(catalogs, bindings, business, &input_sources, allowed)
 }
 
-/// Resolve explicit prerequisites and optional identity sources under the
-/// caller's capability policy. Mandatory deployment prerequisites still use
-/// the catalog allowlist and therefore fail closed when their policy is
-/// incomplete; optional source alternatives that are not permitted are simply
-/// not offered.
-pub fn prerequisite_closure_with_source_authorization<F>(
+/// Close infrastructure prerequisites around direct business work and the
+/// input producers selected from [`project_input_source_candidates`]. The
+/// caller may only select projected read capabilities; this function rejects
+/// arbitrary or effectful additions.
+pub fn prerequisite_closure_with_selected_sources<F>(
     catalogs: &BTreeMap<String, &CGS>,
     bindings: &DeploymentBindings,
     business: &[CapabilityRef],
+    selected_input_sources: &[CapabilityRef],
     allowed: &BTreeSet<String>,
     source_permitted: F,
 ) -> Result<PrerequisiteClosure, String>
 where
     F: Fn(&CapabilityRef) -> bool,
 {
+    let projected: BTreeSet<_> =
+        project_input_source_candidates(catalogs, business, &source_permitted)?
+            .into_iter()
+            .map(|candidate| candidate.provider)
+            .collect();
+    for source in selected_input_sources {
+        if !projected.contains(source) {
+            return Err(format!(
+                "selected input source is not a projected producer: {source:?}"
+            ));
+        }
+    }
+    let input_sources: Vec<_> = selected_input_sources
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    prerequisite_closure_with_input_sources(catalogs, bindings, business, &input_sources, allowed)
+}
+
+fn prerequisite_closure_with_input_sources(
+    catalogs: &BTreeMap<String, &CGS>,
+    bindings: &DeploymentBindings,
+    business: &[CapabilityRef],
+    input_sources: &[CapabilityRef],
+    allowed: &BTreeSet<String>,
+) -> Result<PrerequisiteClosure, String> {
     let mut binding_index = BTreeMap::new();
     for binding in &bindings.bindings {
         let key = (binding.consumer.clone(), binding.requirement.clone());
@@ -769,7 +814,6 @@ where
             return Err("duplicate deployment prerequisite binding".into());
         }
     }
-    let input_sources = input_source_capabilities(catalogs, business, &source_permitted)?;
     let mut walker = ClosureWalker {
         catalogs,
         bindings: binding_index,
@@ -783,7 +827,7 @@ where
     for selected in business {
         walker.visit(selected, None, &BTreeMap::new())?;
     }
-    for source in &input_sources {
+    for source in input_sources {
         walker.visit(source, None, &BTreeMap::new())?;
     }
     let selected: BTreeSet<_> = business.iter().cloned().collect();
@@ -799,6 +843,228 @@ where
             .collect(),
         edges: walker.edges,
     })
+}
+
+/// Project candidate business-data producers from the current E/R graphs.
+///
+/// The projection is intentionally vocabulary-blind. It does not inspect the
+/// intent, descriptions, field names, or enum members. It connects required,
+/// non-prerequisite consumer seats to fields populated by read capabilities
+/// when their catalog types are compatible. A later selector may choose among
+/// these lawful edges using the original intent; it cannot invent an edge.
+pub fn project_input_source_candidates<F>(
+    catalogs: &BTreeMap<String, &CGS>,
+    business: &[CapabilityRef],
+    source_permitted: &F,
+) -> Result<Vec<InputSourceCandidate>, String>
+where
+    F: Fn(&CapabilityRef) -> bool,
+{
+    let mut by_provider: BTreeMap<CapabilityRef, BTreeSet<InputSourceBinding>> = BTreeMap::new();
+    let selected: BTreeSet<_> = business.iter().cloned().collect();
+    for consumer in business {
+        let consumer_cgs = *catalogs
+            .get(&consumer.catalog)
+            .ok_or("missing input-source consumer catalog")?;
+        let consumer_cap = capability(consumer_cgs, &consumer.capability)?;
+        let prerequisite_seats: BTreeSet<_> = consumer_cgs
+            .prerequisites
+            .requirements
+            .get(&consumer.capability)
+            .into_iter()
+            .flatten()
+            .flat_map(|requirement| {
+                requirement
+                    .bindings
+                    .iter()
+                    .map(|binding| binding.input.clone())
+            })
+            .collect();
+        for input in required_inputs(consumer_cap)?
+            .into_iter()
+            .filter(|input| !prerequisite_seats.contains(input))
+        {
+            let Some(consumer_value_ref) = input_value_ref(consumer_cap, &input)? else {
+                continue;
+            };
+            let consumer_value = input_type(consumer_cgs, consumer_cap, &input)?;
+            for (provider_catalog, provider_cgs) in catalogs {
+                for provider_cap in provider_cgs.capabilities.values().filter(|capability| {
+                    matches!(
+                        capability.kind,
+                        CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get
+                    )
+                }) {
+                    let provider = CapabilityRef {
+                        catalog: provider_catalog.clone(),
+                        capability: provider_cap.name.to_string(),
+                    };
+                    if selected.contains(&provider) || !source_permitted(&provider) {
+                        continue;
+                    }
+                    let entity = provider_cgs
+                        .entities
+                        .get(&provider_cap.domain)
+                        .ok_or("input-source provider entity missing")?;
+                    for output_field in provider_cgs.effective_provides(provider_cap) {
+                        let Some(field) = entity.fields.get(output_field.as_str()) else {
+                            continue;
+                        };
+                        let provider_value =
+                            field.named_value(provider_cgs).map_err(|e| e.to_string())?;
+                        let Some(collect) = projected_type_compatibility(
+                            consumer_cgs,
+                            provider_cgs,
+                            consumer_value,
+                            provider_value,
+                            provider_cap.kind,
+                            consumer.catalog == *provider_catalog
+                                && field.kind.registry_key() == consumer_value_ref,
+                            consumer.catalog == *provider_catalog
+                                && consumer_value.array_items.as_ref().is_some_and(|left| {
+                                    provider_value.array_items.as_ref().is_some_and(|right| {
+                                        left.kind.registry_key() == right.kind.registry_key()
+                                    })
+                                }),
+                            consumer.catalog == *provider_catalog
+                                && consumer_value.array_items.as_ref().is_some_and(|items| {
+                                    items.kind.registry_key() == field.kind.registry_key()
+                                }),
+                        ) else {
+                            continue;
+                        };
+                        by_provider.entry(provider.clone()).or_default().insert(
+                            InputSourceBinding {
+                                consumer: consumer.clone(),
+                                input: input.clone(),
+                                provider: provider.clone(),
+                                output_field,
+                                collect,
+                            },
+                        );
+                    }
+                }
+            }
+        }
+    }
+    Ok(by_provider
+        .into_iter()
+        .map(|(provider, bindings)| InputSourceCandidate {
+            provider,
+            bindings: bindings.into_iter().collect(),
+        })
+        .collect())
+}
+
+fn projected_type_compatibility(
+    consumer_cgs: &CGS,
+    provider_cgs: &CGS,
+    consumer: &NamedValueSchema,
+    provider: &NamedValueSchema,
+    provider_kind: CapabilityKind,
+    same_value_ref: bool,
+    same_array_item_value_ref: bool,
+    same_collected_item_value_ref: bool,
+) -> Option<bool> {
+    if semantic_value_type_eq(consumer, provider, same_value_ref) {
+        return Some(false);
+    }
+    if let (Some(consumer_items), Some(provider_items)) =
+        (&consumer.array_items, &provider.array_items)
+    {
+        let consumer_item = consumer_cgs.named_value_for_slot(consumer_items).ok()?;
+        let provider_item = provider_cgs.named_value_for_slot(provider_items).ok()?;
+        if semantic_value_type_eq(consumer_item, provider_item, same_array_item_value_ref) {
+            return Some(false);
+        }
+    }
+    let items = consumer.array_items.as_ref()?;
+    if !matches!(
+        provider_kind,
+        CapabilityKind::Query | CapabilityKind::Search
+    ) {
+        return None;
+    }
+    let item = consumer_cgs.named_value_for_slot(items).ok()?;
+    semantic_value_type_eq(item, provider, same_collected_item_value_ref).then_some(true)
+}
+
+fn semantic_value_type_eq(
+    left: &NamedValueSchema,
+    right: &NamedValueSchema,
+    same_value_ref: bool,
+) -> bool {
+    if left.domain != right.domain
+        || left.field_type != right.field_type
+        || left.array_items != right.array_items
+        || left.value_format != right.value_format
+        || left.allowed_values != right.allowed_values
+        || left.currency != right.currency
+    {
+        return false;
+    }
+    // Catalog-local primitive domains are intentionally not treated as a
+    // global ontology. Cross-catalog edges require a core profile (email,
+    // e164, temporal, enum, etc.), money, or an exact entity reference.
+    same_value_ref
+        || left.domain.profile.is_some()
+        || matches!(
+            left.domain.kernel,
+            crate::value_domain::KernelKind::Money
+                | crate::value_domain::KernelKind::EntityRef { .. }
+        )
+}
+
+fn input_value_ref<'a>(
+    capability: &'a CapabilitySchema,
+    input: &InputPath,
+) -> Result<Option<&'a crate::ValueDomainKey>, String> {
+    if capability.derived.as_ref().is_some_and(|derived| {
+        input.lane == InputLane::Selection && input.path == [derived.identity_field.clone()]
+    }) {
+        return Ok(None);
+    }
+    let fields = match input.lane {
+        InputLane::Scope => &capability.inputs.scope.0,
+        InputLane::Selection => &capability.inputs.selection.0,
+        InputLane::Controls => &capability.inputs.controls.0,
+        InputLane::Arguments | InputLane::Payload => {
+            let schema = if input.lane == InputLane::Arguments {
+                &capability.inputs.arguments
+            } else {
+                &capability.inputs.payload
+            };
+            match &schema.as_ref().ok_or("missing input lane")?.input_type {
+                InputType::Object { fields, .. } => fields,
+                _ => return Err("input-source path must address an object field".into()),
+            }
+        }
+    };
+    descend_input_value_ref(fields, &input.path)
+}
+
+fn descend_input_value_ref<'a>(
+    fields: &'a [InputFieldSchema],
+    path: &[String],
+) -> Result<Option<&'a crate::ValueDomainKey>, String> {
+    let (head, rest) = path.split_first().ok_or("empty input-source path")?;
+    let field = fields
+        .iter()
+        .find(|field| &field.name == head)
+        .ok_or_else(|| format!("missing input field {head}"))?;
+    if rest.is_empty() {
+        return match &field.wire {
+            InputFieldWire::Registry(value_ref) => Ok(Some(value_ref)),
+            InputFieldWire::Inline(_) => Ok(None),
+        };
+    }
+    match &field.wire {
+        InputFieldWire::Inline(input) => match input.as_ref() {
+            InputType::Object { fields, .. } => descend_input_value_ref(fields, rest),
+            _ => Err("input-source path traverses non-object input".into()),
+        },
+        InputFieldWire::Registry(_) => Err("input-source path traverses scalar input".into()),
+    }
 }
 
 /// Find lawful ways to obtain a required entity identity before the agent has
@@ -1136,6 +1402,87 @@ mod tests {
     }
 
     #[test]
+    fn input_source_projection_uses_types_not_intent_vocabulary() {
+        let mut consumer = fixture();
+        let mut source = fixture();
+        consumer.bind_registry_entry_id("consumer");
+        source.bind_registry_entry_id("source");
+        for cgs in [&mut consumer, &mut source] {
+            let value = cgs.values.get_mut("text").unwrap();
+            value.domain.profile = Some(crate::value_domain::ProfileId::Email);
+        }
+        consumer.values.insert(
+            "emails".into(),
+            NamedValueSchema::from_domain(
+                "Email values collected from matching rows".into(),
+                crate::value_domain::ValueDomain::new(
+                    crate::value_domain::KernelKind::Array,
+                    None,
+                    Default::default(),
+                    None,
+                    None,
+                )
+                .unwrap(),
+                Some(crate::schema::ArrayItemsSchema {
+                    kind: crate::schema::FieldValueKind::Registry(
+                        crate::ValueDomainKey::new("text").unwrap(),
+                    ),
+                    field_type: FieldType::String,
+                    value_format: None,
+                    allowed_values: None,
+                }),
+            ),
+        );
+        let operate = consumer.capabilities.get_mut("operate").unwrap();
+        let InputType::Object { fields, .. } =
+            &mut operate.inputs.payload.as_mut().unwrap().input_type
+        else {
+            panic!("fixture payload object");
+        };
+        fields[0].wire = InputFieldWire::Registry(crate::ValueDomainKey::new("emails").unwrap());
+        let business = CapabilityRef {
+            catalog: "consumer".into(),
+            capability: "operate".into(),
+        };
+        let catalogs = BTreeMap::from([("consumer".into(), &consumer), ("source".into(), &source)]);
+        let candidates =
+            project_input_source_candidates(&catalogs, std::slice::from_ref(&business), &|_| true)
+                .unwrap();
+        let source_read = candidates
+            .iter()
+            .find(|candidate| {
+                candidate.provider.catalog == "source" && candidate.provider.capability == "read"
+            })
+            .expect("profile-compatible read producer");
+        assert!(source_read.bindings.iter().any(|binding| {
+            binding.consumer == business
+                && binding.input.lane == InputLane::Payload
+                && binding.input.path == ["id"]
+                && binding.output_field == "id"
+                && binding.collect
+        }));
+    }
+
+    #[test]
+    fn input_source_projection_does_not_globalize_plain_strings() {
+        let mut consumer = fixture();
+        let mut source = fixture();
+        consumer.bind_registry_entry_id("consumer");
+        source.bind_registry_entry_id("source");
+        let business = CapabilityRef {
+            catalog: "consumer".into(),
+            capability: "operate".into(),
+        };
+        let catalogs = BTreeMap::from([("consumer".into(), &consumer), ("source".into(), &source)]);
+        let candidates =
+            project_input_source_candidates(&catalogs, std::slice::from_ref(&business), &|_| true)
+                .unwrap();
+        assert!(!candidates
+            .iter()
+            .any(|candidate| candidate.provider.catalog == "source"));
+    }
+
+    #[test]
     fn target_identity_is_structural_and_queries_cannot_supply_it() {
         let mut cgs = fixture();
         cgs.prerequisites.requirements.get_mut("read").unwrap()[0]
@@ -1291,10 +1638,14 @@ mod tests {
     }
 
     #[test]
-    fn optional_identity_sources_respect_capability_policy() {
+    fn selected_input_sources_are_exact_and_respect_capability_policy() {
         let cgs = fixture();
         let catalogs = BTreeMap::from([("matrix".into(), &cgs)]);
-        let closure = prerequisite_closure_with_source_authorization(
+        let business = CapabilityRef {
+            catalog: "matrix".into(),
+            capability: "operate".into(),
+        };
+        let empty = prerequisite_closure_with_selected_sources(
             &catalogs,
             &DeploymentBindings {
                 bindings: vec![DeploymentBinding {
@@ -1307,21 +1658,35 @@ mod tests {
                     provider: "value_source".into(),
                 }],
             },
-            &[CapabilityRef {
-                catalog: "matrix".into(),
-                capability: "operate".into(),
-            }],
+            std::slice::from_ref(&business),
+            &[],
             &BTreeSet::from(["matrix".into()]),
             |reference| reference.capability == "read",
         )
         .unwrap();
-        assert_eq!(
-            closure.input_sources,
-            vec![CapabilityRef {
-                catalog: "matrix".into(),
-                capability: "read".into(),
-            }]
-        );
+        assert!(empty.input_sources.is_empty());
+
+        let read = CapabilityRef {
+            catalog: "matrix".into(),
+            capability: "read".into(),
+        };
+        let closure = prerequisite_closure_with_selected_sources(
+            &catalogs,
+            &DeploymentBindings {
+                bindings: vec![DeploymentBinding {
+                    consumer: read.clone(),
+                    requirement: "scoped_access".into(),
+                    provider_catalog: "matrix".into(),
+                    provider: "value_source".into(),
+                }],
+            },
+            &[business],
+            std::slice::from_ref(&read),
+            &BTreeSet::from(["matrix".into()]),
+            |reference| reference.capability == "read",
+        )
+        .unwrap();
+        assert_eq!(closure.input_sources, vec![read]);
     }
 
     #[test]

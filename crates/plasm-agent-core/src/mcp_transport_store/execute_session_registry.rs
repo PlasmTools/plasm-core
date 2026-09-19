@@ -247,18 +247,40 @@ impl PersistedExecuteSessionDescriptor {
         let outbound_hosted_kv_by_entry = session.materialized_outbound_hosted_kv_by_entry.clone();
         let plan_snapshot = session.snapshot_plan_commits_for_persist();
         let op_snapshot = session.snapshot_operations_for_persist();
+        let entities = session.entities.clone();
         let entity_catalog_entry_ids = session
             .teaching_exposure
             .as_ref()
-            .map(|e| e.entity_catalog_entry_ids.clone())
-            .unwrap_or_else(|| vec![session.entry_id.clone(); session.entities.len()]);
+            .map(|exposure| {
+                let mut search_from = 0usize;
+                entities
+                    .iter()
+                    .map(|entity| {
+                        let relative = exposure.entities[search_from..]
+                            .iter()
+                            .position(|candidate| candidate == entity);
+                        if let Some(relative) = relative {
+                            let index = search_from + relative;
+                            search_from = index + 1;
+                            exposure
+                                .entity_catalog_entry_ids
+                                .get(index)
+                                .cloned()
+                                .unwrap_or_else(|| session.entry_id.clone())
+                        } else {
+                            session.entry_id.clone()
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_else(|| vec![session.entry_id.clone(); entities.len()]);
         Self {
             prompt_hash: session.prompt_hash.clone(),
             session_id: session_id.to_string(),
             prompt_text: session.prompt_text.clone(),
             entry_id: session.entry_id.clone(),
             context_entry_ids: session.contexts_by_entry.keys().cloned().collect(),
-            entities: session.entities.clone(),
+            entities,
             entity_catalog_entry_ids,
             tenant_scope: session.tenant_scope.clone(),
             principal_subject: session.principal_subject.clone(),

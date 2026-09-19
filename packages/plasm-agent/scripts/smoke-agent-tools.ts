@@ -27,6 +27,7 @@ async function main(): Promise<void> {
 
   const contextMd = await agent.runtime.plasmContext({
     intent: INTENT,
+    effectSlots: [INTENT],
   });
   const logicalSessionRef = extractLogicalSessionRef(contextMd);
   console.log("--- plasm_context ---");
