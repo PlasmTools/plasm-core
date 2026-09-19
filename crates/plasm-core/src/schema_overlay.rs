@@ -1428,7 +1428,7 @@ mod tests {
 
     #[test]
     fn jira_overlay_fixture_loads_with_schema_overlay() {
-        let jira = Path::new("../../fixtures/schemas/jira_schema_overlay");
+        let jira = Path::new("../../fixtures/schemas/jira_schema_overlay/bootstrap");
         let cgs = load_schema_dir(jira).expect("jira overlay fixture loads");
         assert!(cgs.schema_overlay.is_some());
         cgs.validate().expect("jira overlay fixture validates");
@@ -1447,7 +1447,7 @@ mod tests {
 
     #[test]
     fn notion_overlay_fixture_loads_with_schema_overlay() {
-        let notion = Path::new("../../fixtures/schemas/notion_schema_overlay");
+        let notion = Path::new("../../fixtures/schemas/notion_schema_overlay/bootstrap");
         let cgs = load_schema_dir(notion).expect("notion overlay fixture loads");
         assert!(
             cgs.schema_overlay.is_some(),

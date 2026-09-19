@@ -1,13 +1,13 @@
 ---
-source: plasm-oss/crates/plasm-agent-core/src/mcp_server/tests.rs
+source: crates/plasm-agent-core/src/mcp_server/tests.rs
 expression: "plasm_core::prompt_render::MCP_INITIALIZE_WORKFLOW"
 ---
 # Plasm workflow
 
-Plan from the current requirement, taught symbols and observed results. Stop with no tool call when observations establish every requested effect. Intermediate results alone are not completion.
+Plan from the requirement, symbols and results. Stop with no tool call once observations establish all requested effects; intermediate results are not completion.
 
 1. Call `plasm_context` with `session_mode: "new"` and `intent` describing all business requirements. Ready opens the language card and `logical_session_ref`.
-2. You own conversational decisions. Available capabilities do not settle the user’s choice or authorize execution. Ask when needed, then write only the chosen program. On `insufficient`, preserve useful teaching and report missing presented functionality; extend the same session for additional needs. Searching rows searches data; needing another kind of operation or input source requires discovery extension. Routing errors indicate operational failure.
+2. You own conversational decisions. Capabilities neither settle the user’s choice nor authorize execution. Ask when needed, then write only the chosen program. On `insufficient`, preserve useful teaching and report missing functionality; extend the same session for additional needs. Row search searches data; another operation or input source requires discovery extension. Routing errors are operational failures.
 3. One workflow uses one `logical_session_ref`. Reuse that ref for `plasm` / `plasm_run`. Use intent-only `extend` for the current need against exposed capabilities. Repair parse errors in the same session. Intent does not select the session.
 4. Follow declared prerequisites and input bindings in the card. Write acquisition as ordinary calls, binding provider outputs into consumer inputs. Discovery and teaching perform no acquisition.
 5. Submit the program to `plasm`. Clean reads may execute directly; a returned `run_ref` identifies a reviewed plan for `plasm_run`.

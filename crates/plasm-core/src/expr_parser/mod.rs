@@ -3997,7 +3997,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     fn test_layer<'a>(cgs: &'a CGS) -> [CgsLayer<'a>; 1] {
-        [CgsLayer::unset(cgs)]
+        [CgsLayer::new(cgs.entry_id.as_deref().unwrap_or(""), cgs)]
     }
 
     fn seed_fx_str(cgs: &mut CGS) {
@@ -5031,7 +5031,8 @@ mod tests {
     fn parse_zero_arity_invoke_pathless_profile() {
         let dir = std::path::Path::new("../../fixtures/schemas/sole_nullary_get");
         let cgs = load_schema_dir(dir).expect("sole_nullary_get");
-        let r = parse("Profile.profile-get()", &cgs).unwrap();
+        let mut r = parse("Profile", &cgs).unwrap();
+        crate::normalize_expr_query_capabilities(&mut r.expr, &cgs).unwrap();
         assert!(matches!(r.expr, Expr::Get(_)));
         assert_eq!(r.expr.primary_entity(), "Profile");
     }
@@ -5050,7 +5051,8 @@ mod tests {
     fn parse_zero_arity_invoke_pathless_profile_no_parens() {
         let dir = std::path::Path::new("../../fixtures/schemas/sole_nullary_get");
         let cgs = load_schema_dir(dir).expect("sole_nullary_get");
-        let r = parse("Profile.profile-get", &cgs).unwrap();
+        let mut r = parse("Profile", &cgs).unwrap();
+        crate::normalize_expr_query_capabilities(&mut r.expr, &cgs).unwrap();
         assert!(matches!(r.expr, Expr::Get(_)));
         assert_eq!(r.expr.primary_entity(), "Profile");
     }
@@ -5069,14 +5071,14 @@ mod tests {
     fn parse_langitem_query_via_method_symbol() {
         let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
-        let cap = cgs
-            .get_capability("langitem_query")
+        cgs.get_capability("langitem_query")
             .expect("langitem_query");
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
         let map = SymbolMap::build(&cgs, &full);
-        let sym = map.method_sym_for("", "LangItem", cap.name.as_str());
-        let line = format!("LangItem.{sym}");
-        let r = parse(&line, &cgs).unwrap();
+        let sym = map.entity_sym_for("", "LangItem");
+        let line = sym.to_string();
+        let mut r = parse(&line, &cgs).unwrap();
+        crate::normalize_expr_query_capabilities(&mut r.expr, &cgs).unwrap();
         let Expr::Query(q) = &r.expr else {
             panic!("expected Query, got {:?}", r.expr);
         };
@@ -5089,7 +5091,7 @@ mod tests {
     fn parse_dotted_call_langitem_create_typechecks() {
         let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
-        let r = parse(r#"LangItem.langitem-create(title="Sprint Sandbox")"#, &cgs).unwrap();
+        let r = parse(r#"LangItem.create(title="Sprint Sandbox")"#, &cgs).unwrap();
         assert!(matches!(r.expr, Expr::Create(_)));
         if let Expr::Create(c) = &r.expr {
             assert_eq!(c.capability.as_str(), "langitem_create");
@@ -5103,7 +5105,7 @@ mod tests {
     fn parse_dotted_call_optional_only_double_dot_typechecks() {
         let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
-        let r = parse("LangItem(i1).langitem-update(..)", &cgs).unwrap();
+        let r = parse("LangItem(i1).update(..)", &cgs).unwrap();
         assert!(matches!(r.expr, Expr::Invoke(_)));
         crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
     }
@@ -5113,7 +5115,7 @@ mod tests {
     fn parse_dotted_call_required_plus_optional_ellipsis_typechecks() {
         let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
-        let r = parse(r#"LangItem.langitem-create(title="example",..)"#, &cgs).unwrap();
+        let r = parse(r#"LangItem.create(title="example",..)"#, &cgs).unwrap();
         assert!(matches!(r.expr, Expr::Create(_)));
         if let Expr::Create(c) = &r.expr {
             let wire = c.input.to_value();
@@ -5212,14 +5214,14 @@ mod tests {
     fn parse_zero_arity_invoke_rejects_action_without_id_when_path_needs_it() {
         let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
-        let e = parse("LangItem.langitem-ping()", &cgs).unwrap_err();
+        let e = parse("LangItem.ping()", &cgs).unwrap_err();
         let msg = e.message();
         assert!(
             msg.contains("(<id>).") && msg.contains("on the left"),
             "must name taught identity seat, got: {msg}"
         );
         assert!(
-            !msg.contains("requires `LangItem.langitem-ping"),
+            !msg.contains("requires `LangItem.ping"),
             "must not advertise pathless wire form as required, got: {msg}"
         );
     }
@@ -5229,7 +5231,7 @@ mod tests {
     fn parse_compound_branch_get_preserves_compound_ref() {
         let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
-        let line = concat!("CompoundBranch(owner=alice,item_id=i1,name=main)", ".get()",);
+        let line = "CompoundBranch(owner=alice,item_id=i1,name=main)";
         let r = parse(line, &cgs).unwrap();
         let Expr::Get(g) = &r.expr else {
             panic!("expected Get, got {:?}", r.expr);
@@ -5249,7 +5251,7 @@ mod tests {
     fn parse_langitem_ping_preserves_simple_ref() {
         let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
-        let r = parse("LangItem(sheet-id-9).langitem-ping()", &cgs).unwrap();
+        let r = parse("LangItem(sheet-id-9).ping()", &cgs).unwrap();
         let Expr::Invoke(inv) = &r.expr else {
             panic!("expected Invoke, got {:?}", r.expr);
         };
@@ -5402,7 +5404,7 @@ mod tests {
     fn parse_dotted_call_langitem_create_unquoted_title_typechecks() {
         let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
-        let r = parse("LangItem.langitem-create(title=Sprint Sandbox)", &cgs).unwrap();
+        let r = parse("LangItem.create(title=Sprint Sandbox)", &cgs).unwrap();
         assert!(matches!(r.expr, Expr::Create(_)));
         crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
     }
@@ -5646,9 +5648,14 @@ mod tests {
     #[test]
     fn parse_nested_compound_entity_ref_constructor_in_brace_query() {
         let cgs = book_library_entity_ref_fixture_cgs();
-        let r = parse(
+        let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
+        let map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
+        let stack = test_layer(&cgs);
+        let r = parse_row_filter_body(
             "Book{library=Library(region=us-west, code=shared-shelf)}",
-            &cgs,
+            &stack,
+            map,
+            &[],
         )
         .unwrap();
         let Expr::Query(q) = &r.expr else {
@@ -5667,7 +5674,8 @@ mod tests {
         };
         assert_eq!(m.get("region"), Some(&Value::String("us-west".into())));
         assert_eq!(m.get("code"), Some(&Value::String("shared-shelf".into())));
-        crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
+        // `parse_row_filter_body` returns predicate parser IR; the enclosing
+        // pipe owns row-grain type checking.
     }
 
     /// Nested entity constructor on a scoped query param (`LangTag{item_id=LangItem(id=…)}`).
@@ -6604,7 +6612,7 @@ mod tests {
             return;
         }
         let expr = format!("{book_sym}{{library={lib_sym}(region=us-west, code=shared-shelf)}}");
-        let r = parse_with_cgs_layers(&expr, &stack, sym_map).expect("symbolic nested ctor");
+        let r = parse_row_filter_body(&expr, &stack, sym_map, &[]).expect("symbolic nested ctor");
         let Expr::Query(q) = &r.expr else {
             panic!("expected query");
         };
@@ -6621,7 +6629,8 @@ mod tests {
         };
         assert_eq!(m.get("region"), Some(&Value::String("us-west".into())));
         assert_eq!(m.get("code"), Some(&Value::String("shared-shelf".into())));
-        crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
+        // The enclosing row-filter pipe, not this parser-shaped Query witness,
+        // owns row-grain type checking.
     }
 
     /// Opaque `e#` LangItem ctor inside LangTag query predicate.

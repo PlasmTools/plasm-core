@@ -400,7 +400,7 @@ fn prompt_matrix_full_tsv_size_within_baseline() {
 }
 
 #[test]
-fn seeded_langitem_teaching_includes_bare_query_row() {
+fn seeded_langitem_teaching_includes_primary_query_row() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/schemas/plasm_language_matrix");
     let mut cgs = load_schema_dir(&dir).expect("plasm_language_matrix");
@@ -429,27 +429,20 @@ fn seeded_langitem_teaching_includes_bare_query_row() {
         "LangItem",
         Some(&map),
         None,
-        false,
+        true,
         &mut line_valid_cache,
         prompt_line_valid_cache_seed_cgs(&cgs),
         &mut gloss_emit_none,
         Some(&delta.required),
         Some("langmatrix"),
     );
-    let bare_query = block.teaching_rows.iter().any(|r| {
-        let expr = r.teaching_expr.expression.trim();
-        let stripped = match parse_trailing_projection_bracket(expr) {
-            Some(br) => expr
-                .strip_suffix(br.as_str())
-                .map(str::trim)
-                .unwrap_or(expr),
-            None => expr,
-        };
-        stripped == item_es.as_str()
-    });
+    let primary_query = block
+        .teaching_rows
+        .iter()
+        .any(|r| r.meta.source_capability.as_deref() == Some("langitem_query"));
     assert!(
-        bare_query,
-        "seeded LangItem with langitem_query on surface must teach bare query row `{item_es}`; exprs={:?}",
+        primary_query,
+        "seeded LangItem with langitem_query on surface must teach its query row for `{item_es}`; exprs={:?}",
         block
             .teaching_rows
             .iter()
@@ -600,7 +593,7 @@ fn langitem_search_scoped_query_validates_with_homograph_p() {
         p_team, "team_key",
         "team_key scope param teaches as catalog wire name"
     );
-    let expr = format!("{es}{{{p_team}=$}}");
+    let expr = format!(r#"{es}~"<query>"{{{p_team}=<wire>}}"#);
     let mut cache = std::collections::HashMap::new();
     let seed = prompt_line_valid_cache_seed_cgs(&cgs);
     assert!(

@@ -3,78 +3,109 @@ source: crates/plasm-core/src/prompt_render/tests.rs
 expression: tsv
 ---
 plasm_expr	Meaning
-v5	integer
-v9	enum · ui | ocr | audio | document
-v14	string
-v4	rfc3339
-app_name	v14
-end_time	v4
-limit	v5
-start_time	v4
-id	v5
-content_type	v9
-text_preview	v14
+evaluation_now	<temporal-now> · relative date/time phrases resolve against this instant
+v11	integer
+v21	enum · ui | ocr | audio | document
+v40	string
+v30	string
+v9	rfc3339
+v12	integer
+v10	rfc3339
+app_name	v30
+end_time	v9
+limit	v12
+start_time	v10
+id	v11
+content_type	v21
+text_preview	v40
 e1(id=<id>, content_type=<id>)[id,content_type,text_preview]	→ e1 · One capture pipeline item
 e1{limit=<wire>, app_name=<wire>, start_time=<wire>, end_time=<wire>}[id,content_type,text_preview]	↣ [e1] · capture-item-query · optional: app_name,end_time,limit,start_time
+v32	string
+v4	boolean
+id	v32
+screen_capture_running	v4
+e2[id,screen_capture_running]	→ e2 · capture-session-get · Capture running or paused
 v2	boolean
-id	v14
-screen_capture_running	v2
-e2[id,screen_capture_running]	→ e2 · capture-session-get
-e2(<id>)[id,screen_capture_running]	→ e2 · Capture running or paused
-v6	number
-v13	markdown
+v18	number
+v16	integer
+v17	integer
+v5	boolean
+v27	markdown
+v3	boolean
 include_answers	v2
-min_answer_similarity	v6
-offset	v5
-speaker_id	v5
-unresolved_only	v2
-question_text	v13
-resolved	v2
-e3{unresolved_only=<wire>, app_name=<wire>, speaker_id=<wire>, include_answers=<wire>, min_answer_similarity=<wire>, limit=<wire>, offset=<wire>}[id,question_text,resolved]	↣ [e3] · detected-question-query · A detected question with optional answers · optional: app_name,include_answers,limit,min_answer_similarity,offset,speaker_id,unresolved_only
-v3	iso8601_date
-v7	enum · active | ended | cancelled
-end_date	v3
-start_date	v3
-meeting_uuid	v14
-meeting_id	v5
-status	v7
-summary	v13
-e4{status=<wire>, start_date=<wire>, end_date=<wire>, limit=<wire>}[meeting_uuid,meeting_id,status,summary]	↣ [e4] · query · A detected meeting · optional: end_date,limit,start_date,status
-e4{meeting_uuid=<wire>}[meeting_uuid,meeting_id,status,summary]	→ e4
-v11	enum · debug | info | warning | error | critical
-min_severity	v11
-names	v14
-sources	v14
-name	v14
-severity	v11
-e5{names=<wire>, sources=<wire>, min_severity=<wire>, limit=<wire>}[id,name,severity]	↣ [e5] · pipeline-event-query · One pipeline bus event · optional: limit,min_severity,names,sources
-workers	v14
-e6[id,workers]	→ e6 · pipeline-snapshot-get
-e6(<id>)[id,workers]	→ e6 · Pipeline health snapshot
-v12	enum · person | organisation | project
-display_name	v14
-profile_type	v12
+min_answer_similarity	v18
+offset	v16
+speaker_id	v17
+unresolved_only	v5
+question_text	v27
+resolved	v3
+DetectedQuestion	A detected question with optional answers
+e3{unresolved_only=<wire>, app_name=<wire>, speaker_id=<wire>, include_answers=<wire>, min_answer_similarity=<wire>, limit=<wire>, offset=<wire>}[id,question_text,resolved]	↣ [e3] · detected-question-query · optional: app_name,include_answers,limit,min_answer_similarity,offset,speaker_id,unresolved_only
+v6	iso8601_date
+v7	iso8601_date
+v19	enum · active | ended | cancelled
+v33	string
+v14	integer
+v28	markdown
+end_date	v6
+start_date	v7
+meeting_uuid	v33
+meeting_id	v14
+status	v19
+summary	v28
+e4{status="<member>", start_date=<wire>, end_date=<wire>, limit=<wire>}[meeting_uuid,meeting_id,status,summary]	↣ [e4] · query · optional: end_date,limit,start_date,status
+e4(<id>)[meeting_uuid,meeting_id,status,summary]	→ e4 · A detected meeting
+v23	enum · debug | info | warning | error | critical
+v35	string
+v39	string
+v34	string
+v24	enum · debug | info | warning | error | critical
+min_severity	v23
+names	v35
+sources	v39
+name	v34
+severity	v24
+PipelineEvent	One pipeline bus event
+e5{names=<wire>, sources=<wire>, min_severity="<member>", limit=<wire>}[id,name,severity]	↣ [e5] · pipeline-event-query · optional: limit,min_severity,names,sources
+v42	string
+workers	v42
+e6[id,workers]	→ e6 · pipeline-snapshot-get · Pipeline health snapshot
+v25	enum · person | organisation | project
+v31	string
+rows	rows
+display_name	v31
+profile_type	v25
 r1	recorded_matches · Content scoped to this profile
-e7{profile_type=<wire>, limit=<wire>}[id,display_name,profile_type]	↣ [e7] · query · A person, organisation, or project profile · optional: limit,profile_type
-e7{id=<wire>}[id,display_name,profile_type]	→ e7
-e7{profile_type=<wire>, limit=<wire>}.r1	relation e7 ↣ [e9]
+e7{profile_type="<member>", limit=<wire>}[id,display_name,profile_type]	↣ [e7] · query · optional: limit,profile_type
+e7(<id>)[id,display_name,profile_type]	→ e7 · A person, organisation, or project profile
+e7(<id>).r1	relation e7 ↣ [e9]
+rows = e7{profile_type="<member>", limit=<wire>}	↣ [e7]
+rows => _.r1	relation e7 ↣ [e9]
 v1	array[integer]
+v38	string
 meeting_ids	v1
-slug	v14
+slug	v38
+PromptRun	Action prompt execution result
 e8.m11(slug=<wire>, meeting_id=<wire>, meeting_uuid=<wire>, meeting_ids=[<wire>], start_time=<wire>, end_time=<wire>)	↠ () · prompt-run-create · optional: end_time,meeting_id,meeting_ids,meeting_uuid,start_time
-v10	enum · auto | keyword | natural
-v15	ref:Profile · integer
-v8	enum · ui | ocr | audio | document
-max_length	v5
-min_length	v5
-mode	v10
-query	v14
-captured_at	v4
-content_type	v8
-profile_id	v15
-text	v13
-window_name	v14
-e9{profile_id=e7(<id>), query=<wire>, limit=<wire>, mode=<wire>}[id,app_name,captured_at,content_type,profile_id,text,window_name]	↣ [e9] · A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text · optional: limit,mode,query
+v22	enum · auto | keyword | natural
+v37	string
+v43	ref:Profile · integer
+v8	rfc3339
+v29	markdown
+v41	string
+v13	integer
+v15	integer
+max_length	v13
+min_length	v15
+mode	v22
+query	v37
+captured_at	v8
+content_type	v20
+profile_id	v43
+text	v29
+window_name	v41
+RecordedContent	A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text
+e9{profile_id=e7(<id>), query=<wire>, limit=<wire>, mode="<member>"}[id,app_name,captured_at,content_type,profile_id,text,window_name]	↣ [e9] · optional: limit,mode,query
 e9~"<query>"[id,app_name,captured_at,content_type,profile_id,text,window_name]	↣ [e9] · optional: app_name,content_type,end_time,limit,max_length,min_length,offset,start_time,window_name
-e9~"<query>"{content_type=<wire>, limit=<wire>, offset=<wire>, start_time=<wire>, end_time=<wire>, app_name=<wire>, window_name=<wire>, min_length=<wire>, max_length=<wire>}[id,app_name,captured_at,content_type,profile_id,text,window_name]	↣ [e9] · optional: app_name,content_type,end_time,limit,max_length,min_length,offset,start_time,window_name
-e9{profile_id=e7(<id>), query=<wire>, limit=<wire>, mode=<wire>}.profile_id	relation e9 → e7
+e9~"<query>"{content_type="<member>", limit=<wire>, offset=<wire>, start_time=<wire>, end_time=<wire>, app_name=<wire>, window_name=<wire>, min_length=<wire>, max_length=<wire>}[id,app_name,captured_at,content_type,profile_id,text,window_name]	↣ [e9] · optional: app_name,content_type,end_time,limit,max_length,min_length,offset,start_time,window_name
+e9(<id>).profile_id	→ relation e9 → e7

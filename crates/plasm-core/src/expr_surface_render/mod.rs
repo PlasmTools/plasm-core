@@ -129,7 +129,7 @@ mod tests {
     fn wire_surface_dotted_create_langitem() {
         let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
-        let surface = r#"LangItem.langitem-create(title="Sprint Sandbox")"#;
+        let surface = r#"LangItem.create(title="Sprint Sandbox")"#;
         let parsed = parse(surface, &cgs).unwrap();
         let back = render_expr_surface(&parsed.expr, &cgs);
         assert_eq!(back, surface);

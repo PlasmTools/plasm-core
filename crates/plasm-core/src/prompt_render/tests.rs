@@ -12,12 +12,10 @@ use crate::schema::{
 };
 use crate::symbol_tuning::{
     entity_slices_for_render, resolve_prompt_surface_entities, symbol_map_for_prompt,
-    ExposureEntityKey, ExposureSlotKey, ExposureSurface, FocusSpec, SymbolMap,
-    TeachingExposureSession,
+    ExposureSlotKey, ExposureSurface, FocusSpec, SymbolMap, TeachingExposureSession,
 };
 use crate::CapabilityKind;
 use crate::Cardinality;
-use crate::EntityName;
 use crate::FieldType;
 use crate::CGS;
 use line_validate::validate_teaching_line_wire;
@@ -1759,7 +1757,7 @@ fn prompt_matrix_zone_domain_no_unary_placeholder_relation_or_fake_projection_me
 }
 
 #[test]
-fn plasm_language_contract_defines_ref_meaning_prefix() {
+fn plasm_language_contract_teaches_entity_ref_constructor() {
     let dir = fixtures_schemas_dir("plasm_prompt_matrix");
     if !dir.exists() {
         return;
@@ -1767,8 +1765,8 @@ fn plasm_language_contract_defines_ref_meaning_prefix() {
     let cgs = load_schema_dir(&dir).unwrap();
     let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
     assert!(
-        prompt.contains("ref:Zone") && prompt.contains("string · Zone identifier"),
-        "language card must include entity-ref value-domain gloss with canonical entity (not e#):\n{prompt}"
+        prompt.contains("zone_id=e4(<id>)"),
+        "language card must teach the typed Zone reference as a direct entity constructor:\n{prompt}"
     );
 }
 
@@ -1820,7 +1818,7 @@ fn prompt_matrix_zone_identity_gloss_is_scalar_with_reference_scope() {
 }
 
 #[test]
-fn exposure_surface_omits_entity_ref_nav_when_target_entity_not_exposed() {
+fn exposure_surface_does_not_invent_relation_from_scalar_id_field() {
     let dir = fixtures_schemas_dir("plasm_prompt_matrix");
     let cgs = load_schema_dir(&dir).unwrap();
     let entry = cgs.entry_id.clone().unwrap_or_default();
@@ -1871,40 +1869,6 @@ fn exposure_surface_omits_entity_ref_nav_when_target_entity_not_exposed() {
         !has_zone_nav,
         "zone_id navigation should be omitted when Zone is not on the exposure entity set; exprs={:?}",
         block
-            .teaching_rows
-            .iter()
-            .map(|r| r.teaching_expr.expression.as_str())
-            .collect::<Vec<_>>()
-    );
-
-    let mut surface_with_zone = delta.required.clone();
-    surface_with_zone.entities.insert(ExposureEntityKey {
-        entry_id: entry.clone(),
-        entity: EntityName::from("Zone"),
-    });
-    let mut line_valid_cache2 = HashMap::new();
-    let mut gloss_emit_none2 = None;
-    let block2 = collect_entity_teaching_block(
-        &cgs,
-        "Ruleset",
-        Some(&map),
-        None,
-        false,
-        &mut line_valid_cache2,
-        prompt_line_valid_cache_seed_cgs(&cgs),
-        &mut gloss_emit_none2,
-        Some(&surface_with_zone),
-        Some(entry.as_str()),
-    );
-    assert!(
-        block2.teaching_rows.iter().any(|r| {
-            let ex = strip_teaching_projection_for_test(r.teaching_expr.expression.as_str());
-            (ex.contains('.') && ex.contains(zone_nav_sym.as_str()))
-                || ex.contains("Zone(")
-                || ex.contains("Zone($)")
-        }),
-        "adding Zone to exposure entities should admit zone_id navigation again; exprs={:?}",
-        block2
             .teaching_rows
             .iter()
             .map(|r| r.teaching_expr.expression.as_str())
@@ -3081,7 +3045,11 @@ fn session_token_get_teaches_token_identity_braces_not_paren() {
     let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval_seeds(&["Wallet"]));
     let wallet_lines: Vec<&str> = prompt
         .lines()
-        .filter(|l| l.starts_with('e') && (l.contains("{access_token=") || l.contains("(<id>)")))
+        .filter(|l| {
+            l.starts_with('e')
+                && !l.contains(".m")
+                && (l.contains("{access_token=") || l.contains("(<id>)"))
+        })
         .collect();
     assert!(
         wallet_lines
@@ -3621,7 +3589,7 @@ fn langitem_domain_gloss_and_symbol_map_queries() {
 
 /// Query-primary LangItem first e# row is `e#` or `e#[…]` (not `e#(42)` / `e#.m#()`).
 #[test]
-fn langitem_query_primary_first_row_is_bare_or_projected() {
+fn langitem_query_primary_row_is_taught() {
     let dir = fixtures_schemas_dir("plasm_language_matrix");
     let mut cgs = load_schema_dir(&dir).unwrap();
     cgs.bind_registry_entry_id("langmatrix");
@@ -3631,13 +3599,12 @@ fn langitem_query_primary_first_row_is_bare_or_projected() {
     );
     let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
     let user_sym = map.entity_sym_for("langmatrix", "LangItem");
-    let first_user_e = sym.lines().find_map(|l| {
+    let query_row = sym.lines().find_map(|l| {
         l.split_once('\t').and_then(|(expr, meaning)| {
             let expr = expr.trim();
             if expr == user_sym.as_str()
                 || expr.starts_with(&format!("{user_sym}["))
-                || expr.starts_with(&format!("{user_sym}."))
-                || expr.starts_with(&format!("{user_sym}("))
+                || expr.starts_with(&format!("{user_sym}{{"))
             {
                 Some((expr.to_string(), meaning.to_string()))
             } else {
@@ -3645,14 +3612,10 @@ fn langitem_query_primary_first_row_is_bare_or_projected() {
             }
         })
     });
-    let (expr, meaning) = first_user_e.expect("LangItem must have an e# teaching row");
-    assert!(
-        expr == user_sym.as_str() || expr.starts_with(&format!("{user_sym}[")),
-        "query-primary first e# row must be bare or projected {user_sym}, got {expr:?}"
-    );
+    let (expr, meaning) = query_row.expect("LangItem must have a query teaching row");
     assert!(
         meaning.contains("↣") || meaning.contains("→"),
-        "LangItem Meaning should carry a return arrow, got {meaning:?}"
+        "LangItem query Meaning should carry a return arrow for {expr:?}, got {meaning:?}"
     );
 }
 

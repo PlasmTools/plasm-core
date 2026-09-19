@@ -326,8 +326,6 @@ pub(crate) fn collect_entity_teaching_block(
         }
     }
 
-    let teach_list_reads_before_mutators = get_caps.is_empty();
-
     macro_rules! emit_query_capability_rows {
         () => {
             if !query_caps.is_empty() {
@@ -456,9 +454,10 @@ pub(crate) fn collect_entity_teaching_block(
         };
     }
 
-    if teach_list_reads_before_mutators {
-        emit_query_capability_rows!();
-    }
+    // A row-producing read is the entity's compositional entry point. Keep it
+    // ahead of mutators even when an identity Get is also present so the card
+    // does not frame an effect as the primary operation for the entity.
+    emit_query_capability_rows!();
 
     let mut zero_arity_method_caps: Vec<&crate::CapabilitySchema> = manifest
         .zero_arity_methods
@@ -585,10 +584,6 @@ pub(crate) fn collect_entity_teaching_block(
             map_arc,
             None,
         );
-    }
-
-    if !teach_list_reads_before_mutators {
-        emit_query_capability_rows!();
     }
 
     // Unary `e#(<id>)` (or token-identity braces) after query lines when primary GET

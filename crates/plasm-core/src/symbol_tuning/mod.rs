@@ -4603,7 +4603,7 @@ mod tests {
 
     /// Two `p#` slots may share one `values:` key; each still earns a full select gloss (no cross-`p#` peer line).
     #[test]
-    fn value_domain_v_symbols_dedupe_shared_registry_rows() {
+    fn value_domain_v_symbols_preserve_distinct_wire_roles() {
         let mut cgs = CGS::new();
         cgs.bind_registry_entry_id("fixture_entry");
         cgs.values.insert(
@@ -4722,10 +4722,9 @@ mod tests {
         let v_bar = map
             .value_sym_for_wire("fixture_entry", "Widget", "bar")
             .expect("registry-backed bar maps to v#");
-        assert_eq!(v_foo, v_bar, "same structural value class → one v#");
-        assert_eq!(
-            map.value_domain_fp_for_v_sym(&v_foo).unwrap(),
-            "vc|\"select\"|profile:null|items:null|allowed:[\"alpha\",\"beta\"]"
+        assert_ne!(
+            v_foo, v_bar,
+            "distinct wires keep distinct v# roles even when their registry type is shared"
         );
         let gloss = map.value_domain_gloss_for_v_sym(&v_foo).expect("v gloss");
         assert!(

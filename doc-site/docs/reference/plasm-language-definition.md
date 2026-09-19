@@ -19,7 +19,7 @@ Each surface binding `label = rhs` is **`bind`** over the prior comp:
 ```plasm
 issues = e1{status="open"}
 labels = issues.r2
-summary = labels[title, color]
+summary = labels | select title, color
 summary
 ```
 
