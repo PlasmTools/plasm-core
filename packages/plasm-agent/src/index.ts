@@ -103,6 +103,7 @@ export {
   TaskLedgerReviewSeat,
   composeTaskLedgerReviewPacket,
   extractRecentPlasmObservations,
+  extractReviewObservations,
   isTaskLedgerReviewGatedTool,
   parseTaskLedgerReviewVerdict,
   reviewAllowsProposedAction,

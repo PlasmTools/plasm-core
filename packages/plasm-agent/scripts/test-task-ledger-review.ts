@@ -24,8 +24,10 @@ import {
   TASK_LEDGER_REVIEW_OBSERVATIONS_HEADER,
   composeTaskLedgerReviewPacket,
   extractRecentPlasmObservations,
+  extractReviewObservations,
   parseTaskLedgerReviewVerdict,
   reviewAllowsProposedAction,
+  type TaskLedgerReviewVerdict,
 } from "../src/tools/task-ledger-review.js";
 import { PlasmAgent } from "../src/runtime/plasm-agent.js";
 import type { PlasmEngine } from "../src/engine/napi-binding.js";
@@ -93,6 +95,9 @@ const allowVerdict = {
   negative_evidence: "insufficient" as const,
   role_satisfaction: "unsatisfied" as const,
   unresolved_obligations: "do_not_permit" as const,
+  selection_constraint_coverage: "satisfied" as const,
+  selection_constraint_basis: "no_selection_constraints" as const,
+  selection_constraints: [],
   rationale: "Reviewer allows the proposed finish; host must not invert this.",
 };
 
@@ -101,6 +106,9 @@ const continueVerdict = {
   negative_evidence: "insufficient" as const,
   role_satisfaction: "unsatisfied" as const,
   unresolved_obligations: "do_not_permit" as const,
+  selection_constraint_coverage: "unsatisfied" as const,
+  selection_constraint_basis: "unresolved" as const,
+  selection_constraints: [],
   rationale: "Outstanding Venmo obligations are inconsistent with finishing.",
 };
 
@@ -123,14 +131,13 @@ function mockReviewJson(verdict: object) {
     doStream: async () => ({
       stream: new ReadableStream({
         start(controller) {
-          controller.enqueue({ type: "text-start", id: "text" });
           controller.enqueue({
-            type: "text-delta",
-            id: "text",
-            delta: JSON.stringify(verdict),
+            type: "tool-call",
+            toolCallId: "review-verdict",
+            toolName: "submit_task_ledger_review",
+            input: JSON.stringify(verdict),
           });
-          controller.enqueue({ type: "text-end", id: "text" });
-          finish(controller, "stop");
+          finish(controller, "tool-calls");
         },
       }),
     }),
@@ -242,18 +249,111 @@ function mockPlasmRunThenStop() {
   });
 }
 
-const parsedFence = parseTaskLedgerReviewVerdict(`\`\`\`json\n${JSON.stringify(allowVerdict)}\n\`\`\``);
-assert.equal(parsedFence.ok, true);
-if (!parsedFence.ok) throw new Error("expected fenced verdict");
-assert.equal(parsedFence.verdict.decision, "allow");
+assert.equal(
+  parseTaskLedgerReviewVerdict(`\`\`\`json\n${JSON.stringify(allowVerdict)}\n\`\`\``).ok,
+  false,
+  "free-form JSON is not a legacy alternative to the forced verdict tool",
+);
 
-assert.equal(reviewAllowsProposedAction("allow", COMPLETE_TASK_TOOL_NAME), true);
-assert.equal(reviewAllowsProposedAction("continue", COMPLETE_TASK_TOOL_NAME), false);
-assert.equal(reviewAllowsProposedAction("unresolved", COMPLETE_TASK_TOOL_NAME), false);
-assert.equal(reviewAllowsProposedAction("complete_without_value", COMPLETE_TASK_TOOL_NAME), true);
-assert.equal(reviewAllowsProposedAction("complete_without_value", "submit_answer"), false);
-assert.equal(reviewAllowsProposedAction("submit", "submit_answer"), true);
-assert.equal(reviewAllowsProposedAction("submit", COMPLETE_TASK_TOOL_NAME), false);
+const uncoveredSelection = parseTaskLedgerReviewVerdict({
+  ...allowVerdict,
+  selection_constraint_coverage: "unsatisfied",
+  selection_constraint_basis: "unresolved",
+});
+assert.equal(uncoveredSelection.ok, true);
+if (!uncoveredSelection.ok) throw new Error("expected selection coverage verdict");
+assert.equal(uncoveredSelection.verdict.selection_constraint_coverage, "unsatisfied");
+assert.equal(reviewAllowsProposedAction(uncoveredSelection.verdict, "plasm_run"), false);
+
+const coveredSelection = parseTaskLedgerReviewVerdict({
+  ...allowVerdict,
+  selection_constraint_coverage: "satisfied",
+  selection_constraint_basis: "constraints_verified",
+  selection_constraints: [{
+    constraint: "recipients are coworkers",
+    evidence: "phone relation query returned the coworker set",
+    mutation_dataflow: "the transaction mutation iterates that returned set",
+  }],
+});
+assert.equal(coveredSelection.ok, true);
+if (!coveredSelection.ok) throw new Error("expected covered selection verdict");
+assert.equal(reviewAllowsProposedAction(coveredSelection.verdict, "plasm_run"), true);
+assert.equal(
+  reviewAllowsProposedAction(
+    {
+      ...coveredSelection.verdict,
+      selection_constraint_coverage: "not_applicable",
+    } as unknown as TaskLedgerReviewVerdict,
+    "plasm_run",
+  ),
+  false,
+  "plasm_run requires a positive satisfied judgment",
+);
+
+assert.equal(
+  parseTaskLedgerReviewVerdict({
+    ...allowVerdict,
+    selection_constraint_basis: "constraints_verified",
+    selection_constraints: [],
+  }).ok,
+  false,
+  "constraints_verified cannot hide an empty all-constraint proof",
+);
+
+const { selection_constraint_coverage: _omittedCoverage, ...legacyAllowVerdict } = allowVerdict;
+assert.equal(
+  parseTaskLedgerReviewVerdict(legacyAllowVerdict).ok,
+  false,
+  "review output without an explicit selection-coverage judgment must fail closed",
+);
+
+const exactPlan = extractReviewObservations(
+  [
+    {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "plan-0",
+        toolName: "plasm",
+        output: {
+          type: "text",
+          value: "wrong plan\n\n**Run:** pass `run_ref`: `pc0` to **`plasm_run`**.",
+        },
+      }],
+    },
+    {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "plan-1",
+        toolName: "plasm",
+        output: {
+          type: "text",
+          value: "right plan\n\n**Run:** pass `run_ref`: `pc1` to **`plasm_run`**.",
+        },
+      }],
+    },
+  ],
+  { toolName: "plasm_run", input: { run_ref: "pc1" } },
+);
+assert.match(exactPlan, /right plan/);
+assert.equal(exactPlan.includes("wrong plan"), false, "review packet binds only the proposed run_ref");
+assert.match(
+  extractReviewObservations([], { toolName: "plasm_run", input: { run_ref: "pc9" } }),
+  /no plasm dry-plan observation matched proposed run_ref pc9/,
+);
+
+const verdictWithDecision = (decision: typeof allowVerdict.decision | "continue" | "unresolved" | "complete_without_value" | "submit") => ({
+  ...allowVerdict,
+  decision,
+});
+assert.equal(reviewAllowsProposedAction(verdictWithDecision("allow"), COMPLETE_TASK_TOOL_NAME), true);
+assert.equal(reviewAllowsProposedAction(verdictWithDecision("continue"), COMPLETE_TASK_TOOL_NAME), false);
+assert.equal(reviewAllowsProposedAction(verdictWithDecision("unresolved"), COMPLETE_TASK_TOOL_NAME), false);
+assert.equal(reviewAllowsProposedAction(verdictWithDecision("complete_without_value"), COMPLETE_TASK_TOOL_NAME), true);
+assert.equal(reviewAllowsProposedAction(verdictWithDecision("complete_without_value"), "submit_answer"), false);
+assert.equal(reviewAllowsProposedAction(verdictWithDecision("submit"), "submit_answer"), true);
+assert.equal(reviewAllowsProposedAction(verdictWithDecision("submit"), COMPLETE_TASK_TOOL_NAME), false);
 
 const packet = composeTaskLedgerReviewPacket({
   instruction: INSTRUCTION,
@@ -307,10 +407,19 @@ assert.equal(product.includes("grader"), false);
 
 const reviewLiturgy = buildDefaultSystemLiturgy({ includeTaskLedgerReview: true });
 assert.equal(reviewLiturgy.includes(TASK_LEDGER_REVIEW_ACTOR_LITURGY), true);
+assert.match(TASK_LEDGER_REVIEW_ACTOR_LITURGY, /selection constraints/i);
+assert.match(TASK_LEDGER_REVIEW_ACTOR_LITURGY, /dataflow/i);
 assert.equal(reviewLiturgy.includes("grader"), false);
 assert.equal(reviewLiturgy.includes("AppWorld"), false);
 assert.equal(reviewLiturgy.includes("EvalTerminal"), false);
 assert.match(TASK_LEDGER_REVIEW_LITURGY, /not automatic failure/);
+assert.match(TASK_LEDGER_REVIEW_LITURGY, /every original selection constraint/i);
+assert.match(TASK_LEDGER_REVIEW_LITURGY, /acquired evidence/i);
+assert.match(TASK_LEDGER_REVIEW_LITURGY, /visibly constrain the mutation set/i);
+assert.match(
+  TASK_LEDGER_REVIEW_LITURGY,
+  /merely mentioning.*independent read.*not sufficient/i,
+);
 assert.equal(TASK_LEDGER_REVIEW_LITURGY.includes("grader"), false);
 assert.equal(TASK_LEDGER_REVIEW_LITURGY.includes("AppWorld"), false);
 
@@ -395,7 +504,20 @@ try {
     false,
     "host does not judge negative evidence true or false",
   );
-  assert.equal((allowReview.doStreamCalls[0]?.tools ?? []).length, 0, "review context has no actor tools");
+  assert.equal(
+    (allowReview.doStreamCalls[0]?.tools ?? []).length,
+    1,
+    "review context exposes exactly one verdict-schema tool and no actor tools",
+  );
+  assert.deepEqual(allowReview.doStreamCalls[0]?.toolChoice, {
+    type: "tool",
+    toolName: "submit_task_ledger_review",
+  });
+  assert.equal(
+    allowReview.doStreamCalls[0]?.maxOutputTokens,
+    16_384,
+    "review reasoning and the structured verdict share the established generation ceiling",
+  );
   assert.match(allowPrompt, new RegExp(TASK_LEDGER_REVIEW_INSTRUCTION_HEADER));
   assert.ok(
     allowResult.usage.totalTokens !== undefined && allowResult.usage.totalTokens > 0,
@@ -435,7 +557,12 @@ try {
   );
 
   let runExecuted = 0;
-  const runReview = mockReviewJson(continueVerdict);
+  const runReview = mockReviewJson({
+    ...allowVerdict,
+    selection_constraint_coverage: "unsatisfied",
+    selection_constraint_basis: "unresolved",
+    rationale: "The proposed mutation is not constrained by evidence for the original selector.",
+  });
   const runActor = mockPlasmRunThenStop();
   const runAgent = new PlasmAgent({
     agentRoot: root,
@@ -461,11 +588,56 @@ try {
     maxSteps: 4,
   });
   assert.equal(runResult.reviewGenerateCount, 1, "plasm_run is a gated review seat");
-  assert.equal(runExecuted, 0, "continue must not execute the live run");
+  assert.equal(
+    runAgent.taskLedgerReviews[0]?.verdict.decision,
+    "allow",
+    "the test isolates the host selection-coverage invariant from the review decision",
+  );
+  assert.equal(runAgent.taskLedgerReviews[0]?.allowed, false);
+  assert.equal(runExecuted, 0, "uncovered selection constraints must not execute the live run");
   const runPrompt = JSON.stringify(runReview.doStreamCalls[0]);
   assert.match(runPrompt, /plasm_run/);
   assert.match(runPrompt, /I owe them/);
   assert.equal(runPrompt.includes("grader"), false);
+
+  let coveredRunExecuted = 0;
+  const coveredRunReview = mockReviewJson({
+    ...allowVerdict,
+    selection_constraint_coverage: "satisfied",
+    selection_constraint_basis: "constraints_verified",
+    selection_constraints: [{
+      constraint: "recipients are coworkers",
+      evidence: "phone relation query returned the coworker set",
+      mutation_dataflow: "the payment mutation iterates that returned set",
+    }],
+    rationale: "The proposed mutation is dataflow-constrained by acquired selector evidence.",
+  });
+  const coveredRunAgent = new PlasmAgent({
+    agentRoot: root,
+    model: mockPlasmRunThenStop(),
+    engine,
+    hostTransport: null,
+    archiveEnabled: false,
+    telemetry: false,
+    includeTaskLedgerReview: true,
+    taskLedgerReviewModel: coveredRunReview,
+  });
+  const coveredRunResult = await coveredRunAgent.generate(INSTRUCTION, {
+    wrapTools: () => ({
+      plasm_run: tool({
+        description: "run",
+        inputSchema: jsonSchema({ type: "object", properties: {} }),
+        execute: async () => {
+          coveredRunExecuted += 1;
+          return "RAN";
+        },
+      }),
+    }),
+    maxSteps: 4,
+  });
+  assert.equal(coveredRunResult.reviewGenerateCount, 1);
+  assert.equal(coveredRunAgent.taskLedgerReviews[0]?.allowed, true);
+  assert.equal(coveredRunExecuted, 1, "covered selection constraints permit the reviewed live run");
 } finally {
   await rm(root, { recursive: true, force: true });
 }
