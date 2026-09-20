@@ -76,7 +76,6 @@
     "test:eval-terminal-liturgy": "node scripts/run-plasm-cli.mjs scripts/test-eval-terminal-liturgy.ts",
     "test:eval-terminal-discovery-gate": "node scripts/run-plasm-cli.mjs scripts/test-eval-terminal-discovery-gate.ts",
     "test:task-ledger": "node scripts/run-plasm-cli.mjs scripts/test-task-ledger.ts",
-    "test:task-ledger-review": "node scripts/run-plasm-cli.mjs scripts/test-task-ledger-review.ts",
     "test:graded-scalar-after-writes": "node scripts/run-plasm-cli.mjs scripts/test-graded-scalar-after-writes.ts",
     "test:artifact-pin-gate": "node scripts/run-plasm-cli.mjs scripts/test-artifact-pin-gate.ts",
     "test:live-transport-infallible": "node scripts/run-plasm-cli.mjs scripts/test-live-transport-infallible.ts",

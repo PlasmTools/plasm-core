@@ -93,29 +93,6 @@ export {
 } from "./tools/task-ledger.js";
 export type { ParseTaskLedgerResult, TaskLedgerRecord } from "./tools/task-ledger.js";
 export {
-  TASK_LEDGER_REVIEW_ACTOR_LITURGY,
-  TASK_LEDGER_REVIEW_ACTION_HEADER,
-  TASK_LEDGER_REVIEW_GATED_TOOLS,
-  TASK_LEDGER_REVIEW_INSTRUCTION_HEADER,
-  TASK_LEDGER_REVIEW_LEDGER_HEADER,
-  TASK_LEDGER_REVIEW_LITURGY,
-  TASK_LEDGER_REVIEW_OBSERVATIONS_HEADER,
-  TaskLedgerReviewSeat,
-  composeTaskLedgerReviewPacket,
-  extractRecentPlasmObservations,
-  extractReviewObservations,
-  isTaskLedgerReviewGatedTool,
-  parseTaskLedgerReviewVerdict,
-  reviewAllowsProposedAction,
-  wrapTaskLedgerReviewTools,
-} from "./tools/task-ledger-review.js";
-export type {
-  ParseTaskLedgerReviewVerdict,
-  TaskLedgerReviewGatedTool,
-  TaskLedgerReviewRecord,
-  TaskLedgerReviewVerdict,
-} from "./tools/task-ledger-review.js";
-export {
   artefactTransformAdvertised,
   extractGradedScalarFromObservation,
   gateArtefactTransform,

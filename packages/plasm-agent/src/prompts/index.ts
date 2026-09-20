@@ -6,8 +6,6 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { TASK_LEDGER_REVIEW_ACTOR_LITURGY } from "../tools/task-ledger-review.js";
-
 const here = path.dirname(fileURLToPath(import.meta.url));
 const vendoredDir = path.join(here, "assets");
 const monorepoAssetsDir = path.resolve(
@@ -46,11 +44,6 @@ export type SystemLiturgyOptions = {
    * Eval/A-B factor only — product default is unset (corrected current loop).
    */
   includeTaskLedger?: boolean;
-  /**
-   * Same gate as `PlasmAgent({ includeTaskLedgerReview })`.
-   * Isolated review seat — product default is unset.
-   */
-  includeTaskLedgerReview?: boolean;
 };
 
 /**
@@ -119,8 +112,6 @@ export const TASK_LEDGER_PLAN_OVERLAY =
  * paragraph index. The current record is *not* system law; each loop
  * iteration presents a separate model-authored state echo.
  */
-export { TASK_LEDGER_REVIEW_ACTOR_LITURGY, TASK_LEDGER_REVIEW_LITURGY } from "../tools/task-ledger-review.js";
-
 export const TASK_LEDGER_LITURGY = [
   "## Task ledger",
   "",
@@ -166,9 +157,6 @@ export function buildDefaultSystemLiturgy(options: SystemLiturgyOptions = {}): s
   ];
   if (options.includeTaskLedger) {
     sections.push("", TASK_LEDGER_LITURGY);
-  }
-  if (options.includeTaskLedgerReview) {
-    sections.push("", TASK_LEDGER_REVIEW_ACTOR_LITURGY);
   }
   return sections.join("\n");
 }

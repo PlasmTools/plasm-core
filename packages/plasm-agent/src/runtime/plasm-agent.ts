@@ -28,13 +28,6 @@ import {
   TaskLedgerStore,
   type TaskLedgerRecord,
 } from "../tools/task-ledger.js";
-import {
-  TaskLedgerReviewSeat,
-  addLanguageModelUsage,
-  snapshotOrEmptyLedger,
-  wrapTaskLedgerReviewTools,
-  type TaskLedgerReviewRecord,
-} from "../tools/task-ledger-review.js";
 
 export type { AgentStepEvent };
 
@@ -65,14 +58,6 @@ export interface PlasmAgentConfig extends AgentRuntimeConfig {
    * (`PLASM_EVAL_TASK_LEDGER=1` on the TS eval host). Product default unset.
    */
   includeTaskLedger?: boolean;
-  /**
-   * Isolated ledger-review seat before `plasm_run` and finish proposals.
-   * Eval/A-B factor (`PLASM_EVAL_TASK_LEDGER_REVIEW=1`). Product default unset.
-   * Same model, separate context — one nested generate per gated decision.
-   */
-  includeTaskLedgerReview?: boolean;
-  /** Override the review-seat model. Defaults to the actor model. */
-  taskLedgerReviewModel?: string | LanguageModel;
 }
 
 export interface AgentGenerateOptions {
@@ -127,11 +112,6 @@ export interface AgentTurnResult {
   generationTimeoutCount: number;
   /** Successful live write-node count on this runtime (`plasm_run`). */
   committedWriteOps: number;
-  /**
-   * Nested review generates this turn. Zero when the experiment flag is off.
-   * Each gated `plasm_run` / finish proposal costs one extra model call.
-   */
-  reviewGenerateCount: number;
 }
 
 export class PlasmAgent {
@@ -149,11 +129,7 @@ export class PlasmAgent {
   private readonly getAuthoringContext?: () => AuthoringContext;
   private readonly includeEvalTerminals: boolean;
   private readonly includeTaskLedger: boolean;
-  private readonly includeTaskLedgerReview: boolean;
-  private readonly taskLedgerReviewModel?: string | LanguageModel;
   private readonly taskLedgerStore = new TaskLedgerStore();
-  private lastReviewRecords: TaskLedgerReviewRecord[] = [];
-  private reviewInstruction = "";
   private readonly agentName: string;
   private conversation: ModelMessage[] = [];
 
@@ -184,18 +160,11 @@ export class PlasmAgent {
     this.getAuthoringContext = config.getAuthoringContext;
     this.includeEvalTerminals = config.includeEvalTerminals === true;
     this.includeTaskLedger = config.includeTaskLedger === true;
-    this.includeTaskLedgerReview = config.includeTaskLedgerReview === true;
-    this.taskLedgerReviewModel = config.taskLedgerReviewModel;
   }
 
   /** Last accepted model write, or `null` when the experiment flag is off. */
   get taskLedger(): TaskLedgerRecord | null {
     return this.includeTaskLedger ? this.taskLedgerStore.record : null;
-  }
-
-  /** Review verdicts from the last generate, or `[]` when the flag is off. */
-  get taskLedgerReviews(): TaskLedgerReviewRecord[] {
-    return this.includeTaskLedgerReview ? this.lastReviewRecords.map((r) => ({ ...r })) : [];
   }
 
   async bootstrap(): Promise<void> {
@@ -207,7 +176,6 @@ export class PlasmAgent {
     const core = buildDefaultSystemLiturgy({
       includeEvalTerminals: this.includeEvalTerminals,
       includeTaskLedger: this.includeTaskLedger,
-      includeTaskLedgerReview: this.includeTaskLedgerReview,
     });
     let project = "";
     try {
@@ -248,10 +216,6 @@ export class PlasmAgent {
 
     if (options.resetConversation) {
       this.taskLedgerStore.clear();
-      this.reviewInstruction = "";
-    }
-    if (!this.reviewInstruction) {
-      this.reviewInstruction = prompt;
     }
 
     const system = await this.loadInstructions();
@@ -295,23 +259,8 @@ export class PlasmAgent {
 
     messages = await maybeCompactMessages(messages, this.compaction, this.model);
 
-    this.lastReviewRecords = [];
-    let liveMessages = messages;
-    const reviewSeat = this.includeTaskLedgerReview
-      ? new TaskLedgerReviewSeat({
-          model: resolveGatewayModel(this.taskLedgerReviewModel ?? this.model, this.modelOptions),
-          getInstruction: () => this.reviewInstruction || prompt,
-          getLedger: () => snapshotOrEmptyLedger(this.taskLedgerStore.record),
-          getMessages: () => liveMessages,
-        })
-      : null;
-    if (reviewSeat) {
-      tools = wrapTaskLedgerReviewTools(tools, reviewSeat);
-    }
-
     const toolInvocations: string[] = [];
     const onStepFinish = async (step: AgentStepEvent) => {
-      if (step.messages) liveMessages = step.messages;
       for (const call of step.toolCalls ?? []) {
         toolInvocations.push(call.toolName);
       }
@@ -362,11 +311,10 @@ export class PlasmAgent {
     if (!externalMessages) {
       this.conversation = result.messages;
     }
-    this.lastReviewRecords = reviewSeat?.records ?? [];
     return {
       text: result.text,
       steps: result.steps,
-      usage: reviewSeat ? addLanguageModelUsage(result.usage, reviewSeat.usage) : result.usage,
+      usage: result.usage,
       toolsAvailable: Object.keys(tools).length,
       toolCount: toolInvocations.length,
       toolInvocations,
@@ -377,7 +325,6 @@ export class PlasmAgent {
       lengthTruncationCount: result.lengthTruncationCount,
       generationTimeoutCount: result.generationTimeoutCount,
       committedWriteOps: this.runtime.committedLiveWriteOps(),
-      reviewGenerateCount: reviewSeat?.generateCount ?? 0,
     };
   }
 }
