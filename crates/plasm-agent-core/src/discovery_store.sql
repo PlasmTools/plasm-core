@@ -48,8 +48,10 @@ CREATE TABLE IF NOT EXISTS discovery_intent_embeddings (
 );
 CREATE TABLE IF NOT EXISTS discovery_intent_provenance (
     session_id text PRIMARY KEY REFERENCES discovery_session_pins(session_id) ON DELETE CASCADE,
-    provenance jsonb NOT NULL
+    provenance jsonb NOT NULL,
+    coverage jsonb
 );
+ALTER TABLE discovery_intent_provenance ADD COLUMN IF NOT EXISTS coverage jsonb;
 CREATE TABLE IF NOT EXISTS discovery_selector_cache (
     cache_key text PRIMARY KEY,
     envelope text NOT NULL,

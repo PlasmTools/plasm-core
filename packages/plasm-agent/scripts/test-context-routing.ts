@@ -1,84 +1,46 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { routingPacketSchema, routingRecoveryMarkdown } from "../src/engine/routing.js";
 
-const packet = routingPacketSchema.parse({
-  routing: {
-    intent_provenance: { nodes: [{ parent: null, intent: "Read the account balance." }] },
-    intent: "Read the account balance.",
-    pin_id: "11111111-1111-4111-8111-111111111111",
-    retrieval: { generation: "fixture", candidates: [] },
-    matching: {
-      slots: [{ id: "s0", statement: "Read the account balance." }],
-      matches: [],
-      complete: false,
-      unmatched_slot_ids: ["s0"],
-      additional_capability_ids: [],
-    },
-    input_source_projection: [],
-    input_source_matching: { matches: [], selected: [] },
-    closure: null,
-    recovery: {
-      unmatched_slots: [{
-        slot_id: "s0", statement: "Read the account balance.",
-        admitted_candidate_ids: [],
-      }],
-      available_catalogs: [{ entry_id: "matrix", description: "Abstract fixture catalog" }],
-      guidance: "Extend discovery when another capability is needed.",
-    },
-  },
-  teaching: null,
-});
-
+// The Rust discovery_service test derives this same fixture's coverage, matching,
+// and recovery. Both consumers validate the identical serialized boundary.
+const fixture = JSON.parse(readFileSync(new URL("../../../fixtures/discovery/partial-routing.json", import.meta.url), "utf8"));
+const packet = routingPacketSchema.parse(fixture);
+assert.equal(packet.routing.matching.complete, false);
+assert.ok(packet.teaching);
+assert.equal(packet.routing.closure?.business[0]?.capability, "record_read");
 const markdown = routingRecoveryMarkdown(packet.routing);
-assert.ok(markdown?.includes("Unmatched affirmative effect slots"));
-assert.ok(markdown?.includes("s0"));
+assert.ok(markdown?.includes("teaching available"));
+assert.ok(markdown?.includes("Publish the selected records after inspection"));
+assert.ok(markdown?.includes("matrix/record_read"));
+assert.ok(markdown?.includes("rejected"));
+assert.deepEqual(routingPacketSchema.parse(JSON.parse(JSON.stringify(packet))), packet);
 
-const candidate = {
-  id: "matrix:Contact:query",
-  reference: { catalog: "matrix", capability: "Contact:query" },
-  document: { entity: "Contact" },
-};
-const valid = {
-  routing: {
-    ...packet.routing,
-    retrieval: { generation: "fixture", candidates: [candidate] },
-    matching: {
-      slots: packet.routing.matching.slots,
-      matches: [{
-        slot_id: "s0",
-        capability_id: candidate.id,
-        choice: "direct_match" as const,
-        probabilities: { direct_match: 1, does_not_match: 0, uncertain: 0 },
-        confidence: 1,
-      }],
-      complete: true,
-      unmatched_slot_ids: [],
-      additional_capability_ids: [candidate.id],
-    },
-    recovery: null,
-  },
-  teaching: null,
-};
-routingPacketSchema.parse(valid);
+for (const corrupt of [
+  (p: typeof packet) => { p.routing.matching.complete = true; },
+  (p: typeof packet) => { p.routing.coverage.obligations.pop(); },
+  (p: typeof packet) => { p.routing.coverage.obligations[0]!.matched_capabilities = []; },
+  (p: typeof packet) => { p.routing.recovery!.unmatched_slots = []; },
+  (p: typeof packet) => { p.routing.recovery!.unmatched_slots[0]!.statement = "Publish all records"; },
+  (p: typeof packet) => { p.routing.recovery!.unmatched_slots[0]!.candidates = []; },
+  (p: typeof packet) => { p.routing.authorization.capabilities.matrix = []; },
+  (p: typeof packet) => { p.routing.closure!.business.push({ catalog: "unauthorized", capability: "read" }); },
+]) {
+  const changed = structuredClone(packet);
+  corrupt(changed);
+  assert.throws(() => routingPacketSchema.parse(changed));
+}
 
-assert.throws(() =>
-  routingPacketSchema.parse({
-    routing: {
-      ...valid.routing,
-      matching: {
-        ...valid.routing.matching,
-        matches: valid.routing.matching.matches.map((entry) => ({
-          ...entry,
-          choice: "does_not_match" as const,
-          probabilities: { direct_match: 0, does_not_match: 1, uncertain: 0 },
-        })),
-        complete: true,
-        unmatched_slot_ids: [],
-      },
-    },
-    teaching: null,
-  }),
-  /completion fields contradict match choices/,
-);
-console.log("context-routing: direct matching, typed input sources, and host recovery passed");
+const missing = structuredClone(packet);
+missing.routing.retrieval.candidates = [];
+missing.routing.matching.matches = [];
+missing.routing.matching.unmatched_slot_ids = ["s0", "s1"];
+missing.routing.matching.additional_capability_ids = [];
+missing.routing.recovery!.unmatched_slots[0]!.candidates = [];
+missing.routing.closure = null;
+missing.teaching = null;
+// Prior positive coverage survives a turn with no candidates.
+routingPacketSchema.parse(missing);
+assert.ok(routingRecoveryMarkdown(missing.routing)?.includes("No authorized candidates"));
+console.log("context-routing: partial teaching, persistent coverage, authorization and Rust wire fixture passed");

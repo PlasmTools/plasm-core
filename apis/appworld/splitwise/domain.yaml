@@ -1,4 +1,4 @@
-version: 20
+version: 21
 entry_id: splitwise
 auth:
   scheme: none
@@ -141,7 +141,7 @@ entities:
   Expense:
     id_field: expense_id
     primary_query: expense_query
-    description: Shared expense among group members.
+    description: Expense shared between people, optionally belonging to a group.
     discovery:
       names:
       - expense
@@ -979,6 +979,7 @@ capabilities:
         - name: group_id
           value_ref: nv_group_ref
           required: false
+          description: Omit for an expense that does not belong to any group.
     provides:
     - expense_id
   expense_update:

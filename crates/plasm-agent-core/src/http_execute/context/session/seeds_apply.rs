@@ -626,6 +626,7 @@ mod sufficiency_tests {
                 unmatched_slot_ids: vec![],
                 additional_capability_ids: vec![],
             },
+            coverage: Default::default(),
             input_source_projection: vec![],
             input_source_matching: crate::discovery_matcher::InputSourceMatchReceipt {
                 matches: vec![],

@@ -453,7 +453,7 @@ async fn run_context_command(
     let reply: ContextReply = serde_json::from_slice(&body)?;
     let Some(context) = reply.context else {
         anyhow::ensure!(
-            !reply.routing.matching.complete,
+            reply.routing.coverage.unresolved().next().is_some(),
             "matching routing response is missing its execution context"
         );
         // Preserve the full insufficiency receipt; no execution binding is opened or replaced.
@@ -500,10 +500,10 @@ async fn run_context_command(
         .join("\n");
     teaching.push('\n');
     teaching.push_str(&reply.prerequisite_guidance);
-    debug_assert!(
-        reply.routing.recovery.is_none(),
-        "complete route cannot carry recovery"
-    );
+    if let Some(recovery) = &reply.routing.recovery {
+        teaching.push_str("\n\n");
+        teaching.push_str(&recovery.render_unmatched_markdown());
+    }
     let artifact = mirror.write_file(&op_dir, "teaching.md", teaching.as_bytes())?;
     mirror.update_latest_pointer(&mirror.rel_dir_for_display(&op_dir))?;
     state.persist(server)?;
@@ -914,9 +914,11 @@ mod routed_terminal_tests {
                             "routing": {
                                 "authorization":{"catalogs":["matrix"],"capabilities":{}},
                                 "intent_analysis":"fixture",
+                                "intent_provenance":crate::intent_provenance::IntentProvenance::from_turns([payload["intent"].as_str().unwrap().to_owned()]).unwrap(),
                                 "intent":payload["intent"],"pin_id":"pin",
                                 "retrieval":{"generation":"generation-one","candidates":[],"lexical_count":0,"vector_count":0,"lexical_truncated":false,"vector_truncated":false,"fusion_truncated":0,"relation_truncated":0},
                                 "matching":{"slots":[{"id":"s0","statement":payload["effect_slots"][0]}],"matches":[],"complete":!insufficient,"unmatched_slot_ids":if insufficient { json!(["s0"]) } else { json!([]) },"additional_capability_ids":[]},
+                                "coverage":{"obligations":[{"slot":{"id":"s0","statement":payload["effect_slots"][0]},"matched_capabilities":if insufficient {json!([])} else {json!([{"catalog":"matrix","capability":"read"}])}}]},
                                 "input_source_projection":[],
                                 "input_source_matching":{"matches":[],"selected":[]},
                                 "closure":null
@@ -925,7 +927,10 @@ mod routed_terminal_tests {
                         if payload["intent"] == "wrong generation" {
                             reply["routing"]["retrieval"]["generation"] = json!("generation-two");
                         }
-                        if !insufficient {
+                        if insufficient {
+                            reply["routing"]["recovery"] = json!({"unmatched_slots":[{"slot_id":"s0","statement":payload["effect_slots"][0],"candidates":[]}],"available_catalogs":[],"guidance":"Continue available work while preserving unresolved obligations."});
+                        }
+                        if !missing {
                             reply["routing"]["closure"] = json!({"business":[{"catalog":"matrix","capability":"read"}],"input_sources":[],"prerequisites":[],"acquisitions":[],"edges":[]});
                             reply["context"] = json!({"prompt_hash":"ph","session_id":"sid","primary_entry_id":"matrix","principal":null,"waves":[{"mode":"new","entry_id":"matrix","entities":["Record"],"markdown_delta":"canonical teaching","reused_session":false,"teaching_prompt_chars_added":18}],"binding_updated":true,"new_symbol_space":true,"stale_execute_binding_recovered":false,"stale_binding_previous":null,"symbol_space_reset":false});
                             reply["prerequisite_guidance"] = json!("explicit provider binding");
@@ -947,7 +952,7 @@ mod routed_terminal_tests {
                 run_context_command(&client, &server, &profile, args(true,"unavailable")).await.unwrap();
                 assert!(read_current_session_pointer(&server).unwrap().is_none());
                 run_context_command(&client, &server, &profile, args(true,"partial records")).await.unwrap();
-                assert!(read_current_session_pointer(&server).unwrap().is_none());
+                assert!(read_current_session_pointer(&server).unwrap().is_some(), "partial teaching must open a usable context");
                 run_context_command(&client, &server, &profile, args(true,"available records")).await.unwrap();
                 let id = read_current_session_pointer(&server).unwrap().unwrap();
                 run_context_command(&client, &server, &profile, args(false,"more records")).await.unwrap();

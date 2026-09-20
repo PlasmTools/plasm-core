@@ -141,10 +141,6 @@ pub fn issue_batches(
             .cmp(&right.reference)
             .then(left.id.cmp(&right.id))
     });
-    ensure!(
-        !candidates.is_empty(),
-        "retrieval returned no capability candidates"
-    );
     let mut batches = Vec::new();
     let mut pending = Vec::new();
     for slot in slots {
@@ -169,10 +165,7 @@ pub fn issue_batches(
 }
 
 pub fn validate_slots(slots: &[EffectSlot]) -> Result<()> {
-    ensure!(
-        (1..=64).contains(&slots.len()),
-        "one to 64 effect slots required"
-    );
+    ensure!(!slots.is_empty(), "at least one effect slot required");
     let mut ids = BTreeSet::new();
     for slot in slots {
         ensure!(
@@ -293,7 +286,7 @@ fn issue_batch(
         questions.insert(key, json!({
             "type":"choice",
             "instructions": format!(
-                "Classify this capability against the explicit affirmative effect slot `{}`. The host has already determined that this slot is required work; do not decide that it is optional because another branch or step is also requested. The provenance nodes run from root to current; each derived intent retains the qualifiers, conditions, restrictions, and ordering inherited from its ancestors. Omission in a later node does not erase an inherited constraint. Use this ancestry to interpret the current slot. Choose `direct_match` only when the capability directly fulfils this slot's requested effect or requested information outcome. Judge this slot only and do not judge sufficiency for the whole intent. Choose `does_not_match` for different or conflicting work. Choose `uncertain` only when the slot, intent provenance, and card do not establish either relationship. Do not infer prerequisite or selector work here; the host projects typed input-source candidates only after every affirmative slot is covered.\n\nIntent provenance (root to current):\n{}\n\nAffirmative effect slot:\n{}\n\nCapability card:\n{}",
+                "Classify this capability against the explicit affirmative effect slot `{}`. The host has already determined that this slot is required work; do not decide that it is optional because another branch or step is also requested. The provenance nodes run from root to current; each derived intent retains the qualifiers, conditions, restrictions, and ordering inherited from its ancestors. Omission in a later node does not erase an inherited constraint. Use this ancestry to interpret the current slot. Choose `direct_match` only when the capability directly fulfils this slot's requested effect or requested information outcome. Judge this slot only and do not judge sufficiency for the whole intent. Choose `does_not_match` for different or conflicting work. Choose `uncertain` only when the slot, intent provenance, and card do not establish either relationship. Do not infer prerequisite or selector work here; the host projects typed input-source candidates for matched capabilities independently of unresolved slots.\n\nIntent provenance (root to current):\n{}\n\nAffirmative effect slot:\n{}\n\nCapability card:\n{}",
                 slot.id,
                 intent_provenance.judgment_context()?,
                 serde_json::to_string(slot)?,
@@ -439,15 +432,13 @@ pub fn finish(
         .filter(|c| c.admissions.contains("already_exposed"))
         .map(|c| c.id.as_str())
         .collect();
-    let additional_capability_ids = if complete {
-        positive
-            .into_iter()
-            .map(|(_, capability)| capability.to_owned())
-            .filter(|id| !exposed.contains(id.as_str()))
-            .collect()
-    } else {
-        Vec::new()
-    };
+    let additional_capability_ids = positive
+        .into_iter()
+        .map(|(_, capability)| capability.to_owned())
+        .filter(|id| !exposed.contains(id.as_str()))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     Ok(CapabilityMatchReceipt {
         slots,
         matches,
@@ -666,7 +657,7 @@ mod tests {
         let receipt = finish(slots, matches, &retrieval).unwrap();
         assert!(!receipt.complete);
         assert_eq!(receipt.unmatched_slot_ids, vec!["r1"]);
-        assert!(receipt.additional_capability_ids.is_empty());
+        assert_eq!(receipt.additional_capability_ids, vec!["rev/balance.read"]);
     }
 
     #[test]

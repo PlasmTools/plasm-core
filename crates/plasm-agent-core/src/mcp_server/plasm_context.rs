@@ -429,10 +429,10 @@ impl PlasmMcpHandler {
                 }
             }
         }
-        debug_assert!(
-            route.recovery.is_none(),
-            "complete route cannot carry recovery"
-        );
+        if let Some(recovery) = &route.recovery {
+            text.push_str("\n\n");
+            text.push_str(&recovery.render_unmatched_markdown());
+        }
         text = format!("{}\n\n{text}", route.intent_analysis);
         for wave in &out.waves {
             if wave.teaching_prompt_chars_added > 0 {

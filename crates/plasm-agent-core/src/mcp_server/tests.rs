@@ -191,7 +191,7 @@ fn mcp_server_initialize_workflow_uses_session_mode_not_intent_key() {
     assert!(!text.contains("several discovery calls"));
     assert!(!text.contains("pass **`query`**"));
     assert!(!text.contains("syntax guide in MCP initialize"));
-    assert!(text.contains("Reuse that ref"));
+    assert!(text.contains("Reuse it for `plasm` / `plasm_run`"));
     assert!(text.contains("no tool call"));
     assert!(!text.contains("until observation matches"));
     assert!(!text.contains("Then reply with exactly: DONE"));
@@ -220,7 +220,7 @@ fn mcp_tool_descriptions_are_self_contained_without_initialize() {
     );
     assert!(plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("session_mode"));
     assert!(plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION
-        .contains("does NOT select the session"));
+        .contains("does not select the session"));
     assert!(
         plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("Call before `plasm`")
     );
@@ -352,7 +352,7 @@ fn plasm_context_tool_description_contract_append_vs_refresh() {
     assert!(
         desc.contains("session_mode: \"extend\"")
             && desc.contains("effect_slots")
-            && desc.contains("no partial language card"),
+            && desc.contains("independently of unresolved slots"),
         "expected explicit-slot coverage guidance in plasm_context description"
     );
     assert!(
@@ -364,7 +364,7 @@ fn plasm_context_tool_description_contract_append_vs_refresh() {
         "initialize workflow must not treat intent as session key"
     );
     assert!(
-        workflow.contains("Reuse that ref"),
+        workflow.contains("Reuse it for `plasm` / `plasm_run`"),
         "expected steady-state guidance in initialize workflow"
     );
 }

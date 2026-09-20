@@ -26,6 +26,7 @@ pub struct RoutingReceipt {
     pub pin_id: String,
     pub retrieval: RetrievalReceipt,
     pub matching: CapabilityMatchReceipt,
+    pub coverage: crate::discovery_coverage::DiscoveryCoverage,
     pub input_source_projection: Vec<InputSourceCandidate>,
     pub input_source_matching: InputSourceMatchReceipt,
     pub closure: Option<PrerequisiteClosure>,
@@ -97,6 +98,11 @@ impl DiscoveryService {
                 .await?;
             request.new_generation.to_owned()
         };
+        let coverage = if request.logical_session.is_some() {
+            self.store.discovery_coverage(&pin_id).await?
+        } else {
+            crate::discovery_coverage::DiscoveryCoverage::default()
+        };
         let mut receipt = self
             .route(
                 &generation,
@@ -104,13 +110,15 @@ impl DiscoveryService {
                 request.effect_slots,
                 request.allowed,
                 request.exposed,
+                coverage,
             )
             .await?;
         receipt.pin_id = pin_id;
         self.store
-            .commit_intent_provenance(
+            .commit_discovery_progress(
                 &receipt.pin_id,
                 request.intent_provenance,
+                &receipt.coverage,
                 request.logical_session.is_some(),
             )
             .await?;
@@ -118,8 +126,8 @@ impl DiscoveryService {
     }
 
     /// Deterministic retrieval bounds the candidate universe; Jev independently
-    /// matches every card against every explicit affirmative effect slot. No
-    /// closure is published unless the host proves every slot has a match.
+    /// matches cards against current and unresolved effect slots. Matched capabilities
+    /// can be exposed independently; coverage never certifies task completion.
     pub async fn route(
         &self,
         generation: &str,
@@ -127,6 +135,7 @@ impl DiscoveryService {
         effect_slots: &[String],
         allowed: &DiscoveryAuthorization,
         exposed: &[CapabilityRef],
+        mut coverage: crate::discovery_coverage::DiscoveryCoverage,
     ) -> Result<RoutingReceipt> {
         let queries = provenance.retrieval_queries(effect_slots)?;
         let mut retrieval = self
@@ -136,14 +145,7 @@ impl DiscoveryService {
         self.store
             .include_exposed(&mut retrieval, exposed, allowed)
             .await?;
-        let slots = effect_slots
-            .iter()
-            .enumerate()
-            .map(|(index, statement)| matcher::EffectSlot {
-                id: format!("s{index}"),
-                statement: statement.clone(),
-            })
-            .collect::<Vec<_>>();
+        let slots = coverage.slots_for_turn(effect_slots)?;
         matcher::validate_slots(&slots)?;
         let batches = matcher::issue_batches(&self.match_model, provenance, &slots, &retrieval)?;
         let mut answers = Vec::new();
@@ -164,12 +166,14 @@ impl DiscoveryService {
             answers.extend(matcher::decode_batch(issued, &raw)?);
         }
         let matching = matcher::finish(slots, answers, &retrieval)?;
-        let business = if matching.complete {
-            matched_capabilities(&matching, &retrieval)?
-        } else {
-            Vec::new()
-        };
-        let needs_catalogs = !matching.complete || !business.is_empty() || !exposed.is_empty();
+        coverage.observe(&matching, &retrieval)?;
+        let business = coverage.matched_capabilities();
+        ensure!(
+            business.iter().all(|reference| allowed.permits(reference)),
+            "previously matched capability is no longer authorized"
+        );
+        let needs_catalogs =
+            coverage.unresolved().next().is_some() || !business.is_empty() || !exposed.is_empty();
         let loaded = if needs_catalogs {
             Some(self.store.load_generation(generation).await?)
         } else {
@@ -221,7 +225,7 @@ impl DiscoveryService {
             let matched = matcher::finish_input_sources(answers, &projection)?;
             (projection, matched)
         };
-        let closure = if matching.complete && (!business.is_empty() || !exposed.is_empty()) {
+        let closure = if !business.is_empty() || !exposed.is_empty() {
             let (catalogs, _compiled_catalogs, bindings) = loaded
                 .as_ref()
                 .expect("catalogs required for prerequisite closure");
@@ -241,12 +245,14 @@ impl DiscoveryService {
             None
         };
         validate_closure_authorization(closure.as_ref(), allowed)?;
-        let recovery = if !matching.complete {
+        let recovery = if coverage.unresolved().next().is_some() {
             let (catalogs, _, _) = loaded
                 .as_ref()
                 .expect("catalogs required for unmatched recovery");
             Some(DiscoveryRecovery::from_unmatched(
+                &coverage,
                 &matching,
+                &retrieval,
                 catalogs,
                 allowed.catalogs.iter(),
             ))
@@ -257,12 +263,13 @@ impl DiscoveryService {
             intent_provenance: provenance.clone(),
             authorization: allowed.clone(),
             intent_analysis:
-                "**Capability selection** (deterministic retrieval; Jev classifies each card against every explicit affirmative effect slot; the host requires complete slot coverage before CGS input projection and closure):"
+                "**Capability selection** (deterministic retrieval; Jev classifies each card against every explicit affirmative effect slot; matched capabilities receive CGS input projection and closure; unresolved slots remain explicit):"
                     .to_owned(),
             intent: provenance.current().to_owned(),
             pin_id: String::new(),
             retrieval,
             matching,
+            coverage,
             input_source_projection,
             input_source_matching,
             closure,
@@ -315,33 +322,6 @@ fn capability_document_index(
     Ok(documents)
 }
 
-fn matched_capabilities(
-    matching: &CapabilityMatchReceipt,
-    retrieval: &RetrievalReceipt,
-) -> Result<Vec<CapabilityRef>> {
-    let ids: std::collections::BTreeSet<_> = matching
-        .matches
-        .iter()
-        .filter(|matched| {
-            matches!(
-                matched.choice,
-                crate::discovery_matcher::MatchChoice::DirectMatch
-            )
-        })
-        .map(|matched| matched.capability_id.as_str())
-        .collect();
-    ids.into_iter()
-        .map(|id| {
-            retrieval
-                .candidates
-                .iter()
-                .find(|candidate| candidate.id == id)
-                .map(|candidate| candidate.reference.clone())
-                .context("matched capability disappeared from retrieval receipt")
-        })
-        .collect()
-}
-
 fn save_rejection(directory: &std::path::Path, record: &serde_json::Value) -> Result<()> {
     use std::io::Write;
 
@@ -381,7 +361,115 @@ fn validate_closure_authorization(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
     use std::collections::BTreeSet;
+
+    proptest! {
+        #[test]
+        fn partial_coverage_exposes_only_positive_matches_across_serialization(mask in prop::collection::vec(any::<bool>(), 1..16)) {
+            let packet: serde_json::Value = serde_json::from_str(include_str!("../../../fixtures/discovery/partial-routing.json")).unwrap();
+            let route: RoutingReceipt = serde_json::from_value(packet["routing"].clone()).unwrap();
+            let mut coverage = crate::discovery_coverage::DiscoveryCoverage::default();
+            let slots = coverage.slots_for_turn(&(0..mask.len()).map(|i| format!("Requested effect {i}")).collect::<Vec<_>>()).unwrap();
+            let answers = slots.iter().zip(&mask).map(|(slot, &direct)| matcher::CapabilityIntentMatch {
+                slot_id: slot.id.clone(), capability_id: "matrix/record_read".into(),
+                choice: if direct { matcher::MatchChoice::DirectMatch } else { matcher::MatchChoice::DoesNotMatch },
+                probabilities: BTreeMap::from([("direct_match".into(), if direct {1.0} else {0.0}), ("does_not_match".into(), if direct {0.0} else {1.0}), ("uncertain".into(), 0.0)]), confidence: 1.0,
+            }).collect();
+            let matching = matcher::finish(slots, answers, &route.retrieval).unwrap();
+            let decoded: CapabilityMatchReceipt = serde_json::from_value(serde_json::to_value(&matching).unwrap()).unwrap();
+            prop_assert_eq!(&decoded, &matching);
+            prop_assert_eq!(decoded.complete, mask.iter().all(|&bit| bit));
+            prop_assert_eq!(decoded.additional_capability_ids.len(), usize::from(mask.iter().any(|&bit| bit)));
+            coverage.observe(&decoded, &route.retrieval).unwrap();
+            prop_assert_eq!(coverage.matched_capabilities().len(), usize::from(mask.iter().any(|&bit| bit)));
+            let wire: crate::discovery_coverage::DiscoveryCoverage = serde_json::from_value(serde_json::to_value(&coverage).unwrap()).unwrap();
+            prop_assert_eq!(&wire, &coverage);
+            prop_assert_eq!(wire.unresolved().count(), mask.iter().filter(|&&bit| !bit).count());
+            let recovery = DiscoveryRecovery::from_unmatched(&wire, &decoded, &route.retrieval, &BTreeMap::new(), Vec::<String>::new());
+            prop_assert_eq!(recovery.unmatched_slots.len(), wire.unresolved().count());
+        }
+    }
+
+    #[test]
+    fn partial_routing_wire_preserves_matches_obligations_and_recovery() {
+        let packet: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../fixtures/discovery/partial-routing.json"
+        ))
+        .unwrap();
+        let route: RoutingReceipt = serde_json::from_value(packet["routing"].clone()).unwrap();
+        let matching = matcher::finish(
+            route.matching.slots.clone(),
+            route.matching.matches.clone(),
+            &route.retrieval,
+        )
+        .unwrap();
+        assert_eq!(matching, route.matching);
+        validate_closure_authorization(route.closure.as_ref(), &route.authorization).unwrap();
+        let mut coverage = crate::discovery_coverage::DiscoveryCoverage::default();
+        coverage
+            .slots_for_turn(
+                &matching
+                    .slots
+                    .iter()
+                    .map(|slot| slot.statement.clone())
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap();
+        coverage.observe(&matching, &route.retrieval).unwrap();
+        assert_eq!(coverage, route.coverage);
+        assert_eq!(
+            coverage.matched_capabilities(),
+            route.closure.as_ref().unwrap().business
+        );
+        let recovery = DiscoveryRecovery::from_unmatched(
+            &coverage,
+            &matching,
+            &route.retrieval,
+            &BTreeMap::new(),
+            Vec::<String>::new(),
+        );
+        assert_eq!(
+            recovery.unmatched_slots,
+            route.recovery.unwrap().unmatched_slots
+        );
+        assert!(recovery
+            .render_unmatched_markdown()
+            .contains("matrix/record_read"));
+        assert!(recovery.render_unmatched_markdown().contains("rejected"));
+
+        // A later negative judgment cannot erase an earlier positive witness.
+        let previous = coverage.clone();
+        let slots = coverage
+            .slots_for_turn(&["Read selected records".into()])
+            .unwrap();
+        let matches = slots
+            .iter()
+            .map(|slot| matcher::CapabilityIntentMatch {
+                slot_id: slot.id.clone(),
+                capability_id: "matrix/record_read".into(),
+                choice: matcher::MatchChoice::DoesNotMatch,
+                probabilities: BTreeMap::from([
+                    ("direct_match".into(), 0.0),
+                    ("does_not_match".into(), 1.0),
+                    ("uncertain".into(), 0.0),
+                ]),
+                confidence: 1.0,
+            })
+            .collect();
+        let rejected = matcher::finish(slots, matches, &route.retrieval).unwrap();
+        coverage.observe(&rejected, &route.retrieval).unwrap();
+        assert_eq!(coverage, previous);
+        let roundtrip: crate::discovery_coverage::DiscoveryCoverage =
+            serde_json::from_value(serde_json::to_value(&coverage).unwrap()).unwrap();
+        assert_eq!(
+            roundtrip
+                .unresolved()
+                .map(|slot| slot.id.as_str())
+                .collect::<Vec<_>>(),
+            ["s1"]
+        );
+    }
 
     #[test]
     fn unauthorized_declared_prerequisite_blocks_exposure() {

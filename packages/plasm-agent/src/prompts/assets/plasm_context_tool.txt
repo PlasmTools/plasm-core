@@ -6,6 +6,6 @@
 
 Use `session_mode: "new"` once per workflow. Later needs use `session_mode: "extend"`, the same `logical_session_ref`, current `intent`, and current `effect_slots`; existing symbols remain unchanged.
 
-Jev classifies each retrieved capability against each effect slot. `ready` requires a selected capability for every slot before typed input-source projection and prerequisite closure. `insufficient` identifies every empty slot and publishes no partial language card. Searching rows searches data; another operation or input source requires extension. Empty additions on a complete extension preserve existing teaching.
+Jev classifies retrieved capabilities against current and unresolved slots. Matched capabilities receive typed input-source projection, prerequisite closure and teaching independently of unresolved slots. The response reports unresolved work and retrieved candidates rejected or judged uncertain. Continue using available teaching within the intent constraints; extend only for missing capabilities. Earlier slots, matches and symbols persist. Capability coverage is not task completion.
 
 Discovery does not choose records, authorize substitute work, acquire data, or execute effects. Ask when needed, then write taught provider and business calls as ordinary Plasm, submit to `plasm`, and execute reviewed `run_ref` plans with `plasm_run`.

@@ -302,7 +302,7 @@ export class AgentRuntime {
       await this.sessionManager.update(session);
       this.workflowSession = session;
       const recoveryMarkdown = routingRecoveryMarkdown(routing);
-      if (!routing.closure && !routing.matching.complete) {
+      if (!routing.closure) {
         await this.recordToolTrace("tool", "plasm_context", started, {
           intent, session_mode: mode, routing: JSON.stringify(routing),
           logical_session_ref: session.logicalSessionRef,
@@ -339,8 +339,7 @@ export class AgentRuntime {
         trace_id: activeTraceId() ?? span.spanContext().traceId,
       });
       const teachingMarkdown = formatPlasmContextMarkdown(session.logicalSessionRef, teaching.tsv, false);
-      if (recoveryMarkdown) throw new Error("complete routing unexpectedly carried recovery");
-      return [routing.intent_analysis, teachingMarkdown, ...routingExplanationLines(routing.matching)].filter(Boolean).join("\n\n");
+      return [routing.intent_analysis, teachingMarkdown, recoveryMarkdown].filter(Boolean).join("\n\n");
     });
   }
 

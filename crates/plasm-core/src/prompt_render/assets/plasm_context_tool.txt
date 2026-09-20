@@ -1,11 +1,11 @@
 **Returns a language card** with a session symbol table, selected business capabilities, declared prerequisites and input bindings. Call before `plasm` / `plasm_run`; this tool performs no acquisition or business calls.
 
 **Required semantic input:**
-- `intent`: the immutable original task instruction for this turn. It does NOT select the session.
-- `effect_slots`: every affirmative effect and explicitly requested information outcome, one complete statement per slot. A slot states work, not a tool name. Preserve branch and ordering context. Attach selection constraints and prohibitions to the effect they constrain; never merge independent effects or omit a downstream step as "context."
+- `intent`: the original task on `new`, and the current need on `extend`; the runtime preserves the original. It does not select the session.
+- `effect_slots`: every affirmative effect and explicitly requested information outcome, one complete statement per slot. Preserve branch, order, constraints and prohibitions.
 
-Use `session_mode: "new"` once per workflow. Ready creates `logical_session_ref` and fresh symbols. For later needs use `session_mode: "extend"`, the same ref, current `intent`, and current `effect_slots`; existing symbols remain unchanged.
+Use `session_mode: "new"` once per workflow. Later needs use `session_mode: "extend"`, the same `logical_session_ref`, current `intent`, and current `effect_slots`; existing symbols remain unchanged.
 
-Jev classifies each retrieved card against each supplied slot. `ready` requires at least one selected capability per slot before CGS input-source projection and prerequisite closure. `insufficient` identifies every empty slot and publishes no partial language card. Extend discovery when another operation or input source is needed; searching rows only searches data within taught capabilities. Empty additions on a complete extension preserve existing capabilities and bindings.
+Jev classifies retrieved capabilities against current and unresolved slots. Matched capabilities receive typed input-source projection, prerequisite closure and teaching independently of unresolved slots. The response reports unresolved work and retrieved candidates rejected or judged uncertain. Continue using available teaching within the intent constraints; extend only for missing capabilities. Earlier slots, matches and symbols persist. Capability coverage is not task completion.
 
-Discovery neither chooses the intended record nor authorizes substitute work or execution. Ask the user when needed, then write only the chosen program. Bind declared provider outputs into specified inputs using ordinary Plasm, submit it to `plasm` for review, and execute returned `run_ref` plans with `plasm_run`.
+Discovery does not choose records, authorize substitute work, acquire data, or execute effects. Ask when needed, then write taught provider and business calls as ordinary Plasm, submit to `plasm`, and execute reviewed `run_ref` plans with `plasm_run`.

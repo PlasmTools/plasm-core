@@ -1,7 +1,20 @@
 import { z } from "zod";
 import { workflowIntentSchema, intentProvenanceSchema } from "../runtime/session-contract.js";
 
-const capability = z.object({ catalog: z.string(), capability: z.string() });
+const capability = z.object({ catalog: z.string().min(1), capability: z.string().min(1) }).strict();
+const slot = z.object({ id: z.string().min(1), statement: workflowIntentSchema }).strict();
+export const discoveryCoverageSchema = z.object({
+  obligations: z.array(z.object({ slot, matched_capabilities: z.array(capability) }).strict()),
+}).strict().superRefine((coverage, ctx) => {
+  const statements = new Set<string>();
+  coverage.obligations.forEach((entry, index) => {
+    if (entry.slot.id !== `s${index}` || statements.has(entry.slot.statement)
+      || new Set(entry.matched_capabilities.map(capabilityKey)).size !== entry.matched_capabilities.length) {
+      ctx.addIssue({ code: "custom", message: "coverage has invalid slot identity or duplicate statements/matches" });
+    }
+    statements.add(entry.slot.statement);
+  });
+});
 export const prerequisiteClosureSchema = z.object({
   business: z.array(capability),
   input_sources: z.array(capability),
@@ -79,6 +92,8 @@ const routingSchema = z.object({
   intent_analysis: z.string().optional(),
   intent: workflowIntentSchema,
   pin_id: z.string().uuid(),
+  authorization: z.object({ catalogs: z.array(z.string()), capabilities: z.record(z.string(), z.array(z.string())) }).strict(),
+  coverage: discoveryCoverageSchema,
   retrieval: z.object({
     generation: z.string(),
     candidates: z.array(z.object({
@@ -107,7 +122,11 @@ const routingSchema = z.object({
   recovery: z.object({
     unmatched_slots: z.array(z.object({
       slot_id: z.string().min(1), statement: z.string().min(1),
-      admitted_candidate_ids: z.array(z.string()),
+      candidates: z.array(z.object({
+        reference: capability,
+        choice: z.enum(["does_not_match", "uncertain"]),
+        direct_match_probability: z.number().min(0).max(1),
+      }).strict()),
     }).strict()),
     available_catalogs: z.array(z.object({
       entry_id: z.string().min(1),
@@ -167,8 +186,43 @@ const routingSchema = z.object({
   if (!sameSet(routing.input_source_matching.selected.map(capabilityKey), requiredProviders)) {
     ctx.addIssue({ code: "custom", path: ["input_source_matching", "selected"], message: "selected input sources contradict match choices" });
   }
-  if (routing.matching.complete === Boolean(routing.recovery)) {
-    ctx.addIssue({ code: "custom", path: ["recovery"], message: "recovery must exist exactly when matching is incomplete" });
+  const obligations = new Map(routing.coverage.obligations.map((entry) => [entry.slot.id, entry]));
+  for (const slot of routing.matching.slots) {
+    if (obligations.get(slot.id)?.slot.statement !== slot.statement) {
+      ctx.addIssue({ code: "custom", path: ["coverage"], message: "matching changed an obligation" });
+    }
+  }
+  for (const entry of routing.matching.matches.filter((entry) => entry.choice === "direct_match")) {
+    const candidate = routing.retrieval.candidates.find((candidate) => candidate.id === entry.capability_id);
+    if (candidate && !obligations.get(entry.slot_id)?.matched_capabilities.some((ref) => capabilityKey(ref) === capabilityKey(candidate.reference))) {
+      ctx.addIssue({ code: "custom", path: ["coverage"], message: "coverage omitted a direct match" });
+    }
+  }
+  const unresolved = routing.coverage.obligations.filter((entry) => entry.matched_capabilities.length === 0);
+  if ((unresolved.length > 0) !== Boolean(routing.recovery)
+    || !sameSet(unresolved.map((entry) => entry.slot.id), routing.recovery?.unmatched_slots.map((entry) => entry.slot_id) ?? [])) {
+    ctx.addIssue({ code: "custom", path: ["recovery"], message: "recovery must preserve every unresolved obligation" });
+  }
+  for (const entry of routing.recovery?.unmatched_slots ?? []) {
+    if (obligations.get(entry.slot_id)?.slot.statement !== entry.statement) {
+      ctx.addIssue({ code: "custom", path: ["recovery"], message: "recovery changed an obligation" });
+    }
+    const judgments = routing.matching.matches.filter((match) => match.slot_id === entry.slot_id);
+    const expected = judgments.map((match) => {
+      const candidate = routing.retrieval.candidates.find((candidate) => candidate.id === match.capability_id);
+      return candidate && JSON.stringify([capabilityKey(candidate.reference), match.choice, match.probabilities.direct_match]);
+    });
+    if (!sameSet(expected.filter((key): key is string => Boolean(key)), entry.candidates.map((candidate) =>
+      JSON.stringify([capabilityKey(candidate.reference), candidate.choice, candidate.direct_match_probability])))) {
+      ctx.addIssue({ code: "custom", path: ["recovery"], message: "recovery judgments contradict matching" });
+    }
+  }
+  const permitted = (ref: z.infer<typeof capability>): boolean => routing.authorization.catalogs.includes(ref.catalog)
+    && (routing.authorization.capabilities[ref.catalog]?.includes(ref.capability) ?? true);
+  const closure = routing.closure;
+  if (routing.retrieval.candidates.some((candidate) => !permitted(candidate.reference))
+    || (closure && [...closure.business, ...closure.input_sources, ...closure.prerequisites].some((ref) => !permitted(ref)))) {
+    ctx.addIssue({ code: "custom", path: ["authorization"], message: "routing exposed an unauthorized capability" });
   }
 });
 
@@ -191,11 +245,21 @@ export function routingRecoveryMarkdown(routing: RoutingPacket["routing"]): stri
   const recovery = routing.recovery;
   if (!recovery) return null;
   const lines = [
-    `**plasm_context:** ${routing.matching.complete ? "matched" : "insufficient"}`,
+    `**plasm_context:** ${routing.closure ? "teaching available; unresolved discovery slots remain" : "unresolved discovery slots"}`,
     recovery.unmatched_slots.length
       ? "**Unmatched affirmative effect slots** (bounded packet result):"
       : "",
-    ...recovery.unmatched_slots.map((slot) => `- \`${slot.slot_id}\` — ${slot.statement}`),
+    ...recovery.unmatched_slots.flatMap((slot) => {
+      const candidates = [...slot.candidates].sort((left, right) => right.direct_match_probability - left.direct_match_probability
+        || capabilityKey(left.reference).localeCompare(capabilityKey(right.reference)));
+      return [
+        `- \`${slot.slot_id}\` — ${slot.statement}`,
+        ...(candidates.length ? candidates.slice(0, 3).map((candidate) =>
+          `  - \`${candidate.reference.catalog}/${candidate.reference.capability}\` — ${candidate.choice === "does_not_match" ? "rejected" : "uncertain"} (match probability ${candidate.direct_match_probability.toFixed(2)})`)
+          : ["  - No authorized candidates retrieved in this packet."]),
+        ...(candidates.length > 3 ? [`  - ${candidates.length - 3} other judgments in the routing receipt.`] : []),
+      ];
+    }),
     recovery.guidance,
     recovery.available_catalogs.length
       ? "**Available integrations** (descriptions for broader rediscovery):"

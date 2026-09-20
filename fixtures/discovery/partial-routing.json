@@ -1,0 +1,156 @@
+{
+  "routing": {
+    "intent_provenance": {
+      "nodes": [
+        {
+          "parent": null,
+          "intent": "Read selected records and publish them after inspection."
+        }
+      ]
+    },
+    "authorization": {
+      "catalogs": [
+        "matrix"
+      ],
+      "capabilities": {}
+    },
+    "intent_analysis": "",
+    "intent": "Read selected records and publish them after inspection.",
+    "pin_id": "11111111-1111-4111-8111-111111111111",
+    "retrieval": {
+      "generation": "fixture",
+      "candidates": [
+        {
+          "id": "matrix/record_read",
+          "reference": {
+            "catalog": "matrix",
+            "capability": "record_read"
+          },
+          "document": {
+            "capability": "record_read",
+            "entity": "Record",
+            "text": "Read selected records.",
+            "text_hash": "fixture",
+            "related_entities": []
+          },
+          "admissions": []
+        }
+      ],
+      "lexical_count": 1,
+      "vector_count": 0,
+      "lexical_truncated": false,
+      "vector_truncated": false,
+      "fusion_truncated": 0,
+      "relation_truncated": 0
+    },
+    "matching": {
+      "slots": [
+        {
+          "id": "s0",
+          "statement": "Read selected records"
+        },
+        {
+          "id": "s1",
+          "statement": "Publish the selected records after inspection"
+        }
+      ],
+      "matches": [
+        {
+          "slot_id": "s0",
+          "capability_id": "matrix/record_read",
+          "choice": "direct_match",
+          "probabilities": {
+            "direct_match": 1,
+            "does_not_match": 0,
+            "uncertain": 0
+          },
+          "confidence": 1
+        },
+        {
+          "slot_id": "s1",
+          "capability_id": "matrix/record_read",
+          "choice": "does_not_match",
+          "probabilities": {
+            "direct_match": 0,
+            "does_not_match": 1,
+            "uncertain": 0
+          },
+          "confidence": 1
+        }
+      ],
+      "complete": false,
+      "unmatched_slot_ids": [
+        "s1"
+      ],
+      "additional_capability_ids": [
+        "matrix/record_read"
+      ]
+    },
+    "coverage": {
+      "obligations": [
+        {
+          "slot": {
+            "id": "s0",
+            "statement": "Read selected records"
+          },
+          "matched_capabilities": [
+            {
+              "catalog": "matrix",
+              "capability": "record_read"
+            }
+          ]
+        },
+        {
+          "slot": {
+            "id": "s1",
+            "statement": "Publish the selected records after inspection"
+          },
+          "matched_capabilities": []
+        }
+      ]
+    },
+    "input_source_projection": [],
+    "input_source_matching": {
+      "matches": [],
+      "selected": []
+    },
+    "closure": {
+      "business": [
+        {
+          "catalog": "matrix",
+          "capability": "record_read"
+        }
+      ],
+      "input_sources": [],
+      "prerequisites": [],
+      "acquisitions": [],
+      "edges": []
+    },
+    "recovery": {
+      "unmatched_slots": [
+        {
+          "slot_id": "s1",
+          "statement": "Publish the selected records after inspection",
+          "candidates": [
+            {
+              "reference": {
+                "catalog": "matrix",
+                "capability": "record_read"
+              },
+              "choice": "does_not_match",
+              "direct_match_probability": 0
+            }
+          ]
+        }
+      ],
+      "available_catalogs": [],
+      "guidance": "Continue with available capabilities while retaining unresolved obligations."
+    }
+  },
+  "teaching": {
+    "tsv": "e1\tRecord",
+    "delta_refs": [
+      "matrix:Record"
+    ]
+  }
+}

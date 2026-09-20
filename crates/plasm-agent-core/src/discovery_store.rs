@@ -11,7 +11,10 @@ use plasm_core::catalog_il::{
 use plasm_core::prerequisites::{prerequisite_closure, CapabilityRef, DeploymentBindings};
 use plasm_core::CGS;
 use serde::{Deserialize, Serialize};
-use sqlx::{PgPool, Row};
+use sqlx::{Connection, Row};
+
+mod database;
+use database::DiscoveryDatabase;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Arc;
@@ -108,7 +111,7 @@ pub struct DiscoverySessionPin {
 
 #[derive(Clone)]
 pub struct DiscoveryStore {
-    pool: PgPool,
+    pool: DiscoveryDatabase,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -137,29 +140,50 @@ impl DiscoveryStore {
         session: &str,
     ) -> Result<crate::intent_provenance::IntentProvenance> {
         let value: serde_json::Value = sqlx::query_scalar("SELECT p.provenance FROM discovery_intent_provenance p JOIN discovery_session_pins s USING (session_id) WHERE session_id=$1 AND s.expires_at > now()")
-            .bind(session).fetch_one(&self.pool).await?;
+            .bind(session).fetch_one(&mut *self.pool.acquire().await?).await?;
         Ok(serde_json::from_value(value)?)
+    }
+
+    pub async fn discovery_coverage(
+        &self,
+        session: &str,
+    ) -> Result<crate::discovery_coverage::DiscoveryCoverage> {
+        let value: Option<serde_json::Value> = sqlx::query_scalar("SELECT p.coverage FROM discovery_intent_provenance p JOIN discovery_session_pins s USING (session_id) WHERE session_id=$1 AND s.expires_at > now()")
+            .bind(session).fetch_one(&mut *self.pool.acquire().await?).await?;
+        Ok(serde_json::from_value(value.context(
+            "session has no discovery coverage; open a new context",
+        )?)?)
     }
 
     /// Serialize ancestry commits on the existing session pin. A stale or rewritten
     /// chain cannot become the context for an exposed capability surface.
-    pub async fn commit_intent_provenance(
+    pub async fn commit_discovery_progress(
         &self,
         session: &str,
         provenance: &crate::intent_provenance::IntentProvenance,
+        coverage: &crate::discovery_coverage::DiscoveryCoverage,
         extending: bool,
     ) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
+        let mut connection = self.pool.acquire().await?;
+        let mut tx = connection.begin().await?;
         sqlx::query("SELECT session_id FROM discovery_session_pins WHERE session_id=$1 AND expires_at > now() FOR UPDATE")
             .bind(session).fetch_one(&mut *tx).await?;
-        let previous: Option<serde_json::Value> = sqlx::query_scalar(
-            "SELECT provenance FROM discovery_intent_provenance WHERE session_id=$1",
+        let previous: Option<(serde_json::Value, Option<serde_json::Value>)> = sqlx::query_as(
+            "SELECT provenance,coverage FROM discovery_intent_provenance WHERE session_id=$1",
         )
         .bind(session)
         .fetch_optional(&mut *tx)
         .await?;
-        if let Some(previous) = previous {
+        if let Some((previous, previous_coverage)) = previous {
             let previous = serde_json::from_value(previous)?;
+            let previous_coverage = serde_json::from_value(
+                previous_coverage
+                    .context("session has no discovery coverage; open a new context")?,
+            )?;
+            anyhow::ensure!(
+                coverage.is_continuation_of(&previous_coverage),
+                "discovery coverage rewrites or omits pinned obligations or matches"
+            );
             anyhow::ensure!(
                 provenance.is_continuation_of(&previous),
                 "intent provenance rewrites or omits pinned ancestry"
@@ -170,8 +194,8 @@ impl DiscoveryStore {
                 "session has no intent provenance; open a new context"
             );
         }
-        sqlx::query("INSERT INTO discovery_intent_provenance (session_id,provenance) VALUES ($1,$2) ON CONFLICT (session_id) DO UPDATE SET provenance=EXCLUDED.provenance")
-            .bind(session).bind(serde_json::to_value(provenance)?).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO discovery_intent_provenance (session_id,provenance,coverage) VALUES ($1,$2,$3) ON CONFLICT (session_id) DO UPDATE SET provenance=EXCLUDED.provenance,coverage=EXCLUDED.coverage")
+            .bind(session).bind(serde_json::to_value(provenance)?).bind(serde_json::to_value(coverage)?).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -192,16 +216,14 @@ impl DiscoveryStore {
     }
 
     pub async fn connect(url: &str) -> Result<Self> {
-        let pool = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(8)
-            .connect(url)
-            .await?;
+        let pool = DiscoveryDatabase::connect(url).await?;
         Ok(Self { pool })
     }
 
     /// Install the discovery schema explicitly; startup checks extension availability separately.
     pub async fn migrate(&self) -> Result<()> {
-        let mut transaction = self.pool.begin().await?;
+        let mut connection = self.pool.acquire().await?;
+        let mut transaction = connection.begin().await?;
         sqlx::query("SELECT pg_advisory_xact_lock(734901182)")
             .execute(&mut *transaction)
             .await?;
@@ -214,12 +236,13 @@ impl DiscoveryStore {
         sqlx::Executor::execute(&mut *transaction, include_str!("discovery_sufficiency.sql"))
             .await?;
         transaction.commit().await?;
+        drop(connection);
         self.verify_extension().await
     }
 
     pub async fn verify_extension(&self) -> Result<()> {
         sqlx::query("SELECT '[1,0]'::vector <=> '[1,0]'::vector")
-            .execute(&self.pool)
+            .execute(&mut *self.pool.acquire().await?)
             .await
             .context("discovery requires the pgvector extension in PostgreSQL")?;
         Ok(())
@@ -285,7 +308,8 @@ impl DiscoveryStore {
             catalogs.iter().map(|c| &c.revision).collect::<Vec<_>>(),
             &canonical_bindings,
         ))?);
-        let mut tx = self.pool.begin().await?;
+        let mut connection = self.pool.acquire().await?;
+        let mut tx = connection.begin().await?;
         sqlx::query("SELECT pg_advisory_xact_lock(734901183)")
             .execute(&mut *tx)
             .await?;
@@ -339,7 +363,8 @@ impl DiscoveryStore {
 
     /// Collect only expired, inactive generations; live pins are protected by foreign keys.
     pub async fn collect_retired(&self, before: chrono::DateTime<chrono::Utc>) -> Result<u64> {
-        let mut tx = self.pool.begin().await?;
+        let mut connection = self.pool.acquire().await?;
+        let mut tx = connection.begin().await?;
         sqlx::query("SELECT pg_advisory_xact_lock(734901183)")
             .execute(&mut *tx)
             .await?;
@@ -365,11 +390,11 @@ impl DiscoveryStore {
         let bindings: serde_json::Value =
             sqlx::query_scalar("SELECT bindings FROM discovery_generations WHERE generation_id=$1")
                 .bind(generation)
-                .fetch_optional(&self.pool)
+                .fetch_optional(&mut *self.pool.acquire().await?)
                 .await?
                 .context("unknown discovery generation")?;
         let rows = sqlx::query("SELECT g.entry_id,r.cgs,r.manifest,p.recipes FROM discovery_generation_catalogs g JOIN discovery_revisions r USING(revision_id) JOIN discovery_compiled_recipes p USING(revision_id) WHERE g.generation_id=$1 ORDER BY g.entry_id")
-            .bind(generation).fetch_all(&self.pool).await?;
+            .bind(generation).fetch_all(&mut *self.pool.acquire().await?).await?;
         let mut catalogs = BTreeMap::new();
         let mut compiled_catalogs = BTreeMap::new();
         for row in rows {
@@ -401,7 +426,7 @@ impl DiscoveryStore {
         expires_at: chrono::DateTime<chrono::Utc>,
     ) -> Result<()> {
         let actual: Option<String> = sqlx::query_scalar("INSERT INTO discovery_session_pins (session_id,generation_id,expires_at) VALUES ($1,$2,$3) ON CONFLICT (session_id) DO UPDATE SET expires_at=GREATEST(discovery_session_pins.expires_at,EXCLUDED.expires_at) WHERE discovery_session_pins.generation_id=EXCLUDED.generation_id RETURNING generation_id")
-            .bind(session).bind(generation).bind(expires_at).fetch_optional(&self.pool).await?;
+            .bind(session).bind(generation).bind(expires_at).fetch_optional(&mut *self.pool.acquire().await?).await?;
         if actual.is_none() {
             bail!("session is pinned to a different registry generation");
         }
@@ -415,13 +440,13 @@ impl DiscoveryStore {
         expires_at: chrono::DateTime<chrono::Utc>,
     ) -> Result<String> {
         let generation: Option<String> = sqlx::query_scalar("INSERT INTO discovery_session_pins (session_id,generation_id,expires_at) SELECT $1,generation_id,$2 FROM discovery_active WHERE deployment_id=$3 ON CONFLICT (session_id) DO UPDATE SET expires_at=GREATEST(discovery_session_pins.expires_at,EXCLUDED.expires_at) RETURNING generation_id")
-            .bind(session).bind(expires_at).bind(deployment).fetch_optional(&self.pool).await?;
+            .bind(session).bind(expires_at).bind(deployment).fetch_optional(&mut *self.pool.acquire().await?).await?;
         generation.context("no active discovery generation")
     }
 
     pub async fn pinned_generation(&self, session: &str) -> Result<String> {
         sqlx::query_scalar("SELECT generation_id FROM discovery_session_pins WHERE session_id=$1 AND expires_at > now()")
-            .bind(session).fetch_optional(&self.pool).await?.context("discovery session pin missing or expired")
+            .bind(session).fetch_optional(&mut *self.pool.acquire().await?).await?.context("discovery session pin missing or expired")
     }
 
     pub async fn refresh_session_pin(&self, pin: &DiscoverySessionPin) -> Result<()> {
@@ -438,7 +463,7 @@ impl DiscoveryStore {
             .bind(&pin.pin_id)
             .bind(&pin.generation)
             .bind(expires_at)
-            .execute(&self.pool)
+            .execute(&mut *self.pool.acquire().await?)
             .await
             .context("refresh discovery session lease")?;
         if refreshed.rows_affected() != 1 {
@@ -459,7 +484,7 @@ impl DiscoveryStore {
         let profile = EmbeddingProfile::default();
         let cache_key = content_hash(&serde_json::to_vec(&(intent, &profile))?);
         let cached: Option<String> = sqlx::query_scalar("SELECT embedding::text FROM discovery_intent_embeddings WHERE cache_key=$1 AND profile=$2")
-            .bind(&cache_key).bind(serde_json::to_value(&profile)?).fetch_optional(&self.pool).await?;
+            .bind(&cache_key).bind(serde_json::to_value(&profile)?).fetch_optional(&mut *self.pool.acquire().await?).await?;
         let vector = if let Some(cached) = cached {
             cached
         } else {
@@ -468,7 +493,7 @@ impl DiscoveryStore {
                 .await?;
             let vector = vector_literal(vectors.first().context("missing intent embedding")?)?;
             sqlx::query("INSERT INTO discovery_intent_embeddings VALUES ($1,$2,$3::text::vector) ON CONFLICT DO NOTHING")
-                .bind(&cache_key).bind(serde_json::to_value(&profile)?).bind(&vector).execute(&self.pool).await?;
+                .bind(&cache_key).bind(serde_json::to_value(&profile)?).bind(&vector).execute(&mut *self.pool.acquire().await?).await?;
             vector
         };
         self.retrieve_vector(generation, intent, &vector, allowed)
@@ -478,7 +503,7 @@ impl DiscoveryStore {
     pub async fn cached_selector_envelope(&self, cache_key: &str) -> Result<Option<String>> {
         sqlx::query_scalar("SELECT envelope FROM discovery_selector_cache WHERE cache_key=$1")
             .bind(cache_key)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut *self.pool.acquire().await?)
             .await
             .context("read selector cache")
     }
@@ -489,7 +514,7 @@ impl DiscoveryStore {
         )
         .bind(cache_key)
         .bind(envelope)
-        .execute(&self.pool)
+        .execute(&mut *self.pool.acquire().await?)
         .await
         .context("write selector cache")?;
         Ok(())
@@ -508,7 +533,7 @@ impl DiscoveryStore {
                 bail!("exposed capability is no longer authorized");
             }
             let row = sqlx::query("SELECT c.*,g.entry_id FROM discovery_capabilities c JOIN discovery_generation_catalogs g USING (revision_id) WHERE g.generation_id=$1 AND g.entry_id=$2 AND c.capability=$3")
-                .bind(&receipt.generation).bind(&reference.catalog).bind(&reference.capability).fetch_optional(&self.pool).await?.context("exposed capability does not belong to the pinned generation")?;
+                .bind(&receipt.generation).bind(&reference.catalog).bind(&reference.capability).fetch_optional(&mut *self.pool.acquire().await?).await?.context("exposed capability does not belong to the pinned generation")?;
             let mut candidate = candidate_from_row(&row)?;
             candidate.admissions.insert("already_exposed".into());
             existing.insert(candidate.id.clone(), candidate);
@@ -543,9 +568,9 @@ impl DiscoveryStore {
         let restrictions = serde_json::to_value(&allowed.capabilities)?;
         let allowed: Vec<_> = allowed.catalogs.iter().cloned().collect();
         let mut lexical = sqlx::query("WITH terms AS (SELECT unnest(tsvector_to_array(to_tsvector('english',$3))) AS term), q AS (SELECT to_tsquery('english',string_agg(quote_literal(term),' | ')) AS query FROM terms) SELECT c.*,g.entry_id FROM discovery_capabilities c JOIN discovery_generation_catalogs g USING (revision_id) CROSS JOIN q WHERE g.generation_id=$1 AND g.entry_id=ANY($2) AND (NOT ($5::jsonb ? g.entry_id) OR ($5::jsonb -> g.entry_id) ? c.capability) AND c.search @@ q.query ORDER BY ts_rank_cd(c.search,q.query) DESC,c.revision_id,c.capability LIMIT $4")
-            .bind(generation).bind(&allowed).bind(intent).bind(CHANNEL_LIMIT + 1).bind(&restrictions).fetch_all(&self.pool).await?;
+            .bind(generation).bind(&allowed).bind(intent).bind(CHANNEL_LIMIT + 1).bind(&restrictions).fetch_all(&mut *self.pool.acquire().await?).await?;
         let mut vector = sqlx::query("SELECT c.*,g.entry_id FROM discovery_capabilities c JOIN discovery_generation_catalogs g USING (revision_id) WHERE g.generation_id=$1 AND g.entry_id=ANY($2) AND (NOT ($5::jsonb ? g.entry_id) OR ($5::jsonb -> g.entry_id) ? c.capability) ORDER BY c.embedding <=> $3::text::vector,c.revision_id,c.capability LIMIT $4")
-            .bind(generation).bind(&allowed).bind(vector).bind(CHANNEL_LIMIT + 1).bind(&restrictions).fetch_all(&self.pool).await?;
+            .bind(generation).bind(&allowed).bind(vector).bind(CHANNEL_LIMIT + 1).bind(&restrictions).fetch_all(&mut *self.pool.acquire().await?).await?;
         let lexical_truncated = lexical.len() > CHANNEL_LIMIT as usize;
         let vector_truncated = vector.len() > CHANNEL_LIMIT as usize;
         lexical.truncate(CHANNEL_LIMIT as usize);
@@ -585,7 +610,7 @@ impl DiscoveryStore {
         let mut expanded = BTreeMap::new();
         for (catalog, entity) in relation_targets {
             let rows = sqlx::query("SELECT c.*,g.entry_id FROM discovery_capabilities c JOIN discovery_generation_catalogs g USING (revision_id) WHERE g.generation_id=$1 AND g.entry_id=ANY($2) AND g.entry_id=$3 AND c.entity=$4 AND (NOT ($5::jsonb ? g.entry_id) OR ($5::jsonb -> g.entry_id) ? c.capability) ORDER BY c.revision_id,c.capability")
-                .bind(generation).bind(&allowed).bind(catalog).bind(entity).bind(&restrictions).fetch_all(&self.pool).await?;
+                .bind(generation).bind(&allowed).bind(catalog).bind(entity).bind(&restrictions).fetch_all(&mut *self.pool.acquire().await?).await?;
             for row in rows {
                 let mut candidate = candidate_from_row(&row)?;
                 if admitted.insert(candidate.id.clone()) {
@@ -864,38 +889,42 @@ mod tests {
                 ["Read selected records".into()],
             )
             .unwrap();
+        let mut coverage = crate::discovery_coverage::DiscoveryCoverage::default();
+        coverage
+            .slots_for_turn(&["Read selected records".into()])
+            .unwrap();
         store
-            .commit_intent_provenance(&session, &root, false)
+            .commit_discovery_progress(&session, &root, &coverage, false)
             .await
             .unwrap();
         let child = root
             .derived("Resolve the required relation".into())
             .unwrap();
         store
-            .commit_intent_provenance(&session, &child, true)
+            .commit_discovery_progress(&session, &child, &coverage, true)
             .await
             .unwrap();
         store
-            .commit_intent_provenance(&session, &child, true)
+            .commit_discovery_progress(&session, &child, &coverage, true)
             .await
             .unwrap();
         assert_eq!(store.intent_provenance(&session).await.unwrap(), child);
         assert!(store
-            .commit_intent_provenance(&session, &root, true)
+            .commit_discovery_progress(&session, &root, &coverage, true)
             .await
             .is_err());
         let rewritten =
             crate::intent_provenance::IntentProvenance::from_turns(["Read all records".into()])
                 .unwrap();
         assert!(store
-            .commit_intent_provenance(&session, &rewritten, true)
+            .commit_discovery_progress(&session, &rewritten, &coverage, true)
             .await
             .is_err());
         let left = child.derived("Left next need".into()).unwrap();
         let right = child.derived("Right next need".into()).unwrap();
         let (left_result, right_result) = tokio::join!(
-            store.commit_intent_provenance(&session, &left, true),
-            store.commit_intent_provenance(&session, &right, true),
+            store.commit_discovery_progress(&session, &left, &coverage, true),
+            store.commit_discovery_progress(&session, &right, &coverage, true),
         );
         assert_ne!(
             left_result.is_ok(),
@@ -904,6 +933,16 @@ mod tests {
         );
         let winner = if left_result.is_ok() { left } else { right };
         assert_eq!(store.intent_provenance(&session).await.unwrap(), winner);
+        assert_eq!(store.discovery_coverage(&session).await.unwrap(), coverage);
+        assert!(store
+            .commit_discovery_progress(
+                &session,
+                &winner,
+                &crate::discovery_coverage::DiscoveryCoverage::default(),
+                true
+            )
+            .await
+            .is_err());
         let next = store
             .import(
                 "matrix-deployment",
@@ -1032,7 +1071,7 @@ mod tests {
         let saved_expiry: chrono::DateTime<chrono::Utc> =
             sqlx::query_scalar("SELECT expires_at FROM discovery_session_pins WHERE session_id=$1")
                 .bind(&session)
-                .fetch_one(&store.pool)
+                .fetch_one(&mut *store.pool.acquire().await.unwrap())
                 .await
                 .unwrap();
         assert_eq!(
@@ -1057,7 +1096,7 @@ mod tests {
         let renewed: chrono::DateTime<chrono::Utc> =
             sqlx::query_scalar("SELECT expires_at FROM discovery_session_pins WHERE session_id=$1")
                 .bind(&lease_pin.pin_id)
-                .fetch_one(&store.pool)
+                .fetch_one(&mut *store.pool.acquire().await.unwrap())
                 .await
                 .unwrap();
         assert!(renewed > chrono::Utc::now() + chrono::Duration::hours(23));
@@ -1069,7 +1108,7 @@ mod tests {
             .await
             .is_err());
         sqlx::query("UPDATE discovery_session_pins SET expires_at=now() - interval '1 second' WHERE session_id=$1")
-            .bind(&lease_pin.pin_id).execute(&store.pool).await.unwrap();
+            .bind(&lease_pin.pin_id).execute(&mut *store.pool.acquire().await.unwrap()).await.unwrap();
         assert!(
             store.refresh_session_pin(&lease_pin).await.is_err(),
             "expired sessions must not be resurrected"
@@ -1077,7 +1116,7 @@ mod tests {
         assert!(store.pinned_generation(&lease_pin.pin_id).await.is_err());
         sqlx::query("DELETE FROM discovery_session_pins WHERE session_id=$1")
             .bind(&lease_pin.pin_id)
-            .execute(&store.pool)
+            .execute(&mut *store.pool.acquire().await.unwrap())
             .await
             .unwrap();
         let mut empty_candidates = empty;
@@ -1107,7 +1146,7 @@ mod tests {
         )
         .bind(b"{}".as_slice())
         .bind(&generation)
-        .execute(&store.pool)
+        .execute(&mut *store.pool.acquire().await.unwrap())
         .await
         .unwrap();
         let error = store

@@ -22,6 +22,7 @@ pub mod catalog_reload;
 pub mod catalog_runtime;
 pub mod cli_builder;
 pub mod control_plane_http;
+pub mod discovery_coverage;
 pub mod discovery_embeddings;
 pub mod discovery_matcher;
 pub mod discovery_recovery;

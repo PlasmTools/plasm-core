@@ -292,10 +292,6 @@ async fn post_terminal_discover(
         "Discovery: no additional capability matches.\n\n".to_owned()
     };
     if let Some(closure) = &receipt.closure {
-        debug_assert!(
-            receipt.recovery.is_none(),
-            "complete route cannot carry recovery"
-        );
         let registry = match st.catalog.pinned_view(&receipt.retrieval.generation).await {
             Ok(view) => view.snapshot(),
             Err(error) => {

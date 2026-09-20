@@ -2,9 +2,9 @@
 
 Plan from the current requirement, taught symbols and observed results. Stop with no tool call when observations establish every requested effect. Intermediate results alone are not completion.
 
-1. Call `plasm_context` with `session_mode: "new"`, the original `intent`, and one `effect_slots` entry for every affirmative effect or requested information outcome. Ready opens the language card and `logical_session_ref`.
-2. You own conversational decisions. Capabilities do not settle the user’s choice or authorize execution. On `insufficient`, report every unmatched slot; no partial teaching was published. Searching rows searches data; another operation or input source requires discovery extension. Routing errors indicate operational failure.
-3. One workflow uses one `logical_session_ref`. Reuse it for `plasm` / `plasm_run`. Extend with the current intent and effect slots; the runtime preserves the original intent and existing symbols. Repair parse errors in the same session. Intent does not select the session.
+1. Call `plasm_context` with `session_mode: "new"`, the original `intent`, and one `effect_slots` entry for every affirmative effect or requested information outcome. Matched capabilities open the language card and `logical_session_ref`, even while other slots remain unresolved.
+2. You own conversational decisions. Teaching does not authorize execution. Use available capabilities within inherited constraints; keep unresolved work explicit. Routing errors are operational failures.
+3. One workflow uses one `logical_session_ref`. Reuse it for `plasm` / `plasm_run`. Extend only for current discovery needs; the runtime preserves intent ancestry, unresolved slots and existing symbols. Repair parse errors in the same session. Intent does not select the session.
 4. Follow declared prerequisites and input bindings in the card. Write acquisition as ordinary calls, binding provider outputs into consumer inputs. Discovery and teaching perform no acquisition.
 5. Submit the program to `plasm`. Clean reads may execute directly; a returned `run_ref` identifies a reviewed plan for `plasm_run`.
 

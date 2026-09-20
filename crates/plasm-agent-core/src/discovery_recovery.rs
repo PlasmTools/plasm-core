@@ -1,26 +1,36 @@
 //! Host-derived recovery after bounded capability-to-intent matching.
-use crate::discovery_matcher::CapabilityMatchReceipt;
+use crate::discovery_coverage::DiscoveryCoverage;
+use crate::discovery_matcher::{CapabilityMatchReceipt, MatchChoice};
+use crate::discovery_store::RetrievalReceipt;
+use plasm_core::prerequisites::CapabilityRef;
 use plasm_core::schema::CGS;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const RECOVERY_GUIDANCE: &str = "No matching authorized retrieved capability was found for every affirmative effect slot above. The host withheld the entire candidate teaching set: partial slot coverage is not readiness. This is a bounded packet result, not proof that the wider task is impossible. Widen discovery with plasm_context session_mode extend and the same logical_session_ref when a session exists, or session_mode new only when none exists.";
+pub const RECOVERY_GUIDANCE: &str = "These slots remain unresolved; capability coverage is not task completion. Use available teaching for work whose inputs and intent constraints are satisfied. Previously taught capabilities remain available. Extend the same logical_session_ref for missing capabilities; inherited conditions and ordering still apply. No candidates means retrieval found none in this bounded packet. Rejected candidates were retrieved but judged not to match: inspect their documented constraints rather than repeatedly paraphrasing the same request. Uncertain judgments do not establish a match.";
 const MAX_DESCRIPTION_BYTES: usize = 720;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct CandidateJudgment {
+    pub reference: CapabilityRef,
+    pub choice: MatchChoice,
+    pub direct_match_probability: f64,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct CatalogAppDescription {
     pub entry_id: String,
     pub description: String,
 }
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct UnmatchedEffectSlot {
     pub slot_id: String,
     pub statement: String,
-    pub admitted_candidate_ids: Vec<String>,
+    pub candidates: Vec<CandidateJudgment>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct DiscoveryRecovery {
     pub unmatched_slots: Vec<UnmatchedEffectSlot>,
@@ -30,23 +40,32 @@ pub struct DiscoveryRecovery {
 
 impl DiscoveryRecovery {
     pub fn from_unmatched(
+        coverage: &DiscoveryCoverage,
         matching: &CapabilityMatchReceipt,
+        retrieval: &RetrievalReceipt,
         catalogs: &BTreeMap<String, CGS>,
         allowed_catalog_ids: impl IntoIterator<Item = impl AsRef<str>>,
     ) -> Self {
-        let unmatched: BTreeSet<_> = matching.unmatched_slot_ids.iter().collect();
-        let unmatched_slots = matching
-            .slots
-            .iter()
-            .filter(|slot| unmatched.contains(&slot.id))
+        let unmatched_slots = coverage
+            .unresolved()
             .map(|slot| UnmatchedEffectSlot {
                 slot_id: slot.id.clone(),
                 statement: slot.statement.clone(),
-                admitted_candidate_ids: matching
+                candidates: matching
                     .matches
                     .iter()
                     .filter(|matched| matched.slot_id == slot.id)
-                    .map(|matched| matched.capability_id.clone())
+                    .map(|matched| CandidateJudgment {
+                        reference: retrieval
+                            .candidates
+                            .iter()
+                            .find(|candidate| candidate.id == matched.capability_id)
+                            .expect("validated match candidate")
+                            .reference
+                            .clone(),
+                        choice: matched.choice.clone(),
+                        direct_match_probability: matched.probabilities["direct_match"],
+                    })
                     .collect(),
             })
             .collect();
@@ -67,7 +86,7 @@ impl DiscoveryRecovery {
     }
     pub fn render_unmatched_markdown(&self) -> String {
         let mut lines = vec![
-            "**Capability matching is insufficient** (no partial teaching was published)."
+            "**Unresolved discovery slots** (matched capabilities can be taught independently)."
                 .to_owned(),
         ];
         for slot in &self.unmatched_slots {
@@ -75,6 +94,36 @@ impl DiscoveryRecovery {
                 "- No matching authorized retrieved capability for effect slot `{}`: {}",
                 slot.slot_id, slot.statement
             ));
+            let mut candidates: Vec<_> = slot.candidates.iter().collect();
+            candidates.sort_by(|left, right| {
+                right
+                    .direct_match_probability
+                    .total_cmp(&left.direct_match_probability)
+                    .then(left.reference.cmp(&right.reference))
+            });
+            if candidates.is_empty() {
+                lines.push("No authorized candidates retrieved in this packet.".into());
+            } else {
+                for candidate in candidates.iter().take(3) {
+                    let judgment = match candidate.choice {
+                        MatchChoice::DoesNotMatch => "rejected",
+                        MatchChoice::Uncertain => "uncertain",
+                        MatchChoice::DirectMatch => "matched",
+                    };
+                    lines.push(format!(
+                        "  - `{}/{}` — {judgment} (match probability {:.2})",
+                        candidate.reference.catalog,
+                        candidate.reference.capability,
+                        candidate.direct_match_probability
+                    ));
+                }
+                if candidates.len() > 3 {
+                    lines.push(format!(
+                        "  - {} other judgments in the routing receipt.",
+                        candidates.len() - 3
+                    ));
+                }
+            }
         }
         lines.push(self.guidance.clone());
         lines.join("\n\n")
