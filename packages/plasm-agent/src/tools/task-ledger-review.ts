@@ -55,6 +55,7 @@ export const taskLedgerReviewVerdictSchema = z.object({
   selection_constraint_coverage: z.enum(["satisfied", "unsatisfied"]),
   selection_constraint_basis: z.enum([
     "constraints_verified",
+    "no_effect_mutation",
     "no_selection_constraints",
     "unresolved",
   ]),
@@ -75,13 +76,14 @@ export const taskLedgerReviewVerdictSchema = z.object({
   }
   if (
     verdict.selection_constraint_coverage === "satisfied" &&
-    verdict.selection_constraint_basis === "no_selection_constraints" &&
+    (verdict.selection_constraint_basis === "no_effect_mutation" ||
+      verdict.selection_constraint_basis === "no_selection_constraints") &&
     proofCount !== 0
   ) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["selection_constraints"],
-      message: "no_selection_constraints requires an empty proof list",
+      message: `${verdict.selection_constraint_basis} requires an empty proof list`,
     });
   }
   if (
@@ -443,7 +445,7 @@ export const TASK_LEDGER_REVIEW_LITURGY = [
   "1. Whether negative evidence is sufficient for the claims it supports, including whether a search was exhaustive or targeted.",
   "2. Whether completed operations satisfy the requested roles in the instruction.",
   "3. Whether unresolved obligations permit the proposed action.",
-  "4. For a proposed plasm_run, enumerate every original selection constraint that narrows which records receive an effect. Every such constraint must have acquired evidence, and the exact reviewed plan must visibly constrain the mutation set through dataflow from that evidence. Use `constraints_verified` with one proof entry per constraint. Use `no_selection_constraints` with an empty list only after establishing that the original instruction has no selection constraints; this is vacuously satisfied. Otherwise use unresolved/unsatisfied and choose continue. Merely mentioning a constraint, recording an interpretation, or performing an independent read that does not feed the mutation is not sufficient. If the observations do not expose the exact plan for the proposed run_ref, choose continue.",
+  "4. For a proposed plasm_run that applies a requested effect, enumerate every original selection constraint that narrows which records receive that effect. Every such constraint must have acquired evidence, and the exact reviewed plan must visibly constrain the mutation set through dataflow from that evidence. Use `constraints_verified` with one proof entry per constraint. Use `no_effect_mutation` with an empty list only when the exact proposed plan performs prerequisite acquisition or session setup but applies no requested effect. Use `no_selection_constraints` with an empty list only when the plan applies a requested effect and the original instruction has no selection constraints; these cases are vacuously satisfied. Otherwise use unresolved/unsatisfied and choose continue. Merely mentioning a constraint, recording an interpretation, or performing an independent read that does not feed the mutation is not sufficient. If the observations do not expose the exact plan for the proposed run_ref, choose continue.",
   "",
   "A nonempty remaining_work list is not automatic failure. Do not invent a new success path.",
 ].join("\n");
@@ -457,5 +459,5 @@ export const TASK_LEDGER_REVIEW_ACTOR_LITURGY = [
   "",
   "Consequential `plasm_run` and finish proposals (`complete_task` / `submit_answer`) are reviewed in a separate seat against the instruction, the current ledger snapshot, and recent Plasm observations. The host does not invent obligations or judge the domain. A review that does not allow the proposal returns a tool error; that is not completion.",
   "",
-  "Before proposing `plasm_run`, acquire evidence for all original selection constraints and make that evidence constrain the mutation set through program dataflow. Mentioning a constraint or performing an unrelated lookup does not satisfy this invariant.",
+  "Before proposing a `plasm_run` that applies a requested effect, acquire evidence for all original selection constraints and make that evidence constrain the mutation set through program dataflow. Mentioning a constraint or performing an unrelated lookup does not satisfy this invariant. Prerequisite acquisition and session-setup plans may run before that proof exists when they apply no requested effect.",
 ].join("\n");

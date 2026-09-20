@@ -278,6 +278,18 @@ const coveredSelection = parseTaskLedgerReviewVerdict({
 assert.equal(coveredSelection.ok, true);
 if (!coveredSelection.ok) throw new Error("expected covered selection verdict");
 assert.equal(reviewAllowsProposedAction(coveredSelection.verdict, "plasm_run"), true);
+
+const acquisitionOnly = parseTaskLedgerReviewVerdict({
+  ...allowVerdict,
+  selection_constraint_basis: "no_effect_mutation",
+});
+assert.equal(acquisitionOnly.ok, true);
+if (!acquisitionOnly.ok) throw new Error("expected prerequisite-acquisition verdict");
+assert.equal(
+  reviewAllowsProposedAction(acquisitionOnly.verdict, "plasm_run"),
+  true,
+  "a stateful prerequisite-acquisition plan must not deadlock its later selector proof",
+);
 assert.equal(
   reviewAllowsProposedAction(
     {
