@@ -15,7 +15,7 @@ const plasmContextInputSchema = z.object({
     .string()
     .min(1)
     .describe(
-      "The original user intent on new; the current business need on extend. The runtime preserves the original intent with every extension.",
+      "The current intent for this discovery turn. The runtime appends it to the workflow provenance chain and preserves ancestor constraints.",
     ),
   effect_slots: z
     .array(z.string().trim().min(1))

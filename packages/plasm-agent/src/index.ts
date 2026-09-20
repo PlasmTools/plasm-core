@@ -241,9 +241,11 @@ export type { AgentTurnResult, PlasmAgentConfig } from "./runtime/plasm-agent.js
 
 export {
   formatLogicalSessionWireRef,
-  mintLogicalSessionId,
   parseLogicalSessionWireRef,
 } from "./runtime/logical-session.js";
+
+export { deriveIntent, intentProvenanceSchema, workflowIntentSchema, logicalSessionRefSchema, sessionIdentitySchema } from "./runtime/session-contract.js";
+export type { IntentProvenance, WorkflowIntent, LogicalSessionRef, SessionIdentity } from "./runtime/session-contract.js";
 
 export { createPlasmTools } from "./tools/plasm-tools.js";
 export type { PlasmTools } from "./tools/plasm-tools.js";

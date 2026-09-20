@@ -1,7 +1,8 @@
 import { z } from "zod";
+import { workflowIntentSchema, intentProvenanceSchema } from "../runtime/session-contract.js";
 
 const capability = z.object({ catalog: z.string(), capability: z.string() });
-const closure = z.object({
+export const prerequisiteClosureSchema = z.object({
   business: z.array(capability),
   input_sources: z.array(capability),
   prerequisites: z.array(capability),
@@ -74,8 +75,9 @@ function validateProbabilities(
 }
 
 const routingSchema = z.object({
+  intent_provenance: intentProvenanceSchema,
   intent_analysis: z.string().optional(),
-  intent: z.string(),
+  intent: workflowIntentSchema,
   pin_id: z.string().uuid(),
   retrieval: z.object({
     generation: z.string(),
@@ -101,7 +103,7 @@ const routingSchema = z.object({
     }).strict()),
     selected: z.array(capability),
   }).strict(),
-  closure: closure.nullable(),
+  closure: prerequisiteClosureSchema.nullable(),
   recovery: z.object({
     unmatched_slots: z.array(z.object({
       slot_id: z.string().min(1), statement: z.string().min(1),
@@ -140,7 +142,7 @@ const routingSchema = z.object({
   }
   const unmatched = [...slotIds].filter((slotId) => !directSlots.has(slotId));
   if (routing.matching.complete !== (unmatched.length === 0)
-      || !sameSet(routing.matching.unmatched_slot_ids, unmatched)) {
+    || !sameSet(routing.matching.unmatched_slot_ids, unmatched)) {
     ctx.addIssue({ code: "custom", path: ["matching"], message: "completion fields contradict match choices" });
   }
   if (routing.matching.additional_capability_ids.some((id) => !directCandidates.has(id))) {
@@ -176,7 +178,7 @@ export const routingPacketSchema = z.object({
   teaching: z.object({ tsv: z.string(), delta_refs: z.array(z.string()) }).nullable(),
 });
 export type RoutingPacket = z.infer<typeof routingPacketSchema>;
-export type PrerequisiteClosure = z.infer<typeof closure>;
+export type PrerequisiteClosure = z.infer<typeof prerequisiteClosureSchema>;
 
 export function routingExplanationLines(matching: RoutingPacket["routing"]["matching"]): string[] {
   return matching.complete

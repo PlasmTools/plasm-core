@@ -64,7 +64,6 @@
     "smoke:vercel-handler": "node scripts/run-plasm-cli.mjs scripts/smoke-vercel-handler.ts",
     "test:resolve-app-options": "node scripts/run-plasm-cli.mjs scripts/test-resolve-app-options.ts",
     "test:context-routing": "node scripts/run-plasm-cli.mjs scripts/test-context-routing.ts",
-    "test:session-intent-key": "node scripts/run-plasm-cli.mjs scripts/test-session-intent-key.ts",
     "test:run-ref-not-terminal": "node scripts/run-plasm-cli.mjs scripts/test-run-ref-not-terminal.ts",
     "test:invalid-tool-input-retry": "node scripts/run-plasm-cli.mjs scripts/test-invalid-tool-input-retry.ts",
     "test:generation-length-continue": "node scripts/run-plasm-cli.mjs scripts/test-generation-length-continue.ts",
@@ -81,7 +80,11 @@
     "test:live-transport-infallible": "node scripts/run-plasm-cli.mjs scripts/test-live-transport-infallible.ts",
     "agent": "node scripts/run-plasm-cli.mjs scripts/run-agent.ts",
     "dev": "node scripts/run-plasm-cli.mjs scripts/dev-server.ts",
-    "plasm:dev": "npm run dev"
+    "plasm:dev": "npm run dev",
+    "test:session-contract": "node scripts/run-plasm-cli.mjs scripts/test-session-contract.ts",
+    "test:session-extension": "node scripts/run-plasm-cli.mjs scripts/test-session-extension.ts",
+    "test:session-postgres": "node scripts/run-plasm-cli.mjs scripts/test-session-postgres.ts",
+    "test:intent-native": "node scripts/run-plasm-cli.mjs scripts/test-intent-native.ts"
   },
   "dependencies": {
     "@ai-sdk/otel": "1.0.14",

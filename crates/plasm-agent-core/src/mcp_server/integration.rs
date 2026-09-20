@@ -1269,7 +1269,9 @@ async fn plasm_run_page_handle_through_handler() {
         .register_routed_session(
             crate::session_identity::LogicalSessionId(logical_uuid),
             "",
-            "page handler e2e",
+            &crate::intent_provenance::IntentProvenance::from_turns(["page handler e2e".into()])
+                .unwrap(),
+            None,
         )
         .await
         .expect("register logical session");
@@ -1382,7 +1384,11 @@ async fn plasm_read_run_artifact_matches_resources_read() {
             .register_routed_session(
                 crate::session_identity::LogicalSessionId(logical_uuid),
                 "",
-                "artifact read parity",
+                &crate::intent_provenance::IntentProvenance::from_turns([
+                    "artifact read parity".into()
+                ])
+                .unwrap(),
+                None,
             )
             .await
             .expect("register logical session");

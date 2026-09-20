@@ -120,25 +120,16 @@ export function createOperatorRoutes(ctx: OperatorRouteContext): OperatorHandler
         agentRoot: ctx.agentRoot,
         tenantScope: ctx.tenantScope ?? "local",
       });
-      const intents = await store.listIntents();
-      const sessions = await Promise.all(
-        intents.map(async (intent) => {
-          const state = await store.get(intent);
-          if (!state) return null;
-          return {
-            intent: state.intent,
-            logicalSessionRef: state.logicalSessionRef,
-            logicalSessionId: state.logicalSessionId,
-            waveCount: state.waves.length,
-            seedCount: state.seeds.length,
-            planCommitCount: state.planCommits.length,
-            updatedAt: state.updatedAt,
-          };
-        }),
-      );
-      return {
-        sessions: sessions.filter((s): s is NonNullable<typeof s> => s !== null),
-      };
+      const states = await store.listSessions();
+      return { sessions: states.map((state) => ({
+        intent: state.intent,
+        logicalSessionRef: state.logicalSessionRef,
+        logicalSessionId: state.logicalSessionId,
+        waveCount: state.waves.length,
+        seedCount: state.seeds.length,
+        planCommitCount: state.planCommits.length,
+        updatedAt: state.updatedAt,
+      })) };
     },
 
     async listPlans() {
@@ -146,11 +137,9 @@ export function createOperatorRoutes(ctx: OperatorRouteContext): OperatorHandler
         agentRoot: ctx.agentRoot,
         tenantScope: ctx.tenantScope ?? "local",
       });
-      const intents = await store.listIntents();
+      const states = await store.listSessions();
       const plans = [];
-      for (const intent of intents) {
-        const state = await store.get(intent);
-        if (!state) continue;
+      for (const state of states) {
         for (const commit of state.planCommits) {
           plans.push({
             intent: state.intent,
@@ -171,11 +160,10 @@ export function createOperatorRoutes(ctx: OperatorRouteContext): OperatorHandler
         agentRoot: ctx.agentRoot,
         tenantScope: ctx.tenantScope ?? "local",
       });
-      const intents = await store.listIntents();
+      const states = await store.listSessions();
       let planCommitCount = 0;
-      for (const intent of intents) {
-        const state = await store.get(intent);
-        planCommitCount += state?.planCommits.length ?? 0;
+      for (const state of states) {
+        planCommitCount += state.planCommits.length;
       }
       const native = isNativeEngineAvailable();
       return {
@@ -183,7 +171,7 @@ export function createOperatorRoutes(ctx: OperatorRouteContext): OperatorHandler
         engineMode: native ? "napi" : "stub",
         agentRoot: ctx.agentRoot,
         catalogCount: bootstrapped.length,
-        sessionCount: intents.length,
+        sessionCount: states.length,
         planCommitCount,
       };
     },

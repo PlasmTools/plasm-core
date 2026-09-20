@@ -3,13 +3,11 @@ import path from "node:path";
 
 import type { SymbolRegistrySnapshot } from "../symbol-registry.js";
 import {
-  intentKey,
   LocalSessionStore,
   type AgentSessionState,
 } from "../session-state.js";
 import type { AgentStateStore, StateBackend } from "./define-state.js";
-
-export { intentKey };
+import { sessionStorageKey, sessionTenantKey, type LogicalSessionRef } from "../runtime/session-contract.js";
 
 export class FsStateAdapter implements AgentStateStore {
   private readonly sessions: LocalSessionStore;
@@ -18,23 +16,23 @@ export class FsStateAdapter implements AgentStateStore {
     private readonly agentRoot: string,
     private readonly tenantScope: string,
   ) {
-    this.sessions = new LocalSessionStore(agentRoot);
+    this.sessions = new LocalSessionStore(agentRoot, tenantScope);
   }
 
   backend(): StateBackend {
     return "fs";
   }
 
-  async get(intent: string): Promise<AgentSessionState | null> {
-    return this.sessions.get(intent);
+  async get(ref: LogicalSessionRef): Promise<AgentSessionState | null> {
+    return this.sessions.get(ref);
   }
 
   async put(state: AgentSessionState): Promise<void> {
     await this.sessions.put(state);
   }
 
-  async listIntents(): Promise<string[]> {
-    return this.sessions.listIntents();
+  async listSessions(): Promise<AgentSessionState[]> {
+    return this.sessions.listSessions();
   }
 
   private symbolsPath(): string {
@@ -62,8 +60,12 @@ export class FsStateAdapter implements AgentStateStore {
   }
 }
 
-export function sessionKvKey(tenantId: string, intent: string): string {
-  return `plasm:${tenantId}:session:${intentKey(intent)}`;
+export function sessionKvPrefix(tenantScope: string): string {
+  return `plasm:${sessionTenantKey(tenantScope)}:session-v2:`;
+}
+
+export function sessionKvKey(tenantScope: string, logicalSessionRef: LogicalSessionRef): string {
+  return `${sessionKvPrefix(tenantScope)}${sessionStorageKey({ tenantScope, logicalSessionRef })}`;
 }
 
 export function symbolsKvKey(tenantId: string): string {

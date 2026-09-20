@@ -15,8 +15,7 @@ use crate::http_execute::{
 use crate::incoming_auth::tenant_scope;
 use crate::mcp_logical_ref::format_logical_session_wire_ref;
 use crate::session_identity::{
-    accumulated_intent_meta_preview, discovery_routing_intent, LogicalSessionId,
-    PlasmContextSessionMode,
+    accumulated_intent_meta_preview, LogicalSessionId, PlasmContextSessionMode,
 };
 use crate::trace_hub::PlasmContextTrace;
 
@@ -43,7 +42,7 @@ impl PlasmMcpHandler {
         let effect_slots = parse_effect_slots(tname, v)?;
         let (session_mode, extend_ref) = parse_plasm_context_session_mode(tname, v)?;
         if v.get("seeds").is_some() || v.get("ranked_capabilities").is_some() {
-            return Err(CallToolError::invalid_arguments(tname, Some("plasm_context accepts original intent, affirmative effect slots, and continuation fields; explicit seed selection has been removed".into())));
+            return Err(CallToolError::invalid_arguments(tname, Some("plasm_context accepts current intent, affirmative effect slots, and continuation fields; explicit seed selection has been removed".into())));
         }
         let principal = parse_optional_principal(v);
         let tcfg = self.tenant_mcp_cfg(runtime).await?;
@@ -69,41 +68,46 @@ impl PlasmMcpHandler {
         let logical_id = existing
             .as_ref()
             .map(|rec| rec.logical_session_id.as_uuid().to_string());
-        let routing_intent = existing
-            .as_ref()
-            .map(|rec| discovery_routing_intent(&rec.accumulated_intent, intent))
-            .unwrap_or_else(|| intent.trim().to_owned());
         let mut exposed = Vec::new();
         let mut session_pin = None;
         if let Some(rec) = &existing {
+            session_pin = Some(rec.discovery_pin.clone().ok_or_else(|| {
+                CallToolError::from_message("intent extension requires a pinned discovery session")
+            })?);
             let id = rec.logical_session_id.as_uuid();
             let binding = self.resolve_binding_for_logical(key, id).await;
             let pair = match binding {
                 Some(b) => Some((b.prompt_hash, b.session_id)),
                 None => self.plasm.logical_execute_bindings.get(&id).await,
-            }
-            .ok_or_else(|| {
-                CallToolError::from_message("extension requires a live execute session")
-            })?;
-            let session = self
-                .plasm
-                .get_execute_session(&pair.0, &pair.1)
-                .await
-                .ok_or_else(|| {
-                    CallToolError::from_message(
-                        "execute session expired or its pinned generation is unavailable",
-                    )
+            };
+            if let Some(pair) = pair {
+                let session = self
+                    .plasm
+                    .get_execute_session(&pair.0, &pair.1)
+                    .await
+                    .ok_or_else(|| {
+                        CallToolError::from_message(
+                            "execute session expired or its pinned generation is unavailable",
+                        )
+                    })?;
+                let execute_pin = session.discovery_pin.as_ref().ok_or_else(|| {
+                    CallToolError::from_message("execute session has no discovery pin")
                 })?;
-            session_pin = Some(session.discovery_pin.clone().ok_or_else(|| {
-                CallToolError::from_message("intent extension requires a routed execute session")
-            })?);
-            if let Some(exposure) = &session.teaching_exposure {
-                exposed.extend(exposure.surface.capabilities.iter().map(|cap| {
-                    plasm_core::prerequisites::CapabilityRef {
-                        catalog: cap.entry_id.clone(),
-                        capability: cap.capability.to_string(),
-                    }
-                }));
+                let pin = session_pin.as_mut().expect("validated discovery pin");
+                if execute_pin.pin_id != pin.pin_id || execute_pin.generation != pin.generation {
+                    return Err(CallToolError::from_message(
+                        "execute and discovery pins disagree",
+                    ));
+                }
+                pin.authorization = pin.authorization.intersection(&execute_pin.authorization);
+                if let Some(exposure) = &session.teaching_exposure {
+                    exposed.extend(exposure.surface.capabilities.iter().map(|cap| {
+                        plasm_core::prerequisites::CapabilityRef {
+                            catalog: cap.entry_id.clone(),
+                            capability: cap.capability.to_string(),
+                        }
+                    }));
+                }
             }
         }
         let generation = match &session_pin {
@@ -151,7 +155,7 @@ impl PlasmMcpHandler {
         {
             return Err(CallToolError::invalid_arguments(
                 tname,
-                Some("Discovery accepts original intent plus affirmative effect slots; conversational choices belong to the agent".into()),
+                Some("Discovery accepts current intent plus affirmative effect slots; conversational choices belong to the agent".into()),
             ));
         }
         let store = self
@@ -160,12 +164,21 @@ impl PlasmMcpHandler {
             .discovery_store()
             .await
             .map_err(|e| CallToolError::from_message(e.to_string()))?;
+        let provenance = if let Some(id) = logical_id.as_deref() {
+            store
+                .intent_provenance(id)
+                .await
+                .and_then(|chain| chain.derived(intent.to_owned()))
+        } else {
+            crate::intent_provenance::IntentProvenance::from_turns([intent.to_owned()])
+        }
+        .map_err(|e| CallToolError::from_message(e.to_string()))?;
         let service = DiscoveryService::from_env(store.clone())
             .map_err(|e| CallToolError::from_message(e.to_string()))?;
         let receipt = service
             .route_turn(RouteTurn {
                 new_generation: &generation,
-                intent: &routing_intent,
+                intent_provenance: &provenance,
                 effect_slots: &effect_slots,
                 logical_session: logical_id.as_deref(),
                 allowed: &allowed,
@@ -175,13 +188,33 @@ impl PlasmMcpHandler {
             })
             .await
             .map_err(|e| CallToolError::from_message(format!("routing error: {e}")))?;
+        let logical_uuid = uuid::Uuid::parse_str(&receipt.pin_id)
+            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+        let rec = self
+            .plasm
+            .logical_sessions
+            .register_routed_session(
+                LogicalSessionId(logical_uuid),
+                &scope,
+                &receipt.intent_provenance,
+                Some(crate::discovery_store::DiscoverySessionPin {
+                    pin_id: receipt.pin_id.clone(),
+                    generation: receipt.retrieval.generation.clone(),
+                    authorization: receipt.authorization.clone(),
+                }),
+            )
+            .await
+            .map_err(CallToolError::from_message)?;
         if receipt.closure.is_none() {
             let content = if let Some(recovery) = &receipt.recovery {
                 recovery.render_unmatched_markdown()
             } else {
                 "**plasm_context:** no additional capability matches.".into()
             };
+            let wire_ref = format_logical_session_wire_ref(LogicalSessionId(logical_uuid));
+            let content = format!("{content}\n\n**logical_session_ref:** `{wire_ref}`");
             let mut meta = serde_json::Map::new();
+            meta.insert("logical_session_ref".into(), json!(wire_ref));
             meta.insert(
                 "routing".into(),
                 serde_json::to_value(&receipt)
@@ -195,21 +228,6 @@ impl PlasmMcpHandler {
             }
             .into_call_tool_result());
         }
-        let logical_uuid = uuid::Uuid::parse_str(&receipt.pin_id)
-            .map_err(|e| CallToolError::from_message(e.to_string()))?;
-        let rec = if existing.is_some() {
-            self.plasm
-                .logical_sessions
-                .append_intent_turn(LogicalSessionId(logical_uuid), intent)
-                .await
-                .ok_or_else(|| CallToolError::from_message("logical session expired"))?
-        } else {
-            self.plasm
-                .logical_sessions
-                .register_routed_session(LogicalSessionId(logical_uuid), &scope, intent)
-                .await
-                .map_err(CallToolError::from_message)?
-        };
         let routed_host = self
             .plasm
             .with_discovery_route(receipt)
@@ -481,7 +499,7 @@ impl PlasmMcpHandler {
             PlasmContextToolMetaParams {
                 logical_session_ref: logical_session_ref.as_str(),
                 session_mode: session_mode.as_str(),
-                intent_turns: rec.intent_turns.len(),
+                intent_turns: rec.intent_provenance.turns().count(),
                 accumulated_intent_preview: accumulated_intent_meta_preview(
                     accumulated_intent,
                     240,

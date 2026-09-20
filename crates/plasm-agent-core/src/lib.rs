@@ -60,6 +60,7 @@ mod http_traces;
 pub mod incoming_auth;
 pub mod incoming_auth_device;
 pub mod input_field_cli;
+pub mod intent_provenance;
 pub mod invoke_args;
 pub mod listen_endpoint;
 pub mod live_plan_run_worker;

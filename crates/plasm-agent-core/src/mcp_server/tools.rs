@@ -47,7 +47,7 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
     context_props.insert(
         "intent".into(),
         json_schema_non_empty_string_type(
-            "This turn's task description. Appended to the session on extend; used for capability scoring — not session identity.",
+            "This turn's current intent. Appended to the workflow provenance chain; current intent and slots drive retrieval, ancestry preserves constraints for judgment. Independent of session identity.",
         ),
     );
     context_props.insert(

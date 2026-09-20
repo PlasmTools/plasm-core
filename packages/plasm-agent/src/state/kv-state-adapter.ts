@@ -1,7 +1,8 @@
 import type { SymbolRegistrySnapshot } from "../symbol-registry.js";
-import type { AgentSessionState } from "../session-state.js";
+import { decodeSessionState, decodeListedSession, encodeSessionState, type AgentSessionState } from "../session-state.js";
+import { type LogicalSessionRef } from "../runtime/session-contract.js";
 import type { AgentStateStore, StateBackend } from "./define-state.js";
-import { sessionKvKey, symbolsKvKey } from "./fs-state-adapter.js";
+import { sessionKvKey, sessionKvPrefix, symbolsKvKey } from "./fs-state-adapter.js";
 
 type KvClient = {
   get<T>(key: string): Promise<T | null>;
@@ -26,25 +27,30 @@ export class KvStateAdapter implements AgentStateStore {
     return "kv";
   }
 
-  async get(intent: string): Promise<AgentSessionState | null> {
+  async get(ref: LogicalSessionRef): Promise<AgentSessionState | null> {
     const kv = await loadKv();
-    return kv.get<AgentSessionState>(sessionKvKey(this.tenantScope, intent));
+    const raw = await kv.get<unknown>(sessionKvKey(this.tenantScope, ref));
+    return raw === null ? null : decodeSessionState(raw, { tenantScope: this.tenantScope, logicalSessionRef: ref });
   }
 
   async put(state: AgentSessionState): Promise<void> {
+    const raw: unknown = JSON.parse(encodeSessionState(state, { tenantScope: this.tenantScope, logicalSessionRef: state.logicalSessionRef }));
     const kv = await loadKv();
-    await kv.set(sessionKvKey(this.tenantScope, state.intent), state);
+    await kv.set(sessionKvKey(this.tenantScope, state.logicalSessionRef), raw);
   }
 
-  async listIntents(): Promise<string[]> {
+  async listSessions(): Promise<AgentSessionState[]> {
     const kv = await loadKv();
-    const keys = await kv.keys(`plasm:${this.tenantScope}:session:*`);
-    const intents: string[] = [];
+    const keys = await kv.keys(`${sessionKvPrefix(this.tenantScope)}*`);
+    const sessions: AgentSessionState[] = [];
     for (const key of keys) {
-      const state = await kv.get<AgentSessionState>(key);
-      if (state?.intent) intents.push(state.intent);
+      const raw = await kv.get<unknown>(key);
+      if (raw === null) continue;
+      const state = decodeListedSession(raw, this.tenantScope);
+      if (key !== sessionKvKey(this.tenantScope, state.logicalSessionRef)) throw new Error("Session key does not match its identity");
+      sessions.push(state);
     }
-    return intents;
+    return sessions;
   }
 
   async getSymbolRegistry(tenantId: string): Promise<SymbolRegistrySnapshot | null> {

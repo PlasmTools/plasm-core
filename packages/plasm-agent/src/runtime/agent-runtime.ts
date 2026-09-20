@@ -12,7 +12,8 @@ import {
   type PlasmEngine,
 } from "../engine/napi-binding.js";
 import { createDefaultHostTransport } from "../engine/host-transport.js";
-import { mintLogicalSessionId, formatLogicalSessionWireRef } from "../runtime/logical-session.js";
+import { formatLogicalSessionWireRef } from "../runtime/logical-session.js";
+import { logicalSessionRefSchema, workflowIntentSchema, deriveIntent, type IntentProvenance } from "./session-contract.js";
 import { SessionManager, type AgentSessionState } from "../session-state.js";
 import { runIdFromArtifactRef } from "../tools/artifact-contract.js";
 import {
@@ -38,6 +39,8 @@ export type AgentArchiveStore = LocalArchiveStore | ProdArchiveStore;
 
 export interface AgentRuntimeConfig {
   agentRoot: string;
+  /** Optional first intent supplied by the embedding workflow. */
+  initialIntent?: string;
   tenantScope?: string;
   engine?: PlasmEngine;
   /** Outbound HTTP for live `plasm_run`. Defaults to fetch + env bearer + Connect. Set `null` to validate-only. */
@@ -122,13 +125,6 @@ function mergeSeeds(
   return out;
 }
 
-/** Preserve the immutable first workflow request when an agent extends it. */
-export function discoveryRoutingIntent(original: string, current: string): string {
-  const first = original.trim();
-  const next = current.trim();
-  return first && first !== next ? `${first}\n${next}` : next;
-}
-
 function planArchiveEnabled(): boolean {
   const flag = process.env.PLASM_WRITE_PLAN_ARCHIVE?.trim();
   if (flag === "0" || flag === "false") return false;
@@ -175,16 +171,12 @@ export class AgentRuntime {
   readonly hostTransport: HostTransportFn | null;
   readonly artefactWorkspaceRoot: string;
   private readonly agentRoot: string;
+  private readonly initialProvenance?: IntentProvenance;
   private readonly archiveEnabled: boolean;
   private readonly hookRunner?: HookRunner;
   private readonly getAuthoringContext?: () => AuthoringContext;
   private loadedCatalogs: LoadedCatalog[] = [];
-  /**
-   * One auto-seed workflow session per AgentRuntime process.
-   * Models often rephrase `intent` on repeat `new` — do not remint or re-FO.
-   * Holds the live AgentSessionState (not a detached card) so plasm / plasm_run
-   * resolve without depending on durable store list scans.
-   */
+  /** Most recently used live session; explicit new calls create distinct workflows. */
   private workflowSession: AgentSessionState | null = null;
 
   /** True after the first successful `plasm_read_run_artifact` this runtime. */
@@ -216,6 +208,7 @@ export class AgentRuntime {
 
   constructor(config: AgentRuntimeConfig) {
     this.agentRoot = path.resolve(config.agentRoot);
+    this.initialProvenance = config.initialIntent === undefined ? undefined : deriveIntent(undefined, workflowIntentSchema.parse(config.initialIntent));
     this.engine = config.engine ?? createEngine();
     this.hostTransport =
       config.hostTransport === null
@@ -234,8 +227,8 @@ export class AgentRuntime {
     const envArtefacts = process.env.PLASM_RUN_ARTIFACTS_DIR?.trim();
     this.artefactWorkspaceRoot = path.resolve(
       config.artefactWorkspaceRoot ??
-        envArtefacts ??
-        path.join(this.agentRoot, ".plasm", "artefacts"),
+      envArtefacts ??
+      path.join(this.agentRoot, ".plasm", "artefacts"),
     );
     if (config.archive === null) {
       this.archive = null;
@@ -271,21 +264,9 @@ export class AgentRuntime {
     return [...this.loadedCatalogs];
   }
 
-  async openOrExtendSession(intent: string): Promise<AgentSessionState> {
-    const trimmed = intent.trim();
-    let session = await this.sessionManager.get(trimmed);
-    if (session) return session;
-    const ids = mintLogicalSessionId(this.sessionManager.tenant(), trimmed);
-    return this.sessionManager.getOrCreate(
-      trimmed,
-      ids.logicalSessionRef,
-      ids.logicalSessionId,
-    );
-  }
-
   async plasmContext(input: PlasmContextInput): Promise<string> {
-    const intent = input.intent.trim();
-    const effectSlots = input.effectSlots.map((slot) => slot.trim());
+    const intent = workflowIntentSchema.parse(input.intent);
+    const effectSlots = input.effectSlots.map((slot) => workflowIntentSchema.parse(slot));
     const mode = input.sessionMode ?? "new";
     if (!intent) throw new Error("plasm_context requires intent");
     if (effectSlots.length < 1 || effectSlots.length > 64 || effectSlots.some((slot) => !slot)) {
@@ -299,42 +280,44 @@ export class AgentRuntime {
       if (mode === "new" && input.logicalSessionRef) {
         throw new Error("logical_session_ref belongs on session_mode extend");
       }
-      const routingIntent = existing
-        ? discoveryRoutingIntent(existing.intent, intent)
-        : intent;
+      const provenance = deriveIntent(existing?.intentProvenance ?? this.initialProvenance, intent);
       const packet = await this.engine.routeIntent(
-        routingIntent,
+        provenance,
         effectSlots,
         existing?.logicalSessionId,
       );
       const { routing, teaching } = packet;
+      if (JSON.stringify(routing.intent_provenance) !== JSON.stringify(provenance)) throw new Error("Routing changed intent provenance");
+      if (existing && (existing.logicalSessionId !== routing.pin_id
+        || existing.registryGeneration !== routing.retrieval.generation)) {
+        throw new Error("Routing changed a logical session's pinned registry generation");
+      }
+      const wireRef = logicalSessionRefSchema.parse(formatLogicalSessionWireRef(Buffer.from(routing.pin_id.replace(/-/g, ""), "hex")));
+      const session = existing ?? await this.sessionManager.getOrCreate({
+        intent: provenance.nodes[0]!.intent, intentProvenance: provenance, logicalSessionRef: wireRef, logicalSessionId: routing.pin_id,
+      });
+      session.intentProvenance = provenance;
+      session.engineInstanceId = this.engineInstanceId;
+      session.registryGeneration = routing.retrieval.generation;
+      await this.sessionManager.update(session);
+      this.workflowSession = session;
       const recoveryMarkdown = routingRecoveryMarkdown(routing);
       if (!routing.closure && !routing.matching.complete) {
         await this.recordToolTrace("tool", "plasm_context", started, {
           intent, session_mode: mode, routing: JSON.stringify(routing),
-          logical_session_ref: existing?.logicalSessionRef,
+          logical_session_ref: session.logicalSessionRef,
         });
         return [
           routing.intent_analysis,
           recoveryMarkdown ?? "**plasm_context:** insufficient effect-slot coverage",
-          existing ? `**logical_session_ref:** \`${existing.logicalSessionRef}\`` : "",
+          `**logical_session_ref:** \`${session.logicalSessionRef}\``,
           ...(recoveryMarkdown ? [] : routingExplanationLines(routing.matching)),
         ].filter(Boolean).join("\n\n");
       }
       if (!routing.closure || !teaching?.tsv.trim()) {
         throw new Error("Routing is missing its prerequisite closure or canonical teaching");
       }
-      if (existing && (existing.logicalSessionId !== routing.pin_id
-          || existing.registryGeneration !== routing.retrieval.generation)) {
-        throw new Error("Routing changed a logical session's pinned registry generation");
-      }
-      const wireRef = formatLogicalSessionWireRef(Buffer.from(routing.pin_id.replace(/-/g, ""), "hex"));
-      const session = existing ?? await this.sessionManager.getOrCreate(
-        `${routing.intent}\0${wireRef}`, wireRef, routing.pin_id,
-      );
       // Keep exact capability and prerequisite distinctions as returned by Rust.
-      session.engineInstanceId = this.engineInstanceId;
-      session.registryGeneration = routing.retrieval.generation;
       session.routingClosures = [...(session.routingClosures ?? []), routing.closure];
       const exposed = teaching.delta_refs.map((ref) => {
         const separator = ref.indexOf(":");
@@ -458,8 +441,8 @@ export class AgentRuntime {
         const runMeta = parseRunMeta(result.metaJson);
         const requestFingerprints = collectRequestFingerprints(runMeta);
         const artifacts = result.ok
-          ? z.array(z.object({run_id: z.string().regex(/^pr[a-f0-9]{64}$/), snapshot: z.unknown()}))
-              .parse(JSON.parse(result.artifactsJson ?? "null"))
+          ? z.array(z.object({ run_id: z.string().regex(/^pr[a-f0-9]{64}$/), snapshot: z.unknown() }))
+            .parse(JSON.parse(result.artifactsJson ?? "null"))
           : [];
         for (const artifact of artifacts) {
           if (this.archive) {
@@ -468,7 +451,7 @@ export class AgentRuntime {
               logical_session_ref: session.logicalSessionRef, intent: session.intent,
               ok: result.ok, message: result.message,
               native_snapshot: artifact.snapshot,
-              _meta: {plasm: {steps: runMeta?.steps ?? [], request_fingerprints: requestFingerprints}},
+              _meta: { plasm: { steps: runMeta?.steps ?? [], request_fingerprints: requestFingerprints } },
               archived_at: new Date().toISOString(),
             });
           }
@@ -547,7 +530,7 @@ export class AgentRuntime {
   private async materializeRunArtefact(runId: string, payload: unknown, logicalSessionRef: string): Promise<void> {
     const safe = runId.replace(/[^a-zA-Z0-9_-]/g, "");
     if (!safe) return;
-    await mkdir(this.artefactWorkspaceRoot, {recursive: true});
+    await mkdir(this.artefactWorkspaceRoot, { recursive: true });
     const body = `${JSON.stringify(payload, null, 2)}\n`;
     await writeWorkspaceFile(this.artefactWorkspaceRoot, `artefacts/${logicalSessionRef}/${safe}.json`, body);
     await writeWorkspaceFile(this.artefactWorkspaceRoot, "artefacts/latest.json", body);

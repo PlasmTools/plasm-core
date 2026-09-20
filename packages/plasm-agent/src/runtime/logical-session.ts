@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 const WIRE_PREFIX = "l_";
 const TOKEN_LEN = 22;
@@ -29,34 +29,6 @@ export function parseLogicalSessionWireRef(ref: string): Buffer {
     throw new Error(`invalid logical_session_ref payload: ${ref}`);
   }
   return bytes;
-}
-
-/**
- * Idempotent logical session identity for `(tenantScope, intent)`.
- * Persisted via SessionStore on first `plasm_context` open.
- */
-export function mintLogicalSessionId(tenantScope: string, intent: string): {
-  logicalSessionId: string;
-  logicalSessionRef: string;
-} {
-  const digest = createHash("sha256")
-    .update(`${tenantScope}\0${intent}`, "utf8")
-    .digest();
-  const bytes = Buffer.alloc(16);
-  digest.copy(bytes, 0, 0, 16);
-  bytes[6] = (bytes[6]! & 0x0f) | 0x50;
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
-  const logicalSessionId = [
-    bytes.toString("hex", 0, 4),
-    bytes.toString("hex", 4, 6),
-    bytes.toString("hex", 6, 8),
-    bytes.toString("hex", 8, 10),
-    bytes.toString("hex", 10, 16),
-  ].join("-");
-  return {
-    logicalSessionId,
-    logicalSessionRef: formatLogicalSessionWireRef(bytes),
-  };
 }
 
 export function newEphemeralLogicalSession(): {

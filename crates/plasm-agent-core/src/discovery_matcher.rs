@@ -5,6 +5,7 @@
 //! one host-owned affirmative effect slot. Packet construction, batching, answer
 //! validation, exposure, closure, and recovery remain host responsibilities.
 
+use crate::intent_provenance::IntentProvenance;
 use anyhow::{ensure, Context, Result};
 use plasm_core::{
     catalog_discovery::{content_hash, CapabilityDocument},
@@ -126,15 +127,11 @@ struct DecisionAnswer {
 /// escape this module.
 pub fn issue_batches(
     model: &str,
-    original_intent: &str,
+    intent_provenance: &IntentProvenance,
     slots: &[EffectSlot],
     retrieval: &RetrievalReceipt,
 ) -> Result<Vec<IssuedBatch>> {
     ensure!(!model.trim().is_empty(), "Jev model required");
-    ensure!(
-        !original_intent.trim().is_empty(),
-        "original intent required"
-    );
     validate_slots(slots)?;
     let mut slots: Vec<_> = slots.iter().collect();
     slots.sort_by(|left, right| left.id.cmp(&right.id));
@@ -153,20 +150,20 @@ pub fn issue_batches(
     for slot in slots {
         for candidate in &candidates {
             pending.push((slot, *candidate));
-            let issued = issue_batch(model, original_intent, &pending)?;
+            let issued = issue_batch(model, intent_provenance, &pending)?;
             if o200k_token_count(&issued.body) > MAX_BATCH_TOKENS {
                 let last = pending.pop().expect("just pushed pair");
                 ensure!(
                     !pending.is_empty(),
                     "one Jev slot-match question exceeds packet token budget"
                 );
-                batches.push(issue_batch(model, original_intent, &pending)?);
+                batches.push(issue_batch(model, intent_provenance, &pending)?);
                 pending = vec![last];
             }
         }
     }
     if !pending.is_empty() {
-        batches.push(issue_batch(model, original_intent, &pending)?);
+        batches.push(issue_batch(model, intent_provenance, &pending)?);
     }
     Ok(batches)
 }
@@ -191,12 +188,11 @@ pub fn validate_slots(slots: &[EffectSlot]) -> Result<()> {
 /// Every offered binding is already lawful under the CGS type system.
 pub fn issue_input_source_batches(
     model: &str,
-    intent: &str,
+    intent: &IntentProvenance,
     candidates: &[InputSourceCandidate],
     documents: &BTreeMap<CapabilityRef, CapabilityDocument>,
 ) -> Result<Vec<IssuedInputSourceBatch>> {
     ensure!(!model.trim().is_empty(), "Jev model required");
-    ensure!(!intent.trim().is_empty(), "input-source intent required");
     let mut candidates: Vec<_> = candidates.iter().collect();
     candidates.sort_by(|left, right| left.provider.cmp(&right.provider));
     let mut batches = Vec::new();
@@ -226,7 +222,7 @@ pub fn issue_input_source_batches(
 
 fn issue_input_source_batch(
     model: &str,
-    intent: &str,
+    intent: &IntentProvenance,
     candidates: &[&InputSourceCandidate],
     documents: &BTreeMap<CapabilityRef, CapabilityDocument>,
 ) -> Result<IssuedInputSourceBatch> {
@@ -255,14 +251,14 @@ fn issue_input_source_batch(
             json!({
                 "type":"choice",
                 "instructions": format!(
-                    "Select or eliminate this host-projected input-source capability. The CGS type system has already established that each listed producer output can lawfully populate the listed required consumer input; do not reconsider type compatibility. Choose `required_source` only when the original intent requires values to be discovered or classified and this producer's documented domain meaning is suitable for at least one listed input. This includes resolving an explicit qualifier, category, membership, status, or identity before the final effect. Choose `not_required` when the user already supplies the values, the producer's domain meaning is unrelated, or the operation is not needed for this intent. Choose `uncertain` only when the original intent and cards do not establish either result. Judge the producer as an input source, not as the final requested effect.\n\nOriginal intent:\n{}\n\nConsumer capabilities:\n{}\n\nProjected typed bindings:\n{}\n\nProducer capability:\n{}",
-                    intent,
+                    "Select or eliminate this host-projected input-source capability. The CGS type system has already established that each listed producer output can lawfully populate the listed required consumer input; do not reconsider type compatibility. Choose `required_source` only when the intent provenance requires values to be discovered or classified and this producer's documented domain meaning is suitable for at least one listed input. This includes resolving an explicit qualifier, category, membership, status, or identity before the final effect. Choose `not_required` when the user already supplies the values, the producer's domain meaning is unrelated, or the operation is not needed for this intent. Choose `uncertain` only when the intent provenance and cards do not establish either result. Judge the producer as an input source, not as the final requested effect.\n\nIntent provenance (root to current):\n{}\n\nConsumer capabilities:\n{}\n\nProjected typed bindings:\n{}\n\nProducer capability:\n{}",
+                    intent.judgment_context()?,
                     serde_json::to_string(&consumers)?,
                     serde_json::to_string(&candidate.bindings)?,
                     serde_json::to_string(provider)?,
                 ),
                 "criteria": {
-                    "required_source":"The original intent requires discovered or classified values that this producer can supply to at least one projected consumer input.",
+                    "required_source":"The intent provenance requires discovered or classified values that this producer can supply to at least one projected consumer input.",
                     "not_required":"The values are supplied without this producer, or its documented domain meaning is unrelated to the intent.",
                     "uncertain":"The intent and cards do not establish whether this producer is required."
                 }
@@ -271,11 +267,11 @@ fn issue_input_source_batch(
     }
     let body = serde_json::to_string(&json!({
         "model": model,
-        "state": {"original_intent": intent},
+        "state": {"intent_provenance": intent},
         "questions": questions,
     }))?;
     Ok(IssuedInputSourceBatch {
-        cache_key: content_hash(format!("jev-input-source-match-v1\n{body}").as_bytes()),
+        cache_key: content_hash(format!("jev-input-source-match-v2\n{body}").as_bytes()),
         body,
         model: model.to_owned(),
         bindings,
@@ -284,7 +280,7 @@ fn issue_input_source_batch(
 
 fn issue_batch(
     model: &str,
-    original_intent: &str,
+    intent_provenance: &IntentProvenance,
     pairs: &[(&EffectSlot, &RetrievedCapability)],
 ) -> Result<IssuedBatch> {
     let mut questions = serde_json::Map::new();
@@ -297,9 +293,9 @@ fn issue_batch(
         questions.insert(key, json!({
             "type":"choice",
             "instructions": format!(
-                "Classify this capability against the explicit affirmative effect slot `{}`. The host has already determined that this slot is required work; do not decide that it is optional because another branch or step is also requested. Use the immutable original intent only to preserve the slot's qualifiers, conditions, restrictions, and ordering. Choose `direct_match` only when the capability directly fulfils this slot's requested effect or requested information outcome. Judge this slot only and do not judge sufficiency for the whole intent. Choose `does_not_match` for different or conflicting work. Choose `uncertain` only when the slot, original intent, and card do not establish either relationship. Do not infer prerequisite or selector work here; the host projects typed input-source candidates only after every affirmative slot is covered.\n\nOriginal intent:\n{}\n\nAffirmative effect slot:\n{}\n\nCapability card:\n{}",
+                "Classify this capability against the explicit affirmative effect slot `{}`. The host has already determined that this slot is required work; do not decide that it is optional because another branch or step is also requested. The provenance nodes run from root to current; each derived intent retains the qualifiers, conditions, restrictions, and ordering inherited from its ancestors. Omission in a later node does not erase an inherited constraint. Use this ancestry to interpret the current slot. Choose `direct_match` only when the capability directly fulfils this slot's requested effect or requested information outcome. Judge this slot only and do not judge sufficiency for the whole intent. Choose `does_not_match` for different or conflicting work. Choose `uncertain` only when the slot, intent provenance, and card do not establish either relationship. Do not infer prerequisite or selector work here; the host projects typed input-source candidates only after every affirmative slot is covered.\n\nIntent provenance (root to current):\n{}\n\nAffirmative effect slot:\n{}\n\nCapability card:\n{}",
                 slot.id,
-                original_intent,
+                intent_provenance.judgment_context()?,
                 serde_json::to_string(slot)?,
                 serde_json::to_string(&card(index, capability))?,
             ),
@@ -313,13 +309,13 @@ fn issue_batch(
     let body = serde_json::to_string(&json!({
         "model": model,
         "state": {
-            "original_intent": original_intent,
+            "intent_provenance": intent_provenance,
             "affirmative_effect_slots": slots.into_values().collect::<Vec<_>>()
         },
         "questions": questions,
     }))?;
     Ok(IssuedBatch {
-        cache_key: content_hash(format!("jev-effect-slot-match-v1\n{body}").as_bytes()),
+        cache_key: content_hash(format!("jev-effect-slot-match-v2\n{body}").as_bytes()),
         body,
         model: model.to_owned(),
         bindings,
@@ -558,6 +554,9 @@ pub fn finish_input_sources(
 
 #[cfg(test)]
 mod tests {
+    fn provenance(intent: &str) -> super::IntentProvenance {
+        super::IntentProvenance::from_turns([intent.to_owned()]).unwrap()
+    }
     use super::*;
     use crate::discovery_store::RetrievedCapability;
     use plasm_core::catalog_discovery::CapabilityDocument;
@@ -599,9 +598,36 @@ mod tests {
     }
 
     #[test]
+    fn selector_receives_lossless_ancestry_separately_from_current_retrieval_queries() {
+        let chain = IntentProvenance::from_turns([
+            format!("Preserve this constraint {}", "x".repeat(4096)),
+            "Resolve the selected relation".into(),
+            "Read the required records".into(),
+        ])
+        .unwrap();
+        let (slots, retrieval) = packet();
+        let batches = issue_batches(JEV_MODEL, &chain, &slots, &retrieval).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&batches[0].body).unwrap();
+        assert_eq!(
+            body["state"]["intent_provenance"],
+            serde_json::to_value(&chain).unwrap()
+        );
+        assert_eq!(
+            chain.retrieval_queries(&["Read records".into()]).unwrap(),
+            ["Read records", "Read the required records"]
+        );
+    }
+
+    #[test]
     fn native_choice_packet_binds_and_derives_only_positive_matches() {
         let (slots, retrieval) = packet();
-        let batches = issue_batches(JEV_MODEL, "Read the balance.", &slots, &retrieval).unwrap();
+        let batches = issue_batches(
+            JEV_MODEL,
+            &provenance("Read the balance."),
+            &slots,
+            &retrieval,
+        )
+        .unwrap();
         assert_eq!(batches.len(), 1);
         assert!(batches[0].body.contains("api/alpha/decisions") == false);
         let raw = json!({"model":"typesafe/jev-1.13-20260917","provider":"TypeSafe","answers":{"q0":{"type":"choice","choice":"direct_match","probabilities":{"direct_match":0.98,"does_not_match":0.01,"uncertain":0.01},"confidence":0.98}}}).to_string();
@@ -621,7 +647,7 @@ mod tests {
         });
         let batch = issue_batches(
             JEV_MODEL,
-            "Read and publish the balance.",
+            &provenance("Read and publish the balance."),
             &slots,
             &retrieval,
         )
@@ -646,10 +672,15 @@ mod tests {
     #[test]
     fn native_choice_packet_accepts_additive_transport_metadata() {
         let (slots, retrieval) = packet();
-        let batch = issue_batches(JEV_MODEL, "Read the balance.", &slots, &retrieval)
-            .unwrap()
-            .pop()
-            .unwrap();
+        let batch = issue_batches(
+            JEV_MODEL,
+            &provenance("Read the balance."),
+            &slots,
+            &retrieval,
+        )
+        .unwrap()
+        .pop()
+        .unwrap();
         let raw = json!({
             "model":"typesafe/jev-1.13-20260917",
             "provider":"TypeSafe",
@@ -663,10 +694,15 @@ mod tests {
     #[test]
     fn response_model_must_resolve_the_requested_configured_model() {
         let (slots, retrieval) = packet();
-        let batch = issue_batches("typesafe/jev-2.0", "Read the balance.", &slots, &retrieval)
-            .unwrap()
-            .pop()
-            .unwrap();
+        let batch = issue_batches(
+            "typesafe/jev-2.0",
+            &provenance("Read the balance."),
+            &slots,
+            &retrieval,
+        )
+        .unwrap()
+        .pop()
+        .unwrap();
         let answer = json!({
             "q0": {
                 "type": "choice",
@@ -699,10 +735,15 @@ mod tests {
     #[test]
     fn direct_match_packet_defers_input_source_decisions() {
         let (slots, retrieval) = packet();
-        let batch = issue_batches(JEV_MODEL, "Read the balance.", &slots, &retrieval)
-            .unwrap()
-            .pop()
-            .unwrap();
+        let batch = issue_batches(
+            JEV_MODEL,
+            &provenance("Read the balance."),
+            &slots,
+            &retrieval,
+        )
+        .unwrap()
+        .pop()
+        .unwrap();
         assert_eq!(ANSWERS, ["direct_match", "does_not_match", "uncertain"]);
         assert!(batch
             .body
@@ -712,10 +753,15 @@ mod tests {
     #[test]
     fn native_choice_packet_normalizes_provider_probability_rounding() {
         let (slots, retrieval) = packet();
-        let batch = issue_batches(JEV_MODEL, "Read the balance.", &slots, &retrieval)
-            .unwrap()
-            .pop()
-            .unwrap();
+        let batch = issue_batches(
+            JEV_MODEL,
+            &provenance("Read the balance."),
+            &slots,
+            &retrieval,
+        )
+        .unwrap()
+        .pop()
+        .unwrap();
         let raw = json!({"model":"typesafe/jev-1.13-20260917","provider":"TypeSafe","answers":{"q0":{"type":"choice","choice":"does_not_match","probabilities":{"direct_match":0.03,"does_not_match":0.94,"uncertain":0.02},"confidence":0.93}}}).to_string();
         let matched = decode_batch(&batch, &raw).unwrap();
         let total: f64 = matched[0].probabilities.values().sum();
@@ -725,10 +771,15 @@ mod tests {
     #[test]
     fn native_choice_packet_rejects_partial_answers() {
         let (slots, retrieval) = packet();
-        let batch = issue_batches(JEV_MODEL, "Read the balance.", &slots, &retrieval)
-            .unwrap()
-            .pop()
-            .unwrap();
+        let batch = issue_batches(
+            JEV_MODEL,
+            &provenance("Read the balance."),
+            &slots,
+            &retrieval,
+        )
+        .unwrap()
+        .pop()
+        .unwrap();
         let raw = json!({"model":"typesafe/jev-1.13-20260917","provider":"TypeSafe","answers":{}})
             .to_string();
         assert!(decode_batch(&batch, &raw).is_err());
@@ -784,7 +835,7 @@ mod tests {
         ]);
         let batch = issue_input_source_batches(
             JEV_MODEL,
-            "Create an expense with my coworkers.",
+            &provenance("Create an expense with my coworkers."),
             &candidates,
             &documents,
         )
@@ -793,7 +844,7 @@ mod tests {
         .unwrap();
         assert!(batch.body.contains("host-projected input-source"));
         assert!(batch.body.contains("participant_emails"));
-        assert!(batch.body.contains("Original intent"));
+        assert!(batch.body.contains("Intent provenance"));
         let raw = json!({"model":"typesafe/jev-1.13-20260917","provider":"TypeSafe","answers":{"q0":{"type":"choice","choice":"required_source","probabilities":{"required_source":0.97,"not_required":0.02,"uncertain":0.01},"confidence":0.97}}}).to_string();
         let matches = decode_input_source_batch(&batch, &raw).unwrap();
         let receipt = finish_input_sources(matches, &candidates).unwrap();

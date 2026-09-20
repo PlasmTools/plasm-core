@@ -1,15 +1,15 @@
 import type { SymbolRegistrySnapshot } from "../symbol-registry.js";
-import type { AgentSessionState } from "../session-state.js";
+import { decodeSessionState, decodeListedSession, encodeSessionState, type AgentSessionState } from "../session-state.js";
+import { sessionStorageKey, sessionTenantKey, type LogicalSessionRef } from "../runtime/session-contract.js";
 import {
   blobGetJson,
   blobList,
   blobPutJson,
 } from "../storage/vercel-blob.js";
 import type { AgentStateStore, StateBackend } from "./define-state.js";
-import { intentKey } from "./fs-state-adapter.js";
 
-function sessionBlobKey(tenantScope: string, intent: string): string {
-  return `plasm/state/${tenantScope}/sessions/${intentKey(intent)}.json`;
+function sessionBlobKey(tenantScope: string, logicalSessionRef: LogicalSessionRef): string {
+  return `${sessionPrefix(tenantScope)}${sessionStorageKey({ tenantScope, logicalSessionRef })}.json`;
 }
 
 function symbolsBlobKey(tenantScope: string): string {
@@ -17,7 +17,7 @@ function symbolsBlobKey(tenantScope: string): string {
 }
 
 function sessionPrefix(tenantScope: string): string {
-  return `plasm/state/${tenantScope}/sessions/`;
+  return `plasm/state/${sessionTenantKey(tenantScope)}/sessions-v2/`;
 }
 
 export class BlobStateAdapter implements AgentStateStore {
@@ -32,24 +32,29 @@ export class BlobStateAdapter implements AgentStateStore {
     return "blob";
   }
 
-  async get(intent: string): Promise<AgentSessionState | null> {
-    return blobGetJson<AgentSessionState>(sessionBlobKey(this.tenantScope, intent));
+  async get(ref: LogicalSessionRef): Promise<AgentSessionState | null> {
+    const raw = await blobGetJson<unknown>(sessionBlobKey(this.tenantScope, ref));
+    return raw === null ? null : decodeSessionState(raw, { tenantScope: this.tenantScope, logicalSessionRef: ref });
   }
 
   async put(state: AgentSessionState): Promise<void> {
-    await blobPutJson(sessionBlobKey(this.tenantScope, state.intent), state);
+    const raw: unknown = JSON.parse(encodeSessionState(state, { tenantScope: this.tenantScope, logicalSessionRef: state.logicalSessionRef }));
+    await blobPutJson(sessionBlobKey(this.tenantScope, state.logicalSessionRef), raw);
   }
 
-  async listIntents(): Promise<string[]> {
+  async listSessions(): Promise<AgentSessionState[]> {
     const prefix = sessionPrefix(this.tenantScope);
     const paths = await blobList(prefix);
-    const intents: string[] = [];
+    const sessions: AgentSessionState[] = [];
     for (const pathname of paths) {
       if (!pathname.endsWith(".json")) continue;
-      const state = await blobGetJson<AgentSessionState>(pathname);
-      if (state?.intent) intents.push(state.intent);
+      const raw = await blobGetJson<unknown>(pathname);
+      if (raw === null) continue;
+      const state = decodeListedSession(raw, this.tenantScope);
+      if (pathname !== sessionBlobKey(this.tenantScope, state.logicalSessionRef)) throw new Error("Session key does not match its identity");
+      sessions.push(state);
     }
-    return intents;
+    return sessions;
   }
 
   async getSymbolRegistry(tenantId: string): Promise<SymbolRegistrySnapshot | null> {

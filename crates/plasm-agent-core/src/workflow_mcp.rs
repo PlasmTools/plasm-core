@@ -223,7 +223,8 @@ impl PlasmMcpHandler {
             .plasm
             .logical_sessions
             .mint_session(&scope, intent)
-            .await;
+            .await
+            .map_err(CallToolError::from_message)?;
         let logical_session_ref = format_logical_session_wire_ref(rec.logical_session_id);
         let logical_uuid = rec.logical_session_id.as_uuid();
         let seeds = manifest_seeds_to_capability_seeds(&manifest);

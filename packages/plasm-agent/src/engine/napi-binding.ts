@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import type { LoadedCatalog } from "../catalog/loader.js";
 import { routingPacketSchema, type RoutingPacket } from "./routing.js";
 import { toNapiHostTransport } from "./host-transport-bridge.js";
+import { workflowIntentSchema, intentProvenanceSchema, type IntentProvenance } from "../runtime/session-contract.js";
 
 const nodeRequire = createRequire(import.meta.url);
 
@@ -57,7 +58,7 @@ export interface PlasmEngine {
   ): Promise<TeachingExposureResult>;
   dryRun(program: string, executeSessionRef?: string): Promise<DryRunResult>;
   activateDiscovery(deploymentId: string, bindingsJson: string): Promise<string>;
-  routeIntent(intent: string, effectSlots: string[], logicalSessionId?: string): Promise<RoutingPacket>;
+  routeIntent(provenance: IntentProvenance, effectSlots: string[], logicalSessionId?: string): Promise<RoutingPacket>;
   runPlan(planCommitRef: string, logicalSessionId?: string): Promise<{ ok: boolean; message: string; rowsJson?: string; metaJson?: string; artifactsJson?: string }>;
   runPlanLive?(
     planCommitRef: string,
@@ -87,7 +88,7 @@ type NativePlasmEngine = {
     fusedCleanRead?: boolean;
   }>;
   activateDiscovery(deploymentId: string, bindingsJson: string): Promise<string>;
-  routeIntent(intent: string, effectSlots: string[], logicalSessionId?: string): Promise<string>;
+  routeIntent(intentProvenanceJson: string, effectSlots: string[], logicalSessionId?: string): Promise<string>;
   runPlan(planCommitRef: string, logicalSessionId?: string): Promise<{
     ok: boolean;
     message: string;
@@ -176,8 +177,8 @@ export class NapiPlasmEngine implements PlasmEngine {
     return this.native.activateDiscovery(deploymentId, bindingsJson);
   }
 
-  async routeIntent(intent: string, effectSlots: string[], logicalSessionId?: string): Promise<RoutingPacket> {
-    const raw = await this.native.routeIntent(intent, effectSlots, logicalSessionId);
+  async routeIntent(provenance: IntentProvenance, effectSlots: string[], logicalSessionId?: string): Promise<RoutingPacket> {
+    const raw = await this.native.routeIntent(JSON.stringify(intentProvenanceSchema.parse(provenance)), effectSlots.map((slot) => workflowIntentSchema.parse(slot)), logicalSessionId);
     return routingPacketSchema.parse(JSON.parse(raw));
   }
 

@@ -18,6 +18,7 @@ pub use crate::discovery_recovery::{CatalogAppDescription, DiscoveryRecovery, RE
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RoutingReceipt {
+    pub intent_provenance: crate::intent_provenance::IntentProvenance,
     pub authorization: DiscoveryAuthorization,
     #[serde(default)]
     pub intent_analysis: String,
@@ -34,7 +35,7 @@ pub struct RoutingReceipt {
 
 pub struct RouteTurn<'a> {
     pub new_generation: &'a str,
-    pub intent: &'a str,
+    pub intent_provenance: &'a crate::intent_provenance::IntentProvenance,
     pub effect_slots: &'a [String],
     pub logical_session: Option<&'a str>,
     pub allowed: &'a DiscoveryAuthorization,
@@ -99,13 +100,20 @@ impl DiscoveryService {
         let mut receipt = self
             .route(
                 &generation,
-                request.intent,
+                request.intent_provenance,
                 request.effect_slots,
                 request.allowed,
                 request.exposed,
             )
             .await?;
         receipt.pin_id = pin_id;
+        self.store
+            .commit_intent_provenance(
+                &receipt.pin_id,
+                request.intent_provenance,
+                request.logical_session.is_some(),
+            )
+            .await?;
         Ok(receipt)
     }
 
@@ -115,12 +123,16 @@ impl DiscoveryService {
     pub async fn route(
         &self,
         generation: &str,
-        intent: &str,
+        provenance: &crate::intent_provenance::IntentProvenance,
         effect_slots: &[String],
         allowed: &DiscoveryAuthorization,
         exposed: &[CapabilityRef],
     ) -> Result<RoutingReceipt> {
-        let mut retrieval = self.store.retrieve(generation, intent, allowed).await?;
+        let queries = provenance.retrieval_queries(effect_slots)?;
+        let mut retrieval = self
+            .store
+            .retrieve_queries(generation, &queries, allowed)
+            .await?;
         self.store
             .include_exposed(&mut retrieval, exposed, allowed)
             .await?;
@@ -133,7 +145,7 @@ impl DiscoveryService {
             })
             .collect::<Vec<_>>();
         matcher::validate_slots(&slots)?;
-        let batches = matcher::issue_batches(&self.match_model, intent, &slots, &retrieval)?;
+        let batches = matcher::issue_batches(&self.match_model, provenance, &slots, &retrieval)?;
         let mut answers = Vec::new();
         for issued in &batches {
             let raw = if let Some(cached) = self
@@ -185,7 +197,7 @@ impl DiscoveryService {
             let documents = capability_document_index(catalogs)?;
             let batches = matcher::issue_input_source_batches(
                 &self.match_model,
-                intent,
+                provenance,
                 &projection,
                 &documents,
             )?;
@@ -242,11 +254,12 @@ impl DiscoveryService {
             None
         };
         Ok(RoutingReceipt {
+            intent_provenance: provenance.clone(),
             authorization: allowed.clone(),
             intent_analysis:
                 "**Capability selection** (deterministic retrieval; Jev classifies each card against every explicit affirmative effect slot; the host requires complete slot coverage before CGS input projection and closure):"
                     .to_owned(),
-            intent: intent.to_owned(),
+            intent: provenance.current().to_owned(),
             pin_id: String::new(),
             retrieval,
             matching,
@@ -271,7 +284,7 @@ impl DiscoveryService {
         let raw = response.text().await?;
         if let Some(directory) = &self.rejection_dir {
             let record = serde_json::json!({
-                "contract": "jev-two-stage-capability-routing-v3",
+                "contract": "jev-two-stage-capability-routing-v4",
                 "request_body": body,
                 "http_status": status.as_u16(),
                 "raw_response": raw,

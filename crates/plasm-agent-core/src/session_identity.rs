@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 use crate::mcp_transport_store::RedisBackend;
 
-const SESSION_KEY_PREFIX: &str = "mcp:logical:session:";
+const SESSION_KEY_PREFIX: &str = "mcp:logical:session:v2:";
 const RECENT_SESSIONS_CAP: usize = 32;
 
 /// Server-minted UUID identifying one Plasm logical session (prompt + execute + trace root).
@@ -78,23 +78,21 @@ const ACCUMULATED_INTENT_MAX_SCALARS: usize = 2048;
 pub struct LogicalSessionRecord {
     pub logical_session_id: LogicalSessionId,
     pub tenant_scope: String,
+    pub discovery_pin: Option<crate::discovery_store::DiscoverySessionPin>,
     /// Append-only per `plasm_context` turn (`new` seeds the first turn).
-    pub intent_turns: Vec<String>,
-    /// Derived join of [`Self::intent_turns`] for session intent history.
+    pub intent_provenance: crate::intent_provenance::IntentProvenance,
+    /// Bounded display/scoring projection; never used as discovery ancestry.
     pub accumulated_intent: String,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PersistedLogicalSession {
     logical_session_id: Uuid,
     tenant_scope: String,
-    #[serde(default)]
-    intent_turns: Vec<String>,
-    #[serde(default)]
-    accumulated_intent: String,
-    /// Legacy v1 field — hydrated into `intent_turns` when `intent_turns` is empty.
-    #[serde(default)]
-    intent: Option<String>,
+    provenance: crate::intent_provenance::IntentProvenance,
+    #[serde(deserialize_with = "Option::deserialize")]
+    discovery_pin: Option<crate::discovery_store::DiscoverySessionPin>,
 }
 
 impl From<&LogicalSessionRecord> for PersistedLogicalSession {
@@ -102,31 +100,21 @@ impl From<&LogicalSessionRecord> for PersistedLogicalSession {
         Self {
             logical_session_id: rec.logical_session_id.0,
             tenant_scope: rec.tenant_scope.clone(),
-            intent_turns: rec.intent_turns.clone(),
-            accumulated_intent: rec.accumulated_intent.clone(),
-            intent: None,
+            provenance: rec.intent_provenance.clone(),
+            discovery_pin: rec.discovery_pin.clone(),
         }
     }
 }
 
 impl From<PersistedLogicalSession> for LogicalSessionRecord {
     fn from(p: PersistedLogicalSession) -> Self {
-        let mut intent_turns = p.intent_turns;
-        if intent_turns.is_empty() {
-            if let Some(legacy) = p.intent.filter(|s| !s.trim().is_empty()) {
-                intent_turns.push(legacy);
-            }
-        }
-        let accumulated_intent = if p.accumulated_intent.trim().is_empty() {
-            normalize_accumulated_intent(&intent_turns)
-        } else {
-            p.accumulated_intent
-        };
+        let intent_turns: Vec<_> = p.provenance.turns().map(str::to_owned).collect();
         Self {
             logical_session_id: LogicalSessionId(p.logical_session_id),
             tenant_scope: p.tenant_scope,
-            intent_turns,
-            accumulated_intent,
+            accumulated_intent: normalize_accumulated_intent(&intent_turns),
+            intent_provenance: p.provenance,
+            discovery_pin: p.discovery_pin,
         }
     }
 }
@@ -166,25 +154,9 @@ pub fn normalize_accumulated_intent(turns: &[String]) -> String {
     joined
 }
 
-/// Build the semantic-discovery prompt from immutable workflow history and the
-/// current request. The first turn is never replaced by an agent paraphrase on
-/// extension; repeated identical requests are not duplicated.
-#[must_use]
-pub fn discovery_routing_intent(accumulated: &str, current: &str) -> String {
-    let accumulated = accumulated.trim();
-    let current = current.trim();
-    if accumulated.is_empty() || accumulated == current {
-        return current.to_owned();
-    }
-    if current.is_empty() {
-        return accumulated.to_owned();
-    }
-    normalize_accumulated_intent(&[accumulated.to_owned(), current.to_owned()])
-}
-
 fn normalize_intent_turn(raw: &str) -> Option<String> {
     let t = raw.trim();
-    if t.is_empty() {
+    if t.is_empty() || t.contains('\0') {
         None
     } else {
         Some(t.to_string())
@@ -274,18 +246,21 @@ impl LogicalSessionRegistry {
         &self,
         tenant_scope: &str,
         first_intent_turn: &str,
-    ) -> LogicalSessionRecord {
-        let turn = normalize_intent_turn(first_intent_turn).unwrap_or_else(|| " ".to_string());
+    ) -> Result<LogicalSessionRecord, String> {
+        let turn = normalize_intent_turn(first_intent_turn)
+            .ok_or("logical session requires valid nonempty intent")?;
         let intent_turns = vec![turn];
         let accumulated_intent = normalize_accumulated_intent(&intent_turns);
         let rec = LogicalSessionRecord {
             logical_session_id: LogicalSessionId::new_v4(),
             tenant_scope: tenant_scope.to_string(),
-            intent_turns,
+            intent_provenance: crate::intent_provenance::IntentProvenance::from_turns(intent_turns)
+                .map_err(|e| e.to_string())?,
             accumulated_intent,
+            discovery_pin: None,
         };
         self.persist_record(&rec).await;
-        rec
+        Ok(rec)
     }
 
     /// Commit the identity already pinned by successful discovery. Identical retries are idempotent.
@@ -293,38 +268,31 @@ impl LogicalSessionRegistry {
         &self,
         id: LogicalSessionId,
         tenant_scope: &str,
-        intent: &str,
+        provenance: &crate::intent_provenance::IntentProvenance,
+        discovery_pin: Option<crate::discovery_store::DiscoverySessionPin>,
     ) -> Result<LogicalSessionRecord, String> {
         if let Some(existing) = self.get(id).await {
             if existing.tenant_scope != tenant_scope {
                 return Err("routing session belongs to another scope".into());
             }
-            return Ok(existing);
+            if !provenance
+                .turns()
+                .take(existing.intent_provenance.turns().count())
+                .eq(existing.intent_provenance.turns())
+            {
+                return Err("routing intent rewrites session ancestry".into());
+            }
         }
-        let intent_turns = vec![normalize_intent_turn(intent).ok_or("routing intent is empty")?];
+        let intent_turns: Vec<_> = provenance.turns().map(str::to_owned).collect();
         let rec = LogicalSessionRecord {
             logical_session_id: id,
             tenant_scope: tenant_scope.to_owned(),
             accumulated_intent: normalize_accumulated_intent(&intent_turns),
-            intent_turns,
+            intent_provenance: provenance.clone(),
+            discovery_pin,
         };
         self.persist_record(&rec).await;
         Ok(rec)
-    }
-
-    /// Append an intent turn on extend; updates accumulated intent and persists.
-    pub async fn append_intent_turn(
-        &self,
-        id: LogicalSessionId,
-        intent_turn: &str,
-    ) -> Option<LogicalSessionRecord> {
-        let mut rec = self.get(id).await?;
-        if let Some(turn) = normalize_intent_turn(intent_turn) {
-            rec.intent_turns.push(turn);
-            rec.accumulated_intent = normalize_accumulated_intent(&rec.intent_turns);
-            self.persist_record(&rec).await;
-        }
-        Some(rec)
     }
 
     pub async fn get(&self, id: LogicalSessionId) -> Option<LogicalSessionRecord> {
@@ -400,25 +368,16 @@ mod tests {
         assert_eq!(normalize_accumulated_intent(&turns), "first\nsecond");
     }
 
-    #[test]
-    fn discovery_routing_intent_preserves_original_and_current() {
-        assert_eq!(
-            discovery_routing_intent("original constraint", "agent paraphrase"),
-            "original constraint\nagent paraphrase"
-        );
-        assert_eq!(
-            discovery_routing_intent("original constraint", "original constraint"),
-            "original constraint"
-        );
-    }
-
     #[tokio::test]
     async fn mint_session_always_fresh() {
         let reg = LogicalSessionRegistry::new();
-        let a = reg.mint_session("tenant", "goal-a").await;
-        let b = reg.mint_session("tenant", "goal-a").await;
+        let a = reg.mint_session("tenant", "goal-a").await.unwrap();
+        let b = reg.mint_session("tenant", "goal-a").await.unwrap();
         assert_ne!(a.logical_session_id, b.logical_session_id);
-        assert_eq!(a.intent_turns, vec!["goal-a"]);
+        assert_eq!(
+            a.intent_provenance.turns().collect::<Vec<_>>(),
+            vec!["goal-a"]
+        );
         assert!(reg.verify_tenant(a.logical_session_id, "tenant").await);
         assert!(!reg.verify_tenant(a.logical_session_id, "other").await);
     }
@@ -426,14 +385,56 @@ mod tests {
     #[tokio::test]
     async fn append_intent_turn_accumulates() {
         let reg = LogicalSessionRegistry::new();
-        let rec = reg.mint_session("tenant", "turn-one").await;
+        let rec = reg.mint_session("tenant", "turn-one").await.unwrap();
         let id = rec.logical_session_id;
         let extended = reg
-            .append_intent_turn(id, "turn-two")
+            .register_routed_session(
+                id,
+                "tenant",
+                &rec.intent_provenance.derived("turn-two".into()).unwrap(),
+                None,
+            )
             .await
             .expect("extend");
-        assert_eq!(extended.intent_turns.len(), 2);
+        assert_eq!(extended.intent_provenance.turns().count(), 2);
         assert_eq!(extended.accumulated_intent, "turn-one\nturn-two");
+    }
+
+    #[tokio::test]
+    async fn pending_discovery_roundtrip_preserves_pin_and_ancestry() {
+        let registry = LogicalSessionRegistry::new();
+        let id = LogicalSessionId::new_v4();
+        let provenance = crate::intent_provenance::IntentProvenance::from_turns([
+            "  Only selected records.  ".into(),
+        ])
+        .unwrap();
+        let pin = crate::discovery_store::DiscoverySessionPin {
+            pin_id: id.to_string(),
+            generation: "matrix-generation".into(),
+            authorization: crate::discovery_store::DiscoveryAuthorization::catalogs(
+                ["matrix".into()].into(),
+            ),
+        };
+        let pending = registry
+            .register_routed_session(id, "tenant", &provenance, Some(pin.clone()))
+            .await
+            .unwrap();
+        let wire = serde_json::to_string(&PersistedLogicalSession::from(&pending)).unwrap();
+        let restored = LogicalSessionRecord::from(
+            serde_json::from_str::<PersistedLogicalSession>(&wire).unwrap(),
+        );
+        assert_eq!(restored.discovery_pin, Some(pin.clone()));
+        assert_eq!(restored.intent_provenance, provenance);
+        let child = provenance
+            .derived("Read the related records.".into())
+            .unwrap();
+        let extended = registry
+            .register_routed_session(id, "tenant", &child, Some(pin.clone()))
+            .await
+            .unwrap();
+        assert_eq!(extended.logical_session_id, id);
+        assert_eq!(extended.discovery_pin, Some(pin));
+        assert_eq!(extended.intent_provenance, child);
     }
 
     /// Requires `PLASM_TEST_REDIS_URL` (same as other agent-core Redis integration tests).
@@ -455,7 +456,10 @@ mod tests {
         let reg_b = LogicalSessionRegistry::new();
         reg_b.attach_redis(backend).await;
 
-        let rec = reg_a.mint_session("tenant-smoke", "cross-pod").await;
+        let rec = reg_a
+            .mint_session("tenant-smoke", "cross-pod")
+            .await
+            .unwrap();
         assert!(
             reg_b
                 .verify_tenant(rec.logical_session_id, "tenant-smoke")

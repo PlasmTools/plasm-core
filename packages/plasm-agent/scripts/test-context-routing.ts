@@ -4,6 +4,7 @@ import { routingPacketSchema, routingRecoveryMarkdown } from "../src/engine/rout
 
 const packet = routingPacketSchema.parse({
   routing: {
+    intent_provenance: { nodes: [{ parent: null, intent: "Read the account balance." }] },
     intent: "Read the account balance.",
     pin_id: "11111111-1111-4111-8111-111111111111",
     retrieval: { generation: "fixture", candidates: [] },

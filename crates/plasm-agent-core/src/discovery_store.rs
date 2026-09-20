@@ -132,6 +132,65 @@ pub struct RetrievalReceipt {
 }
 
 impl DiscoveryStore {
+    pub async fn intent_provenance(
+        &self,
+        session: &str,
+    ) -> Result<crate::intent_provenance::IntentProvenance> {
+        let value: serde_json::Value = sqlx::query_scalar("SELECT p.provenance FROM discovery_intent_provenance p JOIN discovery_session_pins s USING (session_id) WHERE session_id=$1 AND s.expires_at > now()")
+            .bind(session).fetch_one(&self.pool).await?;
+        Ok(serde_json::from_value(value)?)
+    }
+
+    /// Serialize ancestry commits on the existing session pin. A stale or rewritten
+    /// chain cannot become the context for an exposed capability surface.
+    pub async fn commit_intent_provenance(
+        &self,
+        session: &str,
+        provenance: &crate::intent_provenance::IntentProvenance,
+        extending: bool,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT session_id FROM discovery_session_pins WHERE session_id=$1 AND expires_at > now() FOR UPDATE")
+            .bind(session).fetch_one(&mut *tx).await?;
+        let previous: Option<serde_json::Value> = sqlx::query_scalar(
+            "SELECT provenance FROM discovery_intent_provenance WHERE session_id=$1",
+        )
+        .bind(session)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if let Some(previous) = previous {
+            let previous = serde_json::from_value(previous)?;
+            anyhow::ensure!(
+                provenance.is_continuation_of(&previous),
+                "intent provenance rewrites or omits pinned ancestry"
+            );
+        } else {
+            anyhow::ensure!(
+                !extending,
+                "session has no intent provenance; open a new context"
+            );
+        }
+        sqlx::query("INSERT INTO discovery_intent_provenance (session_id,provenance) VALUES ($1,$2) ON CONFLICT (session_id) DO UPDATE SET provenance=EXCLUDED.provenance")
+            .bind(session).bind(serde_json::to_value(provenance)?).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Independent current-slot recall, fairly interleaved under the selector bound.
+    pub async fn retrieve_queries(
+        &self,
+        generation: &str,
+        queries: &[String],
+        allowed: &DiscoveryAuthorization,
+    ) -> Result<RetrievalReceipt> {
+        anyhow::ensure!(!queries.is_empty(), "discovery queries required");
+        let mut receipts = Vec::new();
+        for query in queries {
+            receipts.push(self.retrieve(generation, query, allowed).await?);
+        }
+        merge_query_receipts(receipts, allowed)
+    }
+
     pub async fn connect(url: &str) -> Result<Self> {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(8)
@@ -652,6 +711,64 @@ mod tests {
         }
     }
 
+    fn recall_receipt(catalog: &str, count: usize) -> RetrievalReceipt {
+        RetrievalReceipt {
+            generation: "matrix".into(),
+            lexical_count: count,
+            vector_count: 0,
+            lexical_truncated: false,
+            vector_truncated: false,
+            fusion_truncated: 0,
+            relation_truncated: 0,
+            candidates: (0..count)
+                .map(|index| RetrievedCapability {
+                    id: format!("{catalog}/{index}"),
+                    reference: CapabilityRef {
+                        catalog: catalog.into(),
+                        capability: format!("read_{index}"),
+                    },
+                    document: CapabilityDocument {
+                        capability: format!("read_{index}"),
+                        entity: "Record".into(),
+                        text: "Read abstract records".into(),
+                        text_hash: "fixture".into(),
+                        related_entities: Vec::new(),
+                    },
+                    admissions: BTreeSet::from(["lexical".into()]),
+                })
+                .collect(),
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn current_slot_recall_survives_broad_query_and_stays_bounded(broad in 1usize..256, narrow in 1usize..64) {
+            let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["broad".into(), "current".into()]));
+            let receipt = merge_query_receipts(vec![recall_receipt("broad", broad), recall_receipt("current", narrow)], &allowed).unwrap();
+            proptest::prop_assert!(receipt.candidates.len() <= SELECTOR_LIMIT);
+            proptest::prop_assert!(receipt.candidates.iter().any(|candidate| candidate.reference.catalog == "current"));
+            proptest::prop_assert_eq!(receipt.candidates.len() + receipt.fusion_truncated, broad + narrow);
+            proptest::prop_assert!(receipt.candidates.iter().all(|candidate| allowed.permits(&candidate.reference)));
+        }
+    }
+
+    #[test]
+    fn query_merge_rejects_out_of_scope_and_keeps_all_admission_witnesses() {
+        let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
+        assert!(merge_query_receipts(vec![recall_receipt("forbidden", 1)], &allowed).is_err());
+        let merged = merge_query_receipts(
+            vec![recall_receipt("matrix", 2), recall_receipt("matrix", 2)],
+            &allowed,
+        )
+        .unwrap();
+        assert_eq!(merged.candidates.len(), 2);
+        assert_eq!(merged.fusion_truncated, 0);
+        for candidate in merged.candidates {
+            assert!(candidate.admissions.contains("query:0"));
+            assert!(candidate.admissions.contains("query:1"));
+        }
+    }
+
     #[test]
     fn pinned_authorization_intersection_never_broadens_capabilities() {
         let pinned = DiscoveryAuthorization {
@@ -742,6 +859,51 @@ mod tests {
                 .unwrap(),
             generation
         );
+        let root =
+            crate::intent_provenance::IntentProvenance::from_turns(
+                ["Read selected records".into()],
+            )
+            .unwrap();
+        store
+            .commit_intent_provenance(&session, &root, false)
+            .await
+            .unwrap();
+        let child = root
+            .derived("Resolve the required relation".into())
+            .unwrap();
+        store
+            .commit_intent_provenance(&session, &child, true)
+            .await
+            .unwrap();
+        store
+            .commit_intent_provenance(&session, &child, true)
+            .await
+            .unwrap();
+        assert_eq!(store.intent_provenance(&session).await.unwrap(), child);
+        assert!(store
+            .commit_intent_provenance(&session, &root, true)
+            .await
+            .is_err());
+        let rewritten =
+            crate::intent_provenance::IntentProvenance::from_turns(["Read all records".into()])
+                .unwrap();
+        assert!(store
+            .commit_intent_provenance(&session, &rewritten, true)
+            .await
+            .is_err());
+        let left = child.derived("Left next need".into()).unwrap();
+        let right = child.derived("Right next need".into()).unwrap();
+        let (left_result, right_result) = tokio::join!(
+            store.commit_intent_provenance(&session, &left, true),
+            store.commit_intent_provenance(&session, &right, true),
+        );
+        assert_ne!(
+            left_result.is_ok(),
+            right_result.is_ok(),
+            "exactly one concurrent child commits"
+        );
+        let winner = if left_result.is_ok() { left } else { right };
+        assert_eq!(store.intent_provenance(&session).await.unwrap(), winner);
         let next = store
             .import(
                 "matrix-deployment",
@@ -785,7 +947,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(receipt.lexical_count, 0);
-        assert_eq!(receipt.candidates.len(), 2);
+        assert_eq!(
+            receipt.candidates.len(),
+            prepared("matrix", 1).discovery.capabilities.len()
+        );
         assert_eq!(receipt.candidates[0].reference.capability, "read");
         assert!(receipt
             .candidates
@@ -956,4 +1121,65 @@ mod tests {
             "{error:#}"
         );
     }
+}
+
+/// Round-robin prevents one broad query from excluding every specific-slot result.
+fn merge_query_receipts(
+    receipts: Vec<RetrievalReceipt>,
+    allowed: &DiscoveryAuthorization,
+) -> Result<RetrievalReceipt> {
+    let generation = receipts
+        .first()
+        .context("discovery queries required")?
+        .generation
+        .clone();
+    let mut merged = RetrievalReceipt {
+        generation,
+        candidates: Vec::new(),
+        lexical_count: 0,
+        vector_count: 0,
+        lexical_truncated: false,
+        vector_truncated: false,
+        fusion_truncated: 0,
+        relation_truncated: 0,
+    };
+    let mut queues = Vec::new();
+    for receipt in receipts {
+        anyhow::ensure!(
+            receipt.generation == merged.generation,
+            "cannot merge registry generations"
+        );
+        merged.lexical_count += receipt.lexical_count;
+        merged.vector_count += receipt.vector_count;
+        merged.lexical_truncated |= receipt.lexical_truncated;
+        merged.vector_truncated |= receipt.vector_truncated;
+        merged.fusion_truncated += receipt.fusion_truncated;
+        merged.relation_truncated += receipt.relation_truncated;
+        queues.push(std::collections::VecDeque::from(receipt.candidates));
+    }
+    let mut seen = BTreeMap::<CapabilityRef, usize>::new();
+    let mut dropped = BTreeSet::new();
+    while queues.iter().any(|queue| !queue.is_empty()) {
+        for (query_index, queue) in queues.iter_mut().enumerate() {
+            if let Some(mut candidate) = queue.pop_front() {
+                anyhow::ensure!(
+                    allowed.permits(&candidate.reference),
+                    "retrieval escaped authorization scope"
+                );
+                candidate.admissions.insert(format!("query:{query_index}"));
+                if let Some(index) = seen.get(&candidate.reference) {
+                    merged.candidates[*index]
+                        .admissions
+                        .extend(candidate.admissions);
+                } else if merged.candidates.len() < SELECTOR_LIMIT {
+                    seen.insert(candidate.reference.clone(), merged.candidates.len());
+                    merged.candidates.push(candidate);
+                } else {
+                    dropped.insert(candidate.reference);
+                }
+            }
+        }
+    }
+    merged.fusion_truncated += dropped.len();
+    Ok(merged)
 }

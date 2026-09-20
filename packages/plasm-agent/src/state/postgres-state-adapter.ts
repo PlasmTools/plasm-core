@@ -1,5 +1,6 @@
 import type { SymbolRegistrySnapshot } from "../symbol-registry.js";
-import { intentKey, type AgentSessionState } from "../session-state.js";
+import { decodeSessionState, decodeListedSession, encodeSessionState, type AgentSessionState } from "../session-state.js";
+import { sessionStorageKey, type LogicalSessionRef } from "../runtime/session-contract.js";
 import type { AgentStateStore, StateBackend } from "./define-state.js";
 
 function postgresUrl(): string {
@@ -45,48 +46,55 @@ async function pool(): Promise<PgPool> {
 }
 
 export class PostgresStateAdapter implements AgentStateStore {
-  constructor(private readonly tenantScope: string) {}
+  constructor(private readonly tenantScope: string, private readonly connection?: PgPool) { }
+
+  private database(): Promise<PgPool> {
+    return this.connection ? Promise.resolve(this.connection) : pool();
+  }
 
   backend(): StateBackend {
     return "postgres";
   }
 
-  async get(intent: string): Promise<AgentSessionState | null> {
-    const db = await pool();
+  async get(ref: LogicalSessionRef): Promise<AgentSessionState | null> {
+    const db = await this.database();
     const result = await db.query(
       `SELECT payload FROM plasm_agent_state
-       WHERE tenant_id = $1 AND kind = 'session' AND state_key = $2`,
-      [this.tenantScope, intentKey(intent)],
+       WHERE tenant_id = $1 AND kind = 'session-v2' AND state_key = $2`,
+      [this.tenantScope, sessionStorageKey({ tenantScope: this.tenantScope, logicalSessionRef: ref })],
     );
     const row = result.rows[0]?.payload;
-    return row ? (row as AgentSessionState) : null;
+    return row === undefined ? null : decodeSessionState(row, { tenantScope: this.tenantScope, logicalSessionRef: ref });
   }
 
   async put(state: AgentSessionState): Promise<void> {
-    const db = await pool();
+    const encoded = encodeSessionState(state, { tenantScope: this.tenantScope, logicalSessionRef: state.logicalSessionRef });
+    const db = await this.database();
     await db.query(
       `INSERT INTO plasm_agent_state (tenant_id, kind, state_key, payload, updated_at)
-       VALUES ($1, 'session', $2, $3::jsonb, NOW())
+       VALUES ($1, 'session-v2', $2, $3::jsonb, NOW())
        ON CONFLICT (tenant_id, kind, state_key)
        DO UPDATE SET payload = EXCLUDED.payload, updated_at = NOW()`,
-      [this.tenantScope, intentKey(state.intent), JSON.stringify(state)],
+      [this.tenantScope, sessionStorageKey({ tenantScope: this.tenantScope, logicalSessionRef: state.logicalSessionRef }), encoded],
     );
   }
 
-  async listIntents(): Promise<string[]> {
-    const db = await pool();
+  async listSessions(): Promise<AgentSessionState[]> {
+    const db = await this.database();
     const result = await db.query(
-      `SELECT payload FROM plasm_agent_state
-       WHERE tenant_id = $1 AND kind = 'session'`,
+      `SELECT state_key, payload FROM plasm_agent_state
+       WHERE tenant_id = $1 AND kind = 'session-v2'`,
       [this.tenantScope],
     );
-    return result.rows
-      .map((row) => (row.payload as AgentSessionState | undefined)?.intent)
-      .filter((intent): intent is string => Boolean(intent));
+    return result.rows.map((row) => {
+      const state = decodeListedSession(row.payload, this.tenantScope);
+      if (row.state_key !== sessionStorageKey({ tenantScope: this.tenantScope, logicalSessionRef: state.logicalSessionRef })) throw new Error("Session key does not match its identity");
+      return state;
+    });
   }
 
   async getSymbolRegistry(tenantId: string): Promise<SymbolRegistrySnapshot | null> {
-    const db = await pool();
+    const db = await this.database();
     const result = await db.query(
       `SELECT payload FROM plasm_agent_state
        WHERE tenant_id = $1 AND kind = 'symbols' AND state_key = 'registry'`,
@@ -100,7 +108,7 @@ export class PostgresStateAdapter implements AgentStateStore {
     tenantId: string,
     snapshot: SymbolRegistrySnapshot,
   ): Promise<void> {
-    const db = await pool();
+    const db = await this.database();
     await db.query(
       `INSERT INTO plasm_agent_state (tenant_id, kind, state_key, payload, updated_at)
        VALUES ($1, 'symbols', 'registry', $2::jsonb, NOW())

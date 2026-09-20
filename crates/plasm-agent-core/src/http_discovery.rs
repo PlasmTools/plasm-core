@@ -229,11 +229,20 @@ async fn route_http_intent(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let store = st.catalog.discovery_store().await?;
+    let provenance = if let Some(id) = logical_session {
+        store
+            .intent_provenance(id)
+            .await?
+            .derived(body.intent.clone())?
+    } else {
+        crate::intent_provenance::IntentProvenance::from_turns([body.intent.clone()])?
+    };
     let service = DiscoveryService::from_env(st.catalog.discovery_store().await?.clone())?;
     service
         .route_turn(RouteTurn {
             new_generation: &generation,
-            intent: &body.intent,
+            intent_provenance: &provenance,
             effect_slots: &body.effect_slots,
             logical_session,
             allowed: &allowed,

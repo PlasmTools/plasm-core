@@ -35,7 +35,7 @@ is product overlay — not where language law lives.
 | `prompts/` | Canonical liturgy from plasm-core assets (system + tool descriptions) |
 | `tools/plasm-tools.ts` | Four MCP-shaped language tools (Zod + `tool()`) |
 | `runtime/agent-runtime.ts` | Engine + session orchestration for tool handlers |
-| `session-state.ts` | Durable session mirror (`agent/.plasm/sessions/`, teaching.tsv) |
+| `session-state.ts` | Validated session mirror (`agent/.plasm/sessions-v2/<tenant digest>/`) |
 | `symbol-registry.ts` | Agent-global monotonic `e#/m#/p#/r#` mirror |
 | `catalog/loader.ts` | Filesystem catalog discovery |
 | `engine/napi-binding.ts` | `NapiPlasmEngine` / `StubPlasmEngine` |
@@ -51,9 +51,35 @@ plasm_context → plasm → plasm_run
 ```
 
 - Language card returned as **tool result markdown** (history-resident)
-- Stable `intent` per goal → deterministic `logical_session_ref` (`l_<token>`)
+- `session_mode: "new"` creates a fresh `logical_session_ref`; `extend` reuses it. Intent is prose, never a storage key.
 - `plasm` dry-run registers `pcN` in the NAPI engine; `plasm_run` validates it
 - **Live HTTP execute** still requires `HostTransportFn` (Vercel Connect) — next phase
+
+Session persistence uses a SHA-256 digest of the JSON tuple `(tenantScope,
+logicalSessionRef)`. `WorkflowIntent` and `LogicalSessionRef` are separately
+validated branded types. Every adapter validates the versioned record, its
+tenant/ref address, and the UUID/ref correspondence on read and write. NUL and
+unpaired UTF-16 surrogates are rejected rather than silently replaced across
+the JSON/UTF-8/PostgreSQL boundary. Distinct sessions can have identical intents.
+
+This is a storage-contract cutover: filesystem/Blob use `sessions-v2`, KV uses
+`session-v2`, and PostgreSQL uses kind `session-v2`. Previous intent-keyed mirrors
+are not loaded or migrated, and their files/rows are not deleted. Open a new
+context after upgrading. A decoded mirror does not resurrect an expired native
+execution session. Custom `SessionStore` implementations now provide
+`get(LogicalSessionRef)`, `put(AgentSessionState)`, and `listSessions()`.
+
+Boundary checks (no model calls):
+
+```sh
+npm run test:session-contract
+npm run test:session-extension
+PLASM_TEST_POSTGRES_URL=... npm run test:session-postgres
+```
+
+Generated properties use a reproducible default seed; set `PLASM_PROPERTY_SEED`
+to explore another sequence. PostgreSQL tests use a connection-local temporary
+table and cover JSONB round trips plus the discovery text-search parameter.
 
 ```ts
 import { PlasmAgent } from "@plasm_lang/vercel-agent";
@@ -253,3 +279,17 @@ host injection and reject missing credentials before dispatch. `rejectRedirects`
 requires rejecting redirects. The default transport implements both checks. Scoped
 delegated reads dispatch live so a response cache cannot skip injection validation.
 These flags contain policy, not credential material.
+
+### Intent provenance
+
+`AgentRuntimeConfig.initialIntent` optionally seeds the first intent. Each
+`plasm_context` call appends its current intent as a child in `intentProvenance`;
+there are no task/agent roles in this contract. The native `routeIntent` boundary
+accepts serialized, validated provenance plus current effect slots. Retrieval uses
+current slots and current intent; Jev receives the lossless ancestry. PostgreSQL
+rejects a rewritten or omitted ancestor for an existing session pin. Completed
+insufficient extensions retain their intent without adding teaching.
+
+Session schema version 2 persists the chain, with a versioned storage namespace.
+Open a new context for older mirrors; no automatic migration is performed. Native
+engine binaries and TypeScript bindings must be rebuilt together for this wire cutover.

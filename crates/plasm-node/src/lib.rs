@@ -298,15 +298,18 @@ impl PlasmEngine {
         Ok(generation)
     }
 
-    /// Original intent plus explicit affirmative effect slots; selection runs
+    /// Typed intent provenance plus current affirmative effect slots; selection runs
     /// outside the execution mutex.
     #[napi]
     pub async fn route_intent(
         &self,
-        intent: String,
+        intent_provenance_json: String,
         effect_slots: Vec<String>,
         logical_session_id: Option<String>,
     ) -> Result<String> {
+        let provenance: plasm_agent_core::intent_provenance::IntentProvenance =
+            serde_json::from_str(&intent_provenance_json)
+                .map_err(|error| Error::from_reason(error.to_string()))?;
         let store = self.discovery_store.get().ok_or_else(|| {
             Error::from_reason(
                 "activateDiscovery must validate a complete generation before routing",
@@ -320,7 +323,7 @@ impl PlasmEngine {
         let receipt = service
             .route_turn(RouteTurn {
                 new_generation: &generation,
-                intent: &intent,
+                intent_provenance: &provenance,
                 effect_slots: &effect_slots,
                 logical_session: logical_session_id.as_deref(),
                 allowed: &allowed,
@@ -330,7 +333,7 @@ impl PlasmEngine {
             })
             .await
             .map_err(map_err)?;
-        let teaching = if let Some(closure) = &receipt.closure {
+        let teaching = {
             let (catalogs, compiled_catalogs, _) = store
                 .load_generation(&receipt.retrieval.generation)
                 .await
@@ -359,13 +362,15 @@ impl PlasmEngine {
                     "routing receipt does not match the logical session pin",
                 ));
             }
-            Some(
-                engine
-                    .expose_routing(&receipt.intent, closure)
-                    .map_err(map_err)?,
-            )
-        } else {
-            None
+            receipt
+                .closure
+                .as_ref()
+                .map(|closure| {
+                    engine
+                        .expose_routing(&receipt.intent, closure)
+                        .map_err(map_err)
+                })
+                .transpose()?
         };
         serde_json::to_string(&serde_json::json!({"routing":receipt,"teaching":teaching}))
             .map_err(|e| Error::from_reason(e.to_string()))
