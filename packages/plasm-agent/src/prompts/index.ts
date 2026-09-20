@@ -58,9 +58,9 @@ export type SystemLiturgyOptions = {
  * Overlay replaces this exact paragraph — never the first paragraph by index.
  */
 export const WORKFLOW_COMPLETION_SLOT =
-  "Plan from the current requirement, taught symbols and observed results. " +
-  "Stop with no tool call when observations establish every requested effect. " +
-  "Intermediate results alone are not completion.";
+  "Plan from the requirement, symbols and results. " +
+  "Stop with no tool call once observations establish all requested effects; " +
+  "intermediate results are not completion.";
 
 /**
  * Eval overlay for `WORKFLOW_COMPLETION_SLOT` when terminal tools are registered.
