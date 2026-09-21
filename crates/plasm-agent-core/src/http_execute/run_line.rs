@@ -204,12 +204,13 @@ pub(crate) async fn run_parsed_plasm_line(
     };
     if let Some(ref key) = page_storage_key {
         if let Some(cursor) = sess.peek_synthetic_paging_resume(key) {
+            let entry_id = cursor.qualified_entity.entry_id.clone();
             let result = synthetic_page_result(sess, key, cursor, trace);
             let artifact = persist_execute_run(PersistExecuteRunInput {
                 st,
                 sess,
                 session_id,
-                entry_id: sess.entry_id.as_str(),
+                entry_id: entry_id.as_str(),
                 source_line: line,
                 display_lines: vec![line.to_string()],
                 parsed: &parsed,
@@ -246,8 +247,21 @@ pub(crate) async fn run_parsed_plasm_line(
         parsed.expr.primary_entity().to_string()
     };
     let root_entity = root_entity_owned.as_str();
-    let exec_cgs = crate::catalog_ownership::resolve_cgs_for_entity(sess, root_entity, None)
-        .map_err(RunLineError::Parse)?;
+    let qualified_entity = if let Some(key) = page_storage_key.as_ref() {
+        sess.paging_qualified_entity(key)
+            .ok_or_else(|| RunLineError::Parse(format!("unknown paging handle `{key}`")))?
+    } else if let Some(owner) = parsed.expr.qualified_entity_key() {
+        crate::plasm_plan::QualifiedEntityKey::from(owner)
+    } else {
+        crate::catalog_ownership::resolve_qualified_entity_key(sess, root_entity, None)
+            .map_err(RunLineError::Parse)?
+    };
+    let exec_cgs = crate::catalog_ownership::resolve_cgs_for_entry_entity(
+        sess,
+        &qualified_entity.entry_id,
+        &qualified_entity.entity,
+    )
+    .map_err(RunLineError::Parse)?;
     let parsed = crate::execute_pipeline::preflight_line_compile_dispatch(
         sess, sess, &parsed, line, exec_cgs,
     )
@@ -262,7 +276,7 @@ pub(crate) async fn run_parsed_plasm_line(
                     sess,
                     st,
                     exec_cgs,
-                    root_entity,
+                    &qualified_entity,
                     fp_sink.clone(),
                     preflight_token,
                     rows_progress.clone(),
@@ -276,7 +290,7 @@ pub(crate) async fn run_parsed_plasm_line(
                     sess,
                     st,
                     exec_cgs,
-                    root_entity,
+                    &qualified_entity,
                     fp_sink.clone(),
                     preflight_token,
                     rows_progress.clone(),
@@ -315,6 +329,7 @@ pub(crate) async fn run_parsed_plasm_line(
         if result.has_more {
             if let Some(next) = result.pagination_resume.take() {
                 sess.upsert_paging_resume(storage_key, next);
+                result.paging_handle = Some(storage_key.clone());
             } else {
                 sess.remove_paging_resume(storage_key);
             }
@@ -325,6 +340,7 @@ pub(crate) async fn run_parsed_plasm_line(
         if let Some(resume) = result.pagination_resume.take() {
             let h = sess.register_paging_continuation(
                 resume,
+                qualified_entity.clone(),
                 trace.and_then(|t| t.logical_session_ref.as_deref()),
             );
             result.paging_handle = Some(h);
@@ -337,7 +353,7 @@ pub(crate) async fn run_parsed_plasm_line(
         st,
         sess,
         session_id,
-        entry_id: sess.entry_id.as_str(),
+        entry_id: qualified_entity.entry_id.as_str(),
         source_line: line,
         display_lines: vec![line.to_string()],
         parsed: &parsed,

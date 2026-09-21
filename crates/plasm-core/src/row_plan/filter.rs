@@ -21,30 +21,19 @@ impl CatalogFilter {
     }
 }
 
-/// Row-plane AND-filter. No conversion to [`CatalogFilter`].
+/// Row-plane boolean filter. No conversion to [`CatalogFilter`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RowFilter {
-    predicates: Vec<PlanPredicate>,
+    predicates: crate::BooleanExpr<PlanPredicate>,
 }
-
 impl RowFilter {
-    pub fn new(predicates: Vec<PlanPredicate>) -> Result<Self, RowFilterError> {
-        if predicates.is_empty() {
+    pub fn new(predicates: crate::BooleanExpr<PlanPredicate>) -> Result<Self, RowFilterError> {
+        if predicates.has_empty_branch() {
             return Err(RowFilterError::Empty);
         }
         Ok(Self { predicates })
     }
-
-    #[must_use]
-    pub fn predicates(&self) -> &[PlanPredicate] {
+    pub fn predicates(&self) -> &crate::BooleanExpr<PlanPredicate> {
         &self.predicates
-    }
-}
-
-impl TryFrom<Vec<PlanPredicate>> for RowFilter {
-    type Error = RowFilterError;
-
-    fn try_from(predicates: Vec<PlanPredicate>) -> Result<Self, Self::Error> {
-        Self::new(predicates)
     }
 }

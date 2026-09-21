@@ -460,6 +460,8 @@ fn where_in_rowset_ra13_dry_comp_witness() {
     let cgs = language_matrix::load_language_matrix_cgs();
     let es = language_matrix::matrix_execute_session(cgs);
     for row_id in [
+        "lang_where_literal_boolean_sugar",
+        "lang_where_boolean_rowset_sugar",
         "lang_where_in_rowset",
         "lang_where_not_in_rowset",
         "lang_where_in_rowset_paren",
@@ -707,24 +709,25 @@ fn quoted_binding_field_literal_is_preserved() {
     assert_comp_witness(&dry).unwrap_or_else(|e| panic!("comp witness: {e}"));
 }
 
-/// RA-13 dest reject: literal `in ("a", "b")` is not a rowset.
+/// Literal membership repair must reject unsupported values without dropping them.
 #[test]
-fn where_in_literal_list_is_compile_reject() {
+fn where_in_invalid_literal_list_is_compile_reject() {
     let cgs = language_matrix::load_language_matrix_cgs();
     let es = language_matrix::matrix_execute_session(cgs);
-    let err = compile_plasm_program(
-        &PromptPipelineConfig::default(),
-        None,
-        &es,
-        "where_in_literal_list_is_compile_reject",
-        r#"LangItem | where owner in ("alice", "bob")"#,
-    )
-    .expect_err("literal membership list must fail compile");
-    let err = err.to_string();
-    assert!(
-        err.contains("not a literal list"),
-        "RA-13 dest reject must name the list ban, got: {err}"
-    );
+    for source in [
+        r#"LangItem | where owner in ("alice", null)"#,
+        r#"LangItem | where owner in ("alice", {})"#,
+        r#"LangItem | where score in (1, true)"#,
+    ] {
+        compile_plasm_program(
+            &PromptPipelineConfig::default(),
+            None,
+            &es,
+            "invalid_membership",
+            source,
+        )
+        .expect_err("invalid list entry must reject the entire selection");
+    }
 }
 
 /// RA-2: `| select handle = owner | where handle = …` binds the projection grain.
@@ -1206,6 +1209,8 @@ fn lang_where_in_rowset_live() {
                     cgs,
                 );
                 for id in [
+                    "lang_where_literal_boolean_sugar",
+                    "lang_where_boolean_rowset_sugar",
                     "lang_where_in_rowset",
                     "lang_where_not_in_rowset",
                     "lang_where_in_rowset_paren",

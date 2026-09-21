@@ -1,7 +1,7 @@
 //! Stable program-surface error messages.
 
 use super::flatten::leading_identifier;
-use super::labels::looks_like_domain_symbol;
+use super::labels::{looks_like_domain_symbol, reserved_program_label_pattern};
 
 /// Agent-facing hint when a program has bindings but no executable return roots.
 pub fn missing_program_roots_error() -> String {
@@ -19,7 +19,7 @@ pub fn program_return_keyword_error() -> String {
 
 pub fn program_invalid_binding_label_error(label: &str) -> String {
     if looks_like_domain_symbol(label) {
-        format!("Binding names must be labels like `issue`, not teaching symbols (`{label}`).")
+        format!("Binding names must be labels like `items_1`; whole names matching `{}` are reserved (`{label}`). Rename these bindings and their references.", reserved_program_label_pattern())
     } else {
         format!("Binding names must be identifiers like `issue`, not `{label}`.")
     }

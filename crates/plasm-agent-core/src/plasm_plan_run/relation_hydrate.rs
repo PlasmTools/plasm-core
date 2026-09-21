@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use plasm_core::expr_parser::ParsedExpr;
 use plasm_core::{Expr, GetExpr, Ref, CGS};
-use plasm_runtime::{entity_to_agent_row_json, CachedEntity, ExecutionResult};
+use plasm_runtime::{entity_to_row_json, CachedEntity, ExecutionResult};
 
 use crate::execute_session::ExecuteSession;
 use crate::http_execute::execute_plasm_parsed_expr;
@@ -231,7 +231,7 @@ pub(crate) fn relation_rows_from_entities(
 ) -> Vec<serde_json::Value> {
     entities
         .iter()
-        .map(|e| entity_to_agent_row_json(e, Some(cgs)))
+        .map(|e| entity_to_row_json(e, Some(cgs)))
         .collect()
 }
 

@@ -355,6 +355,11 @@ pub(crate) fn assert_planning_query_pipe(
                 return Err(format!("expected With compute, got {:?}", computes));
             }
         }
+        "lang_where_literal_boolean_sugar" | "lang_where_boolean_rowset_sugar" => {
+            if !computes.iter().any(|c| matches!(&c.op, ComputeOp::Filter { predicates } if predicates.conjunction().is_none())) {
+                return Err("boolean repair must preserve non-conjunctive typed filter structure".into());
+            }
+        }
         "lang_where_in_rowset" | "lang_where_in_rowset_paren" => {
             let Some(ComputeOp::Filter { predicates }) =
                 computes.iter().map(|c| &c.op).find(|op| {

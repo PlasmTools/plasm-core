@@ -74,6 +74,25 @@ pub struct CachedEntity {
     pub unavailable_fields: BTreeSet<String>,
 }
 
+impl plasm_core::row_contract::EntityRow for CachedEntity {
+    fn identity(&self) -> &Ref {
+        &self.reference
+    }
+    fn fields(&self) -> impl Iterator<Item = (&str, TypedFieldValue)> {
+        self.fields
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.clone()))
+    }
+    fn relations(&self) -> impl Iterator<Item = (&str, &[Ref])> {
+        self.relations
+            .iter()
+            .map(|(key, references)| (key.as_str(), references.as_slice()))
+    }
+    fn unavailable_fields(&self) -> impl Iterator<Item = &str> {
+        self.unavailable_fields.iter().map(String::as_str)
+    }
+}
+
 /// Graph cache with stable identity and merge semantics.
 ///
 /// **Invariants:** See [Cache invariants (semi-formal)](crate::cache#cache-invariants-semi-formal) (*I1–I7*).
@@ -126,25 +145,32 @@ impl CachedEntity {
         timestamp: u64,
         completeness: EntityCompleteness,
     ) -> Self {
-        let relations: IndexMap<String, Vec<Ref>> = relations
-            .into_iter()
-            .filter_map(|(k, dr)| match dr {
-                DecodedRelation::Unspecified => None,
-                DecodedRelation::Specified(refs) => Some((k, refs)),
-            })
-            .collect();
-        let fields: IndexMap<String, TypedFieldValue> = fields
-            .into_iter()
-            .map(|(k, v)| (k, TypedFieldValue::from(v)))
-            .collect();
+        let decoded = plasm_compile::DecodedEntity {
+            reference,
+            fields,
+            relations,
+            embedded_entities: Vec::new(),
+            field_diagnostics: Vec::new(),
+        };
+        Self::from_row(&decoded, timestamp, completeness)
+    }
+
+    /// All observation adapters enter cache storage through the semantic row contract.
+    pub fn from_row(
+        row: &impl plasm_core::row_contract::EntityRow,
+        timestamp: u64,
+        completeness: EntityCompleteness,
+    ) -> Self {
+        let (reference, fields, relations, unavailable_fields) =
+            plasm_core::row_contract::RowRecord::capture(row).into_parts();
         Self {
             reference,
             fields,
             relations,
+            unavailable_fields,
             last_updated: timestamp,
             version: 1,
             completeness,
-            unavailable_fields: BTreeSet::new(),
         }
     }
 
@@ -206,24 +232,7 @@ impl CachedEntity {
 
     /// Serialize fields and relations to JSON (no `_ref` / `_version` cache metadata).
     pub fn payload_to_json(&self) -> serde_json::Value {
-        let mut obj = serde_json::Map::new();
-        for (k, v) in &self.fields {
-            obj.insert(
-                k.clone(),
-                serde_json::to_value(v).unwrap_or(serde_json::Value::Null),
-            );
-        }
-        for (k, refs) in &self.relations {
-            obj.insert(
-                k.clone(),
-                serde_json::Value::Array(
-                    refs.iter()
-                        .map(|r| serde_json::Value::String(r.to_string()))
-                        .collect(),
-                ),
-            );
-        }
-        serde_json::Value::Object(obj)
+        plasm_core::row_contract::RowCodec::new(None).payload(self)
     }
 
     /// Row-shaped JSON for plan evaluation, spill pages, and snapshots (CGS-aware id slots).
@@ -231,7 +240,7 @@ impl CachedEntity {
         entity_to_row_json(self, cgs)
     }
 
-    /// Restore a cached entity from a spill/snapshot row (v1 lossy or v2 with `_ref`).
+    /// Restore a cached entity from a spill/snapshot row with typed relation identities.
     pub fn from_row_json(
         entity_type: &str,
         row: &serde_json::Value,
@@ -240,47 +249,14 @@ impl CachedEntity {
         let obj = row.as_object().ok_or_else(|| RuntimeError::CacheError {
             message: "row must be a JSON object".into(),
         })?;
-        let reference = if let Some(r) = obj.get("_ref") {
-            plasm_core::RefWire::parse_json(r).ok_or_else(|| RuntimeError::CacheError {
-                message: format!("invalid _ref `{r}`"),
-            })?
-        } else {
-            build_ref_from_row(entity_type, obj, cgs)?
-        };
-        let mut fields = IndexMap::new();
-        let mut relations = IndexMap::new();
-        let entity_def = cgs.get_entity(entity_type);
-        let id_field = entity_def.map(|e| e.id_field.as_str()).unwrap_or("id");
-        let relation_names: std::collections::HashSet<String> = entity_def
-            .map(|e| e.relations.keys().map(|k| k.as_str().to_string()).collect())
-            .unwrap_or_default();
-        for (k, v) in obj {
-            if matches!(
-                k.as_str(),
-                "_ref" | "_version" | "_last_updated" | "_completeness" | "_unavailable_fields"
-            ) {
-                continue;
-            }
-            if relation_names.contains(k) {
-                if let Some(arr) = v.as_array() {
-                    let refs: Vec<Ref> = arr
-                        .iter()
-                        .filter_map(|item| item.as_str().and_then(Ref::from_string))
-                        .collect();
-                    if !refs.is_empty() {
-                        relations.insert(k.clone(), refs);
-                    }
-                }
-                continue;
-            }
-            if k == id_field {
-                continue;
-            }
-            if let Ok(tf) = serde_json::from_value::<TypedFieldValue>(v.clone()) {
-                fields.insert(k.clone(), tf);
-            }
+        let mut semantic = obj.clone();
+        for field in ["_version", "_last_updated", "_completeness"] {
+            semantic.remove(field);
         }
-        plasm_core::restore_id_field_from_compound_ref(&mut fields, &reference, entity_def, cgs);
+        let record = plasm_core::row_contract::RowCodec::new(Some(cgs))
+            .decode(entity_type, &serde_json::Value::Object(semantic))
+            .map_err(|message| RuntimeError::CacheError { message })?;
+        let (reference, fields, relations, unavailable_fields) = record.into_parts();
         let completeness = obj
             .get("_completeness")
             .and_then(|v| v.as_str())
@@ -294,15 +270,6 @@ impl CachedEntity {
             .get("_last_updated")
             .and_then(|v| v.as_u64())
             .unwrap_or(1);
-        let unavailable_fields = obj
-            .get("_unavailable_fields")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|item| item.as_str().map(str::to_string))
-                    .collect::<BTreeSet<_>>()
-            })
-            .unwrap_or_default();
         Ok(Self {
             reference,
             fields,
@@ -480,63 +447,12 @@ impl CacheStore for GraphCache {
     }
 }
 
-fn build_ref_from_row(
-    entity_type: &str,
-    obj: &serde_json::Map<String, serde_json::Value>,
-    cgs: &plasm_core::CGS,
-) -> Result<Ref, RuntimeError> {
-    let ent = cgs
-        .get_entity(entity_type)
-        .ok_or_else(|| RuntimeError::CacheError {
-            message: format!("unknown entity type `{entity_type}`"),
-        })?;
-    if ent.key_vars.len() <= 1 {
-        let id_name = ent.id_field.as_str();
-        let id = obj
-            .get(id_name)
-            .or_else(|| obj.get("id"))
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| RuntimeError::CacheError {
-                message: format!("row missing id field `{id_name}`"),
-            })?;
-        return Ok(Ref::new(entity_type, id));
-    }
-    let mut parts = std::collections::BTreeMap::new();
-    for kv in &ent.key_vars {
-        let val = obj
-            .get(kv.as_str())
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| RuntimeError::CacheError {
-                message: format!("row missing compound key `{kv}`"),
-            })?;
-        parts.insert(kv.to_string(), val.to_string());
-    }
-    Ok(Ref::compound(entity_type, parts))
-}
-
 /// Agent-visible row JSON: domain fields + relations + CGS identity slots — no cache metadata.
 pub fn entity_to_agent_row_json(
     entity: &CachedEntity,
     cgs: Option<&plasm_core::CGS>,
 ) -> serde_json::Value {
-    let mut v = entity.payload_to_json();
-    let Some(obj) = v.as_object_mut() else {
-        return v;
-    };
-    apply_identity_slots_to_row(obj, entity, cgs);
-    if !entity.unavailable_fields.is_empty() {
-        obj.insert(
-            "_unavailable_fields".to_string(),
-            serde_json::Value::Array(
-                entity
-                    .unavailable_fields
-                    .iter()
-                    .map(|f| serde_json::Value::String(f.clone()))
-                    .collect(),
-            ),
-        );
-    }
-    v
+    plasm_core::row_contract::RowCodec::new(cgs).display(entity)
 }
 
 /// Row-shaped JSON for spill pages and graph rehydrate (includes `_ref`, `_version`, …).
@@ -544,15 +460,8 @@ pub fn entity_to_row_json(
     entity: &CachedEntity,
     cgs: Option<&plasm_core::CGS>,
 ) -> serde_json::Value {
-    let mut v = entity_to_agent_row_json(entity, cgs);
-    let Some(obj) = v.as_object_mut() else {
-        return v;
-    };
-    obj.insert(
-        "_ref".to_string(),
-        serde_json::to_value(plasm_core::RefWire::from_ref(&entity.reference))
-            .unwrap_or_else(|_| serde_json::Value::String(entity.reference.to_string())),
-    );
+    let mut v = plasm_core::row_contract::RowCodec::new(cgs).encode(entity);
+    let obj = v.as_object_mut().expect("row object");
     obj.insert(
         "_version".to_string(),
         serde_json::Value::Number(entity.version.into()),
@@ -572,14 +481,6 @@ pub fn entity_to_row_json(
         ),
     );
     v
-}
-
-fn apply_identity_slots_to_row(
-    obj: &mut serde_json::Map<String, serde_json::Value>,
-    entity: &CachedEntity,
-    cgs: Option<&plasm_core::CGS>,
-) {
-    plasm_core::apply_identity_slots_to_row(obj, &entity.reference, cgs);
 }
 
 impl GraphCache {
@@ -1405,5 +1306,76 @@ mod tests {
                 }),
             Some("release".to_string())
         );
+    }
+}
+
+#[cfg(test)]
+mod relation_wire_properties {
+    use super::*;
+    use proptest::prelude::*;
+
+    #[test]
+    fn malformed_relation_identity_is_rejected_instead_of_dropped() {
+        let cgs = plasm_core::load_schema_dir(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/plasm_language_matrix"),
+        )
+        .unwrap();
+        for child in [
+            serde_json::json!("LangLine:1"),
+            serde_json::json!({"id":"1"}),
+            serde_json::json!({"_ref":plasm_core::RefWire::from_ref(&Ref::new("LangSummary", "1"))}),
+        ] {
+            let row = serde_json::json!({"id":"parent", "lines":[child]});
+            assert!(CachedEntity::from_row_json("LangItem", &row, &cgs).is_err());
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(32))]
+        #[test]
+        fn relation_rows_roundtrip_identity_order_multiplicity_and_empty_edges(
+            ids in prop::collection::vec("[a-zA-Z0-9:_/-]{1,20}", 0..16),
+            singleton in proptest::option::of("[a-zA-Z0-9:_/-]{1,20}"),
+        ) {
+            let cgs = plasm_core::load_schema_dir(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix")).unwrap();
+            let mut parent = CachedEntity::new(Ref::new("LangItem", "parent"), 1);
+            parent.relations.insert("lines".into(), ids.iter().map(|id| Ref::new("LangLine",id.as_str())).collect());
+            parent.relations.insert("summary".into(), singleton.iter().map(|id| Ref::new("LangSummary",id.as_str())).collect());
+            parent.relations.insert("compound_branches".into(), ids.iter().map(|id| Ref::compound("CompoundBranch", [("owner".into(), "owner:literal".into()), ("item_id".into(), "parent".into()), ("name".into(),id.clone())].into())).collect());
+            // One law runs unchanged for decoded, cache and owned wire adapters.
+            fn assert_row_laws(row: &impl plasm_core::row_contract::EntityRow, cgs: &plasm_core::CGS) -> serde_json::Value {
+                use plasm_core::row_contract::{EntityRow, RowCodec, RowRecord};
+                let codec = RowCodec::new(Some(cgs));
+                let captured = RowRecord::capture(row);
+                let wire = codec.encode(row);
+                let wire = serde_json::from_slice(&serde_json::to_vec(&wire).unwrap()).unwrap();
+                let restored = codec.decode(row.identity().entity_type.as_str(), &wire).unwrap();
+                assert_eq!(restored.identity(), captured.identity());
+                assert_eq!(restored.relations().collect::<std::collections::BTreeMap<_,_>>(), captured.relations().collect::<std::collections::BTreeMap<_,_>>());
+                assert_eq!(codec.encode(&restored), wire);
+                assert_eq!(codec.encode(&CachedEntity::from_row(&restored, 999, EntityCompleteness::Complete)), wire);
+                wire
+            }
+            parent.fields.insert("_tag".into(), TypedFieldValue::from(Value::String("public".into())));
+            let decoded = plasm_compile::DecodedEntity {
+                reference: parent.reference.clone(),
+                fields: parent.fields.iter().map(|(key,value)|(key.clone(),value.to_value())).collect(),
+                relations: parent.relations.iter().map(|(key,refs)|(key.clone(),DecodedRelation::Specified(refs.clone()))).collect(),
+                embedded_entities: vec![], field_diagnostics: vec![],
+            };
+            let canonical = plasm_core::row_contract::RowRecord::capture(&decoded);
+            let expected = assert_row_laws(&decoded, &cgs);
+            prop_assert_eq!(&assert_row_laws(&parent, &cgs), &expected);
+            prop_assert_eq!(&assert_row_laws(&canonical, &cgs), &expected);
+            let wire = entity_to_row_json(&parent, Some(&cgs));
+            let wire = serde_json::from_slice(&serde_json::to_vec(&wire).unwrap()).unwrap();
+            let restored = CachedEntity::from_row_json("LangItem", &wire, &cgs).unwrap();
+            prop_assert_eq!(&restored.relations, &parent.relations);
+            prop_assert_eq!(&wire, &entity_to_row_json(&restored, Some(&cgs)));
+            for (row, id) in wire["lines"].as_array().unwrap().iter().zip(ids) {
+                prop_assert_eq!(row["id"].as_str(), Some(id.as_str()));
+            }
+        }
     }
 }

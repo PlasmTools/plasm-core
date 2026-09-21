@@ -438,6 +438,8 @@ mod tests {
     mod compute_render;
     mod dry_run;
     mod materialize_tests;
+    mod session_provisions;
+    mod hydration_boundary;
     mod support;
 }
 

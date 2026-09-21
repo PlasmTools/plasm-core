@@ -100,6 +100,14 @@ const result = await agent.generate("List products and summarize");
 console.log(result.text);
 ```
 
+Before its first model generation, the host calls `plasm_context` once with the
+task description unchanged as both the root intent and the initial retrieval
+query. The actual discovery result is added to the conversation as host context,
+including insufficient-coverage results and their continuation reference. The
+model can refine discovery with `session_mode: "extend"`; it is not forced to
+generate an initialization call. Existing workflows are reused. Initialization
+uses the normal tool observer, and failures propagate before generation starts.
+
 ```bash
 PLASM_AGENT_MODEL=anthropic/claude-sonnet-4.6 npm run agent -- "list products"
 ```

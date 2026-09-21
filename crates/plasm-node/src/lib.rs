@@ -22,7 +22,7 @@ use plasm_agent_core::http_execute::CapabilitySeed;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use tokio::sync::OnceCell;
+use tokio::sync::{Mutex as AsyncMutex, OnceCell};
 
 use crate::transport::{JsCallbackHttpTransport, JsHostTransport};
 
@@ -72,97 +72,15 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|p| p.into_inner())
 }
 
-fn engine_busy() -> Error {
-    Error::from_reason("engine busy in live run")
-}
-
-/// Occupancy of the default engine or one logical session.
-/// `Live` is fail-closed: no blank `InnerEngine::new()` stand-in.
-enum EngineSlot {
-    Ready(InnerEngine),
-    Live,
-}
-
-impl EngineSlot {
-    fn ready_mut(&mut self) -> Result<&mut InnerEngine> {
-        match self {
-            EngineSlot::Ready(engine) => Ok(engine),
-            EngineSlot::Live => Err(engine_busy()),
-        }
-    }
-
-    fn ready_ref(&self) -> Result<&InnerEngine> {
-        match self {
-            EngineSlot::Ready(engine) => Ok(engine),
-            EngineSlot::Live => Err(engine_busy()),
-        }
-    }
-
-    fn take_ready(&mut self) -> Result<InnerEngine> {
-        match std::mem::replace(self, EngineSlot::Live) {
-            EngineSlot::Ready(engine) => Ok(engine),
-            EngineSlot::Live => {
-                *self = EngineSlot::Live;
-                Err(engine_busy())
-            }
-        }
-    }
-}
-
-/// Restores a detached engine on Drop (panic, Promise cancel, or Result).
-struct LiveEngineGuard {
-    inner: Option<Arc<Mutex<EngineSlot>>>,
-    session: Option<(Arc<Mutex<HashMap<String, EngineSlot>>>, String)>,
-    engine: Option<InnerEngine>,
-}
-
-impl LiveEngineGuard {
-    fn session(
-        map: Arc<Mutex<HashMap<String, EngineSlot>>>,
-        id: String,
-        engine: InnerEngine,
-    ) -> Self {
-        Self {
-            inner: None,
-            session: Some((map, id)),
-            engine: Some(engine),
-        }
-    }
-
-    fn default_inner(inner: Arc<Mutex<EngineSlot>>, engine: InnerEngine) -> Self {
-        Self {
-            inner: Some(inner),
-            session: None,
-            engine: Some(engine),
-        }
-    }
-
-    fn engine_mut(&mut self) -> &mut InnerEngine {
-        self.engine.as_mut().expect("live engine present")
-    }
-}
-
-impl Drop for LiveEngineGuard {
-    fn drop(&mut self) {
-        if let Some(engine) = self.engine.take() {
-            if let Some((map, id)) = self.session.take() {
-                lock(&map).insert(id, EngineSlot::Ready(engine));
-            } else if let Some(inner) = self.inner.take() {
-                *lock(&inner) = EngineSlot::Ready(engine);
-            }
-        }
-    }
-}
-
 /// In-process Plasm engine for NAPI.
 ///
-/// **Mutex law (full cutover):** `inner` / `sessions` are `std::sync::Mutex`
-/// held only for short critical sections. Never hold them across JS host-transport
-/// awaits. Occupancy is `Ready | Live` — concurrent live callers fail closed.
+/// Each engine has a FIFO asynchronous admission queue. A live HTTP callback may
+/// await JavaScript while retaining its session engine; queued callers yield the
+/// executor instead of blocking it. Independent logical sessions remain concurrent.
 #[napi]
 pub struct PlasmEngine {
-    inner: Arc<Mutex<EngineSlot>>,
-    sessions: Arc<Mutex<HashMap<String, EngineSlot>>>,
+    inner: Arc<AsyncMutex<InnerEngine>>,
+    sessions: Mutex<HashMap<String, Arc<AsyncMutex<InnerEngine>>>>,
     discovery_store: Arc<OnceCell<DiscoveryStore>>,
     activated: tokio::sync::RwLock<Option<(String, std::collections::BTreeSet<String>)>>,
 }
@@ -174,6 +92,29 @@ impl Default for PlasmEngine {
 }
 
 impl PlasmEngine {
+    fn session_engine(&self, id: &str) -> anyhow::Result<Arc<AsyncMutex<InnerEngine>>> {
+        lock(&self.sessions).get(id).cloned().ok_or_else(|| {
+            anyhow::anyhow!("unknown logical session `{id}`; open a session with plasm_context")
+        })
+    }
+
+    async fn execution_engine(
+        &self,
+        logical_session_id: Option<&str>,
+    ) -> Result<tokio::sync::OwnedMutexGuard<InnerEngine>> {
+        let shared = match logical_session_id {
+            Some(id) => self.session_engine(id).map_err(map_err)?,
+            None => Arc::clone(&self.inner),
+        };
+        let engine = shared.lock_owned().await;
+        if logical_session_id.is_some() {
+            self.refresh_discovery_session(&engine)
+                .await
+                .map_err(map_err)?;
+        }
+        Ok(engine)
+    }
+
     async fn routing_inputs(
         &self,
         logical_session_id: Option<&str>,
@@ -183,12 +124,8 @@ impl PlasmEngine {
         Vec<plasm_core::prerequisites::CapabilityRef>,
     )> {
         if let Some(id) = logical_session_id {
-            let sessions = lock(&self.sessions);
-            let engine = sessions
-                .get(id)
-                .ok_or_else(|| anyhow::anyhow!("unknown logical session"))?
-                .ready_ref()
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let shared = self.session_engine(id)?;
+            let engine = shared.lock().await;
             let pin = engine.discovery_pin().ok_or_else(|| {
                 anyhow::anyhow!("logical session has no discovery generation pin")
             })?;
@@ -212,12 +149,8 @@ impl PlasmEngine {
         }
     }
 
-    async fn refresh_discovery_session(&self, id: &str) -> anyhow::Result<()> {
-        let pin = lock(&self.sessions)
-            .get(id)
-            .ok_or_else(|| anyhow::anyhow!("unknown logical session"))?
-            .ready_ref()
-            .map_err(|e| anyhow::anyhow!("{e}"))?
+    async fn refresh_discovery_session(&self, engine: &InnerEngine) -> anyhow::Result<()> {
+        let pin = engine
             .discovery_pin()
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("logical session has no discovery generation pin"))?;
@@ -235,8 +168,8 @@ impl PlasmEngine {
     pub fn new() -> Self {
         tracing_setup::init();
         Self {
-            inner: Arc::new(Mutex::new(EngineSlot::Ready(InnerEngine::new()))),
-            sessions: Arc::new(Mutex::new(HashMap::new())),
+            inner: Arc::new(AsyncMutex::new(InnerEngine::new())),
+            sessions: Mutex::new(HashMap::new()),
             discovery_store: Arc::new(OnceCell::new()),
             activated: Default::default(),
         }
@@ -244,9 +177,8 @@ impl PlasmEngine {
 
     #[napi]
     pub async fn load_catalog(&self, catalog_dir: String) -> Result<JsCatalogInfo> {
-        let mut slot = lock(&self.inner);
-        let info = slot
-            .ready_mut()?
+        let mut engine = self.inner.lock().await;
+        let info = engine
             .load_catalog(PathBuf::from(catalog_dir).as_path())
             .map_err(map_err)?;
         Ok(JsCatalogInfo {
@@ -263,8 +195,7 @@ impl PlasmEngine {
         bindings_json: String,
     ) -> Result<String> {
         let (paths, allowed) = {
-            let slot = lock(&self.inner);
-            let engine = slot.ready_ref()?;
+            let engine = self.inner.lock().await;
             (engine.packed_manifests(), engine.allowed_catalogs())
         };
         let bindings = serde_json::from_str(&bindings_json)
@@ -338,25 +269,25 @@ impl PlasmEngine {
                 .load_generation(&receipt.retrieval.generation)
                 .await
                 .map_err(map_err)?;
-            let mut sessions = lock(&self.sessions);
             let pin = DiscoverySessionPin {
                 authorization: receipt.authorization.clone(),
                 generation: receipt.retrieval.generation.clone(),
                 pin_id: receipt.pin_id.clone(),
             };
-            if let std::collections::hash_map::Entry::Vacant(vacant) =
-                sessions.entry(receipt.pin_id.clone())
-            {
-                vacant.insert(EngineSlot::Ready(InnerEngine::from_pinned_generation(
-                    catalogs,
-                    compiled_catalogs,
-                    pin.clone(),
-                )));
-            }
-            let engine = sessions
-                .get_mut(&receipt.pin_id)
-                .ok_or_else(|| Error::from_reason("unknown logical session"))?
-                .ready_mut()?;
+            let shared = {
+                let mut sessions = lock(&self.sessions);
+                sessions
+                    .entry(receipt.pin_id.clone())
+                    .or_insert_with(|| {
+                        Arc::new(AsyncMutex::new(InnerEngine::from_pinned_generation(
+                            catalogs,
+                            compiled_catalogs,
+                            pin.clone(),
+                        )))
+                    })
+                    .clone()
+            };
+            let mut engine = shared.lock().await;
             if engine.discovery_pin() != Some(&pin) {
                 return Err(Error::from_reason(
                     "routing receipt does not match the logical session pin",
@@ -382,8 +313,7 @@ impl PlasmEngine {
         intent: String,
         seeds: Vec<JsSeed>,
     ) -> Result<JsTeachingResult> {
-        let mut slot = lock(&self.inner);
-        let engine = slot.ready_mut()?;
+        let mut engine = self.inner.lock().await;
         let capability_seeds: Vec<CapabilitySeed> = seeds
             .into_iter()
             .map(|s| CapabilitySeed {
@@ -402,11 +332,8 @@ impl PlasmEngine {
 
     #[napi]
     pub async fn introspect_catalog(&self, entry_id: String) -> Result<String> {
-        let slot = lock(&self.inner);
-        let info = slot
-            .ready_ref()?
-            .introspect_catalog(&entry_id)
-            .map_err(map_err)?;
+        let engine = self.inner.lock().await;
+        let info = engine.introspect_catalog(&entry_id).map_err(map_err)?;
         serde_json::to_string(&info).map_err(|e| Error::from_reason(e.to_string()))
     }
 
@@ -416,20 +343,8 @@ impl PlasmEngine {
         program: String,
         logical_session_id: Option<String>,
     ) -> Result<JsDryRunResult> {
-        let result = if let Some(id) = logical_session_id {
-            self.refresh_discovery_session(&id).await.map_err(map_err)?;
-            lock(&self.sessions)
-                .get_mut(&id)
-                .ok_or_else(|| Error::from_reason("unknown logical session"))?
-                .ready_mut()?
-                .dry_run(&program)
-                .map_err(map_err)?
-        } else {
-            lock(&self.inner)
-                .ready_mut()?
-                .dry_run(&program)
-                .map_err(map_err)?
-        };
+        let mut engine = self.execution_engine(logical_session_id.as_deref()).await?;
+        let result = engine.dry_run(&program).map_err(map_err)?;
         Ok(JsDryRunResult {
             plan_commit_ref: result.plan_commit_ref,
             summary: result.summary,
@@ -445,20 +360,8 @@ impl PlasmEngine {
         plan_commit_ref: String,
         logical_session_id: Option<String>,
     ) -> Result<JsRunPlanResult> {
-        let result = if let Some(id) = logical_session_id {
-            self.refresh_discovery_session(&id).await.map_err(map_err)?;
-            lock(&self.sessions)
-                .get_mut(&id)
-                .ok_or_else(|| Error::from_reason("unknown logical session"))?
-                .ready_mut()?
-                .run_plan(&plan_commit_ref)
-                .map_err(map_err)?
-        } else {
-            lock(&self.inner)
-                .ready_mut()?
-                .run_plan(&plan_commit_ref)
-                .map_err(map_err)?
-        };
+        let mut engine = self.execution_engine(logical_session_id.as_deref()).await?;
+        let result = engine.run_plan(&plan_commit_ref).map_err(map_err)?;
         Ok(JsRunPlanResult {
             ok: result.ok,
             message: result.message,
@@ -477,40 +380,12 @@ impl PlasmEngine {
         transport: JsHostTransport,
         logical_session_id: Option<String>,
     ) -> Result<JsRunPlanResult> {
-        // Detach under a short std mutex, then await JS transport. Drop restores
-        // Ready even if the NAPI Promise is cancelled.
-        let result = if let Some(id) = logical_session_id {
-            eprintln!("plasm-node: run_plan_live session={id}");
-            self.refresh_discovery_session(&id).await.map_err(map_err)?;
-            let engine = {
-                let mut sessions = lock(&self.sessions);
-                sessions
-                    .get_mut(&id)
-                    .ok_or_else(|| Error::from_reason("unknown logical session"))?
-                    .take_ready()?
-            };
-            eprintln!("plasm-node: detached session engine");
-            let mut guard = LiveEngineGuard::session(Arc::clone(&self.sessions), id, engine);
-            let callback =
-                JsCallbackHttpTransport::new(transport.0, guard.engine_mut().primary_entry_id());
-            let run = guard
-                .engine_mut()
-                .run_plan_live(&plan_commit_ref, callback)
-                .await
-                .map_err(map_err)?;
-            eprintln!("plasm-node: session live returned ok={}", run.ok);
-            run
-        } else {
-            let engine = lock(&self.inner).take_ready()?;
-            let mut guard = LiveEngineGuard::default_inner(Arc::clone(&self.inner), engine);
-            let callback =
-                JsCallbackHttpTransport::new(transport.0, guard.engine_mut().primary_entry_id());
-            guard
-                .engine_mut()
-                .run_plan_live(&plan_commit_ref, callback)
-                .await
-                .map_err(map_err)?
-        };
+        let mut engine = self.execution_engine(logical_session_id.as_deref()).await?;
+        let callback = JsCallbackHttpTransport::new(transport.0, engine.primary_entry_id());
+        let result = engine
+            .run_plan_live(&plan_commit_ref, callback)
+            .await
+            .map_err(map_err)?;
         Ok(JsRunPlanResult {
             ok: result.ok,
             message: result.message,
@@ -539,11 +414,11 @@ mod mutex_law_tests {
         };
         lock(&engine.sessions).insert(
             pin.pin_id.clone(),
-            EngineSlot::Ready(InnerEngine::from_pinned_generation(
+            Arc::new(AsyncMutex::new(InnerEngine::from_pinned_generation(
                 Default::default(),
                 Default::default(),
                 pin,
-            )),
+            ))),
         );
         *engine.activated.write().await =
             Some(("new-generation".into(), ["replacement".into()].into()));
@@ -559,7 +434,13 @@ mod mutex_law_tests {
         assert!(engine.routing_inputs(Some("missing")).await.is_err());
         assert!(
             engine
-                .refresh_discovery_session("logical-session")
+                .refresh_discovery_session(
+                    &*engine
+                        .session_engine("logical-session")
+                        .unwrap()
+                        .lock()
+                        .await
+                )
                 .await
                 .is_err(),
             "routed execution must fail when its discovery store is unavailable"
@@ -577,47 +458,72 @@ mod mutex_law_tests {
         );
     }
 
-    #[test]
-    fn live_guard_restores_ready_on_drop() {
-        let map: Arc<Mutex<HashMap<String, EngineSlot>>> = Arc::new(Mutex::new(HashMap::new()));
-        let pin = DiscoverySessionPin {
-            generation: "g".into(),
-            authorization: DiscoveryAuthorization {
-                catalogs: ["c".into()].into(),
-                capabilities: Default::default(),
-            },
-            pin_id: "s".into(),
-        };
-        let engine =
-            InnerEngine::from_pinned_generation(Default::default(), Default::default(), pin);
-        lock(&map).insert("s".into(), EngineSlot::Live);
-        {
-            let _guard = LiveEngineGuard::session(Arc::clone(&map), "s".into(), engine);
-        }
+    #[tokio::test]
+    async fn calls_queue_and_cancel_without_losing_the_engine() {
+        use std::future::{poll_fn, Future};
+        use std::task::Poll;
+        let engine = PlasmEngine::new();
+        let mut held = engine.inner.lock().await;
+        *held = InnerEngine::from_generation(
+            [("fixture".into(), plasm_core::CGS::new())].into(),
+            Default::default(),
+            "queued-session".into(),
+        );
+        let mut first = Box::pin(engine.dry_run("invalid".into(), None));
+        let mut cancelled = Box::pin(engine.introspect_catalog("fixture".into()));
+        let mut second = Box::pin(engine.introspect_catalog("fixture".into()));
+        poll_fn(|cx| {
+            assert!(first.as_mut().poll(cx).is_pending());
+            assert!(cancelled.as_mut().poll(cx).is_pending());
+            assert!(second.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        // Cancelling a queued caller must not obstruct those behind it.
+        drop(cancelled);
+        drop(held);
         assert!(
-            matches!(lock(&map).get("s"), Some(EngineSlot::Ready(_))),
-            "Drop must restore Ready, not leave Live"
+            first.await.is_err(),
+            "invalid program should fail after admission"
+        );
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), second)
+            .await
+            .unwrap();
+        assert!(
+            result.is_ok(),
+            "queued read must succeed after the preceding call fails: {result:?}"
+        );
+        assert!(
+            engine.inner.try_lock().is_ok(),
+            "failed call releases admission"
         );
     }
 
-    #[test]
-    fn run_plan_live_detaches_via_occupancy_and_drop_guard() {
-        let src = include_str!("lib.rs");
-        let live = src
-            .split("pub async fn run_plan_live")
-            .nth(1)
-            .expect("run_plan_live");
-        let live = live
-            .split("Ok(JsRunPlanResult")
-            .next()
-            .expect("live result");
+    #[tokio::test]
+    async fn logical_sessions_have_independent_queues_and_survive_holder_cancellation() {
+        let engine = Arc::new(PlasmEngine::new());
+        for id in ["a", "b"] {
+            lock(&engine.sessions).insert(id.into(), Arc::new(AsyncMutex::new(InnerEngine::new())));
+        }
+        let a = engine.session_engine("a").unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let holder = tokio::spawn(async move {
+            let _held = a.lock().await;
+            tx.send(()).unwrap();
+            std::future::pending::<()>().await;
+        });
+        rx.await.unwrap();
+        let b = engine.session_engine("b").unwrap();
         assert!(
-            live.contains("take_ready") && live.contains("LiveEngineGuard"),
-            "run_plan_live must detach Ready→Live and restore via Drop"
+            b.try_lock().is_ok(),
+            "different sessions must not share admission"
         );
+        holder.abort();
+        assert!(holder.await.unwrap_err().is_cancelled());
+        let a = engine.session_engine("a").unwrap();
         assert!(
-            !live.contains("InnerEngine::new()"),
-            "run_plan_live must not park a blank engine while live"
+            a.try_lock().is_ok(),
+            "cancellation must release the retained engine"
         );
     }
 }

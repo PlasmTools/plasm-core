@@ -46,8 +46,8 @@ pub(crate) fn trace_api_entry_id_for_execute_root(
 fn trace_api_entry_id_for_parsed_line(sess: &ExecuteSession, parsed: &ParsedExpr) -> String {
     match &parsed.expr {
         plasm_core::Expr::Page(p) => sess
-            .peek_paging_resume(&p.handle)
-            .map(|r| trace_api_entry_id_for_execute_root(sess, r.query.entity.as_str()))
+            .paging_qualified_entity(&p.handle)
+            .map(|owner| owner.entry_id)
             .unwrap_or_else(|| sess.entry_id.clone()),
         plasm_core::Expr::TeachingValue { .. } => sess.entry_id.clone(),
         _ => trace_api_entry_id_for_execute_root(sess, parsed.expr.primary_entity()),

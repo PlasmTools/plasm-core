@@ -1,0 +1,99 @@
+version: 1
+auth: {scheme: none}
+http_backend: http://127.0.0.1:9
+entities:
+  Session:
+    id_field: access_token
+    fields:
+      access_token: {value_ref: text, required: true}
+  Folder:
+    id_field: id
+    fields:
+      id: {value_ref: text, required: true}
+    relations:
+      notes:
+        target: Note
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path: [{key: notes}, {wildcard: true}]
+  SavedNote:
+    id_field: note_id
+    fields:
+      note_id: {value_ref: number, required: true}
+    relations:
+      note:
+        target: Note
+        cardinality: one
+        materialize:
+          kind: get_scoped_bindings
+          capability: note_get
+          bindings: {note_id: note_id}
+  Note:
+    id_field: note_id
+    fields:
+      note_id: {value_ref: number, required: true}
+      title: {value_ref: text, required: true}
+      body: {value_ref: text, required: false}
+    relations:
+      owners:
+        target: Owner
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path: [{key: owners}, {wildcard: true}]
+  Owner:
+    id_field: owner_id
+    fields:
+      owner_id: {value_ref: number, required: true}
+      name: {value_ref: text, required: true}
+      description: {value_ref: text, required: false}
+      _tag: {value_ref: text, required: true}
+capabilities:
+  login:
+    kind: action
+    entity: Session
+    provides: [access_token]
+    output: {type: side_effect, description: Establishes a scoped session.}
+  folder_get:
+    kind: get
+    entity: Folder
+    provides: [id]
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - {name: access_token, value_ref: text, required: true}
+  saved_get:
+    kind: get
+    entity: SavedNote
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - {name: access_token, value_ref: text, required: true}
+    provides: [note_id]
+  saved_query:
+    kind: query
+    entity: SavedNote
+    selection:
+    - {name: access_token, value_ref: text, required: true}
+    provides: [note_id]
+  note_get:
+    kind: get
+    entity: Note
+    scope:
+    - {name: note_id, value_ref: number, required: true}
+    provides: [note_id, title]
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - {name: access_token, value_ref: text, required: true}
+  owner_get:
+    kind: get
+    entity: Owner
+    provides: [owner_id, name, _tag]
+values:
+  text: {type: string}
+  number: {type: integer}

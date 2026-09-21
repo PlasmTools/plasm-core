@@ -101,7 +101,7 @@ export interface EveToolLoopOptions {
   /**
    * Optional tool choice for the first model step.
    * Later steps stay auto unless a reviewed `run_ref` or required
-   * run snapshot is still unread, or initial discovery is still pending.
+   * run snapshot is still unread.
    */
   toolChoice?:
     | "auto"
@@ -109,30 +109,13 @@ export interface EveToolLoopOptions {
     | "none"
     | { type: "tool"; toolName: string };
   /**
-   * Eval lifecycle gate: while true, the loop requires `plasm_context` and
-   * refuses prose-only exit until a valid discovery response exists (or a
-   * session is already open via `discoveryCompleted`). Successful insufficient
-   * responses count; malformed args / validation failure / non-execution do
-   * not. After a valid response, prose clarification is allowed; terminals
-   * still require an open workflow.
-   */
-  requireInitialDiscovery?: boolean;
-  /**
-   * Whether lifecycle gates may force a provider tool choice (initial
-   * discovery or continuation with pending run refs/artifacts). Defaults true.
+   * Whether pending run refs/artifacts may force a provider tool choice.
+   * Defaults true.
    * Set false for reasoning endpoints that reject forced tool choice; the
    * corresponding lifecycle gates still hold.
    */
   forceToolChoice?: boolean;
-  /**
-   * True once initial `plasm_context` has opened a workflow session.
-   * Used with `requireInitialDiscovery` so a pre-opened session skips the force.
-   */
-  discoveryCompleted?: () => boolean;
 }
-
-/** Forced first tool while initial discovery has no valid response yet. */
-export const INITIAL_DISCOVERY_TOOL_NAME = "plasm_context";
 
 /**
  * Loop-exit telemetry. `unterminated` is the existing host grade vocabulary
@@ -300,41 +283,6 @@ export function stepHasSuccessfulToolResult(
     for (const part of content) {
       if (!part || typeof part !== "object") continue;
       const rec = part as Record<string, unknown>;
-      if (rec.type === "tool-error" || rec.invalid === true) continue;
-      if (rec.error !== undefined && rec.error !== null) continue;
-      if (outputLooksLikeToolError(rec.output)) continue;
-      if (rec.type === "tool-result") return true;
-    }
-  }
-  return false;
-}
-
-/**
- * Satisfaction predicate for the initial-discovery force:
- * a successful `plasm_context` tool-result (including insufficient domain
- * outcomes). Naming the tool, schema/JSON validation failure, or any
- * non-execution path must not satisfy the gate.
- */
-export function stepHasValidDiscoveryResponse(
-  messages: readonly ModelMessage[],
-  toolResults?: ReadonlyArray<Record<string, unknown>>,
-): boolean {
-  for (const result of toolResults ?? []) {
-    if (result.toolName !== INITIAL_DISCOVERY_TOOL_NAME) continue;
-    if (result.type === "tool-error" || result.invalid === true) continue;
-    if (result.error !== undefined && result.error !== null) continue;
-    if (outputLooksLikeToolError(result.output)) continue;
-    if (result.type === "tool-result") return true;
-    if (result.output !== undefined) return true;
-  }
-  for (const message of messages) {
-    if (message.role !== "tool") continue;
-    const content = message.content;
-    if (!Array.isArray(content)) continue;
-    for (const part of content) {
-      if (!part || typeof part !== "object") continue;
-      const rec = part as Record<string, unknown>;
-      if (rec.toolName !== INITIAL_DISCOVERY_TOOL_NAME) continue;
       if (rec.type === "tool-error" || rec.invalid === true) continue;
       if (rec.error !== undefined && rec.error !== null) continue;
       if (outputLooksLikeToolError(rec.output)) continue;
@@ -586,9 +534,6 @@ export async function runEveToolLoop(
   let forceTool = false;
   let consecutiveProviderFailures = 0;
   let generationTimeoutCount = 0;
-  // Session already open → discovery satisfied. Else wait for a valid plasm_context response.
-  let discoverySatisfied =
-    !options.requireInitialDiscovery || options.discoveryCompleted?.() === true;
 
   while (stepIndex < options.maxSteps) {
     await options.onStepStart?.();
@@ -604,9 +549,6 @@ export async function runEveToolLoop(
       options.telemetry ?? { isEnabled: true, functionId: options.agentName },
       runtimeContext,
     );
-
-    const discoveryPending =
-      options.requireInitialDiscovery === true && !discoverySatisfied;
 
     const stepResult = await withEveTurnSpan(
       {
@@ -624,14 +566,8 @@ export async function runEveToolLoop(
             : options.tools,
           outstandingArtifacts,
         );
-        // Discovery force outranks caller toolChoice and run_ref force until a
-        // valid plasm_context response exists (clarification allowed after).
-        // The lifecycle gate remains active when provider compatibility
-        // requires auto tool choice.
         const stepToolChoice =
-          discoveryPending && options.forceToolChoice !== false
-          ? ({ type: "tool", toolName: INITIAL_DISCOVERY_TOOL_NAME } as const)
-          : stepIndex === 0 && options.toolChoice !== undefined
+          stepIndex === 0 && options.toolChoice !== undefined
             ? options.toolChoice
             : forceTool && options.forceToolChoice !== false
               ? ("required" as const)
@@ -793,14 +729,6 @@ export async function runEveToolLoop(
     });
     messages = [...messages, ...delta];
 
-    // Valid plasm_context response (or pre-opened session) — not a mere tool name.
-    if (
-      stepHasValidDiscoveryResponse(delta, stepToolResults) ||
-      options.discoveryCompleted?.() === true
-    ) {
-      discoverySatisfied = true;
-    }
-
     await options.onStepFinish?.({
       toolCalls: stepCalls.length > 0 ? stepCalls : undefined,
       text: stepResult.text,
@@ -908,12 +836,9 @@ export async function runEveToolLoop(
         ];
         continue;
       }
-      const discoveryStillPending =
-        options.requireInitialDiscovery === true && !discoverySatisfied;
       if (
         (outstandingRunRefs.size > 0 ||
-          outstandingArtifacts.size > 0 ||
-          discoveryStillPending) &&
+          outstandingArtifacts.size > 0) &&
         stepIndex < options.maxSteps
       ) {
         continue;

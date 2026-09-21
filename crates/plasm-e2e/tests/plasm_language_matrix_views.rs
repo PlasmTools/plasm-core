@@ -657,7 +657,9 @@ fn matrix_views_query_only_parent_relations_live() {
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/schemas/view_rowsets");
-        let cgs = Arc::new(plasm_core::loader::load_schema_dir(&dir).unwrap());
+        let mut cgs = plasm_core::loader::load_schema_dir(&dir).unwrap();
+        cgs.http_backend = base.clone();
+        let cgs = Arc::new(cgs);
         for program in [
             "library = Library{access_token=\"test-token\"}\nitems = library => _.items\nitems",
             "library = Library{access_token=\"test-token\"}\nitems = library.items\nitems",

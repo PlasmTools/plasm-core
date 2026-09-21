@@ -317,7 +317,7 @@ pub fn render_plan_dry_compact_text(
     out
 }
 
-/// Operator-facing step title for synthetic IR nodes (not tuned `r1`/`c2` labels).
+/// Operator-facing step title for synthetic IR nodes (not tuned `read_1`/`compute_2` labels).
 pub(crate) fn human_ux_headline_for_op(op: &PlanDryOp) -> String {
     match op {
         PlanDryOp::Surface { kind, .. } => match kind {
@@ -521,7 +521,7 @@ fn compact_op_from_compute(
             fields: fields.keys().map(|k| k.as_str().to_string()).collect(),
         },
         ComputeOp::Filter { predicates } => PlanDryOp::Filter {
-            predicates: predicates.iter().map(render_predicate_compact).collect(),
+            predicates: vec![predicates.render(&render_predicate_compact)].into(),
         },
         ComputeOp::GroupBy { keys, aggregates } => PlanDryOp::GroupBy {
             keys: keys.iter().map(|k| k.dotted()).collect(),
@@ -916,41 +916,41 @@ fn next_synthetic_plan_label(
         ValidatedPlanNode::Surface(surface) => match surface.effect_class {
             EffectClass::Read => {
                 counters.r += 1;
-                format!("r{}", counters.r)
+                format!("read_{}", counters.r)
             }
             EffectClass::Write | EffectClass::SideEffect => {
                 counters.w += 1;
-                format!("w{}", counters.w)
+                format!("write_{}", counters.w)
             }
             EffectClass::ArtifactRead => {
                 counters.x += 1;
-                format!("x{}", counters.x)
+                format!("artifact_{}", counters.x)
             }
         },
         ValidatedPlanNode::Compute(_) => {
             counters.c += 1;
-            format!("c{}", counters.c)
+            format!("compute_{}", counters.c)
         }
         ValidatedPlanNode::Derive(_) => {
             counters.d += 1;
-            format!("d{}", counters.d)
+            format!("derive_{}", counters.d)
         }
         ValidatedPlanNode::ForEach(_) | ValidatedPlanNode::IterateUntil(_) => {
             counters.f += 1;
-            format!("f{}", counters.f)
+            format!("apply_{}", counters.f)
         }
         ValidatedPlanNode::RelationTraversal(_) => {
             counters.l += 1;
-            format!("l{}", counters.l)
+            format!("relation_{}", counters.l)
         }
         ValidatedPlanNode::Data(_) => {
             counters.x += 1;
-            format!("x{}", counters.x)
+            format!("value_{}", counters.x)
         }
     }
 }
 
-/// Node id → compact display label (`r1`, `c1`, …) for async operation progress lines.
+/// Node id → compact display label (`read_1`, `compute_1`, …) for async operation progress lines.
 pub(crate) fn plan_node_display_map(
     plan: &Plan<ValidatedPlanState>,
     topological_order: &[String],
@@ -964,12 +964,24 @@ fn build_plan_node_display_map(
 ) -> HashMap<String, String> {
     let mut map = HashMap::new();
     let mut counters = SyntheticPlanLabelCounters::default();
+    // Reserve every authored name up front, including names later in the plan.
+    let mut occupied: std::collections::HashSet<String> = plan
+        .nodes
+        .iter()
+        .filter(|node| !is_synthetic_plan_node_id(node.id().as_str()))
+        .map(|node| node.id().as_str().to_owned())
+        .collect();
     for id in topological_order {
         let Some(node) = plan.nodes.iter().find(|n| n.id().as_str() == id) else {
             continue;
         };
         let label = if is_synthetic_plan_node_id(id.as_str()) {
-            next_synthetic_plan_label(node, &mut counters)
+            loop {
+                let candidate = next_synthetic_plan_label(node, &mut counters);
+                if occupied.insert(candidate.clone()) {
+                    break candidate;
+                }
+            }
         } else {
             id.clone()
         };

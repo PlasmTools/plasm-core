@@ -26,7 +26,7 @@ pub enum ComputeOp {
         fields: std::collections::BTreeMap<OutputName, FieldPath>,
     },
     Filter {
-        predicates: Vec<PlanPredicate>,
+        predicates: crate::BooleanExpr<PlanPredicate>,
     },
     GroupBy {
         #[serde(alias = "key", deserialize_with = "deserialize_group_by_keys")]
@@ -190,7 +190,7 @@ mod tests {
     #[test]
     fn preserves_row_identity_table() {
         assert!(ComputeOp::Filter {
-            predicates: Vec::new()
+            predicates: Vec::new().into()
         }
         .preserves_row_identity());
         assert!(ComputeOp::Sort {

@@ -49,10 +49,9 @@ impl ExecutionEngine {
             });
         }
 
-        let get = get_with_session_params(get, cgs, mat);
         let (cached, source) = self
             .fetch_get_decoded(
-                &get,
+                get,
                 cgs,
                 mode,
                 get.capability_name.as_deref(),
@@ -62,7 +61,7 @@ impl ExecutionEngine {
             )
             .await?;
         mat.insert(cached.clone())?;
-        stamp_get_capability_params(mat, cgs, &get, ambient, &cached);
+        stamp_get_capability_params(mat, cgs, get, ambient, &cached);
 
         Ok(ExecutionResult {
             entities: vec![cached],
@@ -120,23 +119,16 @@ impl ExecutionEngine {
             });
         }
 
-        let capability = match get.capability_name.as_deref() {
-            Some(name) => cgs.get_capability(name),
-            None => {
-                cgs.find_capability(&get.reference.entity_type, plasm_core::CapabilityKind::Get)
-            }
-        }
-        .filter(|cap| {
-            cap.kind == plasm_core::CapabilityKind::Get && cap.domain == get.reference.entity_type
-        })
-        .ok_or_else(|| RuntimeError::CapabilityNotFound {
-            capability: get
-                .capability_name
-                .as_ref()
-                .map(ToString::to_string)
-                .unwrap_or_else(|| "get".into()),
-            entity: get.reference.entity_type.to_string(),
-        })?;
+        let ambient = ViewAmbientContext::default();
+        let request = ResolvedGet::resolve(
+            get,
+            cgs,
+            get.capability_name.as_deref(),
+            mat,
+            &ambient,
+            GetPurpose::Authored,
+        )?;
+        let capability = request.capability;
         if capability.derived.is_some() {
             return Err(RuntimeError::ConfigurationError {
                 message: format!(
@@ -153,23 +145,18 @@ impl ExecutionEngine {
                         .into(),
             });
         }
-        let get = get_with_session_params(get, cgs, mat);
-        let ambient = ViewAmbientContext::default();
         let (cached, source) = self
             .fetch_http_transport_get_decoded(
-                &get,
+                &request,
                 cgs,
                 mode,
-                capability,
                 &capability_template,
                 true,
-                true,
                 Some(mat),
-                &ambient,
             )
             .await?;
         mat.insert(cached.clone())?;
-        stamp_get_capability_params(mat, cgs, &get, &ambient, &cached);
+        stamp_get_capability_params(mat, cgs, get, &ambient, &cached);
 
         Ok(ExecutionResult {
             entities: vec![cached],
@@ -266,54 +253,18 @@ impl ExecutionEngine {
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn fetch_http_transport_get_decoded(
         &self,
-        get: &GetExpr,
+        request: &ResolvedGet<'_>,
         cgs: &CGS,
         mode: ExecutionMode,
-        capability: &CapabilitySchema,
         capability_template: &CapabilityTemplate,
-        inject_execute_session_env: bool,
         validate_identity: bool,
         mut cache: Option<&mut SessionMaterialization>,
-        ambient: &ViewAmbientContext,
     ) -> Result<(CachedEntity, ExecutionSource), RuntimeError> {
-        let mut env = CmlEnv::new();
-        let target_ent = cgs
-            .get_entity(get.reference.entity_type.as_str())
-            .ok_or_else(|| RuntimeError::ConfigurationError {
-                message: format!(
-                    "unknown entity `{}` for get identity-env projection",
-                    get.reference.entity_type
-                ),
-            })?;
-        let catalog_key =
-            SessionMaterialization::provide_catalog_key(cgs, get.catalog_entry_id.as_deref());
-        let mut overlay_map = cache
-            .as_ref()
-            .map(|m| m.capability_params_for_get(&get.reference, &catalog_key))
-            .unwrap_or_default();
-        for (k, v) in &ambient.capability_params {
-            overlay_map.entry(k.clone()).or_insert_with(|| v.clone());
-        }
-        let session_overlay = (!overlay_map.is_empty()).then(|| Value::Object(overlay_map));
-        populate_template_path_env(
-            &mut env,
-            capability,
-            &get.reference,
-            plasm_core::IdentityProjectionCtx::Entity(target_ent),
-            session_overlay.as_ref(),
-        )?;
-        normalize_cml_env_scope_entity_refs(&mut env, cgs, capability)?;
-        plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
-            RuntimeError::ConfigurationError {
-                message: e.to_string(),
-            }
-        })?;
+        let get = request.get;
+        let capability = request.capability;
+        let env = &request.env;
 
-        if inject_execute_session_env {
-            merge_plasm_execute_session_env(&mut env);
-        }
-
-        let compiled = compile_operation_dispatch(capability_template, &env)?;
+        let compiled = compile_operation_dispatch(capability_template, env)?;
         if hydration_trace::active() {
             hydration_trace::emit(
                 "dispatch",
@@ -337,7 +288,7 @@ impl ExecutionEngine {
         let response = self
             .apply_auxiliary_http_merge_response(
                 capability_template,
-                &env,
+                env,
                 mode,
                 response,
                 Some(get.reference.entity_type.as_str()),
@@ -352,7 +303,7 @@ impl ExecutionEngine {
                 None
             }
         });
-        let identity_ambient = decode_identity_ambient_for_ref(&get.reference, &env);
+        let identity_ambient = decode_identity_ambient_for_ref(&get.reference, env);
         let decoder = create_entity_decoder_for_capability(
             &get.reference.entity_type,
             cgs,
@@ -429,37 +380,19 @@ impl ExecutionEngine {
         cache: Option<&mut SessionMaterialization>,
         ambient: &ViewAmbientContext,
     ) -> Result<(CachedEntity, ExecutionSource), RuntimeError> {
-        let capability: &CapabilitySchema = match hydrate_capability {
-            Some(name) => {
-                let c =
-                    cgs.get_capability(name)
-                        .ok_or_else(|| RuntimeError::CapabilityNotFound {
-                            capability: name.to_string(),
-                            entity: get.reference.entity_type.to_string(),
-                        })?;
-                if c.kind != plasm_core::CapabilityKind::Get {
-                    return Err(RuntimeError::ConfigurationError {
-                        message: format!("preflight hydrate get '{name}' must be kind get"),
-                    });
-                }
-                if c.domain.as_str() != get.reference.entity_type.as_str() {
-                    return Err(RuntimeError::ConfigurationError {
-                        message: format!(
-                            "preflight: hydrate capability '{name}' is for entity {}, expected {}",
-                            c.domain.as_str(),
-                            get.reference.entity_type
-                        ),
-                    });
-                }
-                c
-            }
-            None => cgs
-                .find_capability(&get.reference.entity_type, plasm_core::CapabilityKind::Get)
-                .ok_or_else(|| RuntimeError::CapabilityNotFound {
-                    capability: "get".to_string(),
-                    entity: get.reference.entity_type.to_string(),
-                })?,
+        let purpose = if inject_execute_session_env {
+            GetPurpose::Authored
+        } else {
+            GetPurpose::Hydration
         };
+        let request = match cache.as_deref() {
+            Some(session) => {
+                ResolvedGet::resolve(get, cgs, hydrate_capability, session, ambient, purpose)
+            }
+            None => ResolvedGet::resolve(get, cgs, hydrate_capability, ambient, ambient, purpose),
+        }?;
+        let capability = request.capability;
+        let ambient = &request.ambient;
 
         if let Some(plan) = capability.derived.as_ref() {
             let mut ephemeral = SessionMaterialization::new();
@@ -496,15 +429,12 @@ impl ExecutionEngine {
         }
 
         self.fetch_http_transport_get_decoded(
-            get,
+            &request,
             cgs,
             mode,
-            capability,
             &capability_template,
-            inject_execute_session_env,
             false,
             cache,
-            ambient,
         )
         .await
     }

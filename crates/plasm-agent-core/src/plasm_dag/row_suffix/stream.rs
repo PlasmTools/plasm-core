@@ -329,11 +329,10 @@ fn compile_membership_filter_rhs(
     suffix_i: usize,
     body: &str,
 ) -> Result<(String, Vec<DagNode>), String> {
-    let clauses = plasm_core::split_where_and_clauses(body)?;
-    let mut out_clauses = Vec::new();
+    let tree = plasm_core::parse_boolean_filter(body)?;
     let mut prefix = Vec::new();
     let mut mem_i = 0usize;
-    for clause in clauses {
+    let rewritten = tree.try_map(&mut |clause| -> Result<String, String> {
         match plasm_core::parse_membership_clause(clause)? {
             Some(m) => {
                 let label = match m.rhs {
@@ -356,12 +355,12 @@ fn compile_membership_filter_rhs(
                     }
                 };
                 let op = if m.anti { "not in" } else { "in" };
-                out_clauses.push(format!("{} {op} {label}", m.field));
+                Ok(format!("{} {op} {label}", m.field))
             }
-            None => out_clauses.push(clause.to_string()),
+            None => Ok(clause.to_string()),
         }
-    }
-    Ok((out_clauses.join(", "), prefix))
+    })?;
+    Ok((rewritten.render(&Clone::clone), prefix))
 }
 
 /// Compile RA-14 `| union` RHS pipelines; rewrite them to synthetic bindings.

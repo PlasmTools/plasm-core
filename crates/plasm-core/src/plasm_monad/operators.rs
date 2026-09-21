@@ -84,7 +84,7 @@ pub fn plasm_parallel_return(steps: Vec<StepId>) -> Result<PlasmReturn, String> 
 /// Construct an empty comp shell for incremental bind construction.
 pub fn empty_comp(name: Option<String>) -> PlasmComp {
     PlasmComp {
-        version: 1,
+        version: super::PLASM_COMP_WIRE_VERSION,
         name,
         steps: BTreeMap::new(),
         bind: PlasmBindGraph::default(),

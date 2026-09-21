@@ -167,7 +167,7 @@ mod tests {
             },
         };
         let node = plan_node_from_compute(&ComputeOp::Filter {
-            predicates: vec![pred],
+            predicates: vec![pred].into(),
         })
         .unwrap();
         assert!(matches!(node, PlanNode::Filter(_)));

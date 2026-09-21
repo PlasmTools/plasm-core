@@ -2409,6 +2409,9 @@ impl CGS {
     /// Stamp every [`FieldType::EntityRef`] / [`KernelKind::EntityRef`] with this catalog's
     /// `entry_id` (empty string when unset). Intra-catalog default for homograph-safe types.
     pub fn stamp_entity_ref_catalogs(&mut self) {
+        // Registry ownership is serialized into the catalog and its reference types.
+        // Never retain a digest computed before those fields changed.
+        self.catalog_hash_hex.take();
         let eid = crate::identity::RegistryEntryId::new(
             self.entry_id.as_deref().unwrap_or_default().to_owned(),
         );
@@ -6436,5 +6439,27 @@ mod view_bind_validation_tests {
         let cgs = crate::loader::load_schema_dir(p).expect("matrix views");
         cgs.validate()
             .expect("validate views fixture with node binds");
+    }
+}
+
+#[cfg(test)]
+mod catalog_binding_digest_tests {
+    use super::CGS;
+
+    proptest::proptest! {
+        #[test]
+        fn binding_preserves_digest_across_clone_and_serialization(
+            entries in proptest::collection::vec("[a-z]{1,12}", 1..8),
+        ) {
+            let mut cgs = CGS::new();
+            for entry in entries {
+                let _cached_before_binding = cgs.catalog_cgs_hash_hex();
+                cgs.bind_registry_entry_id(entry);
+                let cloned = cgs.clone();
+                let decoded: CGS = serde_json::from_slice(&serde_json::to_vec(&cgs).unwrap()).unwrap();
+                proptest::prop_assert_eq!(cgs.catalog_cgs_hash_hex(), cloned.catalog_cgs_hash_hex());
+                proptest::prop_assert_eq!(cgs.catalog_cgs_hash_hex(), decoded.catalog_cgs_hash_hex());
+            }
+        }
     }
 }

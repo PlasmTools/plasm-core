@@ -37,7 +37,7 @@ pub enum PlasmReturn {
 }
 
 /// Canonical PlasmComp wire version (`_meta.plasm.comp.version`).
-pub const PLASM_COMP_WIRE_VERSION: u32 = 1;
+pub const PLASM_COMP_WIRE_VERSION: u32 = 2;
 
 /// Canonical executable Plasm program (wire + in-memory).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -32,7 +32,7 @@ pub(crate) fn wire_row_with_from_parent_embeds(
             continue;
         }
         depths.insert(r.clone(), depth);
-        let Some(e) = mat.get(&r) else {
+        let Some(e) = (if r == root { Some(entity) } else { mat.get(&r) }) else {
             continue;
         };
         let Some(def) = cgs.get_entity(e.reference.entity_type.as_str()) else {
@@ -58,7 +58,7 @@ pub(crate) fn wire_row_with_from_parent_embeds(
     refs_by_depth.sort_by(|(_, a), (_, b)| b.cmp(a));
 
     for (r, _) in refs_by_depth {
-        let Some(e) = mat.get(&r) else {
+        let Some(e) = (if r == root { Some(entity) } else { mat.get(&r) }) else {
             continue;
         };
         let mut row = entity_to_row_json(e, Some(cgs));
@@ -77,19 +77,15 @@ pub(crate) fn wire_row_with_from_parent_embeds(
                 match rel_schema.cardinality {
                     Cardinality::One => {
                         if let Some(child) = refs.first() {
-                            if let Some(child_json) = memo.get(child) {
-                                obj.insert(wire.to_string(), child_json.clone());
-                            }
+                            obj.insert(wire.to_string(), embedded_identity_row(child, &memo, cgs));
                         }
                     }
                     Cardinality::Many => {
                         let arr: Vec<_> = refs
                             .iter()
-                            .filter_map(|child| memo.get(child).cloned())
+                            .map(|child| embedded_identity_row(child, &memo, cgs))
                             .collect();
-                        if !arr.is_empty() {
-                            obj.insert(wire.to_string(), serde_json::Value::Array(arr));
-                        }
+                        obj.insert(wire.to_string(), serde_json::Value::Array(arr));
                     }
                 }
             }
@@ -100,6 +96,29 @@ pub(crate) fn wire_row_with_from_parent_embeds(
     memo.get(&root)
         .cloned()
         .unwrap_or_else(|| entity_to_row_json(entity, Some(cgs)))
+}
+
+/// A missing cache payload is still a known identity, never a display string or a dropped row.
+fn embedded_identity_row(
+    reference: &Ref,
+    observed: &IndexMap<Ref, serde_json::Value>,
+    cgs: &CGS,
+) -> serde_json::Value {
+    observed.get(reference).cloned().unwrap_or_else(|| {
+        plasm_core::row_contract::RowCodec::new(Some(cgs)).identity_row(reference)
+    })
+}
+
+fn identity_only_entity(reference: &Ref) -> CachedEntity {
+    CachedEntity {
+        reference: reference.clone(),
+        fields: Default::default(),
+        relations: Default::default(),
+        last_updated: 0,
+        version: 0,
+        completeness: plasm_runtime::EntityCompleteness::Summary,
+        unavailable_fields: Default::default(),
+    }
 }
 
 /// Wire rows for materialized relation targets (full embed closure from session graph).
@@ -207,15 +226,12 @@ pub(crate) fn collect_all_embedded_relation_targets(
             if r.entity_type.as_str() != target_entity {
                 return None;
             }
-            out.push(graph.get(r).cloned().unwrap_or_else(|| CachedEntity {
-                reference: r.clone(),
-                fields: Default::default(),
-                relations: Default::default(),
-                last_updated: 0,
-                version: 0,
-                completeness: plasm_runtime::EntityCompleteness::Summary,
-                unavailable_fields: Default::default(),
-            }));
+            out.push(
+                graph
+                    .get(r)
+                    .cloned()
+                    .unwrap_or_else(|| identity_only_entity(r)),
+            );
         }
     }
     Some(out)
@@ -318,6 +334,50 @@ mod tests {
             proptest::prop_assert!(collect_all_embedded_relation_targets("missing", "Child", &[parent.clone()], &graph).is_none());
             if !present.is_empty() {
                 proptest::prop_assert!(collect_all_embedded_relation_targets("children", "Other", &[parent], &graph).is_none());
+            }
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn wire_embed_preserves_all_identities_under_partial_cache(
+            present in proptest::collection::vec(proptest::bool::ANY, 1..16),
+            root_cached in proptest::bool::ANY,
+        ) {
+            static MATRIX: std::sync::OnceLock<CGS> = std::sync::OnceLock::new();
+            let cgs = MATRIX.get_or_init(|| plasm_core::load_schema_dir(
+                &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../fixtures/schemas/plasm_language_matrix"),
+            ).unwrap());
+            let refs: Vec<_> = (0..present.len())
+                .map(|i| Ref::new("LangLine", format!("line:{i}"))).collect();
+            let parent = CachedEntity {
+                reference: Ref::new("LangItem", "parent"),
+                fields: Default::default(),
+                relations: IndexMap::from([("lines".into(), refs.clone())]),
+                last_updated: 0, version: 0,
+                completeness: plasm_runtime::EntityCompleteness::Complete,
+                unavailable_fields: Default::default(),
+            };
+            let mut graph = SessionMaterialization::new();
+            if root_cached { graph.merge_graph(vec![parent.clone()]).unwrap(); }
+            for (reference, cached) in refs.iter().zip(&present) {
+                if *cached {
+                    graph.merge_graph(vec![CachedEntity {
+                        reference: reference.clone(), fields: Default::default(),
+                        relations: Default::default(), last_updated: 0, version: 0,
+                        completeness: plasm_runtime::EntityCompleteness::Complete,
+                        unavailable_fields: Default::default(),
+                    }]).unwrap();
+                }
+            }
+            let row = wire_row_with_from_parent_embeds(&parent, cgs, &graph);
+            let wire: serde_json::Value = serde_json::from_slice(&serde_json::to_vec(&row).unwrap()).unwrap();
+            let children = wire["lines"].as_array().unwrap();
+            proptest::prop_assert_eq!(children.len(), refs.len());
+            for (child, reference) in children.iter().zip(refs) {
+                proptest::prop_assert_eq!(child["id"].as_str().map(str::to_owned), Some(reference.primary_slot_str()));
+                proptest::prop_assert_eq!(plasm_core::RefWire::parse_json(&child["_ref"]), Some(reference));
             }
         }
     }

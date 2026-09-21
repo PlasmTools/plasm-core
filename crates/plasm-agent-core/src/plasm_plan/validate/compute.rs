@@ -330,6 +330,9 @@ pub(super) fn validate_compute_template(
             ));
         }
         ComputeOp::Filter { predicates } => {
+            if predicates.has_empty_branch() {
+                return Err("filter contains an empty boolean branch".into());
+            }
             for (j, p) in predicates.iter().enumerate() {
                 validate_predicate(p, node_index, j)?;
             }

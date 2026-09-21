@@ -26,7 +26,9 @@ fn compile_source_to_artifact(
         compile_plasm_surface_line_to_plan(pipeline, symbol_map_cross_cache, session, name, source)?
     };
     let validated = validate_plan_artifact(&plan)?;
-    Ok(plasm_comp_from_validated(&validated))
+    let mut artifact = plasm_comp_from_validated(&validated);
+    crate::plan_session_provisions::seal(session, validated.nodes(), &mut artifact.comp.bind)?;
+    Ok(artifact)
 }
 
 fn compile_to_bundle(

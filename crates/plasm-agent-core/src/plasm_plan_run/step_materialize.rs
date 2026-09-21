@@ -276,7 +276,9 @@ async fn live_materialize_io(
                     &mut result,
                     cap,
                     surface.id.as_str(),
-                    entity_type,
+                    surface.qualified_entity.as_ref().ok_or_else(|| {
+                        format!("pageable step `{}` lacks catalog ownership", surface.id)
+                    })?,
                     ctx.trace.and_then(|t| t.logical_session_ref.as_deref()),
                 );
             }

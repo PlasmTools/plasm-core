@@ -129,10 +129,10 @@ impl ExecutionEngine {
                                             );
                                             return None;
                                         }
-                                        let get = synthesized_get(
-                                            plasm_core::Ref::new(entity_type, &id),
-                                            &inherit,
-                                        );
+                                        let get = GetExpr::from_ref(plasm_core::Ref::new(
+                                            entity_type,
+                                            &id,
+                                        ));
                                         Expr::Get(get)
                                     }
                                     _ => {

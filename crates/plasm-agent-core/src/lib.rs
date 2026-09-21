@@ -160,6 +160,7 @@ pub mod plan_flow_reflection;
 pub mod plan_node_graph;
 pub mod plan_prepare;
 pub mod plan_read_bounds;
+mod plan_session_provisions;
 pub mod plan_ux_reflection;
 mod plasm_comp_bundle;
 pub mod plasm_comp_display;

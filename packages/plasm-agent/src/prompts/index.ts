@@ -63,7 +63,7 @@ export const WORKFLOW_COMPLETION_SLOT =
  */
 export const EVAL_TERMINAL_COMPLETION =
   "Plan from the current requirement, taught symbols and observed results. " +
-  "Call plasm_context before claiming unsupported access or ending the task. " +
+  "The host supplies initial discovery from the task description. Use plasm_context with session_mode extend and the supplied logical_session_ref for further discovery. " +
   "After observations establish every requested effect, end through complete_task " +
   "when the instruction asked for no reportable value, or submit_answer with that " +
   "value when it did. A request for a single number, amount, count, name, or other " +

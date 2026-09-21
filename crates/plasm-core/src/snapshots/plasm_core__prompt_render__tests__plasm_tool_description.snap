@@ -6,28 +6,28 @@ expression: "super::PLASM_TOOL_DESCRIPTION"
 
 **`program` is Plasm source text, not JSON data.** Grammar below; symbols from the language card. Reply with one valid plasm_program:
 
-**Program shape:** one `plasm_expr`, or `label = …` bindings (names are identifiers, not `e#`/`m#`/`p#`/`r#`/`v#`) then **one** final return line (comma-separated roots on that line only). No prose, `return` keyword, fences, or table rows.
+**Program shape:** one `plasm_expr`, or `label = …` bindings (e.g. `items_1`; whole names `[emprv][0-9]+` are reserved) then **one** final return line (comma-separated roots on that line only). No prose, `return` keyword, fences, or table rows.
 
 **Strings:** JSON escapes in quotes (`\n` `\t` `\\` `\"`); tagged `<<TAG` … `TAG` heredocs (real newlines). **Minijinja only** (`{{ wire }}` / `{{ binding.content }}` / `| split_part`); marker-free opaque; `${…}`/`$$` abolished. **`=>` applies once per row; a plain template evaluates once.** Lanes:
 - Plain — `body = <<TAG` … `TAG` → **string** (`{% for item in items %}` inside that one evaluation); `param=body` (never `body.content`)
 - Per-row arg — `rows => _.m#(param=<<TAG` … `TAG)` — once per invocation
 - Render — `label = source => <<TAG` … `TAG` → one `{content}` per input row; params take **`label.content`**
 
-**Batch independent reads** (required): shared scope + multi-root return — not N tool cycles.
+**Bindings and return:** batch independent reads under shared scope; one final return line.
 ```
-foo = e1(id="a")
+foo = e1("a")
 bars = e2{foo=foo}
 bazs = e3{foo=foo}
 bars, bazs
 ```
-Batch reads aggressively. After a write use **`label.wire`** from that binding — never invent a `.wire` not taught on the card.
+After a write use **`label.wire`** from that binding — never invent a `.wire` not taught on the card.
 
 **Language-card Meaning:**
 - Header `plasm_expr<TAB>Meaning`; **left column is a template** — never copy Meaning.
 - Executable rows start with `e#`; `r#`/`v#`/`evaluation_now` are never roots. wire names appear on field-gloss / bracket rows by first use.
-- Never emit `v#`. `<id>` / `<wire>` / `<query>` are holes — fill each from a bound value, a row field, or a string of that hole's sort. `<id>` is the Get identity (taught `id_field`).
+- Never emit `v#`. `<id>` / `<wire>` / `<query>` are holes — fill each from a bound value, a row field, or a string of that hole's sort. `e#(<id>)` takes only the taught `id_field`, never extra arguments. Other inputs use their declared catalog lanes or provision bindings; do not append parameters to Get.
 
-**Membership plane (prefer `| where`):** Materialize with `e#` / `e#{wire=tok}` then filter membership with `| where wire = tok`. Set membership / difference against another rowset: `| where wire in (other | select wire)` / `| where wire not in (other | select wire)` — RHS is one column (or `peers = other | select wire` then `| where wire in peers`). Two projections: `peers = a | union b` then `| where wire in peers`. Use entity-head `e#{wire=tok}` for catalog / backend selection. Bare taught tokens — fill `<…>` holes; leave no `|` alternatives.
+**Row filters:** combine conditions with `rows | where active = true | where score > 0`. Filter a set without changing its selection criteria during syntax repair. Set membership / difference against another rowset: `| where wire in (other | select wire)` / `| where wire not in (other | select wire)` — RHS is one column (or `peers = other | select wire` then `| where wire in peers`).
 
 **Date/time:** `| where ts >= "…"` with `"Nd ago"` / `"today"`·`"yesterday"`·`"last week"`·`"this year"` / `"last monday"` / RFC3339 (quote multi-word) — not brace `min_*`, not `now()`/`date_*`. **"Last N days (including today)" → `"Nd ago"` / `"N days ago"`** (inclusive lower bound; do **not** emit `N−1`). Relative phrases resolve against language-card `evaluation_now`.
 
@@ -35,14 +35,13 @@ Batch reads aggressively. After a write use **`label.wire`** from that binding �
 
 1. **Catalog source** — `e#` / `e#{wire=value}` / `e#~"q"` / `e#(<id>)` — before `|` stages or bare (no `|`). Bare `e#` → e. Backend WHERE only on an **entity head**.
 2. **Row algebra** — `|` stages left-to-right (never after `=>`): `| where …` · `| select fields, name = expr` · `| summarize [by keys] n=count()` · `| order by f [desc]` · `| take n` · `| distinct [by f]` · `| union (other | select col)`. Bind cuts: `label = e# | where …` then `label | select …` or `label => …`.
-3. **Application `=>`** — once per row: `{ t: _.f }` · `<<TAG` · `e#(_.id)` Get · `e#{scope=_.f}` Query · `_.m#(args)` · `_.r#` / `_.wire`. `_` is the current row with identity and scope. Use only holes printed by the card. Singleton scalar: `one = rows | take 1`, then `one.field`; empty extraction errors. Project with `| select` or `[…]`.
+3. **Application `=>`** — once per row: `{ t: _.f }` · `<<TAG` · `e#(_.id)` Get · `e#{scope=_.f}` Query · `_.m#(args)` · `_.r#` / `_.wire`. `_` is the current row with identity and scope. Use only holes printed by the card. Singleton scalar: `one = rows | take 1`, then `one.field`; empty extraction errors. Project with `| select`; bracketed card fields describe returned columns, not executable suffixes.
 
 **Catalog vs row plane:** backend WHERE is `e#{wire=value}` on an entity head; row filter is `e# | where …` or `rows = e#` then `rows | where …`. Invalid: `rows{wire=…}` on a binding.
 
 **Forbidden as row algebra:** `.filter` / `.with` / `[proj]` / `.group_by` / `.sort` / `.limit`, `| update`, bare `=> tags` without `_`.
 
 **Composition:**
-- After `label = source => <<TAG`, string params take **`label.content`** (or `{{ label.content }}`) on a singleton. Plain `body = <<TAG` → **`param=body`**. Per-row args: `title=<<T\n{{ name }} — {{ code }}\nT`.
 - **Operation receivers:** `e#(<id>).m#(args)` acts on a known entity; `item.m#(args)` acts on a bound singleton, including `| take 1`; `rows => _.m#(args)` acts on each row. The row supplies identity and scope. Empty singleton receivers fail. Receiver-free operations use `e#.m#(args)` as printed on the card. Bind effects (`done = rows => _.m#(args)`) and include `done` among return roots.
 - **State iterate** (not foreach): `cur = e#(tok)` / `cur = e#("id")` / `cur = e#{id_field=tok}` then `done = iterate cur step e#(_.id).m#(…, _.f) until field = value take N` — Get-identity seed, not query / `| take` / relation. **`take N` required** (`N≥1`); re-Gets after each step; bound exhaustion without predicate is an error. No unbounded `while`.
 - Quote scalars in `{…}` and string params.

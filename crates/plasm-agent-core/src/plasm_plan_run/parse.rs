@@ -463,7 +463,18 @@ pub(crate) fn propagate_row_identities(
                 .row_identities
                 .iter()
                 .zip(rows.iter())
-                .filter(|(_, row)| resolved.iter().all(|p| predicate_matches(row, p)))
+                .filter(|(_, row)| {
+                    resolved.evaluate(&|p| {
+                        if p.op != crate::plasm_plan::PlanPredicateOp::Exists
+                            && value_at_dotted(row, &p.field_path.dotted())
+                                .is_none_or(serde_json::Value::is_null)
+                        {
+                            None
+                        } else {
+                            Some(predicate_matches(row, p))
+                        }
+                    }) == Some(true)
+                })
                 .map(|(id, _)| id.clone())
                 .collect())
         }

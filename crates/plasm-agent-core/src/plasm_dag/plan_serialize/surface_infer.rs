@@ -26,30 +26,12 @@ pub(in crate::plasm_dag) fn infer_surface_contract(
         if let Some(qe) = expr.qualified_entity_key() {
             QualifiedEntityKey::from(qe)
         } else if let Expr::Page(p) = expr {
-            let resume_entity = session
-                .peek_synthetic_paging_resume(&p.handle)
-                .map(|c| c.entity_type.clone())
-                .or_else(|| {
-                    session
-                        .peek_paging_resume(&p.handle)
-                        .map(|r| r.query.entity.to_string())
-                })
-                .ok_or_else(|| {
-                    format!(
-                        "page handle `{}` is not registered in this session",
-                        p.handle
-                    )
-                })?;
-            let resolving_cgs = crate::catalog_ownership::resolve_cgs_for_entity(
-                session,
-                resume_entity.as_str(),
-                None,
-            )?;
-            crate::catalog_ownership::resolve_qualified_entity_key(
-                session,
-                resume_entity.as_str(),
-                Some(resolving_cgs),
-            )?
+            session.paging_qualified_entity(&p.handle).ok_or_else(|| {
+                format!(
+                    "page handle `{}` is not registered in this session",
+                    p.handle
+                )
+            })?
         } else {
             return Err(
                 "page continuation requires catalog ownership from session e# / binding — not bare wire entity names".to_string(),

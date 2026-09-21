@@ -1,7 +1,8 @@
 //! Row-plane set membership / difference (`| where field in rhs` / `not in`).
 //!
 //! RA-13: the RHS is a **closed one-column rowset** (binding or parenthesized pipeline),
-//! not a brace/backend `in` and not a literal dest list.
+//! not a brace/backend `in`. Literal membership repair is normalized to typed
+//! scalar comparisons by `boolean_surface` before this rowset-only lowering.
 
 use crate::expr_parser::{is_valid_program_label, parse_expr_node, split_top_level, RowExpr};
 
@@ -62,7 +63,7 @@ fn is_row_field_ident(field: &str) -> bool {
 }
 
 /// Find top-level ` not in ` / ` in ` (outside quotes and nesting).
-fn split_membership_op(raw: &str) -> Result<Option<(String, bool, &str)>, String> {
+pub(crate) fn split_membership_op(raw: &str) -> Result<Option<(String, bool, &str)>, String> {
     let bytes = raw.as_bytes();
     let mut i = 0usize;
     let mut depth = 0i32;

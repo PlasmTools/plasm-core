@@ -120,7 +120,9 @@ fn associativity_three_read_maps() {
         "filter",
         map_step_payload(
             "b",
-            ComputeOp::Filter { predicates: vec![] },
+            ComputeOp::Filter {
+                predicates: vec![].into(),
+            },
             ResultShape::List,
         ),
     )
@@ -149,7 +151,9 @@ fn associativity_three_read_maps() {
         "limit+filter",
         map_step_payload(
             "a",
-            ComputeOp::Filter { predicates: vec![] },
+            ComputeOp::Filter {
+                predicates: vec![].into(),
+            },
             ResultShape::List,
         ),
     )

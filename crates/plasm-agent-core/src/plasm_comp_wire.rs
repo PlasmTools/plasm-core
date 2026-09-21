@@ -50,7 +50,7 @@ pub fn plasm_comp_from_validated(validated: &ValidatedPlan) -> PlasmCompArtifact
         );
     }
     let comp = PlasmComp {
-        version: plan.version,
+        version: plasm_core::plasm_monad::PLASM_COMP_WIRE_VERSION,
         name: plan.name.clone(),
         steps,
         bind: bind.graph,

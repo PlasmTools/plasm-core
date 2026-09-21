@@ -69,7 +69,7 @@ pub fn normalize_query_expr_to_rowset(
                     continue;
                 }
                 return Err(format!(
-                    "RA-2: '{field}' is not a declared selection/scope parameter of capability '{}'; source braces bind backend-selection slots only (row predicates use .filter)",
+                    "RA-2: '{field}' is not a declared selection/scope parameter of capability '{}'; source braces bind backend-selection slots only (row predicates use `| where`)",
                     cap.name
                 ));
             }

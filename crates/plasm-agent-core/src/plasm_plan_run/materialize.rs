@@ -29,7 +29,7 @@ pub(crate) async fn materialize_synthetic_node(
                 .unwrap_or_else(|| format!("PlanComputed_{}", node.id().as_str())),
             _ => format!("PlanComputed_{}", node.id().as_str()),
         });
-    let full_entities = json_rows_to_entities(&entity, &rows);
+    let full_entities = json_rows_to_entities(&entity, &rows)?;
     let request_fingerprints = vec![compute_fingerprint(node, &rows)];
     let coverage = match node {
         ValidatedPlanNode::Compute(compute) => {
@@ -87,7 +87,10 @@ pub(crate) async fn materialize_synthetic_node(
         let handle = es.register_synthetic_paging_continuation(
             crate::execute_session::SyntheticPageCursor {
                 node_id: node.id().as_str().to_string(),
-                entity_type: entity.clone(),
+                qualified_entity: crate::plasm_plan::QualifiedEntityKey {
+                    entry_id: entry_id.to_string(),
+                    entity: entity.clone(),
+                },
                 rows: full_entities,
                 offset: page_size,
                 page_size,
@@ -467,7 +470,7 @@ pub(crate) async fn try_materialize_from_parent_get_relation(
         &parents,
         wire_fallback.as_deref(),
     )
-    .await;
+    .await?;
     let display = relation
         .relation
         .ir
@@ -834,7 +837,7 @@ pub(crate) async fn archive_materialize_iterate_until(
         seed_qe.entity.as_str(),
         &rows,
         Some(scoped_es.cgs.as_ref()),
-    );
+    )?;
     let result = ExecutionResult {
         count: entities.len(),
         entities,

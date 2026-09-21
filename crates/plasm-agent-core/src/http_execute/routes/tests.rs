@@ -679,7 +679,7 @@ async fn resolved_plan_endpoint_rejects_digest_mismatch() {
         mode: ResolvedPlanRunMode::Plan,
         source_program: "Profile{}".into(),
         comp: plasm_core::PlasmComp {
-            version: 1,
+            version: plasm_core::plasm_monad::PLASM_COMP_WIRE_VERSION,
             name: Some("bad".into()),
             steps: std::collections::BTreeMap::new(),
             bind: plasm_core::PlasmBindGraph::default(),

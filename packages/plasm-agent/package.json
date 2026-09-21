@@ -63,6 +63,7 @@
     "smoke:vercel-build": "node scripts/run-plasm-cli.mjs scripts/smoke-vercel-build.ts",
     "smoke:vercel-handler": "node scripts/run-plasm-cli.mjs scripts/smoke-vercel-handler.ts",
     "test:resolve-app-options": "node scripts/run-plasm-cli.mjs scripts/test-resolve-app-options.ts",
+    "test:initial-context": "node scripts/run-plasm-cli.mjs scripts/test-initial-context.ts",
     "test:context-routing": "node scripts/run-plasm-cli.mjs scripts/test-context-routing.ts",
     "test:run-ref-not-terminal": "node scripts/run-plasm-cli.mjs scripts/test-run-ref-not-terminal.ts",
     "test:invalid-tool-input-retry": "node scripts/run-plasm-cli.mjs scripts/test-invalid-tool-input-retry.ts",

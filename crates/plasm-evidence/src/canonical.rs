@@ -138,7 +138,7 @@ mod tests {
             holes: BTreeMap::new(),
         };
         let a = PlasmComp {
-            version: 1,
+            version: plasm_core::plasm_monad::PLASM_COMP_WIRE_VERSION,
             name: Some("a".into()),
             steps: steps.clone(),
             bind: bind.clone(),

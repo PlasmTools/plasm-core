@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "name": "demo",
   "steps": {
     "n1": {
@@ -10,7 +10,9 @@
     }
   },
   "bind": {
-    "topo": ["n1"],
+    "topo": [
+      "n1"
+    ],
     "deps": {}
   },
   "return": {

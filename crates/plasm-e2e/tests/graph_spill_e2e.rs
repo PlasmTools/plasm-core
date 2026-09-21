@@ -230,7 +230,7 @@ async fn graph_spill_bounded_hot_and_plan_filter_rehydrate_async() {
 
     drop(mat);
 
-    let program = "all = Berry\none = all.limit(1)\none";
+    let program = "all = Berry\none = all | take 1\none";
     let bundle = compile_plasm_program(
         &PromptPipelineConfig::default(),
         None,
@@ -272,7 +272,7 @@ async fn graph_spill_bounded_hot_and_plan_filter_rehydrate_async() {
         "published markdown must include rehydrated rows, got: {md}"
     );
 
-    let program_many = "all = Berry\nmany = all.limit(40)\nmany";
+    let program_many = "all = Berry\nmany = all | take 40\nmany";
     let bundle_many = compile_plasm_program(
         &PromptPipelineConfig::default(),
         None,

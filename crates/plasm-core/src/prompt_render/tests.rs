@@ -2202,7 +2202,7 @@ fn plasm_tool_description_includes_composition_strata() {
     assert!(frontmatter.contains("| select"));
     assert!(frontmatter.contains("| take"));
     assert!(
-        frontmatter.contains("| union") && frontmatter.contains("peers = a | union b"),
+        frontmatter.contains("| union (other | select col)"),
         "RA-14 must teach the executable `| union` skeleton"
     );
     assert!(frontmatter.contains("=>"));
@@ -2370,7 +2370,7 @@ fn plasm_tool_description_truncation_prefix_has_composition_mandate() {
     let end = full.floor_char_boundary(full.len().min(prefix_n));
     let prefix = &full[..end];
     assert!(
-        prefix.contains("Batch independent reads"),
+        prefix.contains("batch independent reads under shared scope"),
         "batching mandate must be in first {prefix_n} bytes (host truncation)"
     );
     assert!(
@@ -2534,7 +2534,7 @@ fn language_matrix_search_tilde_teaches_search_text_not_exact_or_complete() {
         "catalog-source line must keep Backend WHERE seat"
     );
     assert!(
-        card.contains("Membership plane (prefer `| where`)"),
+        card.contains("**Row filters:**") && card.contains("| where wire in (other | select wire)"),
         "card teaches membership via | where, not ~"
     );
     assert!(
@@ -2579,7 +2579,7 @@ fn plasm_tool_teaches_semantic_operation_receivers() {
 #[test]
 fn plasm_tool_teaches_typed_identity_holes() {
     let card = super::PLASM_TOOL_DESCRIPTION;
-    assert!(card.contains("`<id>` is the Get identity (taught `id_field`)"));
+    assert!(card.contains("`e#(<id>)` takes only the taught `id_field`"));
     assert!(card.contains("fill each from a bound value"));
     assert!(card.contains("of that hole's sort"));
     assert!(!card.contains("copy the card left-column seat exactly"));

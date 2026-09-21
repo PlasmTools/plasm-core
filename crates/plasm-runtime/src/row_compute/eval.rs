@@ -239,6 +239,23 @@ fn trim_float(f: f64) -> String {
     d.to_string()
 }
 
+fn boolean_filter_expr(
+    predicate: &plasm_core::BooleanExpr<plasm_core::plasm_monad::PlanPredicate>,
+    state: &FrameState,
+) -> PolarsResult<Expr> {
+    use plasm_core::BooleanExpr;
+    match predicate {
+        BooleanExpr::Atom(p) => pred_expr(p, state),
+        BooleanExpr::And(args) => args.iter().try_fold(lit(true), |acc, p| {
+            Ok(acc.and(boolean_filter_expr(p, state)?))
+        }),
+        BooleanExpr::Or(args) => args.iter().try_fold(lit(false), |acc, p| {
+            Ok(acc.or(boolean_filter_expr(p, state)?))
+        }),
+        BooleanExpr::Not(arg) => Ok(boolean_filter_expr(arg, state)?.not()),
+    }
+}
+
 fn apply_node(
     lf: LazyFrame,
     node: &PlanNode,
@@ -246,13 +263,7 @@ fn apply_node(
     now: DateTime<Utc>,
 ) -> PolarsResult<LazyFrame> {
     match node {
-        PlanNode::Filter(filter) => {
-            let mut e = lit(true);
-            for p in filter.predicates() {
-                e = e.and(pred_expr(p, state)?);
-            }
-            Ok(lf.filter(e))
-        }
+        PlanNode::Filter(filter) => Ok(lf.filter(boolean_filter_expr(filter.predicates(), state)?)),
         PlanNode::Sort { key, descending } => Ok(lf.sort(
             [key.dotted()],
             SortMultipleOptions::default()
@@ -806,6 +817,34 @@ mod tests {
     use plasm_core::parse_with_body;
     use std::str::FromStr;
 
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(48))]
+        #[test]
+        fn boolean_filter_wire_preserves_rows_order_multiplicity_and_nulls(
+            values in proptest::collection::vec(proptest::option::of(-10i64..10), 1..40),
+            threshold in -10i64..10,
+        ) {
+            use plasm_core::BooleanExpr::{Atom, And, Or, Not};
+            let pred = |op| PlanPredicate {
+                field_path: FieldPath::from_dotted("score").unwrap(), op,
+                value: PlasmDataValue::Literal { value: serde_json::json!(threshold) },
+            };
+            // Overlapping branches must not duplicate rows; null must remain unknown under NOT.
+            let tree = Or(vec![Atom(pred(PlanPredicateOp::Gt)), And(vec![
+                Not(Box::new(Atom(pred(PlanPredicateOp::Lt)))), Atom(pred(PlanPredicateOp::Gte))])]);
+            let op = ComputeOp::Filter { predicates: tree };
+            let wire = serde_json::to_vec(&op).unwrap();
+            let restored: ComputeOp = serde_json::from_slice(&wire).unwrap();
+            proptest::prop_assert_eq!(&op, &restored);
+            let rows: Vec<_> = values.iter().map(|n| serde_json::json!({"id":n,"score":n})).collect();
+            // Keep one non-null value so Polars can infer the scalar type even for all-null inputs.
+            let mut rows = rows; rows.push(serde_json::json!({"id":threshold,"score":threshold}));
+            let expected: Vec<_> = rows.iter().filter(|r| r["score"].as_i64().is_some_and(|n| n >= threshold)).cloned().collect();
+            let ComputeEvalOutcome::Rows(out) = eval_compute_ops(&[restored], &rows).unwrap() else { panic!("rows") };
+            proptest::prop_assert_eq!(out, expected);
+        }
+    }
+
     #[test]
     fn filter_sort_limit_roundtrip() {
         let rows = vec![
@@ -822,7 +861,7 @@ mod tests {
         };
         let ops = vec![
             ComputeOp::Filter {
-                predicates: vec![pred],
+                predicates: vec![pred].into(),
             },
             ComputeOp::Sort {
                 key: FieldPath::from_dotted("score").unwrap(),
@@ -848,7 +887,7 @@ mod tests {
     fn eval_pan_eq(rows: &[serde_json::Value], rhs: serde_json::Value) -> Vec<serde_json::Value> {
         let ComputeEvalOutcome::Rows(out) = eval_compute_ops(
             &[ComputeOp::Filter {
-                predicates: vec![filter_eq_pan(rhs)],
+                predicates: vec![filter_eq_pan(rhs)].into(),
             }],
             rows,
         )
@@ -907,7 +946,7 @@ mod tests {
         };
         let ComputeEvalOutcome::Rows(kept) = eval_compute_ops(
             &[ComputeOp::Filter {
-                predicates: vec![inn],
+                predicates: vec![inn].into(),
             }],
             &rows,
         )
@@ -916,7 +955,7 @@ mod tests {
         };
         let ComputeEvalOutcome::Rows(drop) = eval_compute_ops(
             &[ComputeOp::Filter {
-                predicates: vec![outn],
+                predicates: vec![outn].into(),
             }],
             &rows,
         )

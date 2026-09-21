@@ -45,18 +45,20 @@ pub(crate) fn prefer_hydrate_target_refs(
     target_entity: &str,
     cgs: &CGS,
     cardinality: Cardinality,
-) -> Vec<Ref> {
+) -> Result<Vec<Ref>, String> {
     let wire_rows = prefer_embed_wire_rows(source_row, embed_path, cardinality, cgs, target_entity);
     if !wire_rows.is_empty() {
-        return json_rows_to_entities_with_refs(target_entity, &wire_rows, Some(cgs))
-            .into_iter()
-            .map(|e| e.reference)
-            .collect();
+        return Ok(
+            json_rows_to_entities_with_refs(target_entity, &wire_rows, Some(cgs))?
+                .into_iter()
+                .map(|e| e.reference)
+                .collect(),
+        );
     }
-    parent
+    Ok(parent
         .and_then(|p| p.relations.get(rel_name))
         .map(|rs| rs.to_vec())
-        .unwrap_or_default()
+        .unwrap_or_default())
 }
 
 /// Split refs into graph-resident rows vs identities needing GET hydrate.
@@ -148,7 +150,7 @@ pub(crate) async fn plan_prefer_hydrate_fallback_row(
         target_entity,
         scoped_es.cgs.as_ref(),
         cardinality,
-    );
+    )?;
     if refs.is_empty() {
         return Err(format!(
             "relation `{rel_name}` hydrate_from_embed_path: no embed identities on parent row {row_index}"
@@ -249,7 +251,8 @@ mod tests {
             "Pokemon",
             &cgs,
             Cardinality::Many,
-        );
+        )
+        .unwrap();
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].primary_slot_str(), "pikachu");
     }

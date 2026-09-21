@@ -348,7 +348,7 @@ pub struct SessionRunSummary {
 #[derive(Clone, Debug)]
 pub struct SyntheticPageCursor {
     pub node_id: String,
-    pub entity_type: String,
+    pub qualified_entity: crate::plasm_plan::QualifiedEntityKey,
     pub rows: Vec<CachedEntity>,
     pub offset: usize,
     pub page_size: usize,
@@ -360,7 +360,10 @@ pub struct SyntheticPageCursor {
 #[derive(Clone, Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum PagingResume {
-    Query(QueryPaginationResumeData),
+    Query {
+        qualified_entity: crate::plasm_plan::QualifiedEntityKey,
+        resume: QueryPaginationResumeData,
+    },
     Synthetic(SyntheticPageCursor),
 }
 
@@ -732,6 +735,7 @@ impl ExecuteSession {
     pub fn register_paging_continuation(
         &self,
         resume: QueryPaginationResumeData,
+        qualified_entity: crate::plasm_plan::QualifiedEntityKey,
         logical_session_ref: Option<&str>,
     ) -> PagingHandle {
         let n = self.paging_handle_next.fetch_add(1, Ordering::Relaxed) + 1;
@@ -742,7 +746,13 @@ impl ExecuteSession {
         self.paging_resume_by_handle
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(handle.clone(), PagingResume::Query(resume));
+            .insert(
+                handle.clone(),
+                PagingResume::Query {
+                    qualified_entity,
+                    resume,
+                },
+            );
         handle
     }
 
@@ -752,16 +762,37 @@ impl ExecuteSession {
             .unwrap_or_else(|e| e.into_inner())
             .get(handle)
             .and_then(|resume| match resume {
-                PagingResume::Query(query) => Some(query.clone()),
+                PagingResume::Query { resume, .. } => Some(resume.clone()),
                 PagingResume::Synthetic(_) => None,
             })
     }
 
-    pub fn upsert_paging_resume(&self, handle: &PagingHandle, resume: QueryPaginationResumeData) {
+    /// Ownership is immutable for the lifetime of a continuation, including page updates.
+    pub fn paging_qualified_entity(
+        &self,
+        handle: &PagingHandle,
+    ) -> Option<crate::plasm_plan::QualifiedEntityKey> {
         self.paging_resume_by_handle
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(handle.clone(), PagingResume::Query(resume));
+            .get(handle)
+            .map(|resume| match resume {
+                PagingResume::Query {
+                    qualified_entity, ..
+                } => qualified_entity.clone(),
+                PagingResume::Synthetic(cursor) => cursor.qualified_entity.clone(),
+            })
+    }
+
+    pub fn upsert_paging_resume(&self, handle: &PagingHandle, next: QueryPaginationResumeData) {
+        if let Some(PagingResume::Query { resume, .. }) = self
+            .paging_resume_by_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(handle)
+        {
+            *resume = next;
+        }
     }
 
     pub fn register_synthetic_paging_continuation(
@@ -790,7 +821,7 @@ impl ExecuteSession {
             .unwrap_or_else(|e| e.into_inner())
             .get(handle)
             .and_then(|resume| match resume {
-                PagingResume::Query(_) => None,
+                PagingResume::Query { .. } => None,
                 PagingResume::Synthetic(cursor) => Some(cursor.clone()),
             })
     }
@@ -2294,9 +2325,23 @@ mod tests {
             None,
         );
         let r = sample_pagination_resume();
-        let h1 = sess.register_paging_continuation(r.clone(), None);
+        let h1 = sess.register_paging_continuation(
+            r.clone(),
+            crate::plasm_plan::QualifiedEntityKey {
+                entry_id: "default".into(),
+                entity: "Pet".into(),
+            },
+            None,
+        );
         assert_eq!(h1.as_str(), "pg1");
-        let h2 = sess.register_paging_continuation(r.clone(), None);
+        let h2 = sess.register_paging_continuation(
+            r.clone(),
+            crate::plasm_plan::QualifiedEntityKey {
+                entry_id: "default".into(),
+                entity: "Pet".into(),
+            },
+            None,
+        );
         assert_eq!(h2.as_str(), "pg2");
         assert!(sess.peek_paging_resume(&h1).is_some());
         sess.remove_paging_resume(&h1);

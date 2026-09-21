@@ -52,7 +52,7 @@ impl PlanLineExecuteShared {
         sess: &ExecuteSession,
         st: &PlasmHostState,
         exec_cgs: &CGS,
-        root_entity: &str,
+        qualified_entity: &crate::plasm_plan::QualifiedEntityKey,
         fp_sink: Arc<Mutex<Vec<String>>>,
         preflight: PreflightToken,
         rows_progress: Option<RowsProgressFn>,
@@ -63,41 +63,21 @@ impl PlanLineExecuteShared {
             .base_url
             .as_deref()
             .and_then(|b| crate::http_backend::ReplHttpOverride::from_engine_base(b).ok());
-        let catalog_backend = self
-            .federation
-            .as_ref()
-            .and_then(|fed| fed.http_backend_for_entity(root_entity))
-            .map(crate::http_backend::CatalogHttpBackend::from_cgs_field)
-            .or_else(|| {
-                sess.http_backend
-                    .as_deref()
-                    .map(crate::http_backend::CatalogHttpBackend::from_cgs_field)
-            });
+        let catalog_backend =
+            crate::http_backend::CatalogHttpBackend::from_cgs_field(&exec_cgs.http_backend);
         let http_backend_for_root = crate::catalog_ownership::plan_http_origin(
             engine_override.as_ref(),
-            catalog_backend.as_ref(),
+            Some(&catalog_backend),
         )
         .map(|origin| origin.as_str().to_string());
         let auth_for_exec = exec_cgs.auth.clone();
-        let catalog_entry_for_bind = self
-            .federation
-            .as_ref()
-            .and_then(|_| {
-                sess.contexts_by_entry.keys().find(|eid| {
-                    sess.contexts_by_entry
-                        .get(*eid)
-                        .and_then(|ctx| ctx.get_entity(root_entity))
-                        .is_some()
-                })
-            })
-            .cloned()
-            .unwrap_or_else(|| sess.entry_id.clone());
+        let catalog_entry_for_bind = &qualified_entity.entry_id;
         let catalog_bind = sess
-            .session_bindings_for_entry(&catalog_entry_for_bind)
+            .session_bindings_for_entry(catalog_entry_for_bind)
             .map(|m| m.cml_env_entries());
         ExecuteOptions {
             compiled_catalog: Some(
-                sess.compiled_catalog_for_entry(&catalog_entry_for_bind)
+                sess.compiled_catalog_for_entry(catalog_entry_for_bind)
                     .expect("scoped execute catalog was compiled when the session opened"),
             ),
             request_fingerprint_sink: Some(fp_sink),
@@ -115,7 +95,7 @@ impl PlanLineExecuteShared {
                     exec_cgs.catalog_cgs_hash_hex()
                 ),
                 compiled_catalog: sess
-                    .compiled_catalog_for_entry(&catalog_entry_for_bind)
+                    .compiled_catalog_for_entry(catalog_entry_for_bind)
                     .expect("scoped execute catalog was compiled when the session opened"),
                 credential_store: Some(Arc::new(crate::session_credentials::HostCredentialStore {
                     registry: st.execute_session_registry.clone(),

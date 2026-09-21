@@ -108,15 +108,19 @@ pub(in crate::plasm_dag) fn resolve_qualified_entity_for_dag_source(
             }
             | DagNodeSource::RelationTraversal {
                 qualified_entity, ..
+            }
+            | DagNodeSource::ForEach {
+                qualified_entity, ..
+            }
+            | DagNodeSource::IterateUntil {
+                qualified_entity, ..
             } => {
                 return Some(qualified_entity.clone());
             }
             DagNodeSource::Compute { source, .. } => node_id = source.clone(),
             DagNodeSource::Derive { .. }
             | DagNodeSource::ScalarExtract { .. }
-            | DagNodeSource::Data(_)
-            | DagNodeSource::ForEach { .. }
-            | DagNodeSource::IterateUntil { .. } => return None,
+            | DagNodeSource::Data(_) => return None,
         }
     }
     None

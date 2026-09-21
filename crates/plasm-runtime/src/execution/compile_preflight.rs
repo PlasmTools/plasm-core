@@ -64,43 +64,6 @@ fn preflight_compile_query(
     compile_operation_dispatch(&capability_template, &env).map(|_| ())
 }
 
-fn resolve_get_capability_for_preflight<'a>(
-    get: &GetExpr,
-    cgs: &'a CGS,
-) -> Result<&'a plasm_core::CapabilitySchema, RuntimeError> {
-    match get.capability_name.as_deref() {
-        Some(name) => {
-            let c = cgs
-                .get_capability(name)
-                .ok_or_else(|| RuntimeError::CapabilityNotFound {
-                    capability: name.to_string(),
-                    entity: get.reference.entity_type.to_string(),
-                })?;
-            if c.kind != CapabilityKind::Get {
-                return Err(RuntimeError::ConfigurationError {
-                    message: format!("capability '{name}' must be kind get"),
-                });
-            }
-            if c.domain.as_str() != get.reference.entity_type.as_str() {
-                return Err(RuntimeError::ConfigurationError {
-                    message: format!(
-                        "capability '{name}' is for entity {}, expected {}",
-                        c.domain.as_str(),
-                        get.reference.entity_type
-                    ),
-                });
-            }
-            Ok(c)
-        }
-        None => cgs
-            .find_capability(&get.reference.entity_type, CapabilityKind::Get)
-            .ok_or_else(|| RuntimeError::CapabilityNotFound {
-                capability: "get".to_string(),
-                entity: get.reference.entity_type.to_string(),
-            }),
-    }
-}
-
 fn preflight_compile_get(
     get: &GetExpr,
     cgs: &CGS,
@@ -108,43 +71,24 @@ fn preflight_compile_get(
     ambient: &ViewAmbientContext,
     mat: &SessionMaterialization,
 ) -> Result<(), RuntimeError> {
-    let get = get_with_session_params(get, cgs, mat);
-    let capability = resolve_get_capability_for_preflight(&get, cgs)?;
+    let request = ResolvedGet::resolve(
+        get,
+        cgs,
+        get.capability_name.as_deref(),
+        mat,
+        ambient,
+        GetPurpose::Authored,
+    )?;
+    let capability = request.capability;
     // List-backed derived Gets have no CML mapping; schema load already validated the plan.
     if capability.derived.is_some() {
         return Ok(());
     }
     let capability_template = compiled.capability(capability.name.as_str())?.clone();
     if let CapabilityTemplate::View(vt) = &capability_template {
-        return preflight_view_get(vt.view.as_str(), &get, cgs, compiled, ambient, mat);
+        return preflight_view_get(vt.view.as_str(), get, cgs, compiled, &request.ambient, mat);
     }
-    let mut env = CmlEnv::new();
-    let target_ent = cgs
-        .get_entity(get.reference.entity_type.as_str())
-        .ok_or_else(|| RuntimeError::ConfigurationError {
-            message: format!(
-                "unknown entity `{}` for get identity-env projection",
-                get.reference.entity_type
-            ),
-        })?;
-    populate_template_path_env(
-        &mut env,
-        capability,
-        &get.reference,
-        plasm_core::IdentityProjectionCtx::Entity(target_ent),
-        Some(&Value::Object(mat.capability_params_for_get(
-            &get.reference,
-            &SessionMaterialization::provide_catalog_key(cgs, get.catalog_entry_id.as_deref()),
-        ))),
-    )?;
-    normalize_cml_env_scope_entity_refs(&mut env, cgs, capability)?;
-    plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
-        RuntimeError::ConfigurationError {
-            message: e.to_string(),
-        }
-    })?;
-    merge_plasm_execute_session_env(&mut env);
-    compile_operation_dispatch(&capability_template, &env).map(|_| ())
+    compile_operation_dispatch(&capability_template, &request.env).map(|_| ())
 }
 
 fn preflight_compile_create(

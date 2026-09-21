@@ -2821,7 +2821,13 @@ impl<'a> Parser<'a> {
             if let Some((ft, vf, arr)) = self.lookup_field_typing(&first_ty, &field) {
                 if !matches!(val, Value::Null) {
                     val = coerce_value_for_field_type(&ft, vf, arr.as_ref(), val).map_err(|m| {
-                        self.err(ParseErrorKind::InvalidTemporalValue { message: m })
+                        self.err(if matches!(ft, FieldType::Date) {
+                            ParseErrorKind::InvalidTemporalValue { message: m }
+                        } else {
+                            ParseErrorKind::Other {
+                                message: format!("invalid value for `{field}` ({ft:?}): {m}"),
+                            }
+                        })
                     })?;
                 }
             }
@@ -2872,8 +2878,15 @@ impl<'a> Parser<'a> {
         let mut val = self.parse_predicate_rhs_after_op()?;
         if let Some((ft, vf, arr)) = self.lookup_field_typing(entity_name, &pred_wire) {
             if !matches!(val, Value::Null) && !val.is_domain_example_placeholder() {
-                val = coerce_value_for_field_type(&ft, vf, arr.as_ref(), val)
-                    .map_err(|m| self.err(ParseErrorKind::InvalidTemporalValue { message: m }))?;
+                val = coerce_value_for_field_type(&ft, vf, arr.as_ref(), val).map_err(|m| {
+                    self.err(if matches!(ft, FieldType::Date) {
+                        ParseErrorKind::InvalidTemporalValue { message: m }
+                    } else {
+                        ParseErrorKind::Other {
+                            message: format!("invalid value for `{pred_wire}` ({ft:?}): {m}"),
+                        }
+                    })
+                })?;
             }
         }
         Ok(Predicate::comparison(pred_wire, op, val))

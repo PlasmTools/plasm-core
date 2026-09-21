@@ -189,20 +189,6 @@ impl CapabilityParamEnv {
     }
 }
 
-pub(crate) fn synthesized_get(reference: Ref, _params: &CapabilityParamEnv) -> GetExpr {
-    GetExpr::from_ref(reference)
-}
-
-/// Session capability params are applied at CML env populate time from materialization —
-/// identity lives on [`Ref`] only (IdentitySlot cutover).
-pub(crate) fn get_with_session_params(
-    get: &GetExpr,
-    _cgs: &CGS,
-    _mat: &SessionMaterialization,
-) -> GetExpr {
-    get.clone()
-}
-
 pub(crate) fn identity_keys_for_entity(cgs: &CGS, entity: &str) -> HashSet<String> {
     let mut keys = HashSet::from(["id".to_string()]);
     if let Some(ent) = cgs.get_entity(entity) {
@@ -417,7 +403,7 @@ impl ExecutionEngine {
 
         let mut stream = stream::iter(to_fetch.into_iter().map(|reference| {
             let requested = reference.clone();
-            let get = synthesized_get(reference, &inherit);
+            let get = GetExpr::from_ref(reference);
             let cap_name = cap_name.clone();
             let ambient =
                 ViewAmbientContext::default().with_capability_params(inherit.bindings().clone());
@@ -579,17 +565,6 @@ mod tests {
     }
 
     #[test]
-    fn synthesized_get_is_identity_only() {
-        let inherit = CapabilityParamEnv {
-            bindings: IndexMap::from([("access_token".into(), Value::String("tok".into()))]),
-        };
-        let get = synthesized_get(Ref::new("LangSecuredNote", "1"), &inherit);
-        assert_eq!(get.reference, Ref::new("LangSecuredNote", "1"));
-        // Session params ride materialization stamps, not Get AST.
-        assert!(!inherit.bindings().is_empty());
-    }
-
-    #[test]
     fn session_params_overlay_explicit_wins() {
         use plasm_core::loader::load_schema_dir;
         let cgs = load_schema_dir(
@@ -603,8 +578,20 @@ mod tests {
             &reference,
             IndexMap::from([("access_token".into(), Value::String("session".into()))]),
         );
-        let inherited = get_with_session_params(&GetExpr::from_ref(reference.clone()), &cgs, &mat);
-        assert_eq!(inherited.reference, reference);
+        let get = GetExpr::from_ref(reference.clone());
+        let resolved = ResolvedGet::resolve(
+            &get,
+            &cgs,
+            None,
+            &mat,
+            &ViewAmbientContext::default(),
+            GetPurpose::Hydration,
+        )
+        .unwrap();
+        assert_eq!(
+            resolved.env.get("access_token"),
+            Some(&Value::String("session".into()))
+        );
         assert_eq!(
             mat.capability_params_for(&reference).get("access_token"),
             Some(&Value::String("session".into()))

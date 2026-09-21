@@ -381,7 +381,7 @@ impl ExecutionEngine {
                     .get(reference.primary_slot_str().as_str())
                     .cloned()
                     .unwrap_or_default();
-                let get = synthesized_get(reference.clone(), &inherit);
+                let get = GetExpr::from_ref(reference.clone());
                 let cap_name = get_cap_name.clone();
                 let ambient = ViewAmbientContext::default()
                     .with_capability_params(inherit.bindings().clone());
@@ -822,7 +822,7 @@ impl ExecutionEngine {
                     message: format!("Chain materialize: unknown target entity '{target_key}'"),
                 })?;
 
-        let mut gets: Vec<GetExpr> = Vec::new();
+        let mut gets: Vec<(GetExpr, ViewAmbientContext)> = Vec::new();
         for entity in &source_result.entities {
             let mut bound: IndexMap<String, String> = IndexMap::new();
             for (cap_param, parent_field) in bindings.iter() {
@@ -836,7 +836,12 @@ impl ExecutionEngine {
             if !inherit.bindings().is_empty() {
                 mat.stamp_capability_params(&reference, inherit.bindings().clone());
             }
-            gets.push(GetExpr::from_ref(reference));
+            // This fetch executes without a materialization borrow. Carry the typed
+            // inherited parameters across that boundary rather than only stamping
+            // the cache that fetch_get_decoded cannot see.
+            let ambient =
+                ViewAmbientContext::default().with_capability_params(inherit.bindings().clone());
+            gets.push((GetExpr::from_ref(reference), ambient));
         }
 
         if gets.is_empty() {
@@ -864,24 +869,16 @@ impl ExecutionEngine {
 
         let cap_named = capability.clone();
         let entity_type = target_key.to_string();
-        let mut stream = stream::iter(gets.into_iter().map(move |get| {
+        let mut stream = stream::iter(gets.into_iter().map(move |(get, ambient)| {
             let c = cap_named.clone();
             let entity_type = entity_type.clone();
             async move {
-                self.fetch_get_decoded(
-                    &get,
-                    cgs,
-                    mode,
-                    Some(c.as_str()),
-                    false,
-                    None,
-                    &ViewAmbientContext::default(),
-                )
-                .await
-                .map_err(|e| wrap_synthesized_get_error(c.as_str(), &entity_type, e))
+                self.fetch_get_decoded(&get, cgs, mode, Some(c.as_str()), false, None, &ambient)
+                    .await
+                    .map_err(|e| wrap_synthesized_get_error(c.as_str(), &entity_type, e))
             }
         }))
-        .buffer_unordered(concurrency);
+        .buffered(concurrency);
 
         let mut extra_network = 0usize;
         let mut extra_cache_hits = 0usize;
@@ -1071,7 +1068,7 @@ impl ExecutionEngine {
                 .effective_hydrate_concurrency(cgs.entry_id.as_deref());
             let mut stream = stream::iter(to_fetch.into_iter().map(|reference| {
                 let inherit = inherit_by_ref.get(&reference).cloned().unwrap_or_default();
-                let get = synthesized_get(reference.clone(), &inherit);
+                let get = GetExpr::from_ref(reference.clone());
                 let cap_name = get_cap_name.clone();
                 let ambient = ViewAmbientContext::default()
                     .with_capability_params(inherit.bindings().clone());
@@ -1140,3 +1137,7 @@ impl ExecutionEngine {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "chain_boundary_tests.rs"]
+mod boundary_tests;

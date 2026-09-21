@@ -51,6 +51,8 @@ mod coverage;
 mod embed_cache;
 mod engine;
 mod engine_get;
+mod resolved_get;
+use resolved_get::{GetPurpose, ResolvedGet};
 mod engine_query;
 mod entity_decoder;
 mod expr_executor;
@@ -80,9 +82,8 @@ mod observation_honesty;
 mod tests;
 
 pub(crate) use hydrate::{
-    get_with_session_params, identity_keys_for_entity, relation_inherit_for_scoped_query,
-    stamp_entities_and_mat, stamp_get_capability_params, synthesized_get,
-    wrap_synthesized_get_error, CapabilityParamEnv,
+    identity_keys_for_entity, relation_inherit_for_scoped_query, stamp_entities_and_mat,
+    stamp_get_capability_params, wrap_synthesized_get_error, CapabilityParamEnv,
 };
 pub(crate) use session::{compiled_capability_template, compiled_conflict_rules};
 

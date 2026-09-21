@@ -14,8 +14,8 @@ use serde_json::Value as JsonValue;
 #[cfg(test)]
 use crate::api_error_detail::workflow_conflict_from_http;
 use crate::execution::{
-    compiled_conflict_rules, synthesized_get, CapabilityParamEnv, ExecutionEngine, ExecutionMode,
-    ExecutionResult, OperationLedger, ResultCoverage, StreamConsumeOpts,
+    compiled_conflict_rules, CapabilityParamEnv, ExecutionEngine, ExecutionMode, ExecutionResult,
+    OperationLedger, ResultCoverage, StreamConsumeOpts,
 };
 use crate::materialization::SessionMaterialization;
 use crate::RuntimeError;
@@ -259,13 +259,14 @@ impl ExecutionEngine {
                 let reference =
                     crate::view_plan::ref_from_view_get_node(target_ent, via_cap, &bound)?;
                 let inherit = CapabilityParamEnv::from_bindings(identity, via_cap);
-                let get = synthesized_get(reference, &inherit);
+                let get = plasm_core::GetExpr::from_ref(reference);
                 self.execute_get(
                     &get,
                     cgs,
                     mat,
                     mode,
-                    &crate::view_plan::ViewAmbientContext::default(),
+                    &crate::view_plan::ViewAmbientContext::default()
+                        .with_capability_params(inherit.bindings().clone()),
                 )
                 .await
             }

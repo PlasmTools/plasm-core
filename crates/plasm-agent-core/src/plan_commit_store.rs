@@ -459,7 +459,7 @@ mod tests {
         );
         crate::plasm_comp_wire::PlasmCompArtifact {
             comp: PlasmComp {
-                version: 1,
+                version: plasm_core::plasm_monad::PLASM_COMP_WIRE_VERSION,
                 name: Some("test".into()),
                 steps,
                 bind: PlasmBindGraph {

@@ -115,6 +115,7 @@ export interface AgentTurnResult {
 }
 
 export class PlasmAgent {
+  private initialContext?: Promise<string>;
   readonly runtime: AgentRuntime;
   private readonly model: string | LanguageModel;
   private readonly instructionsPath: string;
@@ -257,6 +258,30 @@ export class PlasmAgent {
       messages = this.conversation;
     }
 
+    // Host-owned bootstrap: preserve the task verbatim instead of asking the
+    // execution model to invent an initial discovery call or decompose intent.
+    if (!this.runtime.hasOpenWorkflow()) {
+      const initialize = tools.plasm_context?.execute;
+      if (!initialize) throw new Error("Initial context requires the plasm_context executor");
+      this.initialContext ??= Promise.resolve(initialize({
+        intent: prompt,
+        effect_slots: [prompt],
+        session_mode: "new",
+      }, { toolCallId: "host-initial-context", messages, context: {} })).then((result) => {
+        if (typeof result !== "string") throw new Error("Initial context must return discovery text");
+        return result;
+      }).catch((error: unknown) => {
+        this.initialContext = undefined;
+        throw error;
+      });
+      const context = await this.initialContext;
+      messages = [...messages, {
+        role: "user",
+        content: `Host initialized plasm_context from the original task description. This is the actual discovery result. Continue this workflow using its logical_session_ref; use session_mode="extend" for further discovery.\n\n${context}`,
+      }];
+    }
+
+    if (!externalMessages) this.conversation = messages;
     messages = await maybeCompactMessages(messages, this.compaction, this.model);
 
     const toolInvocations: string[] = [];
@@ -299,13 +324,7 @@ export class PlasmAgent {
       },
       modelOptions: this.modelOptions,
       toolChoice: options.toolChoice,
-      // Env-action evals: force plasm_context until attempted; terminals still
-      // require hasOpenWorkflow via the harness gate (tool-error on refusal).
-      requireInitialDiscovery: this.includeEvalTerminals,
       forceToolChoice: options.forceToolChoice,
-      discoveryCompleted: this.includeEvalTerminals
-        ? () => this.runtime.hasOpenWorkflow()
-        : undefined,
     });
 
     if (!externalMessages) {

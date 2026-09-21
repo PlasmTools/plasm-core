@@ -4,7 +4,8 @@ use super::super::*;
 fn materialized_result_use_preserves_scalar_data_binding_value() {
     let node = PlanNodeId::new("workspace_id".to_string()).expect("node id");
     let row = serde_json::json!("workspace_123");
-    let entities = json_rows_to_entities("PlanComputed_workspace_id", std::slice::from_ref(&row));
+    let entities =
+        json_rows_to_entities("PlanComputed_workspace_id", std::slice::from_ref(&row)).unwrap();
     let mut materialized = BTreeMap::new();
     materialized.insert(
         node.clone(),

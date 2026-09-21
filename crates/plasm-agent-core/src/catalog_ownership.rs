@@ -246,6 +246,47 @@ mod tests {
     }
 
     #[test]
+    fn paging_preserves_origin_after_federation_expands() {
+        let cgs = matrix_cgs();
+        let mut session = session_with_contexts("origin", cgs.clone(), vec![], None);
+        let handle = session.register_synthetic_paging_continuation(
+            crate::execute_session::SyntheticPageCursor {
+                node_id: "rows".into(),
+                qualified_entity: QualifiedEntityKey {
+                    entry_id: "origin".into(),
+                    entity: "LangItem".into(),
+                },
+                rows: vec![],
+                offset: 0,
+                page_size: 1,
+                request_fingerprints: vec![],
+                coverage: plasm_runtime::ResultCoverage::Complete,
+            },
+            None,
+        );
+        session
+            .contexts_by_entry
+            .insert("other".into(), Arc::new(CgsContext::entry("other", cgs)));
+        let bundle = crate::plasm_compile::compile_plasm_expression(
+            &plasm_core::PromptPipelineConfig::default(),
+            None,
+            &session,
+            "page-test",
+            &format!("page({handle})"),
+        )
+        .expect("page remains owned by origin after homonymous catalog is added");
+        let wire = serde_json::to_string(&bundle.artifact().comp).unwrap();
+        let comp = serde_json::from_str(&wire).unwrap();
+        let artifact = crate::plasm_comp_wire::plasm_comp_artifact_from_comp(comp).unwrap();
+        let round_trip = crate::plasm_comp_bundle::PlasmCompBundle::new(artifact).unwrap();
+        crate::plasm_plan_run::evaluate_plasm_comp_dry(&session, &round_trip).unwrap();
+        assert_eq!(
+            session.paging_qualified_entity(&handle).unwrap().entry_id,
+            "origin"
+        );
+    }
+
+    #[test]
     fn errors_when_entity_missing() {
         let cgs = matrix_cgs();
         let session = session_with_contexts("solo", cgs, vec![], None);

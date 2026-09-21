@@ -137,11 +137,7 @@ pub(crate) fn render_compute_template(compute: &ComputeTemplate) -> String {
             format!("project {} -> {{{fields}}}", compute.source)
         }
         ComputeOp::Filter { predicates } => {
-            let predicates = predicates
-                .iter()
-                .map(render_predicate)
-                .collect::<Vec<_>>()
-                .join(", ");
+            let predicates = predicates.render(&render_predicate);
             format!("filter {} where {predicates}", compute.source)
         }
         ComputeOp::GroupBy { keys, aggregates } => {

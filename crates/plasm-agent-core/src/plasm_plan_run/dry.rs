@@ -35,6 +35,11 @@ pub fn evaluate_executable_comp_dry(
     let execution_unsupported = Vec::new();
     let prepared = crate::plan_prepare::prepare_executable_plan_for_session(es, comp, executable)
         .map_err(ProgramStageError::plan)?;
+    crate::plan_session_provisions::validate(es, prepared.validated.nodes(), &executable.bind)
+        .map_err(ProgramStageError::plan)?;
+    let dry_session = crate::plan_session_provisions::DryProvisionSession::new(es)
+        .map_err(ProgramStageError::plan)?;
+    let es = dry_session.session();
     for (step_idx, n) in prepared.validated.artifact().nodes.iter().enumerate() {
         ensure_node_dispatchable(es, n, step_idx).map_err(ProgramStageError::plan)?;
         if let ValidatedPlanNode::RelationTraversal(relation) = n {
@@ -141,6 +146,7 @@ pub fn evaluate_executable_comp_dry(
                         "type_check": "ok",
                         "simulation": simulation
                     }));
+                    dry_session.stage(n).map_err(ProgramStageError::plan)?;
                     continue;
                 }
                 Ok(None) => {

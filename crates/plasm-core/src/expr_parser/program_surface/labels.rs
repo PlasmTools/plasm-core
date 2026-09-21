@@ -2,9 +2,16 @@
 
 use super::errors::program_invalid_binding_label_error;
 
+/// Whole binding names in these numbered symbol families are reserved.
+pub const RESERVED_PROGRAM_SYMBOL_PREFIXES: &str = "emprv";
+
+pub fn reserved_program_label_pattern() -> String {
+    format!("[{RESERVED_PROGRAM_SYMBOL_PREFIXES}][0-9]+")
+}
+
 pub fn looks_like_domain_symbol(label: &str) -> bool {
     let mut chars = label.chars();
-    matches!(chars.next(), Some('e' | 'p' | 'm' | 'r'))
+    matches!(chars.next(), Some(c) if RESERVED_PROGRAM_SYMBOL_PREFIXES.contains(c))
         && matches!(chars.next(), Some(c) if c.is_ascii_digit())
         && chars.all(|c| c.is_ascii_digit())
 }
@@ -62,4 +69,41 @@ pub fn validate_program_label(label: &str) -> Result<(), String> {
         return Err(program_invalid_binding_label_error(label));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn numbered_symbol_families_are_reserved(
+            prefix in proptest::sample::select(RESERVED_PROGRAM_SYMBOL_PREFIXES.chars().collect::<Vec<_>>()),
+            digits in "[0-9]{1,20}",
+        ) {
+            let reserved = format!("{prefix}{digits}");
+            prop_assert!(validate_program_label(&reserved).is_err());
+            let separated = format!("{prefix}_{digits}");
+            prop_assert!(validate_program_label(&separated).is_ok());
+            let descriptive = format!("items_{digits}");
+            prop_assert!(validate_program_label(&descriptive).is_ok());
+            let error = program_invalid_binding_label_error(&reserved);
+            prop_assert!(error.contains(&reserved_program_label_pattern()));
+        }
+    }
+
+    #[test]
+    fn naming_contract_matches_shipped_teaching() {
+        let teaching = crate::prompt_render::PLASM_TOOL_DESCRIPTION;
+        assert!(teaching.contains(&format!(
+            "whole names `{}` are reserved",
+            reserved_program_label_pattern()
+        )));
+        assert!(validate_program_label("items_1").is_ok());
+        assert_eq!(
+            teaching,
+            include_str!("../../../../../packages/plasm-agent/src/prompts/assets/plasm_tool.txt")
+        );
+    }
 }

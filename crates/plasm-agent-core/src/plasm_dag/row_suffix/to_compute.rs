@@ -74,7 +74,9 @@ pub(in crate::plasm_dag) fn row_suffix_to_compute(
             let sym_map = state.sym_map_for(session);
             let core_qe =
                 plasm_core::QualifiedEntityKey::new(qe.entry_id.as_str(), qe.entity.as_str());
-            let clauses = plasm_core::split_where_and_clauses(body.as_str())?;
+            let tree = plasm_core::parse_boolean_filter(body.as_str())?;
+            let predicates = tree.try_flat_map(&mut |clause| -> Result<plasm_core::BooleanExpr<PlanPredicate>, String> {
+            let clauses = [clause.as_str()];
             let mut membership_preds = Vec::new();
             let mut scalar_clauses = Vec::new();
             for clause in clauses {
@@ -115,7 +117,7 @@ pub(in crate::plasm_dag) fn row_suffix_to_compute(
                     qe.entity.as_str(),
                     &scalar_clauses.join(", "),
                     &stack,
-                    sym_map,
+                    sym_map.clone(),
                     &row_schema_fields,
                 )?
             };
@@ -174,6 +176,8 @@ pub(in crate::plasm_dag) fn row_suffix_to_compute(
                     "filter(...)",
                 )?;
             }
+            Ok(predicates.into())
+            })?;
             let schema = compute_passthrough_or_fallback_schema(
                 session,
                 state,
@@ -402,31 +406,33 @@ pub(in crate::plasm_dag) fn row_suffix_to_compute(
             if !state.contains(rhs.as_str()) && !staged.iter().any(|n| n.id == *rhs) {
                 return Err(format!("union RHS `{rhs}` is not a bound rowset (RA-14)"));
             }
-            let left_schema = resolve_immediate_compute_schema(state, staged, source);
-            let right_schema = resolve_immediate_compute_schema(state, staged, rhs);
-            if let (Some(left), Some(right)) = (left_schema.as_ref(), right_schema.as_ref()) {
-                if !is_opaque_passthrough_compute_schema(left)
-                    && !is_opaque_passthrough_compute_schema(right)
-                {
-                    let left_names: std::collections::BTreeSet<&str> =
-                        left.fields.iter().map(|f| f.name.as_str()).collect();
-                    let right_names: std::collections::BTreeSet<&str> =
-                        right.fields.iter().map(|f| f.name.as_str()).collect();
-                    if left_names != right_names {
-                        let left_list: Vec<&str> =
-                            left.fields.iter().map(|f| f.name.as_str()).collect();
-                        let right_list: Vec<&str> =
-                            right.fields.iter().map(|f| f.name.as_str()).collect();
-                        return Err(format!(
-                            "union requires the same columns; left has [{}], right has [{}] (RA-14)",
-                            left_list.join(", "),
-                            right_list.join(", ")
-                        ));
-                    }
-                }
-            }
-            let schema =
+            let left =
                 compute_passthrough_or_fallback_schema(session, state, staged, source, "PlanUnion");
+            let right =
+                compute_passthrough_or_fallback_schema(session, state, staged, rhs, "PlanUnion");
+            if is_opaque_passthrough_compute_schema(&left)
+                || is_opaque_passthrough_compute_schema(&right)
+            {
+                return Err("union requires known row columns; use `| select` to declare the same columns on both inputs (RA-14)".into());
+            }
+            let left_names: std::collections::BTreeSet<_> = left
+                .fields
+                .iter()
+                .map(|field| field.name.as_str())
+                .collect();
+            let right_names: std::collections::BTreeSet<_> = right
+                .fields
+                .iter()
+                .map(|field| field.name.as_str())
+                .collect();
+            if left_names != right_names {
+                return Err(format!(
+                    "union requires the same columns; left has [{}], right has [{}] (RA-14)",
+                    left_names.into_iter().collect::<Vec<_>>().join(", "),
+                    right_names.into_iter().collect::<Vec<_>>().join(", ")
+                ));
+            }
+            let schema = left;
             Ok(mk(
                 ComputeOp::Union {
                     other: OutputName::new(rhs.clone())?,

@@ -1116,7 +1116,10 @@ async fn execute_mcp_live_run_page_handle_synthetic_continuation() {
     }
     let cursor = SyntheticPageCursor {
         node_id: "items".into(),
-        entity_type: "LangItem".into(),
+        qualified_entity: crate::plasm_plan::QualifiedEntityKey {
+            entry_id: fx.es.entry_id.clone(),
+            entity: "LangItem".into(),
+        },
         rows,
         offset: 25,
         page_size: 25,
@@ -1316,7 +1319,10 @@ async fn plasm_run_page_handle_through_handler() {
     }
     let cursor = SyntheticPageCursor {
         node_id: "items".into(),
-        entity_type: "LangItem".into(),
+        qualified_entity: crate::plasm_plan::QualifiedEntityKey {
+            entry_id: es.entry_id.clone(),
+            entity: "LangItem".into(),
+        },
         rows,
         offset: 25,
         page_size: 25,

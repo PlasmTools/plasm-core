@@ -254,7 +254,10 @@ fn effect_template(
     }
 }
 
-fn filter_plan_graph_edges(source: &str, predicates: &[PlanPredicate]) -> Vec<PlanResultUse> {
+fn filter_plan_graph_edges(
+    source: &str,
+    predicates: &plasm_core::BooleanExpr<PlanPredicate>,
+) -> Vec<PlanResultUse> {
     let mut uses = vec![result_use(source, "source")];
     for pred in predicates {
         if let PlanValue::BindingSymbol { binding, .. } = &pred.value {

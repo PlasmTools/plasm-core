@@ -297,6 +297,7 @@ try {
   assert.equal(controlLiturgy.includes(TASK_LEDGER_LITURGY), false);
   assert.equal(controlLiturgy.includes(TASK_LEDGER_STATE_HEADER), false);
   assert.equal(controlLiturgy.includes(TASK_LEDGER_PLAN_SLOT), true);
+  control.runtime.hasOpenWorkflow = () => true;
   await control.generate("CONTROL_TASK", {
     wrapTools: (tools) => {
       assert.equal(TASK_LEDGER_TOOL_NAME in tools, false, "flag off: no ledger tool");
@@ -325,6 +326,7 @@ try {
     assert.equal(TASK_LEDGER_TOOL_NAME in tools, true);
     return { [TASK_LEDGER_TOOL_NAME]: tools[TASK_LEDGER_TOOL_NAME]! };
   };
+  treatment.runtime.hasOpenWorkflow = () => true;
   const first = await treatment.generate("ORIGINAL_TASK", { wrapTools: keepLedger });
   assert.equal(first.toolInvocations.includes(TASK_LEDGER_TOOL_NAME), true);
   assert.equal(
@@ -384,6 +386,7 @@ try {
     assert.equal(TASK_LEDGER_TOOL_NAME in tools, true);
     return { [TASK_LEDGER_TOOL_NAME]: tools[TASK_LEDGER_TOOL_NAME]! };
   };
+  agent.runtime.hasOpenWorkflow = () => true;
   await agent.generate("ORIGINAL_TASK", { wrapTools: wrap });
   await agent.generate("FOLLOW_UP", { wrapTools: wrap });
   const followCall = model.doStreamCalls.at(-1);

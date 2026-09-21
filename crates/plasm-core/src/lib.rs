@@ -129,6 +129,7 @@ pub mod relation_validation_expr;
 pub mod resolved_identity;
 pub mod result_gloss;
 pub mod row_composition;
+pub mod row_contract;
 pub mod row_membership;
 pub mod row_plan;
 pub mod row_predicate;
@@ -436,3 +437,9 @@ pub use workflow_identity::{
 };
 
 pub mod operand_binding;
+
+pub mod boolean_expr;
+pub use boolean_expr::BooleanExpr;
+
+pub mod boolean_surface;
+pub use boolean_surface::parse_boolean_filter;

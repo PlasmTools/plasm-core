@@ -296,7 +296,7 @@ fn minimal_comp() -> plasm_core::PlasmComp {
         holes: BTreeMap::new(),
     };
     plasm_core::PlasmComp {
-        version: 1,
+        version: plasm_core::plasm_monad::PLASM_COMP_WIRE_VERSION,
         name: None,
         steps,
         bind,

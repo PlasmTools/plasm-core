@@ -1,0 +1,34 @@
+login:
+  method: POST
+  path: [{type: literal, value: login}]
+folder_get:
+  method: GET
+  path: [{type: literal, value: folders}, {type: var, name: id}]
+  headers:
+    type: object
+    fields:
+    - [Authorization, {type: var, name: access_token}]
+note_get:
+  method: GET
+  path: [{type: literal, value: notes}, {type: var, name: note_id}]
+  headers:
+    type: object
+    fields:
+    - [Authorization, {type: var, name: access_token}]
+owner_get:
+  method: GET
+  path: [{type: literal, value: owners}, {type: var, name: id}]
+saved_query:
+  method: GET
+  path: [{type: literal, value: saved}]
+  headers:
+    type: object
+    fields:
+    - [Authorization, {type: var, name: access_token}]
+saved_get:
+  method: GET
+  path: [{type: literal, value: saved}, {type: var, name: note_id}]
+  headers:
+    type: object
+    fields:
+    - [Authorization, {type: var, name: access_token}]

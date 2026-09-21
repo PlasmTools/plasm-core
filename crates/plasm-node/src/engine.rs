@@ -1089,9 +1089,9 @@ mod tests {
     fn live_run_serialization_populates_rows_and_meta() {
         let live = synthetic_live_run_result();
         let rows = live_run_rows_json(&live).expect("rows_json");
-        let parsed: Vec<serde_json::Value> = serde_json::from_str(&rows).expect("parse rows");
-        assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed[0]["id"], "p1");
+        let parsed: serde_json::Value = serde_json::from_str(&rows).expect("parse result envelope");
+        assert_eq!(parsed["rows"].as_array().unwrap().len(), 1);
+        assert_eq!(parsed["rows"][0]["id"], "p1");
         let meta = live_run_meta_json(&live).expect("meta_json");
         assert!(meta.contains("plasm"));
         assert!(meta.contains("abc123"));
@@ -1165,7 +1165,9 @@ mod tests {
             .as_deref()
             .expect("rows_json should be populated");
         let parsed: serde_json::Value = serde_json::from_str(rows).expect("rows json");
-        let arr = parsed.as_array().expect("entity rows array");
+        let arr = parsed["rows"]
+            .as_array()
+            .expect("entity rows in result envelope");
         assert!(!arr.is_empty());
         assert_eq!(arr[0]["id"], "p1");
         let artifacts: serde_json::Value =
@@ -1387,7 +1389,7 @@ mod tests {
         );
     }
     #[tokio::test]
-    async fn native_paging_preserves_all_backend_rows() {
+    async fn native_paging_preserves_origin_and_rows_after_federation_expands() {
         use async_trait::async_trait;
         use plasm_compile::CompiledRequest;
         struct Pages;
@@ -1395,11 +1397,16 @@ mod tests {
         impl HttpTransport for Pages {
             async fn send_compiled_http(
                 &self,
-                _: &str,
+                base_url: &str,
                 request: &CompiledRequest,
                 _: Option<plasm_runtime::auth::ResolvedAuth>,
             ) -> Result<(serde_json::Value, Option<String>), plasm_runtime::RuntimeError>
             {
+                assert_eq!(
+                    base_url.trim_end_matches('/'),
+                    "https://origin.example",
+                    "continuation dispatched to wrong catalog"
+                );
                 let offset = request
                     .query
                     .as_ref()
@@ -1407,7 +1414,7 @@ mod tests {
                     .and_then(|q| q.get("offset"))
                     .and_then(Value::as_number)
                     .unwrap_or(0.0) as usize;
-                let rows: Vec<_> = (offset..(offset + 20).min(48))
+                let rows: Vec<_> = (offset..(offset + 20).min(88))
                     .map(|n| serde_json::json!({"id":n.to_string(),"n":n}))
                     .collect();
                 Ok((serde_json::json!({"results":rows}), None))
@@ -1426,11 +1433,21 @@ mod tests {
                 .join("../../fixtures/schemas/plasm_pagination_matrix"),
         )
         .unwrap();
+        cgs.http_backend = "https://origin.example".into();
         cgs.bind_registry_entry_id("paging");
+        let mut other = cgs.clone();
+        other.http_backend = "https://other.example".into();
+        other.bind_registry_entry_id("other");
+        let other_compiled =
+            Arc::new(plasm_compile::compile_cgs_capability_templates(&other).unwrap());
         let compiled = Arc::new(plasm_compile::compile_cgs_capability_templates(&cgs).unwrap());
         let mut engine = AgentEngine::from_generation(
-            [("paging".into(), cgs)].into(),
-            [("paging".into(), compiled)].into(),
+            [("paging".into(), cgs), ("other".into(), other)].into(),
+            [
+                ("paging".into(), compiled),
+                ("other".into(), other_compiled),
+            ]
+            .into(),
             "paging-session".into(),
         );
         engine
@@ -1449,29 +1466,53 @@ mod tests {
             .unwrap();
         let meta: serde_json::Value =
             serde_json::from_str(first.meta_json.as_deref().unwrap()).unwrap();
-        let next = meta["plasm"]["paging"][0]["next_run_ref"]
-            .as_str()
-            .expect("snapshot must preserve backend continuation");
-        let second = engine.run_plan_live(next, Arc::new(Pages)).await.unwrap();
-        let a: serde_json::Value =
-            serde_json::from_str(first.rows_json.as_deref().unwrap()).unwrap();
-        let b: serde_json::Value =
-            serde_json::from_str(second.rows_json.as_deref().unwrap()).unwrap();
-        let rows: Vec<_> = a["rows"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .chain(b["rows"].as_array().unwrap())
-            .collect();
-        assert_eq!(rows.len(), 48);
+        assert!(meta["plasm"]["paging"][0]["next_run_ref"].is_string());
+        engine
+            .expose_seeds(
+                "expand to another catalog",
+                &[CapabilitySeed {
+                    entry_id: "other".into(),
+                    entity: "ItemOffset".into(),
+                }],
+            )
+            .unwrap();
+        let mut current = first;
+        let mut rows = Vec::new();
+        let mut completed = false;
+        for _ in 0..10 {
+            let page: serde_json::Value =
+                serde_json::from_str(current.rows_json.as_deref().unwrap()).unwrap();
+            rows.extend(page["rows"].as_array().unwrap().iter().cloned());
+            let meta: serde_json::Value =
+                serde_json::from_str(current.meta_json.as_deref().unwrap()).unwrap();
+            let next = meta["plasm"]["paging"][0]["next_run_ref"].as_str();
+            if page["coverage"] == "complete" {
+                assert!(
+                    next.is_none(),
+                    "complete results must not advertise more pages"
+                );
+                completed = true;
+                break;
+            }
+            assert_eq!(page["coverage"], "partial");
+            let next = next.expect("every partial backend page must publish its continuation");
+            current = engine.run_plan_live(next, Arc::new(Pages)).await.unwrap();
+        }
+        assert!(
+            completed,
+            "paging must terminate within the fixture's bounded page count"
+        );
+        assert_eq!(rows.len(), 88);
         let ids: std::collections::BTreeSet<_> =
             rows.iter().map(|r| r["id"].as_str().unwrap()).collect();
         assert_eq!(
             ids.len(),
-            48,
+            88,
             "no dropped or repeated rows across native paging"
         );
-        assert_eq!(a["coverage"], "partial");
-        assert_eq!(b["coverage"], "complete");
     }
 }
+
+#[cfg(test)]
+#[path = "hydration_boundary_tests.rs"]
+mod hydration_boundary_tests;

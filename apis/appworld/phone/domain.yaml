@@ -1,4 +1,4 @@
-version: 13
+version: 14
 entry_id: phone
 auth:
   scheme: none
@@ -51,7 +51,7 @@ entities:
         value_ref: nv_str
   Contact:
     id_field: contact_id
-    description: Person in the account holder's address book, classified by their relationship to the account holder.
+    description: Address-book person. A named relationship group contains only contacts bearing that label; address-book membership alone does not establish the relationship.
     discovery:
       names:
       - contact
@@ -415,7 +415,7 @@ capabilities:
       type: side_effect
       description: Ends the Phone session for this token.
   contact_query:
-    description: Find people by name or their relationship to the account holder, and identify how known people are related to the account holder.
+    description: Select contacts by relationship; unfiltered results include every group.
     kind: query
     entity: Contact
     discovery:
@@ -952,7 +952,7 @@ values:
     description: Days an alarm repeats.
   nv_contact_relationship:
     type: enum
-    description: How the contact is related to the account holder; a relationship category rather than a person's name.
+    description: Relationship to the account holder; a named group contains contacts bearing that label.
     enum:
     - brother
     - child
@@ -975,7 +975,7 @@ values:
     type: array
     items:
       value_ref: nv_contact_relationship
-    description: Relationship labels for a contact.
+    description: Recorded relationship memberships; use these labels to resolve named groups.
   nv_bool:
     type: boolean
     description: Boolean flag.

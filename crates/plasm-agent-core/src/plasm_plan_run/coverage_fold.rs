@@ -157,7 +157,8 @@ mod coverage_collection_tests {
                     binding: "excluded".into(),
                     path: vec!["id".into()],
                 },
-            }],
+            }]
+            .into(),
         };
         assert_eq!(
             coverage_from_compute_collections(ResultCoverage::Complete, &op, &materialized),
@@ -178,7 +179,8 @@ mod coverage_collection_tests {
                     binding: "excluded".into(),
                     path: vec!["id".into()],
                 },
-            }],
+            }]
+            .into(),
         };
         assert_eq!(
             coverage_from_compute_collections(ResultCoverage::Complete, &op, &materialized),

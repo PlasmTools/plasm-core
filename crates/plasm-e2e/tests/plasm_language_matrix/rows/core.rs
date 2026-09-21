@@ -398,6 +398,27 @@ labeled"#,
         expect_live_error: None,
     },
     MatrixRow {
+        id: "lang_where_literal_boolean_sugar",
+        program: r#"LangItem | where owner in ("alice", "bob") AND NOT (owner = "bob")"#,
+        surface_line: false,
+        federated: false,
+        features: &["repair_literal_membership", "repair_boolean_filter", "pipe_where", "dry_live_parity"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "alice"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_where_boolean_rowset_sugar",
+        program: r#"alice = LangItem | where owner = "alice" | select owner
+LangItem | where owner in alice OR (owner = "alice" AND score >= 0)"#,
+        surface_line: false,
+        federated: false,
+        features: &["repair_boolean_filter", "pipe_where_in_rowset", "pipe_where", "dry_live_parity"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "alice"],
+        expect_live_error: None,
+    },
+    MatrixRow {
         id: "lang_where_in_rowset",
         program: r#"alice = LangItem | where owner = "alice" | select owner
 kept = LangItem | where owner in alice

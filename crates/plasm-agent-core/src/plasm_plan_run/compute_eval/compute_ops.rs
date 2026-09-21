@@ -39,7 +39,7 @@ pub(crate) fn eval_compute_from_rows(
                 other.as_str()
             )
         })?;
-        return plasm_core::union_rowsets(rows, right);
+        return plasm_core::row_contract::PublicRowSchema::new(&compute.schema).union(rows, right);
     }
     let op = resolve_membership_filter_op(&compute.op, cross_binding_rows)?;
     match eval_compute_ops(std::slice::from_ref(&op), rows)? {
@@ -165,12 +165,12 @@ pub(crate) fn binding_rows_for_compute(
 }
 
 pub(crate) fn resolve_filter_predicates_with_materialized(
-    predicates: &[crate::plasm_plan::PlanPredicate],
+    predicates: &plasm_core::BooleanExpr<crate::plasm_plan::PlanPredicate>,
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
-) -> Result<Vec<crate::plasm_plan::PlanPredicate>, String> {
+) -> Result<plasm_core::BooleanExpr<crate::plasm_plan::PlanPredicate>, String> {
     let mut binding_rows = BTreeMap::new();
     for label in collection_binding_labels(&ComputeOp::Filter {
-        predicates: predicates.to_vec(),
+        predicates: predicates.clone(),
     }) {
         let node_id = PlanNodeId::new(label.clone())?;
         let mat = materialized.get(&node_id).ok_or_else(|| {
@@ -185,10 +185,7 @@ pub(crate) fn resolve_filter_predicates_with_materialized(
             })?;
         binding_rows.insert(label, rows);
     }
-    predicates
-        .iter()
-        .map(|p| resolve_membership_predicate(p, &binding_rows))
-        .collect()
+    predicates.try_map(&mut |p| resolve_membership_predicate(p, &binding_rows))
 }
 
 fn resolve_membership_filter_op(
@@ -198,10 +195,8 @@ fn resolve_membership_filter_op(
     let ComputeOp::Filter { predicates } = op else {
         return Ok(op.clone());
     };
-    let mut resolved = Vec::with_capacity(predicates.len());
-    for pred in predicates {
-        resolved.push(resolve_membership_predicate(pred, binding_rows)?);
-    }
+    let resolved =
+        predicates.try_map(&mut |pred| resolve_membership_predicate(pred, binding_rows))?;
     Ok(ComputeOp::Filter {
         predicates: resolved,
     })

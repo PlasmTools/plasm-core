@@ -1455,3 +1455,285 @@ newbranch, newfile"#;
         Some(&serde_json::json!(["newbranch"]))
     );
 }
+
+#[test]
+fn login_then_get_same_program_preflights_without_changing_session() {
+    let es = language_matrix_session();
+    let bundle = crate::compile_plasm_program(
+        &plasm_core::PromptPipelineConfig::default(), None, &es, "login-get",
+        "auth = LangAuthSession.login(username=\"fixture\", password=\"fixture\")\nnote = LangSecuredNote(1)\nnote",
+    ).expect("compile");
+    evaluate_plasm_comp_dry(&es, &bundle)
+        .expect("prior login supplies Get credential at execution");
+    let get = crate::compile_plasm_program(
+        &plasm_core::PromptPipelineConfig::default(),
+        None,
+        &es,
+        "get-alone",
+        "LangSecuredNote(1)",
+    )
+    .expect("compile get");
+    assert!(
+        evaluate_plasm_comp_dry(&es, &get).is_err(),
+        "dry login must not authenticate the session"
+    );
+}
+
+#[test]
+fn session_provisions_require_prior_same_catalog_login_and_sealed_dependencies() {
+    let es = language_matrix_session();
+    let compile = |source: &str| {
+        crate::compile_plasm_program(
+            &plasm_core::PromptPipelineConfig::default(),
+            None,
+            &es,
+            "provisions",
+            source,
+        )
+        .expect("compile")
+    };
+    let reversed = compile("note = LangSecuredNote(1)\nauth = LangAuthSession.login(username=\"u\", password=\"p\")\nnote");
+    assert!(evaluate_plasm_comp_dry(&es, &reversed).is_err());
+    let bundle = compile("auth = LangAuthSession.login(username=\"u\", password=\"p\")\nnote = LangSecuredNote(1)\nnote");
+    let wire = serde_json::to_value(&bundle.artifact().comp).expect("serialize");
+    let comp = serde_json::from_value(wire).expect("deserialize");
+    let artifact = crate::plasm_comp_wire::plasm_comp_artifact_from_comp(comp).expect("artifact");
+    let restored = crate::PlasmCompBundle::new(artifact).expect("restore");
+    let dry = evaluate_plasm_comp_dry(&es, &restored).expect("roundtrip");
+    assert_eq!(
+        dry.graph_summary["execution_layers"],
+        serde_json::json!([["auth"], ["note"]])
+    );
+    let mut damaged = restored.into_artifact();
+    damaged.comp.bind.deps.clear();
+    let damaged = crate::PlasmCompBundle::new(damaged).expect("structurally valid");
+    let err = evaluate_plasm_comp_dry(&es, &damaged).expect_err("missing semantic edge");
+    assert!(err.to_string().contains("provider dependencies"), "{err}");
+
+    let es = federated_langmatrix_item_session().expect("matrix");
+    let mut es = es;
+    let ctxs = es.contexts_by_entry.clone();
+    let layers: Vec<_> = ctxs.values().map(|c| c.cgs.as_ref()).collect();
+    for (entry, ctx) in &ctxs {
+        es.teaching_exposure.as_mut().unwrap().expose_entities(
+            &layers,
+            ctx.cgs.clone(),
+            entry,
+            &["LangAuthSession", "LangSecuredNote"],
+        );
+    }
+    let symbols = es.teaching_exposure.as_ref().unwrap().symbol_map_arc();
+    let auth = symbols.entity_sym_for("langmatrix_a", "LangAuthSession");
+    let login = symbols.method_sym_for("langmatrix_a", "LangAuthSession", "login");
+    let note = symbols.entity_sym_for("langmatrix_b", "LangSecuredNote");
+    let program =
+        format!("auth = {auth}.{login}(username=\"u\", password=\"p\")\nnote = {note}(1)\nnote");
+    let bundle = crate::compile_plasm_program(
+        &plasm_core::PromptPipelineConfig::default(),
+        None,
+        &es,
+        "foreign",
+        &program,
+    )
+    .expect("foreign compile");
+    assert!(
+        evaluate_plasm_comp_dry(&es, &bundle).is_err(),
+        "login must not authenticate another catalog"
+    );
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(16))]
+    #[test]
+    fn synthetic_display_names_are_valid_unique_and_preserve_authored_names(count in 1usize..10) {
+        let es = language_matrix_session();
+        // Authored names come after the synthetic Get: all must be reserved before allocation.
+        let mut source = "result = LangItem(\"root\").lines\n".to_string();
+        for index in 1..=count {
+            source.push_str(&format!("read_{index} = LangItem(\"item-{index}\")\n"));
+        }
+        source.push_str("result");
+        let bundle = crate::compile_plasm_program(
+            &plasm_core::PromptPipelineConfig::default(), None, &es, "display-names", &source,
+        ).expect("compile matrix");
+        let dry = evaluate_plasm_comp_dry(&es, &bundle).expect("dry matrix");
+        let display = crate::plan_dry_display::plan_node_display_map(dry.validated_plan(), &dry.topological_order);
+        let unique: std::collections::HashSet<_> = display.values().collect();
+        proptest::prop_assert_eq!(unique.len(), display.len());
+        for name in display.values() {
+            proptest::prop_assert!(plasm_core::expr_parser::validate_program_label(name).is_ok());
+        }
+        for index in 1..=count {
+            let name = format!("read_{index}");
+            proptest::prop_assert_eq!(display.get(&name), Some(&name));
+        }
+        proptest::prop_assert!(display.iter().any(|(id, label)| id.starts_with("__plasm_") && label.starts_with("read_")), "exercise synthesized read labels");
+    }
+}
+
+#[test]
+fn query_only_view_relation_does_not_require_parent_get() {
+    let original = matrix_views_session();
+    let mut cgs = (*original.cgs).clone();
+    cgs.capabilities.shift_remove("lang_work_snapshot_get");
+    let entity = cgs.entities.get_mut("LangWorkSnapshot").unwrap();
+    entity.primary_read = None;
+    entity.primary_query = Some("lang_work_snapshot_query".into());
+    let cgs = Arc::new(cgs);
+    let contexts = indexmap::IndexMap::from([(
+        "langmatrix_views".into(),
+        Arc::new(CgsContext::entry("langmatrix_views", cgs.clone())),
+    )]);
+    let es = ExecuteSession::new(
+        "ph".into(),
+        "p".into(),
+        cgs.clone(),
+        contexts,
+        "langmatrix_views".into(),
+        String::new(),
+        String::new(),
+        None,
+        vec!["LangWorkSnapshot".into()],
+        None,
+        None,
+        cgs.catalog_cgs_hash_hex(),
+        None,
+    );
+    for program in [
+        "snapshot = LangWorkSnapshot{}\nitems = snapshot => _.items\nitems",
+        "snapshot = LangWorkSnapshot{} | take 1\nitems = snapshot.items\nitems",
+    ] {
+        let bundle = crate::compile_plasm_program(
+            &plasm_core::PromptPipelineConfig::default(),
+            None,
+            &es,
+            "query-view",
+            program,
+        )
+        .expect("query-backed relation must not require a parent Get");
+        let comp =
+            serde_json::from_slice(&serde_json::to_vec(&bundle.artifact().comp).unwrap()).unwrap();
+        let bundle = crate::PlasmCompBundle::new(
+            crate::plasm_comp_wire::plasm_comp_artifact_from_comp(comp).unwrap(),
+        )
+        .unwrap();
+        evaluate_plasm_comp_dry(&es, &bundle).expect("serialized query-backed relation");
+    }
+}
+
+fn compiled_filter_roundtrip(program: &str) -> Vec<ComputeOp> {
+    let es = language_matrix_session();
+    let bundle = crate::compile_plasm_program(
+        &plasm_core::PromptPipelineConfig::default(),
+        None,
+        &es,
+        "boolean-filter",
+        program,
+    )
+    .expect("typed filter compile");
+    let wire = serde_json::to_value(&bundle.artifact().comp).unwrap();
+    let comp = serde_json::from_value(wire.clone()).unwrap();
+    let restored = crate::PlasmCompBundle::new(
+        crate::plasm_comp_wire::plasm_comp_artifact_from_comp(comp).unwrap(),
+    )
+    .unwrap();
+    evaluate_plasm_comp_dry(&es, &restored).expect("serialized boolean filter dry evaluation");
+    fn filters(value: &serde_json::Value, out: &mut Vec<ComputeOp>) {
+        if value.get("kind").and_then(serde_json::Value::as_str) == Some("filter") {
+            if let Ok(op) = serde_json::from_value::<ComputeOp>(value.clone()) {
+                out.push(op);
+                return;
+            }
+        }
+        match value {
+            serde_json::Value::Object(fields) => {
+                for v in fields.values() {
+                    filters(v, out);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for v in items {
+                    filters(v, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut ops = Vec::new();
+    filters(&wire, &mut ops);
+    assert!(
+        !ops.is_empty(),
+        "compiled artifact must contain typed filter"
+    );
+    ops
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(24))]
+    #[test]
+    fn boolean_sugar_compiles_and_preserves_selected_rows_through_wire(
+        chosen in proptest::collection::vec(0i64..10, 1..8),
+        source in proptest::collection::vec(0i64..15, 1..24),
+        cutoff in 0i64..15,
+    ) {
+        let list = chosen.iter().map(ToString::to_string).collect::<Vec<_>>().join(",");
+        let program = format!("LangItem | where score in ({list}) OR (score >= {cutoff} AND active = true)");
+        let ops = compiled_filter_roundtrip(&program);
+        let rows: Vec<_> = source.iter().map(|n| serde_json::json!({"id":format!("row-{n}"),"score":n,"active":n%2==0})).collect();
+        let expected: Vec<_> = rows.iter().filter(|r| {
+            let n = r["score"].as_i64().unwrap(); chosen.contains(&n) || (n>=cutoff && n%2==0)
+        }).cloned().collect();
+        let plasm_runtime::row_compute::ComputeEvalOutcome::Rows(out) =
+            plasm_runtime::row_compute::eval_compute_ops(&ops, &rows).unwrap() else { panic!("rows") };
+        proptest::prop_assert_eq!(&out, &expected);
+        let node = PlanNodeId::new("source").unwrap();
+        let identities: Vec<_> = rows.iter().map(|row| Some(plasm_core::RowIdentity::new(
+            plasm_core::QualifiedEntityKey::new("matrix", "LangItem"),
+            plasm_core::Ref::new("LangItem", row["id"].as_str().unwrap()),
+            indexmap::IndexMap::new(), plasm_core::IdEncoding::Simple,
+        ))).collect();
+        let materialized = [(node.clone(), MaterializedNode {
+            qualified_entity: crate::plasm_plan::QualifiedEntityKey { entry_id: "matrix".into(), entity: "LangItem".into() },
+            result: Arc::new(ExecutionResult {
+                count: rows.len(), entities: Vec::new(), has_more: false,
+                coverage: plasm_runtime::ResultCoverage::Complete,
+                pagination_resume: None, paging_handle: None, source: ExecutionSource::Cache,
+                stats: Default::default(), request_fingerprints: vec![], operations: plasm_runtime::OperationLedger::empty(),
+            }),
+            row_source: MaterializedRowSource::Inline(rows.clone()), row_identities: identities.clone(),
+            artifact: None, display: String::new(), projection: None,
+        })].into_iter().collect();
+        let actual_ids = propagate_row_identities(&node, &ops[0], &materialized, out.len()).unwrap();
+        let expected_ids: Vec<_> = rows.iter().zip(identities).filter(|(r, _)| {
+            let n=r["score"].as_i64().unwrap(); chosen.contains(&n) || (n>=cutoff && n%2==0)
+        }).map(|(_, id)| id).collect();
+        proptest::prop_assert_eq!(actual_ids, expected_ids);
+    }
+}
+
+#[test]
+fn boolean_sugar_checks_every_branch_and_preserves_membership_dependencies() {
+    let es = language_matrix_session();
+    for source in [
+        "LangItem | where score in (1, true)",
+        "LangItem | where active = true OR missing_field = 1",
+        "LangItem | where score not in (1, null)",
+    ] {
+        assert!(
+            crate::compile_plasm_program(
+                &plasm_core::PromptPipelineConfig::default(),
+                None,
+                &es,
+                "invalid",
+                source
+            )
+            .is_err(),
+            "must reject {source}"
+        );
+    }
+    compiled_filter_roundtrip(
+        "peers = LangItem | select owner\nLangItem | where owner in peers OR score > 3",
+    );
+    compiled_filter_roundtrip("LangItem | where owner in (LangItem | select owner) OR score > 3");
+    compiled_filter_roundtrip("LangItem | where score not in (1, 2) AND NOT (active = false)");
+}

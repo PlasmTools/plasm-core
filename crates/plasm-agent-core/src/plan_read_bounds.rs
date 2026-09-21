@@ -111,7 +111,7 @@ pub fn cap_execution_result_page(
     result: &mut ExecutionResult,
     cap: usize,
     node_id: &str,
-    entity_type: &str,
+    qualified_entity: &crate::plasm_plan::QualifiedEntityKey,
     logical_session_ref: Option<&str>,
 ) {
     // Keep the acquired backend page and its continuation intact. A presentation
@@ -126,7 +126,7 @@ pub fn cap_execution_result_page(
     result.has_more = true;
     let cursor = crate::execute_session::SyntheticPageCursor {
         node_id: node_id.to_string(),
-        entity_type: entity_type.to_string(),
+        qualified_entity: qualified_entity.clone(),
         rows: all,
         offset: cap,
         page_size: cap,
@@ -356,7 +356,7 @@ fn budget_from_chain(chain: &[ComputeOp]) -> Option<PushedReadBudget> {
         [] => Some(PushedReadBudget::Limit(*count)),
         [ComputeOp::Filter { predicates }] => Some(PushedReadBudget::FilterLimit {
             count: *count,
-            predicates: predicates.clone(),
+            predicates: predicates.conjunction()?,
         }),
         [ComputeOp::Sort { key, descending }] => Some(PushedReadBudget::TopK {
             count: *count,
@@ -369,7 +369,7 @@ fn budget_from_chain(chain: &[ComputeOp]) -> Option<PushedReadBudget> {
                 count: *count,
                 key: key.clone(),
                 descending: *descending,
-                filter: Some(predicates.clone()),
+                filter: Some(predicates.conjunction()?),
             })
         }
         _ => None,
@@ -479,7 +479,7 @@ mod tests {
         let chain = vec![
             ComputeOp::Limit { count: 3 },
             ComputeOp::Filter {
-                predicates: Vec::new(),
+                predicates: Vec::new().into(),
             },
         ];
         assert!(matches!(
@@ -649,7 +649,10 @@ mod tests {
             &mut result,
             DEFAULT_HOST_PAGE_SIZE,
             "rows",
-            "LangItem",
+            &crate::plasm_plan::QualifiedEntityKey {
+                entry_id: sess.entry_id.clone(),
+                entity: "LangItem".into(),
+            },
             Some("l_test"),
         );
         assert_eq!(result.entities.len(), DEFAULT_HOST_PAGE_SIZE);
@@ -732,7 +735,7 @@ mod tests {
     fn filter_and_projection_consume_the_requested_collection() {
         use serde_json::json;
         for op in [
-            json!({"kind":"filter", "predicates":[]}),
+            json!({"kind":"filter", "predicates":{"kind":"atom","args":{"field_path":["id"],"op":"exists","value":{"kind":"literal","value":true}}}}),
             json!({"kind":"project", "fields":{"id":["id"]}}),
         ] {
             let plan = json!({
@@ -785,7 +788,7 @@ mod tests {
                         "source": "payments",
                         "op": {
                             "kind": "filter",
-                            "predicates": []
+                            "predicates": {"kind":"atom","args":{"field_path":["id"],"op":"exists","value":{"kind":"literal","value":true}}}
                         },
                         "schema": {
                             "entity": "Product",
@@ -932,7 +935,17 @@ mod tests {
             operations: plasm_runtime::OperationLedger::empty(),
         };
         result.coverage = plasm_runtime::ResultCoverage::Complete;
-        cap_execution_result_page(&sess, &mut result, 2, "rows", "LangItem", Some("l_test"));
+        cap_execution_result_page(
+            &sess,
+            &mut result,
+            2,
+            "rows",
+            &crate::plasm_plan::QualifiedEntityKey {
+                entry_id: sess.entry_id.clone(),
+                entity: "LangItem".into(),
+            },
+            Some("l_test"),
+        );
         assert_eq!(result.entities.len(), 2);
         assert!(result.has_more);
         assert!(result.paging_handle.is_some());

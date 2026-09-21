@@ -212,7 +212,7 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
                 target_entity,
                 &wire_rows,
                 Some(scoped_es.cgs.as_ref()),
-            );
+            )?;
             per_row[row_index].extend(wire_entities);
             continue;
         }
