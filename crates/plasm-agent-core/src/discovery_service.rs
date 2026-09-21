@@ -126,7 +126,7 @@ impl DiscoveryService {
     }
 
     /// Deterministic retrieval bounds the candidate universe; Jev independently
-    /// matches cards against current and unresolved effect slots. Matched capabilities
+    /// matches cards against current effect slots. Matched capabilities
     /// can be exposed independently; coverage never certifies task completion.
     pub async fn route(
         &self,
@@ -222,7 +222,7 @@ impl DiscoveryService {
                 };
                 answers.extend(matcher::decode_input_source_batch(issued, &raw)?);
             }
-            let matched = matcher::finish_input_sources(answers, &projection)?;
+            let matched = matcher::finish_input_sources(answers, &projection, &batches)?;
             (projection, matched)
         };
         let closure = if !business.is_empty() || !exposed.is_empty() {
@@ -459,7 +459,7 @@ mod tests {
             .collect();
         let rejected = matcher::finish(slots, matches, &route.retrieval).unwrap();
         coverage.observe(&rejected, &route.retrieval).unwrap();
-        assert_eq!(coverage, previous);
+        assert_eq!(coverage.obligations(), previous.obligations());
         let roundtrip: crate::discovery_coverage::DiscoveryCoverage =
             serde_json::from_value(serde_json::to_value(&coverage).unwrap()).unwrap();
         assert_eq!(
@@ -467,7 +467,7 @@ mod tests {
                 .unresolved()
                 .map(|slot| slot.id.as_str())
                 .collect::<Vec<_>>(),
-            ["s1"]
+            Vec::<&str>::new()
         );
     }
 

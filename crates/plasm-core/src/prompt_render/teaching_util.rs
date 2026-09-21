@@ -19,11 +19,6 @@ pub(crate) fn select_enum_teach_literal(nv: &crate::NamedValueSchema) -> Option<
 /// Search text hole including quotes: `e#~"<query>"`.
 pub(crate) const TEACHING_SEARCH_QUERY_LITERAL: &str = "\"<query>\"";
 
-pub(crate) fn truncate_inline_desc(s: &str, max: usize) -> String {
-    let t = crate::symbol_tuning::trim_description_for_agent_gloss(s).replace('\t', " ");
-    crate::utf8_trunc::truncate_utf8_bytes_with_ellipsis(&t, max)
-}
-
 /// Strip authoring noise like ``(constructor `v101`)`` from variant descriptions before teaching table Meaning.
 pub(crate) fn strip_union_constructor_authoring_noise(raw: &str) -> String {
     let mut s = raw.to_string();

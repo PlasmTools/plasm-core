@@ -1,4 +1,4 @@
-version: 28
+version: 31
 entry_id: spotify
 auth:
   scheme: none
@@ -135,7 +135,6 @@ entities:
         materialize: {kind: view_embed, view: library}
   Song:
     id_field: song_id
-    primary_query: song_library_query
     description: A Spotify track on the catalog or directly saved song shelf. The Library.songs relation also includes tracks in saved albums and playlists. Not the liked-songs shelf (use LikedSong) and not the playback queue (use Player / QueueEntry).
     discovery:
       names:
@@ -154,7 +153,7 @@ entities:
         value_ref: nv_str
       album_id:
         required: false
-        value_ref: nv_album_id
+        value_ref: nv_album_ref
       album_title:
         required: false
         value_ref: nv_str
@@ -166,7 +165,7 @@ entities:
         value_ref: nv_genre
       release_date:
         required: false
-        value_ref: nv_str
+        value_ref: nv_release_date
       play_count:
         required: false
         value_ref: nv_int
@@ -178,7 +177,7 @@ entities:
         value_ref: nv_like_count
       shareable_link:
         required: false
-        value_ref: nv_str
+        value_ref: nv_shareable_link
     relations:
       artists:
         description: Artists credited on this recording.
@@ -209,7 +208,7 @@ entities:
         value_ref: nv_str
       album_id:
         required: false
-        value_ref: nv_album_id
+        value_ref: nv_album_ref
       album_title:
         required: false
         value_ref: nv_str
@@ -222,7 +221,7 @@ entities:
         value_ref: nv_genre
       release_date:
         required: false
-        value_ref: nv_str
+        value_ref: nv_release_date
       play_count:
         required: false
         value_ref: nv_int
@@ -234,7 +233,7 @@ entities:
         value_ref: nv_like_count
       shareable_link:
         required: false
-        value_ref: nv_str
+        value_ref: nv_shareable_link
       liked_at:
         required: false
         value_ref: nv_datetime
@@ -276,7 +275,7 @@ entities:
         value_ref: nv_like_count
       release_date:
         required: false
-        value_ref: nv_str
+        value_ref: nv_release_date
     relations:
       artists:
         description: Artists credited on this recording.
@@ -325,13 +324,14 @@ entities:
         value_ref: nv_like_count
       release_date:
         required: false
-        value_ref: nv_str
+        value_ref: nv_release_date
       liked_at:
         required: false
         value_ref: nv_datetime
   Artist:
     id_field: artist_id
     primary_query: following_artist_query
+    primary_search: artist_search
     description: Music artist.
     discovery:
       names:
@@ -343,13 +343,22 @@ entities:
         value_ref: nv_artist_id
       name:
         required: true
-        value_ref: nv_str
+        value_ref: nv_artist_name
       genre:
         required: false
         value_ref: nv_genre
       follower_count:
         required: false
         value_ref: nv_int
+    relations:
+      songs:
+        description: Songs credited to this exact artist, selected by artist identity.
+        target: Song
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: artist_songs_query
+          param: artist_id
   Profile:
     id_field: email
     description: Spotify user public profile.
@@ -413,7 +422,7 @@ entities:
         value_ref: nv_datetime
       shareable_link:
         required: false
-        value_ref: nv_str
+        value_ref: nv_shareable_link
     relations:
       songs:
         description: Songs currently on this playlist.
@@ -1906,7 +1915,7 @@ capabilities:
       required: true
     provides: [access_token]
   song_library_query:
-    description: List song summaries by shelf. Song details supply genre and play statistics. Use row filtering and ordering after hydration; Library and recommendation collections can be filtered by genre and sorted after reading their song details.
+    description: Read catalog, directly saved tracks, or recommendations. The library shelf excludes tracks saved only through albums or playlists. Use Artist.songs for exact credited-artist selection. Filter hydrated rows by their fields.
     kind: query
     entity: Song
     discovery:
@@ -1931,9 +1940,6 @@ capabilities:
       value_ref: nv_song_shelf
       required: true
       description: catalog | library | recommendations
-    - name: query
-      value_ref: nv_str
-      required: false
     # Common list fields across catalog, library, and recommendations shelves.
     # Genre and play statistics are supplied by song_get hydration.
     provides:
@@ -1942,6 +1948,19 @@ capabilities:
     - album_id
     - album_title
     - duration
+  artist_songs_query:
+    description: List songs credited to the exact artist identity. Use Artist.songs to traverse from selected or followed artists.
+    kind: search
+    entity: Song
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    scope:
+    - name: artist_id
+      value_ref: nv_artist_id
+      required: true
+    provides: [song_id, title, album_id, album_title, duration]
   song_library_add:
     receiver: {kind: entity, entity: Song}
     description: Add a song to the user's library.
@@ -1994,9 +2013,6 @@ capabilities:
       value_ref: nv_album_shelf
       required: true
       description: catalog | library
-    - name: query
-      value_ref: nv_str
-      required: false
     provides:
     - album_id
     - title
@@ -2121,9 +2137,7 @@ capabilities:
     - release_date
     - liked_at
   following_artist_query:
-    description: 'List artists by shelf — catalog (optional query filter) or artists the user follows.
-
-      '
+    description: List all catalog artists or only artists the user follows.
     kind: query
     entity: Artist
     discovery:
@@ -2131,7 +2145,6 @@ capabilities:
       - list
       - show
       - follow
-      - search
       target_terms:
       - artist
       - artists
@@ -2144,14 +2157,23 @@ capabilities:
       value_ref: nv_artist_shelf
       required: true
       description: catalog | following
-    - name: query
-      value_ref: nv_str
-      required: false
     provides:
     - artist_id
     - name
     - genre
     - follower_count
+  artist_search:
+    description: Ranked artist candidates, including non-matches. Select the requested name or identity before traversal or mutation.
+    kind: search
+    entity: Artist
+    discovery:
+      operation_terms: [search, find]
+      target_terms: [artist, artists]
+    selection:
+    - name: q
+      value_ref: nv_artist_search_text
+      required: true
+    provides: [artist_id, name, genre, follower_count]
   song_review_create:
     description: Write a review for a song.
     kind: create
@@ -2620,6 +2642,22 @@ values:
   account_premium:
     type: boolean
     description: Whether the account has premium membership.
+  nv_album_ref:
+    type: entity_ref
+    target: Album
+    description: Album containing this recording.
+  nv_release_date:
+    type: rfc3339
+    description: Release time of a recording or album.
+  nv_shareable_link:
+    type: http_url
+    description: Public link to a music item.
+  nv_artist_name:
+    type: string
+    description: Artist name for resolving a named artist among candidates.
+  nv_artist_search_text:
+    type: string
+    description: Text that ranks artist candidates; non-matching names may also be returned.
   nv_str:
     type: string
     description: Free-form string.
@@ -2644,7 +2682,7 @@ values:
     - catalog
     - library
     - recommendations
-    description: Song list shelf — catalog browse/filter, saved library, or personalized recommendations.
+    description: Song source — catalog, directly saved tracks only (library), or recommendations. Album and playlist tracks require their own relations or Library.songs.
   nv_album_shelf:
     type: enum
     enum:
@@ -2656,7 +2694,7 @@ values:
     enum:
     - catalog
     - following
-    description: Artist list shelf — catalog browse/filter or followed artists.
+    description: Artist list shelf — all catalog artists or followed artists.
   nv_playlist_shelf:
     type: enum
     enum:

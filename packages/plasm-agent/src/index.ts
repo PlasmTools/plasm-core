@@ -120,6 +120,7 @@ export {
 export {
   ARTIFACT_IMAGE_PIN_RE,
   pinLocalArtifactImageSync,
+  artifactRuntimeAvailable,
   pinnedArtifactImage,
 } from "./tools/artifact-process.js";
 export { maybeCompactMessages } from "./runtime/compaction.js";

@@ -77,6 +77,15 @@ pub(in crate::plasm_dag) fn resolve_relation_segment_for_continuation(
     })?;
     let map = symbol_map_for_plasm_surface_parse(session, cross_cache);
     let ctx = relation_segment_context(map.as_ref(), row_qe, ent, binding_label, true);
+    if let Some((relation, _)) = segment.split_once('{') {
+        if let plasm_core::RelationSegmentOutcome::Wire(wire) =
+            plasm_core::resolve_relation_segment(&ctx, relation.trim())
+        {
+            return Err(plasm_core::relation_segment::relation_query_braces_message(
+                &wire,
+            ));
+        }
+    }
     match plasm_core::resolve_relation_segment(&ctx, segment) {
         plasm_core::RelationSegmentOutcome::Wire(w) => Ok(w),
         plasm_core::RelationSegmentOutcome::WrongRole { sym, wire } => {

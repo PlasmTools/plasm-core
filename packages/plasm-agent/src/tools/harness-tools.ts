@@ -1,5 +1,5 @@
-import { pinnedArtifactImage, runArtefactTransform } from "./artifact-process.js";
-export { pinnedArtifactImage, runArtefactTransform } from "./artifact-process.js";
+import { artifactRuntimeAvailable, runArtefactTransform } from "./artifact-process.js";
+export { artifactRuntimeAvailable, pinnedArtifactImage, runArtefactTransform } from "./artifact-process.js";
 
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
@@ -15,15 +15,8 @@ const readSkillInputSchema = z.object({
 });
 
 const artefactTransformInputSchema = z.object({
-  code: z
-    .string()
-    .min(1)
-    .describe(
-      "JavaScript (not TypeScript syntax) async function body or expression. " +
-        "Helpers: readText(rel), readJson(rel), writeText(rel, s), writeJson(rel, v), list(rel?). " +
-        "Workspace is the artefact dir only. Return a value or use console.log.",
-    ),
-  reasoning: z.string().optional().describe("Optional short note"),
+  paths: z.array(z.string()).min(1).max(16).describe("File locators returned by plasm_read_run_artifact, in argument order"),
+  code: z.string().min(1).describe("TypeScript module exporting a default function: export default (artifacts: any[]) => derivedResult"),
 });
 
 const completeTaskInputSchema = z.object({});
@@ -109,25 +102,16 @@ export function createEvalTerminalTools(gate?: EvalTerminalGate): ToolSet {
   };
 }
 
-export const PLASM_ARTEFACT_TRANSFORM_TOOL_DESCRIPTION = `Harness **artefact transform** (data manipulation only).
-
-Run sandboxed JavaScript against files under the task artefact workspace
-(\`PLASM_RUN_ARTIFACTS_DIR\` / agent artefact root). After \`plasm_read_run_artifact\`,
-snapshots land in \`artefacts/<run_id>.json\` and \`artefacts/latest.json\`.
-
-Allowed: read/write relative paths under the workspace; JSON/CSV/string compute.
-Forbidden: fetch/network, child_process, absolute paths outside workspace, AppWorld HTTP.
-
-Return free-form stdout / returned value. Not a Plasm language feature.`;
+export const PLASM_ARTEFACT_TRANSFORM_TOOL_DESCRIPTION = `Process materialized artifacts with TypeScript. Pass their file locators in paths and export a default function receiving the parsed JSON artifacts in the same order. Example: export default ([snapshot]: any[]) => Object.keys(snapshot). The function may be async. Return only the needed JSON summary (maximum 8192 bytes). Inputs stay outside model context. No network or external side effects; execution is isolated and bounded to 30 seconds. This is harness computation, not Plasm language.`;
 
 export function createArtefactTransformTool(workspaceRoot: string): ToolSet {
   return {
     plasm_artefact_transform: tool({
       description: PLASM_ARTEFACT_TRANSFORM_TOOL_DESCRIPTION,
       inputSchema: toolInput(artefactTransformInputSchema),
-      execute: async ({ code }) => {
+      execute: async ({ code, paths }) => {
         try {
-          return await runArtefactTransform(workspaceRoot, code);
+          return await runArtefactTransform(workspaceRoot, code, paths);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           // Tool errors must stay in-band — never throw out of execute (kills the agent process).
@@ -145,7 +129,7 @@ export function createArtefactTransformTool(workspaceRoot: string): ToolSet {
 export function createHarnessTools(options: {
   skills?: SkillDefinition[];
   subagents?: SubagentRegistry;
-  /** When set, register plasm_artefact_transform only if the digest pin is valid. */
+  /** When set, register plasm_artefact_transform only if an artifact runtime is configured. */
   artefactWorkspaceRoot?: string;
   includeArtefactTransform?: boolean;
   /**
@@ -208,7 +192,7 @@ export function createHarnessTools(options: {
 
   const includeTransform =
     (options.includeArtefactTransform ?? Boolean(options.artefactWorkspaceRoot)) &&
-    pinnedArtifactImage() !== null;
+    artifactRuntimeAvailable();
   if (includeTransform && options.artefactWorkspaceRoot) {
     Object.assign(tools, createArtefactTransformTool(options.artefactWorkspaceRoot));
   }

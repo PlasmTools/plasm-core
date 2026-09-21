@@ -756,6 +756,14 @@ mod tests {
                         capability: format!("read_{index}"),
                         entity: "Record".into(),
                         text: "Read abstract records".into(),
+                        operation: plasm_core::catalog_discovery::OperationEvidence {
+                            kind: plasm_core::schema::CapabilityKind::Query,
+                            receiver: None,
+                            contract: "Read abstract records".into(),
+                        },
+                        collection: plasm_core::catalog_discovery::CollectionEvidence {
+                            meaning: "Abstract records".into(),
+                        },
                         text_hash: "fixture".into(),
                         related_entities: Vec::new(),
                     },

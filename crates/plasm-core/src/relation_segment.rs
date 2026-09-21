@@ -39,6 +39,11 @@ pub enum RelationSegmentOutcome {
     NotFound,
 }
 
+/// Invalid relation braces must never suggest abandoning the receiver's scope.
+pub fn relation_query_braces_message(relation: &str) -> String {
+    format!("relation `{relation}` does not accept query braces; preserve the traversal by binding `related = parent.{relation}` (or `related = parents => _.{relation}`), then apply row filters with `related | where field = value`. Supply capability inputs on their declared catalog source.")
+}
+
 /// Shared user-facing message for homograph `p#` in relation position.
 pub fn relation_segment_wrong_role_message(sym: &str, wire: &str, entity: &str) -> String {
     format!(

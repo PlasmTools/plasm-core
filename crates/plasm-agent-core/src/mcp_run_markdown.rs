@@ -49,6 +49,8 @@ pub enum ArtifactAccessMode {
     ResourcesRead,
     /// Tool-only host (e.g. Claude API MCP connector): expose `plasm_read_run_artifact`.
     ToolFallback,
+    /// Snapshots are files for a sandboxed TypeScript function, never tool payloads.
+    Programmatic,
 }
 
 impl ArtifactAccessMode {
@@ -56,13 +58,16 @@ impl ArtifactAccessMode {
     /// into model context — [`crate::mcp_delivery::McpDeliveryProfile::ToolFallback`]
     /// therefore emits content (+ optional `_meta.ui`) only.
     pub fn exposes_read_tool(self) -> bool {
-        matches!(self, Self::ToolFallback)
+        matches!(self, Self::ToolFallback | Self::Programmatic)
     }
 
     pub fn artifact_read_instruction(self) -> &'static str {
         match self {
             Self::ResourcesRead => "MCP `resources/read`",
             Self::ToolFallback => "MCP `plasm_read_run_artifact`",
+            Self::Programmatic => {
+                "`plasm_read_run_artifact` followed by `plasm_artefact_transform`"
+            }
         }
     }
 
@@ -94,6 +99,9 @@ impl ArtifactAccessMode {
     }
 
     pub fn artifact_only_read_instruction(self) -> String {
+        if self == Self::Programmatic {
+            return "\n\nMaterialize this snapshot with `plasm_read_run_artifact`, then pass the returned file path to `plasm_artefact_transform`. Write a TypeScript function over the artifacts and return only the needed summary or derived values. Artifact contents do not enter model context.\n".to_owned();
+        }
         format!(
             "\n\n**Required:** fetch this step's rows via {} on the snapshot URI above — no inline TSV is sent when a snapshot is stored.\n",
             self.artifact_read_instruction()
@@ -708,5 +716,25 @@ mod tests {
             "must not claim full fidelity while leaving placeholder: {body}"
         );
         assert!(formatted.reference_only_omitted.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod programmatic_artifact_tests {
+    use super::*;
+    #[test]
+    fn programmatic_delivery_teaches_materialization_and_typescript() {
+        let mode = ArtifactAccessMode::Programmatic;
+        let text = mode.artifact_only_body("plasm://test");
+        assert!(mode.exposes_read_tool());
+        for required in [
+            "plasm_read_run_artifact",
+            "plasm_artefact_transform",
+            "TypeScript",
+            "file path",
+        ] {
+            assert!(text.contains(required));
+        }
+        assert!(!text.contains("resources/read"));
     }
 }

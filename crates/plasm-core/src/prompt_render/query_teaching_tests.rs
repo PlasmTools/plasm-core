@@ -5,12 +5,12 @@ use std::collections::HashMap;
 use crate::loader::load_schema_dir;
 use crate::symbol_tuning::{symbol_map_for_prompt, FocusSpec};
 
-use super::teaching_util::truncate_inline_desc;
 use super::{
     collect_entity_teaching_block, parse_trailing_projection_bracket,
     prompt_line_valid_cache_seed_cgs, RenderConfig, PLASM_TOOL_DESCRIPTION,
     TEACHING_VALID_EXPR_MARKER, TSV_TEACHING_TABLE_HEADER,
 };
+use crate::symbol_tuning::description_for_agent_gloss;
 
 /// True when `expr` is rooted on `entity_sym` (`e3`, `e3(…)`, `e3[…]`, …) but not a longer
 /// symbol that shares the same digit prefix (`e3` must not match `e30`).
@@ -207,7 +207,7 @@ fn prompt_matrix_tsv_teaching_surface_invariants() {
         .get_entity("Ruleset")
         .and_then(|e| {
             let d = e.description.trim();
-            (!d.is_empty()).then(|| truncate_inline_desc(d, 200))
+            (!d.is_empty()).then(|| description_for_agent_gloss(d))
         })
         .expect("Ruleset banner");
     let tsv = super::render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
@@ -603,5 +603,31 @@ fn langitem_search_scoped_query_validates_with_homograph_p() {
     assert!(
         super::domain_example_line_count(&cgs, "LangItem", Some(map.as_ref())) > 0,
         "LangItem must synthesize teaching lines"
+    );
+}
+
+#[test]
+fn long_query_description_survives_serialization_and_teaching() {
+    let mut cgs = load_schema_dir(&matrix_fixture_dir()).unwrap();
+    let cap = cgs
+        .capabilities
+        .values_mut()
+        .find(|cap| cap.kind == crate::CapabilityKind::Query)
+        .unwrap();
+    let name = cap.name.to_string();
+    let description = format!(
+        "{} Excludes indirect membership (red, green, blue, etc.).",
+        "Selection semantics 資料. ".repeat(40)
+    );
+    cap.description = description.clone();
+    let cgs: crate::CGS = serde_json::from_str(&serde_json::to_string(&cgs).unwrap()).unwrap();
+    assert!(cgs
+        .long_description_warnings()
+        .iter()
+        .any(|warning| warning.contains(&format!("capability '{name}'"))));
+    let tsv = super::render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
+    assert!(
+        tsv.contains(&description),
+        "full query semantics must reach teaching"
     );
 }

@@ -1162,6 +1162,9 @@ fn warn_unlabeled_output_data(cgs: &CGS) {
 
 /// Warn when an entity would teach a fat multi-arity / relation-nav surface (still taught in full).
 fn warn_teaching_surface_fat(cgs: &CGS) {
+    for msg in cgs.long_description_warnings() {
+        warn!(target: "plasm_core::loader", violation = %msg, "long authored description");
+    }
     for msg in cgs.teaching_surface_fat_warnings() {
         warn!(target: "plasm_core::loader", violation = %msg, "fat teaching surface");
     }

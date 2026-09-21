@@ -32,9 +32,9 @@ use super::surface_filter::{
 };
 use super::symbol_tokens::{ent_sym, id_sym_entity, id_sym_rel, met_sym};
 use super::teaching_push::try_push_teaching_example;
-use super::teaching_util::truncate_inline_desc;
 use super::teaching_util::TEACHING_SEARCH_QUERY_LITERAL;
 use super::{EntityTeachingBlock, EntityTeachingExprRow, TeachingHeading};
+use crate::symbol_tuning::description_for_agent_gloss;
 
 /// Query Meaning: listing is not a create when this entity exposes `kind: create`.
 fn query_existing_rows_create_peer_gloss(
@@ -190,7 +190,7 @@ pub(crate) fn collect_entity_teaching_block(
     let manifest = cgs.capability_manifest(ename);
     let ent_desc_short = {
         let d = ent.description.as_str().trim();
-        (!d.is_empty()).then(|| truncate_inline_desc(d, 200))
+        (!d.is_empty()).then(|| description_for_agent_gloss(d))
     };
     let heading = TeachingHeading::from_entity_banner_description(ent_desc_short.as_deref());
     if let Some(gs) = gloss_emit.as_mut() {
@@ -662,7 +662,7 @@ pub(crate) fn collect_entity_teaching_block(
             cap_leg.clone(),
             None,
             scap.map(|c| &c.name),
-            true,
+            false,
             line_valid_cache,
             line_valid_cache_seed,
             map_arc,
@@ -767,7 +767,7 @@ pub(crate) fn collect_entity_teaching_block(
             if d.is_empty() {
                 None
             } else {
-                Some(truncate_inline_desc(d, 120))
+                Some(description_for_agent_gloss(d))
             }
         } else {
             None

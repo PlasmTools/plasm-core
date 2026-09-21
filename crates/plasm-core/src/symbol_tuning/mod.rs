@@ -1165,8 +1165,8 @@ impl IdentMetadata {
                 if desc.is_empty() {
                     format!("{type_label} \u{00b7} {}", target)
                 } else {
-                    let truncated = truncate_desc(desc, 100);
-                    format!("{type_label} \u{00b7} {truncated}")
+                    let description = description_for_agent_gloss(desc);
+                    format!("{type_label} \u{00b7} {description}")
                 }
             }
             IdentMetadata::SyntheticUnknown { wire_name, .. } => {
@@ -1222,14 +1222,14 @@ impl IdentMetadata {
                     if desc.is_empty() {
                         return type_label;
                     }
-                    let truncated = truncate_desc(desc, 100);
-                    return format!("{type_label} \u{00b7} {truncated}");
+                    let description = description_for_agent_gloss(desc);
+                    return format!("{type_label} \u{00b7} {description}");
                 }
                 if desc.is_empty() {
                     format!("{type_label} \u{00b7} {}", wire_name)
                 } else {
-                    let truncated = truncate_desc(desc, 100);
-                    format!("{type_label} \u{00b7} {truncated}")
+                    let description = description_for_agent_gloss(desc);
+                    format!("{type_label} \u{00b7} {description}")
                 }
             }
         }
@@ -1309,8 +1309,8 @@ impl IdentMetadata {
             // Internal `values:` keys (`nv_*`) are not user-facing teaching; type label alone is enough.
             Some(type_label)
         } else {
-            let truncated = truncate_desc(desc, 100);
-            Some(format!("{type_label} · {truncated}"))
+            let description = description_for_agent_gloss(desc);
+            Some(format!("{type_label} · {description}"))
         }
     }
 }
@@ -1338,7 +1338,7 @@ pub(crate) fn entity_ref_value_domain_row_gloss(
     let desc_opt = if desc.is_empty() {
         None
     } else {
-        Some(truncate_desc(desc, 100))
+        Some(description_for_agent_gloss(desc))
     };
     match (prim.as_deref(), desc_opt) {
         (Some(p), Some(d)) => format!("ref:{canonical} · {p} · {d}"),
@@ -2434,13 +2434,12 @@ impl SymbolMap {
         ident_gloss: &HashMap<String, String>,
         ident_types: Option<&HashMap<String, String>>,
     ) -> String {
-        const MAX_DESC: usize = 100;
         let name = sym.to_string();
         let desc = ident_gloss
             .get(name.as_str())
             .map(|d| d.as_str().trim())
             .filter(|d| !d.is_empty())
-            .map(|d| truncate_desc(d, MAX_DESC))
+            .map(description_for_agent_gloss)
             .unwrap_or_else(|| name.clone())
             .replace('\t', " ");
         let ty = ident_types
@@ -2713,86 +2712,14 @@ pub fn teaching_slot_keys_for_teaching_row(
     ordered
 }
 
-/// Byte scan: `t` ends with `)` — find the `(` that balances the **outermost** trailing `)`.
-fn matching_open_paren_for_trailing_close(t: &str) -> Option<usize> {
-    if !t.ends_with(')') {
-        return None;
-    }
-    let bytes = t.as_bytes();
-    let mut depth = 0i32;
-    let mut i = t.len();
-    while i > 0 {
-        i -= 1;
-        match bytes[i] {
-            b')' => depth += 1,
-            b'(' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(i);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-/// Trailing `( … )` blocks that are example laundry-lists, not tight semantics (e.g. `(DDoS L7, …, etc.)`).
-fn trailing_paren_inner_is_agent_noise(inner: &str) -> bool {
-    let t = inner.trim();
-    if t.is_empty() {
-        return false;
-    }
-    let lower = t.to_ascii_lowercase();
-    if lower.contains("etc.") || lower.contains("e.g.") {
-        return true;
-    }
-    if t.matches(',').count() >= 2 {
-        return true;
-    }
-    t.len() > 55
-}
-
-fn strip_trailing_noise_parentheticals(mut s: &str) -> &str {
-    loop {
-        let mut t = s.trim_end();
-        // Allow authored `(...).` — peel `.` so the balancing scan sees final `)`.
-        t = t.strip_suffix('.').unwrap_or(t).trim_end();
-        let Some(open) = matching_open_paren_for_trailing_close(t) else {
-            break;
-        };
-        let inner = t[open + 1..t.len() - 1].trim();
-        if !trailing_paren_inner_is_agent_noise(inner) {
-            break;
-        }
-        let before = t[..open].trim_end();
-        if before.is_empty() {
-            break;
-        }
-        s = before;
-    }
-    s.trim_end()
-}
-
-/// Normalize authored `description:` prose for compact agent gloss: trim edges, drop trailing
-/// parenthetical example lists, then strip a terminal ASCII full stop.
+/// Preserve authored semantics; only trim surrounding whitespace.
 pub(crate) fn trim_description_for_agent_gloss(s: &str) -> &str {
-    let t = s.trim();
-    let t = strip_trailing_noise_parentheticals(t);
-    match t.strip_suffix('.') {
-        Some(rest) => rest.trim_end(),
-        None => t,
-    }
+    s.trim()
 }
 
-fn truncate_desc(s: &str, max: usize) -> String {
-    let t = trim_description_for_agent_gloss(s);
-    crate::utf8_trunc::truncate_utf8_bytes_with_ellipsis(t, max)
-}
-
-/// Same truncation cap as [`IdentMetadata::render_gloss`] trailing prose (teaching table / TSV parity).
-pub(crate) fn gloss_description_truncated(s: &str) -> String {
-    truncate_desc(s, 100)
+/// Preserve complete authored prose while keeping the TSV cell on one line.
+pub(crate) fn description_for_agent_gloss(s: &str) -> String {
+    trim_description_for_agent_gloss(s).replace(['\t', '\n', '\r'], " ")
 }
 
 fn scan_replace(
@@ -4428,28 +4355,10 @@ mod tests {
     }
 
     #[test]
-    fn trim_description_for_agent_gloss_strips_terminal_period() {
-        assert_eq!(
-            trim_description_for_agent_gloss("Zone identifier."),
-            "Zone identifier"
-        );
-        assert_eq!(trim_description_for_agent_gloss("  x.  "), "x");
-        assert_eq!(trim_description_for_agent_gloss("no period"), "no period");
-        assert_eq!(trim_description_for_agent_gloss(""), "");
-    }
-
-    #[test]
-    fn trim_description_for_agent_gloss_strips_example_list_parentheticals() {
-        assert_eq!(
-            trim_description_for_agent_gloss(
-                "Managed entrypoint ruleset for one execution phase on a zone (DDoS L7, managed WAF, rate limits, etc.)."
-            ),
-            "Managed entrypoint ruleset for one execution phase on a zone"
-        );
-        assert_eq!(
-            trim_description_for_agent_gloss("Short capability (single token)."),
-            "Short capability (single token)"
-        );
+    fn description_preserves_long_authored_semantics() {
+        let description = format!("{} (exclude red, green, blue, etc.).", "資料 ".repeat(200));
+        assert_eq!(description_for_agent_gloss(&description), description);
+        assert_eq!(description_for_agent_gloss("  x.\nY\tZ  "), "x. Y Z");
     }
 
     #[test]

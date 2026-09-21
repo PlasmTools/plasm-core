@@ -79,6 +79,7 @@ mod mcp_plasm_run_phases;
 pub mod mcp_policy;
 pub mod mcp_run_await;
 mod mcp_run_markdown;
+pub use mcp_run_markdown::{ArtifactAccessMode, McpResultTransportPolicy};
 pub mod mcp_runtime_config;
 pub mod mcp_server;
 mod mcp_stream_auth;

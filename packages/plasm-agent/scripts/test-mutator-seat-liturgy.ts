@@ -24,14 +24,15 @@ for (const [name, text] of [
   );
   assert.match(
     text,
-    /row supplies identity and scope/,
+    /needs entity identity and scope/,
     `${name}: row receiver semantics`,
   );
   assert.match(
     text,
-    /Empty singleton receivers fail/,
+    /empty receivers fail/,
     `${name}: singleton emptiness law`,
   );
+  assert.ok(text.includes("rows => e#.m#(recipient=_.field)"), `${name}: receiver-free fan-out`);
   assert.match(
     text,
     /Use only holes printed by the card/,

@@ -26,7 +26,7 @@ import { LocalArchiveStore } from "../archive/index.js";
 import { createArchiveStore } from "../archive/resolve-backend.js";
 import type { ProdArchiveStore } from "../archive/prod-archive-store.js";
 import { z } from "zod";
-import { pinnedArtifactImage } from "../tools/artifact-process.js";
+import { artifactRuntimeAvailable } from "../tools/artifact-process.js";
 import { writeWorkspaceFile } from "../tools/workspace-files.js";
 import { activeTraceId, plasmSpans } from "../telemetry/plasm-spans.js";
 import { PlasmSpanAttributes } from "../instrumentation.js";
@@ -503,7 +503,6 @@ export class AgentRuntime {
         const markdown = formatPlasmRunMarkdown(
           result.message,
           result.ok,
-          result.rowsJson,
           runId,
         );
         return markdown + artifacts.slice(1).map(artifact =>
@@ -535,13 +534,11 @@ export class AgentRuntime {
     this.artefactMaterialized = true;
     return [
       `**run_id:** \`${snap.run_id}\``,
-      pinnedArtifactImage()
-        ? "Materialized under artefact workspace for **plasm_artefact_transform**."
+      artifactRuntimeAvailable()
+        ? "Pass this file locator in **plasm_artefact_transform.paths** and write a default TypeScript function over the parsed artifacts; return only the needed derived result."
         : "Materialized under artefact workspace.",
-      "",
-      "```json",
-      JSON.stringify(snap.native_snapshot ?? snap, null, 2),
-      "```",
+      `File: artefacts/${input.logicalSessionRef.trim()}/${snap.run_id}.json`,
+      "Snapshot contents are available only to programmatic processing; they are not inserted into model context.",
     ].join("\n");
   }
 

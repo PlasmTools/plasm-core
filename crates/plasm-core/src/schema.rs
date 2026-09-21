@@ -3842,6 +3842,36 @@ impl CGS {
         out
     }
 
+    /// Authoring guidance only: complete descriptions are always retained in teaching.
+    pub fn long_description_warnings(&self) -> Vec<String> {
+        const WARN_DESCRIPTION_CHARS: usize = 500;
+        let mut out = Vec::new();
+        let mut check = |path: String, description: &str| {
+            let count = description.trim().chars().count();
+            if count > WARN_DESCRIPTION_CHARS {
+                out.push(format!(
+                    "{path}: description has {count} characters (warn threshold {WARN_DESCRIPTION_CHARS}); consider concise wording while preserving semantics; teaching retains the full description"
+                ));
+            }
+        };
+        for (name, entity) in &self.entities {
+            check(format!("entity '{name}'"), &entity.description);
+            for (relation, schema) in &entity.relations {
+                check(
+                    format!("entity '{name}', relation '{relation}'"),
+                    &schema.description,
+                );
+            }
+        }
+        for (name, cap) in &self.capabilities {
+            check(format!("capability '{name}'"), &cap.description);
+        }
+        for (name, value) in &self.values {
+            check(format!("value '{name}'"), &value.description);
+        }
+        out
+    }
+
     /// Warn when an entity would teach a large multi-arity method or relation-nav surface.
     ///
     /// Thresholds are **warn-only** — the teaching renderer still emits every authored line.
@@ -4934,7 +4964,7 @@ impl CGS {
     ///    list is **not** a teaching summary subset (RA-12). Mutators use explicit `provides`.
     ///    [`crate::capability_exposure::selected_capability_surface`] admits this same read set
     ///    (NAPI / `exposeSeeds`) — no provides-shear dual path.
-    /// 2. **Runtime decode, cache, and [`Self::field_providers`]** — [`Self::effective_provides`]:
+    /// 2. **Runtime decode, cache, and [`Self::read_field_providers`]** — [`Self::effective_provides`]:
     ///    cache/provider contract (explicit `provides`, or the same default entity order when empty).
     /// 3. **Short error / CLI hints** — internal `error_render` projection scalars (scalar-only,
     ///    sorted, `prioritize_projection_scalars`): intentionally **not** the full teaching table projection field list.
@@ -5576,39 +5606,20 @@ impl CGS {
         }
     }
 
-    /// Build a reverse index mapping each entity field to the capabilities that provide it.
-    ///
-    /// Used by the runtime's auto-resolution path: when a projection requests a field that
-    /// is absent from the cache, the engine looks up which capability to invoke.
-    ///
-    /// Result: `field_name → Vec<capability_name>` in priority order:
-    /// `Get` first (most specific), then `Action`, then `Query`/`Search` (least specific).
-    pub fn field_providers(&self, entity: &str) -> IndexMap<String, Vec<String>> {
+    /// Identity-preserving read providers for implicit projection hydration.
+    /// Mutators and collection queries are never implicit field providers.
+    pub fn read_field_providers(&self, entity: &str) -> IndexMap<String, Vec<String>> {
         let mut index: IndexMap<String, Vec<String>> = IndexMap::new();
-
-        // Priority ordering: Get > Action > Query/Search (so the most specific provider
-        // is tried first when multiple capabilities cover the same field).
-        let priority_order = [
-            CapabilityKind::Get,
-            CapabilityKind::Action,
-            CapabilityKind::Create,
-            CapabilityKind::Update,
-            CapabilityKind::Query,
-            CapabilityKind::Search,
-        ];
-
-        for kind in priority_order {
-            for cap in self.find_capabilities(entity, kind) {
-                let provided = self.effective_provides(cap);
-                if provided.is_empty() {
-                    continue;
-                }
-                for field in provided {
-                    index.entry(field).or_default().push(cap.name.to_string());
-                }
+        for cap in self.find_capabilities(entity, CapabilityKind::Get) {
+            if cap.receiver_entity().map(|e| e.as_str()) != Some(entity)
+                || cap.is_list_backed_get(self)
+            {
+                continue;
+            }
+            for field in self.effective_provides(cap) {
+                index.entry(field).or_default().push(cap.name.to_string());
             }
         }
-
         index
     }
 }

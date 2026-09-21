@@ -1,0 +1,75 @@
+version: 1
+entry_id: entity_projection_matrix
+http_backend: http://127.0.0.1:9
+auth: {scheme: none}
+values:
+  record_id: {type: string, description: Record identity}
+  address: {type: email, description: Directory address}
+  credential: {type: string, description: Read credential}
+  text: {type: string, description: Text}
+entities:
+  Record:
+    id_field: id
+    primary_read: detail
+    fields:
+      id: {value_ref: record_id, required: true}
+      email: {value_ref: address}
+      secret: {value_ref: text}
+      unavailable: {value_ref: text}
+  Directory:
+    id_field: email
+    fields:
+      email: {value_ref: address, required: true}
+  Operation:
+    id_field: id
+    fields:
+      id: {value_ref: record_id, required: true}
+capabilities:
+  operation_get:
+    kind: get
+    entity: Operation
+    provides: [id]
+  list:
+    kind: query
+    entity: Record
+    selection:
+      - {name: credential, value_ref: credential, required: true}
+    provides: [id]
+  detail:
+    kind: get
+    entity: Record
+    arguments:
+      input_type:
+        type: object
+        fields:
+          - {name: credential, value_ref: credential, required: true}
+    provides: [id, email]
+  secret:
+    kind: get
+    entity: Record
+    arguments:
+      input_type:
+        type: object
+        fields:
+          - {name: unknown_input, value_ref: text, required: true}
+    provides: [id, secret]
+  directory:
+    kind: query
+    entity: Directory
+    provides: [email]
+  apply:
+    kind: action
+    entity: Record
+    receiver: {kind: entity, entity: Record}
+    output: {type: side_effect, description: Applies an operation to the selected record}
+  free:
+    kind: action
+    entity: Record
+    receiver: {kind: none}
+    output: {type: side_effect, description: Performs an independent operation}
+  write_secret:
+    kind: action
+    entity: Record
+    receiver: {kind: entity, entity: Record}
+    provides: [secret, unavailable]
+    output: {type: side_effect, description: Changes the secret}

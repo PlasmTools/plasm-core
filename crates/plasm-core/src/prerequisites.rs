@@ -140,12 +140,20 @@ pub struct PrerequisiteEdge {
 pub struct PrerequisiteClosure {
     pub acquisitions: Vec<Acquisition>,
     pub business: Vec<CapabilityRef>,
-    /// Lawful producers selected to populate business inputs. These are not
-    /// themselves requested business effects.
+    /// Reads selected to populate business inputs or establish identity membership.
+    /// These are not themselves requested business effects.
     #[serde(default)]
     pub input_sources: Vec<CapabilityRef>,
     pub prerequisites: Vec<CapabilityRef>,
     pub edges: Vec<PrerequisiteEdge>,
+}
+
+/// A source feeds either an ordinary argument or a typed operation receiver.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum InputSourceTarget {
+    Argument { input: InputPath },
+    Receiver { entity: crate::EntityName },
 }
 
 /// A structurally lawful way for one read capability to populate a required
@@ -155,18 +163,37 @@ pub struct PrerequisiteClosure {
 #[serde(deny_unknown_fields)]
 pub struct InputSourceBinding {
     pub consumer: CapabilityRef,
-    pub input: InputPath,
+    pub input: InputSourceTarget,
     pub provider: CapabilityRef,
     pub output_field: String,
     /// The provider yields rows whose scalar field is collected into an array seat.
     pub collect: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RowIdentity {
+    Field { field: crate::EntityFieldName },
+    Relation { relation: crate::RelationName },
+}
+
+/// A read whose identity values can establish membership or absence for rows
+/// supplied to a business input. This is evidence, not an input assignment.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InputSourceMembership {
+    pub source: CapabilityRef,
+    pub source_identity: RowIdentity,
+    pub provider_identity: RowIdentity,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InputSourceCandidate {
     pub provider: CapabilityRef,
+    pub projection: crate::entity_projection::EntityReadProjection,
     pub bindings: Vec<InputSourceBinding>,
+    pub membership: Vec<InputSourceMembership>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -766,8 +793,8 @@ pub fn prerequisite_closure(
 
 /// Close infrastructure prerequisites around direct business work and the
 /// input producers selected from [`project_input_source_candidates`]. The
-/// caller may only select projected read capabilities; this function rejects
-/// arbitrary or effectful additions.
+/// caller may only select projected read capabilities with input or membership
+/// evidence; this function rejects arbitrary or effectful additions.
 pub fn prerequisite_closure_with_selected_sources<F>(
     catalogs: &BTreeMap<String, &CGS>,
     bindings: &DeploymentBindings,
@@ -867,6 +894,47 @@ where
             .get(&consumer.catalog)
             .ok_or("missing input-source consumer catalog")?;
         let consumer_cap = capability(consumer_cgs, &consumer.capability)?;
+        if let Some(receiver) = consumer_cap.receiver_entity() {
+            let entity = &consumer_cgs.entities[receiver];
+            for producer in consumer_cgs.capabilities.values().filter(|cap| {
+                cap.domain == *receiver
+                    && matches!(
+                        cap.kind,
+                        CapabilityKind::Get | CapabilityKind::Query | CapabilityKind::Search
+                    )
+            }) {
+                let provider = CapabilityRef {
+                    catalog: consumer.catalog.clone(),
+                    capability: producer.name.to_string(),
+                };
+                if selected.contains(&provider) || !source_permitted(&provider) {
+                    continue;
+                }
+                let projection = consumer_cgs.entity_read_projection(producer, |cap| {
+                    source_permitted(&CapabilityRef {
+                        catalog: consumer.catalog.clone(),
+                        capability: cap.name.to_string(),
+                    })
+                });
+                if projection
+                    .available_fields()
+                    .any(|field| field == entity.id_field.as_str())
+                {
+                    by_provider
+                        .entry(provider.clone())
+                        .or_default()
+                        .insert(InputSourceBinding {
+                            consumer: consumer.clone(),
+                            input: InputSourceTarget::Receiver {
+                                entity: receiver.clone(),
+                            },
+                            provider,
+                            output_field: entity.id_field.to_string(),
+                            collect: false,
+                        });
+                }
+            }
+        }
         let prerequisite_seats: BTreeSet<_> = consumer_cgs
             .prerequisites
             .requirements
@@ -906,7 +974,12 @@ where
                         .entities
                         .get(&provider_cap.domain)
                         .ok_or("input-source provider entity missing")?;
-                    for output_field in provider_cgs.effective_provides(provider_cap) {
+                    for output_field in readable_fields(
+                        provider_cgs,
+                        provider_catalog,
+                        provider_cap,
+                        source_permitted,
+                    ) {
                         let Some(field) = entity.fields.get(output_field.as_str()) else {
                             continue;
                         };
@@ -936,7 +1009,9 @@ where
                         by_provider.entry(provider.clone()).or_default().insert(
                             InputSourceBinding {
                                 consumer: consumer.clone(),
-                                input: input.clone(),
+                                input: InputSourceTarget::Argument {
+                                    input: input.clone(),
+                                },
                                 provider: provider.clone(),
                                 output_field,
                                 collect,
@@ -947,13 +1022,235 @@ where
             }
         }
     }
-    Ok(by_provider
+    let mut sources: BTreeSet<_> = by_provider.keys().cloned().collect();
+    for reference in business {
+        let cap = capability(catalogs[&reference.catalog], &reference.capability)?;
+        if matches!(
+            cap.kind,
+            CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get
+        ) {
+            sources.insert(reference.clone());
+        }
+    }
+    let mut evidence =
+        project_membership_evidence(catalogs, &sources, &selected, source_permitted)?;
+    let providers: BTreeSet<_> = by_provider.keys().chain(evidence.keys()).cloned().collect();
+    Ok(providers
         .into_iter()
-        .map(|(provider, bindings)| InputSourceCandidate {
+        .map(|provider| InputSourceCandidate {
+            projection: catalogs[&provider.catalog].entity_read_projection(
+                &catalogs[&provider.catalog].capabilities[provider.capability.as_str()],
+                |cap| {
+                    source_permitted(&CapabilityRef {
+                        catalog: provider.catalog.clone(),
+                        capability: cap.name.to_string(),
+                    })
+                },
+            ),
+            bindings: by_provider
+                .remove(&provider)
+                .unwrap_or_default()
+                .into_iter()
+                .collect(),
+            membership: evidence
+                .remove(&provider)
+                .unwrap_or_default()
+                .into_iter()
+                .collect(),
             provider,
-            bindings: bindings.into_iter().collect(),
         })
         .collect())
+}
+
+fn readable_fields(
+    cgs: &CGS,
+    catalog: &str,
+    cap: &CapabilitySchema,
+    permitted: &impl Fn(&CapabilityRef) -> bool,
+) -> Vec<String> {
+    cgs.entity_read_projection(cap, |cap| {
+        permitted(&CapabilityRef {
+            catalog: catalog.into(),
+            capability: cap.name.to_string(),
+        })
+    })
+    .available_fields()
+    .map(str::to_owned)
+    .collect()
+}
+
+fn project_membership_evidence<F>(
+    catalogs: &BTreeMap<String, &CGS>,
+    sources: &BTreeSet<CapabilityRef>,
+    selected: &BTreeSet<CapabilityRef>,
+    source_permitted: &F,
+) -> Result<BTreeMap<CapabilityRef, BTreeSet<InputSourceMembership>>, String>
+where
+    F: Fn(&CapabilityRef) -> bool,
+{
+    // Membership evidence joins identity-bearing outputs of direct producers.
+    // Do not infer membership from a fuzzy query, nor expand through arbitrary
+    // primitive strings. Authorization applies to both ends of every witness.
+    let mut evidence: BTreeMap<CapabilityRef, BTreeSet<InputSourceMembership>> = BTreeMap::new();
+    for source in sources {
+        let source_cgs = catalogs[&source.catalog];
+        let source_cap = capability(source_cgs, &source.capability)?;
+        let source_entity = &source_cgs.entities[&source_cap.domain];
+        for source_field in
+            readable_fields(source_cgs, &source.catalog, source_cap, source_permitted)
+        {
+            let Some(field) = source_entity.fields.get(source_field.as_str()) else {
+                continue;
+            };
+            let value = field.named_value(source_cgs).map_err(|e| e.to_string())?;
+            if !matches!(
+                value.domain.profile,
+                Some(crate::value_domain::ProfileId::Email | crate::value_domain::ProfileId::E164)
+            ) && !matches!(value.field_type, FieldType::EntityRef { .. })
+            {
+                continue;
+            }
+            for (catalog, cgs) in catalogs {
+                for cap in cgs.capabilities.values().filter(|cap| {
+                    matches!(
+                        cap.kind,
+                        CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get
+                    )
+                }) {
+                    let provider = CapabilityRef {
+                        catalog: catalog.clone(),
+                        capability: cap.name.to_string(),
+                    };
+                    if provider == *source
+                        || selected.contains(&provider)
+                        || !source_permitted(&provider)
+                    {
+                        continue;
+                    }
+                    let entity = &cgs.entities[&cap.domain];
+                    for output_field in readable_fields(cgs, catalog, cap, source_permitted) {
+                        let Some(other) = entity.fields.get(output_field.as_str()) else {
+                            continue;
+                        };
+                        let other_value = other.named_value(cgs).map_err(|e| e.to_string())?;
+                        let references_identity = value.field_type.entity_ref_entry_id()
+                            == Some(catalog.as_str())
+                            && value.field_type.entity_ref_target() == Some(cap.domain.as_str())
+                            && output_field == entity.id_field.as_str();
+                        if references_identity
+                            || semantic_value_type_eq(
+                                value,
+                                other_value,
+                                source.catalog == *catalog
+                                    && field.kind.registry_key() == other.kind.registry_key(),
+                            )
+                        {
+                            evidence.entry(provider.clone()).or_default().insert(
+                                InputSourceMembership {
+                                    source: source.clone(),
+                                    source_identity: RowIdentity::Field {
+                                        field: source_field.clone().into(),
+                                    },
+                                    provider_identity: RowIdentity::Field {
+                                        field: output_field.into(),
+                                    },
+                                },
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Existing E/R relations are identity witnesses too: an artist directory
+    // can constrain credited-artist membership without supplying a song id.
+    for source in sources {
+        let cgs = catalogs[&source.catalog];
+        let cap = capability(cgs, &source.capability)?;
+        for (name, relation) in &cgs.entities[&cap.domain].relations {
+            let target = &cgs.entities[&relation.target_resource];
+            for provider_cap in cgs.capabilities.values().filter(|candidate| {
+                candidate.domain == relation.target_resource
+                    && matches!(
+                        candidate.kind,
+                        CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get
+                    )
+            }) {
+                let provider = CapabilityRef {
+                    catalog: source.catalog.clone(),
+                    capability: provider_cap.name.to_string(),
+                };
+                if provider == *source
+                    || selected.contains(&provider)
+                    || !source_permitted(&provider)
+                {
+                    continue;
+                }
+                if readable_fields(cgs, &source.catalog, provider_cap, source_permitted)
+                    .iter()
+                    .any(|field| field == target.id_field.as_str())
+                {
+                    evidence
+                        .entry(provider)
+                        .or_default()
+                        .insert(InputSourceMembership {
+                            source: source.clone(),
+                            source_identity: RowIdentity::Relation {
+                                relation: name.clone(),
+                            },
+                            provider_identity: RowIdentity::Field {
+                                field: target.id_field.clone(),
+                            },
+                        });
+                }
+            }
+        }
+    }
+    // Reverse E/R membership: a collection's relation can identify which
+    // candidate rows belong to it, without supplying an action argument.
+    for source in sources {
+        let cgs = catalogs[&source.catalog];
+        let source_cap = capability(cgs, &source.capability)?;
+        let source_entity = &cgs.entities[&source_cap.domain];
+        if !readable_fields(cgs, &source.catalog, source_cap, source_permitted)
+            .iter()
+            .any(|field| field == source_entity.id_field.as_str())
+        {
+            continue;
+        }
+        for cap in cgs.capabilities.values().filter(|cap| {
+            matches!(
+                cap.kind,
+                CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get
+            )
+        }) {
+            let provider = CapabilityRef {
+                catalog: source.catalog.clone(),
+                capability: cap.name.to_string(),
+            };
+            if provider == *source || selected.contains(&provider) || !source_permitted(&provider) {
+                continue;
+            }
+            for (name, relation) in &cgs.entities[&cap.domain].relations {
+                if relation.target_resource != source_cap.domain {
+                    continue;
+                }
+                evidence
+                    .entry(provider.clone())
+                    .or_default()
+                    .insert(InputSourceMembership {
+                        source: source.clone(),
+                        source_identity: RowIdentity::Field {
+                            field: source_entity.id_field.clone(),
+                        },
+                        provider_identity: RowIdentity::Relation {
+                            relation: name.clone(),
+                        },
+                    });
+            }
+        }
+    }
+    Ok(evidence)
 }
 
 fn projected_type_compatibility(
@@ -1402,6 +1699,162 @@ mod tests {
     }
 
     #[test]
+    fn membership_projection_preserves_typed_identity_witnesses_across_wire() {
+        for identity in [
+            crate::value_domain::ProfileId::Email,
+            crate::value_domain::ProfileId::E164,
+        ] {
+            let mut consumer = fixture();
+            let mut source = fixture();
+            let mut directory = fixture();
+            consumer.bind_registry_entry_id("consumer");
+            source.bind_registry_entry_id("source");
+            directory.bind_registry_entry_id("directory");
+            for cgs in [&mut consumer, &mut source] {
+                cgs.values.get_mut("text").unwrap().domain.profile =
+                    Some(crate::value_domain::ProfileId::E164);
+            }
+            let mut email = directory.values["text"].clone();
+            email.domain.profile = Some(identity);
+            directory.values.insert("text".into(), email.clone());
+            source.values.insert("identity".into(), email);
+            let entity = source.entities.get_mut("BusinessRecord").unwrap();
+            let mut field = entity.fields["id"].clone();
+            field.name = "identity".into();
+            field.kind = crate::schema::FieldValueKind::Registry(
+                crate::ValueDomainKey::new("identity").unwrap(),
+            );
+            entity.fields.insert("identity".into(), field);
+            source
+                .capabilities
+                .get_mut("read")
+                .unwrap()
+                .provides
+                .push("identity".into());
+            let business = CapabilityRef {
+                catalog: "consumer".into(),
+                capability: "operate".into(),
+            };
+            let catalogs = BTreeMap::from([
+                ("consumer".into(), &consumer),
+                ("source".into(), &source),
+                ("directory".into(), &directory),
+            ]);
+            let candidates =
+                project_input_source_candidates(&catalogs, &[business.clone()], &|_| true).unwrap();
+            let candidate = candidates
+                .iter()
+                .find(|c| c.provider.catalog == "directory" && c.provider.capability == "read")
+                .unwrap();
+            assert!(candidate
+                .membership
+                .iter()
+                .any(|w| w.source.catalog == "source"
+                    && w.source_identity
+                        == RowIdentity::Field {
+                            field: "identity".into()
+                        }
+                    && w.provider_identity == RowIdentity::Field { field: "id".into() }));
+            assert_eq!(
+                serde_json::from_slice::<Vec<InputSourceCandidate>>(
+                    &serde_json::to_vec(&candidates).unwrap()
+                )
+                .unwrap(),
+                candidates
+            );
+            let restricted = project_input_source_candidates(&catalogs, &[business], &|r| {
+                r.catalog != "directory"
+            })
+            .unwrap();
+            assert!(restricted.iter().all(|c| c.provider.catalog != "directory"));
+            assert!(candidates
+                .iter()
+                .all(|c| c.provider.capability != "acquire" && c.provider.capability != "create"));
+        }
+    }
+
+    #[test]
+    fn membership_foreign_keys_retain_catalog_qualified_identity() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let mut left = crate::loader::load_schema_dir(&path).unwrap();
+        let mut right = left.clone();
+        left.bind_registry_entry_id("left");
+        right.bind_registry_entry_id("right");
+        let catalogs = BTreeMap::from([("left".into(), &left), ("right".into(), &right)]);
+        let business = CapabilityRef {
+            catalog: "left".into(),
+            capability: "langtag_query".into(),
+        };
+        let candidates =
+            project_input_source_candidates(&catalogs, &[business], &|_| true).unwrap();
+        let target = candidates
+            .iter()
+            .find(|candidate| {
+                candidate.provider.catalog == "left"
+                    && candidate.provider.capability == "langitem_get"
+            })
+            .unwrap();
+        assert!(target
+            .membership
+            .iter()
+            .any(|witness| witness.source_identity
+                == RowIdentity::Field {
+                    field: "item_id".into()
+                }
+                && witness.provider_identity == RowIdentity::Field { field: "id".into() }));
+        assert!(candidates
+            .iter()
+            .filter(|candidate| candidate.provider.catalog == "right")
+            .all(|candidate| candidate.membership.is_empty()));
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(64))]
+        #[test]
+        fn membership_projection_relation_laws(
+            relation_name in "[a-z]{1,16}",
+            reverse in proptest::bool::ANY,
+            direct_read in proptest::bool::ANY,
+            permitted in proptest::bool::ANY,
+        ) {
+            let mut cgs = fixture();
+            cgs.bind_registry_entry_id("matrix");
+            cgs.entities.get_mut("BusinessRecord").unwrap().relations.insert(
+                relation_name.clone().into(), crate::RelationSchema {
+                    name: relation_name.clone().into(), description: "Recorded ownership".into(),
+                    target_resource: "ProviderResult".into(), cardinality: crate::Cardinality::Many,
+                    materialize: None, discovery: None,
+                });
+            let mut directory = cgs.capabilities["read"].clone();
+            directory.name = "owners".into();
+            directory.domain = "ProviderResult".into();
+            directory.provides = vec!["value".into()];
+            cgs.capabilities.insert("owners".into(), directory);
+            let business = CapabilityRef { catalog: "matrix".into(),
+                capability: if reverse { "owners" } else if direct_read { "read" } else { "operate" }.into() };
+            let target = if reverse { "read" } else { "owners" };
+            let authorize = |reference: &CapabilityRef| permitted || reference.capability != target;
+            let catalogs = BTreeMap::from([("matrix".into(), &cgs)]);
+            let candidates = project_input_source_candidates(&catalogs, &[business.clone()], &authorize).unwrap();
+            let roundtrip: CGS = serde_json::from_slice(&serde_json::to_vec(&cgs).unwrap()).unwrap();
+            let decoded = project_input_source_candidates(&BTreeMap::from([("matrix".into(), &roundtrip)]), &[business], &authorize).unwrap();
+            proptest::prop_assert_eq!(&candidates, &decoded);
+            let result = candidates.iter().find(|candidate| candidate.provider.capability == target);
+            if permitted {
+                let expected = RowIdentity::Relation { relation: relation_name.into() };
+                proptest::prop_assert!(result.unwrap().membership.iter().any(|w| {
+                    (if reverse { &w.provider_identity } else { &w.source_identity }) == &expected
+                }), "typed relation witness missing");
+            } else {
+                proptest::prop_assert!(result.is_none());
+            }
+            let wire: Vec<InputSourceCandidate> = serde_json::from_slice(&serde_json::to_vec(&candidates).unwrap()).unwrap();
+            proptest::prop_assert_eq!(candidates, wire);
+        }
+    }
+
+    #[test]
     fn input_source_projection_uses_types_not_intent_vocabulary() {
         let mut consumer = fixture();
         let mut source = fixture();
@@ -1456,8 +1909,13 @@ mod tests {
             .expect("profile-compatible read producer");
         assert!(source_read.bindings.iter().any(|binding| {
             binding.consumer == business
-                && binding.input.lane == InputLane::Payload
-                && binding.input.path == ["id"]
+                && binding.input
+                    == InputSourceTarget::Argument {
+                        input: InputPath {
+                            lane: InputLane::Payload,
+                            path: vec!["id".into()],
+                        },
+                    }
                 && binding.output_field == "id"
                 && binding.collect
         }));

@@ -7,7 +7,7 @@ use plasm_core::schema::CGS;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const RECOVERY_GUIDANCE: &str = "These slots remain unresolved; capability coverage is not task completion. Use available teaching for work whose inputs and intent constraints are satisfied. Previously taught capabilities remain available. Extend the same logical_session_ref for missing capabilities; inherited conditions and ordering still apply. No candidates means retrieval found none in this bounded packet. Rejected candidates were retrieved but judged not to match: inspect their documented constraints rather than repeatedly paraphrasing the same request. Uncertain judgments do not establish a match.";
+pub const RECOVERY_GUIDANCE: &str = "These slots remain unresolved; capability coverage is not task completion. Use available teaching for work whose inputs and intent constraints are satisfied. Previously taught capabilities remain available. Extend the same logical_session_ref for missing capabilities; describe the current need, including any revised conditions or ordering. No candidates means retrieval found none in this bounded packet. Rejected candidates were retrieved but judged not to match: inspect their documented constraints rather than repeatedly paraphrasing the same request. Uncertain judgments do not establish a match.";
 const MAX_DESCRIPTION_BYTES: usize = 720;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

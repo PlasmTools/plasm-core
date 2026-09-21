@@ -534,6 +534,59 @@ fn hermit_shared_server_survives_caller_runtime_shutdown() {
     });
 }
 
+/// Production-catalog integration: ranked search and listing remain distinct after serialization.
+#[test]
+fn spotify_artist_search_and_listing_have_distinct_wire_contracts() {
+    use plasm_compile::{compile_operation, parse_capability_template, CmlEnv, CompiledOperation};
+    use plasm_core::{CapabilityKind, Value, CGS};
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/appworld/spotify");
+    let loaded = plasm_core::load_schema(&directory).expect("Spotify production catalog");
+    let cgs: CGS = serde_json::from_slice(&serde_json::to_vec(&loaded).unwrap()).unwrap();
+    assert_eq!(
+        cgs.get_capability("artist_search").unwrap().kind,
+        CapabilityKind::Search
+    );
+    assert_eq!(
+        cgs.get_capability("following_artist_query").unwrap().kind,
+        CapabilityKind::Query
+    );
+    let compile = |capability: &str, env: &CmlEnv| {
+        let template = parse_capability_template(
+            &cgs.get_capability(capability)
+                .unwrap()
+                .mapping
+                .as_ref()
+                .unwrap()
+                .template,
+        )
+        .unwrap();
+        let CompiledOperation::Http(request) = compile_operation(&template, env).unwrap() else {
+            panic!("HTTP mapping")
+        };
+        request
+    };
+    let mut env = CmlEnv::new();
+    env.insert("q".into(), Value::String("A named artist".into()));
+    let search = compile("artist_search", &env);
+    assert_eq!(search.path, "/spotify/artists");
+    assert_eq!(
+        search.query.unwrap().as_object().unwrap().get("query"),
+        Some(&Value::String("A named artist".into()))
+    );
+    env.insert("access_token".into(), Value::String("test-token".into()));
+    for (shelf, path) in [
+        ("following", "/spotify/following_artists"),
+        ("catalog", "/spotify/artists"),
+    ] {
+        env.insert("shelf".into(), Value::String(shelf.into()));
+        let listing = compile("following_artist_query", &env);
+        assert_eq!(listing.path, path);
+        assert!(listing.query.as_ref().is_none_or(|query| query
+            .as_object()
+            .is_some_and(|fields| !fields.contains_key("query"))));
+    }
+}
+
 /// Production-catalog/spec integration: owner selection and peer mutation are distinct.
 #[test]
 fn venmo_friend_owner_role_preserves_openapi_wire_contract() {

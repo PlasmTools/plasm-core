@@ -17,6 +17,10 @@ assert.equal(ARTIFACT_IMAGE_PIN_RE.test(valid), true);
 assert.equal(ARTIFACT_IMAGE_PIN_RE.test("node:20"), false);
 assert.equal(ARTIFACT_IMAGE_PIN_RE.test("node@sha256:deadbeef"), false);
 
+const previousEndpoint = process.env.PLASM_ARTIFACT_ENDPOINT;
+const previousToken = process.env.PLASM_ARTIFACT_TOKEN;
+delete process.env.PLASM_ARTIFACT_ENDPOINT;
+delete process.env.PLASM_ARTIFACT_TOKEN;
 const previous = process.env.PLASM_ARTIFACT_IMAGE;
 delete process.env.PLASM_ARTIFACT_IMAGE;
 assert.equal(pinnedArtifactImage(), null);
@@ -60,6 +64,17 @@ assert.equal("plasm_artefact_transform" in shown, true);
 const stillHiddenUntilReady = gateArtefactTransform(tools, false);
 assert.equal("plasm_artefact_transform" in stillHiddenUntilReady, false);
 
+delete process.env.PLASM_ARTIFACT_IMAGE;
+process.env.PLASM_ARTIFACT_ENDPOINT = "http://127.0.0.1:1234/transform";
+assert.equal(artefactTransformAdvertised(true), false, "endpoint alone is not a configured runtime");
+process.env.PLASM_ARTIFACT_TOKEN = "test-only";
+assert.equal(artefactTransformAdvertised(true), true);
+assert.equal(artefactTransformAdvertised(false), false);
+assert.ok(createHarnessTools({artefactWorkspaceRoot: "/tmp/plasm-artifact-pin-gate", includeArtefactTransform: true}).plasm_artefact_transform);
+if (previousEndpoint === undefined) delete process.env.PLASM_ARTIFACT_ENDPOINT;
+else process.env.PLASM_ARTIFACT_ENDPOINT = previousEndpoint;
+if (previousToken === undefined) delete process.env.PLASM_ARTIFACT_TOKEN;
+else process.env.PLASM_ARTIFACT_TOKEN = previousToken;
 if (previous === undefined) delete process.env.PLASM_ARTIFACT_IMAGE;
 else process.env.PLASM_ARTIFACT_IMAGE = previous;
 

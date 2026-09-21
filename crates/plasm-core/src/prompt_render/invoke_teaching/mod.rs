@@ -12,7 +12,7 @@ use crate::CGS;
 
 use super::query_teaching::unseeded_entity_ref_invocation_gloss;
 use super::teaching_legend::LEGEND_EM_DESC_SEP;
-use super::teaching_util::truncate_inline_desc;
+use crate::symbol_tuning::description_for_agent_gloss;
 
 pub(crate) use dotted_call::{build_standalone_create_paren_args, format_dotted_call_line};
 pub(crate) use union_ctor::{
@@ -33,13 +33,12 @@ pub(crate) fn format_capability_legend_line(
     _ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
     _catalog_entry_id: &str,
 ) -> String {
-    const MAX_DESC: usize = 80;
     let kebab = capability_method_label_kebab(cap);
     let raw = cap.description.as_str().trim();
     let gloss = if raw.is_empty() {
         kebab
     } else {
-        truncate_inline_desc(raw, MAX_DESC)
+        description_for_agent_gloss(raw)
     };
     let sig = map.capability_input_signature_gloss(cgs, cap);
     if sig.is_empty() {

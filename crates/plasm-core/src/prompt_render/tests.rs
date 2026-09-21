@@ -2525,6 +2525,11 @@ fn language_matrix_search_tilde_teaches_search_text_not_exact_or_complete() {
         );
     }
     let card = super::PLASM_TOOL_DESCRIPTION;
+    assert!(card.contains("Search yields candidates, not verified identities."));
+    assert!(
+        card.contains(r#"selected = candidates | where title = "Chosen title" | where score > 0"#)
+    );
+    assert!(card.contains("then `selected => _.r#`"));
     assert!(
         card.contains(r#"`e#` / `e#{wire=value}` / `e#~"q"` / `e#(<id>)`"#),
         "catalog-source line must list e#~\"q\" literally"
@@ -2555,11 +2560,12 @@ fn plasm_tool_teaches_semantic_operation_receivers() {
     for taught in [
         "e#(<id>).m#(args)",
         "item.m#(args)",
-        "including `| take 1`",
+        "singleton may use `| take 1`",
         "rows => _.m#(args)",
-        "The row supplies identity and scope",
-        "Empty singleton receivers fail",
-        "Receiver-free operations use `e#.m#(args)` as printed on the card",
+        "needs entity identity and scope",
+        "empty receivers fail",
+        "receiver-free `e#.m#(args)`",
+        "rows => e#.m#(recipient=_.field)",
     ] {
         assert!(card.contains(taught), "missing receiver law: {taught}");
     }
@@ -2715,7 +2721,7 @@ fn auth_bearer_search_literal_get_vs_search_tsv_seats() {
         note_lines,
         [
             "e2(<id>)[note_id,title]\t→ e2 · Secured note",
-            "e2~\"<query>\"{access_token=<wire>}[note_id,title]\t↣ [e2]",
+            "e2~\"<query>\"{access_token=<wire>}[note_id,title]\t↣ [e2] · Search notes; Bearer token required; free-text query required for ~ search.",
         ],
         "Get Meaning is identity, not collection/search; Search writes required Bearer selection; prompt=\n{prompt}"
     );
@@ -2753,7 +2759,7 @@ fn language_matrix_secured_note_literal_get_vs_search_tsv_seats() {
             note_lines,
             [
                 "e1(<id>)[note_id,body,title]\t→ e1 · Secured note",
-                "e1~\"<query>\"{access_token=<wire>}[note_id,body,title]\t↣ [e1]",
+                if fixture == "plasm_language_matrix" { "e1~\"<query>\"{access_token=<wire>}[note_id,body,title]\t↣ [e1] · Search secured notes; Bearer access_token required ahead of optional search text." } else { "e1~\"<query>\"{access_token=<wire>}[note_id,body,title]\t↣ [e1] · Search secured notes; Bearer access_token and free-text query required for ~ search." },
             ],
             "{fixture}: Get Meaning is identity, not collection/search; Search writes required Bearer; prompt=\n{prompt}"
         );
@@ -4384,4 +4390,45 @@ fn dump_scalar_auth_pipe_tsv_for_ablation() {
         std::fs::write(&dest, &tsv).expect("write tsv");
         eprintln!("wrote {}", dest.display());
     }
+}
+
+#[test]
+fn search_teaching_preserves_candidate_selection_semantics() {
+    let mut cgs = load_schema_dir(&fixtures_schemas_dir("plasm_language_matrix")).unwrap();
+    let meaning = "Fuzzy candidates; verify exact identity before selection.";
+    cgs.capabilities
+        .get_mut("langitem_search")
+        .unwrap()
+        .description = meaning.into();
+    let exposure = TeachingExposureSession::new(&cgs, "langmatrix", &["LangItem"]);
+    let map = exposure.symbol_map_arc();
+    let mut cache = HashMap::new();
+    let mut gloss = None;
+    let seed = prompt_line_valid_cache_seed_cgs(&cgs);
+    let block = collect_entity_teaching_block(
+        &cgs,
+        "LangItem",
+        Some(&map),
+        None,
+        false,
+        &mut cache,
+        seed,
+        &mut gloss,
+        None,
+        Some("langmatrix"),
+    );
+    let rows: Vec<_> = block
+        .teaching_rows
+        .iter()
+        .filter(|row| row.teaching_expr.expression.contains('~'))
+        .collect();
+    assert!(!rows.is_empty());
+    assert!(
+        rows.iter().any(|row| row
+            .teaching_expr
+            .legend
+            .description
+            .contains(meaning.trim_end_matches('.'))),
+        "search must teach selection semantics: {rows:?}"
+    );
 }

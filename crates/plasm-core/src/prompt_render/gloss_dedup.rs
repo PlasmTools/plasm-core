@@ -84,7 +84,7 @@ pub(crate) struct GlossDescription(String);
 
 impl GlossDescription {
     pub(crate) fn from_trimmed(desc: &str) -> Self {
-        Self(crate::symbol_tuning::gloss_description_truncated(desc))
+        Self(crate::symbol_tuning::description_for_agent_gloss(desc))
     }
 
     pub(crate) fn as_str(&self) -> &str {

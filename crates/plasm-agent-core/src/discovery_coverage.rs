@@ -14,17 +14,19 @@ pub struct DiscoveryObligation {
 }
 
 /// Statements are append-only and matches are witnesses of capability applicability,
-/// not permission to execute without the constraints in intent provenance.
+/// not permission to execute. Only current slots drive discovery and recovery.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "WireCoverage")]
 pub struct DiscoveryCoverage {
     obligations: Vec<DiscoveryObligation>,
+    current_slots: BTreeSet<String>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WireCoverage {
     obligations: Vec<DiscoveryObligation>,
+    current_slots: BTreeSet<String>,
 }
 
 impl TryFrom<WireCoverage> for DiscoveryCoverage {
@@ -43,7 +45,14 @@ impl TryFrom<WireCoverage> for DiscoveryCoverage {
                 "coverage statements must be nonempty, unique and without NUL"
             );
         }
+        ensure!(
+            wire.current_slots
+                .iter()
+                .all(|id| wire.obligations.iter().any(|o| &o.slot.id == id)),
+            "current coverage slot is undeclared"
+        );
         Ok(Self {
+            current_slots: wire.current_slots,
             obligations: wire.obligations,
         })
     }
@@ -57,6 +66,7 @@ impl DiscoveryCoverage {
     pub fn matched_capabilities(&self) -> Vec<CapabilityRef> {
         self.obligations
             .iter()
+            .filter(|entry| self.current_slots.contains(&entry.slot.id))
             .flat_map(|entry| &entry.matched_capabilities)
             .cloned()
             .collect::<BTreeSet<_>>()
@@ -67,12 +77,13 @@ impl DiscoveryCoverage {
     pub fn unresolved(&self) -> impl Iterator<Item = &EffectSlot> {
         self.obligations
             .iter()
-            .filter(|entry| entry.matched_capabilities.is_empty())
+            .filter(|entry| {
+                self.current_slots.contains(&entry.slot.id) && entry.matched_capabilities.is_empty()
+            })
             .map(|entry| &entry.slot)
     }
 
-    /// Retrieve against the caller's current needs, but judge recalled candidates
-    /// against unresolved earlier needs too. An omitted statement never disappears.
+    /// Retain history while selecting only the caller's current needs for judgment.
     pub fn slots_for_turn(&mut self, current: &[String]) -> Result<Vec<EffectSlot>> {
         ensure!(
             (1..=64).contains(&current.len()),
@@ -97,12 +108,16 @@ impl DiscoveryCoverage {
                 });
             }
         }
+        self.current_slots = self
+            .obligations
+            .iter()
+            .filter(|entry| current.contains(&entry.slot.statement))
+            .map(|entry| entry.slot.id.clone())
+            .collect();
         Ok(self
             .obligations
             .iter()
-            .filter(|entry| {
-                entry.matched_capabilities.is_empty() || current.contains(&entry.slot.statement)
-            })
+            .filter(|entry| self.current_slots.contains(&entry.slot.id))
             .map(|entry| entry.slot.clone())
             .collect())
     }
@@ -174,8 +189,12 @@ mod tests {
             let pending = decoded.slots_for_turn(&["resolve a new relation".into()]).unwrap();
             prop_assert!(decoded.is_continuation_of(&previous));
             for old in previous.obligations() {
-                prop_assert_eq!(pending.contains(&old.slot), old.matched_capabilities.is_empty());
+                prop_assert!(!pending.contains(&old.slot));
             }
+            prop_assert_eq!(decoded.unresolved().count(), 1);
+            prop_assert!(decoded.matched_capabilities().is_empty());
+            let restored: DiscoveryCoverage = serde_json::from_value(serde_json::to_value(&decoded).unwrap()).unwrap();
+            prop_assert_eq!(&restored, &decoded);
             prop_assert_eq!(decoded.obligations()[..previous.obligations.len()].to_vec(), previous.obligations);
         }
     }

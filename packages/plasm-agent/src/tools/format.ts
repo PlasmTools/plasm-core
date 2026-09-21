@@ -1,13 +1,13 @@
 import type { ToolSet } from "ai";
 
-import { pinnedArtifactImage } from "./artifact-process.js";
+import { artifactRuntimeAvailable } from "./artifact-process.js";
 
-/** Advertise transform only when a snapshot exists and the digest pin is valid. */
+/** Advertise transform only when a snapshot exists and an artifact runtime is configured. */
 export function artefactTransformAdvertised(artefactReady: boolean): boolean {
-  return artefactReady && pinnedArtifactImage() !== null;
+  return artefactReady && artifactRuntimeAvailable();
 }
 
-/** Harness JS only after `plasm_read_run_artifact` and a pinned image. */
+/** Harness TypeScript only after materialization and runtime configuration. */
 export function gateArtefactTransform(tools: ToolSet, artefactReady: boolean): ToolSet {
   if (artefactTransformAdvertised(artefactReady)) return tools;
   const { plasm_artefact_transform: _omit, ...rest } = tools;
@@ -56,16 +56,13 @@ export function formatPlasmDryRunMarkdown(summary: string, runRef: string): stri
 export function formatPlasmRunMarkdown(
   message: string,
   ok: boolean,
-  rowsJson?: string,
   runId?: string,
 ): string {
   if (!ok) return `**plasm_run** (pending transport)\n\n${message}`;
   const runLine = runId
-    ? `\n\n**run_id:** \`${runId}\` — call **plasm_read_run_artifact** with this id when you need the full snapshot.`
+    ? `\n\n**run_id:** \`${runId}\` — call **plasm_read_run_artifact** with this id to materialize the snapshot for programmatic processing.`
     : "";
-  const rows = rowsJson?.trim();
-  if (!rows) return `${message}${runLine}`;
-  return `${message}${runLine}\n\n\`\`\`json\n${rows}\n\`\`\``;
+  return `${message}${runLine}`;
 }
 
 /** Dry-run schedule line (`1n 0r 1w`) — write count only. */

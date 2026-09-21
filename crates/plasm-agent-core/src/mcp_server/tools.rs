@@ -22,7 +22,9 @@ use super::schema::{
 pub(crate) fn plasm_run_tool_description(mode: ArtifactAccessMode) -> String {
     let suffix = match mode {
         ArtifactAccessMode::ResourcesRead => PLASM_RUN_TOOL_ARTIFACT_RESOURCES,
-        ArtifactAccessMode::ToolFallback => PLASM_RUN_TOOL_ARTIFACT_TOOL,
+        ArtifactAccessMode::ToolFallback | ArtifactAccessMode::Programmatic => {
+            PLASM_RUN_TOOL_ARTIFACT_TOOL
+        }
     };
     format!("{}{}", PLASM_RUN_TOOL_DESCRIPTION_BASE, suffix)
 }

@@ -3,6 +3,111 @@
 use super::*;
 
 #[test]
+fn scoped_relation_composition_preserves_parent_scope_across_wire() {
+    std::thread::Builder::new().stack_size(16 * 1024 * 1024).spawn(|| {
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            use axum::{extract::{Path, Query}, routing::get, Json, Router};
+            use std::{collections::HashMap, sync::{Arc, Mutex}};
+            use serde_json::json;
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            let recorded = requests.clone();
+            let writes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let recorded_writes = writes.clone();
+            let router = Router::new()
+                .route("/language/v1/items", get(|| async {
+                    Json(json!([
+                        {"id":"i2","title":"second","score":2},
+                        {"id":"i1","title":"first","score":1}
+                    ]))
+                }).post(move || {
+                    let writes = recorded_writes.clone();
+                    async move {
+                        writes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        Json(json!({"id":"unexpected-write","title":"unexpected"}))
+                    }
+                }))
+                .route("/language/v1/items/{id}", get(|Path(id): Path<String>| async move {
+                    Json(json!({"score":if id == "i1" {1} else {2},"title":id,"id":id}))
+                }))
+                .route("/language/v1/tags", get(move |Query(query): Query<HashMap<String,String>>| {
+                    let recorded = recorded.clone();
+                    async move {
+                        recorded.lock().unwrap().push(query.clone());
+                        let id = match query.get("seq").map(String::as_str) {
+                            Some("1") => "t1", Some("2") => "t2", _ => "unscoped",
+                        };
+                        Json(json!([{"id":id,"item_id":id,"label":"scoped"}]))
+                    }
+                }))
+                .route("/language/v1/tags/{id}", get(|Path(id): Path<String>| async move {
+                    Json(json!({"id":id,"item_id":id,"label":"scoped"}))
+                }));
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base = format!("http://{}", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move { axum::serve(listener, router).await });
+            for (name, program, expected) in [
+                ("direct_scope", "LangItem(\"i1\").tags_by_score", vec!["LangTag:t1"]),
+                ("bound_scope", "parent = LangItem(\"i1\")\nparent => _.tags_by_score", vec!["LangTag:t1"]),
+                ("fanout_scope", "parents = LangItem\nparents => _.tags_by_score", vec!["LangTag:t2", "LangTag:t1"]),
+                ("composed_scope", "parents = LangItem\nparents => LangItem(_.id).tags_by_score", vec!["LangTag:t2", "LangTag:t1"]),
+                ("separate_scope", "items = LangItem\nparents = items => LangItem(_.id)\nparents => _.tags_by_score", vec!["LangTag:t2", "LangTag:t1"]),
+            ] {
+                let mut cgs = (*language_matrix::load_language_matrix_cgs()).clone();
+                cgs.http_backend = base.clone();
+                let cgs = Arc::new(cgs);
+                let es = language_matrix::matrix_execute_session(cgs.clone());
+                let st = language_matrix::matrix_host_state(ExecutionEngine::new(ExecutionConfig {
+                    base_url: Some(base.clone()), ..Default::default()
+                }).unwrap(), cgs);
+                let bundle = compile_plasm_program(&PromptPipelineConfig::default(), None, &es, name, program).unwrap();
+                let dry = evaluate_plasm_comp_dry(&es, &bundle).unwrap();
+                assert_comp_witness(&dry).unwrap();
+                let wire = serde_json::to_vec(&bundle.artifact().comp).unwrap();
+                let bundle = plasm_agent::PlasmCompBundle::new(plasm_agent::PlasmCompArtifact {
+                    comp: serde_json::from_slice(&wire).unwrap(),
+                    approval_gates: bundle.artifact().approval_gates.clone(),
+                }).unwrap();
+                requests.lock().unwrap().clear();
+                let out = Box::pin(plasm_agent::plasm_plan_run::run_plasm_comp(
+                    &es, &st, &es.prompt_hash, name, &bundle, true, None, None, None, None,
+                )).await.unwrap();
+                let actual: Vec<_> = out.return_steps.iter().flat_map(|step| step.result.entities.iter().map(|e| e.reference.to_string())).collect();
+                assert_eq!(actual, expected, "{name}: composed traversal changed scope or row order");
+                let requests = requests.lock().unwrap();
+                assert!(!requests.is_empty());
+                assert!(requests.iter().all(|q| matches!(q.get("seq").map(String::as_str), Some("1" | "2"))), "{name}: parent scope missing from request: {requests:?}");
+            }
+            // A known optional field may be absent in live rows. It must not satisfy
+            // a required input merely because dry evaluation used a typed example.
+            let mut cgs = (*language_matrix::load_language_matrix_cgs()).clone();
+            cgs.http_backend = base.clone();
+            let cgs = Arc::new(cgs);
+            let es = language_matrix::matrix_execute_session(cgs.clone());
+            let st = language_matrix::matrix_host_state(ExecutionEngine::new(ExecutionConfig {
+                base_url: Some(base.clone()), ..Default::default()
+            }).unwrap(), cgs);
+            let program = "items = LangItem\ncomputed = items | select id, label = owner\ncomputed => LangItem.create(title=_.label)";
+            let bundle = compile_plasm_program(&PromptPipelineConfig::default(), None, &es, "null_input", program).unwrap();
+            let wire = serde_json::to_vec(&bundle.artifact().comp).unwrap();
+            let bundle = plasm_agent::PlasmCompBundle::new(plasm_agent::PlasmCompArtifact {
+                comp: serde_json::from_slice(&wire).unwrap(),
+                approval_gates: bundle.artifact().approval_gates.clone(),
+            }).unwrap();
+            let outcome = Box::pin(plasm_agent::plasm_plan_run::run_plasm_comp(
+                &es, &st, &es.prompt_hash, "null_input", &bundle, true, None, None, None, None,
+            )).await;
+            assert_eq!(writes.load(std::sync::atomic::Ordering::SeqCst), 0);
+            let diagnostic = match outcome {
+                Err(error) => error.to_string(),
+                Ok(out) => out.run_markdown.unwrap_or_default(),
+            };
+            assert!(diagnostic.contains("non-null required input"), "{diagnostic}");
+            server.abort();
+        });
+    }).unwrap().join().unwrap();
+}
+
+#[test]
 fn relation_read_fanout_matches_unary_parent_gets() {
     std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)

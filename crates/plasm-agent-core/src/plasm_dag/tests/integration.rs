@@ -3738,3 +3738,5 @@ bad"#,
 mod review_execution;
 
 mod scalar_predicates;
+
+mod compiler_contracts;

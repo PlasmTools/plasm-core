@@ -393,6 +393,14 @@ mod tests {
             entity: "Fixture".into(),
             text: text.into(),
             text_hash: plasm_core::catalog_discovery::content_hash(text.as_bytes()),
+            operation: plasm_core::catalog_discovery::OperationEvidence {
+                kind: plasm_core::schema::CapabilityKind::Query,
+                receiver: None,
+                contract: text.into(),
+            },
+            collection: plasm_core::catalog_discovery::CollectionEvidence {
+                meaning: text.into(),
+            },
             related_entities: vec![],
         }
     }

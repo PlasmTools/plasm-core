@@ -494,14 +494,6 @@ song_library_query:
       then_expr: { type: const, value: library/songs }
       else_expr: { type: const, value: songs }
   auth: *request_auth
-  query:
-    type: object
-    fields:
-    - - query
-      - type: if
-        condition: { type: exists, var: query }
-        then_expr: { type: var, name: query }
-        else_expr: { type: const, value: null }
   pagination: *appworld_page_index_limit
 
 song_library_add:
@@ -535,14 +527,6 @@ album_library_query:
     then_expr: { type: const, value: library/albums }
     else_expr: { type: const, value: albums }
   auth: *request_auth
-  query:
-    type: object
-    fields:
-    - - query
-      - type: if
-        condition: { type: exists, var: query }
-        then_expr: { type: var, name: query }
-        else_expr: { type: const, value: null }
   pagination: *appworld_page_index_limit
 
 album_library_add:
@@ -625,14 +609,17 @@ following_artist_query:
     then_expr: { type: const, value: following_artists }
     else_expr: { type: const, value: artists }
   auth: *request_auth
+  pagination: *appworld_page_index_limit
+
+artist_search:
+  method: GET
+  path:
+  - { type: literal, value: spotify }
+  - { type: literal, value: artists }
   query:
     type: object
     fields:
-    - - query
-      - type: if
-        condition: { type: exists, var: query }
-        then_expr: { type: var, name: query }
-        else_expr: { type: const, value: null }
+    - [query, { type: var, name: q }]
   pagination: *appworld_page_index_limit
 
 song_review_create:
@@ -1447,3 +1434,16 @@ artist_membership_get:
     token:
       type: var
       name: access_token
+
+artist_songs_query:
+  method: GET
+  path:
+  - { type: literal, value: spotify }
+  - { type: literal, value: songs }
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - - artist_id
+      - { type: var, name: artist_id }
+  pagination: *appworld_page_index_limit

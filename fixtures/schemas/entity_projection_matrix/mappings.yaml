@@ -1,0 +1,8 @@
+list: {method: GET, path: [{type: literal, value: records}], query: {type: object, fields: [[credential, {type: var, name: credential}]]}}
+detail: {method: GET, path: [{type: literal, value: records}, {type: var, name: id}], query: {type: object, fields: [[credential, {type: var, name: credential}]]}}
+secret: {method: GET, path: [{type: literal, value: secrets}, {type: var, name: id}], query: {type: object, fields: [[unknown_input, {type: var, name: unknown_input}]]}}
+directory: {method: GET, path: [{type: literal, value: directory}]}
+apply: {method: POST, path: [{type: literal, value: apply}, {type: var, name: id}]}
+free: {method: POST, path: [{type: literal, value: free}]}
+write_secret: {method: POST, path: [{type: literal, value: secret}, {type: var, name: id}]}
+operation_get: {method: GET, path: [{type: literal, value: operations}, {type: var, name: id}]}

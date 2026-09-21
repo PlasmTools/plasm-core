@@ -1,4 +1,4 @@
-version: 14
+version: 15
 entry_id: phone
 auth:
   scheme: none
@@ -887,7 +887,7 @@ values:
     type: boolean
     description: Whether account ownership has been verified.
   account_phone:
-    type: string
+    type: e164
     description: Account owner phone number.
   nv_str:
     type: string

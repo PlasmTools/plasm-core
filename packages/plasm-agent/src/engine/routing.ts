@@ -5,7 +5,13 @@ const capability = z.object({ catalog: z.string().min(1), capability: z.string()
 const slot = z.object({ id: z.string().min(1), statement: workflowIntentSchema }).strict();
 export const discoveryCoverageSchema = z.object({
   obligations: z.array(z.object({ slot, matched_capabilities: z.array(capability) }).strict()),
+  current_slots: z.array(z.string().min(1)),
 }).strict().superRefine((coverage, ctx) => {
+  const declared = new Set(coverage.obligations.map((entry) => entry.slot.id));
+  if (new Set(coverage.current_slots).size !== coverage.current_slots.length
+    || coverage.current_slots.some((id) => !declared.has(id))) {
+    ctx.addIssue({ code: "custom", message: "current coverage slots must be unique declared identities" });
+  }
   const statements = new Set<string>();
   coverage.obligations.forEach((entry, index) => {
     if (entry.slot.id !== `s${index}` || statements.has(entry.slot.statement)
@@ -41,16 +47,34 @@ const inputPath = z.object({
 
 const inputSourceBinding = z.object({
   consumer: capability,
-  input: inputPath,
+  input: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("argument"), input: inputPath }).strict(),
+    z.object({ kind: z.literal("receiver"), entity: z.string().min(1) }).strict(),
+  ]),
   provider: capability,
   output_field: z.string().min(1),
   collect: z.boolean(),
 }).strict();
 
+const rowIdentity = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("field"), field: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal("relation"), relation: z.string().min(1) }).strict(),
+]);
 const inputSourceCandidate = z.object({
   provider: capability,
-  bindings: z.array(inputSourceBinding).min(1),
-}).strict();
+  projection: z.object({
+    entity: z.string().min(1),
+    fields: z.record(z.string(), z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("direct") }).strict(),
+      z.object({ kind: z.literal("hydrated"), capability: z.string().min(1) }).strict(),
+      z.object({ kind: z.literal("unavailable") }).strict(),
+    ])),
+  }).strict(),
+  bindings: z.array(inputSourceBinding),
+  membership: z.array(z.object({
+    source: capability, source_identity: rowIdentity, provider_identity: rowIdentity,
+  }).strict()),
+}).strict().refine(value => value.bindings.length + value.membership.length > 0, "source requires typed evidence");
 
 const probabilityChoices = {
   capability: ["direct_match", "does_not_match", "uncertain"],
@@ -198,7 +222,8 @@ const routingSchema = z.object({
       ctx.addIssue({ code: "custom", path: ["coverage"], message: "coverage omitted a direct match" });
     }
   }
-  const unresolved = routing.coverage.obligations.filter((entry) => entry.matched_capabilities.length === 0);
+  const unresolved = routing.coverage.obligations.filter((entry) =>
+    routing.coverage.current_slots.includes(entry.slot.id) && entry.matched_capabilities.length === 0);
   if ((unresolved.length > 0) !== Boolean(routing.recovery)
     || !sameSet(unresolved.map((entry) => entry.slot.id), routing.recovery?.unmatched_slots.map((entry) => entry.slot_id) ?? [])) {
     ctx.addIssue({ code: "custom", path: ["recovery"], message: "recovery must preserve every unresolved obligation" });
@@ -220,7 +245,12 @@ const routingSchema = z.object({
   const permitted = (ref: z.infer<typeof capability>): boolean => routing.authorization.catalogs.includes(ref.catalog)
     && (routing.authorization.capabilities[ref.catalog]?.includes(ref.capability) ?? true);
   const closure = routing.closure;
-  if (routing.retrieval.candidates.some((candidate) => !permitted(candidate.reference))
+  if (routing.input_source_projection.some(candidate => !permitted(candidate.provider)
+      || Object.values(candidate.projection.fields).some(field => field.kind === "hydrated"
+        && !permitted({catalog: candidate.provider.catalog, capability: field.capability}))
+      || candidate.bindings.some(binding => !permitted(binding.consumer) || !permitted(binding.provider))
+      || candidate.membership.some(witness => !permitted(witness.source)))
+    || routing.retrieval.candidates.some((candidate) => !permitted(candidate.reference))
     || (closure && [...closure.business, ...closure.input_sources, ...closure.prerequisites].some((ref) => !permitted(ref)))) {
     ctx.addIssue({ code: "custom", path: ["authorization"], message: "routing exposed an unauthorized capability" });
   }

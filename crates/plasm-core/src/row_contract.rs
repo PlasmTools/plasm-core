@@ -237,15 +237,16 @@ impl<'a> RowCodec<'a> {
             if let Some(relation) =
                 definition.and_then(|definition| definition.relations.get(key.as_str()))
             {
-                let values: Vec<&Json> =
-                    match (relation.cardinality, value) {
-                        (Cardinality::Many, Json::Array(values)) => values.iter().collect(),
-                        (Cardinality::One, Json::Object(_)) => vec![value],
-                        (Cardinality::One, Json::Null) => vec![],
-                        _ => return Err(format!(
+                let values: Vec<&Json> = match (relation.cardinality, value) {
+                    (Cardinality::Many, Json::Array(values)) => values.iter().collect(),
+                    (Cardinality::One, Json::Object(_)) => vec![value],
+                    (Cardinality::One, Json::Null) => vec![],
+                    _ => {
+                        return Err(format!(
                             "relation `{key}` has invalid cardinality or identity representation"
-                        )),
-                    };
+                        ))
+                    }
+                };
                 let references = values
                     .into_iter()
                     .map(|value| {

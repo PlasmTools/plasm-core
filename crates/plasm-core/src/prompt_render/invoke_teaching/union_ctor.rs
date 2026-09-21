@@ -12,12 +12,13 @@ use super::super::gloss_dedup::{meaning_canonical_sym_for_emit, FieldGlossMeanin
 use super::super::line_validate::{DomainLineValidCacheKey, DomainLineValidEntry};
 use super::super::teaching_legend::LEGEND_EM_DESC_SEP;
 use super::super::teaching_push::try_push_teaching_example;
-use super::super::teaching_util::{strip_union_constructor_authoring_noise, truncate_inline_desc};
+use super::super::teaching_util::strip_union_constructor_authoring_noise;
 use super::super::EntityTeachingExprRow;
 use super::structural::{
     format_inline_structural_example_symbolic,
     format_inline_structural_example_symbolic_required_only,
 };
+use crate::symbol_tuning::description_for_agent_gloss;
 
 pub(crate) fn union_variants_teachable(variants: &[crate::schema::InputVariantSchema]) -> bool {
     !variants.is_empty()
@@ -83,7 +84,6 @@ pub(crate) fn format_root_union_constructor_invoke_example(
 pub(crate) fn format_union_constructor_gloss_legend(
     v: &crate::schema::InputVariantSchema,
 ) -> String {
-    const MAX_DESC: usize = 120;
     let disc = v.name.as_str();
     let raw =
         strip_union_constructor_authoring_noise(v.description.as_deref().unwrap_or("").trim());
@@ -92,7 +92,7 @@ pub(crate) fn format_union_constructor_gloss_legend(
     }
     format!(
         "{disc}{LEGEND_EM_DESC_SEP}{}",
-        truncate_inline_desc(&raw, MAX_DESC)
+        description_for_agent_gloss(&raw)
     )
 }
 

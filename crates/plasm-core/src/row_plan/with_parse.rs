@@ -11,7 +11,7 @@ pub fn parse_with_body(body: &str) -> Result<Vec<WithColumn>, WithExprError> {
         return Err(WithExprError::EmptyBody);
     }
     let mut columns = Vec::new();
-    for part in split_top_level_comma(body) {
+    for part in split_top_level_comma(body)? {
         let part = part.trim();
         let Some((name, expr)) = part.split_once(':') else {
             return Err(WithExprError::Parse(format!(
@@ -28,23 +28,56 @@ pub fn parse_with_body(body: &str) -> Result<Vec<WithColumn>, WithExprError> {
     Ok(columns)
 }
 
-fn split_top_level_comma(s: &str) -> Vec<&str> {
-    let mut out = Vec::new();
-    let mut depth = 0i32;
-    let mut start = 0usize;
+/// Lexical structure shared by separators and arithmetic: quoted text is opaque.
+fn top_level_chars(s: &str) -> Result<Vec<(usize, char)>, WithExprError> {
+    let mut stack = Vec::new();
+    let mut quoted = false;
+    let mut escaped = false;
+    let mut top = Vec::new();
     for (i, c) in s.char_indices() {
-        match c {
-            '(' | '{' => depth += 1,
-            ')' | '}' => depth -= 1,
-            ',' if depth == 0 => {
-                out.push(&s[start..i]);
-                start = i + 1;
+        if quoted {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                quoted = false;
             }
+            continue;
+        }
+        match c {
+            '"' => quoted = true,
+            '(' => stack.push(')'),
+            ')' => {
+                if stack.pop() != Some(')') {
+                    return Err(WithExprError::Parse(
+                        "unbalanced expression parentheses".into(),
+                    ));
+                }
+            }
+            _ if stack.is_empty() => top.push((i, c)),
             _ => {}
         }
     }
+    if quoted || !stack.is_empty() {
+        return Err(WithExprError::Parse(
+            "unterminated string or parenthesized expression".into(),
+        ));
+    }
+    Ok(top)
+}
+
+fn split_top_level_comma(s: &str) -> Result<Vec<&str>, WithExprError> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    for (i, c) in top_level_chars(s)? {
+        if c == ',' {
+            out.push(&s[start..i]);
+            start = i + 1;
+        }
+    }
     out.push(&s[start..]);
-    out
+    Ok(out)
 }
 
 fn parse_with_expr(s: &str) -> Result<WithExpr, WithExprError> {
@@ -53,21 +86,22 @@ fn parse_with_expr(s: &str) -> Result<WithExpr, WithExprError> {
 }
 
 fn parse_arith(s: &str) -> Result<WithExpr, WithExprError> {
-    if let Some((lhs, rhs)) = split_top_bin(s, '+') {
+    top_level_chars(s)?;
+    if let Ok(i) = s.parse::<i64>() {
+        return Ok(WithExpr::Literal(WithLiteral::Integer(i)));
+    }
+    if let Ok(n) = s.parse::<f64>() {
+        if !n.is_finite() {
+            return Err(WithExprError::Parse("number must be finite".into()));
+        }
+        return Ok(WithExpr::Literal(WithLiteral::Number(s.to_owned())));
+    }
+    if let Some((op, lhs, rhs)) = split_top_addsub(s) {
         return Ok(WithExpr::Arith {
-            op: ArithOp::Add,
+            op,
             lhs: Box::new(parse_arith(lhs)?),
             rhs: Box::new(parse_arith(rhs)?),
         });
-    }
-    if let Some((lhs, rhs)) = split_top_bin(s, '-') {
-        if !lhs.trim().is_empty() {
-            return Ok(WithExpr::Arith {
-                op: ArithOp::Sub,
-                lhs: Box::new(parse_arith(lhs)?),
-                rhs: Box::new(parse_arith(rhs)?),
-            });
-        }
     }
     if let Some((op, lhs, rhs)) = split_top_muldiv(s) {
         return Ok(WithExpr::Arith {
@@ -79,35 +113,48 @@ fn parse_arith(s: &str) -> Result<WithExpr, WithExprError> {
     parse_atom(s)
 }
 
-fn split_top_bin(s: &str, op: char) -> Option<(&str, &str)> {
-    let mut depth = 0i32;
-    for (i, c) in s.char_indices().rev() {
-        match c {
-            ')' | '}' => depth += 1,
-            '(' | '{' => depth -= 1,
-            c if c == op && depth == 0 && i > 0 => {
-                return Some((s[..i].trim(), s[i + op.len_utf8()..].trim()));
+fn split_top_addsub(s: &str) -> Option<(ArithOp, &str, &str)> {
+    top_level_chars(s)
+        .ok()?
+        .into_iter()
+        .rev()
+        .find_map(|(i, c)| {
+            let op = match c {
+                '+' => ArithOp::Add,
+                '-' => ArithOp::Sub,
+                _ => return None,
+            };
+            let lhs = s[..i].trim();
+            if lhs.is_empty() || lhs.ends_with(['+', '-', '*', '/']) {
+                return None;
             }
-            _ => {}
-        }
-    }
-    None
+            // Signs within a scientific literal are not binary operators.
+            if lhs.ends_with(['e', 'E']) {
+                let token = lhs.rsplit(['+', '-', '*', '/', '(', ' ', ',']).next()?;
+                if token[..token.len() - 1].parse::<f64>().is_ok() {
+                    return None;
+                }
+            }
+            Some((op, lhs, s[i + 1..].trim()))
+        })
 }
 
 fn split_top_muldiv(s: &str) -> Option<(ArithOp, &str, &str)> {
-    let mut depth = 0i32;
-    for (i, c) in s.char_indices().rev() {
-        match c {
-            ')' | '}' => depth += 1,
-            '(' | '{' => depth -= 1,
-            '*' | '/' if depth == 0 && i > 0 => {
-                let op = if c == '*' { ArithOp::Mul } else { ArithOp::Div };
-                return Some((op, s[..i].trim(), s[i + 1..].trim()));
+    top_level_chars(s)
+        .ok()?
+        .into_iter()
+        .rev()
+        .find_map(|(i, c)| {
+            if i == 0 {
+                return None;
             }
-            _ => {}
-        }
-    }
-    None
+            let op = match c {
+                '*' => ArithOp::Mul,
+                '/' => ArithOp::Div,
+                _ => return None,
+            };
+            Some((op, s[..i].trim(), s[i + 1..].trim()))
+        })
 }
 
 fn parse_atom(s: &str) -> Result<WithExpr, WithExprError> {
@@ -127,22 +174,21 @@ fn parse_atom(s: &str) -> Result<WithExpr, WithExprError> {
     if s.eq_ignore_ascii_case("now") {
         return Ok(WithExpr::Now);
     }
-    if let Some(inner) = s.strip_prefix('"').and_then(|t| t.strip_suffix('"')) {
-        return Ok(WithExpr::Literal(WithLiteral::String(inner.to_string())));
+    if s.starts_with('"') {
+        let value = serde_json::from_str::<String>(s)
+            .map_err(|e| WithExprError::Parse(format!("invalid string literal: {e}")))?;
+        return Ok(WithExpr::Literal(WithLiteral::String(value)));
     }
     if let Some(rest) = s.strip_prefix("len(").and_then(|t| t.strip_suffix(')')) {
         return Ok(WithExpr::Len {
-            field: FieldPath::from_dotted(rest.trim()).map_err(WithExprError::Parse)?,
+            field: surface_field_path(rest.trim()).map_err(WithExprError::Parse)?,
         });
     }
     if let Some(rest) = s.strip_prefix("when(").and_then(|t| t.strip_suffix(')')) {
         return parse_when(rest);
     }
-    if let Ok(i) = s.parse::<i64>() {
-        return Ok(WithExpr::Literal(WithLiteral::Integer(i)));
-    }
-    if s.parse::<f64>().is_ok() {
-        return Ok(WithExpr::Literal(WithLiteral::Number(s.to_string())));
+    if s.contains('|') {
+        return Err(WithExprError::Parse("row expressions do not accept template filter pipes; use Minijinja inside {{ }} in a string or per-row => <<TAG template".into()));
     }
     if let Some(idx) = s.find('(') {
         if s.ends_with(')') {
@@ -152,7 +198,7 @@ fn parse_atom(s: &str) -> Result<WithExpr, WithExprError> {
             )));
         }
     }
-    FieldPath::from_dotted(s)
+    surface_field_path(s)
         .map(WithExpr::Field)
         .map_err(WithExprError::Parse)
 }
@@ -162,17 +208,27 @@ fn strip_wrapping_parens(s: &str) -> Option<&str> {
     if !s.starts_with('(') || !s.ends_with(')') {
         return None;
     }
-    let mut depth = 0i32;
+    let mut depth = 0;
+    let mut quoted = false;
+    let mut escaped = false;
     for (i, c) in s.char_indices() {
+        if quoted {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                quoted = false;
+            }
+            continue;
+        }
         match c {
+            '"' => quoted = true,
             '(' => depth += 1,
             ')' => {
                 depth -= 1;
                 if depth == 0 {
-                    if i + 1 == s.len() {
-                        return Some(s[1..i].trim());
-                    }
-                    return None;
+                    return (i + 1 == s.len()).then(|| s[1..i].trim());
                 }
             }
             _ => {}
@@ -182,7 +238,7 @@ fn strip_wrapping_parens(s: &str) -> Option<&str> {
 }
 
 fn parse_when(args: &str) -> Result<WithExpr, WithExprError> {
-    let parts = split_top_level_comma(args);
+    let parts = split_top_level_comma(args)?;
     if parts.len() != 3 {
         return Err(WithExprError::Parse(
             "when(pred, then, else) requires three arguments".into(),
@@ -207,26 +263,63 @@ fn split_when_cmp(s: &str) -> Result<(&str, PlanPredicateOp, &str), WithExprErro
         (">", PlanPredicateOp::Gt),
         ("<", PlanPredicateOp::Lt),
     ];
-    let mut depth = 0i32;
-    for (i, c) in s.char_indices() {
-        match c {
-            '(' | '{' => depth += 1,
-            ')' | '}' => depth -= 1,
-            _ if depth == 0 && i > 0 => {
-                for (sym, op) in ops {
-                    if s[i..].starts_with(sym) {
-                        let lhs = s[..i].trim();
-                        let rhs = s[i + sym.len()..].trim();
-                        if !lhs.is_empty() && !rhs.is_empty() {
-                            return Ok((lhs, op, rhs));
-                        }
-                    }
+    for (i, _) in top_level_chars(s)? {
+        if i == 0 {
+            continue;
+        }
+        for (sym, op) in ops {
+            if s[i..].starts_with(sym) {
+                let lhs = s[..i].trim();
+                let rhs = s[i + sym.len()..].trim();
+                if !lhs.is_empty() && !rhs.is_empty() {
+                    return Ok((lhs, op, rhs));
                 }
             }
-            _ => {}
         }
     }
     Err(WithExprError::Parse(format!(
         "when() predicate must be a comparison, got `{s}`"
     )))
+}
+
+fn surface_field_path(s: &str) -> Result<FieldPath, String> {
+    if !s.split('.').all(|part| {
+        let mut chars = part.chars();
+        chars.next().is_some_and(|c| c == '_' || c.is_alphabetic())
+            && chars.all(|c| c == '_' || c.is_alphanumeric())
+    }) {
+        return Err(format!(
+            "invalid computed field reference `{s}`; use a row field or a supported expression"
+        ));
+    }
+    FieldPath::from_dotted(s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn computed_expression_requires_complete_valid_syntax() {
+        for input in [
+            "out: field garbage",
+            "out: unknown(field)",
+            "out: (field",
+            "out: field)",
+            "out: \"unterminated",
+            "out: len(field + 1)",
+            "out: field | last",
+            "out: 1e999",
+        ] {
+            assert!(parse_with_body(input).is_err(), "accepted {input}");
+        }
+        for input in [
+            "out: 1e-3 + score",
+            "out: score * -2",
+            "out: when(title = \"a=b\", \"(,|)\", \"x\")",
+            "out: (score - 2) + 3",
+        ] {
+            assert!(parse_with_body(input).is_ok(), "rejected {input}");
+        }
+    }
 }

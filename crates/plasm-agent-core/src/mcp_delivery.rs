@@ -21,7 +21,9 @@ impl McpDeliveryProfile {
     pub fn resolve(ui_apps_enabled: bool, artifact_access: ArtifactAccessMode) -> Self {
         match (ui_apps_enabled, artifact_access) {
             (false, _) => Self::ContentOnly,
-            (true, ArtifactAccessMode::ToolFallback) => Self::ToolFallback,
+            (true, ArtifactAccessMode::ToolFallback | ArtifactAccessMode::Programmatic) => {
+                Self::ToolFallback
+            }
             (true, ArtifactAccessMode::ResourcesRead) => Self::FullApps,
         }
     }

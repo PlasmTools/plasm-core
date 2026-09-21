@@ -31,7 +31,15 @@
             "entity": "Record",
             "text": "Read selected records.",
             "text_hash": "fixture",
-            "related_entities": []
+            "related_entities": [],
+            "operation": {
+              "kind": "query",
+              "receiver": null,
+              "contract": "Read selected records."
+            },
+            "collection": {
+              "meaning": "Read selected records."
+            }
           },
           "admissions": []
         }
@@ -107,6 +115,10 @@
           },
           "matched_capabilities": []
         }
+      ],
+      "current_slots": [
+        "s0",
+        "s1"
       ]
     },
     "input_source_projection": [],

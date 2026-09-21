@@ -24,9 +24,9 @@ use super::symbol_tokens::id_sym_rel;
 #[cfg(test)]
 use super::symbol_tokens::{ent_sym, id_sym_entity};
 use super::teaching_push::try_push_teaching_example;
-use super::teaching_util::truncate_inline_desc;
 use super::tsv_emit::{teaching_relation_field_gloss, write_teaching_tsv_row, DomainTsvRow};
 use super::{EntityTeachingExprRow, TeachingHeading};
+use crate::symbol_tuning::description_for_agent_gloss;
 
 /// Ordered receiver bases for teaching table dotted calls / relation nav on `ent` (`es` = entity symbol).
 ///
@@ -661,7 +661,7 @@ pub(crate) fn render_relation_edge_delta_rows(
             if d.is_empty() {
                 String::new()
             } else {
-                truncate_inline_desc(d, 120)
+                description_for_agent_gloss(d)
             }
         };
         if let Some(plasm_expr) = try_build_relation_nav_exemplar(

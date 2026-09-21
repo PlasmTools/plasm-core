@@ -443,3 +443,5 @@ pub use boolean_expr::BooleanExpr;
 
 pub mod boolean_surface;
 pub use boolean_surface::parse_boolean_filter;
+
+pub mod entity_projection;

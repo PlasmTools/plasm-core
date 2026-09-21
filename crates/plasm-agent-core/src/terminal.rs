@@ -918,7 +918,7 @@ mod routed_terminal_tests {
                                 "intent":payload["intent"],"pin_id":"pin",
                                 "retrieval":{"generation":"generation-one","candidates":[],"lexical_count":0,"vector_count":0,"lexical_truncated":false,"vector_truncated":false,"fusion_truncated":0,"relation_truncated":0},
                                 "matching":{"slots":[{"id":"s0","statement":payload["effect_slots"][0]}],"matches":[],"complete":!insufficient,"unmatched_slot_ids":if insufficient { json!(["s0"]) } else { json!([]) },"additional_capability_ids":[]},
-                                "coverage":{"obligations":[{"slot":{"id":"s0","statement":payload["effect_slots"][0]},"matched_capabilities":if insufficient {json!([])} else {json!([{"catalog":"matrix","capability":"read"}])}}]},
+                                "coverage":{"current_slots":["s0"],"obligations":[{"slot":{"id":"s0","statement":payload["effect_slots"][0]},"matched_capabilities":if insufficient {json!([])} else {json!([{"catalog":"matrix","capability":"read"}])}}]},
                                 "input_source_projection":[],
                                 "input_source_matching":{"matches":[],"selected":[]},
                                 "closure":null

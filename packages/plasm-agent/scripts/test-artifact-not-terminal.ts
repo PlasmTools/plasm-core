@@ -326,7 +326,7 @@ applyArtifactLedger(inline, [
       {
         type: "tool-result",
         toolName: "plasm_run",
-        output: { type: "text", value: formatPlasmRunMarkdown("## rows (1)\n```tsv\nid\n1\n```", true, undefined, RUN_ID) },
+        output: { type: "text", value: formatPlasmRunMarkdown("## rows (1)\n```tsv\nid\n1\n```", true, RUN_ID) },
       },
     ],
   } as ModelMessage,

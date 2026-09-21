@@ -127,28 +127,10 @@ fn collect_agg_columns(agg: &TypedAggregate, names: &mut Vec<String>) {
 }
 
 fn collect_with_columns(expr: &WithExpr, names: &mut Vec<String>) {
-    match expr {
-        WithExpr::Field(p) | WithExpr::Len { field: p } => {
-            names.push(p.dotted());
-        }
-        WithExpr::Literal(_) | WithExpr::Now => {}
-        WithExpr::Arith { lhs, rhs, .. } => {
-            collect_with_columns(lhs, names);
-            collect_with_columns(rhs, names);
-        }
-        WithExpr::When {
-            lhs,
-            rhs,
-            then,
-            else_,
-            ..
-        } => {
-            collect_with_columns(lhs, names);
-            collect_with_columns(rhs, names);
-            collect_with_columns(then, names);
-            collect_with_columns(else_, names);
-        }
-    }
+    let _: Result<_, std::convert::Infallible> = expr.try_map_fields(&mut |path| {
+        names.push(path.dotted());
+        Ok(path.clone())
+    });
 }
 
 fn finalize_money_sums(state: &mut FrameState) -> PolarsResult<()> {
@@ -871,6 +853,22 @@ mod tests {
 
     proptest::proptest! {
         #![proptest_config(proptest::test_runner::Config::with_cases(48))]
+        #[test]
+        fn computed_wire_preserves_literals_arithmetic_and_row_identity(
+            values in proptest::collection::vec(-100i64..100, 1..25),
+            literal in "[a-zA-Z0-9,()+*/|=<>\\\"\\\\ -]{0,40}",
+        ) {
+            let quoted = serde_json::to_string(&literal).unwrap();
+            let columns = parse_with_body(&format!("result: score - 2 + 3 * 4, label: when(score >= 0, {quoted}, {quoted})")).unwrap();
+            let op = ComputeOp::With { columns };
+            let restored: ComputeOp = serde_json::from_slice(&serde_json::to_vec(&op).unwrap()).unwrap();
+            proptest::prop_assert_eq!(&op, &restored);
+            let rows: Vec<_> = values.iter().map(|n| serde_json::json!({"id":n,"score":n})).collect();
+            let expected: Vec<_> = values.iter().map(|n| serde_json::json!({"id":n,"score":n,"result":n+10,"label":literal})).collect();
+            let ComputeEvalOutcome::Rows(out) = eval_compute_ops(&[restored], &rows).unwrap() else { panic!("rows") };
+            proptest::prop_assert_eq!(out, expected);
+        }
+
         #[test]
         fn boolean_filter_wire_preserves_rows_order_multiplicity_and_nulls(
             values in proptest::collection::vec(proptest::option::of(-10i64..10), 1..40),

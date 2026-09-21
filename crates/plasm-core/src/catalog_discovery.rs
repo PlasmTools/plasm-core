@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
-pub const DISCOVERY_RENDERER_VERSION: u32 = 6;
+pub const DISCOVERY_RENDERER_VERSION: u32 = 7;
 pub const EMBEDDING_DIMENSIONS: usize = 1536;
 pub const EMBEDDING_MODEL: &str = "openai/text-embedding-3-small";
 
@@ -38,6 +38,22 @@ impl EmbeddingProfile {
     }
 }
 
+/// Operation applicability, independent of the collection used to find its receiver.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OperationEvidence {
+    pub kind: crate::schema::CapabilityKind,
+    pub receiver: Option<crate::CapabilityReceiver>,
+    pub contract: String,
+}
+
+/// The universe and relationships a read can establish; never an operation precondition.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CollectionEvidence {
+    pub meaning: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CapabilityDocument {
@@ -45,6 +61,8 @@ pub struct CapabilityDocument {
     pub entity: String,
     pub text: String,
     pub text_hash: String,
+    pub operation: OperationEvidence,
+    pub collection: CollectionEvidence,
     pub related_entities: Vec<String>,
 }
 
@@ -161,6 +179,8 @@ pub fn capability_documents(cgs: &crate::CGS) -> Result<Vec<CapabilityDocument>,
                     aliases.into_iter().cloned().collect::<Vec<_>>().join(", ")
                 ));
             }
+            let contract_start = lines.len();
+            lines.push(format!("Receiver: {:?}", cap.inputs.receiver));
             for (lane, fields) in [
                 ("scope", &cap.inputs.scope.0),
                 ("selection", &cap.inputs.selection.0),
@@ -218,6 +238,16 @@ pub fn capability_documents(cgs: &crate::CGS) -> Result<Vec<CapabilityDocument>,
             let mut provided: Vec<_> = cap.provides.iter().map(|field| field.as_str()).collect();
             provided.sort_unstable();
             lines.push(format!("Populates: {}", provided.join(", ")));
+            let operation = OperationEvidence {
+                kind: cap.kind,
+                receiver: cap.inputs.receiver.clone(),
+                contract: format!(
+                    "Purpose: {}\n{}",
+                    cap.description,
+                    lines[contract_start..].join("\n")
+                ),
+            };
+            let collection_start = lines.len();
             for field in entity.fields.values() {
                 let value = field.named_value(cgs).map_err(|e| e.to_string())?;
                 lines.push(format!(
@@ -244,6 +274,14 @@ pub fn capability_documents(cgs: &crate::CGS) -> Result<Vec<CapabilityDocument>,
                 ));
                 related_entities.insert(relation.target_resource.to_string());
             }
+            let collection = CollectionEvidence {
+                meaning: format!(
+                    "Entity: {}\nEntity purpose: {}\n{}",
+                    cap.domain,
+                    entity.description,
+                    lines[collection_start..].join("\n")
+                ),
+            };
             let text = lines.join("\n");
             Ok(CapabilityDocument {
                 capability: cap.name.to_string(),
@@ -251,6 +289,8 @@ pub fn capability_documents(cgs: &crate::CGS) -> Result<Vec<CapabilityDocument>,
                 text_hash: content_hash(text.as_bytes()),
                 text,
                 related_entities: related_entities.into_iter().collect(),
+                operation,
+                collection,
             })
         })
         .collect()
@@ -370,6 +410,45 @@ mod tests {
         .expect("abstract discovery role fixture")
     }
 
+    proptest::proptest! {
+        #[test]
+        fn collection_semantics_cannot_rewrite_operation_contract(meaning in "[a-zA-Z ]{1,120}") {
+            let mut cgs = role_fixture();
+            let before = capability_documents(&cgs).unwrap();
+            for entity in cgs.entities.values_mut() {
+                entity.description = meaning.clone();
+            }
+            let after = capability_documents(&cgs).unwrap();
+            for (old, new) in before.iter().zip(&after) {
+                proptest::prop_assert_eq!(&old.operation, &new.operation);
+                proptest::prop_assert_ne!(&old.collection, &new.collection);
+                let decoded: CapabilityDocument = serde_json::from_str(&serde_json::to_string(new).unwrap()).unwrap();
+                proptest::prop_assert_eq!(new, &decoded);
+            }
+        }
+    }
+
+    #[test]
+    fn operation_restrictions_survive_projection_and_old_documents_are_rejected() {
+        let mut cgs = role_fixture();
+        cgs.capabilities
+            .get_mut("record_create")
+            .unwrap()
+            .description = "Create a record only in an open collection".into();
+        let documents = capability_documents(&cgs).unwrap();
+        let doc = documents
+            .iter()
+            .find(|d| d.capability == "record_create")
+            .unwrap();
+        assert!(doc
+            .operation
+            .contract
+            .contains("only in an open collection"));
+        let mut wire = serde_json::to_value(doc).unwrap();
+        wire.as_object_mut().unwrap().remove("operation");
+        assert!(serde_json::from_value::<CapabilityDocument>(wire).is_err());
+    }
+
     #[test]
     fn value_role_documents_preserve_semantics_across_input_lanes_and_array_fields() {
         let cgs = role_fixture();
@@ -473,6 +552,14 @@ mod tests {
             capability: "read".into(),
             entity: "Record".into(),
             text: "Read records".into(),
+            operation: OperationEvidence {
+                kind: crate::schema::CapabilityKind::Query,
+                receiver: None,
+                contract: "Read records".into(),
+            },
+            collection: CollectionEvidence {
+                meaning: "Records".into(),
+            },
             text_hash: content_hash(b"Read records"),
             related_entities: vec![],
         };

@@ -54,3 +54,8 @@ member_query:
   method: GET
   path:
     - {type: literal, value: members}
+  query:
+    type: object
+    fields:
+      - [cohort_id, {type: if, condition: {type: exists, var: cohort_id},
+          then_expr: {type: var, name: cohort_id}, else_expr: {type: const, value: null}}]

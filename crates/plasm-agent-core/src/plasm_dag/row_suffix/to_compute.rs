@@ -344,7 +344,29 @@ pub(in crate::plasm_dag) fn row_suffix_to_compute(
             Ok(mk(ComputeOp::DedupeBy { keys: vec![] }, schema, false))
         }
         RowSuffix::With { body } => {
-            let columns = plasm_core::parse_with_body(body).map_err(|e| e.to_string())?;
+            let mut columns = plasm_core::parse_with_body(body).map_err(|e| e.to_string())?;
+            let qe = resolve_qualified_entity_for_dag_source(state, staged, source.to_string());
+            let source_schema = resolve_immediate_compute_schema(state, staged, source);
+            for column in &mut columns {
+                column.expr = column.expr.try_map_fields(&mut |path| {
+                    let resolved = resolve_sort_field_path(
+                        session,
+                        state.cross_cache,
+                        qe.as_ref(),
+                        source_schema.as_ref(),
+                        path,
+                    )?;
+                    validate_compute_paths_for_dag_source(
+                        session,
+                        state,
+                        staged,
+                        source,
+                        std::slice::from_ref(&resolved),
+                        "computed expression",
+                    )?;
+                    Ok::<_, String>(resolved)
+                })?;
+            }
             // Immediate grain when known (already-projected `| select`); else entity passthrough.
             // Assignment onto an existing field name replaces — `| select receiver_email = sender_email`
             // must not emit duplicate schema fields (plan validate rejects that as dishonest).

@@ -613,7 +613,10 @@ impl AgentEngine {
             None,
             None,
             Some(dry),
-            None,
+            Some(plasm_agent_core::McpResultTransportPolicy {
+                artifact_access: plasm_agent_core::ArtifactAccessMode::Programmatic,
+                ..Default::default()
+            }),
         ))
         .await
         .map_err(|e| anyhow!("live execute failed: {e}"))?;

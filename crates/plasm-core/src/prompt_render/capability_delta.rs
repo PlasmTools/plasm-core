@@ -6,7 +6,7 @@ use indexmap::IndexMap;
 
 use crate::symbol_tuning::{
     capability_exposure_param_pairs, capability_exposure_param_triples,
-    field_syms_for_teaching_row, gloss_description_truncated, optional_legend_param_syms,
+    description_for_agent_gloss, field_syms_for_teaching_row, optional_legend_param_syms,
     registry_backed_compact_wire_label, CapabilityParamSurfaceFilter, ExposureCapabilityKey,
     ExposureEntityKey, SymbolMap, TeachingExposureSession,
 };
@@ -104,7 +104,7 @@ fn synthesize_param_gloss_row(
         .map(registry_backed_compact_wire_label)
         .unwrap_or_else(|| wire.to_string());
     let description = meta
-        .map(|m| gloss_description_truncated(m.description().trim()))
+        .map(|m| description_for_agent_gloss(m.description().trim()))
         .filter(|d| !d.is_empty())
         .unwrap_or_default();
     TeachingFieldGloss {

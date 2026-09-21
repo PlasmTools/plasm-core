@@ -339,6 +339,13 @@ fn validate_capability_input_with_satisfied(
                 }
                 let field_path = field_schema.name.as_str();
                 match object.get(&field_schema.name) {
+                    Some(Value::Null) if field_schema.required => {
+                        return Err(TypeError::IncompatibleValue {
+                            field: field_path.to_string(),
+                            value_type: "null".into(),
+                            field_type: "non-null required input".into(),
+                        });
+                    }
                     Some(field_value) => {
                         if !field_value.is_domain_example_placeholder() {
                             match &field_schema.wire {
@@ -408,6 +415,13 @@ pub fn validate_capability_invocation_input(
     if let Value::Object(object) = &mut body {
         for field in capability.scope_params() {
             match object.swap_remove(field.name.as_str()) {
+                Some(Value::Null) if field.required => {
+                    return Err(TypeError::IncompatibleValue {
+                        field: field.name.clone(),
+                        value_type: "null".into(),
+                        field_type: "non-null required scope".into(),
+                    });
+                }
                 Some(value) if !value.is_domain_example_placeholder() => match &field.wire {
                     crate::InputFieldWire::Inline(ty) => {
                         validate_input_type(&value, ty, field.name.as_str(), cgs)?
@@ -625,6 +639,13 @@ pub(crate) fn validate_input_type(
                 };
 
                 match object.get(&field_schema.name) {
+                    Some(Value::Null) if field_schema.required => {
+                        return Err(TypeError::IncompatibleValue {
+                            field: field_path.to_string(),
+                            value_type: "null".into(),
+                            field_type: "non-null required input".into(),
+                        });
+                    }
                     Some(field_value) => {
                         if !field_value.is_domain_example_placeholder() {
                             match &field_schema.wire {
@@ -1076,7 +1097,47 @@ mod tests {
         cap
     }
 
-    /// Dual object lanes: typecheck must validate **arguments** fields even when primary is payload.
+    /// Requiredness applies to concrete values in every invocation lane.
+    #[test]
+    fn required_inputs_reject_null_across_lanes_and_serialization() {
+        let mut cgs = CGS::new();
+        let mut cap = dual_lane_cap(&mut cgs);
+        cap.inputs.scope.0.push(reg_field("parent", "dl_int", true));
+        let valid = obj(&[
+            ("active", Value::Bool(false)),
+            ("limit", Value::Integer(0)),
+            ("parent", Value::Integer(0)),
+        ]);
+        validate_capability_invocation_input(&cap, &valid, &cgs)
+            .expect("false and zero are present");
+        for field in ["active", "limit", "parent"] {
+            let mut invalid = valid.clone();
+            let Value::Object(ref mut object) = invalid else {
+                unreachable!()
+            };
+            object.insert(field.into(), Value::Null);
+            let wire = serde_json::to_vec(&invalid).unwrap();
+            let decoded = serde_json::from_slice(&wire).unwrap();
+            for input in [&invalid, &decoded] {
+                let error = validate_capability_invocation_input(&cap, input, &cgs)
+                    .expect_err("null cannot satisfy a required input");
+                assert!(
+                    matches!(error, TypeError::IncompatibleValue { field: ref name, .. } if name == field),
+                    "{error:?}"
+                );
+            }
+        }
+        cap.inputs.scope.0[0].required = false;
+        let mut optional = valid;
+        let Value::Object(ref mut object) = optional else {
+            unreachable!()
+        };
+        object.insert("parent".into(), Value::Null);
+        validate_capability_invocation_input(&cap, &optional, &cgs)
+            .expect("optional null remains allowed");
+    }
+
+    /// Typecheck arguments fields even when the primary lane is payload.
     #[test]
     fn dual_lane_invocation_validates_both_object_schemas() {
         let mut cgs = CGS::new();

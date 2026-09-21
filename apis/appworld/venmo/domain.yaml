@@ -1,4 +1,4 @@
-version: 25
+version: 28
 entry_id: venmo
 data_classes:
   untrusted:
@@ -68,6 +68,9 @@ values:
   nv_person_name:
     type: string
     description: Display name of a Venmo user.
+  nv_user_search_query:
+    type: string
+    description: Name or email relevance query, not a phone-number lookup.
   nv_search_query:
     type: string
     description: Free-text search query.
@@ -870,7 +873,7 @@ capabilities:
       type: side_effect
       description: Ends the Venmo session represented by the access token.
   user_search:
-    description: Search Venmo users by name or email. Results are fuzzy — before treating someone as on Venmo, confirm an exact email match on a returned candidate.
+    description: Fuzzy name/email candidates; verify exact email for identity or membership.
     kind: search
     entity: User
     selection:
@@ -878,7 +881,7 @@ capabilities:
       value_ref: nv_access_token
       required: true
     - name: query
-      value_ref: nv_search_query
+      value_ref: nv_user_search_query
       required: true
     provides:
     - email
@@ -1108,9 +1111,7 @@ capabilities:
       type: side_effect
       description: Writes the bank-transfer receipt to the given file path.
   transaction_query:
-    description: 'List transactions by shelf — your sent/received history (optional filters) or friends social feed.
-
-      '
+    description: Read transaction history or friends social feed. Filter returned rows with where; both shelves paginate without backend filters.
     kind: query
     entity: Transaction
     discovery:
@@ -1131,33 +1132,20 @@ capabilities:
       value_ref: nv_transaction_shelf
       required: true
       description: mine | social_feed
-    - name: query
-      value_ref: nv_search_query
-    - name: user_email
-      value_ref: nv_email
-    - name: min_created_at
-      value_ref: nv_filter_date
-    - name: max_created_at
-      value_ref: nv_filter_date
-    - name: min_like_count
-      value_ref: nv_count
-    - name: max_like_count
-      value_ref: nv_count
-    - name: min_amount
-      value_ref: nv_amount
-    - name: max_amount
-      value_ref: nv_amount
-    - name: private
-      value_ref: nv_private
-    - name: direction
-      value_ref: nv_direction
-    controls:
-    - name: sort_by
-      value_ref: nv_sort_field
-    provides: &id001
+    provides: &transaction_fields
     - transaction_id
     - amount
     - description
+    - created_at
+    - updated_at
+    - private
+    - like_count
+    - payment_card_digits
+    - comment_count
+    - sender_email
+    - sender_name
+    - receiver_email
+    - receiver_name
   transaction_get:
     description: Show the details of one Venmo transaction.
     kind: get
@@ -1169,7 +1157,7 @@ capabilities:
         - name: access_token
           value_ref: nv_access_token
           required: true
-    provides: *id001
+    provides: *transaction_fields
   transaction_receipt_download:
     receiver: {kind: entity, entity: Transaction}
     description: Download a peer-transfer receipt to a file-system path.

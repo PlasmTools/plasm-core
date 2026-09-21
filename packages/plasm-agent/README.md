@@ -311,3 +311,21 @@ insufficient extensions retain their intent without adding teaching.
 Session schema version 2 persists the chain, with a versioned storage namespace.
 Open a new context for older mirrors; no automatic migration is performed. Native
 engine binaries and TypeScript bindings must be rebuilt together for this wire cutover.
+
+### Programmatic artifact processing
+
+`plasm_read_run_artifact` returns a workspace-relative file locator, never the
+snapshot payload. Pass one or more locators as `paths` to
+`plasm_artefact_transform`, with a TypeScript module such as:
+
+```typescript
+export default ([snapshot]: any[]) => Object.keys(snapshot);
+```
+
+The function receives parsed JSON inputs in path order. Return a JSON value of
+at most 8 KiB; only this derived result enters model context. Execution uses a
+pinned Node 22+ container, with no network, a read-only filesystem, and a
+30-second deadline. The host needs either `PLASM_ARTIFACT_IMAGE` (a local image
+pinned by digest) or `PLASM_ARTIFACT_ENDPOINT` plus `PLASM_ARTIFACT_TOKEN` for the
+artifact broker. Containerized AppWorld batches start and preflight a run-scoped
+broker automatically; workers never receive the Docker socket.

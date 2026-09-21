@@ -3719,30 +3719,33 @@ impl<'a> Parser<'a> {
                 };
                 // Check declared relations (e.g. .species, .abilities, .moves)
                 if let Some(rel) = ent.relations.get(relation_field.as_str()) {
-                    let target = rel.target_resource.clone();
+                    let target = &rel.target_resource;
                     let cardinality = rel.cardinality;
 
-                    // Optional filter block on relation target
+                    // Braces belong to catalog sources, never relation hops (RA-1/RA-6).
+                    // Replacing this chain with a target query erases its receiver.
                     self.skip_ws();
-                    let preds = if self.peek_char() == Some('{') {
-                        self.pos += 1;
-                        let p = self.parse_preds(&target)?;
-                        self.expect_char('}')?;
-                        p
-                    } else {
-                        vec![]
-                    };
+                    if self.peek_char() == Some('{') {
+                        return Err(ParseError {
+                            kind: ParseErrorKind::Other {
+                                message: crate::relation_segment::relation_query_braces_message(
+                                    &relation_field,
+                                ),
+                            },
+                            offset: self.pos,
+                        });
+                    }
 
-                    // Cardinality-one without filters → ChainExpr, executed at runtime.
+                    // Cardinality-one → ChainExpr, executed at runtime.
                     // The executor fetches the source entity, then looks up the decoded
                     // relation target ID from entity.fields[selector] (populated by the
                     // relation decoder) to dispatch Get(target, id).
-                    if cardinality == crate::Cardinality::One && preds.is_empty() {
+                    if cardinality == crate::Cardinality::One {
                         let chain = ChainExpr::auto_get(source, relation_field);
                         return Ok(Expr::Chain(chain));
                     }
 
-                    if cardinality == crate::Cardinality::Many && preds.is_empty() {
+                    {
                         let mat = rel
                             .materialize
                             .as_ref()
@@ -3782,10 +3785,6 @@ impl<'a> Parser<'a> {
                             }
                         }
                     }
-
-                    // Cardinality-many with filters, or cardinality-one with filters → QueryExpr on target
-                    let query = Self::preds_to_query(&target, preds);
-                    return Ok(Expr::Query(query));
                 }
 
                 // Check EntityRef fields (e.g. .petId → ChainExpr). Non-ref fields are
@@ -5033,13 +5032,8 @@ mod tests {
             return;
         }
         let cgs = petstore_cgs();
-        // Pet has declared relation: tags → Tag (cardinality many)
-        let r = parse("Pet(10).tags{name=fluffy}", &cgs).unwrap();
-        assert!(matches!(r.expr, Expr::Query(_)));
-        if let Expr::Query(q) = &r.expr {
-            assert_eq!(q.entity, "Tag");
-            assert!(q.predicate.is_some());
-        }
+        let error = parse("Pet(10).tags{name=fluffy}", &cgs).unwrap_err();
+        assert!(error.to_string().contains("does not accept query braces"));
     }
 
     #[test]
@@ -6106,10 +6100,10 @@ mod tests {
     }
 
     #[test]
-    fn parse_many_relation_with_filter_still_query() {
+    fn parse_many_relation_braces_cannot_replace_receiver_with_query() {
         let cgs = many_rel_unmaterialized_cgs();
-        let r = parse("Parent(p1).items{id=a}", &cgs).unwrap();
-        assert!(matches!(r.expr, Expr::Query(_)));
+        let error = parse("Parent(p1).items{id=a}", &cgs).unwrap_err();
+        assert!(error.to_string().contains("does not accept query braces"));
     }
 
     #[test]

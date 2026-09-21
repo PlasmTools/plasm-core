@@ -727,7 +727,10 @@ mod tests {
                     effect_class: EffectClass::ArtifactRead,
                     result_shape: ResultShape::Artifact,
                     data: PlanValue::Literal {
-                        value: plasm_core::operand_binding::ResolvedValue::from_wire(serde_json::json!([{"id": 1}, {"id": 2}])).expect("literal data"),
+                        value: plasm_core::operand_binding::ResolvedValue::from_wire(
+                            serde_json::json!([{"id": 1}, {"id": 2}]),
+                        )
+                        .expect("literal data"),
                     },
                     depends_on: vec![],
                     uses_result: vec![],
@@ -744,7 +747,10 @@ mod tests {
                         proof: InputCardinalityProof::StaticSingleton,
                     }],
                     value: PlanValue::Literal {
-                        value: plasm_core::operand_binding::ResolvedValue::from_wire(serde_json::json!({"ok": true})).expect("literal data"),
+                        value: plasm_core::operand_binding::ResolvedValue::from_wire(
+                            serde_json::json!({"ok": true}),
+                        )
+                        .expect("literal data"),
                     },
                     depends_on: vec![],
                     uses_result: vec![],

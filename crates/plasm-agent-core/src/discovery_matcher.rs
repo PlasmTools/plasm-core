@@ -73,6 +73,8 @@ pub enum InputSourceChoice {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
+/// Provider decision. For partitioned evidence, probabilities and confidence
+/// belong to the decisive fragment; they are not an aggregate posterior.
 pub struct InputSourceMatch {
     pub provider: CapabilityRef,
     pub choice: InputSourceChoice,
@@ -100,7 +102,22 @@ pub struct IssuedInputSourceBatch {
     pub body: String,
     pub cache_key: String,
     model: String,
-    bindings: BTreeMap<String, CapabilityRef>,
+    bindings: BTreeMap<String, SourceQuestion>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct SourceQuestionId(String);
+
+#[derive(Debug, Clone)]
+struct SourceQuestion {
+    id: SourceQuestionId,
+    provider: CapabilityRef,
+}
+
+#[derive(Debug, Clone)]
+pub struct InputSourceAnswer {
+    question_id: SourceQuestionId,
+    matched: InputSourceMatch,
 }
 
 #[derive(Debug, Deserialize)]
@@ -155,6 +172,11 @@ pub fn issue_batches(
                 );
                 batches.push(issue_batch(model, intent_provenance, &pending)?);
                 pending = vec![last];
+                ensure!(
+                    o200k_token_count(&issue_batch(model, intent_provenance, &pending)?.body)
+                        <= MAX_BATCH_TOKENS,
+                    "one Jev slot-match question exceeds packet token budget"
+                );
             }
         }
     }
@@ -186,18 +208,23 @@ pub fn issue_input_source_batches(
     documents: &BTreeMap<CapabilityRef, CapabilityDocument>,
 ) -> Result<Vec<IssuedInputSourceBatch>> {
     ensure!(!model.trim().is_empty(), "Jev model required");
-    let mut candidates: Vec<_> = candidates.iter().collect();
+    let mut candidates = candidates.to_vec();
     candidates.sort_by(|left, right| left.provider.cmp(&right.provider));
+    let mut fragments = Vec::new();
+    for candidate in candidates {
+        partition_source_question(model, intent, candidate, documents, &mut fragments)?;
+    }
     let mut batches = Vec::new();
     let mut pending = Vec::new();
-    for candidate in candidates {
+    for candidate in &fragments {
         pending.push(candidate);
-        let issued = issue_input_source_batch(model, intent, &pending, documents)?;
-        if o200k_token_count(&issued.body) > MAX_BATCH_TOKENS {
+        if o200k_token_count(&issue_input_source_batch(model, intent, &pending, documents)?.body)
+            > MAX_BATCH_TOKENS
+        {
             let last = pending.pop().expect("just pushed source candidate");
             ensure!(
                 !pending.is_empty(),
-                "one Jev input-source question exceeds packet token budget"
+                "validated source fragment exceeds packet budget"
             );
             batches.push(issue_input_source_batch(
                 model, intent, &pending, documents,
@@ -210,7 +237,47 @@ pub fn issue_input_source_batches(
             model, intent, &pending, documents,
         )?);
     }
+    ensure!(
+        batches
+            .iter()
+            .all(|b| o200k_token_count(&b.body) <= MAX_BATCH_TOKENS),
+        "input-source packet exceeds budget"
+    );
     Ok(batches)
+}
+
+fn partition_source_question(
+    model: &str,
+    intent: &IntentProvenance,
+    mut candidate: InputSourceCandidate,
+    documents: &BTreeMap<CapabilityRef, CapabilityDocument>,
+    out: &mut Vec<InputSourceCandidate>,
+) -> Result<()> {
+    let count = candidate.bindings.len() + candidate.membership.len();
+    ensure!(count > 0, "input-source candidate has no typed evidence");
+    let issued = issue_input_source_batch(model, intent, &[&candidate], documents)?;
+    if o200k_token_count(&issued.body) <= MAX_BATCH_TOKENS {
+        out.push(candidate);
+        return Ok(());
+    }
+    ensure!(count > 1, "input-source {}/{} has one indivisible witness whose intent and capability cards exceed the {} token packet limit; reduce catalog card or intent size before retrying", candidate.provider.catalog, candidate.provider.capability, MAX_BATCH_TOKENS);
+    let midpoint = count / 2;
+    let mut right = InputSourceCandidate {
+        provider: candidate.provider.clone(),
+        projection: candidate.projection.clone(),
+        bindings: Vec::new(),
+        membership: Vec::new(),
+    };
+    if midpoint < candidate.bindings.len() {
+        right.bindings = candidate.bindings.split_off(midpoint);
+        right.membership = std::mem::take(&mut candidate.membership);
+    } else {
+        right.membership = candidate
+            .membership
+            .split_off(midpoint - candidate.bindings.len());
+    }
+    partition_source_question(model, intent, candidate, documents, out)?;
+    partition_source_question(model, intent, right, documents, out)
 }
 
 fn issue_input_source_batch(
@@ -219,52 +286,68 @@ fn issue_input_source_batch(
     candidates: &[&InputSourceCandidate],
     documents: &BTreeMap<CapabilityRef, CapabilityDocument>,
 ) -> Result<IssuedInputSourceBatch> {
+    let references: BTreeSet<_> = candidates
+        .iter()
+        .flat_map(|candidate| {
+            std::iter::once(&candidate.provider)
+                .chain(candidate.bindings.iter().map(|binding| &binding.consumer))
+                .chain(candidate.membership.iter().map(|witness| &witness.source))
+        })
+        .collect();
+    let ids: BTreeMap<_, _> = references
+        .iter()
+        .enumerate()
+        .map(|(i, reference)| (*reference, format!("c{i}")))
+        .collect();
+    let cards: BTreeMap<_, _> = references.into_iter().map(|reference| {
+        let doc = documents.get(reference).context("projected source has no capability document")?;
+        // Hashes and related-entity retrieval metadata are not judgment evidence.
+        Ok((ids[reference].clone(), json!({"catalog": reference.catalog, "capability": reference.capability, "entity": doc.entity, "operation": doc.operation, "collection": doc.collection})))
+    }).collect::<Result<_>>()?;
     let mut questions = serde_json::Map::new();
     let mut bindings = BTreeMap::new();
     for (index, candidate) in candidates.iter().enumerate() {
         let key = format!("q{index}");
-        let provider = documents
-            .get(&candidate.provider)
-            .context("projected input source has no capability document")?;
-        let mut consumer_refs = BTreeSet::new();
-        for binding in &candidate.bindings {
-            consumer_refs.insert(binding.consumer.clone());
-        }
-        let consumers: Vec<_> = consumer_refs
-            .iter()
-            .map(|reference| {
-                documents
-                    .get(reference)
-                    .context("projected consumer has no capability document")
-            })
-            .collect::<Result<_>>()?;
-        bindings.insert(key.clone(), candidate.provider.clone());
-        questions.insert(
-            key,
-            json!({
-                "type":"choice",
-                "instructions": format!(
-                    "Select or eliminate this host-projected input-source capability. The CGS type system has already established that each listed producer output can lawfully populate the listed required consumer input; do not reconsider type compatibility. Choose `required_source` only when the intent provenance requires values to be discovered or classified and this producer's documented domain meaning is suitable for at least one listed input. This includes resolving an explicit qualifier, category, membership, status, or identity before the final effect. Choose `not_required` when the user already supplies the values, the producer's domain meaning is unrelated, or the operation is not needed for this intent. Choose `uncertain` only when the intent provenance and cards do not establish either result. Judge the producer as an input source, not as the final requested effect.\n\nIntent provenance (root to current):\n{}\n\nConsumer capabilities:\n{}\n\nProjected typed bindings:\n{}\n\nProducer capability:\n{}",
-                    intent.judgment_context()?,
-                    serde_json::to_string(&consumers)?,
-                    serde_json::to_string(&candidate.bindings)?,
-                    serde_json::to_string(provider)?,
-                ),
-                "criteria": {
-                    "required_source":"The intent provenance requires discovered or classified values that this producer can supply to at least one projected consumer input.",
-                    "not_required":"The values are supplied without this producer, or its documented domain meaning is unrelated to the intent.",
-                    "uncertain":"The intent and cards do not establish whether this producer is required."
-                }
-            }),
+        let evidence = json!({
+            "provider": ids[&candidate.provider],
+            "entity_projection": candidate.projection,
+            "input_bindings": candidate.bindings.iter().map(|binding| json!({
+                "consumer": ids[&binding.consumer], "input": binding.input,
+                "output_field": binding.output_field, "collect": binding.collect,
+            })).collect::<Vec<_>>(),
+            "membership": candidate.membership.iter().map(|witness| json!({
+                "source": ids[&witness.source], "source_identity": witness.source_identity,
+                "provider_identity": witness.provider_identity,
+            })).collect::<Vec<_>>(),
+        });
+        bindings.insert(
+            key.clone(),
+            SourceQuestion {
+                id: SourceQuestionId(content_hash(serde_json::to_string(candidate)?.as_bytes())),
+                provider: candidate.provider.clone(),
+            },
         );
+        questions.insert(key, json!({
+            "type": "choice",
+            "instructions": format!("Apply state.input_source_rule to this host-projected input-source evidence fragment. Resolve cN references through state.capabilities. Judge only the listed witnesses; other fragments may establish other reasons to select this provider. Evidence: {}", evidence),
+            "criteria": {
+                "required_source": "At least one listed witness supplies required discovered values or establishes a required identity membership test.",
+                "not_required": "None of the listed witnesses requires this provider for the intent.",
+                "uncertain": "No witness is established as required, but at least one remains uncertain."
+            }
+        }));
     }
     let body = serde_json::to_string(&json!({
         "model": model,
-        "state": {"intent_provenance": intent},
+        "state": {
+            "intent_provenance": intent,
+            "input_source_rule": "Intent provenance is ordered root to current. The current need governs; ancestors provide context, not immutable constraints. Explicit revisions may replace earlier goals. Select a provider when its documented domain meaning is suitable for a listed typed witness required by the intent. Input bindings supply required arguments or typed entity receivers. The entity projection distinguishes direct fields, fields obtainable by identity-preserving hydration, and unavailable fields; it does not prove successful retrieval. A typed binding proves structural compatibility, not semantic suitability. For membership, identify the precise collection and fact required by the current need. Shared identity fields do not make collections equivalent: absence in a subset does not establish absence in its superset. Exact identity and complete successful retrieval are required for absence; fuzzy search rank is not identity. Neither witness proves the task condition is already satisfied. Resolve explicit qualifiers, categories, membership, status and identity before effects. Values already supplied by the user need no discovery. Judge the provider as an input source, not the final effect.",
+            "capabilities": cards,
+        },
         "questions": questions,
     }))?;
     Ok(IssuedInputSourceBatch {
-        cache_key: content_hash(format!("jev-input-source-match-v2\n{body}").as_bytes()),
+        cache_key: content_hash(format!("jev-input-source-match-v6\n{body}").as_bytes()),
         body,
         model: model.to_owned(),
         bindings,
@@ -286,7 +369,7 @@ fn issue_batch(
         questions.insert(key, json!({
             "type":"choice",
             "instructions": format!(
-                "Classify this capability against the explicit affirmative effect slot `{}`. The host has already determined that this slot is required work; do not decide that it is optional because another branch or step is also requested. The provenance nodes run from root to current; each derived intent retains the qualifiers, conditions, restrictions, and ordering inherited from its ancestors. Omission in a later node does not erase an inherited constraint. Use this ancestry to interpret the current slot. Choose `direct_match` only when the capability directly fulfils this slot's requested effect or requested information outcome. Judge this slot only and do not judge sufficiency for the whole intent. Choose `does_not_match` for different or conflicting work. Choose `uncertain` only when the slot, intent provenance, and card do not establish either relationship. Do not infer prerequisite or selector work here; the host projects typed input-source candidates for matched capabilities independently of unresolved slots.\n\nIntent provenance (root to current):\n{}\n\nAffirmative effect slot:\n{}\n\nCapability card:\n{}",
+                "Classify this capability against the explicit affirmative effect slot `{}`. The host has already determined that this slot is required work; do not decide that it is optional because another branch or step is also requested. The current discovery need governs. Provenance supplies context, not immutable constraints; explicit revisions may replace earlier goals. Judge operation applicability from its receiver, inputs, documented restrictions and effect. The collection used to select receivers is a separate question and must not become an operation restriction. For a requested read, use collection evidence to distinguish the information it actually establishes. Choose `direct_match` only when the capability directly fulfils this slot's requested effect or requested information outcome. Judge this slot only and do not judge sufficiency for the whole intent. Choose `does_not_match` for different or conflicting work. Choose `uncertain` only when the slot, intent provenance, and card do not establish either relationship. Do not infer prerequisite or selector work here; the host projects typed input-source candidates for matched capabilities independently of unresolved slots.\n\nIntent provenance (root to current):\n{}\n\nAffirmative effect slot:\n{}\n\nCapability card:\n{}",
                 slot.id,
                 intent_provenance.judgment_context()?,
                 serde_json::to_string(slot)?,
@@ -308,7 +391,7 @@ fn issue_batch(
         "questions": questions,
     }))?;
     Ok(IssuedBatch {
-        cache_key: content_hash(format!("jev-effect-slot-match-v2\n{body}").as_bytes()),
+        cache_key: content_hash(format!("jev-effect-slot-match-v3\n{body}").as_bytes()),
         body,
         model: model.to_owned(),
         bindings,
@@ -316,14 +399,25 @@ fn issue_batch(
 }
 
 fn card(index: usize, capability: &RetrievedCapability) -> Value {
-    let text = &capability.document.text;
-    json!({
+    let document = &capability.document;
+    let mut card = json!({
         "id": format!("c{index}"),
-        "capability": capability.document.capability,
-        "entity": capability.document.entity,
-        "description": text,
-        "related_entities": capability.document.related_entities,
-    })
+        "capability": document.capability,
+        "entity": document.entity,
+        "operation": document.operation,
+    });
+    // Read outcomes depend on collection meaning. Effects do not inherit the
+    // selection semantics of whichever collection supplied their receiver.
+    if matches!(
+        document.operation.kind,
+        plasm_core::schema::CapabilityKind::Query
+            | plasm_core::schema::CapabilityKind::Search
+            | plasm_core::schema::CapabilityKind::Get
+    ) {
+        card["collection"] = serde_json::to_value(&document.collection)
+            .expect("collection evidence is serializable");
+    }
+    card
 }
 
 pub fn decode_batch(issued: &IssuedBatch, raw: &str) -> Result<Vec<CapabilityIntentMatch>> {
@@ -451,7 +545,7 @@ pub fn finish(
 pub fn decode_input_source_batch(
     issued: &IssuedInputSourceBatch,
     raw: &str,
-) -> Result<Vec<InputSourceMatch>> {
+) -> Result<Vec<InputSourceAnswer>> {
     let response: DecisionsResponse =
         serde_json::from_str(raw).context("malformed Jev Decisions envelope")?;
     ensure!(
@@ -464,7 +558,7 @@ pub fn decode_input_source_batch(
         "Jev response has missing or extra input-source answers"
     );
     let mut matches = Vec::new();
-    for (question, provider) in &issued.bindings {
+    for (question, source_question) in &issued.bindings {
         let answer = response
             .answers
             .get(question)
@@ -501,15 +595,18 @@ pub fn decode_input_source_batch(
             "uncertain" => InputSourceChoice::Uncertain,
             _ => unreachable!(),
         };
-        matches.push(InputSourceMatch {
-            provider: provider.clone(),
-            choice,
-            probabilities: answer
-                .probabilities
-                .iter()
-                .map(|(key, probability)| (key.clone(), probability / total))
-                .collect(),
-            confidence: answer.confidence,
+        matches.push(InputSourceAnswer {
+            question_id: source_question.id.clone(),
+            matched: InputSourceMatch {
+                provider: source_question.provider.clone(),
+                choice,
+                probabilities: answer
+                    .probabilities
+                    .iter()
+                    .map(|(key, probability)| (key.clone(), probability / total))
+                    .collect(),
+                confidence: answer.confidence,
+            },
         });
     }
     Ok(matches)
@@ -523,22 +620,65 @@ fn resolved_model_matches(requested: &str, resolved: &str) -> bool {
 }
 
 pub fn finish_input_sources(
-    matches: Vec<InputSourceMatch>,
+    mut answers: Vec<InputSourceAnswer>,
     candidates: &[InputSourceCandidate],
+    batches: &[IssuedInputSourceBatch],
 ) -> Result<InputSourceMatchReceipt> {
-    let expected: BTreeSet<_> = candidates
+    let expected: BTreeMap<_, _> = batches
         .iter()
-        .map(|candidate| &candidate.provider)
+        .flat_map(|batch| batch.bindings.values())
+        .map(|question| (&question.id, &question.provider))
         .collect();
-    let actual: BTreeSet<_> = matches.iter().map(|matched| &matched.provider).collect();
+    let actual: BTreeMap<_, _> = answers
+        .iter()
+        .map(|answer| (&answer.question_id, &answer.matched.provider))
+        .collect();
     ensure!(
-        actual == expected && actual.len() == matches.len(),
+        actual == expected && actual.len() == answers.len(),
+        "Jev input-source receipt has missing, duplicate or foreign evidence answers"
+    );
+    answers.sort_by(|a, b| a.question_id.cmp(&b.question_id));
+    let mut grouped: BTreeMap<CapabilityRef, Vec<InputSourceMatch>> = BTreeMap::new();
+    for answer in answers {
+        grouped
+            .entry(answer.matched.provider.clone())
+            .or_default()
+            .push(answer.matched);
+    }
+    ensure!(
+        grouped.keys().collect::<BTreeSet<_>>() == candidates.iter().map(|c| &c.provider).collect(),
         "Jev input-source receipt does not cover exactly the projected candidates"
     );
+    let priority = |choice: &InputSourceChoice| match choice {
+        InputSourceChoice::RequiredSource => 2,
+        InputSourceChoice::Uncertain => 1,
+        InputSourceChoice::NotRequired => 0,
+    };
+    // Existential selection: any positive witness selects, otherwise uncertainty
+    // survives, and rejection requires every fragment to reject. Probability and
+    // confidence remain those of a decisive fragment, not a fabricated aggregate.
+    // All-negative groups retain the least confident rejection.
+    let matches: Vec<_> = grouped
+        .into_values()
+        .map(|answers| {
+            answers
+                .into_iter()
+                .max_by(|a, b| {
+                    priority(&a.choice).cmp(&priority(&b.choice)).then_with(|| {
+                        if a.choice == InputSourceChoice::NotRequired {
+                            b.confidence.total_cmp(&a.confidence)
+                        } else {
+                            a.confidence.total_cmp(&b.confidence)
+                        }
+                    })
+                })
+                .expect("nonempty answer group")
+        })
+        .collect();
     let selected = matches
         .iter()
-        .filter(|matched| matches!(matched.choice, InputSourceChoice::RequiredSource))
-        .map(|matched| matched.provider.clone())
+        .filter(|m| m.choice == InputSourceChoice::RequiredSource)
+        .map(|m| m.provider.clone())
         .collect();
     Ok(InputSourceMatchReceipt { matches, selected })
 }
@@ -568,6 +708,14 @@ mod tests {
                 capability: "balance.read".into(),
                 entity: "Balance".into(),
                 text: "Reads the current account balance.".into(),
+                operation: plasm_core::catalog_discovery::OperationEvidence {
+                    kind: plasm_core::schema::CapabilityKind::Query,
+                    receiver: None,
+                    contract: "Read abstract records".into(),
+                },
+                collection: plasm_core::catalog_discovery::CollectionEvidence {
+                    meaning: "Abstract records".into(),
+                },
                 text_hash: "fixture".into(),
                 related_entities: vec![],
             },
@@ -586,6 +734,41 @@ mod tests {
                 relation_truncated: 0,
             },
         )
+    }
+
+    #[test]
+    fn effects_use_operation_evidence_reads_also_use_collection_evidence() {
+        let (_, mut retrieval) = packet();
+        let candidate = &mut retrieval.candidates[0];
+        candidate.document.operation.kind = plasm_core::schema::CapabilityKind::Action;
+        candidate.document.operation.contract = "Activate a record only when suspended".into();
+        candidate.document.collection.meaning = "Only records in the preferred collection".into();
+        let effect = card(0, candidate);
+        assert!(effect.get("collection").is_none());
+        assert!(effect.to_string().contains("only when suspended"));
+        assert!(!effect.to_string().contains("preferred collection"));
+        candidate.document.operation.kind = plasm_core::schema::CapabilityKind::Query;
+        assert!(card(0, candidate)
+            .to_string()
+            .contains("preferred collection"));
+    }
+
+    #[test]
+    fn current_need_can_replace_ancestor_goals() {
+        let (slots, retrieval) = packet();
+        let intent = IntentProvenance::from_turns([
+            "Activate preferred records".to_owned(),
+            "Instead, read the current account balance".to_owned(),
+        ])
+        .unwrap();
+        let batches = issue_batches(JEV_MODEL, &intent, &slots, &retrieval).unwrap();
+        assert!(batches[0]
+            .body
+            .contains("Instead, read the current account balance"));
+        assert!(batches[0]
+            .body
+            .contains("explicit revisions may replace earlier goals"));
+        assert!(!batches[0].body.contains("inherited constraint"));
     }
 
     #[test]
@@ -777,6 +960,78 @@ mod tests {
     }
 
     #[test]
+    fn input_source_packet_teaches_membership_without_claiming_an_input_binding() {
+        use plasm_core::prerequisites::{InputSourceMembership, RowIdentity};
+        let source = CapabilityRef {
+            catalog: "matrix".into(),
+            capability: "records".into(),
+        };
+        let provider = CapabilityRef {
+            catalog: "directory".into(),
+            capability: "members".into(),
+        };
+        let candidates = vec![InputSourceCandidate {
+            projection: plasm_core::entity_projection::EntityReadProjection {
+                entity: "Record".into(),
+                fields: Default::default(),
+            },
+            provider: provider.clone(),
+            bindings: Vec::new(),
+            membership: vec![InputSourceMembership {
+                source: source.clone(),
+                source_identity: RowIdentity::Field {
+                    field: "email".into(),
+                },
+                provider_identity: RowIdentity::Field {
+                    field: "email".into(),
+                },
+            }],
+        }];
+        let documents = [source, provider]
+            .into_iter()
+            .map(|reference| {
+                let document = CapabilityDocument {
+                    capability: reference.capability.clone(),
+                    entity: "Record".into(),
+                    text: format!("Read identities from {}", reference.catalog),
+                    operation: plasm_core::catalog_discovery::OperationEvidence {
+                        kind: plasm_core::schema::CapabilityKind::Query,
+                        receiver: None,
+                        contract: format!("Read identities from {}", reference.catalog),
+                    },
+                    collection: plasm_core::catalog_discovery::CollectionEvidence {
+                        meaning: "Abstract records".into(),
+                    },
+                    text_hash: "fixture".into(),
+                    related_entities: vec![],
+                };
+                (reference, document)
+            })
+            .collect();
+        let batch = issue_input_source_batches(
+            JEV_MODEL,
+            &provenance("Select records absent from the directory"),
+            &candidates,
+            &documents,
+        )
+        .unwrap();
+        let body: serde_json::Value = serde_json::from_str(&batch[0].body).unwrap();
+        let instructions = body["questions"]["q0"]["instructions"].as_str().unwrap();
+        assert!(instructions.contains("membership"));
+        assert!(body["state"]["input_source_rule"]
+            .as_str()
+            .unwrap()
+            .contains("absence in a subset does not establish absence in its superset"));
+        assert!(body["state"]["capabilities"]
+            .to_string()
+            .contains("Read identities from matrix"));
+        assert!(body["state"]["capabilities"]
+            .to_string()
+            .contains("Read identities from directory"));
+        assert!(instructions.contains("\"input_bindings\":[]"));
+    }
+
+    #[test]
     fn input_source_packet_asks_jev_to_select_a_projected_edge() {
         let consumer = CapabilityRef {
             catalog: "ledger".into(),
@@ -787,12 +1042,19 @@ mod tests {
             capability: "contact_query".into(),
         };
         let candidates = vec![InputSourceCandidate {
+            projection: plasm_core::entity_projection::EntityReadProjection {
+                entity: "Record".into(),
+                fields: Default::default(),
+            },
+            membership: Vec::new(),
             provider: provider.clone(),
             bindings: vec![plasm_core::prerequisites::InputSourceBinding {
                 consumer: consumer.clone(),
-                input: plasm_core::prerequisites::InputPath {
-                    lane: plasm_core::prerequisites::InputLane::Payload,
-                    path: vec!["participant_emails".into()],
+                input: plasm_core::prerequisites::InputSourceTarget::Argument {
+                    input: plasm_core::prerequisites::InputPath {
+                        lane: plasm_core::prerequisites::InputLane::Payload,
+                        path: vec!["participant_emails".into()],
+                    },
                 },
                 provider: provider.clone(),
                 output_field: "email".into(),
@@ -803,6 +1065,14 @@ mod tests {
             capability: capability.into(),
             entity: entity.into(),
             text: text.into(),
+            operation: plasm_core::catalog_discovery::OperationEvidence {
+                kind: plasm_core::schema::CapabilityKind::Query,
+                receiver: None,
+                contract: "Read abstract records".into(),
+            },
+            collection: plasm_core::catalog_discovery::CollectionEvidence {
+                meaning: "Abstract records".into(),
+            },
             text_hash: "fixture".into(),
             related_entities: vec![],
         };
@@ -838,7 +1108,257 @@ mod tests {
         assert!(batch.body.contains("Intent provenance"));
         let raw = json!({"model":"typesafe/jev-1.13-20260917","provider":"TypeSafe","answers":{"q0":{"type":"choice","choice":"required_source","probabilities":{"required_source":0.97,"not_required":0.02,"uncertain":0.01},"confidence":0.97}}}).to_string();
         let matches = decode_input_source_batch(&batch, &raw).unwrap();
-        let receipt = finish_input_sources(matches, &candidates).unwrap();
+        let receipt = finish_input_sources(matches, &candidates, &[batch]).unwrap();
         assert_eq!(receipt.selected, vec![provider]);
+    }
+    #[test]
+    fn oversized_membership_candidate_is_partitioned_without_loss() {
+        use plasm_core::prerequisites::{InputSourceMembership, RowIdentity};
+        let provider = CapabilityRef {
+            catalog: "matrix".into(),
+            capability: "directory".into(),
+        };
+        let source = CapabilityRef {
+            catalog: "matrix".into(),
+            capability: "records".into(),
+        };
+        let candidate = InputSourceCandidate {
+            projection: plasm_core::entity_projection::EntityReadProjection {
+                entity: "Record".into(),
+                fields: Default::default(),
+            },
+            provider: provider.clone(),
+            bindings: vec![],
+            membership: (0..1500)
+                .map(|i| InputSourceMembership {
+                    source: source.clone(),
+                    source_identity: RowIdentity::Field {
+                        field: format!("identity_{i}").into(),
+                    },
+                    provider_identity: RowIdentity::Field {
+                        field: "email".into(),
+                    },
+                })
+                .collect(),
+        };
+        let documents = [provider, source]
+            .into_iter()
+            .map(|reference| {
+                let document = CapabilityDocument {
+                    capability: reference.capability.clone(),
+                    entity: "Record".into(),
+                    text: "Read identity-bearing rows".into(),
+                    operation: plasm_core::catalog_discovery::OperationEvidence {
+                        kind: plasm_core::schema::CapabilityKind::Query,
+                        receiver: None,
+                        contract: "Read abstract records".into(),
+                    },
+                    collection: plasm_core::catalog_discovery::CollectionEvidence {
+                        meaning: "Abstract records".into(),
+                    },
+                    text_hash: "fixture".into(),
+                    related_entities: vec![],
+                };
+                (reference, document)
+            })
+            .collect();
+        let batches = issue_input_source_batches(
+            JEV_MODEL,
+            &provenance("Find records absent from directory"),
+            &[candidate],
+            &documents,
+        )
+        .unwrap();
+        assert!(batches.len() > 1);
+        for batch in &batches {
+            assert!(o200k_token_count(&batch.body) <= MAX_BATCH_TOKENS);
+        }
+        let bodies = batches
+            .iter()
+            .map(|b| b.body.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        for i in 0..1500 {
+            assert_eq!(bodies.matches(&format!("identity_{i}\\\"")).count(), 1);
+        }
+    }
+    fn source_fixture(
+        count: usize,
+    ) -> (
+        InputSourceCandidate,
+        BTreeMap<CapabilityRef, CapabilityDocument>,
+    ) {
+        use plasm_core::prerequisites::{InputSourceMembership, RowIdentity};
+        let provider = CapabilityRef {
+            catalog: "matrix".into(),
+            capability: "directory".into(),
+        };
+        let source = CapabilityRef {
+            catalog: "matrix".into(),
+            capability: "records".into(),
+        };
+        let candidate = InputSourceCandidate {
+            projection: plasm_core::entity_projection::EntityReadProjection {
+                entity: "Record".into(),
+                fields: Default::default(),
+            },
+            provider: provider.clone(),
+            bindings: vec![],
+            membership: (0..count)
+                .map(|i| InputSourceMembership {
+                    source: source.clone(),
+                    source_identity: RowIdentity::Field {
+                        field: format!("identity_{i}").into(),
+                    },
+                    provider_identity: RowIdentity::Field {
+                        field: "email".into(),
+                    },
+                })
+                .collect(),
+        };
+        let documents = [provider, source]
+            .into_iter()
+            .map(|reference| {
+                let document = CapabilityDocument {
+                    capability: reference.capability.clone(),
+                    entity: "Record".into(),
+                    text: "Read identity-bearing rows".into(),
+                    operation: plasm_core::catalog_discovery::OperationEvidence {
+                        kind: plasm_core::schema::CapabilityKind::Query,
+                        receiver: None,
+                        contract: "Read abstract records".into(),
+                    },
+                    collection: plasm_core::catalog_discovery::CollectionEvidence {
+                        meaning: "Abstract records".into(),
+                    },
+                    text_hash: "retrieval_metadata_not_for_jev".into(),
+                    related_entities: vec![],
+                };
+                (reference, document)
+            })
+            .collect();
+        (candidate, documents)
+    }
+
+    #[test]
+    fn source_packet_interns_cards_and_rejects_indivisible_oversize() {
+        let (candidate, mut documents) = source_fixture(1);
+        let source = candidate.membership[0].source.clone();
+        documents.get_mut(&source).unwrap().collection.meaning =
+            "UNIQUE_CARD_MARKER ".to_owned() + &"Detailed identity semantics. ".repeat(700);
+        let mut candidates = vec![];
+        for i in 0..8 {
+            let mut next = candidate.clone();
+            next.provider.capability = format!("directory_{i}");
+            documents.insert(
+                next.provider.clone(),
+                documents[&candidate.provider].clone(),
+            );
+            candidates.push(next);
+        }
+        let batches = issue_input_source_batches(
+            JEV_MODEL,
+            &provenance("Find absent identities"),
+            &candidates,
+            &documents,
+        )
+        .unwrap();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].body.matches("UNIQUE_CARD_MARKER").count(), 1);
+        assert!(!batches[0].body.contains("retrieval_metadata_not_for_jev"));
+        let repeated_cards =
+            candidates.len() * o200k_token_count(&documents[&source].collection.meaning);
+        let compact = o200k_token_count(&batches[0].body);
+        eprintln!("source card repetition alone: {repeated_cards} tokens; full compact packet: {compact} tokens");
+        assert!(compact < repeated_cards / 2);
+        documents.get_mut(&source).unwrap().collection.meaning =
+            "Very large indivisible domain semantics. ".repeat(6000);
+        let error = issue_input_source_batches(
+            JEV_MODEL,
+            &provenance("Find absent identities"),
+            &candidates,
+            &documents,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("indivisible witness"));
+    }
+
+    #[test]
+    fn oversized_source_document_set_is_partitioned_and_every_card_retained() {
+        let (mut candidate, mut documents) = source_fixture(40);
+        for (i, witness) in candidate.membership.iter_mut().enumerate() {
+            let mut doc = documents[&witness.source].clone();
+            witness.source.capability = format!("records_{i}");
+            doc.capability = witness.source.capability.clone();
+            doc.collection.meaning = format!("CARD_MARKER_{i} ")
+                + &"Detailed selection semantics for this domain. ".repeat(250);
+            documents.insert(witness.source.clone(), doc);
+        }
+        let batches = issue_input_source_batches(
+            JEV_MODEL,
+            &provenance("Find absent identities"),
+            &[candidate],
+            &documents,
+        )
+        .unwrap();
+        assert!(batches.len() > 1);
+        let mut cards = BTreeSet::new();
+        for batch in batches {
+            assert!(o200k_token_count(&batch.body) <= MAX_BATCH_TOKENS);
+            let body: Value = serde_json::from_str(&batch.body).unwrap();
+            for card in body["state"]["capabilities"].as_object().unwrap().values() {
+                if card["capability"].as_str().unwrap().starts_with("records_") {
+                    assert!(cards.insert(card["capability"].as_str().unwrap().to_owned()));
+                }
+            }
+        }
+        assert_eq!(cards.len(), 40);
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(32))]
+        #[test]
+        fn source_fragment_reduction_is_complete_and_order_independent(choices in proptest::collection::vec(0u8..3, 1..24)) {
+            let (candidate, _) = source_fixture(1);
+            let question = |i: usize| SourceQuestion { id: SourceQuestionId(format!("fragment_{i}")), provider: candidate.provider.clone() };
+            let batch = IssuedInputSourceBatch {
+                body: String::new(), cache_key: String::new(), model: JEV_MODEL.into(),
+                bindings: (0..choices.len()).map(|i| (format!("q{i}"), question(i))).collect(),
+            };
+            let names = ["not_required", "uncertain", "required_source"];
+            let envelope = json!({"model": JEV_MODEL, "provider": "TypeSafe", "answers": choices.iter().enumerate().map(|(i, choice)| {
+                (format!("q{i}"), json!({"type": "choice", "choice": names[*choice as usize], "probabilities": names.iter().map(|name| (name.to_string(), if *name == names[*choice as usize] {1.0} else {0.0})).collect::<BTreeMap<_, _>>(), "confidence": (i + 1) as f64 / (choices.len() + 1) as f64}))
+            }).collect::<BTreeMap<_, _>>()});
+            let mut answers = decode_input_source_batch(&batch, &envelope.to_string()).unwrap();
+            let receipt = finish_input_sources(answers.clone(), std::slice::from_ref(&candidate), std::slice::from_ref(&batch)).unwrap();
+            let expected = match *choices.iter().max().unwrap() { 2 => InputSourceChoice::RequiredSource, 1 => InputSourceChoice::Uncertain, _ => InputSourceChoice::NotRequired };
+            proptest::prop_assert_eq!(&receipt.matches[0].choice, &expected);
+            proptest::prop_assert_eq!(receipt.selected.is_empty(), expected != InputSourceChoice::RequiredSource);
+            let winning = *choices.iter().max().unwrap();
+            let decisive = if winning == 0 { 0 } else { choices.iter().rposition(|choice| *choice == winning).unwrap() };
+            proptest::prop_assert_eq!(receipt.matches[0].confidence, (decisive + 1) as f64 / (choices.len() + 1) as f64);
+
+            answers.reverse();
+            proptest::prop_assert_eq!(finish_input_sources(answers.clone(), std::slice::from_ref(&candidate), std::slice::from_ref(&batch)).unwrap(), receipt.clone());
+            let roundtrip: InputSourceMatchReceipt = serde_json::from_str(&serde_json::to_string(&receipt).unwrap()).unwrap();
+            proptest::prop_assert_eq!(roundtrip, receipt);
+            let removed = answers.pop().unwrap();
+            proptest::prop_assert!(finish_input_sources(answers.clone(), std::slice::from_ref(&candidate), std::slice::from_ref(&batch)).is_err());
+            answers.push(removed.clone()); answers.push(removed);
+            proptest::prop_assert!(finish_input_sources(answers, &[candidate], &[batch]).is_err());
+        }
+    }
+    #[test]
+    fn oversized_final_slot_question_cannot_escape_after_batch_flush() {
+        let (slots, mut retrieval) = packet();
+        let mut oversized = retrieval.candidates[0].clone();
+        oversized.id = "rev/z.read".into();
+        oversized.reference.capability = "z.read".into();
+        oversized.document.operation.contract =
+            "Large domain card with many details. ".repeat(6000);
+        retrieval.candidates.push(oversized);
+        assert!(
+            issue_batches(JEV_MODEL, &provenance("Read balances"), &slots, &retrieval).is_err()
+        );
     }
 }
