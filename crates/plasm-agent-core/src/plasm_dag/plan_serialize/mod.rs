@@ -21,5 +21,5 @@ pub(in crate::plasm_dag) use surface_infer::{
 #[allow(unused_imports)]
 pub(in crate::plasm_dag) use template_uses::{
     collect_expr_for_template_uses, collect_template_uses_from_expr, dedupe_inputs, dedupe_uses,
-    relation_plan_uses_result, stamp_plan_uses_result_qualified_entities,
+    relation_plan_uses_result, result_use, stamp_plan_uses_result_qualified_entities,
 };

@@ -237,7 +237,7 @@ fn surface_read_constraints(surface: &ValidatedSurfaceNode) -> BTreeMap<String, 
             .map(|s| s.as_str().to_string())
             .unwrap_or_default();
         if let PlanValue::Literal { value } = &p.value {
-            if let Some(s) = json_scalar_to_string(value) {
+            if let Some(s) = json_scalar_to_string(&value.to_wire()) {
                 out.insert(field, s);
             }
         }

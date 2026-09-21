@@ -490,7 +490,6 @@ fn validated_node_from_raw(
                 qualified_entity: node.qualified_entity.clone(),
                 ir,
                 ir_template,
-                display_expr: node.expr.clone(),
                 effect_class: node.effect_class,
                 result_shape: node.result_shape,
                 projection: node.projection.clone(),

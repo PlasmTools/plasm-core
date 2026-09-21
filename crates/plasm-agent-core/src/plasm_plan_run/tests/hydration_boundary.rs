@@ -380,3 +380,53 @@ fn boundary_union_retains_identity_for_following_relation() {
         );
     });
 }
+
+proptest::proptest! {
+    #![proptest_config(ProptestConfig::with_cases(24))]
+    #[test]
+    fn sibling_sample_preserves_source_rows_across_serialized_execution(
+        ids in prop::collection::vec(1i64..20, 2..30), cap in 1usize..8, bounded_source in any::<bool>(),
+    ) {
+        on_runtime(async move {
+            let boundary=if bounded_source {format!(" | take {}",cap+2)} else {String::new()};
+            let program=format!("auth = Session.login()\nsaved = SavedNote{{access_token=auth.access_token}}{boundary}\nsample = saved | take {cap}\nhigh = saved | order by note_id desc | take {cap}\nsaved, sample, high");
+            let result=run_case(&program,"sample-token".into(),ids.clone(),false,false).await.expect("shared read");
+            let cgs=session().cgs;
+            let source=if bounded_source {&ids[..ids.len().min(cap+2)]} else {ids.as_slice()};
+            let mut high=source.to_vec();high.sort_by(|a,b|b.cmp(a));high.truncate(cap);
+            for (name, expected) in [("saved",source),("sample",&source[..source.len().min(cap)]),("high",high.as_slice())] {
+                let step=result.return_steps.iter().find(|s|s.name.as_deref()==Some(name)).expect("returned binding");
+                let actual:Vec<_>=step.result.entities.iter().map(|row|plasm_runtime::entity_to_agent_row_json(row,Some(&cgs))["note_id"].as_i64().unwrap()).collect();
+                assert_eq!(actual,expected,"{name}: identity, order, multiplicity and integer type");
+            }
+        });
+    }
+}
+
+#[test]
+fn boundary_fanout_above_one_thousand_survives_compile_serde_and_execution() {
+    on_runtime(async {
+        let result = run_case(
+            "auth = Session.login()\nsaved = SavedNote{access_token=auth.access_token}\nnotes = saved => Note(_.note_id)\nnotes",
+            "opaque-token".into(),
+            (1..=1002).collect(), false, false,
+        ).await.expect("large fanout must execute without a trace-index panic");
+        let step = result
+            .return_steps
+            .iter()
+            .find(|step| step.name.as_deref() == Some("notes"))
+            .unwrap();
+        let cgs = session().cgs;
+        let actual: Vec<_> = step
+            .result
+            .entities
+            .iter()
+            .map(|row| {
+                plasm_runtime::entity_to_agent_row_json(row, Some(&cgs))["note_id"]
+                    .as_i64()
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(actual, (1..=1002).collect::<Vec<_>>());
+    });
+}

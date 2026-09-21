@@ -734,6 +734,7 @@ pub fn parse_row_filter_body(
     layers: &[CgsLayer<'_>],
     sym_map: Arc<dyn SymbolSession>,
     row_schema_fields: &[String],
+    program_nodes: &std::collections::BTreeSet<String>,
 ) -> Result<ParsedExpr, ParseError> {
     let span = crate::spans::parse_program(input.len());
     let _guard = span.enter();
@@ -746,6 +747,7 @@ pub fn parse_row_filter_body(
         });
     }
     let mut p = Parser::new_with_sym_map(input, LayerStack::borrowed(layers), sym_map);
+    p.program_nodes = Some(program_nodes);
     p.row_schema_fields = row_schema_fields.to_vec();
     let parsed = p.parse_expr()?;
     let remainder = p.classify_remainder();
@@ -3970,7 +3972,7 @@ impl<'a> Parser<'a> {
             return ParseRemainder::Empty;
         }
         let head = tail.chars().next().unwrap_or(' ');
-        if matches!(head, '{' | '.' | '[' | '(' | '~' | '=' | ')' | ',') {
+        if matches!(head, '{' | '.' | '[' | '(' | '~' | '=' | ')' | ',' | '|') {
             ParseRemainder::Syntax { at: self.pos, head }
         } else {
             ParseRemainder::Prose(tail.to_string())
@@ -5669,6 +5671,7 @@ mod tests {
             &stack,
             map,
             &[],
+            &std::collections::BTreeSet::new(),
         )
         .unwrap();
         let Expr::Query(q) = &r.expr else {
@@ -6625,7 +6628,14 @@ mod tests {
             return;
         }
         let expr = format!("{book_sym}{{library={lib_sym}(region=us-west, code=shared-shelf)}}");
-        let r = parse_row_filter_body(&expr, &stack, sym_map, &[]).expect("symbolic nested ctor");
+        let r = parse_row_filter_body(
+            &expr,
+            &stack,
+            sym_map,
+            &[],
+            &std::collections::BTreeSet::new(),
+        )
+        .expect("symbolic nested ctor");
         let Expr::Query(q) = &r.expr else {
             panic!("expected query");
         };

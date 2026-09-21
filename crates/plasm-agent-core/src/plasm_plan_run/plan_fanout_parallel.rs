@@ -33,17 +33,42 @@ pub(crate) fn combine_execution_source(
     }
 }
 
-#[must_use]
-pub(crate) fn plan_subline_index(node_index: usize, row_index: usize) -> usize {
-    const ROWS_PER_NODE: usize = 1000;
-    assert!(
-        row_index < ROWS_PER_NODE,
-        "plan fan-out row_index {row_index} must be < {ROWS_PER_NODE}"
-    );
-    node_index
-        .checked_mul(ROWS_PER_NODE)
-        .and_then(|base| base.checked_add(row_index))
-        .expect("plan subline trace index overflow")
+/// Structured fanout coordinate; row cardinality is independent of node identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct FanoutCoordinate {
+    node: usize,
+    row: usize,
+}
+
+impl FanoutCoordinate {
+    /// Injective Cantor pairing in a reserved high trace-index namespace. Ordinary
+    /// source lines retain their small source offsets. Values stay within the exact JSON/JS
+    /// integer range; overflow is rejected before jobs run.
+    fn trace_index(self) -> Result<usize, String> {
+        let node = self.node as u128;
+        let row = self.row as u128;
+        let diagonal = node + row;
+        let pair = diagonal
+            .checked_mul(diagonal + 1)
+            .and_then(|n| (n / 2).checked_add(row))
+            .filter(|n| *n < (1u128 << 52))
+            .and_then(|n| usize::try_from(n + (1u128 << 52)).ok())
+            .ok_or_else(|| {
+                format!(
+                    "fanout trace coordinate exceeds representable range: node={}, row={}",
+                    self.node, self.row
+                )
+            })?;
+        Ok(pair)
+    }
+}
+
+pub(crate) fn plan_subline_index(node_index: usize, row_index: usize) -> Result<usize, String> {
+    FanoutCoordinate {
+        node: node_index,
+        row: row_index,
+    }
+    .trace_index()
 }
 
 pub(crate) struct PlanLineJob {
@@ -242,7 +267,7 @@ pub(crate) fn push_verified_row_job(
     jobs.push(PlanLineJob {
         index: row_index,
         expr_label,
-        trace_line_index: plan_subline_index(node_index, row_index),
+        trace_line_index: plan_subline_index(node_index, row_index)?,
         parsed,
         source_identity: None,
     });
@@ -255,14 +280,15 @@ pub(crate) fn push_row_job(
     row_index: usize,
     expr_label: String,
     parsed: ParsedExpr,
-) {
+) -> Result<(), String> {
     jobs.push(PlanLineJob {
         index: row_index,
         expr_label,
-        trace_line_index: plan_subline_index(node_index, row_index),
+        trace_line_index: plan_subline_index(node_index, row_index)?,
         parsed,
         source_identity: None,
     });
+    Ok(())
 }
 
 pub(crate) fn push_row_job_with_source(
@@ -272,14 +298,15 @@ pub(crate) fn push_row_job_with_source(
     expr_label: String,
     parsed: ParsedExpr,
     source_identity: Option<String>,
-) {
+) -> Result<(), String> {
     jobs.push(PlanLineJob {
         index: row_index,
         expr_label,
-        trace_line_index: plan_subline_index(node_index, row_index),
+        trace_line_index: plan_subline_index(node_index, row_index)?,
         parsed,
         source_identity,
     });
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -974,5 +1001,32 @@ mod tests {
                 prop_assert_eq!(outcome.error.is_some(), failed_indices.contains(&expected_index));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod coordinate_laws {
+    use super::*;
+    proptest::proptest! {
+        #[test]
+        fn coordinate_is_injective_across_wire(a in (0usize..100_000, 0usize..100_000), b in (0usize..100_000, 0usize..100_000)) {
+            let coordinate = FanoutCoordinate { node: a.0, row: a.1 };
+            let decoded: FanoutCoordinate = serde_json::from_str(&serde_json::to_string(&coordinate).unwrap()).unwrap();
+            proptest::prop_assert_eq!(coordinate, decoded);
+            let left = decoded.trace_index().unwrap();
+            let right = plan_subline_index(b.0, b.1).unwrap();
+            proptest::prop_assert!(left >= (1usize << 52));
+            proptest::prop_assert_eq!(left == right, a == b);
+            proptest::prop_assert_eq!(left as f64 as usize, left);
+            proptest::prop_assert!(left < (1usize << 53));
+        }
+    }
+    #[test]
+    fn large_fanouts_have_distinct_indices_and_overflow_is_fallible() {
+        let ids: std::collections::BTreeSet<_> = (0..3)
+            .flat_map(|node| (0..5000).map(move |row| plan_subline_index(node, row).unwrap()))
+            .collect();
+        assert_eq!(ids.len(), 15000);
+        assert!(plan_subline_index(usize::MAX, usize::MAX).is_err());
     }
 }

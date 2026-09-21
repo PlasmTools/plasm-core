@@ -393,6 +393,12 @@ fn push_money_sum(
 
 fn pred_expr(p: &PlanPredicate, state: &FrameState) -> PolarsResult<Expr> {
     let lhs = col_expr(&p.field_path);
+    if p.op == PlanPredicateOp::Exists {
+        return Ok(lhs.is_not_null());
+    }
+    if state.kinds.get(&p.field_path.dotted()) == Some(&ColKind::Money) {
+        return money_predicate_expr(lhs, &p.value, p.op);
+    }
     if matches!(p.op, PlanPredicateOp::In | PlanPredicateOp::NotIn) {
         let rhs = membership_set_expr(&p.value)?;
         let inn = lhs.is_in(rhs);
@@ -419,57 +425,103 @@ fn pred_expr(p: &PlanPredicate, state: &FrameState) -> PolarsResult<Expr> {
     })
 }
 
-fn membership_set_expr(v: &PlasmDataValue) -> PolarsResult<Expr> {
-    let items = membership_json_items(v)?;
-    Ok(lit(json_values_to_membership_series(&items)?))
+fn money_predicate_expr(
+    lhs: Expr,
+    rhs: &PlasmDataValue,
+    op: PlanPredicateOp,
+) -> PolarsResult<Expr> {
+    let rhs = rhs
+        .clone()
+        .into_resolved()
+        .map_err(|e| PolarsError::ComputeError(e.into()))?
+        .into_value();
+    Ok(lhs.map(
+        move |column| {
+            let money = column.struct_()?;
+            let amounts = money.field_by_name(MONEY_AMOUNT)?;
+            let currencies = money.field_by_name(MONEY_CCY)?;
+            let mut selected = Vec::with_capacity(column.len());
+            for i in 0..column.len() {
+                let Some(amount) = amounts.str()?.get(i) else {
+                    selected.push(None);
+                    continue;
+                };
+                let amount = amount.parse::<Decimal>().map_err(|e| {
+                    PolarsError::ComputeError(format!("invalid money amount: {e}").into())
+                })?;
+                let currency = currencies
+                    .str()?
+                    .get(i)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned);
+                let lhs = plasm_core::Value::Money(plasm_core::MoneyValue::new(amount, currency));
+                let matches = crate::row_predicate::value_predicate_matches(&lhs, op, &rhs)
+                    .map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
+                selected.push(Some(matches));
+            }
+            Ok(Some(Column::new(column.name().clone(), selected)))
+        },
+        GetOutput::from_type(DataType::Boolean),
+    ))
 }
 
-fn membership_json_items(v: &PlasmDataValue) -> PolarsResult<Vec<serde_json::Value>> {
+fn membership_set_expr(v: &PlasmDataValue) -> PolarsResult<Expr> {
+    let items = membership_items(v)?;
+    Ok(lit(values_to_membership_series(&items)?))
+}
+
+fn membership_items(v: &PlasmDataValue) -> PolarsResult<Vec<plasm_core::Value>> {
     match v {
-        PlasmDataValue::Literal {
-            value: serde_json::Value::Array(items),
-        } => Ok(items.clone()),
-        PlasmDataValue::Literal { value } => Ok(vec![value.clone()]),
+        PlasmDataValue::Literal { value } => Ok(match value.value() {
+            plasm_core::Value::Array(items) => items.clone(),
+            value => vec![value.clone()],
+        }),
         PlasmDataValue::Array { items } => {
             let mut out = Vec::new();
             for item in items {
-                out.extend(membership_json_items(item)?);
+                out.extend(membership_items(item)?);
             }
             Ok(out)
         }
         other => Err(PolarsError::ComputeError(
-            format!("membership RHS must be an array, got {other:?}").into(),
+            format!("unbound membership operand {other:?}").into(),
         )),
     }
 }
 
-fn json_values_to_membership_series(items: &[serde_json::Value]) -> PolarsResult<Series> {
+fn values_to_membership_series(items: &[plasm_core::Value]) -> PolarsResult<Series> {
+    use plasm_core::Value as V;
     let name = PlSmallStr::from_static("memb");
-    if items.iter().all(|v| v.is_null() || v.is_string()) {
-        let vals: Vec<Option<&str>> = items.iter().map(|v| v.as_str()).collect();
-        return Ok(Series::new(name, vals));
+    if items.iter().all(|v| matches!(v, V::Null | V::String(_))) {
+        return Ok(Series::new(
+            name,
+            items.iter().map(V::as_str).collect::<Vec<_>>(),
+        ));
     }
-    if items.iter().all(|v| v.is_null() || v.as_i64().is_some()) {
-        let vals: Vec<Option<i64>> = items.iter().map(|v| v.as_i64()).collect();
-        return Ok(Series::new(name, vals));
+    if items.iter().all(|v| matches!(v, V::Null | V::Bool(_))) {
+        return Ok(Series::new(
+            name,
+            items.iter().map(V::as_bool).collect::<Vec<_>>(),
+        ));
     }
-    if items.iter().all(|v| v.is_null() || v.as_f64().is_some()) {
-        let vals: Vec<Option<f64>> = items.iter().map(|v| v.as_f64()).collect();
-        return Ok(Series::new(name, vals));
+    if items.iter().all(|v| matches!(v, V::Null | V::Integer(_))) {
+        return Ok(Series::new(
+            name,
+            items.iter().map(V::as_integer).collect::<Vec<_>>(),
+        ));
     }
-    let vals: Vec<Option<String>> = items
+    if items
         .iter()
-        .map(|v| {
-            if v.is_null() {
-                None
-            } else if let Some(s) = v.as_str() {
-                Some(s.to_string())
-            } else {
-                Some(v.to_string())
-            }
-        })
-        .collect();
-    Ok(Series::new(name, vals))
+        .all(|v| matches!(v, V::Null | V::Integer(_) | V::Float(_)))
+    {
+        return Ok(Series::new(
+            name,
+            items.iter().map(V::as_number).collect::<Vec<_>>(),
+        ));
+    }
+    Err(PolarsError::ComputeError(
+        "membership requires compatible scalar values".into(),
+    ))
 }
 
 /// RA-8 CompareUnify for Polars filters: cast toward the field column kind (or numeric LUB).
@@ -513,11 +565,11 @@ fn unify_compare_sides(
 
 fn data_value_kind(v: &PlasmDataValue) -> ColKind {
     match v {
-        PlasmDataValue::Literal { value } => match value {
-            serde_json::Value::Bool(_) => ColKind::Bool,
-            serde_json::Value::Number(n) if n.as_i64().is_some() => ColKind::Int,
-            serde_json::Value::Number(_) => ColKind::Float,
-            serde_json::Value::String(_) => ColKind::Str,
+        PlasmDataValue::Literal { value } => match value.value() {
+            plasm_core::Value::Bool(_) => ColKind::Bool,
+            plasm_core::Value::Integer(_) => ColKind::Int,
+            plasm_core::Value::Float(_) => ColKind::Float,
+            plasm_core::Value::String(_) => ColKind::Str,
             _ => ColKind::Json,
         },
         _ => ColKind::Json,
@@ -526,7 +578,7 @@ fn data_value_kind(v: &PlasmDataValue) -> ColKind {
 
 fn data_lit(v: &PlasmDataValue) -> PolarsResult<Expr> {
     match v {
-        PlasmDataValue::Literal { value } => json_lit(value),
+        PlasmDataValue::Literal { value } => scalar_lit(value.value()),
         PlasmDataValue::Array { items } => {
             let lits: Result<Vec<_>, _> = items.iter().map(data_lit).collect();
             Ok(concat_list(lits?)?)
@@ -537,25 +589,25 @@ fn data_lit(v: &PlasmDataValue) -> PolarsResult<Expr> {
     }
 }
 
-fn json_lit(v: &serde_json::Value) -> PolarsResult<Expr> {
+fn scalar_lit(v: &plasm_core::Value) -> PolarsResult<Expr> {
+    use plasm_core::Value as V;
     Ok(match v {
-        serde_json::Value::Null => lit(NULL),
-        serde_json::Value::Bool(b) => lit(*b),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                lit(i)
-            } else if let Some(f) = n.as_f64() {
-                lit(f)
-            } else {
-                lit(n.to_string())
-            }
+        V::Null => lit(NULL),
+        V::Bool(b) => lit(*b),
+        V::Integer(i) => lit(*i),
+        V::Float(f) => lit(*f),
+        V::String(s) => lit(s.as_str()),
+        V::Array(items) => concat_list(
+            items
+                .iter()
+                .map(scalar_lit)
+                .collect::<Result<Vec<_>, _>>()?,
+        )?,
+        other => {
+            return Err(PolarsError::ComputeError(
+                format!("unsupported scalar predicate operand {other:?}").into(),
+            ))
         }
-        serde_json::Value::String(s) => lit(s.as_str()),
-        serde_json::Value::Array(items) => {
-            let lits: Result<Vec<_>, _> = items.iter().map(json_lit).collect();
-            concat_list(lits?)?
-        }
-        serde_json::Value::Object(_) => lit(v.to_string()),
     })
 }
 
@@ -827,7 +879,7 @@ mod tests {
             use plasm_core::BooleanExpr::{Atom, And, Or, Not};
             let pred = |op| PlanPredicate {
                 field_path: FieldPath::from_dotted("score").unwrap(), op,
-                value: PlasmDataValue::Literal { value: serde_json::json!(threshold) },
+                value: PlasmDataValue::Literal { value: plasm_core::operand_binding::ResolvedValue::from_wire(serde_json::json!(threshold)).expect("literal data") },
             };
             // Overlapping branches must not duplicate rows; null must remain unknown under NOT.
             let tree = Or(vec![Atom(pred(PlanPredicateOp::Gt)), And(vec![
@@ -846,6 +898,45 @@ mod tests {
     }
 
     #[test]
+    fn money_predicates_keep_exact_amounts_and_propagate_currency_errors() {
+        let threshold =
+            plasm_core::MoneyValue::new("9007199254740992".parse().unwrap(), Some("USD".into()));
+        let pred = PlanPredicate {
+            field_path: FieldPath::from_dotted("price").unwrap(),
+            op: PlanPredicateOp::Gt,
+            value: PlasmDataValue::try_from(plasm_core::Value::Money(threshold)).unwrap(),
+        };
+        let restored: PlanPredicate =
+            serde_json::from_slice(&serde_json::to_vec(&pred).unwrap()).unwrap();
+        let rows = vec![
+            serde_json::json!({"id":1,"price":{"__plasm_money":"9007199254740992","currency":"USD"}}),
+            serde_json::json!({"id":2,"price":{"__plasm_money":"9007199254740993","currency":"USD"}}),
+        ];
+        let op = ComputeOp::Filter {
+            predicates: vec![restored.clone()].into(),
+        };
+        let ComputeEvalOutcome::Rows(actual) = eval_compute_ops(&[op.clone()], &rows).unwrap()
+        else {
+            panic!("filter")
+        };
+        assert_eq!(
+            actual.iter().map(|v| v["id"].clone()).collect::<Vec<_>>(),
+            vec![serde_json::json!(2)]
+        );
+        let wrong_currency = vec![
+            serde_json::json!({"price":{"__plasm_money":"9007199254740993","currency":"EUR"}}),
+        ];
+        assert!(eval_compute_ops(&[op], &wrong_currency).is_err());
+        let bound = crate::row_predicate::BoundRowPredicate {
+            field_path: FieldPath::from_dotted("price").unwrap(),
+            op: pred.op,
+            value: restored.value.into_resolved().unwrap(),
+        };
+        assert!(crate::row_predicate::json_matches_predicate(&wrong_currency[0], &bound).is_err());
+        assert!(crate::row_predicate::json_matches_predicate(&rows[1], &bound).unwrap());
+    }
+
+    #[test]
     fn filter_sort_limit_roundtrip() {
         let rows = vec![
             serde_json::json!({"owner":"alice","score":10}),
@@ -856,7 +947,10 @@ mod tests {
             field_path: FieldPath::from_dotted("owner").unwrap(),
             op: PlanPredicateOp::Eq,
             value: PlasmDataValue::Literal {
-                value: serde_json::json!("alice"),
+                value: plasm_core::operand_binding::ResolvedValue::from_wire(serde_json::json!(
+                    "alice"
+                ))
+                .expect("literal data"),
             },
         };
         let ops = vec![
@@ -880,7 +974,9 @@ mod tests {
         PlanPredicate {
             field_path: FieldPath::from_dotted("pan").unwrap(),
             op: PlanPredicateOp::Eq,
-            value: PlasmDataValue::Literal { value: rhs },
+            value: PlasmDataValue::Literal {
+                value: plasm_core::operand_binding::ResolvedValue::from_wire(rhs).unwrap(),
+            },
         }
     }
 
@@ -934,14 +1030,20 @@ mod tests {
             field_path: FieldPath::from_dotted("owner").unwrap(),
             op: PlanPredicateOp::In,
             value: PlasmDataValue::Literal {
-                value: serde_json::json!(["alice"]),
+                value: plasm_core::operand_binding::ResolvedValue::from_wire(serde_json::json!([
+                    "alice"
+                ]))
+                .expect("literal data"),
             },
         };
         let outn = plasm_core::PlanPredicate {
             field_path: FieldPath::from_dotted("owner").unwrap(),
             op: PlanPredicateOp::NotIn,
             value: PlasmDataValue::Literal {
-                value: serde_json::json!(["alice"]),
+                value: plasm_core::operand_binding::ResolvedValue::from_wire(serde_json::json!([
+                    "alice"
+                ]))
+                .expect("literal data"),
             },
         };
         let ComputeEvalOutcome::Rows(kept) = eval_compute_ops(

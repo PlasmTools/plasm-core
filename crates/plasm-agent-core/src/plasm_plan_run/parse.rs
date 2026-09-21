@@ -459,24 +459,24 @@ pub(crate) fn propagate_row_identities(
             };
             let resolved =
                 super::resolve_filter_predicates_with_materialized(predicates, materialized)?;
-            Ok(mat
-                .row_identities
-                .iter()
-                .zip(rows.iter())
-                .filter(|(_, row)| {
-                    resolved.evaluate(&|p| {
-                        if p.op != crate::plasm_plan::PlanPredicateOp::Exists
-                            && value_at_dotted(row, &p.field_path.dotted())
-                                .is_none_or(serde_json::Value::is_null)
-                        {
-                            None
-                        } else {
-                            Some(predicate_matches(row, p))
-                        }
-                    }) == Some(true)
-                })
-                .map(|(id, _)| id.clone())
-                .collect())
+            let resolved = resolved.try_map(&mut crate::plan_read_bounds::bind_row_predicate)?;
+            let mut identities = Vec::new();
+            for (id, row) in mat.row_identities.iter().zip(rows) {
+                let evaluated = resolved.try_map(&mut |p| -> Result<Option<bool>, String> {
+                    if p.op != crate::plasm_plan::PlanPredicateOp::Exists
+                        && value_at_dotted(row, &p.field_path.dotted())
+                            .is_none_or(serde_json::Value::is_null)
+                    {
+                        Ok(None)
+                    } else {
+                        predicate_matches(row, p).map(Some)
+                    }
+                })?;
+                if evaluated.evaluate(&|value| *value) == Some(true) {
+                    identities.push(id.clone());
+                }
+            }
+            Ok(identities)
         }
         _ => Ok(vec![None; out_len]),
     }

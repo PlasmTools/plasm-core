@@ -181,7 +181,7 @@ impl ExecutionStats {
 #[derive(Debug, Clone)]
 pub struct RowMatchBudget {
     pub count: usize,
-    pub predicates: Vec<crate::row_predicate::JsonRowPredicate>,
+    pub predicates: Vec<crate::row_predicate::BoundRowPredicate>,
 }
 
 /// Out-of-band consumption controls: how many pages / entities to pull (not part of the IR).

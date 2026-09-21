@@ -147,7 +147,7 @@ mod tests {
     fn pure_payload() -> PlasmStepPayload {
         PlasmStepPayload::Pure(PurePayload {
             data: plasm_core::PlasmDataValue::Literal {
-                value: serde_json::Value::Null,
+                value: plasm_core::operand_binding::ResolvedValue::null(),
             },
             effect_class: EffectClass::Read,
             result_shape: ResultShape::List,

@@ -1,5 +1,7 @@
 //! Structural operand substitution. Expression metadata never passes through a text or JSON evaluator.
 
+mod data;
+
 use crate::expr::{ChainStep, EntityKey, Expr, IdentitySlot};
 use crate::{EntityId, EntityName, InvokeInputPayload, PlasmInputRef, Predicate, Value};
 
@@ -111,8 +113,31 @@ impl IdentityCodec {
 /// use plasm_core::{Value, operand_binding::ResolvedValue};
 /// let unchecked = ResolvedValue(Value::Null);
 /// ```
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(into = "Value")]
 pub struct ResolvedValue(Value);
+
+impl<'de> serde::Deserialize<'de> for ResolvedValue {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let wire = <serde_json::Value as serde::Deserialize>::deserialize(deserializer)?;
+        Self::from_wire(wire).map_err(serde::de::Error::custom)
+    }
+}
+
+// Construction excludes non-finite floats, so equality is reflexive.
+impl Eq for ResolvedValue {}
+
+impl TryFrom<Value> for ResolvedValue {
+    type Error = &'static str;
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+impl From<ResolvedValue> for Value {
+    fn from(value: ResolvedValue) -> Self {
+        value.into_value()
+    }
+}
 
 impl ResolvedValue {
     pub fn null() -> Self {
@@ -127,11 +152,11 @@ impl ResolvedValue {
                 | Value::StringTemplate(_) => false,
                 Value::Array(items) => items.iter().all(check),
                 Value::Object(fields) => fields.values().all(check),
-                Value::UnionCtor { ctor_fields, .. } => ctor_fields.values().all(check),
+                Value::UnionCtor { .. } => false,
+                Value::Float(value) => value.is_finite(),
                 Value::Null
                 | Value::Bool(_)
                 | Value::Integer(_)
-                | Value::Float(_)
                 | Value::String(_)
                 | Value::Money(_) => true,
             }
@@ -142,6 +167,61 @@ impl ResolvedValue {
             Err("resolved data contains an unresolved operand")
         }
     }
+    pub fn as_array(&self) -> Option<&[Value]> {
+        if let Value::Array(items) = &self.0 {
+            Some(items)
+        } else {
+            None
+        }
+    }
+    pub fn as_str(&self) -> Option<&str> {
+        if let Value::String(value) = &self.0 {
+            Some(value)
+        } else {
+            None
+        }
+    }
+    pub fn value(&self) -> &Value {
+        &self.0
+    }
+    pub fn to_wire(&self) -> serde_json::Value {
+        serde_json::to_value(&self.0).expect("resolved data is serializable")
+    }
+    pub fn from_wire(value: serde_json::Value) -> Result<Self, String> {
+        fn decode(value: serde_json::Value) -> Result<Value, String> {
+            use serde_json::Value as J;
+            Ok(match value {
+                J::Null => Value::Null,
+                J::Bool(v) => Value::Bool(v),
+                J::Number(v) => {
+                    if let Some(i) = v.as_i64() {
+                        Value::Integer(i)
+                    } else if v.is_f64() {
+                        Value::Float(v.as_f64().ok_or("invalid float")?)
+                    } else {
+                        return Err("literal integer exceeds the signed 64-bit domain".into());
+                    }
+                }
+                J::String(v) => Value::String(v),
+                J::Array(items) => {
+                    Value::Array(items.into_iter().map(decode).collect::<Result<_, _>>()?)
+                }
+                J::Object(fields) => {
+                    if let Some(money) = crate::money::try_from_json_object(&fields) {
+                        Value::Money(money)
+                    } else {
+                        Value::Object(
+                            fields
+                                .into_iter()
+                                .map(|(k, v)| Ok((k, decode(v)?)))
+                                .collect::<Result<_, String>>()?,
+                        )
+                    }
+                }
+            })
+        }
+        Self::new(decode(value)?).map_err(str::to_owned)
+    }
     pub fn into_value(self) -> Value {
         self.0
     }
@@ -151,6 +231,21 @@ impl ResolvedValue {
 pub trait OperandResolver {
     type Error;
     fn resolve(&mut self, reference: &PlasmInputRef) -> Result<ResolvedValue, Self::Error>;
+    fn node(
+        &mut self,
+        node: &str,
+        _alias: &str,
+        path: &[String],
+    ) -> Result<ResolvedValue, Self::Error> {
+        self.resolve(&PlasmInputRef::node_output(node, path.to_vec()))
+    }
+    fn template(
+        &mut self,
+        value: &crate::program_string_template::CompiledProgramString,
+        _bindings: &[crate::PlanInputBinding],
+    ) -> Result<String, Self::Error> {
+        self.string(value)
+    }
     fn identity(
         &mut self,
         target: IdentityTarget<'_>,
@@ -165,6 +260,8 @@ pub trait OperandResolver {
 mod sealed {
     pub trait Sealed {}
     impl Sealed for crate::Expr {}
+    impl Sealed for crate::PlasmDataValue {}
+    impl Sealed for crate::PlanPredicate {}
     impl Sealed for crate::Value {}
     impl Sealed for crate::Predicate {}
     impl Sealed for crate::InvokeInputPayload {}

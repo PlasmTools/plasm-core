@@ -1,7 +1,7 @@
 //! Streaming top-k over paginated entity pages (sort+limit pushdown).
 
 use crate::cache::CachedEntity;
-use crate::row_predicate::{entity_field_path_value, JsonRowPredicate};
+use crate::row_predicate::{entity_field_path_value, BoundRowPredicate};
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
@@ -10,7 +10,7 @@ pub struct TopKSpec {
     pub count: usize,
     pub sort_key: Vec<String>,
     pub descending: bool,
-    pub row_filter: Vec<JsonRowPredicate>,
+    pub row_filter: Vec<BoundRowPredicate>,
 }
 
 #[derive(Debug)]
@@ -80,18 +80,18 @@ impl TopKHeap {
         }
     }
 
-    pub fn insert(&mut self, entity: CachedEntity) {
+    pub fn insert(&mut self, entity: CachedEntity) -> Result<(), crate::RuntimeError> {
         if !self.spec.row_filter.is_empty()
-            && !crate::row_predicate::entity_matches_predicates(&entity, &self.spec.row_filter)
+            && !crate::row_predicate::entity_matches_predicates(&entity, &self.spec.row_filter)?
         {
-            return;
+            return Ok(());
         }
         let sort_key = entity_field_path_value(&entity, &self.spec.sort_key).unwrap_or_default();
         let entry = TopKEntry { sort_key, entity };
         if self.spec.descending {
             if self.min_heap.len() < self.spec.count {
                 self.min_heap.push(MinEntry(entry));
-                return;
+                return Ok(());
             }
             if let Some(worst) = self.min_heap.peek() {
                 if cmp_json_values(&entry.sort_key, &worst.0.sort_key) == Ordering::Greater {
@@ -107,6 +107,7 @@ impl TopKHeap {
                 self.max_heap.push(MaxEntry(entry));
             }
         }
+        Ok(())
     }
 
     pub fn into_sorted_entities(self) -> Vec<CachedEntity> {
@@ -182,7 +183,7 @@ mod tests {
             row_filter: Vec::new(),
         });
         for (name, score) in [("a", 1), ("b", 3), ("c", 2)] {
-            heap.insert(entity(name, score));
+            heap.insert(entity(name, score)).unwrap();
         }
         let names: Vec<_> = heap
             .into_sorted_entities()

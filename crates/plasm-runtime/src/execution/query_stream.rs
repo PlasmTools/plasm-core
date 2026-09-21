@@ -463,7 +463,7 @@ impl ExecutionEngine {
                     .iter()
                     .any(CachedEntity::has_unavailable_detail_fields);
 
-                let ingest = collector.ingest_page(entities);
+                let ingest = collector.ingest_page(entities)?;
                 if !ingest.merge_into_mat.is_empty() {
                     mat.merge(ingest.merge_into_mat.clone())?;
                 }

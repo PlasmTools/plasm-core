@@ -41,7 +41,7 @@ pub(crate) fn eval_compute_from_rows(
         })?;
         return plasm_core::row_contract::PublicRowSchema::new(&compute.schema).union(rows, right);
     }
-    let op = resolve_membership_filter_op(&compute.op, cross_binding_rows)?;
+    let op = bind_filter_op(&compute.op, cross_binding_rows)?;
     match eval_compute_ops(std::slice::from_ref(&op), rows)? {
         ComputeEvalOutcome::Rows(out) => Ok(out),
         ComputeEvalOutcome::Render {
@@ -144,7 +144,7 @@ pub(crate) fn binding_rows_for_compute(
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
 ) -> Result<BTreeMap<String, Vec<serde_json::Value>>, String> {
     let mut out = binding_rows_for_render(compute, materialized)?;
-    for label in collection_binding_labels(&compute.op) {
+    for label in compute_binding_labels(&compute.op) {
         if out.contains_key(&label) {
             continue;
         }
@@ -169,7 +169,7 @@ pub(crate) fn resolve_filter_predicates_with_materialized(
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
 ) -> Result<plasm_core::BooleanExpr<crate::plasm_plan::PlanPredicate>, String> {
     let mut binding_rows = BTreeMap::new();
-    for label in collection_binding_labels(&ComputeOp::Filter {
+    for label in compute_binding_labels(&ComputeOp::Filter {
         predicates: predicates.clone(),
     }) {
         let node_id = PlanNodeId::new(label.clone())?;
@@ -185,47 +185,121 @@ pub(crate) fn resolve_filter_predicates_with_materialized(
             })?;
         binding_rows.insert(label, rows);
     }
-    predicates.try_map(&mut |p| resolve_membership_predicate(p, &binding_rows))
+    predicates.try_map(&mut |p| bind_filter_predicate(p, &binding_rows))
 }
 
-fn resolve_membership_filter_op(
+fn bind_filter_op(
     op: &ComputeOp,
     binding_rows: &BTreeMap<String, Vec<serde_json::Value>>,
 ) -> Result<ComputeOp, String> {
     let ComputeOp::Filter { predicates } = op else {
         return Ok(op.clone());
     };
-    let resolved =
-        predicates.try_map(&mut |pred| resolve_membership_predicate(pred, binding_rows))?;
+    let resolved = predicates.try_map(&mut |pred| bind_filter_predicate(pred, binding_rows))?;
     Ok(ComputeOp::Filter {
         predicates: resolved,
     })
 }
 
-fn resolve_membership_predicate(
+fn bind_filter_predicate(
     pred: &crate::plasm_plan::PlanPredicate,
     binding_rows: &BTreeMap<String, Vec<serde_json::Value>>,
 ) -> Result<crate::plasm_plan::PlanPredicate, String> {
-    let crate::plasm_plan::PlanValue::BindingSymbol { binding, path } = &pred.value else {
-        return Ok(pred.clone());
-    };
-    if !matches!(
-        pred.op,
-        crate::plasm_plan::PlanPredicateOp::In | crate::plasm_plan::PlanPredicateOp::NotIn
-    ) {
-        return Ok(pred.clone());
+    use plasm_core::operand_binding::{BindOperands, ResolvedValue};
+    if let crate::plasm_plan::PlanValue::BindingSymbol { binding, path } = &pred.value {
+        if matches!(
+            pred.op,
+            crate::plasm_plan::PlanPredicateOp::In | crate::plasm_plan::PlanPredicateOp::NotIn
+        ) {
+            let rows = binding_rows.get(binding).ok_or_else(|| {
+                format!("membership RHS `{binding}` has not been materialized (RA-13)")
+            })?;
+            let values = collect_membership_column(binding, path, rows)?;
+            return Ok(crate::plasm_plan::PlanPredicate {
+                field_path: pred.field_path.clone(),
+                op: pred.op,
+                value: crate::plasm_plan::PlanValue::Literal {
+                    value: ResolvedValue::from_wire(serde_json::Value::Array(values))?,
+                },
+            });
+        }
     }
-    let rows = binding_rows
-        .get(binding)
-        .ok_or_else(|| format!("membership RHS `{binding}` has not been materialized (RA-13)"))?;
-    let values = collect_membership_column(binding, path, rows)?;
-    Ok(crate::plasm_plan::PlanPredicate {
-        field_path: pred.field_path.clone(),
-        op: pred.op,
-        value: crate::plasm_plan::PlanValue::Literal {
-            value: serde_json::Value::Array(values),
-        },
-    })
+    pred.bind_operands(&mut PredicateOperands { rows: binding_rows })
+}
+
+struct PredicateOperands<'a> {
+    rows: &'a BTreeMap<String, Vec<serde_json::Value>>,
+}
+impl PredicateOperands<'_> {
+    fn singleton(&self, node: &str) -> Result<&serde_json::Value, String> {
+        let rows = self
+            .rows
+            .get(node)
+            .ok_or_else(|| format!("predicate operand `{node}` has not been materialized"))?;
+        match rows.as_slice() {
+            [row] => Ok(row),
+            [] => Err(format!(
+                "scalar predicate operand `{node}` has zero rows; expected exactly one"
+            )),
+            _ => Err(format!(
+                "scalar predicate operand `{node}` has {} rows; expected exactly one",
+                rows.len()
+            )),
+        }
+    }
+}
+impl plasm_core::operand_binding::OperandResolver for PredicateOperands<'_> {
+    type Error = String;
+    fn resolve(
+        &mut self,
+        reference: &plasm_core::PlasmInputRef,
+    ) -> Result<plasm_core::operand_binding::ResolvedValue, String> {
+        let (node, path) = match reference {
+            plasm_core::PlasmInputRef::NodeInput { node, path } => (node, path),
+            plasm_core::PlasmInputRef::RowBinding { binding, path } => (binding, path),
+        };
+        let mut value = self.singleton(node)?;
+        for field in path {
+            value = value.get(field).ok_or_else(|| {
+                format!(
+                    "scalar predicate operand `{node}` has no field `{}`",
+                    path.join(".")
+                )
+            })?;
+        }
+        plasm_core::operand_binding::ResolvedValue::from_wire(value.clone())
+    }
+    fn identity(
+        &mut self,
+        _: plasm_core::operand_binding::IdentityTarget<'_>,
+        _: &plasm_core::PlasmInputRef,
+    ) -> Result<plasm_core::EntityId, String> {
+        Err("identity is not a scalar predicate operand".into())
+    }
+    fn string(
+        &mut self,
+        template: &plasm_core::program_string_template::CompiledProgramString,
+    ) -> Result<String, String> {
+        self.template(template, &[])
+    }
+    fn template(
+        &mut self,
+        template: &plasm_core::program_string_template::CompiledProgramString,
+        bindings: &[plasm_core::PlanInputBinding],
+    ) -> Result<String, String> {
+        let mut named = BTreeMap::new();
+        for root in template.roots() {
+            let node = bindings
+                .iter()
+                .find(|b| &b.to == root)
+                .map(|b| b.from.as_str())
+                .unwrap_or(root);
+            named.insert(root.clone(), vec![self.singleton(node)?.clone()]);
+        }
+        template
+            .render_minijinja_context(&plasm_core::unified_template_context(None, &named))
+            .map_err(|e| e.to_string())
+    }
 }
 
 fn collect_membership_column(
@@ -364,28 +438,6 @@ pub(crate) fn eval_data_plan_value(
     }
 }
 
-pub(crate) fn json_scalar_display(v: &serde_json::Value) -> String {
-    match v {
-        serde_json::Value::String(s) => s.clone(),
-        serde_json::Value::Number(n) => n.to_string(),
-        serde_json::Value::Bool(b) => b.to_string(),
-        serde_json::Value::Null => String::new(),
-        other => other.to_string(),
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn json_plasm_literal_display(v: &serde_json::Value) -> String {
-    match v {
-        serde_json::Value::String(s) => serde_json::to_string(s)
-            .unwrap_or_else(|_| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))),
-        serde_json::Value::Number(n) => n.to_string(),
-        serde_json::Value::Bool(b) => b.to_string(),
-        serde_json::Value::Null => "null".to_string(),
-        other => other.to_string(),
-    }
-}
-
 pub(crate) fn compute_fingerprint(node: &ValidatedPlanNode, rows: &[serde_json::Value]) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -401,4 +453,86 @@ pub(crate) fn compute_fingerprint(node: &ValidatedPlanNode, rows: &[serde_json::
         Err(e) => hasher.update(format!("rows-serialization-error:{e}").as_bytes()),
     }
     format!("plan-compute:{}", hex::encode(hasher.finalize()))
+}
+
+#[cfg(test)]
+mod scalar_operand_tests {
+    use super::*;
+    use crate::plasm_plan::{FieldPath, PlanPredicate, PlanPredicateOp, PlanValue};
+    use serde_json::json;
+
+    fn predicate(value: PlanValue) -> PlanPredicate {
+        PlanPredicate {
+            field_path: FieldPath::from_dotted("score").unwrap(),
+            op: PlanPredicateOp::Eq,
+            value,
+        }
+    }
+    fn reference() -> PlanValue {
+        PlanValue::NodeSymbol {
+            node: "selected".into(),
+            alias: "selected".into(),
+            path: vec!["score".into()],
+        }
+    }
+
+    #[test]
+    fn scalar_predicate_missing_empty_plural_are_errors() {
+        for rows in [
+            vec![],
+            vec![json!({})],
+            vec![json!({"score":1}), json!({"score":2})],
+        ] {
+            let bindings = BTreeMap::from([("selected".into(), rows)]);
+            assert!(bind_filter_predicate(&predicate(reference()), &bindings).is_err());
+        }
+        assert!(bind_filter_predicate(&predicate(reference()), &BTreeMap::new()).is_err());
+    }
+
+    #[test]
+    fn scalar_template_binds_before_filtering_and_keeps_literal_text_literal() {
+        let template = plasm_core::program_string_template::CompiledProgramString::compile(
+            "{{ selected.score }}".into(),
+        )
+        .unwrap();
+        let bindings = BTreeMap::from([("selected".into(), vec![json!({"score":"one.score"})])]);
+        let value = PlanValue::Template {
+            template,
+            input_bindings: vec![],
+        };
+        let resolved = bind_filter_predicate(&predicate(value), &bindings).unwrap();
+        assert_eq!(
+            resolved.value.into_resolved().unwrap().value(),
+            &plasm_core::Value::String("one.score".into())
+        );
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(64))]
+        #[test]
+        fn scalar_operand_serialization_preserves_selection(
+            selected in -20i64..20,
+            values in proptest::collection::vec(-20i64..20, 0..60),
+        ) {
+            let pred = predicate(reference());
+            let wire = serde_json::to_vec(&pred).unwrap();
+            let restored: PlanPredicate = serde_json::from_slice(&wire).unwrap();
+            proptest::prop_assert_eq!(pred.value.dependencies(), restored.value.dependencies());
+            for representation in 0..3 {
+                let encode = |v: i64| match representation {
+                    0 => json!(v),
+                    1 => json!(v % 2 == 0),
+                    _ => json!(format!("é:{{{{ literal }}}}:{v}")),
+                };
+                let chosen = encode(selected);
+                let bindings = BTreeMap::from([("selected".into(), vec![json!({"score":chosen})])]);
+                let rows = values.iter().enumerate().map(|(id,v)| json!({"id":id % 3,"score":encode(*v)})).collect::<Vec<_>>();
+                let resolved = bind_filter_predicate(&restored, &bindings).unwrap();
+                let op = ComputeOp::Filter { predicates: vec![resolved].into() };
+                let ComputeEvalOutcome::Rows(actual) = eval_compute_ops(&[op], &rows).unwrap() else { panic!("filter returned render") };
+                let expected = rows.into_iter().filter(|r| r["score"] == chosen).collect::<Vec<_>>();
+                proptest::prop_assert_eq!(actual, expected);
+            }
+        }
+    }
 }

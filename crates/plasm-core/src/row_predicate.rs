@@ -41,14 +41,20 @@ pub fn parse_row_predicate_list(
     layers: &[CgsLayer<'_>],
     sym_map: Arc<dyn SymbolSession>,
     row_schema_fields: &[String],
+    program_nodes: &std::collections::BTreeSet<String>,
 ) -> Result<RowPredicate, String> {
     // Deterministic rewrite of Kusto / wire-shaped temporal RHS before parse
     // (`now() - 7d` → `7d ago`, etc.). Wire slots still pass `now-7d` unchanged.
     let rewritten = crate::temporal::rewrite_temporal_aliases_in_predicate_body(body);
     let input = format!("{entity}{{{}}}", rewritten.trim());
-    let parsed =
-        crate::expr_parser::parse_row_filter_body(&input, layers, sym_map, row_schema_fields)
-            .map_err(|e| format!("row filter parse: {e}"))?;
+    let parsed = crate::expr_parser::parse_row_filter_body(
+        &input,
+        layers,
+        sym_map,
+        row_schema_fields,
+        program_nodes,
+    )
+    .map_err(|e| format!("row filter parse: {e}"))?;
     row_predicate_from_expr(&parsed.expr)
 }
 
@@ -145,9 +151,15 @@ mod tests {
         let stack = vec![CgsLayer::unset(cgs.as_ref())];
         let (full, _) = entity_slices_for_render(cgs.as_ref(), FocusSpec::All);
         let sym_map = Arc::new(SymbolMap::build(cgs.as_ref(), &full));
-        let pred =
-            parse_row_predicate_list("LangItem", r#"owner="a", score>1"#, &stack, sym_map, &[])
-                .expect("parse");
+        let pred = parse_row_predicate_list(
+            "LangItem",
+            r#"owner="a", score>1"#,
+            &stack,
+            sym_map,
+            &[],
+            &std::collections::BTreeSet::new(),
+        )
+        .expect("parse");
         assert_eq!(pred.0.len(), 2);
         assert_eq!(pred.0[0].field, "owner");
         assert_eq!(pred.0[1].field, "score");
@@ -167,9 +179,15 @@ mod tests {
         let stack = vec![CgsLayer::unset(cgs.as_ref())];
         let (full, _) = entity_slices_for_render(cgs.as_ref(), FocusSpec::All);
         let sym_map = Arc::new(SymbolMap::build(cgs.as_ref(), &full));
-        let pred =
-            parse_row_predicate_list("DigitAccount", "pan=6419671322388907", &stack, sym_map, &[])
-                .expect("unquoted digits on digit_id coerce via exact i64");
+        let pred = parse_row_predicate_list(
+            "DigitAccount",
+            "pan=6419671322388907",
+            &stack,
+            sym_map,
+            &[],
+            &std::collections::BTreeSet::new(),
+        )
+        .expect("unquoted digits on digit_id coerce via exact i64");
         assert_eq!(
             pred.0[0].value.typed_literal(),
             Some(&crate::TypedLiteral::String("6419671322388907".into()))
@@ -189,6 +207,7 @@ mod tests {
             &stack,
             sym_map,
             &[],
+            &std::collections::BTreeSet::new(),
         )
         .expect("quoted digits on digit_id");
         assert_eq!(
@@ -204,9 +223,15 @@ mod tests {
         let stack = vec![CgsLayer::unset(cgs.as_ref())];
         let (full, _) = entity_slices_for_render(cgs.as_ref(), FocusSpec::All);
         let sym_map = Arc::new(SymbolMap::build(cgs.as_ref(), &full));
-        let pred =
-            parse_row_predicate_list("DigitAccount", "pan=9007199254740993", &stack, sym_map, &[])
-                .expect("i64 beyond f64 exact range");
+        let pred = parse_row_predicate_list(
+            "DigitAccount",
+            "pan=9007199254740993",
+            &stack,
+            sym_map,
+            &[],
+            &std::collections::BTreeSet::new(),
+        )
+        .expect("i64 beyond f64 exact range");
         assert_eq!(
             pred.0[0].value.typed_literal(),
             Some(&crate::TypedLiteral::String("9007199254740993".into()))
@@ -229,6 +254,7 @@ mod tests {
             &stack,
             sym_map,
             &[],
+            &std::collections::BTreeSet::new(),
         )
         .expect_err("IEEE float is not digit_id identity");
         let msg = err.to_string();
@@ -248,9 +274,15 @@ mod tests {
         let stack = vec![CgsLayer::unset(cgs.as_ref())];
         let (full, _) = entity_slices_for_render(cgs.as_ref(), FocusSpec::All);
         let sym_map = Arc::new(SymbolMap::build(cgs.as_ref(), &full));
-        let pred =
-            parse_row_predicate_list("CompoundBranch", r#"name="main""#, &stack, sym_map, &[])
-                .expect("row filter on id_field must parse as a predicate");
+        let pred = parse_row_predicate_list(
+            "CompoundBranch",
+            r#"name="main""#,
+            &stack,
+            sym_map,
+            &[],
+            &std::collections::BTreeSet::new(),
+        )
+        .expect("row filter on id_field must parse as a predicate");
         assert_eq!(pred.0.len(), 1);
         assert_eq!(pred.0[0].field, "name");
         assert_eq!(pred.0[0].op, CompOp::Eq);
@@ -268,6 +300,7 @@ mod tests {
             &stack,
             sym_map,
             &[],
+            &std::collections::BTreeSet::new(),
         )
         .unwrap_err();
         assert!(err.contains("OR") || err.contains("parse"), "{err}");
@@ -285,6 +318,7 @@ mod tests {
             &stack,
             sym_map.clone(),
             &[String::from("handle")],
+            &std::collections::BTreeSet::new(),
         )
         .expect("RA-2: select alias must parse as a row predicate");
         assert_eq!(pred.0.len(), 1);
@@ -297,6 +331,7 @@ mod tests {
             &stack,
             sym_map.clone(),
             &[],
+            &std::collections::BTreeSet::new(),
         )
         .unwrap_err();
         assert!(
@@ -310,6 +345,7 @@ mod tests {
             &stack,
             sym_map,
             &[String::from("handle")],
+            &std::collections::BTreeSet::new(),
         )
         .unwrap_err();
         assert!(

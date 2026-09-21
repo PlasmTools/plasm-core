@@ -3,7 +3,6 @@
 use indexmap::IndexMap;
 use minijinja::{value::ValueKind, Environment, UndefinedBehavior};
 use plasm_core::{temporal_wire_format_from_name, wire_temporal_value, Value};
-use serde_json::json;
 
 use crate::RuntimeError;
 
@@ -24,31 +23,34 @@ fn parse_wire_date(s: &str) -> Option<chrono::NaiveDate> {
         .or_else(|| chrono::NaiveDate::parse_from_str(t, "%Y-%m-%d").ok())
 }
 
-fn plasm_value_to_json(v: &Value) -> serde_json::Value {
-    match v {
-        Value::Null => serde_json::Value::Null,
-        Value::Bool(b) => json!(b),
-        Value::Integer(i) => json!(i),
-        Value::Float(f) => json!(f),
-        Value::String(s) | Value::PhraseIdent(s) => json!(s),
-        Value::Array(arr) => {
-            serde_json::Value::Array(arr.iter().map(plasm_value_to_json).collect())
+fn template_data(v: &Value) -> Result<minijinja::Value, minijinja::Error> {
+    use minijinja::Value as M;
+    Ok(match v {
+        Value::Null => M::from(()),
+        Value::Bool(v) => M::from(*v),
+        Value::Integer(v) => M::from(*v),
+        Value::Float(v) if v.is_finite() => M::from(*v),
+        Value::String(v) => M::from(v.clone()),
+        Value::Money(v) => M::from(v.display()),
+        Value::Array(items) => M::from(
+            items
+                .iter()
+                .map(template_data)
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        Value::Object(fields) => M::from(
+            fields
+                .iter()
+                .map(|(k, v)| Ok((k.clone(), template_data(v)?)))
+                .collect::<Result<std::collections::BTreeMap<_, _>, minijinja::Error>>()?,
+        ),
+        _ => {
+            return Err(minijinja::Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                "unresolved operand reached view template",
+            ))
         }
-        Value::Object(obj) => {
-            let mut map = serde_json::Map::new();
-            for (k, v) in obj {
-                map.insert(k.clone(), plasm_value_to_json(v));
-            }
-            serde_json::Value::Object(map)
-        }
-        Value::StringTemplate(value) => {
-            serde_json::json!({"__plasm_string_template": value.source()})
-        }
-        Value::PlasmInputRef(_) | Value::GetScalarExtract(_) | Value::UnionCtor { .. } => {
-            serde_json::Value::Null
-        }
-        Value::Money(m) => serde_json::Value::String(m.display()),
-    }
+    })
 }
 
 fn parse_wire_num_value(v: minijinja::Value) -> Result<f64, String> {
@@ -131,7 +133,7 @@ fn register_view_template_filters(env: &mut Environment<'_>) {
         "json_encode",
         |v: minijinja::Value| -> Result<String, minijinja::Error> {
             let plasm = minijinja_to_plasm(v);
-            let json = plasm_value_to_json(&plasm);
+            let json = template_data(&plasm)?;
             serde_json::to_string(&json).map_err(|e| {
                 minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string())
             })
@@ -172,9 +174,10 @@ fn register_view_template_filters(env: &mut Environment<'_>) {
                 Value::Float(f) => f.to_string(),
                 Value::Bool(b) => b.to_string(),
                 Value::Null => String::new(),
-                Value::Array(_) | Value::Object(_) => {
-                    serde_json::to_string(&plasm_value_to_json(&out)).unwrap_or_default()
-                }
+                Value::Array(_) | Value::Object(_) => serde_json::to_string(&template_data(&out)?)
+                    .map_err(|e| {
+                        minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string())
+                    })?,
                 Value::StringTemplate(_)
                 | Value::PlasmInputRef(_)
                 | Value::GetScalarExtract(_)
@@ -345,25 +348,40 @@ fn render_view_template_with_nodes(
         });
     }
 
-    let mut ctx = serde_json::Map::new();
+    let mut ctx = std::collections::BTreeMap::new();
     for (k, v) in scope {
-        ctx.insert(k.clone(), plasm_value_to_json(v));
+        ctx.insert(
+            k.clone(),
+            template_data(v).map_err(|e| RuntimeError::ConfigurationError {
+                message: e.to_string(),
+            })?,
+        );
     }
     for (k, v) in fields_plain {
-        ctx.insert(k.clone(), plasm_value_to_json(v));
+        ctx.insert(
+            k.clone(),
+            template_data(v).map_err(|e| RuntimeError::ConfigurationError {
+                message: e.to_string(),
+            })?,
+        );
     }
-    let mut nodes_obj = serde_json::Map::new();
+    let mut nodes_obj = std::collections::BTreeMap::new();
     for (node_id, fields) in node_fields {
-        let mut field_obj = serde_json::Map::new();
+        let mut field_obj = std::collections::BTreeMap::new();
         for (fk, fv) in fields {
-            field_obj.insert(fk.clone(), plasm_value_to_json(fv));
+            field_obj.insert(
+                fk.clone(),
+                template_data(fv).map_err(|e| RuntimeError::ConfigurationError {
+                    message: e.to_string(),
+                })?,
+            );
         }
-        let node_json = serde_json::Value::Object(field_obj.clone());
+        let node_json = minijinja::Value::from(field_obj);
         nodes_obj.insert(node_id.clone(), node_json.clone());
         ctx.insert(node_id.clone(), node_json);
     }
     if !nodes_obj.is_empty() {
-        ctx.insert("nodes".to_string(), serde_json::Value::Object(nodes_obj));
+        ctx.insert("nodes".to_string(), minijinja::Value::from(nodes_obj));
     }
 
     let mut env = Environment::new();

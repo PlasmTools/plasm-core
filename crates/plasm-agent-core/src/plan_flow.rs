@@ -274,7 +274,6 @@ struct MutationFlowCtx<'a> {
     effect_class: EffectClass,
     capability_name: &'a str,
     template_expr: Option<&'a plasm_core::Expr>,
-    expr_template: Option<&'a str>,
     uses_result: &'a [PlanResultUse],
     author_label: Option<&'a str>,
 }
@@ -382,7 +381,6 @@ impl<'a, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, P> {
                     effect_class: n.effect_template.effect_class,
                     capability_name: cap_name.as_str(),
                     template_expr: Some(&n.effect_template.ir_template.expr),
-                    expr_template: Some(n.effect_template.expr_template.as_str()),
                     uses_result: &n.uses_result,
                     author_label: n.approval.as_deref(),
                 });
@@ -403,7 +401,6 @@ impl<'a, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, P> {
                     effect_class: n.effect_template.effect_class,
                     capability_name: cap_name.as_str(),
                     template_expr: Some(&n.effect_template.ir_template.expr),
-                    expr_template: Some(n.effect_template.expr_template.as_str()),
                     uses_result: &n.uses_result,
                     author_label: n.approval.as_deref(),
                 });
@@ -521,7 +518,6 @@ impl<'a, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, P> {
             effect_class: surface.effect_class,
             capability_name: cap_name.as_str(),
             template_expr,
-            expr_template: surface.display_expr.as_deref(),
             uses_result: &surface.uses_result,
             author_label: surface.approval.as_deref(),
         });
@@ -550,7 +546,6 @@ impl<'a, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, P> {
             ctx.kind,
             ctx.effect_class,
             ctx.capability_name,
-            ctx.expr_template,
         );
         let mut disposition = self.policy.disposition_for_event(&event, ctx.author_label);
         for forbidden in self.policy.forbidden_rules() {
@@ -710,15 +705,11 @@ fn policy_disposition_for_node<P: FlowPolicyEvaluator + ?Sized>(
             let cap_name = n
                 .ir_template
                 .as_ref()
-                .map(|t| resolved_mutation_capability_name(Some(&t.expr), n.kind))
+                .map(|t| &t.expr)
+                .or_else(|| n.ir.as_ref().map(|ir| &ir.expr))
+                .map(|expr| resolved_mutation_capability_name(Some(expr), n.kind))
                 .unwrap_or_else(|| operation_name_for_kind(n.kind).to_string());
-            let event = EffectEvent::from_mutation(
-                q,
-                n.kind,
-                n.effect_class,
-                cap_name.as_str(),
-                n.display_expr.as_deref(),
-            );
+            let event = EffectEvent::from_mutation(q, n.kind, n.effect_class, cap_name.as_str());
             policy.disposition_for_event(&event, n.approval.as_deref())
         }
         ValidatedPlanNode::ForEach(n)
@@ -731,7 +722,6 @@ fn policy_disposition_for_node<P: FlowPolicyEvaluator + ?Sized>(
                 n.effect_template.kind,
                 n.effect_template.effect_class,
                 cap_name.as_str(),
-                Some(n.effect_template.expr_template.as_str()),
             );
             policy.disposition_for_event(&event, n.approval.as_deref())
         }
@@ -745,7 +735,6 @@ fn policy_disposition_for_node<P: FlowPolicyEvaluator + ?Sized>(
                 n.effect_template.kind,
                 n.effect_template.effect_class,
                 cap_name.as_str(),
-                Some(n.effect_template.expr_template.as_str()),
             );
             policy.disposition_for_event(&event, n.approval.as_deref())
         }

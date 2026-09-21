@@ -7,6 +7,7 @@ use plasm_core::PlasmCompArtifact;
 #[path = "dry_render.rs"]
 mod dry_render;
 pub use dry_render::render_node_operation;
+pub(crate) use dry_render::render_surface_operation;
 
 pub fn evaluate_plasm_comp_dry(
     es: &ExecuteSession,
@@ -103,19 +104,12 @@ pub fn evaluate_executable_comp_dry(
                             "execution": "typechecked only; row holes prevent CML compile at dry time"
                         })
                     };
-                    let expr = surface
-                        .ir
-                        .as_ref()
-                        .and_then(|ir| ir.display_expr.as_deref())
-                        .or_else(|| {
-                            surface
-                                .ir_template
-                                .as_ref()
-                                .and_then(|t| t.display_expr.as_deref())
-                        })
-                        .or(surface.display_expr.as_deref())
-                        .unwrap_or("<ir>");
-                    let compact_expr = crate::plan_dry_compact::compact_agent_surface_expr(expr);
+                    let expr = crate::plan_dry_display::render_executable_expr(
+                        &parsed.expr,
+                        parsed.projection.as_deref(),
+                        Some(&scoped_es),
+                    );
+                    let compact_expr = crate::plan_dry_compact::compact_agent_surface_expr(&expr);
                     let compact_ir =
                         crate::plan_dry_compact::compact_ir_expr_json_for_agent_snapshot(
                             serde_json::to_value(&parsed.expr).unwrap_or_default(),
@@ -881,7 +875,7 @@ pub(crate) fn dry_stage_result(index: usize, n: &ValidatedPlanNode) -> serde_jso
                 "target": relation.relation.target,
                 "cardinality": relation.relation.cardinality,
                 "source_cardinality": relation.relation.source_cardinality,
-                "expr": relation.relation.ir.display_expr,
+                "expr": crate::plan_dry_display::render_executable_expr(&relation.relation.ir.expr, relation.relation.ir.projection.as_deref(), None),
             },
             "execution_contract": {
                 "entry_id": relation.relation.target.entry_id.as_str(),

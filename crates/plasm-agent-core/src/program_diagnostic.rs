@@ -246,7 +246,9 @@ pub(crate) fn diagnose_compile_failure(
             span_offset: None,
         };
     }
-    if nonempty.len() > 1 {
+    // A row program must keep its own diagnostic; reparsing it as one catalog
+    // expression can only diagnose a prefix and hide the offending row operation.
+    if nonempty.len() > 1 || crate::plasm_dag::is_plasm_dag_source(program) {
         return ProgramStageError::Plan {
             correction: compile_msg,
         };

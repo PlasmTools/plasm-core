@@ -557,19 +557,10 @@ fn compact_op_from_compute(
 }
 
 fn surface_compact_expr(surface: &ValidatedSurfaceNode, es: Option<&ExecuteSession>) -> String {
-    // Prefer authored / taught wire surface over IR-template fallbacks. Preferring
-    // `ir_template` first hid mutators behind `<typed Plasm IR template>` even when
-    // `display_expr` carried the e#.m#(…) form the agent must reuse.
     let raw = surface
-        .display_expr
-        .clone()
-        .filter(|s| !s.trim().is_empty())
-        .or_else(|| {
-            surface
-                .ir
-                .as_ref()
-                .map(|ir| render_plan_expr_ir_for_session(ir, es))
-        })
+        .ir
+        .as_ref()
+        .map(|ir| render_plan_expr_ir_for_session(ir, es))
         .or_else(|| {
             surface
                 .ir_template
@@ -584,10 +575,7 @@ fn render_plan_expr_ir_for_session(
     ir: &ValidatedPlanExprIr,
     es: Option<&ExecuteSession>,
 ) -> String {
-    if let Some(display) = ir.display_expr.as_ref() {
-        return display.clone();
-    }
-    render_expr_wire_for_execute_session(&ir.expr, es)
+    render_executable_expr(&ir.expr, ir.projection.as_deref(), es)
 }
 
 /// Canonical wire-surface renderer for typed [`Expr`] in an execute session (dry plan, artifacts).
@@ -597,7 +585,7 @@ pub(crate) fn render_expr_wire_for_execute_session(
     es: Option<&ExecuteSession>,
 ) -> String {
     match es {
-        None => crate::expr_display::expr_display(expr),
+        None => serde_json::to_string(expr).expect("typed expression serializes to JSON"),
         Some(es) => {
             if es.contexts_by_entry.len() > 1 {
                 if let Some(exposure) = es.teaching_exposure.as_ref() {
@@ -613,22 +601,26 @@ pub(crate) fn render_expr_wire_for_execute_session(
     }
 }
 
-fn render_template_wire_surface(
-    display_expr: Option<&str>,
+/// Review receives only executable structure, never authored display text.
+pub(crate) fn render_executable_expr(
     expr: &plasm_core::Expr,
+    projection: Option<&[String]>,
     es: Option<&ExecuteSession>,
 ) -> String {
-    if let Some(display) = display_expr.map(str::trim).filter(|s| !s.is_empty()) {
-        return display.to_string();
+    let mut rendered = render_expr_wire_for_execute_session(expr, es);
+    if let Some(fields) = projection {
+        rendered.push('[');
+        rendered.push_str(&fields.join(","));
+        rendered.push(']');
     }
-    render_expr_wire_for_execute_session(expr, es)
+    rendered
 }
 
 fn render_plan_expr_template_for_session(
     template: &ValidatedPlanExprTemplate,
     es: Option<&ExecuteSession>,
 ) -> String {
-    render_template_wire_surface(template.display_expr.as_deref(), &template.expr, es)
+    render_executable_expr(&template.expr, template.projection.as_deref(), es)
 }
 
 #[allow(dead_code)]
@@ -637,14 +629,7 @@ fn render_plan_expr_template(template: &ValidatedPlanExprTemplate) -> String {
 }
 
 fn effect_template_body(template: &ValidatedEffectTemplate, es: Option<&ExecuteSession>) -> String {
-    if !template.expr_template.trim().is_empty() {
-        return template.expr_template.clone();
-    }
-    render_template_wire_surface(
-        template.ir_template.display_expr.as_deref(),
-        &template.ir_template.expr,
-        es,
-    )
+    render_plan_expr_template_for_session(&template.ir_template, es)
 }
 
 fn step_upstream_labels(
@@ -765,24 +750,10 @@ fn render_aggregate_function(function: AggregateFunction) -> &'static str {
 
 fn render_plan_value_compact(value: &PlanValue) -> String {
     match value {
-        PlanValue::Literal { value } => render_json_value(value),
-        PlanValue::Helper {
-            name,
-            args,
-            display,
-        } => display.clone().unwrap_or_else(|| {
-            format!(
-                "{}({})",
-                name,
-                args.iter()
-                    .map(render_json_value)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        }),
+        PlanValue::Literal { value } => render_json_value(&value.to_wire()),
         PlanValue::Object { fields } => format!("{{{}}}", fields.len()),
         PlanValue::Array { items } => format!("[{}]", items.len()),
-        PlanValue::Template { .. } => "template".to_string(),
+        PlanValue::Template { .. } => "template".to_owned(),
         PlanValue::NodeSymbol { alias, path, .. } => {
             if path.is_empty() {
                 alias.clone()
@@ -813,7 +784,7 @@ fn plan_value_summary(value: &PlanValue) -> String {
     match value {
         PlanValue::Object { fields } => format!("{{{}}}", fields.len()),
         PlanValue::Array { items } => format!("[{}]", items.len()),
-        PlanValue::Literal { value } => render_json_value(value),
+        PlanValue::Literal { value } => render_json_value(&value.to_wire()),
         PlanValue::Template { .. } => "template".to_string(),
         _ => render_plan_value_compact(value),
     }
@@ -1047,8 +1018,11 @@ mod tests {
         let ir = ValidatedPlanExprIr {
             expr: pe.expr,
             projection: pe.projection,
-            display_expr: Some(wire.clone()),
         };
-        assert_eq!(render_plan_expr_ir_for_session(&ir, None), wire);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&render_plan_expr_ir_for_session(&ir, None))
+                .expect("structural review"),
+            serde_json::to_value(&ir.expr).expect("expression")
+        );
     }
 }

@@ -48,42 +48,32 @@ pub(crate) fn render_surface_operation(node: &ValidatedSurfaceNode) -> String {
         .map(|q| format!("{}.{}", q.entry_id, q.entity))
         .unwrap_or_else(|| "<unqualified>".to_string());
     let expr = node
-        .display_expr
-        .clone()
-        .filter(|s| !s.trim().is_empty())
-        .or_else(|| node.ir.as_ref().map(render_plan_expr_ir))
+        .ir
+        .as_ref()
+        .map(render_plan_expr_ir)
         .or_else(|| node.ir_template.as_ref().map(render_plan_expr_template))
         .unwrap_or_else(|| "<typed Plasm IR>".to_string());
     format!("{} {} <= {}", render_kind(node.kind), entity, expr)
 }
 
 pub(crate) fn render_plan_expr_ir(ir: &crate::plasm_plan::ValidatedPlanExprIr) -> String {
-    ir.display_expr
-        .clone()
-        .unwrap_or_else(|| crate::expr_display::expr_display(&ir.expr))
+    crate::plan_dry_display::render_executable_expr(&ir.expr, ir.projection.as_deref(), None)
 }
 
 pub(crate) fn render_plan_expr_template(
     template: &crate::plasm_plan::ValidatedPlanExprTemplate,
 ) -> String {
-    template
-        .display_expr
-        .clone()
-        .unwrap_or_else(|| "<typed Plasm IR template>".to_string())
+    crate::plan_dry_display::render_executable_expr(
+        &template.expr,
+        template.projection.as_deref(),
+        None,
+    )
 }
 
 pub(crate) fn render_effect_template_expr(
     template: &crate::plasm_plan::ValidatedEffectTemplate,
 ) -> String {
-    if !template.expr_template.trim().is_empty() {
-        template.expr_template.clone()
-    } else {
-        template
-            .ir_template
-            .display_expr
-            .clone()
-            .unwrap_or_else(|| "<typed Plasm IR template>".to_string())
-    }
+    render_plan_expr_template(&template.ir_template)
 }
 
 pub(crate) fn render_derive_template(template: &ValidatedDeriveNode) -> String {
@@ -237,21 +227,7 @@ pub(crate) fn render_predicate(predicate: &crate::plasm_plan::PlanPredicate) -> 
 
 pub(crate) fn render_plan_value(value: &PlanValue) -> String {
     match value {
-        PlanValue::Literal { value } => render_json_value(value),
-        PlanValue::Helper {
-            name,
-            args,
-            display,
-        } => display.clone().unwrap_or_else(|| {
-            format!(
-                "{}({})",
-                name,
-                args.iter()
-                    .map(render_json_value)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        }),
+        PlanValue::Literal { value } => render_json_value(&value.to_wire()),
         PlanValue::Symbol { path } => format!("{{{{ {path} }}}}"),
         PlanValue::BindingSymbol { binding, path } => {
             let suffix = if path.is_empty() {

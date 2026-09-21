@@ -74,10 +74,7 @@ pub(crate) fn augment_row_json_with_identity(
 
 pub(crate) fn predicate_matches(
     row: &serde_json::Value,
-    pred: &crate::plasm_plan::PlanPredicate,
-) -> bool {
-    match crate::plan_read_bounds::plan_predicate_to_json(pred) {
-        Ok(json_pred) => plasm_runtime::json_matches_predicate(row, &json_pred),
-        Err(_) => false,
-    }
+    pred: &plasm_runtime::row_predicate::BoundRowPredicate,
+) -> Result<bool, String> {
+    plasm_runtime::json_matches_predicate(row, pred).map_err(|e| e.to_string())
 }

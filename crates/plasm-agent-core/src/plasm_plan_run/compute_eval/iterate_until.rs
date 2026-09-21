@@ -4,13 +4,19 @@ use super::super::*;
 use super::eval::{instantiate_expr_template, wire_coercion_by_alias_from_inputs};
 use super::for_each::{bound_row_plan_eval_env, cross_uses_excluding_item};
 use super::materialized_result_use_inputs;
-use crate::plasm_plan::{PlanPredicate, ValidatedIterateUntilNode};
+use crate::plasm_plan::ValidatedIterateUntilNode;
 use plasm_core::expr_parser::ParsedExpr;
 
-fn row_satisfies_until(row: &serde_json::Value, preds: &[PlanPredicate]) -> bool {
-    preds
-        .iter()
-        .all(|p| crate::plasm_plan_run::predicate_matches(row, p))
+fn row_satisfies_until(
+    row: &serde_json::Value,
+    preds: &[plasm_runtime::row_predicate::BoundRowPredicate],
+) -> Result<bool, String> {
+    for pred in preds {
+        if !crate::plasm_plan_run::predicate_matches(row, pred)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -43,7 +49,15 @@ pub(crate) async fn materialize_iterate_until_node(
     let seed_qe = seed_mat.qualified_entity.clone();
     let seed_coverage = seed_mat.result.coverage;
 
-    if row_satisfies_until(&current_rows[0], &it.until_predicates) {
+    let resolved_until = super::compute_ops::resolve_filter_predicates_with_materialized(
+        &it.until_predicates.clone().into(),
+        materialized,
+    )?;
+    let until_predicates = resolved_until
+        .iter()
+        .map(crate::plan_read_bounds::bind_row_predicate)
+        .collect::<Result<Vec<_>, _>>()?;
+    if row_satisfies_until(&current_rows[0], &until_predicates)? {
         return super::super::materialize::archive_materialize_iterate_until(
             st,
             es,
@@ -85,7 +99,7 @@ pub(crate) async fn materialize_iterate_until_node(
             (step_idx as usize).saturating_sub(1),
             expr_label,
             parsed,
-        );
+        )?;
         let fold = super::super::plan_fanout_parallel::execute_row_fanout(
             st,
             &scoped_es,
@@ -127,7 +141,7 @@ pub(crate) async fn materialize_iterate_until_node(
                 "iterate_until re-observe after step {step_idx} produced no rows"
             ));
         }
-        if row_satisfies_until(&current_rows[0], &it.until_predicates) {
+        if row_satisfies_until(&current_rows[0], &until_predicates)? {
             return super::super::materialize::archive_materialize_iterate_until(
                 st,
                 es,
@@ -200,7 +214,11 @@ async fn reobserve_seed(
         &seed_replay_uses(&seed_ir.expr),
         materialized,
     )?;
-    let expr_label = seed_ir.display_expr.as_deref().unwrap_or("<iterate-seed>");
+    let expr_label = &crate::plan_dry_display::render_executable_expr(
+        &seed_ir.expr,
+        seed_ir.projection.as_deref(),
+        Some(es),
+    );
     let (_parsed, result, _artifact) = execute_plasm_parsed_expr(
         st,
         &scoped_es,

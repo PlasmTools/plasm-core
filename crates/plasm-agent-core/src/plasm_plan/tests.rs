@@ -430,10 +430,7 @@ fn predicate_helper_values_are_rejected() {
         "return": { "kind": "node", "node": "n1" }
     });
     let err = validate_plan_value(&v).expect_err("helper predicate rejected");
-    assert!(
-        err.contains("helper \"daysAgo\" is not executable"),
-        "{err}"
-    );
+    assert!(err.contains("unknown variant `helper`"), "{err}");
 }
 
 #[test]

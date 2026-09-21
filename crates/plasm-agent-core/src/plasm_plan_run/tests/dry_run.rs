@@ -979,7 +979,7 @@ fn dry_run_text_renders_dependency_dag_snapshot() {
                     "value": {
                         "kind": "object",
                         "fields": {
-                            "title": { "kind": "template", "template": "{{ product.name }}", "input_bindings": [{ "from": "product.name", "to": "" }] }
+                            "title": { "kind": "template", "template": "{{ product.name }}", "input_bindings": [{ "from": "product", "to": "product" }] }
                         }
                     }
                 },
@@ -1014,7 +1014,7 @@ fn dry_run_text_renders_dependency_dag_snapshot() {
     plan review · 3n 1r 0w → returns: summary, cards · p7
     warn: narrow before aggregate/limit
 
-    01 products     query Product
+    01 products     query {\"op\":\"query\",\"entity\":\"Product\"}
     02 summary      project name, sku ← products
     03 cards        derive map summary as product → {1} ← summary
     "
@@ -1192,15 +1192,17 @@ fn for_each_templates_render_concrete_row_bound_plasm_calls() {
         .expect("for_each node");
     let expressions = render_for_each_expressions(
         for_each,
+        &test_session().cgs,
         &[serde_json::json!({ "id": "p1", "name": "Bolt" })],
         None,
     )
     .expect("render expressions");
 
-    assert_eq!(
-        expressions,
-        vec!["Product(\"p1\").label(label=\"stale\")".to_string()]
-    );
+    let executed: serde_json::Value =
+        serde_json::from_str(&expressions[0]).expect("executable review");
+    assert_eq!(executed["capability"], "product_label");
+    assert_eq!(executed["target"]["key"], "p1");
+    assert_eq!(executed["input"]["label"], "stale");
 }
 
 #[test]
@@ -1344,7 +1346,7 @@ fn dry_run_text_renders_staged_read_map_body() {
     assert!(dry.execution_unsupported.is_empty());
     let text = render_plasm_plan_dry_text(&dry, None);
     assert!(
-        text.contains("for_each products as product => Product({{ product.id }})"),
+        text.contains(r#"for_each products as product => {"op":"get","ref":{"entity_type":"Product","key":{"__plasm_hole":{"binding":"product","kind":"binding","path":["id"]}}}}"#),
         "{text}"
     );
     assert!(!text.contains("=> {}"), "{text}");
@@ -1442,8 +1444,8 @@ newbranch, newfile"#;
         .artifact()
         .comp
         .metadata
-        .get("program_order_write_deps")
-        .expect("program_order_write_deps metadata");
+        .get("program_order_effect_deps")
+        .expect("program_order_effect_deps metadata");
     assert_eq!(meta, &serde_json::json!([["newbranch", "newfile"]]));
     let dry = evaluate_plasm_comp_dry(&es, &bundle).expect("dry");
     assert_eq!(
@@ -1670,6 +1672,23 @@ fn compiled_filter_roundtrip(program: &str) -> Vec<ComputeOp> {
 
 proptest::proptest! {
     #![proptest_config(proptest::test_runner::Config::with_cases(24))]
+    #[test]
+    fn application_filter_preserves_order_multiplicity_and_value_types_through_wire(
+        source in proptest::collection::vec(0i64..15, 0..32),
+        cutoff in 0i64..15,
+    ) {
+        let program = format!("items = LangItem\nreads = items => LangItem(_.id)\nselected = reads | where score >= {cutoff}\nselected");
+        let ops = compiled_filter_roundtrip(&program);
+        let rows: Vec<_> = source.iter().map(|n| serde_json::json!({
+            "id": format!("row-{n}"), "score": n, "active": n % 2 == 0,
+            "owner": "same-owner", "title": format!("title-{n}"),
+        })).collect();
+        let expected: Vec<_> = rows.iter().filter(|r| r["score"].as_i64().unwrap() >= cutoff).cloned().collect();
+        let plasm_runtime::row_compute::ComputeEvalOutcome::Rows(actual) =
+            plasm_runtime::row_compute::eval_compute_ops(&ops, &rows).unwrap() else { panic!("rows") };
+        proptest::prop_assert_eq!(actual, expected);
+    }
+
     #[test]
     fn boolean_sugar_compiles_and_preserves_selected_rows_through_wire(
         chosen in proptest::collection::vec(0i64..10, 1..8),

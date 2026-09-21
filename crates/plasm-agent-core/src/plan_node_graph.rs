@@ -7,21 +7,16 @@ use crate::plasm_plan::{
     ComputeOp, EffectClass, Plan, ValidatedPlanNode, ValidatedPlanReturn, ValidatedPlanState,
 };
 
-/// Labels of collection bindings a compute op consumes (union RHS, membership `in` / `not in`).
+/// All upstream bindings consumed by a compute operand, including nested scalar/template references.
 #[must_use]
-pub(crate) fn collection_binding_labels(op: &ComputeOp) -> Vec<String> {
+pub(crate) fn compute_binding_labels(op: &ComputeOp) -> Vec<String> {
     match op {
-        ComputeOp::Filter { predicates } => {
-            let mut labels = Vec::new();
-            for pred in predicates {
-                if let crate::plasm_plan::PlanValue::BindingSymbol { binding, .. } = &pred.value {
-                    if !labels.iter().any(|l| l == binding) {
-                        labels.push(binding.clone());
-                    }
-                }
-            }
-            labels
-        }
+        ComputeOp::Filter { predicates } => predicates
+            .into_iter()
+            .flat_map(|p| p.value.dependencies())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect(),
         ComputeOp::Union { other } => vec![other.as_str().to_string()],
         _ => Vec::new(),
     }
@@ -53,7 +48,7 @@ pub fn node_dependencies(node: &ValidatedPlanNode) -> Vec<String> {
         }
         ValidatedPlanNode::Compute(n) => {
             push_unique(&mut out, std::iter::once(n.compute.source.clone()));
-            push_unique(&mut out, collection_binding_labels(&n.compute.op));
+            push_unique(&mut out, compute_binding_labels(&n.compute.op));
         }
         ValidatedPlanNode::ForEach(n) => {
             push_unique(&mut out, std::iter::once(n.source.as_str().to_string()));

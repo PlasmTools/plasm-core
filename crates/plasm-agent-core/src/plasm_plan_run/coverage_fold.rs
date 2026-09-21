@@ -30,7 +30,7 @@ pub(crate) fn coverage_from_compute_collections(
     op: &ComputeOp,
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
 ) -> plasm_runtime::ResultCoverage {
-    let dep_coverages = crate::plan_node_graph::collection_binding_labels(op)
+    let dep_coverages = crate::plan_node_graph::compute_binding_labels(op)
         .into_iter()
         .map(|label| {
             PlanNodeId::new(label)

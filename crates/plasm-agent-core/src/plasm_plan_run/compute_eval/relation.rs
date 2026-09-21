@@ -45,12 +45,11 @@ pub(crate) async fn materialize_relation_singleton_chain(
         &relation.uses_result,
         materialized,
     )?;
-    let expr_label = relation
-        .relation
-        .ir
-        .display_expr
-        .as_deref()
-        .unwrap_or("<ir>");
+    let expr_label = &crate::plan_dry_display::render_executable_expr(
+        &relation.relation.ir.expr,
+        relation.relation.ir.projection.as_deref(),
+        Some(es),
+    );
     let (parsed, result, artifact) = execute_plasm_parsed_expr(
         st,
         &scoped_es,
@@ -139,12 +138,11 @@ pub(crate) async fn finalize_empty_relation_materialized_node(
     trace: Option<&PlasmTraceContext>,
     read_cap: Option<usize>,
 ) -> Result<MaterializedNode, String> {
-    let display = relation
-        .relation
-        .ir
-        .display_expr
-        .clone()
-        .unwrap_or_else(|| format!("plan.relation({})", node.id().as_str()));
+    let display = crate::plan_dry_display::render_executable_expr(
+        &relation.relation.ir.expr,
+        relation.relation.ir.projection.as_deref(),
+        Some(es),
+    );
     finalize_typed_relation_materialized_node(
         st,
         es,
@@ -363,12 +361,11 @@ pub(crate) async fn materialize_relation_scoped_fanout(
     };
     let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
     let source_node = &relation.relation.source;
-    let base_display = relation
-        .relation
-        .ir
-        .display_expr
-        .clone()
-        .unwrap_or_else(|| format!("plan.relation({})", relation.id.as_str()));
+    let base_display = crate::plan_dry_display::render_executable_expr(
+        &relation.relation.ir.expr,
+        relation.relation.ir.projection.as_deref(),
+        Some(es),
+    );
 
     let read_cap = crate::plan_read_bounds::effective_relation_read_cap(relation);
     let parent_row_cap = read_cap.unwrap_or(source_rows.len());

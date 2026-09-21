@@ -163,7 +163,8 @@ mod tests {
             field_path: FieldPath::from_dotted("owner").unwrap(),
             op: PlanPredicateOp::Eq,
             value: PlasmDataValue::Literal {
-                value: serde_json::json!("alice"),
+                value: crate::operand_binding::ResolvedValue::from_wire(serde_json::json!("alice"))
+                    .expect("literal data"),
             },
         };
         let node = plan_node_from_compute(&ComputeOp::Filter {

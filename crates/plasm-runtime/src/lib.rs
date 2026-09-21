@@ -210,9 +210,7 @@ pub use oauth_token_debug::TokenEndpointResponseSummary;
 pub use query_index::{QueryCacheKey, QueryIndex};
 pub use replay::*;
 pub use row_compute::{eval_compute_ops, ComputeEvalOutcome, PolarsAdapter};
-pub use row_predicate::{
-    json_matches_predicate, json_predicate_matches, JsonRowPredicate, JsonRowPredicateOp,
-};
+pub use row_predicate::{json_matches_predicate, value_predicate_matches, BoundRowPredicate};
 pub use runtime_error_render::step_error_from_runtime;
 pub use session_graph_cache::MutexGraphCacheSession;
 pub use top_k::TopKSpec;

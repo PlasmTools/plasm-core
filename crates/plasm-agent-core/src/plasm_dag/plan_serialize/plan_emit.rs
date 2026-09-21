@@ -177,12 +177,14 @@ impl PlanNodeEmitter for DagNodeSource {
                 parsed_template,
                 display_expr,
                 effect_kind,
+                effect_class,
+                result_shape,
                 qualified_entity,
                 uses_result,
             } => {
                 out.kind = PlanNodeKind::ForEach;
-                out.effect_class = EffectClass::SideEffect;
-                out.result_shape = ResultShape::SideEffectAck;
+                out.effect_class = *effect_class;
+                out.result_shape = ResultShape::List;
                 out.source = Some(source.clone());
                 out.item_binding = Some("_".into());
                 out.uses_result = std::iter::once(result_use(source, "_"))
@@ -190,6 +192,8 @@ impl PlanNodeEmitter for DagNodeSource {
                     .collect();
                 out.effect_template = Some(effect_template(
                     *effect_kind,
+                    *effect_class,
+                    *result_shape,
                     qualified_entity,
                     display_expr,
                     parsed_template,
@@ -200,6 +204,8 @@ impl PlanNodeEmitter for DagNodeSource {
                 parsed_step_template,
                 step_display,
                 effect_kind,
+                effect_class,
+                result_shape,
                 qualified_entity,
                 until_body,
                 until_predicates,
@@ -207,7 +213,7 @@ impl PlanNodeEmitter for DagNodeSource {
                 uses_result,
             } => {
                 out.kind = PlanNodeKind::IterateUntil;
-                out.effect_class = EffectClass::SideEffect;
+                out.effect_class = *effect_class;
                 out.result_shape = ResultShape::Single;
                 out.source = Some(seed.clone());
                 out.item_binding = Some("_".into());
@@ -219,6 +225,8 @@ impl PlanNodeEmitter for DagNodeSource {
                     .collect();
                 out.effect_template = Some(effect_template(
                     *effect_kind,
+                    *effect_class,
+                    *result_shape,
                     qualified_entity,
                     step_display,
                     parsed_step_template,
@@ -238,6 +246,8 @@ impl PlanNodeEmitter for DagNodeSource {
 
 fn effect_template(
     kind: PlanNodeKind,
+    effect_class: EffectClass,
+    result_shape: ResultShape,
     qualified_entity: &QualifiedEntityKey,
     display: &str,
     template: &PlanExprTemplate,
@@ -247,8 +257,8 @@ fn effect_template(
         qualified_entity: qualified_entity.clone(),
         expr_template: display.to_owned(),
         ir_template: template.clone(),
-        effect_class: EffectClass::SideEffect,
-        result_shape: ResultShape::SideEffectAck,
+        effect_class,
+        result_shape,
         projection: vec![],
         input_bindings: vec![],
     }
@@ -260,9 +270,9 @@ fn filter_plan_graph_edges(
 ) -> Vec<PlanResultUse> {
     let mut uses = vec![result_use(source, "source")];
     for pred in predicates {
-        if let PlanValue::BindingSymbol { binding, .. } = &pred.value {
+        for binding in pred.value.dependencies() {
             if binding != source {
-                uses.push(result_use(binding, binding));
+                uses.push(result_use(&binding, &binding));
             }
         }
     }

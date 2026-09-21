@@ -12,11 +12,6 @@ pub(super) fn validate_predicate(
             "plan.nodes[{node_index}].predicates[{pred_index}].field_path must be non-empty"
         ));
     }
-    if let PlanValue::Helper { name, .. } = &p.value {
-        return Err(format!(
-            "plan.nodes[{node_index}].predicates[{pred_index}].value helper {name:?} is not executable in program-plan predicates; pass a literal/entity_ref_key value or precompute it"
-        ));
-    }
     validate_plan_value_expr(
         &p.value,
         node_index,
@@ -32,17 +27,7 @@ pub(super) fn validate_plan_value_expr(
 ) -> Result<(), String> {
     match value {
         PlanValue::Literal { value } => {
-            validate_json_value_no_js_object_coercion(value, node_index, path)
-        }
-        PlanValue::Helper { args, .. } => {
-            for (i, arg) in args.iter().enumerate() {
-                validate_json_value_no_js_object_coercion(
-                    arg,
-                    node_index,
-                    &format!("{path}.args[{i}]"),
-                )?;
-            }
-            Ok(())
+            validate_data_no_js_object_coercion(value.value(), node_index, path)
         }
         PlanValue::Symbol { path: symbol_path } => {
             validate_no_js_object_coercion(symbol_path, node_index, path)
@@ -75,9 +60,13 @@ pub(super) fn validate_plan_value_expr(
         } => {
             validate_no_js_object_coercion(template.source(), node_index, path)?;
             for b in input_bindings {
-                if b.from.trim().is_empty() {
+                if b.from.trim().is_empty()
+                    || b.to.trim().is_empty()
+                    || b.from.contains('.')
+                    || b.to.contains('.')
+                {
                     return Err(format!(
-                        "plan.nodes[{node_index}].{path} has an empty binding"
+                        "plan.nodes[{node_index}].{path} requires non-empty root binding aliases"
                     ));
                 }
             }
@@ -178,40 +167,32 @@ fn looks_like_unnormalized_entity_ref_wrapper(fields: &BTreeMap<String, PlanValu
     matches!(
         fields.get("api"),
         Some(PlanValue::Literal {
-            value: serde_json::Value::String(_)
-        })
+            value
+        }) if value.as_str().is_some()
     ) && matches!(
         fields.get("entity"),
         Some(PlanValue::Literal {
-            value: serde_json::Value::String(_)
-        })
+            value
+        }) if value.as_str().is_some()
     )
 }
 
-fn validate_json_value_no_js_object_coercion(
-    value: &serde_json::Value,
+fn validate_data_no_js_object_coercion(
+    value: &plasm_core::Value,
     node_index: usize,
     path: &str,
 ) -> Result<(), String> {
     match value {
-        serde_json::Value::String(s) => validate_no_js_object_coercion(s, node_index, path),
-        serde_json::Value::Array(items) => {
+        plasm_core::Value::String(s) => validate_no_js_object_coercion(s, node_index, path),
+        plasm_core::Value::Array(items) => {
             for (i, item) in items.iter().enumerate() {
-                validate_json_value_no_js_object_coercion(
-                    item,
-                    node_index,
-                    &format!("{path}[{i}]"),
-                )?;
+                validate_data_no_js_object_coercion(item, node_index, &format!("{path}[{i}]"))?;
             }
             Ok(())
         }
-        serde_json::Value::Object(fields) => {
+        plasm_core::Value::Object(fields) => {
             for (k, field) in fields {
-                validate_json_value_no_js_object_coercion(
-                    field,
-                    node_index,
-                    &format!("{path}.{k}"),
-                )?;
+                validate_data_no_js_object_coercion(field, node_index, &format!("{path}.{k}"))?;
             }
             Ok(())
         }

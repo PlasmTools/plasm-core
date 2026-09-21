@@ -822,7 +822,7 @@ mod tests {
                 api: "github".into(),
                 entity: "Repository".into(),
                 key: Box::new(PlanValue::Literal {
-                    value: serde_json::json!({"owner": "octocat"}),
+                    value: plasm_core::operand_binding::ResolvedValue::from_wire(serde_json::json!({"owner": "octocat"})).expect("literal data"),
                 }),
             },
             &mut used,

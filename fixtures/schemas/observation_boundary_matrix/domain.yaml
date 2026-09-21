@@ -1,0 +1,61 @@
+version: 1
+auth: {scheme: none}
+http_backend: http://127.0.0.1:9
+entities:
+  Counter:
+    id_field: id
+    fields:
+      id: {value_ref: text, required: true}
+      value: {value_ref: integer, required: true}
+  Wire:
+    id_field: id
+    fields:
+      id: {value_ref: text, required: true}
+      value: {value_ref: integer, required: true}
+capabilities:
+  counter_get:
+    kind: get
+    entity: Counter
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - {name: id, value_ref: text, required: true}
+    provides: [id, value]
+  wire_get:
+    kind: get
+    entity: Wire
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - {name: id, value_ref: text, required: true}
+    provides: [id, value]
+  advance:
+    kind: action
+    entity: Counter
+    invalidates_entities: [Counter, Wire]
+    payload:
+      input_type:
+        type: object
+        fields:
+        - {name: id, value_ref: text, required: true}
+    output: {type: side_effect, description: Advances the counter by one.}
+views:
+  counter:
+    description: Current counter state composed from the wire read.
+    capability: counter_get
+    entity: Counter
+    scope:
+    - {name: id, value_ref: text, required: true}
+    nodes:
+    - id: wire
+      capability: wire_get
+      bind:
+        id: {kind: scope, param: id}
+    output:
+      id: {kind: scope, param: id}
+      value: {kind: node_field, node: wire, field: value}
+values:
+  text: {type: string}
+  integer: {type: integer}

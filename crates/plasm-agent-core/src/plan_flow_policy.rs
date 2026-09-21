@@ -63,7 +63,7 @@ pub struct EffectEvent {
     pub entity: String,
     pub kind: PlanNodeKind,
     pub effect_class: EffectClass,
-    /// Capability name (from IR / display) — primary match key for gates.
+    /// Capability name from executable IR — primary match key for gates.
     pub capability: String,
 }
 
@@ -73,12 +73,11 @@ impl EffectEvent {
         kind: PlanNodeKind,
         effect_class: EffectClass,
         capability_name: &str,
-        expr_template: Option<&str>,
     ) -> Self {
         let capability = if !capability_name.is_empty() && capability_name != "action" {
             capability_name.to_string()
         } else {
-            effect_operation_label(kind, capability_name, expr_template)
+            effect_operation_label(kind, capability_name, None)
         };
         Self {
             entry_id: q.entry_id.as_str().to_string(),

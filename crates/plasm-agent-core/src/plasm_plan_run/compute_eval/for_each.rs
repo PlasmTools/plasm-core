@@ -50,6 +50,7 @@ pub(crate) fn cross_uses_excluding_item(
 #[cfg(test)]
 pub(crate) fn render_for_each_expressions(
     for_each: &ValidatedForEachNode,
+    cgs: &plasm_core::CGS,
     source_rows: &[serde_json::Value],
     materialized: Option<&BTreeMap<PlanNodeId, MaterializedNode>>,
 ) -> Result<Vec<String>, String> {
@@ -63,7 +64,13 @@ pub(crate) fn render_for_each_expressions(
         .map(|row| {
             let empty = BTreeMap::new();
             let env = for_each_plan_eval_env(for_each, row, &input_rows, &empty);
-            super::eval::render_expr_template(&for_each.effect_template.expr_template, &env)
+            let parsed =
+                instantiate_expr_template(&for_each.effect_template.ir_template, &env, cgs)?;
+            Ok(crate::plan_dry_display::render_executable_expr(
+                &parsed.expr,
+                parsed.projection.as_deref(),
+                None,
+            ))
         })
         .collect()
 }
@@ -123,7 +130,7 @@ pub(crate) async fn materialize_for_each_node(
             expr_label,
             parsed_expr,
             source_identities.get(row_index).cloned().flatten(),
-        );
+        )?;
     }
     let fold = super::super::plan_fanout_parallel::execute_row_fanout(
         st,

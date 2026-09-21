@@ -276,23 +276,30 @@ pub(in crate::plasm_dag) fn parse_plan_value_expr(
                 dedupe_inputs(inputs),
             ));
         }
-        return Ok((PlanValue::Literal { value: json!(body) }, Vec::new()));
+        return Ok((
+            PlanValue::try_from(plasm_core::Value::String(body))?,
+            Vec::new(),
+        ));
     }
     let value = parse_literal(raw)?;
     Ok((PlanValue::Literal { value }, Vec::new()))
 }
 
-pub(in crate::plasm_dag) fn parse_literal(raw: &str) -> Result<serde_json::Value, String> {
+pub(in crate::plasm_dag) fn parse_literal(
+    raw: &str,
+) -> Result<plasm_core::operand_binding::ResolvedValue, String> {
+    use plasm_core::{operand_binding::ResolvedValue, Value};
     if raw.starts_with('"') || raw == "null" || raw == "true" || raw == "false" {
         return serde_json::from_str(raw).map_err(|e| format!("literal `{raw}`: {e}"));
     }
-    if let Ok(n) = raw.parse::<i64>() {
-        return Ok(json!(n));
-    }
-    if let Ok(n) = raw.parse::<f64>() {
-        return Ok(json!(n));
-    }
-    Ok(json!(raw))
+    let value = if let Ok(n) = raw.parse::<i64>() {
+        Value::Integer(n)
+    } else if let Ok(n) = raw.parse::<f64>() {
+        Value::Float(n)
+    } else {
+        Value::String(raw.to_owned())
+    };
+    ResolvedValue::new(value).map_err(str::to_owned)
 }
 
 /// Split `group_by` args into key field names (no `=`) and trailing aggregate tail.

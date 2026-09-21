@@ -211,7 +211,7 @@ mod tests {
     fn rejects_teaching_relation_symbol_in_literal_rhs() {
         let wires: Vec<String> = Vec::new();
         let value = PlanValue::Literal {
-            value: serde_json::json!("e2.r2"),
+            value: plasm_core::operand_binding::ResolvedValue::from_wire(serde_json::json!("e2.r2")).expect("literal data"),
         };
         let err = reject_derive_map_invalid_rhs(&value, &wires).unwrap_err();
         assert!(err.contains(DERIVE_MAP_RELATION_HOP_MSG), "{err}");

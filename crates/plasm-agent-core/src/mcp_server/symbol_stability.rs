@@ -129,8 +129,8 @@ created"#
         let text =
             crate::plasm_plan_run::render_plasm_plan_dry_text_for_session(dry, None, Some(es));
         assert!(
-            text.contains("langitem_create") || text.contains("create e"),
-            "expected langitem_create (or create-kind) in dry plan:\n{text}"
+            text.contains("create LangItem.create("),
+            "expected resolved LangItem create in dry plan:\n{text}"
         );
     }
 

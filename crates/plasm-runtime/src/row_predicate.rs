@@ -3,26 +3,11 @@
 use crate::cache::CachedEntity;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct JsonRowPredicate {
-    pub field_path: Vec<String>,
-    pub op: JsonRowPredicateOp,
-    pub value: serde_json::Value,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum JsonRowPredicateOp {
-    Eq,
-    Ne,
-    Lt,
-    Lte,
-    Gt,
-    Gte,
-    Contains,
-    In,
-    NotIn,
-    Exists,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BoundRowPredicate {
+    pub field_path: plasm_core::FieldPath,
+    pub op: plasm_core::PlanPredicateOp,
+    pub value: plasm_core::operand_binding::ResolvedValue,
 }
 
 pub fn entity_field_path_value(
@@ -56,78 +41,137 @@ pub fn json_value_field_path(
     Some(cur)
 }
 
-pub fn entity_matches_predicates(entity: &CachedEntity, predicates: &[JsonRowPredicate]) -> bool {
-    predicates
-        .iter()
-        .all(|p| entity_matches_predicate(entity, p))
+pub fn entity_matches_predicates(
+    entity: &CachedEntity,
+    predicates: &[BoundRowPredicate],
+) -> Result<bool, crate::RuntimeError> {
+    for predicate in predicates {
+        if !entity_matches_predicate(entity, predicate)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
-pub fn json_matches_predicates(value: &serde_json::Value, predicates: &[JsonRowPredicate]) -> bool {
-    predicates.iter().all(|p| json_matches_predicate(value, p))
+pub fn entity_matches_predicate(
+    entity: &CachedEntity,
+    pred: &BoundRowPredicate,
+) -> Result<bool, crate::RuntimeError> {
+    let lhs = entity_field_path_value(entity, pred.field_path.segments())
+        .unwrap_or(serde_json::Value::Null);
+    value_predicate_matches(
+        &plasm_core::json_value_to_plasm_value(&lhs),
+        pred.op,
+        pred.value.value(),
+    )
 }
 
-pub fn entity_matches_predicate(entity: &CachedEntity, pred: &JsonRowPredicate) -> bool {
-    let lhs = entity_field_path_value(entity, &pred.field_path).unwrap_or(serde_json::Value::Null);
-    json_predicate_matches(&lhs, pred.op, &pred.value)
+pub fn json_matches_predicate(
+    value: &serde_json::Value,
+    pred: &BoundRowPredicate,
+) -> Result<bool, crate::RuntimeError> {
+    let lhs =
+        json_value_field_path(value, pred.field_path.segments()).unwrap_or(serde_json::Value::Null);
+    value_predicate_matches(
+        &plasm_core::json_value_to_plasm_value(&lhs),
+        pred.op,
+        pred.value.value(),
+    )
 }
 
-pub fn json_matches_predicate(value: &serde_json::Value, pred: &JsonRowPredicate) -> bool {
-    let lhs = json_value_field_path(value, &pred.field_path).unwrap_or(serde_json::Value::Null);
-    json_predicate_matches(&lhs, pred.op, &pred.value)
-}
-
-pub fn json_predicate_matches(
-    lhs: &serde_json::Value,
-    op: JsonRowPredicateOp,
-    rhs: &serde_json::Value,
-) -> bool {
-    match op {
-        JsonRowPredicateOp::Eq => json_values_eq_loose(lhs, rhs),
-        JsonRowPredicateOp::Ne => !json_values_eq_loose(lhs, rhs),
-        JsonRowPredicateOp::Exists => !lhs.is_null(),
-        JsonRowPredicateOp::Contains => lhs
+pub fn value_predicate_matches(
+    lhs: &plasm_core::Value,
+    op: plasm_core::PlanPredicateOp,
+    rhs: &plasm_core::Value,
+) -> Result<bool, crate::RuntimeError> {
+    let equal = |lhs: &plasm_core::Value,
+                 rhs: &plasm_core::Value|
+     -> Result<bool, crate::RuntimeError> {
+        if matches!(lhs, plasm_core::Value::Money(_)) || matches!(rhs, plasm_core::Value::Money(_))
+        {
+            plasm_core::money::values_eq(lhs, rhs)
+                .map_err(|e| crate::RuntimeError::from(plasm_core::TypeError::from(e)))
+        } else {
+            Ok(values_eq_loose(lhs, rhs))
+        }
+    };
+    if matches!(lhs, plasm_core::Value::Money(_)) || matches!(rhs, plasm_core::Value::Money(_)) {
+        if matches!(
+            op,
+            plasm_core::PlanPredicateOp::Lt
+                | plasm_core::PlanPredicateOp::Lte
+                | plasm_core::PlanPredicateOp::Gt
+                | plasm_core::PlanPredicateOp::Gte
+        ) {
+            let ordering = plasm_core::money::values_ord(lhs, rhs)
+                .map_err(|e| crate::RuntimeError::from(plasm_core::TypeError::from(e)))?;
+            return Ok(ordering.is_some_and(|o| match op {
+                plasm_core::PlanPredicateOp::Lt => o.is_lt(),
+                plasm_core::PlanPredicateOp::Lte => o.is_le(),
+                plasm_core::PlanPredicateOp::Gt => o.is_gt(),
+                _ => o.is_ge(),
+            }));
+        }
+    }
+    Ok(match op {
+        plasm_core::PlanPredicateOp::Eq => equal(lhs, rhs)?,
+        plasm_core::PlanPredicateOp::Ne => !equal(lhs, rhs)?,
+        plasm_core::PlanPredicateOp::Exists => !matches!(lhs, plasm_core::Value::Null),
+        plasm_core::PlanPredicateOp::Contains => lhs
             .as_str()
             .zip(rhs.as_str())
             .is_some_and(|(l, r)| l.contains(r)),
-        JsonRowPredicateOp::In => rhs
-            .as_array()
-            .is_some_and(|items| items.iter().any(|item| json_values_eq_loose(item, lhs))),
-        JsonRowPredicateOp::NotIn => !rhs
-            .as_array()
-            .is_some_and(|items| items.iter().any(|item| json_values_eq_loose(item, lhs))),
-        JsonRowPredicateOp::Lt => compare_ordered(lhs, rhs, |l, r| l < r),
-        JsonRowPredicateOp::Lte => compare_ordered(lhs, rhs, |l, r| l <= r),
-        JsonRowPredicateOp::Gt => compare_ordered(lhs, rhs, |l, r| l > r),
-        JsonRowPredicateOp::Gte => compare_ordered(lhs, rhs, |l, r| l >= r),
-    }
+        plasm_core::PlanPredicateOp::In | plasm_core::PlanPredicateOp::NotIn => {
+            let mut found = false;
+            if let Some(items) = rhs.as_array() {
+                for item in items {
+                    found |= equal(lhs, item)?;
+                }
+            }
+            if op == plasm_core::PlanPredicateOp::NotIn {
+                !found
+            } else {
+                found
+            }
+        }
+        plasm_core::PlanPredicateOp::Lt => compare_ordered(lhs, rhs, |l, r| l < r),
+        plasm_core::PlanPredicateOp::Lte => compare_ordered(lhs, rhs, |l, r| l <= r),
+        plasm_core::PlanPredicateOp::Gt => compare_ordered(lhs, rhs, |l, r| l > r),
+        plasm_core::PlanPredicateOp::Gte => compare_ordered(lhs, rhs, |l, r| l >= r),
+    })
 }
 
-/// Strict JSON equality plus bool ↔ boolish-string (`true`/`True`/`false`/`False`).
-fn json_values_eq_loose(lhs: &serde_json::Value, rhs: &serde_json::Value) -> bool {
+/// Typed data equality plus bool ↔ boolish-string (`true`/`True`/`false`/`False`).
+fn values_eq_loose(lhs: &plasm_core::Value, rhs: &plasm_core::Value) -> bool {
     if lhs == rhs {
         return true;
     }
-    match (json_as_boolish(lhs), json_as_boolish(rhs)) {
+    match (value_as_boolish(lhs), value_as_boolish(rhs)) {
         (Some(a), Some(b)) => a == b,
         _ => false,
     }
 }
 
-fn json_as_boolish(v: &serde_json::Value) -> Option<bool> {
+fn value_as_boolish(v: &plasm_core::Value) -> Option<bool> {
     match v {
-        serde_json::Value::Bool(b) => Some(*b),
-        serde_json::Value::String(s) if s.eq_ignore_ascii_case("true") => Some(true),
-        serde_json::Value::String(s) if s.eq_ignore_ascii_case("false") => Some(false),
+        plasm_core::Value::Bool(b) => Some(*b),
+        plasm_core::Value::String(s) if s.eq_ignore_ascii_case("true") => Some(true),
+        plasm_core::Value::String(s) if s.eq_ignore_ascii_case("false") => Some(false),
         _ => None,
     }
 }
 
 fn compare_ordered(
-    lhs: &serde_json::Value,
-    rhs: &serde_json::Value,
+    lhs: &plasm_core::Value,
+    rhs: &plasm_core::Value,
     op: impl Fn(f64, f64) -> bool,
 ) -> bool {
-    plasm_core::compare_unify_json_ordered_numbers(lhs, rhs).is_some_and(|(l, r)| op(l, r))
+    let number = |value: &plasm_core::Value| {
+        value
+            .as_number()
+            .or_else(|| value.as_str()?.parse::<f64>().ok())
+    };
+    number(lhs).zip(number(rhs)).is_some_and(|(l, r)| op(l, r))
 }
 
 #[cfg(test)]
@@ -136,34 +180,39 @@ mod tests {
 
     #[test]
     fn ordered_compare_unifies_numeric_string_lhs() {
-        assert!(json_predicate_matches(
-            &serde_json::json!("5"),
-            JsonRowPredicateOp::Gt,
-            &serde_json::json!(0),
-        ));
-        assert!(!json_predicate_matches(
-            &serde_json::json!("nope"),
-            JsonRowPredicateOp::Gt,
-            &serde_json::json!(0),
-        ));
+        assert!(value_predicate_matches(
+            &plasm_core::Value::String("5".into()),
+            plasm_core::PlanPredicateOp::Gt,
+            &plasm_core::Value::Integer(0),
+        )
+        .unwrap());
+        assert!(!value_predicate_matches(
+            &plasm_core::Value::String("nope".into()),
+            plasm_core::PlanPredicateOp::Gt,
+            &plasm_core::Value::Integer(0),
+        )
+        .unwrap());
     }
 
     #[test]
     fn eq_unifies_bool_and_boolish_strings() {
-        assert!(json_predicate_matches(
-            &serde_json::json!(true),
-            JsonRowPredicateOp::Eq,
-            &serde_json::json!("true"),
-        ));
-        assert!(json_predicate_matches(
-            &serde_json::json!("True"),
-            JsonRowPredicateOp::Eq,
-            &serde_json::json!(true),
-        ));
-        assert!(!json_predicate_matches(
-            &serde_json::json!("True"),
-            JsonRowPredicateOp::Eq,
-            &serde_json::json!(false),
-        ));
+        assert!(value_predicate_matches(
+            &plasm_core::Value::Bool(true),
+            plasm_core::PlanPredicateOp::Eq,
+            &plasm_core::Value::String("true".into()),
+        )
+        .unwrap());
+        assert!(value_predicate_matches(
+            &plasm_core::Value::String("True".into()),
+            plasm_core::PlanPredicateOp::Eq,
+            &plasm_core::Value::Bool(true),
+        )
+        .unwrap());
+        assert!(!value_predicate_matches(
+            &plasm_core::Value::String("True".into()),
+            plasm_core::PlanPredicateOp::Eq,
+            &plasm_core::Value::Bool(false),
+        )
+        .unwrap());
     }
 }

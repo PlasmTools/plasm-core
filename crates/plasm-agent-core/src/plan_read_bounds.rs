@@ -8,7 +8,7 @@ use crate::plasm_plan::{
     ResultShape, ValidatedComputeNode, ValidatedPlanArtifact, ValidatedPlanNode,
     ValidatedRelationTraversalNode, ValidatedSurfaceNode,
 };
-use plasm_runtime::row_predicate::{JsonRowPredicate, JsonRowPredicateOp};
+use plasm_runtime::row_predicate::BoundRowPredicate;
 use plasm_runtime::{CachedEntity, ExecutionResult, RowMatchBudget, TopKSpec};
 
 /// Canonical host page size for unbounded list/page read roots: the first page is materialized
@@ -23,13 +23,13 @@ pub enum PushedReadBudget {
     Limit(usize),
     FilterLimit {
         count: usize,
-        predicates: Vec<PlanPredicate>,
+        predicates: Vec<BoundRowPredicate>,
     },
     TopK {
         count: usize,
         key: FieldPath,
         descending: bool,
-        filter: Option<Vec<PlanPredicate>>,
+        filter: Option<Vec<BoundRowPredicate>>,
     },
     /// Full-collection demand from aggregate / group / global sort / dedupe consumers.
     /// Upstream pagination must run to an authoritative terminal condition.
@@ -146,11 +146,14 @@ pub fn apply_read_budgets(plan: &mut ValidatedPlanArtifact) {
         .map(|(i, n)| (n.id().as_str().to_string(), i))
         .collect();
     let reachable = crate::plan_node_graph::nodes_reachable_from_return(plan.artifact());
+    let shared = shared_collection_bindings(plan);
     for compute_idx in 0..plan.nodes().len() {
         if !reachable.contains(plan.nodes()[compute_idx].id().as_str()) {
             continue;
         }
-        let Some((target, budget)) = classify_limit_chain(plan.nodes(), &by_id, compute_idx) else {
+        let Some((target, budget)) =
+            classify_limit_chain(plan.nodes(), &by_id, &shared, compute_idx)
+        else {
             continue;
         };
         match target {
@@ -169,7 +172,33 @@ pub fn apply_read_budgets(plan: &mut ValidatedPlanArtifact) {
             }
         }
     }
-    apply_complete_demands(plan, &by_id, &reachable);
+    apply_complete_demands(plan, &by_id, &reachable, &shared);
+}
+
+/// A pushed budget belongs to one consumer chain. A shared binding is a semantic
+/// boundary: no consumer may narrow the rows seen by its siblings (including a
+/// direct program return). Materialize that binding before applying branch budgets.
+fn shared_collection_bindings(plan: &ValidatedPlanArtifact) -> HashSet<String> {
+    let mut consumers: HashMap<String, usize> = HashMap::new();
+    // Non-returned bindings still execute, including mutations consuming rows.
+    for node in plan.nodes() {
+        for source in crate::plan_node_graph::node_dependencies(node) {
+            *consumers.entry(source).or_default() += 1;
+        }
+    }
+    let returns = match &plan.artifact().return_value {
+        crate::plasm_plan::ValidatedPlanReturn::Node(node) => vec![node.as_str()],
+        crate::plasm_plan::ValidatedPlanReturn::Parallel { parallel } => {
+            parallel.iter().map(|n| n.as_str()).collect()
+        }
+    };
+    for source in returns {
+        *consumers.entry(source.to_owned()).or_default() += 1;
+    }
+    consumers
+        .into_iter()
+        .filter_map(|(id, count)| (count > 1).then_some(id))
+        .collect()
 }
 
 /// Relational algebra consumes its source expression, not an implicit host page.
@@ -192,6 +221,7 @@ fn apply_complete_demands(
     plan: &mut ValidatedPlanArtifact,
     by_id: &HashMap<String, usize>,
     reachable: &HashSet<String>,
+    shared: &HashSet<String>,
 ) {
     let complete_sources: Vec<String> = plan
         .nodes()
@@ -206,6 +236,7 @@ fn apply_complete_demands(
         })
         .collect();
     let mut pending: VecDeque<_> = complete_sources.into();
+    pending.extend(shared.iter().cloned());
     let mut seen = HashSet::new();
     while let Some(current) = pending.pop_front() {
         if !seen.insert(current.clone()) {
@@ -308,6 +339,7 @@ fn merge_pushed_budget(a: PushedReadBudget, b: PushedReadBudget) -> PushedReadBu
 fn classify_limit_chain(
     nodes: &[ValidatedPlanNode],
     by_id: &HashMap<String, usize>,
+    shared: &HashSet<String>,
     compute_idx: usize,
 ) -> Option<(LimitChainTarget, PushedReadBudget)> {
     let ValidatedPlanNode::Compute(compute) = &nodes[compute_idx] else {
@@ -319,6 +351,9 @@ fn classify_limit_chain(
     let mut chain = vec![ComputeOp::Limit { count }];
     let mut current = compute.compute.source.clone();
     loop {
+        if shared.contains(&current) {
+            return None;
+        }
         let idx = *by_id.get(current.as_str())?;
         match &nodes[idx] {
             ValidatedPlanNode::Surface(surface)
@@ -356,7 +391,7 @@ fn budget_from_chain(chain: &[ComputeOp]) -> Option<PushedReadBudget> {
         [] => Some(PushedReadBudget::Limit(*count)),
         [ComputeOp::Filter { predicates }] => Some(PushedReadBudget::FilterLimit {
             count: *count,
-            predicates: predicates.conjunction()?,
+            predicates: lower_plan_predicates(&predicates.conjunction()?).ok()?,
         }),
         [ComputeOp::Sort { key, descending }] => Some(PushedReadBudget::TopK {
             count: *count,
@@ -369,7 +404,7 @@ fn budget_from_chain(chain: &[ComputeOp]) -> Option<PushedReadBudget> {
                 count: *count,
                 key: key.clone(),
                 descending: *descending,
-                filter: Some(predicates.conjunction()?),
+                filter: Some(lower_plan_predicates(&predicates.conjunction()?).ok()?),
             })
         }
         _ => None,
@@ -378,45 +413,18 @@ fn budget_from_chain(chain: &[ComputeOp]) -> Option<PushedReadBudget> {
 
 pub fn lower_plan_predicates(
     predicates: &[PlanPredicate],
-) -> Result<Vec<JsonRowPredicate>, String> {
+) -> Result<Vec<BoundRowPredicate>, String> {
     predicates
         .iter()
-        .map(plan_predicate_to_json)
+        .map(bind_row_predicate)
         .collect::<Result<Vec<_>, _>>()
 }
 
-pub fn plan_predicate_to_json(pred: &PlanPredicate) -> Result<JsonRowPredicate, String> {
-    let rhs = match &pred.value {
-        crate::plasm_plan::PlanValue::Literal { value } => value.clone(),
-        crate::plasm_plan::PlanValue::EntityRefKey { key, .. } => match key.as_ref() {
-            crate::plasm_plan::PlanValue::Literal { value } => value.clone(),
-            other => {
-                return Err(format!(
-                    "unsupported plan predicate value for pushdown: {other:?}"
-                ));
-            }
-        },
-        other => {
-            return Err(format!(
-                "unsupported plan predicate value for pushdown: {other:?}"
-            ));
-        }
-    };
-    Ok(JsonRowPredicate {
-        field_path: pred.field_path.segments().to_vec(),
-        op: match pred.op {
-            crate::plasm_plan::PlanPredicateOp::Eq => JsonRowPredicateOp::Eq,
-            crate::plasm_plan::PlanPredicateOp::Ne => JsonRowPredicateOp::Ne,
-            crate::plasm_plan::PlanPredicateOp::Lt => JsonRowPredicateOp::Lt,
-            crate::plasm_plan::PlanPredicateOp::Lte => JsonRowPredicateOp::Lte,
-            crate::plasm_plan::PlanPredicateOp::Gt => JsonRowPredicateOp::Gt,
-            crate::plasm_plan::PlanPredicateOp::Gte => JsonRowPredicateOp::Gte,
-            crate::plasm_plan::PlanPredicateOp::Contains => JsonRowPredicateOp::Contains,
-            crate::plasm_plan::PlanPredicateOp::In => JsonRowPredicateOp::In,
-            crate::plasm_plan::PlanPredicateOp::NotIn => JsonRowPredicateOp::NotIn,
-            crate::plasm_plan::PlanPredicateOp::Exists => JsonRowPredicateOp::Exists,
-        },
-        value: rhs,
+pub fn bind_row_predicate(pred: &PlanPredicate) -> Result<BoundRowPredicate, String> {
+    Ok(BoundRowPredicate {
+        field_path: pred.field_path.clone(),
+        op: pred.op,
+        value: pred.value.clone().into_resolved()?,
     })
 }
 
@@ -425,27 +433,20 @@ pub fn pushed_budget_to_stream_fields(
 ) -> Result<(Option<RowMatchBudget>, Option<TopKSpec>), String> {
     match budget {
         PushedReadBudget::Limit(_) | PushedReadBudget::Complete => Ok((None, None)),
-        PushedReadBudget::FilterLimit { count, predicates } => {
-            let preds = lower_plan_predicates(predicates)?;
-            Ok((
-                Some(RowMatchBudget {
-                    count: *count,
-                    predicates: preds,
-                }),
-                None,
-            ))
-        }
+        PushedReadBudget::FilterLimit { count, predicates } => Ok((
+            Some(RowMatchBudget {
+                count: *count,
+                predicates: predicates.clone(),
+            }),
+            None,
+        )),
         PushedReadBudget::TopK {
             count,
             key,
             descending,
             filter,
         } => {
-            let row_filter = filter
-                .as_ref()
-                .map(|ps| lower_plan_predicates(ps))
-                .transpose()?
-                .unwrap_or_default();
+            let row_filter = filter.clone().unwrap_or_default();
             Ok((
                 None,
                 Some(TopKSpec {
@@ -464,6 +465,57 @@ mod tests {
     use super::*;
     use crate::plasm_plan::{ComputeOp, ValidatedPlanNode};
     use plasm_runtime::ResultCoverage;
+
+    #[test]
+    fn bounded_sibling_must_not_truncate_returned_source() {
+        let plan = serde_json::json!({
+            "version":1,"kind":"program","name":"shared-source",
+            "nodes":[
+                {"id":"rows","kind":"query","qualified_entity":{"entry_id":"matrix","entity":"Product"},
+                 "expr":"Product","ir":{"expr":{"op":"query","entity":"Product"}},"effect_class":"read","result_shape":"list"},
+                {"id":"sample","kind":"compute","effect_class":"read","result_shape":"list","depends_on":["rows"],
+                 "compute":{"source":"rows","op":{"kind":"limit","count":1},
+                 "schema":{"entity":"Product","fields":[{"name":"id","value_kind":"string","source":["id"]}]}}}
+            ],"return":{"kind":"parallel","nodes":["rows","sample"]}
+        });
+        let wire = serde_json::to_vec(&plan).unwrap();
+        let mut plan = crate::plasm_plan::parse_and_validate_plan_json(
+            &serde_json::from_slice(&wire).unwrap(),
+        )
+        .unwrap();
+        apply_read_budgets(&mut plan);
+        let ValidatedPlanNode::Surface(source) = &plan.nodes()[0] else {
+            panic!("source")
+        };
+        assert_eq!(source.pushed_read_budget, Some(PushedReadBudget::Complete));
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn sibling_limits_preserve_full_source_across_wire(
+            left in 1usize..40, right in 1usize..40, reverse in proptest::bool::ANY,
+            return_source in proptest::bool::ANY,
+        ) {
+            use serde_json::json;
+            let schema=json!({"entity":"Product","fields":[{"name":"id","value_kind":"string","source":["id"]}]});
+            let mut nodes=vec![json!({"id":"rows","kind":"query","qualified_entity":{"entry_id":"matrix","entity":"Product"},
+                "expr":"Product","ir":{"expr":{"op":"query","entity":"Product"}},"effect_class":"read","result_shape":"list"})];
+            let mut branches=vec![("left",left),("right",right)];
+            if reverse { branches.reverse(); }
+            for (id,count) in branches {
+                nodes.push(json!({"id":id,"kind":"compute","effect_class":"read","result_shape":"list","depends_on":["rows"],
+                    "compute":{"source":"rows","op":{"kind":"limit","count":count},"schema":schema}}));
+            }
+            let returns=if return_source {vec!["rows","left","right"]} else {vec!["left"]};
+            let wire=serde_json::to_vec(&json!({"version":1,"kind":"program","name":"siblings","nodes":nodes,
+                "return":{"kind":"parallel","nodes":returns}})).unwrap();
+            let mut plan=crate::plasm_plan::parse_and_validate_plan_json(&serde_json::from_slice(&wire).unwrap()).unwrap();
+            apply_read_budgets(&mut plan);
+            apply_read_budgets(&mut plan);
+            let ValidatedPlanNode::Surface(source)=&plan.nodes()[0] else {panic!("source")};
+            proptest::prop_assert_eq!(&source.pushed_read_budget,&Some(PushedReadBudget::Complete));
+        }
+    }
 
     #[test]
     fn limit_only_chain_budget() {
@@ -961,10 +1013,10 @@ mod tests {
         let preds = vec![PlanPredicate {
             field_path: FieldPath::from_dotted("x").expect("field path"),
             op: crate::plasm_plan::PlanPredicateOp::Eq,
-            value: crate::plasm_plan::PlanValue::Helper {
-                name: "nope".into(),
-                args: vec![],
-                display: None,
+            value: crate::plasm_plan::PlanValue::NodeSymbol {
+                node: "nope".into(),
+                alias: "nope".into(),
+                path: vec![],
             },
         }];
         assert!(lower_plan_predicates(&preds).is_err());

@@ -43,10 +43,10 @@ pub fn plasm_comp_from_validated(validated: &ValidatedPlan) -> PlasmCompArtifact
     let return_ = plasm_return_from_validated(&plan.return_value);
     let mut metadata = plan.metadata.clone();
     metadata.insert("language".into(), serde_json::json!("plasm-comp"));
-    if !bind.program_order_write_deps.is_empty() {
+    if !bind.program_order_effect_deps.is_empty() {
         metadata.insert(
-            "program_order_write_deps".into(),
-            serde_json::json!(&bind.program_order_write_deps),
+            "program_order_effect_deps".into(),
+            serde_json::json!(&bind.program_order_effect_deps),
         );
     }
     let comp = PlasmComp {
@@ -118,7 +118,7 @@ fn build_bind_graph(validated: &ValidatedPlan) -> BuiltBindGraph {
             holes.insert(id, hole_uses);
         }
     }
-    let program_order_write_deps = add_consecutive_write_program_order_deps(validated, &mut deps);
+    let program_order_effect_deps = add_program_order_effect_deps(validated, &mut deps);
     BuiltBindGraph {
         graph: PlasmBindGraph {
             topo,
@@ -126,18 +126,21 @@ fn build_bind_graph(validated: &ValidatedPlan) -> BuiltBindGraph {
             primary,
             holes,
         },
-        program_order_write_deps,
+        program_order_effect_deps,
     }
 }
 
 struct BuiltBindGraph {
     graph: PlasmBindGraph,
-    /// Pairs `[earlier_write, later_write]` added for program-order scheduling (not dataflow).
-    program_order_write_deps: Vec<[String; 2]>,
+    /// Pairs `[predecessor, successor]` added at effect boundaries (not dataflow).
+    program_order_effect_deps: Vec<[String; 2]>,
 }
 
-/// Synthetic bind edges between consecutive write/side-effect steps in program order.
-fn add_consecutive_write_program_order_deps(
+/// Effect boundaries preserve observations as well as mutation order. Reads in
+/// the same interval remain independent; a write waits for the preceding read
+/// frontier, and subsequent reads wait for that write. These are executable bind
+/// edges, so the ordering survives comp serialization and every host scheduler.
+fn add_program_order_effect_deps(
     validated: &ValidatedPlan,
     deps: &mut BTreeMap<StepId, BTreeSet<StepId>>,
 ) -> Vec<[String; 2]> {
@@ -147,24 +150,31 @@ fn add_consecutive_write_program_order_deps(
         .map(|n| (n.id().as_str(), n))
         .collect();
     let mut last_write: Option<StepId> = None;
+    let mut reads: BTreeSet<StepId> = BTreeSet::new();
     let mut added = Vec::new();
     for id_str in validated.topological_order() {
         let Some(node) = by_id.get(id_str.as_str()) else {
             continue;
         };
-        match node.effect_class() {
-            EffectClass::Write | EffectClass::SideEffect => {
-                let Ok(id) = StepId::new(id_str.as_str().to_string()) else {
-                    continue;
-                };
-                if let Some(ref prev) = last_write {
-                    if deps.entry(id.clone()).or_default().insert(prev.clone()) {
-                        added.push([prev.as_str().to_string(), id.as_str().to_string()]);
-                    }
-                }
-                last_write = Some(id);
+        let id = StepId::new(id_str.as_str().to_string()).expect("validated step id");
+        let predecessors = deps.entry(id.clone()).or_default();
+        if let Some(previous) = &last_write {
+            if predecessors.insert(previous.clone()) {
+                added.push([previous.as_str().to_owned(), id.as_str().to_owned()]);
             }
-            _ => last_write = None,
+        }
+        if matches!(
+            node.effect_class(),
+            EffectClass::Write | EffectClass::SideEffect
+        ) {
+            for read in std::mem::take(&mut reads) {
+                if predecessors.insert(read.clone()) {
+                    added.push([read.as_str().to_owned(), id.as_str().to_owned()]);
+                }
+            }
+            last_write = Some(id);
+        } else {
+            reads.insert(id);
         }
     }
     added

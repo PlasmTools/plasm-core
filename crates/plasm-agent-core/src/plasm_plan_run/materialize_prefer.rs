@@ -174,12 +174,11 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
         field_dot_extract: None,
     };
     let source_node = &relation.relation.source;
-    let base_display = relation
-        .relation
-        .ir
-        .display_expr
-        .clone()
-        .unwrap_or_else(|| format!("plan.relation({})", relation.id.as_str()));
+    let base_display = crate::plan_dry_display::render_executable_expr(
+        &relation.relation.ir.expr,
+        relation.relation.ir.projection.as_deref(),
+        Some(es),
+    );
     let resolutions = snapshot.resolutions;
     let mut per_row = snapshot.embedded_per_row;
     let mut request_fingerprints = Vec::new();

@@ -451,7 +451,7 @@ mod tests {
             "x".into(),
             PlasmStepPayload::Pure(PurePayload {
                 data: plasm_core::PlasmDataValue::Literal {
-                    value: serde_json::json!("ok"),
+                    value: plasm_core::operand_binding::ResolvedValue::from_wire(serde_json::json!("ok")).expect("literal data"),
                 },
                 effect_class: plasm_core::EffectClass::ArtifactRead,
                 result_shape: plasm_core::ResultShape::Artifact,

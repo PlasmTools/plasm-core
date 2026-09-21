@@ -7,14 +7,7 @@ use std::collections::BTreeMap;
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PlasmDataValue {
     Literal {
-        value: serde_json::Value,
-    },
-    Helper {
-        name: String,
-        #[serde(default)]
-        args: Vec<serde_json::Value>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        display: Option<String>,
+        value: crate::operand_binding::ResolvedValue,
     },
     BindingSymbol {
         binding: String,
@@ -111,4 +104,140 @@ pub struct PlanDataInput {
 pub struct PlanInputBinding {
     pub from: String,
     pub to: String,
+}
+
+impl TryFrom<crate::Value> for PlasmDataValue {
+    type Error = String;
+    fn try_from(value: crate::Value) -> Result<Self, String> {
+        use crate::{PlasmInputRef, Value};
+        Ok(match value {
+            Value::PlasmInputRef(PlasmInputRef::NodeInput { node, path }) => Self::NodeSymbol {
+                alias: node.clone(),
+                node,
+                path,
+            },
+            Value::PlasmInputRef(PlasmInputRef::RowBinding { binding, path }) => {
+                Self::BindingSymbol { binding, path }
+            }
+            Value::StringTemplate(template) => {
+                let input_bindings = template
+                    .roots()
+                    .iter()
+                    .map(|root| PlanInputBinding {
+                        from: root.clone(),
+                        to: root.clone(),
+                    })
+                    .collect();
+                Self::Template {
+                    template,
+                    input_bindings,
+                }
+            }
+            Value::Array(items) => Self::Array {
+                items: items
+                    .into_iter()
+                    .map(Self::try_from)
+                    .collect::<Result<_, _>>()?,
+            },
+            Value::Object(fields) => Self::Object {
+                fields: fields
+                    .into_iter()
+                    .map(|(k, v)| Ok((k, Self::try_from(v)?)))
+                    .collect::<Result<_, String>>()?,
+            },
+            value => Self::Literal {
+                value: crate::operand_binding::ResolvedValue::new(value).map_err(str::to_owned)?,
+            },
+        })
+    }
+}
+
+impl PlasmDataValue {
+    /// Finish binding without interpreting serialized markers or display strings.
+    pub fn into_resolved(self) -> Result<crate::operand_binding::ResolvedValue, String> {
+        use crate::{operand_binding::ResolvedValue, Value};
+        let value = match self {
+            Self::Literal { value } => return Ok(value),
+            Self::EntityRefKey { key, .. } => return key.into_resolved(),
+            Self::Array { items } => Value::Array(
+                items
+                    .into_iter()
+                    .map(|v| v.into_resolved().map(ResolvedValue::into_value))
+                    .collect::<Result<_, _>>()?,
+            ),
+            Self::Object { fields } => Value::Object(
+                fields
+                    .into_iter()
+                    .map(|(k, v)| Ok((k, v.into_resolved()?.into_value())))
+                    .collect::<Result<_, String>>()?,
+            ),
+            unresolved => return Err(format!("unbound data operand {unresolved:?}")),
+        };
+        ResolvedValue::new(value).map_err(str::to_owned)
+    }
+}
+
+#[cfg(test)]
+mod operand_tests {
+    use super::*;
+    use crate::{operand_binding::ResolvedValue, PlasmInputRef, Value};
+
+    #[test]
+    fn literal_marker_objects_remain_inert_data_even_when_nested() {
+        for key in [
+            "__plasm_hole",
+            "__plasm_string_template",
+            "__plasm_get_scalar_extract",
+            "__plasm_union_ctor",
+        ] {
+            for value in [
+                serde_json::json!({key: "invalid"}),
+                serde_json::json!([{"nested": {key: "invalid"}}]),
+            ] {
+                let wire = serde_json::json!({"kind":"literal", "value":value});
+                let data: PlasmDataValue = serde_json::from_value(wire.clone()).unwrap();
+                assert!(data.dependencies().is_empty());
+                assert_eq!(serde_json::to_value(&data).unwrap(), wire);
+                assert!(data.into_resolved().is_ok());
+            }
+        }
+        assert!(ResolvedValue::new(Value::Float(f64::NAN)).is_err());
+        assert!(ResolvedValue::new(Value::Float(f64::INFINITY)).is_err());
+    }
+
+    #[test]
+    fn nested_lowering_preserves_dependencies_across_serialization() {
+        let value = Value::Array(vec![Value::Object(
+            [
+                (
+                    "ref".into(),
+                    Value::PlasmInputRef(PlasmInputRef::node_output(
+                        "source",
+                        vec!["owner".into()],
+                    )),
+                ),
+                (
+                    "text".into(),
+                    Value::StringTemplate(
+                        crate::program_string_template::CompiledProgramString::compile(
+                            "{{ profile.email }}".into(),
+                        )
+                        .unwrap(),
+                    ),
+                ),
+                ("literal".into(), Value::String("source.owner".into())),
+            ]
+            .into_iter()
+            .collect(),
+        )]);
+        let lowered = PlasmDataValue::try_from(value).unwrap();
+        let restored: PlasmDataValue =
+            serde_json::from_slice(&serde_json::to_vec(&lowered).unwrap()).unwrap();
+        assert_eq!(restored, lowered);
+        assert_eq!(
+            restored.dependencies(),
+            ["profile".into(), "source".into()].into_iter().collect()
+        );
+        assert!(restored.into_resolved().is_err());
+    }
 }

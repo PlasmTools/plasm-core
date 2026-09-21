@@ -29,7 +29,8 @@ pub(crate) fn is_plasm_dag_source(src: &str) -> bool {
         !line.is_empty() && split_assignment_at_top_level(line).is_some()
     }) || src.contains("=>")
         || src.trim_start().starts_with("iterate")
-        || parse_pipe_expr(src).is_ok_and(|pipe| pipe.is_some())
+        // Classify syntax before validation so malformed pipelines keep their row-algebra diagnostic.
+        || split_top_level(src, '|').is_ok_and(|parts| parts.len() > 1)
         || peel_collect_meta(src)
             .map(|(_, meta)| !meta.is_empty())
             .unwrap_or(false)
@@ -244,7 +245,8 @@ fn lower_catalog_application(
     }
     let uses =
         collect_template_uses_from_expr(&parsed.expr, Some("_"), &state.program_node_id_set());
-    let (kind, qualified, _effect, _shape) = infer_surface_contract(session, &parsed.expr)?;
+    let (kind, qualified, effect_class, result_shape) =
+        infer_surface_contract(session, &parsed.expr)?;
     if !kind.is_template_allowed() {
         return Err(format!(
             "Plasm program `{id}` row application must be a catalog read or operation expression"
@@ -260,6 +262,8 @@ fn lower_catalog_application(
             parsed_template: expression_template(&parsed, &uses),
             display_expr: surface.to_string(),
             effect_kind: kind,
+            effect_class,
+            result_shape,
             qualified_entity: qualified,
             uses_result: uses,
         },
@@ -459,9 +463,10 @@ fn lower_iterate_until(
         true,
         Some(id),
     )?;
-    let uses =
+    let mut uses =
         collect_template_uses_from_expr(&parsed.expr, Some("_"), &state.program_node_id_set());
-    let (kind, qualified, _effect, _shape) = infer_surface_contract(session, &parsed.expr)?;
+    let (kind, qualified, effect_class, result_shape) =
+        infer_surface_contract(session, &parsed.expr)?;
     if !matches!(
         kind,
         PlanNodeKind::Create | PlanNodeKind::Update | PlanNodeKind::Delete | PlanNodeKind::Action
@@ -487,6 +492,7 @@ fn lower_iterate_until(
         &stack,
         sym_map,
         &[],
+        &state.program_node_id_set(),
     )
     .map_err(|e| format!("Plasm program `{id}` iterate until predicate: {e}"))?;
     let until_predicates = crate::row_predicate_lower::lower_row_predicate_to_plan(
@@ -498,6 +504,20 @@ fn lower_iterate_until(
     )
     .map_err(|e| format!("Plasm program `{id}` iterate until lower: {e}"))?;
 
+    for predicate in &until_predicates {
+        for label in predicate.value.dependencies() {
+            let contract = super::binding_contract::binding_contract(state, &label)
+                .ok_or_else(|| format!("unknown until predicate binding `{label}`"))?;
+            if !contract.row_cardinality.permits_scalar_field_extract() {
+                return Err(format!(
+                    "until predicate binding `{label}` is plural; select exactly one row"
+                ));
+            }
+            uses.push(super::plan_serialize::result_use(&label, &label));
+        }
+    }
+    let uses = super::plan_serialize::dedupe_uses(uses);
+
     prefix.push(DagNode {
         id: id.to_string(),
         expr: display.to_string(),
@@ -508,6 +528,8 @@ fn lower_iterate_until(
             parsed_step_template: expression_template(&parsed, &uses),
             step_display: it.step.trim().to_string(),
             effect_kind: kind,
+            effect_class,
+            result_shape,
             qualified_entity: qualified,
             until_body: it.until.clone(),
             until_predicates,

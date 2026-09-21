@@ -37,7 +37,6 @@ pub(in crate::plasm_dag) use plasm_core::{
     CapabilityKind, ChainExpr, Expr, GetExpr, PlasmInputRef, PromptPipelineConfig, Ref,
     SymbolMapCrossRequestCache,
 };
-pub(in crate::plasm_dag) use serde_json::json;
 pub(in crate::plasm_dag) use std::cell::RefCell;
 pub(in crate::plasm_dag) use std::collections::{BTreeMap, BTreeSet};
 pub(in crate::plasm_dag) use std::ops::Deref;

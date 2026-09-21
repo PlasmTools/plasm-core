@@ -1,0 +1,11 @@
+counter_get:
+  transport: view
+  view: counter
+wire_get:
+  method: GET
+  path: [{type: literal, value: counter}]
+  query: {type: object, fields: [[id, {type: var, name: id}]]}
+advance:
+  method: POST
+  path: [{type: literal, value: advance}]
+  body: {type: object, fields: [[id, {type: var, name: id}]]}

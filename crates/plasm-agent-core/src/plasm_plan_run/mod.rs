@@ -437,13 +437,14 @@ mod tests {
     mod approval_policy;
     mod compute_render;
     mod dry_run;
-    mod materialize_tests;
-    mod session_provisions;
     mod hydration_boundary;
+    mod materialize_tests;
+    mod observation_boundary;
+    mod session_provisions;
     mod support;
 }
 
 #[cfg(test)]
 mod observation_honesty_tests;
 
-use crate::plan_node_graph::collection_binding_labels;
+use crate::plan_node_graph::compute_binding_labels;

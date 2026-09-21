@@ -37,7 +37,7 @@ pub(in crate::plasm_dag) fn reject_non_singleton_field_dot(
     plp::plp4_program(
         id,
         format!(
-            "`{expr_hint}` field-dot requires a singleton — narrow with `| take 1` before extracting, or use `| select {wire}` for row projection"
+            "`{expr_hint}` field-dot requires a singleton — resolve the intended identity with Get before extracting, or use `| select {wire}` to preserve all selected rows"
         ),
     )
 }

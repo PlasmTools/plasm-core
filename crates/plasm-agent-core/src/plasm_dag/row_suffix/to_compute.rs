@@ -118,8 +118,7 @@ pub(in crate::plasm_dag) fn row_suffix_to_compute(
                     &scalar_clauses.join(", "),
                     &stack,
                     sym_map.clone(),
-                    &row_schema_fields,
-                )?
+                    &row_schema_fields, &state.program_node_id_set())?
             };
             let tc_ctx = plasm_core::RowPredicateTypeCtx {
                 qe: &core_qe,
@@ -137,6 +136,16 @@ pub(in crate::plasm_dag) fn row_suffix_to_compute(
                     &row_schema_fields,
                 )?
             };
+            for predicate in &predicates {
+                for label in predicate.value.dependencies() {
+                    let node = staged.iter().find(|n| n.id == label).or_else(|| state.get(&label))
+                        .ok_or_else(|| format!("unknown scalar predicate binding `{label}`"))?;
+                    let contract = super::super::binding_contract::binding_contract_for_node(state, &label, node);
+                    if !contract.row_cardinality.permits_scalar_field_extract() {
+                        return Err(format!("scalar predicate binding `{label}` is plural; select exactly one row before comparing its field"));
+                    }
+                }
+            }
             predicates.extend(membership_preds);
             if predicates.is_empty() {
                 return Err("filter(...) requires at least one predicate".into());

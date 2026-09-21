@@ -49,6 +49,5 @@ fn comp_op_to_plan(op: CompOp) -> PlanPredicateOp {
 }
 
 fn typed_comparison_to_plan_value(v: &TypedComparisonValue) -> Result<PlanValue, String> {
-    let json = serde_json::to_value(v.to_value()).map_err(|e| format!("row filter value: {e}"))?;
-    Ok(PlanValue::Literal { value: json })
+    PlanValue::try_from(v.to_value())
 }

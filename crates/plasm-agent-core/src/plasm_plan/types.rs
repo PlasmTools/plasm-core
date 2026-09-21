@@ -169,11 +169,11 @@ pub struct PlanExprIr {
     pub display_expr: Option<String>,
 }
 
+/// Admitted executable expression. Review and execution share this structure; source text is erased.
 #[derive(Debug, Clone)]
 pub struct ValidatedPlanExprIr {
     pub(crate) expr: Expr,
     pub(crate) projection: Option<Vec<String>>,
-    pub(crate) display_expr: Option<String>,
 }
 
 /// Structural expression with deferred operands. Binding cannot reconstruct expression structure.
@@ -188,11 +188,11 @@ pub struct PlanExprTemplate {
     pub input_bindings: Vec<PlanInputBinding>,
 }
 
+/// Deferred operands retain typed structure; binding cannot add, drop, or reparse operations.
 #[derive(Debug, Clone, Serialize)]
 pub struct ValidatedPlanExprTemplate {
     pub(crate) expr: plasm_core::Expr,
     pub(crate) projection: Option<Vec<String>>,
-    pub(crate) display_expr: Option<String>,
     #[allow(dead_code)]
     pub(crate) input_bindings: Vec<PlanInputBinding>,
 }
@@ -383,7 +383,6 @@ pub struct ValidatedSurfaceNode {
     pub(crate) qualified_entity: Option<QualifiedEntityKey>,
     pub(crate) ir: Option<ValidatedPlanExprIr>,
     pub(crate) ir_template: Option<ValidatedPlanExprTemplate>,
-    pub(crate) display_expr: Option<String>,
     pub(crate) effect_class: EffectClass,
     pub(crate) result_shape: ResultShape,
     pub(crate) projection: Vec<String>,
@@ -753,7 +752,6 @@ pub use plasm_core::plasm_monad::RelationSourceCardinality;
 pub struct ValidatedEffectTemplate {
     pub(crate) kind: PlanNodeKind,
     pub(crate) qualified_entity: QualifiedEntityKey,
-    pub(crate) expr_template: String,
     pub(crate) ir_template: ValidatedPlanExprTemplate,
     pub(crate) effect_class: EffectClass,
     pub(crate) result_shape: ResultShape,

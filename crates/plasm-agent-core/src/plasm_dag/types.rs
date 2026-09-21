@@ -1,6 +1,7 @@
 //! DAG node types and compile-time state.
 
 use super::prelude::*;
+use crate::plasm_plan::ResultShape;
 
 /// Structural plan emission from a resolved DAG node.
 pub(in crate::plasm_dag) trait PlanNodeEmitter {
@@ -103,6 +104,8 @@ pub(in crate::plasm_dag) enum DagNodeSource {
         parsed_template: crate::plasm_plan::PlanExprTemplate,
         display_expr: String,
         effect_kind: PlanNodeKind,
+        effect_class: EffectClass,
+        result_shape: ResultShape,
         qualified_entity: QualifiedEntityKey,
         uses_result: Vec<crate::plasm_plan::PlanResultUse>,
     },
@@ -112,6 +115,8 @@ pub(in crate::plasm_dag) enum DagNodeSource {
         parsed_step_template: crate::plasm_plan::PlanExprTemplate,
         step_display: String,
         effect_kind: PlanNodeKind,
+        effect_class: EffectClass,
+        result_shape: ResultShape,
         qualified_entity: QualifiedEntityKey,
         until_body: String,
         until_predicates: Vec<crate::plasm_plan::PlanPredicate>,

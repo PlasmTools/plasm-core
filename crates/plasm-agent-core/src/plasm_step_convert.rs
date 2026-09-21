@@ -57,7 +57,7 @@ fn surface_to_invoke(node: &ValidatedSurfaceNode) -> Result<InvokePayload, Strin
         predicates: convert_predicates(&node.predicates)?,
         page_size: node.page_size,
         approval: node.approval.clone(),
-        display_expr: node.display_expr.clone(),
+        display_expr: None,
         effect_class: effect_class(node.effect_class),
         result_shape: result_shape(node.result_shape),
     })
@@ -163,7 +163,11 @@ fn effect_template_to_core(
     Ok(CoreEffectTemplate {
         kind: plan_kind_to_surface(template.kind)?,
         qualified_entity: qualified_entity_key(&template.qualified_entity),
-        expr_template: template.expr_template.clone(),
+        expr_template: crate::plan_dry_display::render_executable_expr(
+            &template.ir_template.expr,
+            template.ir_template.projection.as_deref(),
+            None,
+        ),
         ir_template: validated_expr_template_to_plan(&template.ir_template),
         effect_class: effect_class(template.effect_class),
         result_shape: result_shape(template.result_shape),
@@ -183,7 +187,7 @@ fn validated_expr_ir_to_plan(ir: &ValidatedPlanExprIr) -> Result<PlanExprIr, Str
     Ok(PlanExprIr {
         expr: ir.expr.clone(),
         projection: ir.projection.clone(),
-        display_expr: ir.display_expr.clone(),
+        display_expr: None,
     })
 }
 
@@ -191,7 +195,7 @@ fn validated_expr_template_to_plan(template: &ValidatedPlanExprTemplate) -> Plan
     PlanExprTemplate {
         expr: template.expr.clone(),
         projection: template.projection.clone(),
-        display_expr: template.display_expr.clone(),
+        display_expr: None,
         input_bindings: template
             .input_bindings
             .iter()
@@ -247,9 +251,7 @@ fn convert_predicates(predicates: &[PlanPredicate]) -> Result<Vec<PlanPredicate>
 }
 
 fn relation_expr(ir: &ValidatedPlanExprIr) -> String {
-    ir.display_expr
-        .clone()
-        .unwrap_or_else(|| crate::expr_display::expr_display(&ir.expr))
+    crate::plan_dry_display::render_executable_expr(&ir.expr, ir.projection.as_deref(), None)
 }
 
 fn effect_class(value: PlanEffectClass) -> EffectClass {
@@ -278,7 +280,6 @@ fn step_payload_to_validated_node(
             qualified_entity: p.qualified_entity.as_ref().map(plan_qualified_entity_key),
             ir: p.ir.as_ref().map(plan_expr_ir_to_validated).transpose()?,
             ir_template: p.ir_template.as_ref().map(plan_expr_template_to_validated),
-            display_expr: p.display_expr.clone(),
             effect_class: plan_effect_class(p.effect_class),
             result_shape: plan_result_shape(p.result_shape),
             projection: p.projection.clone(),
@@ -512,7 +513,6 @@ fn plan_expr_ir_to_validated(ir: &PlanExprIr) -> Result<ValidatedPlanExprIr, Str
     Ok(ValidatedPlanExprIr {
         expr,
         projection: ir.projection.clone(),
-        display_expr: ir.display_expr.clone(),
     })
 }
 
@@ -520,7 +520,6 @@ fn plan_expr_template_to_validated(template: &PlanExprTemplate) -> ValidatedPlan
     ValidatedPlanExprTemplate {
         expr: template.expr.clone(),
         projection: template.projection.clone(),
-        display_expr: template.display_expr.clone(),
         input_bindings: template
             .input_bindings
             .iter()
@@ -587,7 +586,6 @@ fn effect_template_to_plan(
     Ok(ValidatedEffectTemplate {
         kind: surface_kind_to_plan(template.kind)?,
         qualified_entity: plan_qualified_entity_key(&template.qualified_entity),
-        expr_template: template.expr_template.clone(),
         ir_template: plan_expr_template_to_validated(&template.ir_template),
         effect_class: plan_effect_class(template.effect_class),
         result_shape: plan_result_shape(template.result_shape),
@@ -729,7 +727,7 @@ mod tests {
                     effect_class: EffectClass::ArtifactRead,
                     result_shape: ResultShape::Artifact,
                     data: PlanValue::Literal {
-                        value: serde_json::json!([{"id": 1}, {"id": 2}]),
+                        value: plasm_core::operand_binding::ResolvedValue::from_wire(serde_json::json!([{"id": 1}, {"id": 2}])).expect("literal data"),
                     },
                     depends_on: vec![],
                     uses_result: vec![],
@@ -746,7 +744,7 @@ mod tests {
                         proof: InputCardinalityProof::StaticSingleton,
                     }],
                     value: PlanValue::Literal {
-                        value: serde_json::json!({"ok": true}),
+                        value: plasm_core::operand_binding::ResolvedValue::from_wire(serde_json::json!({"ok": true})).expect("literal data"),
                     },
                     depends_on: vec![],
                     uses_result: vec![],

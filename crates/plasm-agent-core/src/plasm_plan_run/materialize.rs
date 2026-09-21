@@ -471,12 +471,11 @@ pub(crate) async fn try_materialize_from_parent_get_relation(
         wire_fallback.as_deref(),
     )
     .await?;
-    let display = relation
-        .relation
-        .ir
-        .display_expr
-        .clone()
-        .unwrap_or_else(|| format!("plan.relation({})", node.id().as_str()));
+    let display = crate::plan_dry_display::render_executable_expr(
+        &relation.relation.ir.expr,
+        relation.relation.ir.projection.as_deref(),
+        Some(es),
+    );
     super::compute_eval::finalize_embed_relation_materialized_node(
         st,
         es,

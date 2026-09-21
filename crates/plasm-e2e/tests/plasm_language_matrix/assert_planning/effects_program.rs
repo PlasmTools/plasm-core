@@ -526,14 +526,14 @@ pub(crate) fn assert_planning_effects_program(
                 ));
             }
             let meta = comp
-                .pointer("/metadata/program_order_write_deps")
+                .pointer("/metadata/program_order_effect_deps")
                 .and_then(|v| v.as_array())
                 .ok_or_else(|| {
-                    "expected comp.metadata.program_order_write_deps witness".to_string()
+                    "expected comp.metadata.program_order_effect_deps witness".to_string()
                 })?;
             if meta != &[serde_json::json!(["newbranch", "newfile"])] {
                 return Err(format!(
-                    "unexpected program_order_write_deps metadata: {meta:?}"
+                    "unexpected program_order_effect_deps metadata: {meta:?}"
                 ));
             }
             let layers = dry

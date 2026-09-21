@@ -340,28 +340,30 @@ struct DataLiteralShape {
 /// Single classifier for `DagNodeSource::Data` — cardinality and value-kind stay aligned.
 fn data_literal_shape(value: &PlanValue) -> DataLiteralShape {
     match value {
-        PlanValue::Literal { value: lit } => match lit {
-            serde_json::Value::Null
-            | serde_json::Value::Bool(_)
-            | serde_json::Value::Number(_)
-            | serde_json::Value::String(_) => DataLiteralShape {
+        PlanValue::Literal { value: lit } => match lit.value() {
+            plasm_core::Value::Null
+            | plasm_core::Value::Bool(_)
+            | plasm_core::Value::Integer(_)
+            | plasm_core::Value::Float(_)
+            | plasm_core::Value::Money(_)
+            | plasm_core::Value::String(_) => DataLiteralShape {
                 result_shape: crate::plasm_plan::ResultShape::Single,
                 row_cardinality: RowCardinalityProof::StaticSingleton,
                 value_kind: BindingValueKind::ScalarCell,
             },
-            serde_json::Value::Array(items) if items.len() <= 1 => DataLiteralShape {
+            plasm_core::Value::Array(items) if items.len() <= 1 => DataLiteralShape {
                 result_shape: crate::plasm_plan::ResultShape::Single,
                 row_cardinality: RowCardinalityProof::StaticSingleton,
                 value_kind: BindingValueKind::EntityRow,
             },
-            serde_json::Value::Array(_) => DataLiteralShape {
+            plasm_core::Value::Array(_) => DataLiteralShape {
                 result_shape: crate::plasm_plan::ResultShape::List,
                 row_cardinality: RowCardinalityProof::StaticPlural,
                 value_kind: BindingValueKind::EntityRow,
             },
             // Objects are non-array literals → prior `as_array().is_none_or(…)` treated them
             // as singleton rows, not scalar cells.
-            serde_json::Value::Object(_) => DataLiteralShape {
+            _ => DataLiteralShape {
                 result_shape: crate::plasm_plan::ResultShape::Single,
                 row_cardinality: RowCardinalityProof::StaticSingleton,
                 value_kind: BindingValueKind::EntityRow,
@@ -463,13 +465,19 @@ mod tests {
         );
         assert_eq!(
             binding_value_kind(&DagNodeSource::Data(PlanValue::Literal {
-                value: serde_json::json!("hi"),
+                value: plasm_core::operand_binding::ResolvedValue::from_wire(serde_json::json!(
+                    "hi"
+                ))
+                .expect("literal data"),
             })),
             BindingValueKind::ScalarCell
         );
         assert_eq!(
             binding_value_kind(&DagNodeSource::Data(PlanValue::Literal {
-                value: serde_json::json!({"k": 1}),
+                value: plasm_core::operand_binding::ResolvedValue::from_wire(
+                    serde_json::json!({"k": 1})
+                )
+                .expect("literal data"),
             })),
             BindingValueKind::EntityRow
         );
@@ -477,7 +485,10 @@ mod tests {
             binding_value_kind(&DagNodeSource::Derive {
                 source: "src".into(),
                 value: PlanValue::Literal {
-                    value: serde_json::json!("x"),
+                    value: plasm_core::operand_binding::ResolvedValue::from_wire(
+                        serde_json::json!("x")
+                    )
+                    .expect("literal data"),
                 },
                 inputs: Vec::new(),
             }),
@@ -488,7 +499,8 @@ mod tests {
     #[test]
     fn data_literal_shape_aligns_cardinality_and_value_kind() {
         let s = data_literal_shape(&PlanValue::Literal {
-            value: serde_json::json!("cell"),
+            value: plasm_core::operand_binding::ResolvedValue::from_wire(serde_json::json!("cell"))
+                .expect("literal data"),
         });
         assert_eq!(s.value_kind, BindingValueKind::ScalarCell);
         assert!(matches!(
@@ -497,7 +509,8 @@ mod tests {
         ));
 
         let arr1 = data_literal_shape(&PlanValue::Literal {
-            value: serde_json::json!([1]),
+            value: plasm_core::operand_binding::ResolvedValue::from_wire(serde_json::json!([1]))
+                .expect("literal data"),
         });
         assert_eq!(arr1.value_kind, BindingValueKind::EntityRow);
         assert!(matches!(
@@ -506,7 +519,8 @@ mod tests {
         ));
 
         let arr_many = data_literal_shape(&PlanValue::Literal {
-            value: serde_json::json!([1, 2]),
+            value: plasm_core::operand_binding::ResolvedValue::from_wire(serde_json::json!([1, 2]))
+                .expect("literal data"),
         });
         assert_eq!(arr_many.value_kind, BindingValueKind::EntityRow);
         assert!(matches!(

@@ -24,6 +24,12 @@ fn relation_read_fanout_matches_unary_parent_gets() {
                     "lines": [{"id": child}],
                 });
                 let router = Router::new()
+                    .route("/language/v1/items/search", get(|| async {
+                        Json(json!([
+                            {"id": "i1", "title": "i1", "score": 1, "owner": "alice"},
+                            {"id": "i2", "title": "i2", "score": 1, "owner": "alice"},
+                        ]))
+                    }))
                     .route("/language/v1/items", get(move || async move {
                         Json(json!([
                             {"id": "i1", "title": "i1", "score": 1, "owner": "alice"},
@@ -66,6 +72,11 @@ fn relation_read_fanout_matches_unary_parent_gets() {
                     ("unary_evicted", "first = LangItem(\"i1\").lines\nsecond = LangItem(\"i2\").lines\nfirst, second"),
                     ("get_relation_fanout", "items = LangItem | take 2\nlines = items => LangItem(_.id).lines\nlines"),
                     ("bound_get_relation_fanout", "items = LangItem | take 2\nparents = items => LangItem(_.id)\nlines = parents => _.lines\nlines"),
+                    ("filtered_candidates", "candidates = LangItem~\"i1\"\nselected = candidates | where title = \"i1\" | where score > 0\nlines = selected => _.lines\nlines"),
+                    ("filtered_application", "items = LangItem | take 2\nparents = items => LangItem(_.id)\nselected = parents | where title = \"i1\"\nlines = selected => _.lines\nlines"),
+                    ("scalar_filter", "one = LangItem(\"i2\")\nselected = LangItem | where title = one.title | take 1\nlines = selected => _.lines\nlines"),
+                    ("template_filter", "one = LangItem(\"i1\")\nselected = LangItem | where title = \"{{ one.title }}\"\nlines = selected => _.lines\nlines"),
+
                 ] {
                     if name == "fanout_evicted" {
                         let mut graph = es.graph_cache.lock().await;
@@ -81,6 +92,17 @@ fn relation_read_fanout_matches_unary_parent_gets() {
                     let bundle = compile_plasm_program(
                         &PromptPipelineConfig::default(), None, &es, name, program,
                     ).expect("compile relation reads");
+                    if matches!(name, "filtered_candidates" | "filtered_application") {
+                        let dry = evaluate_plasm_comp_dry(&es, &bundle).expect("candidate filter dry validation");
+                        assert_comp_witness(&dry).expect("candidate filter serialized comp witness");
+                    }
+                    let wire = serde_json::to_vec(&bundle.artifact().comp).expect("serialize executable comp");
+                    let bundle = plasm_agent::PlasmCompBundle::new(
+                        plasm_agent::PlasmCompArtifact {
+                            comp: serde_json::from_slice(&wire).expect("decode executable comp"),
+                            approval_gates: bundle.artifact().approval_gates.clone(),
+                        }
+                    ).expect("admit serialized executable comp");
                     let out = Box::pin(run_plasm_comp(
                         &es, &st, &es.prompt_hash, name, &bundle, true,
                         None, None, None, None,
@@ -111,6 +133,10 @@ fn relation_read_fanout_matches_unary_parent_gets() {
                 assert_eq!(sets[2], sets[0], "fanout treated evicted child rows as an empty relation");
                 assert_eq!(sets[4], sets[0], "Get followed by a relation must compose inside apply");
                 assert_eq!(sets[5], sets[0], "intermediate Get results must retain entity identity");
+                assert_eq!(sets[6], BTreeSet::from(["LangLine:l1".into()]), "nonmatching search candidate must not reach relation traversal");
+                assert_eq!(sets[7], sets[6], "filter after a separately bound Get must constrain downstream reads");
+                assert_eq!(sets[8], BTreeSet::from(["LangLine:l2".into()]), "scalar binding must constrain downstream traversal before take after serialization");
+                assert_eq!(sets[9], sets[6], "template binding must constrain downstream traversal after serialization");
                 server.abort();
             });
         })

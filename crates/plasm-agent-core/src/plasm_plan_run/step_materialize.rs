@@ -239,12 +239,11 @@ async fn live_materialize_io(
                     surface.id.as_str()
                 ));
             };
-            let expr_label = surface
-                .ir
-                .as_ref()
-                .and_then(|ir| ir.display_expr.as_deref())
-                .or(surface.display_expr.as_deref())
-                .unwrap_or("<ir>");
+            let expr_label = &crate::plan_dry_display::render_executable_expr(
+                &parsed.expr,
+                parsed.projection.as_deref(),
+                Some(&scoped_es),
+            );
             let host_page = crate::plan_read_bounds::effective_host_page_size(&surface);
             let (parsed, mut result, artifact) = execute_plasm_parsed_expr(
                 ctx.st,

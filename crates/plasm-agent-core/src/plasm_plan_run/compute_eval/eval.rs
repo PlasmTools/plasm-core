@@ -465,82 +465,93 @@ pub(crate) fn eval_plan_value(
     value: &PlanValue,
     env: &PlanEvalEnv<'_>,
 ) -> Result<serde_json::Value, String> {
-    match value {
-        PlanValue::Literal { value } => Ok(value.clone()),
-        PlanValue::Helper { display, args, .. } => Ok(display
-            .as_ref()
-            .map(|s| serde_json::Value::String(s.clone()))
-            .unwrap_or_else(|| serde_json::Value::Array(args.clone()))),
-        PlanValue::Symbol { path } => {
-            let path = match &env.scope {
-                EvalScope::Root { .. } => path.as_str(),
-                EvalScope::Bound { binding, .. } => strip_binding(path, binding),
-            };
-            Ok(value_at_dotted(env.scope.row(), path)
-                .cloned()
-                .unwrap_or(serde_json::Value::Null))
-        }
-        PlanValue::BindingSymbol { binding, path } => {
-            let EvalScope::Bound {
-                binding: scope_binding,
-                ..
-            } = &env.scope
-            else {
-                return Err(format!(
-                    "binding symbol {binding:?} cannot resolve at root scope"
-                ));
-            };
-            if scope_binding.as_str() != binding.as_str() {
-                return Err(format!(
-                    "binding symbol references unknown binding {binding:?}"
-                ));
+    use plasm_core::operand_binding::BindOperands;
+    Ok(value
+        .bind_operands(&mut DataOperands(env))?
+        .into_resolved()?
+        .to_wire())
+}
+
+struct DataOperands<'a, 'b>(&'a PlanEvalEnv<'b>);
+impl plasm_core::operand_binding::OperandResolver for DataOperands<'_, '_> {
+    type Error = String;
+    fn resolve(
+        &mut self,
+        reference: &plasm_core::PlasmInputRef,
+    ) -> Result<plasm_core::operand_binding::ResolvedValue, String> {
+        use plasm_core::PlasmInputRef;
+        match reference {
+            PlasmInputRef::NodeInput { node, path } => self.node(node, node, path),
+            PlasmInputRef::RowBinding { binding, path } => {
+                let dotted = path.join(".");
+                let path = match &self.0.scope {
+                    EvalScope::Root { .. } if binding == "_" => dotted.as_str(),
+                    EvalScope::Bound {
+                        binding: actual, ..
+                    } if binding == "_" || binding == actual.as_str() => {
+                        strip_binding(&dotted, actual)
+                    }
+                    _ => return Err(format!("unknown row binding `{binding}`")),
+                };
+                let value = value_at_dotted(self.0.scope.row(), path)
+                    .ok_or_else(|| format!("row binding `{binding}` has no field `{path}`"))?;
+                plasm_core::operand_binding::ResolvedValue::from_wire(value.clone())
             }
-            Ok(value_at_segments(env.scope.row(), path)
-                .cloned()
-                .unwrap_or(serde_json::Value::Null))
         }
-        PlanValue::NodeSymbol { node, alias, path } => {
-            let alias = InputAlias::new(alias.clone())?;
-            let expected_node = PlanNodeId::new(node.clone())?;
-            let input = env.inputs.rows.get(&alias).ok_or_else(|| {
-                format!(
-                    "node symbol references missing input alias {:?}",
-                    alias.as_str()
-                )
-            })?;
-            if input.node != expected_node {
-                return Err(format!(
-                    "node symbol alias {:?} is bound to {:?}, not {:?}",
-                    alias.as_str(),
-                    input.node.as_str(),
-                    expected_node.as_str()
-                ));
-            }
-            match input.proof {
-                crate::plasm_plan::InputCardinalityProof::StaticSingleton
-                | crate::plasm_plan::InputCardinalityProof::RuntimeCheckedSingleton => {}
-            }
-            Ok(value_at_segments(&input.row, path)
-                .cloned()
-                .unwrap_or(serde_json::Value::Null))
+    }
+    fn node(
+        &mut self,
+        node: &str,
+        alias: &str,
+        path: &[String],
+    ) -> Result<plasm_core::operand_binding::ResolvedValue, String> {
+        let input = self
+            .0
+            .inputs
+            .rows
+            .get(&InputAlias::new(alias.to_owned())?)
+            .ok_or_else(|| format!("missing input alias `{alias}`"))?;
+        if input.node.as_str() != node {
+            return Err(format!(
+                "input alias `{alias}` is bound to `{}`, not `{node}`",
+                input.node.as_str()
+            ));
         }
-        PlanValue::Template { template, .. } => {
-            Ok(serde_json::Value::String(render_template(template, env)?))
+        match input.proof {
+            crate::plasm_plan::InputCardinalityProof::StaticSingleton
+            | crate::plasm_plan::InputCardinalityProof::RuntimeCheckedSingleton => {}
         }
-        PlanValue::EntityRefKey { key, .. } => eval_plan_value(key, env),
-        PlanValue::Array { items } => Ok(serde_json::Value::Array(
-            items
-                .iter()
-                .map(|item| eval_plan_value(item, env))
-                .collect::<Result<Vec<_>, _>>()?,
-        )),
-        PlanValue::Object { fields } => {
-            let mut out = serde_json::Map::new();
-            for (k, v) in fields {
-                out.insert(k.clone(), eval_plan_value(v, env)?);
-            }
-            Ok(serde_json::Value::Object(out))
+        let value = value_at_segments(&input.row, path)
+            .ok_or_else(|| format!("input `{node}` has no field `{}`", path.join(".")))?;
+        plasm_core::operand_binding::ResolvedValue::from_wire(value.clone())
+    }
+    fn identity(
+        &mut self,
+        _: plasm_core::operand_binding::IdentityTarget<'_>,
+        _: &plasm_core::PlasmInputRef,
+    ) -> Result<plasm_core::EntityId, String> {
+        Err("data operands do not encode catalog identities".into())
+    }
+    fn string(
+        &mut self,
+        template: &plasm_core::program_string_template::CompiledProgramString,
+    ) -> Result<String, String> {
+        render_template(template, self.0)
+    }
+    fn template(
+        &mut self,
+        template: &plasm_core::program_string_template::CompiledProgramString,
+        bindings: &[plasm_core::PlanInputBinding],
+    ) -> Result<String, String> {
+        let mut scope = plan_binding_scope_owned(self.0);
+        let original = scope.clone();
+        for binding in bindings {
+            let value = original
+                .get(&binding.from)
+                .ok_or_else(|| format!("template input `{}` is missing", binding.from))?;
+            scope.insert(binding.to.clone(), value.clone());
         }
+        template.render(&scope).map_err(|e| e.to_string())
     }
 }
 
@@ -583,47 +594,6 @@ pub(crate) fn render_template(
     template
         .render_minijinja_context(&ctx)
         .map_err(|e| e.to_string())
-}
-
-#[cfg(test)]
-pub(crate) fn render_expr_template(
-    template: &str,
-    env: &PlanEvalEnv<'_>,
-) -> Result<String, String> {
-    render_template_with(template, env, json_plasm_literal_display)
-}
-
-#[cfg(test)]
-pub(crate) fn render_template_with(
-    template: &str,
-    env: &PlanEvalEnv<'_>,
-    render_value: fn(&serde_json::Value) -> String,
-) -> Result<String, String> {
-    // Pre-format scalar leaves for Plasm surface display, then Minijinja-expand.
-    let scope = insert_plan_eval_scope(env, |row| json_row_to_display_plasm(row, render_value));
-    plasm_core::render_program_string(template, &scope).map_err(|e| e.to_string())
-}
-
-fn json_row_to_display_plasm(
-    row: &serde_json::Value,
-    render_value: fn(&serde_json::Value) -> String,
-) -> plasm_core::Value {
-    match row {
-        serde_json::Value::Object(map) => {
-            let mut out = indexmap::IndexMap::new();
-            for (k, v) in map {
-                out.insert(k.clone(), json_row_to_display_plasm(v, render_value));
-            }
-            plasm_core::Value::Object(out)
-        }
-        serde_json::Value::Array(items) => plasm_core::Value::Array(
-            items
-                .iter()
-                .map(|v| json_row_to_display_plasm(v, render_value))
-                .collect(),
-        ),
-        other => plasm_core::Value::String(render_value(other)),
-    }
 }
 
 pub(crate) use plasm_core::json_value_to_plasm_value as json_to_plasm_value;

@@ -266,7 +266,6 @@ fn materialized_result_use_allows_plural_rows_for_column_node_input_holes() {
             )),
         },
         projection: None,
-        display_expr: None,
         input_bindings: vec![],
     };
     let input_rows = materialized_result_use_inputs(
@@ -440,7 +439,6 @@ fn typed_fanout_delete_binds_numeric_identity_and_input() {
     let template = ValidatedPlanExprTemplate {
         expr: plasm_core::Expr::Delete(delete),
         projection: None,
-        display_expr: None,
         input_bindings: vec![],
     };
     let bound = instantiate_expr_template(

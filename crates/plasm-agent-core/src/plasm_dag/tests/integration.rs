@@ -224,6 +224,8 @@ fn take_two_field_extract_remains_plural() {
         )
         .expect_err("take 2 does not prove scalar extraction");
         assert!(error.contains("singleton"), "{error}");
+        assert!(!error.contains("take 1"), "diagnostics must not replace identity selection: {error}");
+        assert!(error.contains("identity"), "{error}");
     }
 }
 
@@ -3732,3 +3734,7 @@ bad"#,
         "help must steer to bare string bind: {err}"
     );
 }
+
+mod review_execution;
+
+mod scalar_predicates;

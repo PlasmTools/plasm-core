@@ -138,8 +138,8 @@ fn reject_non_scalar_cell_invoke_refs(
                 return Err(plp::plp4_program(
                     node_id,
                     format!(
-                        "param `{param}` expects a scalar, but `{node}.{}` is not a singleton field extract — use a Get or bind `rows | take 1`, then extract the field with `ℓ.wire`",
-                        path.join(".")
+                        "param `{param}` expects a scalar, but `{node}.{}` is not a singleton field extract — resolve the intended identity and use its Get before extracting; for every selected row, use `{node} => ...` with `_.{}`",
+                        path.join("."), path.join(".")
                     ),
                 ));
             }

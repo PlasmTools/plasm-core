@@ -10,7 +10,6 @@ pub(super) fn validated_plan_expr_ir(
     Ok(ValidatedPlanExprIr {
         expr,
         projection: ir.projection.clone(),
-        display_expr: ir.display_expr.clone(),
     })
 }
 
@@ -23,7 +22,6 @@ pub(super) fn validated_plan_expr_template(
     Ok(ValidatedPlanExprTemplate {
         expr: template.expr.clone(),
         projection: template.projection.clone(),
-        display_expr: template.display_expr.clone(),
         input_bindings: template.input_bindings.clone(),
     })
 }
@@ -36,7 +34,6 @@ pub(super) fn validated_effect_template(
     Ok(ValidatedEffectTemplate {
         kind: template.kind,
         qualified_entity: template.qualified_entity.clone(),
-        expr_template: template.expr_template.clone(),
         ir_template: validated_plan_expr_template(
             &template.ir_template,
             node_index,
@@ -229,50 +226,84 @@ fn validate_plan_value_input_refs(
     inputs_by_alias: &HashMap<&str, &str>,
     item_binding: Option<&str>,
 ) -> Result<(), String> {
-    match value {
-        PlanValue::NodeSymbol { node, alias, .. } => match inputs_by_alias.get(alias.as_str()) {
-            Some(input_node) if *input_node == node.as_str() => Ok(()),
-            Some(input_node) => Err(format!(
-                "plan.nodes[{node_index}].derive_template.value node symbol alias {:?} points at {:?}, not {:?}",
-                alias, input_node, node
-            )),
-            None => Err(format!(
-                "plan.nodes[{node_index}].derive_template.value node symbol alias {:?} is not declared in inputs",
-                alias
-            )),
-        },
-        PlanValue::Template {
-            template,
-            input_bindings,
-        } => {
-            for binding in input_bindings {
-                let Some((alias, _)) = binding.from.split_once('.') else {
-                    continue;
-                };
-                validate_template_alias(alias, node_index, inputs_by_alias, item_binding)?;
-            }
-            for alias in template.roots() {
-                validate_template_alias(alias, node_index, inputs_by_alias, item_binding)?;
-            }
-            Ok(())
-        }
-        PlanValue::Array { items } => {
-            for item in items {
-                validate_plan_value_input_refs(item, node_index, inputs_by_alias, item_binding)?;
-            }
-            Ok(())
-        }
-        PlanValue::EntityRefKey { key, .. } => {
-            validate_plan_value_input_refs(key, node_index, inputs_by_alias, item_binding)
-        }
-        PlanValue::Object { fields } => {
-            for field in fields.values() {
-                validate_plan_value_input_refs(field, node_index, inputs_by_alias, item_binding)?;
-            }
-            Ok(())
-        }
-        _ => Ok(()),
+    use plasm_core::operand_binding::{
+        BindOperands, IdentityTarget, OperandResolver, ResolvedValue,
+    };
+    struct Check<'a> {
+        inputs: &'a HashMap<&'a str, &'a str>,
+        item: Option<&'a str>,
+        index: usize,
     }
+    impl OperandResolver for Check<'_> {
+        type Error = String;
+        fn resolve(
+            &mut self,
+            reference: &plasm_core::PlasmInputRef,
+        ) -> Result<ResolvedValue, String> {
+            match reference {
+                plasm_core::PlasmInputRef::NodeInput { node, path } => self.node(node, node, path),
+                plasm_core::PlasmInputRef::RowBinding { binding, .. } => {
+                    if self.item != Some(binding.as_str())
+                        && !(binding == "_" && self.item.is_some())
+                    {
+                        return Err(format!(
+                            "plan.nodes[{}] unknown row binding `{binding}`",
+                            self.index
+                        ));
+                    }
+                    Ok(ResolvedValue::null())
+                }
+            }
+        }
+        fn node(&mut self, node: &str, alias: &str, _: &[String]) -> Result<ResolvedValue, String> {
+            match self.inputs.get(alias) {
+                Some(input) if *input == node => Ok(ResolvedValue::null()),
+                Some(input) => Err(format!(
+                    "plan.nodes[{}] node symbol alias {alias:?} points at {input:?}, not {node:?}",
+                    self.index
+                )),
+                None => Err(format!(
+                    "plan.nodes[{}] node symbol alias {alias:?} is not declared in inputs",
+                    self.index
+                )),
+            }
+        }
+        fn identity(
+            &mut self,
+            _: IdentityTarget<'_>,
+            reference: &plasm_core::PlasmInputRef,
+        ) -> Result<plasm_core::EntityId, String> {
+            self.resolve(reference)?;
+            Ok(plasm_core::EntityId::from("validation"))
+        }
+        fn string(
+            &mut self,
+            template: &plasm_core::program_string_template::CompiledProgramString,
+        ) -> Result<String, String> {
+            self.template(template, &[])
+        }
+        fn template(
+            &mut self,
+            template: &plasm_core::program_string_template::CompiledProgramString,
+            bindings: &[plasm_core::PlanInputBinding],
+        ) -> Result<String, String> {
+            for root in template.roots() {
+                let alias = bindings
+                    .iter()
+                    .find(|binding| &binding.to == root)
+                    .map(|binding| binding.from.as_str())
+                    .unwrap_or(root);
+                validate_template_alias(alias, self.index, self.inputs, self.item)?;
+            }
+            Ok(String::new())
+        }
+    }
+    value.bind_operands(&mut Check {
+        inputs: inputs_by_alias,
+        item: item_binding,
+        index: node_index,
+    })?;
+    Ok(())
 }
 
 fn validate_template_alias(
@@ -335,6 +366,18 @@ pub(super) fn validate_compute_template(
             }
             for (j, p) in predicates.iter().enumerate() {
                 validate_predicate(p, node_index, j)?;
+                let collection_operand =
+                    matches!(p.op, PlanPredicateOp::In | PlanPredicateOp::NotIn)
+                        && matches!(p.value, PlanValue::BindingSymbol { .. });
+                if !collection_operand {
+                    let inputs = by_id.keys().map(|id| (id.as_str(), id.as_str())).collect();
+                    validate_plan_value_input_refs(&p.value, node_index, &inputs, None)?;
+                }
+                for dependency in p.value.dependencies() {
+                    if !by_id.contains_key(&dependency) {
+                        return Err(format!("plan.nodes[{node_index}] predicate references unknown binding `{dependency}`"));
+                    }
+                }
             }
         }
         ComputeOp::With { columns } if columns.is_empty() => {

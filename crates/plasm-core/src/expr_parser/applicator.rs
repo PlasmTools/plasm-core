@@ -44,6 +44,12 @@ pub fn parse_applicator(raw: &str) -> Result<Applicator, String> {
             kind: RenderApplicator::Inferred { template },
         });
     }
+    if let Some((head, tail)) = super::split_token_top_level(right, "|")? {
+        let (head, tail) = (head.trim(), tail.trim());
+        return Err(format!(
+            "`=>` must be the final stage; `{right}` has a row pipeline after application. Bind the application first, then preserve the filter or transform: `applied = rows => {head}` followed by `result = applied | {tail}`"
+        ));
+    }
     if let Some(wire) = right.strip_prefix("_.") {
         if method_call_at_depth_zero(right) {
             return Ok(Applicator::Apply {
@@ -73,6 +79,39 @@ pub fn parse_applicator(raw: &str) -> Result<Applicator, String> {
     Err(format!(
         "unsupported `=>` applicator `{right}`; use a row-producing form such as `=> {{ … }}`, `=> <<TAG`, `=> Entity(_.id)`, `=> Entity{{parent_id=_.id}}`, `=> Entity.m#(…, _)`, or `=> _.r#`"
     ))
+}
+
+#[cfg(test)]
+mod complete_application_tests {
+    use super::*;
+
+    #[test]
+    fn application_never_silently_accepts_row_pipeline_suffixes() {
+        for head in [
+            "Item(_.id)",
+            "Item{parent_id=_.id}",
+            "_.update(title=_.title)",
+            "_.children",
+        ] {
+            for suffix in [
+                "where active = true",
+                "select id",
+                "order by id",
+                "take 1",
+                "distinct id",
+                "summarize n=count(*)",
+            ] {
+                let input = format!("{head} | {suffix}");
+                assert!(
+                    parse_applicator(&input).is_err(),
+                    "accepted non-executable suffix: {input}"
+                );
+            }
+        }
+        assert!(parse_applicator(r#"Item(_.id).update(title="a | b")"#).is_ok());
+        assert!(parse_applicator("<<TEXT\na | b\nTEXT").is_ok());
+        assert!(parse_applicator("<<TEXT\na | b\nTEXT\n| take 1").is_err());
+    }
 }
 
 fn parse_render_template_after_tag_opener(rest: &str) -> Result<String, String> {
@@ -108,7 +147,11 @@ fn parse_render_template_after_tag_opener(rest: &str) -> Result<String, String> 
             pos += 1;
         }
         let line_slice = &rest[line_start..pos];
-        if tagged_heredoc_close_kind(line_slice, tag).is_some() {
+        if let Some((_, leading_ws)) = tagged_heredoc_close_kind(line_slice, tag) {
+            let tail = rest[line_start + leading_ws + tag.len()..].trim();
+            if !tail.is_empty() {
+                return Err(format!("unexpected trailing syntax `{tail}` after render applicator; `=>` must be the final stage. Bind the rendered result before applying another transform"));
+            }
             return Ok(rest[body_start..line_start].to_string());
         }
         if pos >= bytes.len() {

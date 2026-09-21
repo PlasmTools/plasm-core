@@ -39,8 +39,11 @@ impl PageCollector {
         !matches!(self, Self::Standard)
     }
 
-    pub fn ingest_page(&mut self, entities: Vec<CachedEntity>) -> PageIngestOutcome {
-        match self {
+    pub fn ingest_page(
+        &mut self,
+        entities: Vec<CachedEntity>,
+    ) -> Result<PageIngestOutcome, crate::RuntimeError> {
+        Ok(match self {
             Self::Standard => {
                 let progress_rows = entities.len();
                 PageIngestOutcome {
@@ -54,10 +57,12 @@ impl PageCollector {
                 budget,
                 matching_total,
             } => {
-                let filtered: Vec<_> = entities
-                    .into_iter()
-                    .filter(|e| entity_matches_predicates(e, &budget.predicates))
-                    .collect();
+                let mut filtered = Vec::new();
+                for entity in entities {
+                    if entity_matches_predicates(&entity, &budget.predicates)? {
+                        filtered.push(entity);
+                    }
+                }
                 *matching_total = matching_total.saturating_add(filtered.len());
                 let satisfied = *matching_total >= budget.count;
                 PageIngestOutcome {
@@ -70,7 +75,7 @@ impl PageCollector {
             Self::TopK(heap) => {
                 let progress_rows = entities.len();
                 for entity in entities {
-                    heap.insert(entity);
+                    heap.insert(entity)?;
                 }
                 PageIngestOutcome {
                     merge_into_mat: Vec::new(),
@@ -79,7 +84,7 @@ impl PageCollector {
                     row_match_budget_satisfied: false,
                 }
             }
-        }
+        })
     }
 
     pub fn finish(self) -> Option<Vec<CachedEntity>> {

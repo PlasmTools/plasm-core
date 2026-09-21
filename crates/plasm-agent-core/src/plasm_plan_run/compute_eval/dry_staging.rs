@@ -165,7 +165,7 @@ async fn dry_stub_materialize_io(
                             qe.clone(),
                             rows,
                             row_identities,
-                            surface.display_expr.clone().unwrap_or_default(),
+                            crate::plasm_plan_run::dry::render_surface_operation(surface),
                             Some(surface.projection.clone()).filter(|p| !p.is_empty()),
                         )))
                     }
