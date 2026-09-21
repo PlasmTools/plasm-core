@@ -74,12 +74,22 @@ Boundary checks (no model calls):
 ```sh
 npm run test:session-contract
 npm run test:session-extension
+npm run test:discovery-queue
 PLASM_TEST_POSTGRES_URL=... npm run test:session-postgres
 ```
 
 Generated properties use a reproducible default seed; set `PLASM_PROPERTY_SEED`
 to explore another sequence. PostgreSQL tests use a connection-local temporary
 table and cover JSONB round trips plus the discovery text-search parameter.
+
+Within one `AgentRuntime`, concurrent `plasm_context` extensions are queued per
+logical session from reading the session through native discovery and persisted
+teaching. Each distinct request therefore derives from the previous committed
+intent chain. Identical pending requests (same session, exact intent and ordered
+effect slots) share one result; completed requests are not cached. Failures release
+the queue, unrelated sessions remain independent, and `new` requests always create
+distinct workflows. This is local orchestration, not a cross-process lock: the
+native store still rejects stale or rewritten ancestry from independent writers.
 
 ```ts
 import { PlasmAgent } from "@plasm_lang/vercel-agent";

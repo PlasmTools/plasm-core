@@ -14,6 +14,7 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
   const routed: IntentProvenance[] = [];
   let insufficient = false;
   let partial = false;
+  const provenanceBySession = new Map<string, IntentProvenance>();
   const coverageBySession = new Map<string, Array<{ slot: { id: string; statement: string }; matched_capabilities: Array<{ catalog: string; capability: string }> }>>();
   const unused = async (): Promise<never> => { throw new Error("unexpected engine operation"); };
   const engine: PlasmEngine = {
@@ -68,6 +69,12 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
         },
         teaching: insufficient ? null : { tsv: "e1\tRecord", delta_refs: ["matrix:Record"] },
       });
+      const previous = provenanceBySession.get(pin);
+      if (previous) {
+        assert.deepEqual(provenance.nodes.slice(0, previous.nodes.length), previous.nodes,
+          "intent provenance rewrites or omits pinned ancestry");
+      }
+      provenanceBySession.set(pin, structuredClone(provenance));
       coverageBySession.set(pin, coverage);
       return packet;
     },
@@ -127,7 +134,44 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
       await assert.rejects(() => runtime.plasmContext({ intent: `Read${invalid}`, effectSlots: ["Read records"] }));
       assert.equal(routed.length, before, "invalid text fails before native discovery");
     }
-    console.log("session-extension: new -> persist -> extend passed");
+    const concurrentIntents = Array.from({ length: 12 }, (_, i) => `Resolve independent relation ${i}`);
+    const concurrentResults = await Promise.allSettled(concurrentIntents.map((intent) => runtime.plasmContext({
+      intent, effectSlots: [intent], sessionMode: "extend", logicalSessionRef: ref,
+    })));
+    for (const result of concurrentResults) {
+      if (result.status === "rejected") throw result.reason;
+    }
+    const afterConcurrent = await runtime.sessionManager.getByLogicalRef(ref);
+    assert.ok(afterConcurrent);
+    assert.deepEqual(afterConcurrent.intentProvenance.nodes.slice(-concurrentIntents.length).map(n => n.intent), concurrentIntents);
+    const committed = provenanceBySession.get(afterConcurrent.logicalSessionId);
+    assert.deepEqual(afterConcurrent.intentProvenance, committed, "filesystem and native provenance must agree");
+    const obligations = coverageBySession.get(afterConcurrent.logicalSessionId)!;
+    for (const intent of concurrentIntents) assert.ok(obligations.some(entry => entry.slot.statement === intent));
+    const beforeDuplicates = routed.length;
+    const duplicateRequest = { intent: "Resolve the same relation", effectSlots: ["Read one relation"], sessionMode: "extend" as const, logicalSessionRef: ref };
+    const duplicates = await Promise.all(Array.from({ length: 80 }, () =>
+      runtime.plasmContext(JSON.parse(JSON.stringify(duplicateRequest)))));
+    assert.equal(routed.length - beforeDuplicates, 1, "identical pending requests share one native discovery");
+    assert.ok(duplicates.every(result => result === duplicates[0]));
+    await runtime.plasmContext(duplicateRequest);
+    assert.equal(routed.length - beforeDuplicates, 2, "completed discovery is not cached");
+    const beforeDifferentSlots = routed.length;
+    await Promise.all(["Read left relation", "Read right relation"].map(slot =>
+      runtime.plasmContext({ ...duplicateRequest, effectSlots: [slot] })));
+    assert.equal(routed.length - beforeDifferentSlots, 2, "different slots must never coalesce");
+    const mutableRequest = { ...duplicateRequest, effectSlots: ["Preserve submitted slot"] };
+    const pending = runtime.plasmContext(mutableRequest);
+    mutableRequest.intent = "Changed after submission";
+    mutableRequest.effectSlots[0] = "Changed after submission";
+    await pending;
+    assert.equal(routed.at(-1)?.nodes.at(-1)?.intent, duplicateRequest.intent);
+    assert.ok(coverageBySession.get(afterConcurrent.logicalSessionId)!.some(entry => entry.slot.statement === "Preserve submitted slot"));
+    const newWorkflows = await Promise.all([0, 1].map(() => runtime.plasmContext({
+      intent: "Same new workflow", effectSlots: ["Read records"],
+    })));
+    assert.notEqual(newWorkflows[0]!.match(/l_[A-Za-z0-9_-]{22}/)?.[0], newWorkflows[1]!.match(/l_[A-Za-z0-9_-]{22}/)?.[0]);
+    console.log("session-extension: new -> persist -> concurrent extend passed");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

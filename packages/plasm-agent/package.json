@@ -83,6 +83,7 @@
     "plasm:dev": "npm run dev",
     "test:session-contract": "node scripts/run-plasm-cli.mjs scripts/test-session-contract.ts",
     "test:session-extension": "node scripts/run-plasm-cli.mjs scripts/test-session-extension.ts",
+    "test:discovery-queue": "node scripts/run-plasm-cli.mjs scripts/test-discovery-queue.ts",
     "test:session-postgres": "node scripts/run-plasm-cli.mjs scripts/test-session-postgres.ts",
     "test:intent-native": "node scripts/run-plasm-cli.mjs scripts/test-intent-native.ts"
   },

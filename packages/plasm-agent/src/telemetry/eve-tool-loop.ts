@@ -15,6 +15,7 @@ import {
   gateUnreadArtifactTerminals,
 } from "../tools/artifact-contract.js";
 import { successfulEvalTerminalInStep } from "../tools/format.js";
+import { transientProviderFailure } from "./provider-failure.js";
 import { ensureOtelIntegration } from "../instrumentation.js";
 import {
   buildEveRuntimeContext,
@@ -652,6 +653,9 @@ export async function runEveToolLoop(
                 );
               }, options.generationTimeoutMs);
         const streamResult = streamText({
+          // Transport retries precede any tool execution. Failed generations
+          // additionally consume the existing step/provider-failure budgets.
+          maxRetries: 2,
           onToolExecutionStart: () => {
             toolExecutionStarted = true;
           },
@@ -702,13 +706,17 @@ export async function runEveToolLoop(
               streamResult.response,
             ]);
         } catch (error: unknown) {
-          if (!generationTimedOut) {
-            // No-output rejection otherwise hides HTTP payment/auth failures.
-            throw providerStreamError ?? error;
+          const failure = providerStreamError ?? error;
+          const transient = transientProviderFailure(failure);
+          if (!generationTimedOut && (toolExecutionStarted || !transient)) {
+            // Keep payment/auth errors and uncertain post-execution failures
+            // fatal. An empty SDK response cannot reconstruct executed effects.
+            throw failure;
           }
+          providerStreamErrorCount = Math.max(1, providerStreamErrorCount);
           text = "";
           finishReason = "error";
-          rawFinishReason = "generation_timeout";
+          rawFinishReason = generationTimedOut ? "generation_timeout" : transient;
           steps = [];
           usage = {
             inputTokens: 0,

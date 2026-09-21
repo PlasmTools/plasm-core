@@ -34,6 +34,7 @@ import type { AuthoringContext } from "../authoring/context.js";
 import type { HookRunner } from "../authoring/hook-runner.js";
 import type { AgentWorkflowWorldDefinition } from "../define-agent.js";
 import { createAgentStateStore } from "../state/define-state.js";
+import { DiscoveryQueue } from "./discovery-queue.js";
 
 export type AgentArchiveStore = LocalArchiveStore | ProdArchiveStore;
 
@@ -264,7 +265,25 @@ export class AgentRuntime {
     return [...this.loadedCatalogs];
   }
 
+  private readonly discoveryQueue = new DiscoveryQueue();
+
   async plasmContext(input: PlasmContextInput): Promise<string> {
+    // Snapshot inputs before waiting: callers must not mutate a queued request.
+    const request: PlasmContextInput = {
+      ...input,
+      intent: workflowIntentSchema.parse(input.intent),
+      effectSlots: input.effectSlots.map((slot) => workflowIntentSchema.parse(slot)),
+    };
+    if (request.sessionMode !== "extend") return this.plasmContextTurn(request);
+    const ref = logicalSessionRefSchema.parse(request.logicalSessionRef);
+    return this.discoveryQueue.run(
+      ref,
+      JSON.stringify([request.intent, request.effectSlots]),
+      () => this.plasmContextTurn(request),
+    );
+  }
+
+  private async plasmContextTurn(input: PlasmContextInput): Promise<string> {
     const intent = workflowIntentSchema.parse(input.intent);
     const effectSlots = input.effectSlots.map((slot) => workflowIntentSchema.parse(slot));
     const mode = input.sessionMode ?? "new";
