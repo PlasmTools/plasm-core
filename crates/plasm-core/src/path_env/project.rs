@@ -20,10 +20,20 @@ pub struct CmlIdentityEnv {
 }
 
 /// Full identity materialization + path/GQL identity-env projection (one `from_ref`).
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CapabilityIdentityProjection {
-    pub identity: ResolvedIdentity,
-    pub path_env: CmlIdentityEnv,
+    identity: ResolvedIdentity,
+    path_env: CmlIdentityEnv,
+}
+
+impl CapabilityIdentityProjection {
+    /// Bind non-identity inputs first, then seal identity slots from the selected Ref.
+    /// Ambient row metadata and payload splats cannot retarget the operation.
+    pub fn bind(self, mut inputs: IndexMap<String, Value>) -> IndexMap<String, Value> {
+        inputs.extend(self.identity.slots);
+        inputs.extend(self.path_env.slots);
+        inputs
+    }
 }
 
 /// Projection failures when a required var cannot be filled from identity.

@@ -45,6 +45,9 @@ project_query:
   query:
     type: object
     fields:
+    - [sort_by, {type: if, condition: {type: exists, var: sort_by}, then_expr: {type: var, name: sort_by}, else_expr: {type: const, value: null}}]
+    - [is_favorite, {type: if, condition: {type: exists, var: is_favorite}, then_expr: {type: var, name: is_favorite}, else_expr: {type: const, value: null}}]
+    - [is_archived, {type: if, condition: {type: exists, var: is_archived}, then_expr: {type: var, name: is_archived}, else_expr: {type: const, value: null}}]
     - - query
       - type: if
         condition: { type: exists, var: query }
@@ -73,6 +76,7 @@ project_create:
   body:
     type: object
     fields:
+    - [is_favorite, {type: if, condition: {type: exists, var: is_favorite}, then_expr: {type: var, name: is_favorite}, else_expr: {type: const, value: null}}]
     - [name, { type: var, name: name }]
     - - color
       - type: if
@@ -95,6 +99,8 @@ project_update:
   body:
     type: object
     fields:
+    - [is_archived, {type: if, condition: {type: exists, var: is_archived}, then_expr: {type: var, name: is_archived}, else_expr: {type: const, value: null}}]
+    - [is_favorite, {type: if, condition: {type: exists, var: is_favorite}, then_expr: {type: var, name: is_favorite}, else_expr: {type: const, value: null}}]
     - - name
       - type: if
         condition: { type: exists, var: name }
@@ -130,10 +136,24 @@ task_query:
   query:
     type: object
     fields:
+    - [sort_by, {type: if, condition: {type: exists, var: sort_by}, then_expr: {type: var, name: sort_by}, else_expr: {type: const, value: null}}]
+    - [max_due_date, {type: if, condition: {type: exists, var: max_due_date}, then_expr: {type: var, name: max_due_date}, else_expr: {type: const, value: null}}]
+    - [min_due_date, {type: if, condition: {type: exists, var: min_due_date}, then_expr: {type: var, name: min_due_date}, else_expr: {type: const, value: null}}]
+    - [section_id, {type: if, condition: {type: exists, var: section_id}, then_expr: {type: var, name: section_id}, else_expr: {type: const, value: null}}]
+    - [overdue, {type: if, condition: {type: exists, var: overdue}, then_expr: {type: var, name: overdue}, else_expr: {type: const, value: null}}]
+    - [label_id, {type: if, condition: {type: exists, var: label_id}, then_expr: {type: var, name: label_id}, else_expr: {type: const, value: null}}]
+    - [is_completed, {type: if, condition: {type: exists, var: is_completed}, then_expr: {type: var, name: is_completed}, else_expr: {type: const, value: null}}]
+    - [due_today, {type: if, condition: {type: exists, var: due_today}, then_expr: {type: var, name: due_today}, else_expr: {type: const, value: null}}]
+    - [assigner_email, {type: if, condition: {type: exists, var: assigner_email}, then_expr: {type: var, name: assigner_email}, else_expr: {type: const, value: null}}]
     - - priority
       - type: if
         condition: { type: exists, var: priority }
         then_expr: { type: var, name: priority }
+        else_expr: { type: const, value: null }
+    - - assignee_email
+      - type: if
+        condition: { type: exists, var: assignee_email }
+        then_expr: { type: var, name: assignee_email }
         else_expr: { type: const, value: null }
   # Vendor `Task:collection` is `{ project_id, no_section_tasks, sections[].tasks }`, not a root array.
   response:
@@ -164,6 +184,7 @@ task_create:
   body:
     type: object
     fields:
+    - [order_index, {type: if, condition: {type: exists, var: order_index}, then_expr: {type: var, name: order_index}, else_expr: {type: const, value: null}}]
     - [title, { type: var, name: title }]
     - - description
       - type: if
@@ -206,6 +227,7 @@ task_update:
   body:
     type: object
     fields:
+    - [order_index, {type: if, condition: {type: exists, var: order_index}, then_expr: {type: var, name: order_index}, else_expr: {type: const, value: null}}]
     - - title
       - type: if
         condition: { type: exists, var: title }
@@ -277,6 +299,8 @@ label_query:
   query:
     type: object
     fields:
+    - [task_id, {type: if, condition: {type: exists, var: task_id}, then_expr: {type: var, name: task_id}, else_expr: {type: const, value: null}}]
+    - [task_attached, {type: if, condition: {type: exists, var: task_attached}, then_expr: {type: var, name: task_attached}, else_expr: {type: const, value: null}}]
     - - query
       - type: if
         condition: { type: exists, var: query }
@@ -355,6 +379,7 @@ section_create:
   body:
     type: object
     fields:
+    - [order_index, {type: if, condition: {type: exists, var: order_index}, then_expr: {type: var, name: order_index}, else_expr: {type: const, value: null}}]
     - [name, { type: var, name: name }]
 
 section_delete:
@@ -394,6 +419,8 @@ task_comment_create:
   body:
     type: object
     fields:
+    - [file_system_access_token, {type: if, condition: {type: exists, var: file_system_access_token}, then_expr: {type: var, name: file_system_access_token}, else_expr: {type: const, value: null}}]
+    - [attachment_file_paths, {type: if, condition: {type: exists, var: attachment_file_paths}, then_expr: {type: var, name: attachment_file_paths}, else_expr: {type: const, value: null}}]
     - [content, { type: var, name: content }]
 
 task_comment_update:
@@ -493,6 +520,12 @@ sub_task_create:
   body:
     type: object
     fields:
+    - [priority, {type: if, condition: {type: exists, var: priority}, then_expr: {type: var, name: priority}, else_expr: {type: const, value: null}}]
+    - [order_index, {type: if, condition: {type: exists, var: order_index}, then_expr: {type: var, name: order_index}, else_expr: {type: const, value: null}}]
+    - [duration_unit, {type: if, condition: {type: exists, var: duration_unit}, then_expr: {type: var, name: duration_unit}, else_expr: {type: const, value: null}}]
+    - [duration, {type: if, condition: {type: exists, var: duration}, then_expr: {type: var, name: duration}, else_expr: {type: const, value: null}}]
+    - [due_date, {type: if, condition: {type: exists, var: due_date}, then_expr: {type: var, name: due_date}, else_expr: {type: const, value: null}}]
+    - [description, {type: if, condition: {type: exists, var: description}, then_expr: {type: var, name: description}, else_expr: {type: const, value: null}}]
     - [title, { type: var, name: title }]
 
 sub_task_delete:
@@ -862,6 +895,8 @@ sub_task_update:
   body:
     type: object
     fields:
+    - [duration_unit, {type: if, condition: {type: exists, var: duration_unit}, then_expr: {type: var, name: duration_unit}, else_expr: {type: const, value: null}}]
+    - [duration, {type: if, condition: {type: exists, var: duration}, then_expr: {type: var, name: duration}, else_expr: {type: const, value: null}}]
     - - title
       - type: if
         condition:

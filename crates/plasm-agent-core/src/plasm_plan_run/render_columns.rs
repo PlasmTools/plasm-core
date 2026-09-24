@@ -57,7 +57,13 @@ impl RenderColumns {
                         format!(
                             "render column {:?} did not resolve at row {row_index}. {}",
                             column.as_str(),
-                            self.access_hint()
+                            match row.as_object() {
+                                Some(fields) => format!(
+                                    "Available row fields: {}",
+                                    fields.keys().cloned().collect::<Vec<_>>().join(", ")
+                                ),
+                                None => "Render input is not an object row".into(),
+                            }
                         )
                     })?,
             );
@@ -110,5 +116,21 @@ mod tests {
         let projected = cols.project_row(&row, 0).expect("project");
         assert_eq!(projected.get("name").and_then(|v| v.as_str()), Some("a"));
         assert_eq!(projected.get("p23").and_then(|v| v.as_str()), Some("a"));
+    }
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+    #[test]
+    fn missing_column_reports_actual_keys_without_values() {
+        let cols =
+            RenderColumns::from_field_pairs(&[("missing".into(), "missing".into())]).unwrap();
+        let error = cols
+            .project_row(&serde_json::json!({"present":"private-value"}), 0)
+            .unwrap_err();
+        assert!(error.contains("Available row fields: present"));
+        assert!(!error.contains("Valid row fields: missing"));
+        assert!(!error.contains("private-value"));
     }
 }

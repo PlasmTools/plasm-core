@@ -10,8 +10,8 @@ expression: "plasm_core::prompt_render::PLASM_RUN_TOOL_DESCRIPTION"
 
 **Paging:** when a result says `more pages — call plasm_run with run_ref: "…"`, copy that handle into **`run_ref`** (same **`logical_session_ref`**). A snapshot contains the acquired batch; it does not fetch further backend pages. Follow a returned continuation even when that batch has a snapshot. `page(...)` is HTTP-execute program syntax only.
 
-**Live results:** `## {return_label} ({n} rows)` header. Small results (≤25 rows): inline ` ```tsv ` when `result_delivery` is `inline`; `snapshot_only` / `(in artifact)` need the artifact read path (suffix below).
+**Live results:** `## {return_label} ({n} rows)` header. Small results (≤25 rows): inline ` ```tsv ` when `result_delivery` is `inline`; `snapshot_only` / `(in artifact)` mark omitted data, available through the optional artifact read path (suffix below).
 
 **Retry:** transient `session materialization changed during concurrent execute` — re-issue the same `plasm_run` once.
 
-**Artifact:** when **`content`** has a `plasm://…` snapshot, `(in artifact)` cells, or `result_delivery` is `snapshot_only`, call MCP **`resources/read`** on that URI before answering. When delivery is `inline` without those markers, rows are already in **`content`**.
+**Artifact (optional):** when you need data omitted from **`content`**, use the `plasm://…` snapshot referenced by `(in artifact)` / `snapshot_only`. Call MCP **`resources/read`** on that URI. When delivery is `inline` without those markers, rows are already in **`content`**.

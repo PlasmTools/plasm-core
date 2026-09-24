@@ -157,8 +157,6 @@ pub fn evaluate_executable_comp_dry(
         staged_nodes.push(format!("{} ({:?})", n.id(), n.kind()));
         out.push(dry_stage_result(step_idx, n));
     }
-    dry_validate_render_nodes(es, prepared.validated.artifact())
-        .map_err(ProgramStageError::plan)?;
     dry_validate_staged_surfaces(es, prepared.validated.artifact())
         .map_err(ProgramStageError::plan)?;
     let flow_catalog = es.build_flow_catalog_view();

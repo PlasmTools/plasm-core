@@ -336,11 +336,11 @@ fn lower_relation_continuation_inner(
             ),
         ));
     }
-    if !contract.anchor.is_present() {
+    if !contract.supports_relation_dot() || !contract.anchor.is_present() {
         return Err(plp::plp4_program(
             id,
             format!(
-                "`{source_label}.{segment}` requires a continuation anchor on `{source_label}` — bind an intermediate row before continuing the relation chain"
+                "`{source_label}.{segment}` requires entity continuation evidence on `{source_label}`; terminal rowsets (including union results) cannot regain it through filtering, projection or take — traverse relations from the originating entity bindings before combining the resulting rowsets"
             ),
         ));
     }

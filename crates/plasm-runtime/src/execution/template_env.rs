@@ -36,18 +36,11 @@ pub(crate) fn populate_template_path_env(
                 message: e.to_string(),
             }
         })?;
-    for (k, v) in &projected.identity.slots {
-        env.insert(k.clone(), v.clone());
-    }
-    for (k, v) in projected.path_env.slots {
-        env.insert(k, v);
-    }
-
+    let mut inputs = env.clone();
     if let Some(Value::Object(map)) = input_overlay {
-        for (k, v) in map {
-            env.insert(k.clone(), v.clone());
-        }
+        inputs.extend(map.clone());
     }
+    *env = projected.bind(inputs);
     Ok(())
 }
 
@@ -102,5 +95,42 @@ pub(crate) fn normalize_cml_scope_entity_ref_value(
             })
         }
         other => Some(other.clone()),
+    }
+}
+
+#[cfg(test)]
+mod identity_binding_laws {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+        #[test]
+        fn serialized_identity_projects_unchanged_into_every_targeted_transport(
+            path in "/[a-zA-Z0-9_ /.-]{1,64}", foreign in any::<i64>(),
+        ) {
+            let cgs = plasm_core::load_schema_dir(&std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/target_identity_matrix")).unwrap();
+            let compiled = plasm_compile::compile_cgs_capability_templates(&cgs).unwrap();
+            let reference = Ref::new("Document", path.clone());
+            let reference: Ref = serde_json::from_slice(&serde_json::to_vec(&reference).unwrap()).unwrap();
+            for name in ["document_get", "document_touch", "document_delete"] {
+                let cap = cgs.get_capability(name).unwrap();
+                let inputs = Value::Object(IndexMap::from([
+                    ("id".into(), Value::Integer(foreign)),
+                    ("path".into(), Value::String("wrong".into())),
+                    ("unrelated".into(), Value::Integer(foreign)),
+                ]));
+                let mut env = CmlEnv::new();
+                populate_template_path_env(&mut env, cap, &reference,
+                    plasm_core::IdentityProjectionCtx::Entity(cgs.get_entity("Document").unwrap()),
+                    Some(&inputs)).unwrap();
+                prop_assert_eq!(env.get("unrelated"), Some(&Value::Integer(foreign)));
+                let operation = compile_operation_dispatch(compiled.capability(name).unwrap(), &env).unwrap();
+                let CompiledOperation::Http(request) = operation else { panic!("expected HTTP") };
+                let Some(Value::Object(slots)) = request.query.or(request.body) else { panic!("missing target") };
+                prop_assert_eq!(&slots["path"], &Value::String(path.clone()));
+            }
+        }
     }
 }

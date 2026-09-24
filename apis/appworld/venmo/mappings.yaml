@@ -168,6 +168,20 @@ transaction_query:
     else_expr: { type: const, value: transactions }
   auth: *request_auth
   pagination: *appworld_page_index_limit
+  query:
+    type: object
+    fields:
+    - [sort_by, {type: if, condition: {type: exists, var: sort_by}, then_expr: {type: var, name: sort_by}, else_expr: {type: const, value: null}}]
+    - [direction, {type: if, condition: {type: exists, var: direction}, then_expr: {type: var, name: direction}, else_expr: {type: const, value: null}}]
+    - [private, {type: if, condition: {type: exists, var: private}, then_expr: {type: var, name: private}, else_expr: {type: const, value: null}}]
+    - [max_like_count, {type: if, condition: {type: exists, var: max_like_count}, then_expr: {type: var, name: max_like_count}, else_expr: {type: const, value: null}}]
+    - [min_like_count, {type: if, condition: {type: exists, var: min_like_count}, then_expr: {type: var, name: min_like_count}, else_expr: {type: const, value: null}}]
+    - [max_amount, {type: if, condition: {type: exists, var: max_amount}, then_expr: {type: var, name: max_amount}, else_expr: {type: const, value: null}}]
+    - [min_amount, {type: if, condition: {type: exists, var: min_amount}, then_expr: {type: var, name: min_amount}, else_expr: {type: const, value: null}}]
+    - [max_created_at, {type: if, condition: {type: exists, var: max_created_at}, then_expr: {type: var, name: max_created_at}, else_expr: {type: const, value: null}}]
+    - [min_created_at, {type: if, condition: {type: exists, var: min_created_at}, then_expr: {type: var, name: min_created_at}, else_expr: {type: const, value: null}}]
+    - [user_email, {type: if, condition: {type: exists, var: user_email}, then_expr: {type: var, name: user_email}, else_expr: {type: const, value: null}}]
+    - [query, {type: if, condition: {type: exists, var: query}, then_expr: {type: var, name: query}, else_expr: {type: const, value: null}}]
 transaction_get:
   method: GET
   path:
@@ -242,6 +256,7 @@ payment_request_query:
   query: &status_query
     type: object
     fields:
+    - [query, {type: if, condition: {type: exists, var: query}, then_expr: {type: var, name: query}, else_expr: {type: const, value: null}}]
     - - status
       - type: if
         condition: { type: exists, var: status }

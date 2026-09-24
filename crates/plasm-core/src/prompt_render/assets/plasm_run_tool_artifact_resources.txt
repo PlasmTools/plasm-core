@@ -1,2 +1,2 @@
 
-**Artifact:** when **`content`** has a `plasm://…` snapshot, `(in artifact)` cells, or `result_delivery` is `snapshot_only`, call MCP **`resources/read`** on that URI before answering. When delivery is `inline` without those markers, rows are already in **`content`**.
+**Artifact (optional):** when you need data omitted from **`content`**, use the `plasm://…` snapshot referenced by `(in artifact)` / `snapshot_only`. Call MCP **`resources/read`** on that URI. When delivery is `inline` without those markers, rows are already in **`content`**.

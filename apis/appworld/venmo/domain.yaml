@@ -1,4 +1,4 @@
-version: 28
+version: 30
 entry_id: venmo
 data_classes:
   untrusted:
@@ -11,6 +11,31 @@ data_classes:
     description: Outbound payment or payment request leaving the account boundary.
     severity: critical
 values:
+  transaction_query_ordering:
+    type: enum
+    description: History shelf only. With query, ordering applies within relevance-ranked pages.
+    enum: ['+created_at', '-created_at', '+like_count', '-like_count', '+amount', '-amount']
+  transaction_date:
+    type: iso8601_date
+    description: Calendar date bounding transaction creation.
+  transaction_direction:
+    type: enum
+    description: Direction of money movement relative to the account holder.
+    enum: ['sent', 'received']
+  nv_int:
+    type: integer
+    description: Backend numeric identifier.
+  downloaded_file_path:
+    type: string
+    description: Absolute path of the downloaded file in the account file system.
+  notification_payment_request_id_ref:
+    type: entity_ref
+    target: PaymentRequest
+    description: PaymentRequest referenced by this notification, if applicable to its type.
+  notification_transaction_id_ref:
+    type: entity_ref
+    target: Transaction
+    description: Transaction referenced by this notification, if applicable to its type.
   notification_count:
     type: number
     description: Number of notifications matching the selected read status.
@@ -146,7 +171,7 @@ values:
     description: Linked payment card primary account number.
   nv_cvv:
     type: integer
-    description: Card CVV digits as integer.
+    description: Card verification code (CVV).
   nv_month:
     type: integer
     description: Card expiry month.
@@ -155,7 +180,7 @@ values:
     description: Card expiry year.
   nv_amount:
     type: number
-    description: Money amount as JSON number.
+    description: Amount of money transferred, requested, or charged.
   nv_count:
     type: integer
     description: Count or limit.
@@ -197,7 +222,6 @@ values:
     description: Bearer token authorizing the file-path argument, distinct from this service's login token.
   nv_bool:
     type: boolean
-    description: Boolean flag.
   prerequisite_principal_email:
     type: email
     description: Account holder email.
@@ -208,6 +232,15 @@ values:
     type: string
     description: Service account identifier.
 entities:
+  DownloadedFile:
+    abstract: true
+    id_field: file_path
+    description: File written by a download operation in the account file system.
+    fields:
+      file_path:
+        required: true
+        value_ref: downloaded_file_path
+        description: Actual destination path, including an automatically chosen path when none was supplied.
   NotificationSummary:
     id_field: access_token
     implicit_request_identity: true
@@ -382,6 +415,10 @@ entities:
       - send money
       - pay someone
     fields:
+      liked:
+        required: false
+        value_ref: nv_bool
+        description: Whether the signed-in user likes this transaction.
       transaction_id:
         value_ref: nv_transaction_id
         required: true
@@ -491,7 +528,7 @@ entities:
         - name
   PaymentCard:
     id_field: payment_card_id
-    description: A linked payment card used to fund balance moves and approve payment requests.
+    description: A linked payment card used to fund payments and balance moves. Card balances are not exposed; expiry dates are visible.
     discovery:
       names:
       - payment card
@@ -525,6 +562,10 @@ entities:
       - transaction comment
       - comment
     fields:
+      liked:
+        required: false
+        value_ref: nv_bool
+        description: Whether the signed-in user likes this comment.
       comment_id:
         value_ref: nv_comment_id
         required: true
@@ -559,6 +600,21 @@ entities:
       - alert
       - inbox
     fields:
+      action_by_id:
+        required: false
+        value_ref: nv_int
+        description: Backend identifier of the person who caused this notification; this is not an email identity.
+        path: [data, action_by_id]
+      payment_request_id:
+        required: false
+        value_ref: notification_payment_request_id_ref
+        description: PaymentRequest referenced by this notification, when applicable.
+        path: [data, payment_request_id]
+      transaction_id:
+        required: false
+        value_ref: notification_transaction_id_ref
+        description: Transaction referenced by this notification, when applicable.
+        path: [data, transaction_id]
       notification_id:
         value_ref: nv_notification_id
         required: true
@@ -1107,11 +1163,9 @@ capabilities:
         - name: file_system_access_token
           value_ref: nv_file_access_token
           required: false
-    output:
-      type: side_effect
-      description: Writes the bank-transfer receipt to the given file path.
+    output: {type: entity, entity_type: DownloadedFile}
   transaction_query:
-    description: Read transaction history or friends social feed. Filter returned rows with where; both shelves paginate without backend filters.
+    description: Read paginated transaction history with the declared history filters and ranked text search, or the unfiltered friends social feed. Use where to narrow returned rows.
     kind: query
     entity: Transaction
     discovery:
@@ -1125,6 +1179,46 @@ capabilities:
       - social feed
       - friends feed
     selection:
+    - name: direction
+      value_ref: transaction_direction
+      required: false
+      description: History shelf only; social_feed is unfiltered. Select sent or received payments.
+    - name: private
+      value_ref: nv_bool
+      required: false
+      description: History shelf only; social_feed is unfiltered. Select private or public transactions.
+    - name: max_like_count
+      value_ref: nv_int
+      required: false
+      description: History shelf only; social_feed is unfiltered. Maximum likes.
+    - name: min_like_count
+      value_ref: nv_int
+      required: false
+      description: History shelf only; social_feed is unfiltered. Minimum likes.
+    - name: max_amount
+      value_ref: nv_amount
+      required: false
+      description: History shelf only; social_feed is unfiltered. Maximum transaction amount.
+    - name: min_amount
+      value_ref: nv_amount
+      required: false
+      description: History shelf only; social_feed is unfiltered. Minimum transaction amount.
+    - name: max_created_at
+      value_ref: transaction_date
+      required: false
+      description: History shelf only; social_feed is unfiltered. Latest transaction creation date.
+    - name: min_created_at
+      value_ref: transaction_date
+      required: false
+      description: History shelf only; social_feed is unfiltered. Earliest transaction creation date.
+    - name: user_email
+      value_ref: nv_email
+      required: false
+      description: History shelf only; social_feed is unfiltered. Counterparty email.
+    - name: query
+      value_ref: nv_search_query
+      required: false
+      description: History shelf only; social_feed is unfiltered. Rank transaction text matches.
     - name: access_token
       value_ref: nv_access_token
       required: true
@@ -1146,6 +1240,11 @@ capabilities:
     - sender_name
     - receiver_email
     - receiver_name
+    controls:
+    - name: sort_by
+      value_ref: transaction_query_ordering
+      required: false
+      description: History shelf only. With query, ordering applies within relevance-ranked pages.
   transaction_get:
     description: Show the details of one Venmo transaction.
     kind: get
@@ -1179,9 +1278,7 @@ capabilities:
         - name: file_system_access_token
           value_ref: nv_file_access_token
           required: false
-    output:
-      type: side_effect
-      description: Writes the transaction receipt to the given file path.
+    output: {type: entity, entity_type: DownloadedFile}
   transaction_create:
     description: Send your money to another Venmo user (you pay them).
     kind: create
@@ -1204,7 +1301,7 @@ capabilities:
           sink_class: external_pay
         - name: payment_card_id
           value_ref: nv_payment_card_id
-          description: Linked Venmo card to fund this payment; omit to spend the Venmo balance. Use the payment_card_id from a linked Venmo PaymentCard, not its card number.
+          description: Linked Venmo card ID, not its card number; omit to spend the Venmo balance. Card balances are not exposed. An insufficient-funds rejection transfers nothing; another unexpired linked card may be tried.
         - name: private
           value_ref: nv_private
     provides:
@@ -1225,6 +1322,10 @@ capabilities:
       target_terms:
       - payment request
     selection:
+    - name: query
+      value_ref: nv_search_query
+      required: false
+      description: Rank payment requests by text relevance; inspect returned rows for exact identity.
     - name: access_token
       value_ref: nv_access_token
       required: true
@@ -1309,7 +1410,7 @@ capabilities:
           required: true
         - name: payment_card_id
           value_ref: nv_payment_card_id
-          description: Linked Venmo card to fund this payment; omit to spend the Venmo balance. Use the payment_card_id from a linked Venmo PaymentCard, not its card number.
+          description: Linked Venmo card ID, not its card number; omit to spend the Venmo balance. Card balances are not exposed. An insufficient-funds rejection transfers nothing; another unexpired linked card may be tried.
     output:
       type: side_effect
       description: Approves the payment request and transfers the requested money.

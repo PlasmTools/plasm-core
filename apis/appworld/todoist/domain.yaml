@@ -1,4 +1,4 @@
-version: 13
+version: 15
 entry_id: todoist
 auth:
   scheme: none
@@ -8,6 +8,40 @@ data_classes:
     description: User-authored task or comment text.
     severity: untrusted
 entities:
+  DownloadedFile:
+    abstract: true
+    id_field: file_path
+    description: File written by a download operation in the account file system.
+    fields:
+      file_path:
+        required: true
+        value_ref: downloaded_file_path
+        description: Actual destination path, including an automatically chosen path when none was supplied.
+  Collaborator:
+    abstract: true
+    id_field: email
+    description: A person collaborating on a project.
+    fields:
+      email: {required: true, value_ref: nv_email}
+      name: {value_ref: nv_str, description: Collaborator display name.}
+  ProjectInvitation:
+    abstract: true
+    id_field: invite_code
+    description: Pending invitation to collaborate on a project.
+    fields:
+      invite_code: {required: true, value_ref: nv_str}
+      invitee_email: {value_ref: nv_email, path: [invitee, email], description: Person invited to collaborate.}
+      invitee_name: {value_ref: nv_str, path: [invitee, name], description: Invited person display name.}
+      inviter_email: {value_ref: nv_email, path: [inviter, email], description: Person who sent the invitation.}
+      inviter_name: {value_ref: nv_str, path: [inviter, name], description: Inviter display name.}
+  TaskLabel:
+    abstract: true
+    id_field: label_id
+    description: Label assigned to a task.
+    fields:
+      label_id: {required: true, value_ref: nv_label_id, path: [id]}
+      name: {value_ref: nv_str, description: Name of the assigned label.}
+      color: {value_ref: nv_todoist_color, description: Display color of the assigned label.}
   NotificationSummary:
     id_field: access_token
     implicit_request_identity: true
@@ -65,6 +99,41 @@ entities:
       - project
       - projects
     fields:
+      section_counts:
+        required: false
+        value_ref: project_section_counts
+        description: Task counts by section, including the unsectioned bucket whose id and name are null.
+        path: [sections]
+      num_tasks:
+        required: false
+        value_ref: nv_int
+        description: Number of tasks in this project.
+      is_shared:
+        required: false
+        value_ref: nv_bool
+        description: Whether this project is shared with collaborators.
+      is_archived:
+        required: false
+        value_ref: nv_bool
+        description: Whether this project has been archived.
+      is_favorite:
+        required: false
+        value_ref: nv_bool
+        description: Whether this project is in the account holder favorites.
+      created_at:
+        required: false
+        value_ref: nv_datetime
+        description: Time this project was created.
+      creator_name:
+        required: false
+        value_ref: nv_str
+        description: Creator of this project display name.
+        path: [creator, name]
+      creator_email:
+        required: false
+        value_ref: nv_email
+        description: Creator of this project email address.
+        path: [creator, email]
       project_id:
         required: true
         value_ref: nv_project_id
@@ -84,6 +153,20 @@ entities:
         value_ref: nv_str
         description: Code returned when inviting a collaborator to this project.
     relations:
+      pending_invites:
+        description: Invitations awaiting a response for this project.
+        target: ProjectInvitation
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path: [{key: pending_invites}, {wildcard: true}]
+      collaborators:
+        description: People collaborating on this project.
+        target: Collaborator
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path: [{key: collaborators}, {wildcard: true}]
       tasks:
         description: Tasks in this project.
         target: Task
@@ -109,6 +192,38 @@ entities:
       - tasks
       - todo
     fields:
+      order_index:
+        required: false
+        value_ref: nv_int
+        description: Position of this task within its containing collection.
+      num_sub_tasks:
+        required: false
+        value_ref: nv_int
+        description: Number of sub-tasks under this task.
+      created_at:
+        required: false
+        value_ref: nv_datetime
+        description: Time this task was created.
+      assigner_name:
+        required: false
+        value_ref: nv_str
+        description: Person who assigned this task display name.
+        path: [assigner, name]
+      assigner_email:
+        required: false
+        value_ref: nv_email
+        description: Person who assigned this task email address.
+        path: [assigner, email]
+      creator_name:
+        required: false
+        value_ref: nv_str
+        description: Creator of this task display name.
+        path: [creator, name]
+      creator_email:
+        required: false
+        value_ref: nv_email
+        description: Creator of this task email address.
+        path: [creator, email]
       task_id:
         required: true
         value_ref: nv_task_id
@@ -141,10 +256,22 @@ entities:
       is_completed:
         required: false
         value_ref: nv_bool
-      assignee_id:
+      assignee_email:
         required: false
-        value_ref: nv_assignee_id
+        value_ref: nv_email
+        path: [assignee, email]
+      assignee_name:
+        required: false
+        value_ref: nv_str
+        path: [assignee, name]
     relations:
+      labels:
+        description: Labels assigned to this task.
+        target: TaskLabel
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path: [{key: labels}, {wildcard: true}]
       comments:
         description: Comments on this task.
         target: TaskComment
@@ -165,6 +292,18 @@ entities:
     id_field: section_id
     description: Named section within a project.
     fields:
+      order_index:
+        required: false
+        value_ref: nv_int
+        description: Position of this section within its containing collection.
+      num_tasks:
+        required: false
+        value_ref: nv_int
+        description: Number of tasks in this section.
+      created_at:
+        required: false
+        value_ref: nv_datetime
+        description: Time this section was created.
       section_id:
         required: true
         value_ref: nv_section_id
@@ -178,6 +317,16 @@ entities:
     id_field: label_id
     description: Task label.
     fields:
+      creator_name:
+        required: false
+        value_ref: nv_str
+        description: Creator of this label display name.
+        path: [creator, name]
+      creator_email:
+        required: false
+        value_ref: nv_email
+        description: Creator of this label email address.
+        path: [creator, email]
       label_id:
         required: true
         value_ref: nv_label_id
@@ -235,6 +384,34 @@ entities:
     id_field: sub_task_id
     description: Sub-task under a parent task.
     fields:
+      duration_unit:
+        required: false
+        value_ref: nv_duration_unit
+        description: Unit of this sub-task estimated duration.
+      duration:
+        required: false
+        value_ref: nv_duration_amount
+        description: Estimated duration of this sub-task, measured in duration_unit.
+      priority:
+        required: false
+        value_ref: nv_task_priority
+        description: Priority of this sub-task.
+      due_date:
+        required: false
+        value_ref: nv_due_date
+        description: Due date and time for this sub-task.
+      description:
+        required: false
+        value_ref: nv_task_description
+        description: Details of this sub-task.
+      order_index:
+        required: false
+        value_ref: nv_int
+        description: Position of this subtask within its containing collection.
+      created_at:
+        required: false
+        value_ref: nv_datetime
+        description: Time this subtask was created.
       sub_task_id:
         required: true
         value_ref: nv_sub_task_id
@@ -310,6 +487,41 @@ entities:
       - alert
       - inbox
     fields:
+      removed_collaborator_id:
+        required: false
+        value_ref: nv_int
+        description: Backend identifier of the collaborator removed.
+        path: [data, removed_collaborator_id]
+      added_collaborator_id:
+        required: false
+        value_ref: nv_int
+        description: Backend identifier of the collaborator added.
+        path: [data, added_collaborator_id]
+      joined_collaborator_id:
+        required: false
+        value_ref: nv_int
+        description: Backend identifier of the collaborator who joined.
+        path: [data, joined_collaborator_id]
+      action_by_id:
+        required: false
+        value_ref: nv_int
+        description: Backend identifier of the person who caused this notification; this is not an email identity.
+        path: [data, action_by_id]
+      task_comment_id:
+        required: false
+        value_ref: notification_task_comment_id_ref
+        description: TaskComment referenced by this notification, when applicable.
+        path: [data, task_comment_id]
+      task_id:
+        required: false
+        value_ref: notification_task_id_ref
+        description: Task referenced by this notification, when applicable.
+        path: [data, task_id]
+      project_id:
+        required: false
+        value_ref: notification_project_id_ref
+        description: Project referenced by this notification, when applicable.
+        path: [data, project_id]
       notification_id:
         required: true
         value_ref: nv_notification_id
@@ -396,6 +608,14 @@ capabilities:
       input_type:
         type: object
         fields:
+        - name: duration_unit
+          value_ref: nv_duration_unit
+          required: false
+          description: Updated duration unit.
+        - name: duration
+          value_ref: nv_duration_amount
+          required: false
+          description: Updated estimated duration.
         - name: access_token
           value_ref: nv_access_token
           required: true
@@ -669,6 +889,14 @@ capabilities:
     kind: query
     entity: Project
     selection:
+    - name: is_favorite
+      value_ref: nv_bool
+      required: false
+      description: Select favorite or non-favorite projects.
+    - name: is_archived
+      value_ref: nv_bool
+      required: false
+      description: Select archived or active projects.
     - name: access_token
       value_ref: nv_access_token
       required: true
@@ -684,6 +912,11 @@ capabilities:
     - color
     - is_inbox
     - description
+    controls:
+    - name: sort_by
+      value_ref: project_query_ordering
+      required: false
+      description: Project creation-time ordering; with query it sorts within relevance-ranked pages.
   project_get:
     description: Show one project.
     kind: get
@@ -709,6 +942,10 @@ capabilities:
       input_type:
         type: object
         fields:
+        - name: is_favorite
+          value_ref: nv_bool
+          required: false
+          description: Whether this project is a favorite.
         - name: access_token
           value_ref: nv_access_token
           required: true
@@ -729,6 +966,14 @@ capabilities:
       input_type:
         type: object
         fields:
+        - name: is_archived
+          value_ref: nv_bool
+          required: false
+          description: Whether this project is archived.
+        - name: is_favorite
+          value_ref: nv_bool
+          required: false
+          description: Whether this project is a favorite.
         - name: access_token
           value_ref: nv_access_token
           required: true
@@ -761,11 +1006,46 @@ capabilities:
       value_ref: nv_project_id
       required: true
     selection:
+    - name: max_due_date
+      value_ref: nv_due_date
+      required: false
+      description: Latest due date to include.
+    - name: min_due_date
+      value_ref: nv_due_date
+      required: false
+      description: Earliest due date to include.
+    - name: section_id
+      value_ref: nv_section_id
+      required: false
+      description: Select tasks in this project section.
+    - name: overdue
+      value_ref: nv_bool
+      required: false
+      description: Select overdue tasks.
+    - name: label_id
+      value_ref: nv_label_id
+      required: false
+      description: Select tasks with this label.
+    - name: is_completed
+      value_ref: nv_bool
+      required: false
+      description: Select completed or incomplete tasks.
+    - name: due_today
+      value_ref: nv_bool
+      required: false
+      description: Select tasks due today.
+    - name: assigner_email
+      value_ref: nv_email
+      required: false
+      description: Person who assigned the task.
     - name: access_token
       value_ref: nv_access_token
       required: true
     - name: priority
       value_ref: nv_task_priority
+      required: false
+    - name: assignee_email
+      value_ref: nv_email
       required: false
     # Project and section IDs are scope context, not fields of shortened list rows.
     provides:
@@ -777,7 +1057,13 @@ capabilities:
     - duration
     - duration_unit
     - is_completed
-    - assignee_id
+    - assignee_email
+    - assignee_name
+    controls:
+    - name: sort_by
+      value_ref: task_query_ordering
+      required: false
+      description: Order tasks by position, due date or priority.
   task_get:
     description: Show one task.
     kind: get
@@ -797,6 +1083,10 @@ capabilities:
       input_type:
         type: object
         fields:
+        - name: order_index
+          value_ref: nv_int
+          required: false
+          description: Position within the containing collection.
         - name: project_id
           value_ref: nv_project_id
           required: true
@@ -832,6 +1122,10 @@ capabilities:
       input_type:
         type: object
         fields:
+        - name: order_index
+          value_ref: nv_int
+          required: false
+          description: Position within the containing collection.
         - name: access_token
           value_ref: nv_access_token
           required: true
@@ -891,6 +1185,14 @@ capabilities:
     kind: query
     entity: Label
     selection:
+    - name: task_id
+      value_ref: nv_task_id
+      required: false
+      description: Select labels attached to this task.
+    - name: task_attached
+      value_ref: nv_bool
+      required: false
+      description: Select labels by whether they are attached to a task.
     - name: access_token
       value_ref: nv_access_token
       required: true
@@ -984,6 +1286,10 @@ capabilities:
       input_type:
         type: object
         fields:
+        - name: order_index
+          value_ref: nv_int
+          required: false
+          description: Position within the containing collection.
         - name: project_id
           value_ref: nv_project_id
           required: true
@@ -1037,6 +1343,14 @@ capabilities:
       input_type:
         type: object
         fields:
+        - name: file_system_access_token
+          value_ref: nv_file_access_token
+          required: false
+          description: File-system session authorizing attachment reads.
+        - name: attachment_file_paths
+          value_ref: attachment_paths
+          required: false
+          description: Files to attach from the account file system.
         - name: task_id
           value_ref: nv_task_id
           required: true
@@ -1139,9 +1453,7 @@ capabilities:
         - name: file_system_access_token
           value_ref: nv_file_access_token
           required: true
-    output:
-      type: side_effect
-      description: Writes the attachment bytes to the given file path.
+    output: {type: entity, entity_type: DownloadedFile}
   sub_task_query:
     description: List sub-tasks under a task.
     kind: query
@@ -1162,6 +1474,30 @@ capabilities:
       input_type:
         type: object
         fields:
+        - name: priority
+          value_ref: nv_task_priority
+          required: false
+          description: Priority of this sub-task.
+        - name: order_index
+          value_ref: nv_int
+          required: false
+          description: Position within the parent task.
+        - name: duration_unit
+          value_ref: nv_duration_unit
+          required: false
+          description: Unit of the estimated sub-task duration.
+        - name: duration
+          value_ref: nv_duration_amount
+          required: false
+          description: Estimated sub-task duration.
+        - name: due_date
+          value_ref: nv_due_date
+          required: false
+          description: Due date of this sub-task.
+        - name: description
+          value_ref: nv_task_description
+          required: false
+          description: Details of this sub-task.
         - name: task_id
           value_ref: nv_task_id
           required: true
@@ -1333,6 +1669,32 @@ capabilities:
       type: side_effect
       description: Updates the read status of every notification.
 values:
+  project_section_counts:
+    type: json
+    description: Section summaries with nullable id and name for the unsectioned bucket, plus num_tasks. Named sections are navigable through Project.sections.
+  task_query_ordering:
+    type: enum
+    description: Order tasks by position, due date or priority.
+    enum: ['+order_index', '-order_index', '+due_date', '-due_date', '+priority', '-priority']
+  project_query_ordering:
+    type: enum
+    description: Project creation-time ordering; with query it sorts within relevance-ranked pages.
+    enum: ['+created_at', '-created_at']
+  downloaded_file_path:
+    type: string
+    description: Absolute path of the downloaded file in the account file system.
+  notification_task_comment_id_ref:
+    type: entity_ref
+    target: TaskComment
+    description: TaskComment referenced by this notification, if applicable to its type.
+  notification_task_id_ref:
+    type: entity_ref
+    target: Task
+    description: Task referenced by this notification, if applicable to its type.
+  notification_project_id_ref:
+    type: entity_ref
+    target: Project
+    description: Project referenced by this notification, if applicable to its type.
   notification_count:
     type: number
     description: Number of notifications matching the selected read status.
@@ -1361,9 +1723,6 @@ values:
   account_verified:
     type: boolean
     description: Whether account ownership has been verified.
-  nv_assignee_id:
-    type: integer
-    description: Identifier of the Todoist user assigned to a task.
   nv_duration_amount:
     type: number
     description: Task duration quantity, interpreted with duration_unit.
@@ -1380,7 +1739,6 @@ values:
     description: Time a task comment was posted.
   nv_str:
     type: string
-    description: Free-form string.
   nv_email:
     type: email
     description: Email address of a user or counterparty.
@@ -1431,7 +1789,6 @@ values:
     description: Boolean.
   nv_int:
     type: integer
-    description: Integer.
   nv_project_id:
     type: integer
     description: Project id.
@@ -1453,6 +1810,11 @@ values:
   nv_file_path:
     type: string
     description: Absolute file-system path for attachment upload.
+  attachment_paths:
+    type: array
+    items:
+      value_ref: nv_file_path
+    description: Paths of files to attach.
   nv_notification_id:
     type: integer
     description: Identifies the notification to read or act on.
@@ -1484,7 +1846,6 @@ values:
     description: Whether a notification has been read.
   nv_datetime:
     type: rfc3339
-    description: ISO datetime string.
   nv_invite_code:
     type: string
     description: Project collaboration invite code.
@@ -1840,6 +2201,13 @@ prerequisites:
           lane: payload
           path:
           - access_token
+        output: token
+    - id: file_session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path: [file_system_access_token]
         output: token
     task_comment_update:
     - id: session

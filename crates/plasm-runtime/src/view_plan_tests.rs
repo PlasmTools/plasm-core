@@ -46,6 +46,7 @@ fn derive_view_query_scope_missing_predicate_errors() {
                 inject: None,
             }],
             nodes: vec![],
+            locals: indexmap::IndexMap::new(),
             output: indexmap::IndexMap::new(),
             relation_outputs: vec![],
         },
@@ -74,6 +75,7 @@ fn merge_ambient_scope_uses_explicit_transport_origin() {
             inject: Some(ViewScopeInject::SessionTransportOrigin),
         }],
         nodes: vec![],
+        locals: indexmap::IndexMap::new(),
         output: indexmap::IndexMap::new(),
         relation_outputs: vec![],
     };
@@ -397,4 +399,56 @@ proptest::proptest! {
         let actual_order: Vec<_> = refs.iter().map(|r| r.primary_slot_str().to_string()).collect();
         proptest::prop_assert_eq!(actual_order, expected_order);
     }
+}
+
+proptest::proptest! {
+    #[test]
+    fn view_private_bindings_preserve_public_rows_through_codec(title in "[a-z]{1,20}") {
+        use plasm_core::schema::ViewOutputBinding;
+        let mut cgs = matrix_views_cgs();
+        let view = cgs.views.get_mut("lang_digest").unwrap();
+        let title_source = view.output["echo_title"].clone();
+        view.locals.insert("private_title".into(), title_source);
+        view.output.insert("echo_title".into(), ViewOutputBinding::Computed {
+            template: "{{ private_title }}".into(),
+        });
+        cgs.validate().unwrap();
+        let decoded: CGS = serde_json::from_slice(&serde_json::to_vec(&cgs).unwrap()).unwrap();
+        for schema in [&cgs, &decoded] {
+            let results = indexmap::IndexMap::from([("item_node".into(), stub_item_node_result("item-1", &title))]);
+            let (proof, result) = run_view_dag_sync(
+                &FixtureViewNodeRunner { results }, "lang_digest", lang_digest_scope(), schema,
+                &ViewAmbientContext::default(),
+            ).unwrap();
+            proptest::prop_assert!(!proof.output_fields.contains_key("private_title"));
+            proptest::prop_assert_eq!(proof.output_fields.get("echo_title"), Some(&Value::String(title.clone())));
+            proptest::prop_assert_eq!(result.entities.len(), 1);
+            proptest::prop_assert!(!result.entities[0].fields.contains_key("private_title"));
+            proptest::prop_assert_eq!(proof.output_fields.get("echo_slug"), Some(&Value::String(format!("item-1-{title}"))));
+        }
+    }
+}
+
+#[test]
+fn view_private_bindings_reject_shadowing_and_unknown_sources() {
+    use plasm_core::schema::ViewOutputBinding;
+    for name in ["item_id", "echo_title"] {
+        let mut cgs = matrix_views_cgs();
+        cgs.views.get_mut("lang_digest").unwrap().locals.insert(
+            name.into(),
+            ViewOutputBinding::Scope {
+                param: "item_id".into(),
+            },
+        );
+        assert!(cgs.validate().unwrap_err().to_string().contains("shadows"));
+    }
+    let mut cgs = matrix_views_cgs();
+    cgs.views.get_mut("lang_digest").unwrap().locals.insert(
+        "private_title".into(),
+        ViewOutputBinding::NodeField {
+            node: "missing".into(),
+            field: "title".into(),
+        },
+    );
+    assert!(cgs.validate().is_err());
 }

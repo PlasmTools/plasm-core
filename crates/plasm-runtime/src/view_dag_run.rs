@@ -43,14 +43,14 @@ fn materialize_view_row(
     cgs: &CGS,
 ) -> Result<MaterializedViewOutputs, RuntimeError> {
     let mut fields_plain: IndexMap<String, plasm_core::Value> = IndexMap::new();
-    for (fname, binding) in &view.output {
+    for (fname, binding) in view.locals.iter().chain(view.output.iter()) {
         if matches!(binding, ViewOutputBinding::Computed { .. }) {
             continue;
         }
         let v = resolve_output_binding(binding, scope, node_results, write_outcomes)?;
         fields_plain.insert(fname.clone(), v);
     }
-    for (fname, binding) in &view.output {
+    for (fname, binding) in view.locals.iter().chain(view.output.iter()) {
         let ViewOutputBinding::Computed { template } = binding else {
             continue;
         };
@@ -59,6 +59,8 @@ fn materialize_view_row(
         fields_plain.insert(fname.clone(), v);
     }
 
+    // Locals participate in composition only; neither cache nor artifacts may expose them.
+    fields_plain.retain(|field, _| view.output.contains_key(field));
     let row_ref = build_view_row_reference(view_entity, &fields_plain)?;
     let relation_refs = resolve_view_relation_maps(view, node_results, cgs)?;
     Ok((fields_plain, row_ref, relation_refs))

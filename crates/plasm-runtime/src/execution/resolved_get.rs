@@ -116,7 +116,11 @@ mod tests {
             let cgs = plasm_core::load_schema_dir(&std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../fixtures/schemas/hydration_boundary_matrix")).unwrap();
             let get = GetExpr::from_ref(Ref::new("Note", id.to_string()));
-            let bindings: IndexMap<String, Value> = IndexMap::from([("access_token".into(), Value::String(token.clone()))]);
+            let bindings: IndexMap<String, Value> = IndexMap::from([
+                ("access_token".into(), Value::String(token.clone())),
+                ("id".into(), Value::Integer(-999)),
+                ("note_id".into(), Value::String("foreign-identity".into())),
+            ]);
             let bindings = serde_json::from_slice(&serde_json::to_vec(&bindings).unwrap()).unwrap();
             let ambient = ViewAmbientContext::default().with_capability_params(bindings);
             let cap = cgs.find_capability("Note", CapabilityKind::Get).unwrap();

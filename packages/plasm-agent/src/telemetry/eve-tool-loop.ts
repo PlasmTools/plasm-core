@@ -10,10 +10,6 @@ import {
   type StepResult,
 } from "ai";
 
-import {
-  applyArtifactLedger,
-  gateUnreadArtifactTerminals,
-} from "../tools/artifact-contract.js";
 import { successfulEvalTerminalInStep } from "../tools/format.js";
 import { transientProviderFailure } from "./provider-failure.js";
 import { ensureOtelIntegration } from "../instrumentation.js";
@@ -100,8 +96,7 @@ export interface EveToolLoopOptions {
   maxConsecutiveProviderFailures?: number;
   /**
    * Optional tool choice for the first model step.
-   * Later steps stay auto unless a reviewed `run_ref` or required
-   * run snapshot is still unread.
+   * Later steps stay auto unless a reviewed `run_ref` is pending.
    */
   toolChoice?:
     | "auto"
@@ -109,7 +104,7 @@ export interface EveToolLoopOptions {
     | "none"
     | { type: "tool"; toolName: string };
   /**
-   * Whether pending run refs/artifacts may force a provider tool choice.
+   * Whether pending run refs may force a provider tool choice.
    * Defaults true.
    * Set false for reasoning endpoints that reject forced tool choice; the
    * corresponding lifecycle gates still hold.
@@ -530,7 +525,6 @@ export async function runEveToolLoop(
   const aggregatedSteps: StepResult<ToolSet>[] = [];
   const stepFinishReasons: FinishReason[] = [];
   const outstandingRunRefs = new Set<string>();
-  const outstandingArtifacts = new Set<string>();
   let forceTool = false;
   let consecutiveProviderFailures = 0;
   let generationTimeoutCount = 0;
@@ -560,12 +554,9 @@ export async function runEveToolLoop(
         functionId: options.agentName,
       },
       async () => {
-        const stepTools = gateUnreadArtifactTerminals(
-          typeof options.tools === "function"
-            ? options.tools({ stepIndex })
-            : options.tools,
-          outstandingArtifacts,
-        );
+        const stepTools = typeof options.tools === "function"
+          ? options.tools({ stepIndex })
+          : options.tools;
         const stepToolChoice =
           stepIndex === 0 && options.toolChoice !== undefined
             ? options.toolChoice
@@ -738,8 +729,7 @@ export async function runEveToolLoop(
       messages,
     });
     applyRunRefLedger(outstandingRunRefs, delta);
-    applyArtifactLedger(outstandingArtifacts, delta);
-    forceTool = outstandingRunRefs.size > 0 || outstandingArtifacts.size > 0;
+    forceTool = outstandingRunRefs.size > 0;
 
     stepIndex += 1;
     consecutiveProviderFailures = stepResult.providerFailed
@@ -763,9 +753,7 @@ export async function runEveToolLoop(
       toolResults: stepToolResults,
       messages: delta,
     });
-    const hasValidatedTerminal = Boolean(
-      terminal && outstandingArtifacts.size === 0,
-    );
+    const hasValidatedTerminal = Boolean(terminal);
     if (hasValidatedTerminal) {
       stopReason = "completed";
       break;
@@ -837,8 +825,7 @@ export async function runEveToolLoop(
         continue;
       }
       if (
-        (outstandingRunRefs.size > 0 ||
-          outstandingArtifacts.size > 0) &&
+        outstandingRunRefs.size > 0 &&
         stepIndex < options.maxSteps
       ) {
         continue;

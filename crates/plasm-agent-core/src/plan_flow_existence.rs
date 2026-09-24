@@ -473,6 +473,7 @@ mod tests {
                     }),
                 },
             ],
+            locals: indexmap::IndexMap::new(),
             output: indexmap::IndexMap::new(),
             relation_outputs: vec![],
         };

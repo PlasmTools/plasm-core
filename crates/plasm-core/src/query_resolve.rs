@@ -383,7 +383,16 @@ pub fn resolve_query_capability<'a>(
         0 => {
             let all_query = cgs.find_capabilities(&query.entity, CapabilityKind::Query);
             if !all_query.is_empty() {
-                let names: Vec<_> = all_query.iter().map(|c| c.name.as_str()).collect();
+                let names: Vec<_> = all_query
+                    .iter()
+                    .map(|c| {
+                        let missing = required_predicate_field_names_for_scoped_match(c)
+                            .into_iter()
+                            .filter(|name| !pred_fields.contains(name))
+                            .collect::<Vec<_>>();
+                        format!("{} (missing: {})", c.name, missing.join(", "))
+                    })
+                    .collect();
                 return Err(QueryCapabilityResolveError::NoMatchingCapability {
                     entity: query.entity.to_string(),
                     message: format!(

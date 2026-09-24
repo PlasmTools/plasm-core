@@ -683,7 +683,11 @@ pub(crate) fn assert_planning_query_pipe(
                 ));
             }
         }
-        "lang_bindings_render"
+        "lang_render_derived_shape"
+        | "lang_render_value_error_at_execution"
+        | "lang_render_projected_shape"
+        | "lang_render_relation_shape"
+        | "lang_bindings_render"
         | "lang_render_split_part"
         | "lang_per_row_render_zero"
         | "lang_per_row_render_many" => {

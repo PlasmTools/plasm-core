@@ -1,5 +1,5 @@
 //! Intentional integration coverage of the packaged AppWorld catalog contracts.
-use plasm_core::{Expr, Value};
+use plasm_core::{Expr, GetExpr, Value};
 use plasm_runtime::{
     ExecuteOptions, ExecutionConfig, ExecutionEngine, SessionMaterialization, StreamConsumeOpts,
 };
@@ -7,6 +7,79 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
 };
+
+#[tokio::test]
+async fn todoist_assignment_survives_query_and_get_wire_shapes() {
+    let count = Arc::new(AtomicUsize::new(0));
+    let seen = count.clone();
+    let row = serde_json::json!({"task_id":7,"title":"Review contract","is_completed":false,
+        "assignee":{"name":"Alex","email":"alex@example.com"}});
+    let detail = row.clone();
+    let app = axum::Router::new()
+        .route("/todoist/tasks/7", axum::routing::get(move || { let row=detail.clone(); async move { axum::Json(row) } }))
+        .route("/todoist/projects/1/tasks", axum::routing::get(move |axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String,String>>| {
+            let row=row.clone(); let seen=seen.clone(); async move {
+                assert_eq!(q.get("assignee_email").map(String::as_str), Some("alex@example.com"));
+                seen.fetch_add(1, Ordering::SeqCst);
+                axum::Json(serde_json::json!({"project_id":1,"no_section_tasks":[row],"sections":[]}))
+            }
+        }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let cgs = plasm_core::load_schema_dir(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/appworld/todoist"),
+    )
+    .unwrap();
+    let compiled = Arc::new(plasm_compile::compile_cgs_capability_templates(&cgs).unwrap());
+    let engine = ExecutionEngine::new(ExecutionConfig {
+        base_url: Some(url),
+        ..Default::default()
+    })
+    .unwrap();
+    let query = plasm_core::expr_parser::parse_session_line(
+        r#"Task{project_id=1,access_token="fixture",assignee_email="alex@example.com"}"#,
+        &cgs,
+        None,
+    )
+    .unwrap()
+    .expr;
+    for expr in [query, Expr::Get(GetExpr::new("Task", "7"))] {
+        let mut mat = SessionMaterialization::new();
+        mat.stamp_capability_params(
+            &plasm_core::Ref::new("Task", "7"),
+            indexmap::IndexMap::from([("access_token".into(), Value::String("fixture".into()))]),
+        );
+        let result = engine
+            .execute(
+                &expr,
+                &cgs,
+                &mut mat,
+                None,
+                StreamConsumeOpts::default(),
+                ExecuteOptions {
+                    compiled_catalog: Some(compiled.clone()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.entities.len(), 1);
+        assert_eq!(
+            result.entities[0].fields["assignee_email"].to_value(),
+            Value::String("alex@example.com".into())
+        );
+        assert_eq!(
+            result.entities[0].fields["assignee_name"].to_value(),
+            Value::String("Alex".into())
+        );
+        assert!(!result.entities[0].fields.contains_key("assignee_id"));
+    }
+    assert!(count.load(Ordering::SeqCst) > 0);
+    server.abort();
+}
 
 #[tokio::test]
 async fn gmail_message_preserves_sender_recipients_and_attachment_identity() {
@@ -207,6 +280,110 @@ async fn gmail_typed_schedule_encodes_only_at_transport_boundary() {
         .unwrap();
     assert_eq!(result.entities.len(), 1);
     server.abort();
+}
+
+/// Opt-in actual pinned AppWorld transport probe. The private manifest is produced
+/// by the audit driver, contains real session tokens, and must never be committed.
+#[tokio::test]
+#[ignore = "requires disposable pinned AppWorld server and private manifest"]
+async fn pinned_backend_catalog_contracts() {
+    #[derive(serde::Deserialize)]
+    struct Case {
+        app: String,
+        entity: String,
+        id: String,
+        program: String,
+        fields: Vec<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Manifest {
+        base_url: String,
+        tokens: std::collections::BTreeMap<String, String>,
+        cases: Vec<Case>,
+    }
+    let manifest: Manifest = serde_json::from_slice(
+        &std::fs::read(
+            std::env::var("PLASM_CONTRACT_PROBE_MANIFEST").expect("private manifest path"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let mut failures = Vec::new();
+    let mut checked = 0;
+    for case in manifest.cases {
+        let cgs = plasm_core::load_schema_dir(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../apis/appworld")
+                .join(&case.app),
+        )
+        .unwrap();
+        let cgs = serde_json::from_slice(&serde_json::to_vec(&cgs).unwrap()).unwrap();
+        let compiled = plasm_compile::compile_cgs_capability_templates(&cgs).unwrap();
+        let compiled = Arc::new(
+            plasm_compile::CompiledCatalog::decode_artifact(
+                &serde_json::to_vec(&compiled).unwrap(),
+                &cgs,
+            )
+            .unwrap(),
+        );
+        let engine = ExecutionEngine::new(ExecutionConfig {
+            base_url: Some(manifest.base_url.clone()),
+            max_concurrent_requests: 1,
+            per_host_max_inflight: 1,
+            hydrate_concurrency: 1,
+            backend_max_inflight: std::collections::HashMap::from([(case.app.clone(), 1)]),
+            ..Default::default()
+        })
+        .unwrap();
+        let expr = plasm_core::expr_parser::parse_session_line(&case.program, &cgs, None)
+            .unwrap()
+            .expr;
+        let mut mat = SessionMaterialization::new();
+        if let Some(token) = manifest.tokens.get(&case.app) {
+            mat.stamp_capability_params(
+                &plasm_core::Ref::new(&case.entity, &case.id),
+                indexmap::IndexMap::from([("access_token".into(), Value::String(token.clone()))]),
+            );
+        }
+        let result = engine
+            .execute(
+                &expr,
+                &cgs,
+                &mut mat,
+                None,
+                StreamConsumeOpts::default(),
+                ExecuteOptions {
+                    compiled_catalog: Some(compiled),
+                    ..Default::default()
+                },
+            )
+            .await;
+        let label = format!("{} {}", case.app, case.entity);
+        match result {
+            Err(error) => failures.push(format!("{label}: {error}")),
+            Ok(result) => {
+                if result.entities.is_empty() {
+                    failures.push(format!("{label}: no rows"));
+                    continue;
+                }
+                for row in &result.entities {
+                    for field in &case.fields {
+                        if !row.fields.contains_key(field.as_str()) {
+                            failures.push(format!("{label}: missing {field}"));
+                        }
+                    }
+                }
+                checked += 1;
+                println!(
+                    "PROBE {label}: {} rows; {} requests",
+                    result.entities.len(),
+                    result.stats.network_requests
+                );
+            }
+        }
+    }
+    println!("PROBE completed {checked} cases");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 /// Cart identity belongs to its request scope, never to its changing checkout total.

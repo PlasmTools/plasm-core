@@ -1756,3 +1756,18 @@ fn boolean_sugar_checks_every_branch_and_preserves_membership_dependencies() {
     compiled_filter_roundtrip("LangItem | where owner in (LangItem | select owner) OR score > 3");
     compiled_filter_roundtrip("LangItem | where score not in (1, 2) AND NOT (active = false)");
 }
+
+#[test]
+fn dry_render_validates_structure_without_inventing_observations() {
+    let s = langmatrix_session();
+    for program in [
+        "items = LangItem\nout = items => <<ROW\n{{ lines | length }}\nROW\nout",
+        "items = LangItem\nprojected = items | select renamed = title\nout = projected => <<ROW\n{{ renamed | split_part('/', 2) }}\nROW\nout",
+        "items = LangItem\nderived = items => { renamed: _.title }\nout = derived => <<ROW\n{{ renamed }}\nROW\nout",
+    ] {
+        let plan = crate::plasm_dag::compile_plasm_dag_to_plan(
+            &plasm_core::PromptPipelineConfig::default(), None, &s, "typed-render", program,
+        ).expect("statically valid render");
+        evaluate_plasm_plan_dry(&s, &plan).expect("unknown observations cannot fail value-dependent computation");
+    }
+}

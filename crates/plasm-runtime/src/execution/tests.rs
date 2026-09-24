@@ -2669,3 +2669,100 @@ fn decoder_regression_fixtures_have_compilable_contracts() {
             .unwrap_or_else(|error| panic!("{fixture}: {error}"));
     }
 }
+
+#[tokio::test]
+async fn canonical_target_survives_ambient_metadata_on_outbound_requests() {
+    use crate::auth::ResolvedAuth;
+    use crate::http_transport::HttpTransport;
+    use async_trait::async_trait;
+    use plasm_compile::CompiledRequest;
+    use std::sync::{Arc, Mutex};
+    struct Capture(Arc<Mutex<Vec<Value>>>);
+    #[async_trait]
+    impl HttpTransport for Capture {
+        async fn send_compiled_http(
+            &self,
+            _: &str,
+            r: &CompiledRequest,
+            _: Option<ResolvedAuth>,
+        ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+            let Some(Value::Object(slots)) = r.query.as_ref().or(r.body.as_ref()) else {
+                panic!("missing target")
+            };
+            self.0.lock().unwrap().push(slots["path"].clone());
+            Ok((serde_json::json!({"path":"/notes/a.md", "id":25891}), None))
+        }
+        async fn get_json_absolute(
+            &self,
+            _: &str,
+            _: Option<ResolvedAuth>,
+        ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+            panic!("unexpected GET")
+        }
+    }
+    let cgs = plasm_core::load_schema_dir(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/target_identity_matrix"),
+    )
+    .unwrap();
+    let compiled = Arc::new(plasm_compile::compile_cgs_capability_templates(&cgs).unwrap());
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let engine = ExecutionEngine::new_with_transport(
+        ExecutionConfig {
+            base_url: Some("http://fixture.invalid".into()),
+            ..Default::default()
+        },
+        Arc::new(Capture(captured.clone())),
+        None,
+    );
+    let target = Ref::new("Document", "/notes/a.md");
+    let expressions = [
+        Expr::Get(GetExpr::from_ref(target.clone())),
+        Expr::Invoke(plasm_core::InvokeExpr::with_target(
+            "document_touch",
+            target.clone(),
+            None,
+        )),
+        Expr::Delete(plasm_core::DeleteExpr::with_target(
+            "document_delete",
+            target.clone(),
+        )),
+    ];
+    for expr in expressions {
+        let expr: Expr = serde_json::from_slice(&serde_json::to_vec(&expr).unwrap()).unwrap();
+        let mut mat = SessionMaterialization::new();
+        mat.stamp_capability_params(
+            &target,
+            IndexMap::from([
+                ("id".into(), Value::Integer(25891)),
+                ("path".into(), Value::String("/wrong.md".into())),
+            ]),
+        );
+        super::compile_preflight::preflight_compile_expr(
+            &expr,
+            &cgs,
+            &compiled,
+            &ViewAmbientContext::default(),
+            &mat,
+        )
+        .unwrap();
+        engine
+            .execute(
+                &expr,
+                &cgs,
+                &mut mat,
+                None,
+                StreamConsumeOpts::default(),
+                ExecuteOptions {
+                    compiled_catalog: Some(compiled.clone()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        *captured.lock().unwrap(),
+        vec![Value::String("/notes/a.md".into()); 3]
+    );
+}

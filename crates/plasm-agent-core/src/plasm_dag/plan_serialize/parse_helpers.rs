@@ -168,79 +168,6 @@ pub(in crate::plasm_dag) fn parse_plan_value_expr(
     row_binding: Option<&str>,
 ) -> Result<(PlanValue, Vec<crate::plasm_plan::PlanDataInput>), String> {
     let raw = raw.trim();
-    if raw.starts_with('{') && raw.ends_with('}') {
-        let mut inputs = Vec::new();
-        let mut fields = BTreeMap::new();
-        for part in split_top_level(&raw[1..raw.len() - 1], ',')? {
-            let (k, v) = part
-                .split_once(':')
-                .ok_or_else(|| format!("object field `{part}` must be key: value"))?;
-            let (value, child_inputs) = parse_plan_value_expr(v, state, row_binding)?;
-            inputs.extend(child_inputs);
-            fields.insert(k.trim().to_string(), value);
-        }
-        return Ok((PlanValue::Object { fields }, dedupe_inputs(inputs)));
-    }
-    if raw.starts_with('[') && raw.ends_with(']') {
-        let mut inputs = Vec::new();
-        let mut items = Vec::new();
-        for part in split_top_level(&raw[1..raw.len() - 1], ',')? {
-            let (value, child_inputs) = parse_plan_value_expr(part, state, row_binding)?;
-            inputs.extend(child_inputs);
-            items.push(value);
-        }
-        return Ok((PlanValue::Array { items }, dedupe_inputs(inputs)));
-    }
-    if let Some(path) = raw.strip_prefix("_.") {
-        return Ok((
-            PlanValue::BindingSymbol {
-                binding: row_binding.unwrap_or("_").to_string(),
-                path: path.split('.').map(str::to_string).collect(),
-            },
-            Vec::new(),
-        ));
-    }
-    if let Some((node, path)) = raw.split_once('.') {
-        if let Some(dep) = state.get(node) {
-            let path_segs: Vec<String> = path.split('.').map(str::to_string).collect();
-            reject_illegal_content_stitch(state, node, &path_segs)?;
-            return Ok((
-                PlanValue::NodeSymbol {
-                    node: node.to_string(),
-                    alias: node.to_string(),
-                    path: path_segs,
-                },
-                vec![crate::plasm_plan::PlanDataInput {
-                    node: node.to_owned(),
-                    alias: node.to_owned(),
-                    cardinality: if dep.singleton {
-                        crate::plasm_plan::InputCardinality::Auto
-                    } else {
-                        crate::plasm_plan::InputCardinality::Singleton
-                    },
-                }],
-            ));
-        }
-    }
-    if state.contains(raw) {
-        let path = if row_binding.is_some() {
-            vec!["content".to_string()]
-        } else {
-            Vec::new()
-        };
-        return Ok((
-            PlanValue::NodeSymbol {
-                node: raw.to_string(),
-                alias: raw.to_string(),
-                path,
-            },
-            vec![crate::plasm_plan::PlanDataInput {
-                node: raw.to_owned(),
-                alias: raw.to_owned(),
-                cardinality: crate::plasm_plan::InputCardinality::Singleton,
-            }],
-        ));
-    }
     if raw.starts_with("<<") {
         let body = plasm_core::expr_parser::parse_tagged_heredoc_literal(raw)
             .map_err(|e| format!("heredoc literal: {e}"))?;
@@ -281,25 +208,70 @@ pub(in crate::plasm_dag) fn parse_plan_value_expr(
             Vec::new(),
         ));
     }
-    let value = parse_literal(raw)?;
-    Ok((PlanValue::Literal { value }, Vec::new()))
+    let expression = plasm_core::expr_parser::data::parse_data_expression(raw)?;
+    lower_data_expression(expression, state, row_binding)
 }
 
-pub(in crate::plasm_dag) fn parse_literal(
-    raw: &str,
-) -> Result<plasm_core::operand_binding::ResolvedValue, String> {
-    use plasm_core::{operand_binding::ResolvedValue, Value};
-    if raw.starts_with('"') || raw == "null" || raw == "true" || raw == "false" {
-        return serde_json::from_str(raw).map_err(|e| format!("literal `{raw}`: {e}"));
+fn lower_data_expression(
+    expression: plasm_core::expr_parser::data::DataExpr,
+    state: &CompileState<'_>,
+    row_binding: Option<&str>,
+) -> Result<(PlanValue, Vec<crate::plasm_plan::PlanDataInput>), String> {
+    use plasm_core::expr_parser::data::DataExpr;
+    match expression {
+        DataExpr::Literal(value) => Ok((PlanValue::Literal { value }, Vec::new())),
+        DataExpr::Object(object) => {
+            let mut fields = BTreeMap::new();
+            let mut inputs = Vec::new();
+            for (key, expression) in object {
+                let (value, uses) = lower_data_expression(expression, state, row_binding)?;
+                fields.insert(key, value);
+                inputs.extend(uses);
+            }
+            Ok((PlanValue::Object { fields }, dedupe_inputs(inputs)))
+        }
+        DataExpr::Array(array) => {
+            let mut items = Vec::new();
+            let mut inputs = Vec::new();
+            for expression in array {
+                let (value, uses) = lower_data_expression(expression, state, row_binding)?;
+                items.push(value);
+                inputs.extend(uses);
+            }
+            Ok((PlanValue::Array { items }, dedupe_inputs(inputs)))
+        }
+        DataExpr::Reference { root, path } if root == "_" => {
+            let binding = row_binding.ok_or("row reference `_` is not in scope")?;
+            Ok((
+                PlanValue::BindingSymbol {
+                    binding: binding.into(),
+                    path,
+                },
+                Vec::new(),
+            ))
+        }
+        DataExpr::Reference { root, path } => {
+            let dep = state.get(&root).ok_or_else(|| format!("unknown data binding `{root}`; quote literal text, or bind the value before using it"))?;
+            reject_illegal_content_stitch(state, &root, &path)?;
+            let cardinality = if !path.is_empty() && dep.singleton {
+                crate::plasm_plan::InputCardinality::Auto
+            } else {
+                crate::plasm_plan::InputCardinality::Singleton
+            };
+            Ok((
+                PlanValue::NodeSymbol {
+                    node: root.clone(),
+                    alias: root.clone(),
+                    path,
+                },
+                vec![crate::plasm_plan::PlanDataInput {
+                    node: root.clone(),
+                    alias: root,
+                    cardinality,
+                }],
+            ))
+        }
     }
-    let value = if let Ok(n) = raw.parse::<i64>() {
-        Value::Integer(n)
-    } else if let Ok(n) = raw.parse::<f64>() {
-        Value::Float(n)
-    } else {
-        Value::String(raw.to_owned())
-    };
-    ResolvedValue::new(value).map_err(str::to_owned)
 }
 
 /// Split `group_by` args into key field names (no `=`) and trailing aggregate tail.

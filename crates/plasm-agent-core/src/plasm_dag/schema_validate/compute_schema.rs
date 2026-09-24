@@ -45,9 +45,7 @@ pub(in crate::plasm_dag) fn infer_render_columns_for_node(
             ComputeOp::With { .. } | ComputeOp::Union { .. } => {
                 Ok(schema.fields.iter().map(|f| f.name.clone()).collect())
             }
-            ComputeOp::Render { .. } => Err(
-                "cannot infer columns from a row-to-text template result; bind a row-producing query/relation/projection, or write explicit `[field,...] <<TAG` columns before the template".into(),
-            ),
+            ComputeOp::Render { .. } => Ok(schema.fields.iter().map(|f| f.name.clone()).collect()),
         },
         DagNodeSource::Surface {
             qualified_entity, ..
@@ -58,8 +56,11 @@ pub(in crate::plasm_dag) fn infer_render_columns_for_node(
         DagNodeSource::Data(_) => Err(
             "data literals cannot provide inferred template columns; use explicit `[field,...] <<TAG` columns or bind a query".into(),
         ),
+        DagNodeSource::Derive { value: PlanValue::Object { fields }, .. } => {
+            fields.keys().map(|name| OutputName::new(name.clone())).collect()
+        }
         DagNodeSource::Derive { .. } | DagNodeSource::ScalarExtract { .. } => {
-            Err("derive / scalar-extract bindings cannot provide inferred template columns".into())
+            Err("render source must have an object row shape; derive a named-field object before rendering".into())
         }
         DagNodeSource::ForEach { .. } | DagNodeSource::IterateUntil { .. } => {
             Err("for_each / iterate_until bindings cannot provide inferred template columns".into())

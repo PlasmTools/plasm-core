@@ -4,6 +4,63 @@ use super::super::row::MatrixRow;
 
 pub(crate) const ROWS: &[MatrixRow] = &[
     MatrixRow {
+        id: "lang_render_derived_shape",
+        program: r#"items = LangItem("i1")
+mapped = items => { renamed: _.id }
+out = mapped => <<ROW
+value={{ renamed }}
+ROW
+out"#,
+        surface_line: false,
+        federated: false,
+        features: &["bindings_assignment", "per_row_render"],
+        min_node_results: 2,
+        expect_markdown_substrings: &["value=i1"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_render_value_error_at_execution",
+        program: r#"items = LangItem("i1")
+out = items => <<ROW
+{{ id | split_part('/', 99) }}
+ROW
+out"#,
+        surface_line: false,
+        federated: false,
+        features: &["bindings_assignment", "per_row_render"],
+        min_node_results: 2,
+        expect_markdown_substrings: &[],
+        expect_live_error: Some("split_part"),
+    },
+    MatrixRow {
+        id: "lang_render_projected_shape",
+        program: r#"items = LangItem("i1") | select renamed = id
+out = items => <<ROW
+{{ renamed | split_part('1', 0) }}
+ROW
+out"#,
+        surface_line: false,
+        federated: false,
+        features: &["bindings_assignment", "per_row_render"],
+        min_node_results: 2,
+        expect_markdown_substrings: &["i"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_render_relation_shape",
+        program: r#"items = LangItem("i1")
+out = items => <<ROW
+relation_count={{ lines | length }}
+ROW
+out"#,
+        surface_line: false,
+        federated: false,
+        features: &["bindings_assignment", "per_row_render"],
+        min_node_results: 2,
+        expect_markdown_substrings: &["relation_count="],
+        expect_live_error: None,
+    },
+    MatrixRow {
         id: "lang_bindings_render",
         program: r#"items = LangItem("i1") | select id, title
 hdr = items => <<MD
@@ -339,7 +396,7 @@ tags"#,
             "binding_continuation",
         ],
         min_node_results: 3,
-        expect_markdown_substrings: &["```tsv"],
+        expect_markdown_substrings: &["## tags (", "Result coverage:"],
         expect_live_error: None,
     },
     MatrixRow {

@@ -2085,6 +2085,9 @@ pub struct ViewDefinition {
     #[serde(default)]
     pub scope: Vec<ViewScopeParam>,
     pub nodes: Vec<ViewNodeSpec>,
+    /// Private composition values available to computed outputs, never entity fields.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub locals: IndexMap<String, ViewOutputBinding>,
     #[serde(default)]
     pub output: IndexMap<String, ViewOutputBinding>,
     /// Optional outbound relation refs synthesized from node results (not taught as scalar ids).
@@ -2878,8 +2881,23 @@ impl CGS {
                 }
             }
 
-            for (field_name, binding) in &view.output {
-                if !ent.fields.contains_key(field_name.as_str()) {
+            for local in view.locals.keys() {
+                if view.output.contains_key(local)
+                    || view.scope.iter().any(|slot| &slot.name == local)
+                {
+                    return Err(SchemaError::ViewCapabilityMappingInvalid {
+                        view: view_key.clone(),
+                        capability: view.capability.clone(),
+                        detail: format!(
+                            "private binding `{local}` shadows a scope or output field"
+                        ),
+                    });
+                }
+            }
+            for (field_name, binding) in view.locals.iter().chain(view.output.iter()) {
+                if view.output.contains_key(field_name)
+                    && !ent.fields.contains_key(field_name.as_str())
+                {
                     return Err(SchemaError::ViewUnknownOutputField {
                         view: view_key.clone(),
                         field: field_name.clone(),

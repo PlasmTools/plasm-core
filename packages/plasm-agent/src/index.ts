@@ -111,10 +111,6 @@ export {
 } from "./tools/format.js";
 export type { EvalTerminalGrade, SuccessfulEvalTerminal } from "./tools/format.js";
 export {
-  applyArtifactLedger,
-  artifactKeysInText,
-  artifactRefFromToolInput,
-  previewRequiresArtifact,
   runIdFromArtifactRef,
 } from "./tools/artifact-contract.js";
 export {

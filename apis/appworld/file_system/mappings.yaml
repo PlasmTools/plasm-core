@@ -64,6 +64,7 @@ directory_create:
   body:
     type: object
     fields:
+    - [allow_if_exists, {type: if, condition: {type: exists, var: allow_if_exists}, then_expr: {type: var, name: allow_if_exists}, else_expr: {type: const, value: null}}]
     - [directory_path, { type: var, name: directory_path }]
     - - recursive
       - type: if
@@ -104,6 +105,8 @@ directory_copy:
   body:
     type: object
     fields:
+    - [retain_dates, {type: if, condition: {type: exists, var: retain_dates}, then_expr: {type: var, name: retain_dates}, else_expr: {type: const, value: null}}]
+    - [overwrite, {type: if, condition: {type: exists, var: overwrite}, then_expr: {type: var, name: overwrite}, else_expr: {type: const, value: null}}]
     - [source_directory_path, { type: var, name: source_directory_path }]
     - [destination_directory_path, { type: var, name: destination_directory_path }]
 
@@ -117,6 +120,8 @@ directory_move:
   body:
     type: object
     fields:
+    - [retain_dates, {type: if, condition: {type: exists, var: retain_dates}, then_expr: {type: var, name: retain_dates}, else_expr: {type: const, value: null}}]
+    - [overwrite, {type: if, condition: {type: exists, var: overwrite}, then_expr: {type: var, name: overwrite}, else_expr: {type: const, value: null}}]
     - [source_directory_path, { type: var, name: source_directory_path }]
     - [destination_directory_path, { type: var, name: destination_directory_path }]
 
@@ -253,6 +258,8 @@ file_copy:
   body:
     type: object
     fields:
+    - [retain_dates, {type: if, condition: {type: exists, var: retain_dates}, then_expr: {type: var, name: retain_dates}, else_expr: {type: const, value: null}}]
+    - [overwrite, {type: if, condition: {type: exists, var: overwrite}, then_expr: {type: var, name: overwrite}, else_expr: {type: const, value: null}}]
     - [source_file_path, { type: var, name: source_file_path }]
     - [destination_file_path, { type: var, name: destination_file_path }]
 
@@ -266,6 +273,8 @@ file_move:
   body:
     type: object
     fields:
+    - [retain_dates, {type: if, condition: {type: exists, var: retain_dates}, then_expr: {type: var, name: retain_dates}, else_expr: {type: const, value: null}}]
+    - [overwrite, {type: if, condition: {type: exists, var: overwrite}, then_expr: {type: var, name: overwrite}, else_expr: {type: const, value: null}}]
     - [source_file_path, { type: var, name: source_file_path }]
     - [destination_file_path, { type: var, name: destination_file_path }]
 
@@ -279,6 +288,7 @@ file_decompress:
   body:
     type: object
     fields:
+    - [overwrite, {type: if, condition: {type: exists, var: overwrite}, then_expr: {type: var, name: overwrite}, else_expr: {type: const, value: null}}]
     - [compressed_file_path, { type: var, name: compressed_file_path }]
     - - decompressed_directory_path
       - type: if

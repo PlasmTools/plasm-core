@@ -1,122 +1,9 @@
 //! Dry-run stub materialization and staged IR template preflight.
 
 use super::super::*;
-use super::compute_ops::{render_compute, RenderComputeInput};
 use super::eval::{instantiate_expr_template, EvalScope, InputEnv, PlanEvalEnv};
 use super::input_rows::{materialized_result_use_inputs, materialized_singleton_inputs};
 use std::collections::BTreeMap;
-
-pub(crate) fn dry_validate_render_nodes(
-    es: &ExecuteSession,
-    plan: &crate::plasm_plan::Plan<crate::plasm_plan::ValidatedPlanState>,
-) -> Result<(), String> {
-    use crate::plasm_plan::{ComputeOp, ValidatedPlanNode};
-    use std::collections::HashMap;
-
-    let nodes: HashMap<String, &ValidatedPlanNode> = plan
-        .nodes
-        .iter()
-        .map(|n| (n.id().as_str().to_string(), n))
-        .collect();
-    for n in &plan.nodes {
-        let ValidatedPlanNode::Compute(c) = n else {
-            continue;
-        };
-        let ComputeOp::Render {
-            columns,
-            template,
-            column_aliases,
-            render_bindings,
-        } = &c.compute.op
-        else {
-            continue;
-        };
-        let qe = dry_render_source_qualified_entity(&nodes, c.compute.source.clone())?;
-        let scoped = entry_scoped_execute_session(es, Some(&qe))?;
-        let ent = scoped
-            .cgs
-            .get_entity(qe.entity.as_str())
-            .ok_or_else(|| format!("dry render: unknown entity `{}`", qe.entity))?;
-        let mut row = serde_json::Map::new();
-        for field in ent.fields.keys() {
-            row.insert(field.as_str().to_string(), serde_json::Value::Null);
-        }
-        row.insert(
-            ent.id_field.as_str().to_string(),
-            serde_json::Value::String("dry-placeholder".into()),
-        );
-        let mut binding_rows = BTreeMap::new();
-        let stub = serde_json::Value::Object(row.clone());
-        for label in render_bindings {
-            binding_rows.insert(label.as_str().to_string(), vec![stub.clone()]);
-        }
-        if let Some(alias) = c.compute.collection_alias.as_ref() {
-            if !binding_rows.contains_key(alias.as_str()) {
-                binding_rows.insert(alias.as_str().to_string(), vec![serde_json::Value::Null]);
-            }
-        }
-        render_compute(&RenderComputeInput {
-            primary_rows: &[serde_json::Value::Object(row)],
-            columns: &RenderColumns::from_op_parts(columns.clone(), column_aliases.clone()),
-            template,
-            collection_alias: c.compute.collection_alias.as_ref(),
-            render_bindings,
-            binding_rows: &binding_rows,
-        })?;
-    }
-    Ok(())
-}
-
-fn dry_render_source_qualified_entity(
-    nodes: &std::collections::HashMap<String, &ValidatedPlanNode>,
-    mut source: String,
-) -> Result<QualifiedEntityKey, String> {
-    use crate::plasm_plan::ValidatedPlanNode;
-
-    loop {
-        let Some(n) = nodes.get(source.as_str()) else {
-            return Err(format!("dry render: unknown source node `{source}`"));
-        };
-        match n {
-            ValidatedPlanNode::Surface(s) => {
-                match crate::plan_surface_policy::surface_qualified_entity_policy(s, false) {
-                    Ok(crate::plan_surface_policy::SurfaceQualifiedEntityPolicy::PageWithoutEntity) => {
-                        return Err(format!(
-                            "dry render: surface `{source}` has no qualified entity (page continuation cannot be a render source)"
-                        ));
-                    }
-                    Ok(
-                        crate::plan_surface_policy::SurfaceQualifiedEntityPolicy::EntityOptional,
-                    ) => {
-                        return Err(format!(
-                            "dry render: surface `{source}` has no qualified entity"
-                        ));
-                    }
-                    Ok(
-                        crate::plan_surface_policy::SurfaceQualifiedEntityPolicy::RequiresQualifiedEntity(
-                            qe,
-                        ),
-                    ) => return Ok(qe),
-                    Err(reason) => {
-                        return Err(format!(
-                            "dry render: surface `{source}` has no qualified entity: {reason}"
-                        ));
-                    }
-                }
-            }
-            ValidatedPlanNode::RelationTraversal(r) => return Ok(r.relation.target.clone()),
-            ValidatedPlanNode::Compute(c) => {
-                source = c.compute.source.clone();
-            }
-            other => {
-                return Err(format!(
-                    "dry render: source `{source}` is {:?}, expected surface/relation/compute chain",
-                    other.kind()
-                ));
-            }
-        }
-    }
-}
 
 fn dry_stub_row_count(shape: crate::plasm_plan::ResultShape) -> usize {
     use crate::plasm_plan::ResultShape;
@@ -392,18 +279,17 @@ pub(crate) fn dry_validate_staged_surfaces(
     let mut synthetic = std::collections::BTreeSet::new();
     let mut deferred = std::collections::BTreeSet::new();
     for n in &plan.nodes {
-        // Backend stubs witness types, not membership. A predicate evaluated on
-        // invented values cannot prove a real query empty (or nonempty). Stage
-        // that computation and its dependents until live rows are available;
-        // their IR still receives the normal template/type preflight.
+        // Backend stubs witness types, never values. Every pure computation
+        // over unknown observations (render, derive, arithmetic, filtering,
+        // aggregation, etc.) is deferred along with its dependents. Evaluating
+        // even one such operator on invented values can reject a lawful plan.
         let has_synthetic_input = n.depends_on().iter().any(|id| synthetic.contains(id));
-        if matches!(ExecStep::classify(n.clone()), ExecStep::Io(_)) || has_synthetic_input {
+        let step = ExecStep::classify(n.clone());
+        if matches!(step, ExecStep::Io(_)) || has_synthetic_input {
             synthetic.insert(n.id().clone());
         }
-        let filters_synthetic_rows = has_synthetic_input
-            && matches!(n, ValidatedPlanNode::Compute(c)
-                if matches!(c.compute.op, crate::plasm_plan::ComputeOp::Filter { .. }));
-        if filters_synthetic_rows || n.depends_on().iter().any(|id| deferred.contains(id)) {
+        let needs_real_values = has_synthetic_input && matches!(step, ExecStep::Pure(_));
+        if needs_real_values || n.depends_on().iter().any(|id| deferred.contains(id)) {
             deferred.insert(n.id().clone());
             continue;
         }

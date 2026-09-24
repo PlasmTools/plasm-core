@@ -1,6 +1,6 @@
 //! Per-row render lowering from typed applicator data into DAG compute nodes (PLP-12).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use crate::execute_session::ExecuteSession;
 use crate::plasm_plan::{
@@ -8,8 +8,7 @@ use crate::plasm_plan::{
 };
 use crate::plasm_plan_run::RenderColumns;
 use crate::plasm_render_compile::{
-    classify_per_row_template_names, resolve_inferred_render_columns,
-    resolve_render_collection_alias,
+    classify_per_row_template_names, resolve_render_collection_alias,
 };
 
 use super::pipeline::compile_surface_nodes;
@@ -18,9 +17,7 @@ use super::row_suffix::{
 };
 // compile_state_with_nodes: Arc-share base nodes; only prefix payloads are cloned once.
 use super::prelude::*;
-use super::schema_validate::{
-    infer_render_columns_for_node, lookup_dag_node, resolve_qualified_entity_for_dag_source,
-};
+use super::schema_validate::{infer_render_columns_for_node, lookup_dag_node};
 use super::types::{CompileState, DagNode, DagNodeSource};
 
 pub(in crate::plasm_dag) fn plan_render_content_schema() -> Result<SyntheticResultSchema, String> {
@@ -128,12 +125,14 @@ fn compile_render_chain(
     let (row_tokens, binding_labels) =
         classify_per_row_template_names(&template, &source_field_names, &binding_names, id)?;
 
-    let spec = if !row_tokens.is_empty() {
-        let qe = resolve_qualified_entity_for_dag_source(&scratch, &prefix, chain_tail_id.clone());
-        resolve_inferred_render_columns(session, state.cross_cache, qe.as_ref(), &row_tokens)?
-    } else {
-        RenderColumns::from_op_parts(Vec::new(), BTreeMap::new())
-    };
+    // These names have already been resolved against the actual source schema.
+    // Re-resolving them against an ancestral entity loses projected/derived names.
+    let spec = RenderColumns::from_field_pairs(
+        &row_tokens
+            .into_iter()
+            .map(|name| (name.clone(), name))
+            .collect::<Vec<_>>(),
+    )?;
 
     let (columns, column_aliases) = spec.into_op_parts();
     let collection_alias =

@@ -98,36 +98,33 @@ pub async fn execute(
     for (entity_name, entity) in &cgs.entities {
         let mut results: Vec<CheckResult> = Vec::new();
 
-        // 1. Get by ID — every entity with a Get capability
-        if let Some(cap) = cgs.find_capability(entity_name.as_str(), CapabilityKind::Get) {
-            let get = GetExpr::new(entity_name, "test-1").with_capability(cap.name.clone());
-            if let Value::Object(params) = build_fake_input(cap, &cgs) {
-                mat.stamp_capability_params(&get.reference, params);
-            }
-            results.push(
-                check_execution(
-                    &format!("get {entity_name} by ID"),
-                    Expr::Get(get),
-                    &cgs,
-                    &engine,
-                    &mut mat,
-                    StreamConsumeOpts::default(),
-                )
-                .await,
-            );
-        }
+        let identity = entity
+            .fields
+            .get(entity.id_field.as_str())
+            .and_then(|field| field.named_value(&cgs).ok())
+            .map(fake_value_for_named_value)
+            .unwrap_or_else(|| Value::String("test-1".into()));
+        let identity = match identity {
+            Value::String(value) => value,
+            Value::Integer(value) => value.to_string(),
+            value => serde_json::to_string(&plasm_core::plasm_value_to_json(&value))?,
+        };
 
-        // 2. Query — every entity with a Query capability
-        if let Some(cap) = cgs.find_capability(entity_name.as_str(), CapabilityKind::Query) {
+        // Exercise every collection operation, including secondary queries and searches.
+        for cap in cgs.capabilities.values().filter(|cap| {
+            cap.domain == *entity_name
+                && matches!(cap.kind, CapabilityKind::Query | CapabilityKind::Search)
+        }) {
             // 2a. Query with required params (should succeed)
             let required_pred = build_required_predicate(cap, entity, &cgs);
-            let query_expr = match required_pred {
+            let mut query_expr = match required_pred {
                 Some(p) => QueryExpr::filtered(entity_name, p),
                 None => QueryExpr::all(entity_name),
             };
+            query_expr.capability_name = Some(cap.name.clone());
             results.push(
                 check_execution(
-                    &format!("query {} (required params)", entity_name),
+                    &format!("{} (required params)", cap.name),
                     Expr::Query(query_expr.clone()),
                     &cgs,
                     &engine,
@@ -143,7 +140,7 @@ pub async fn execute(
                 let paginated = query_expr.with_pagination(QueryPagination::default());
                 results.push(
                     check_execution(
-                        &format!("query {} (paginated collection)", entity_name),
+                        &format!("{} (paginated collection)", cap.name),
                         Expr::Query(paginated),
                         &cgs,
                         &engine,
@@ -162,9 +159,11 @@ pub async fn execute(
 
             // 2b. Query without required params (should fail at type-check, not CML)
             if cap.has_any_required_param() {
+                let mut bare = QueryExpr::all(entity_name);
+                bare.capability_name = Some(cap.name.clone());
                 let bare_result = engine
                     .execute(
-                        &Expr::Query(QueryExpr::all(entity_name)),
+                        &Expr::Query(bare),
                         &cgs,
                         &mut SessionMaterialization::new(),
                         Some(ExecutionMode::Live),
@@ -189,6 +188,31 @@ pub async fn execute(
             }
         }
 
+        // 1. Get by ID — every entity with a Get capability
+        if let Some(cap) = cgs.find_capability(entity_name.as_str(), CapabilityKind::Get) {
+            let get = GetExpr::from_ref(
+                mat.get_entities_by_type(entity_name.as_str())
+                    .first()
+                    .map(|row| row.reference.clone())
+                    .unwrap_or_else(|| plasm_core::Ref::new(entity_name, identity.clone())),
+            )
+            .with_capability(cap.name.clone());
+            if let Value::Object(params) = build_fake_input(cap, &cgs) {
+                mat.stamp_capability_params(&get.reference, params);
+            }
+            results.push(
+                check_execution(
+                    &format!("get {entity_name} by ID"),
+                    Expr::Get(get),
+                    &cgs,
+                    &engine,
+                    &mut mat,
+                    StreamConsumeOpts::default(),
+                )
+                .await,
+            );
+        }
+
         // 3. Create
         if let Some(cap) = cgs.find_capability(entity_name.as_str(), CapabilityKind::Create) {
             let input = build_fake_input(cap, &cgs);
@@ -207,7 +231,7 @@ pub async fn execute(
 
         // 4. Delete
         if let Some(cap) = cgs.find_capability(entity_name.as_str(), CapabilityKind::Delete) {
-            let mut delete = DeleteExpr::new(&cap.name, entity_name, "test-1");
+            let mut delete = DeleteExpr::new(&cap.name, entity_name, identity.clone());
             delete.input = Some(build_fake_input(cap, &cgs).into());
             results.push(
                 check_execution(
@@ -242,7 +266,7 @@ pub async fn execute(
                         cap_name,
                         entity_name,
                         if cap.requires_receiver() {
-                            "test-1"
+                            identity.as_str()
                         } else {
                             ""
                         },
@@ -451,7 +475,15 @@ async fn check_execution(
                     };
                 }
             }
-            if result.count == 0 && !matches!(expr, Expr::Delete(_)) {
+            let side_effect = capability.is_some_and(|cap| {
+                cap.output_schema.as_ref().is_some_and(|output| {
+                    matches!(
+                        output.output_type,
+                        plasm_core::OutputType::SideEffect { .. }
+                    )
+                })
+            });
+            if result.count == 0 && !matches!(expr, Expr::Delete(_)) && !side_effect {
                 // Request succeeded but returned no entities — could be mock returning
                 // empty/wrong shape, or the capability is action-typed but returns nothing
                 CheckResult::Warn {
@@ -486,21 +518,25 @@ fn trim_error(msg: &str) -> String {
     }
 }
 
+fn fake_value_for_named_value(nv: &plasm_core::NamedValueSchema) -> Value {
+    match nv.domain.profile {
+        Some(plasm_core::value_domain::ProfileId::Email) => {
+            Value::String("contract@example.com".into())
+        }
+        Some(plasm_core::value_domain::ProfileId::E164) => Value::String("+12025550123".into()),
+        _ => fake_value_for_type(
+            &nv.field_type,
+            nv.allowed_values.as_deref(),
+            nv.value_format.as_ref(),
+        ),
+    }
+}
+
 fn fake_value_for_input_field(f: &InputFieldSchema, cgs: &CGS) -> Option<Value> {
     match &f.wire {
         InputFieldWire::Registry(_) => {
             let nv = f.named_value(cgs).ok()?;
-            if nv.domain.profile == Some(plasm_core::value_domain::ProfileId::Email) {
-                return Some(Value::String("contract@example.com".into()));
-            }
-            if nv.domain.profile == Some(plasm_core::value_domain::ProfileId::E164) {
-                return Some(Value::String("+12025550123".into()));
-            }
-            Some(fake_value_for_type(
-                &nv.field_type,
-                nv.allowed_values.as_deref(),
-                nv.value_format.as_ref(),
-            ))
+            Some(fake_value_for_named_value(nv))
         }
         InputFieldWire::Inline(ty) => Some(fake_value_for_input_type(ty.as_ref(), cgs)),
     }
@@ -668,6 +704,17 @@ fn fake_value_for_type(
             plasm_core::money::normalize(Value::String("1".into()), fmt, None)
                 .unwrap_or_else(|_| Value::String("1".into()))
         }
+        FieldType::Date => {
+            let format = match value_format {
+                Some(ValueWireFormat::Temporal(format)) => *format,
+                _ => plasm_core::TemporalWireFormat::Rfc3339,
+            };
+            plasm_core::temporal::normalize_temporal_value(
+                Value::String("2026-01-02T03:04:05Z".into()),
+                format,
+            )
+            .expect("fixed temporal probe must be encodable")
+        }
         FieldType::Boolean => Value::Bool(false),
         FieldType::EntityRef { .. } => Value::String("1".into()),
         _ => Value::String("plasm-test".into()),
@@ -734,4 +781,28 @@ async fn start_hermit(
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     Ok((base_url, server))
+}
+
+#[cfg(test)]
+mod temporal_probe_tests {
+    use super::*;
+    #[test]
+    fn temporal_probe_respects_declared_wire_type() {
+        for format in [
+            plasm_core::TemporalWireFormat::Rfc3339,
+            plasm_core::TemporalWireFormat::Iso8601Date,
+            plasm_core::TemporalWireFormat::UnixSec,
+            plasm_core::TemporalWireFormat::UnixMs,
+        ] {
+            let value = fake_value_for_type(
+                &FieldType::Date,
+                None,
+                Some(&ValueWireFormat::Temporal(format)),
+            );
+            assert_eq!(
+                plasm_core::temporal::normalize_temporal_value(value.clone(), format).unwrap(),
+                value
+            );
+        }
+    }
 }

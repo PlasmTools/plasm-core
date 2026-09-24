@@ -8,8 +8,8 @@ mod template_uses;
 #[allow(unused_imports)] // barrel re-exports for sibling `plasm_dag` modules
 pub(in crate::plasm_dag) use parse_helpers::{
     parse_aggregates, parse_dedupe_key_paths, parse_field_list,
-    parse_group_by_key_and_aggregate_tail, parse_literal, parse_one_aggregate_spec,
-    parse_plan_value_expr, parse_sort_direction_token, parse_sort_field_and_direction,
+    parse_group_by_key_and_aggregate_tail, parse_one_aggregate_spec, parse_plan_value_expr,
+    parse_sort_direction_token, parse_sort_field_and_direction,
 };
 #[allow(unused_imports)]
 pub(in crate::plasm_dag) use plan_emit::{expression_template, lower_plan_node};

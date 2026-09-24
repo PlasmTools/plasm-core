@@ -3836,6 +3836,24 @@
     },
     {
       "consumer": {
+        "catalog": "splitwise",
+        "capability": "balance_summary_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "splitwise",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "spotify",
+        "capability": "user_search"
+      },
+      "requirement": "session",
+      "provider_catalog": "spotify",
+      "provider": "session"
+    },
+    {
+      "consumer": {
         "catalog": "gmail",
         "capability": "email_send"
       },
@@ -3865,6 +3883,33 @@
       "consumer": {
         "catalog": "gmail",
         "capability": "draft_send"
+      },
+      "requirement": "file_session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "expense_create"
+      },
+      "requirement": "file_session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "splitwise",
+        "capability": "payment_create"
+      },
+      "requirement": "file_session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "todoist",
+        "capability": "task_comment_create"
       },
       "requirement": "file_session",
       "provider_catalog": "file_system",

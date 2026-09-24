@@ -251,8 +251,21 @@ pub fn register_shared_minijinja_filters(env: &mut Environment<'_>) {
                     "split_part: separator must be non-empty",
                 ));
             }
-            let idx = usize::try_from(index.max(0)).unwrap_or(0);
-            Ok(s.split(&sep).nth(idx).unwrap_or("").to_string())
+            let idx = usize::try_from(index).map_err(|_| {
+                minijinja::Error::new(
+                    minijinja::ErrorKind::InvalidOperation,
+                    format!("split_part: index {index} must be non-negative (zero-based)"),
+                )
+            })?;
+            s.split(&sep).nth(idx).map(str::to_owned).ok_or_else(|| {
+                minijinja::Error::new(
+                    minijinja::ErrorKind::InvalidOperation,
+                    format!(
+                        "split_part: index {index} out of range; {} parts (zero-based)",
+                        s.split(&sep).count()
+                    ),
+                )
+            })
         },
     );
 }
@@ -551,6 +564,36 @@ mod tests {
         }
         assert!(!is_shared_minijinja_filter("where"));
         assert!(!is_shared_minijinja_filter("select"));
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn split_part_obeys_sequence_indexing_after_serialization(
+            parts in proptest::collection::vec("[a-zA-Z0-9 ]{0,12}", 1..12),
+        ) {
+            let source = parts.join("/");
+            let env = program_string_env();
+            for (i, expected) in parts.iter().enumerate() {
+                let template = format!("{{{{ path | split_part('/', {i}) }}}}");
+                let template: String = serde_json::from_slice(&serde_json::to_vec(&template).unwrap()).unwrap();
+                let rendered = env.render_str(&template, minijinja::context!(path => &source)).unwrap();
+                proptest::prop_assert_eq!(&rendered, expected);
+            }
+            let bad = format!("{{{{ path | split_part('/', {}) }}}}", parts.len());
+            proptest::prop_assert!(env.render_str(&bad, minijinja::context!(path => &source)).is_err());
+        }
+    }
+
+    #[test]
+    fn split_part_rejects_invalid_indices() {
+        let env = program_string_env();
+        for index in [-1i64, 3, i64::MAX] {
+            let template = format!("{{{{ path | split_part('/', {index}) }}}}");
+            let error = env
+                .render_str(&template, minijinja::context!(path => "/a/b"))
+                .expect_err("invalid index must not become an empty path component");
+            assert!(error.to_string().contains("split_part"));
+        }
     }
 
     #[test]

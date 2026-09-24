@@ -251,6 +251,9 @@ expense_query:
   query:
     type: object
     fields:
+    - [max_created_at, {type: if, condition: {type: exists, var: max_created_at}, then_expr: {type: datetime_format, value: {type: var, name: max_created_at}, format: "%Y-%m-%d"}, else_expr: {type: const, value: null}}]
+    - [min_created_at, {type: if, condition: {type: exists, var: min_created_at}, then_expr: {type: datetime_format, value: {type: var, name: min_created_at}, format: "%Y-%m-%d"}, else_expr: {type: const, value: null}}]
+    - [deleted, {type: if, condition: {type: exists, var: deleted}, then_expr: {type: var, name: deleted}, else_expr: {type: const, value: null}}]
     - - query
       - type: if
         condition:
@@ -328,6 +331,8 @@ expense_create:
   body:
     type: object
     fields:
+    - [file_system_access_token, {type: if, condition: {type: exists, var: file_system_access_token}, then_expr: {type: var, name: file_system_access_token}, else_expr: {type: const, value: null}}]
+    - [receipt_file_path, {type: if, condition: {type: exists, var: receipt_file_path}, then_expr: {type: var, name: receipt_file_path}, else_expr: {type: const, value: null}}]
     - - description
       - type: var
         name: description
@@ -567,6 +572,11 @@ payment_query:
   query:
     type: object
     fields:
+    - [max_amount, {type: if, condition: {type: exists, var: max_amount}, then_expr: {type: var, name: max_amount}, else_expr: {type: const, value: null}}]
+    - [min_amount, {type: if, condition: {type: exists, var: min_amount}, then_expr: {type: var, name: min_amount}, else_expr: {type: const, value: null}}]
+    - [max_created_at, {type: if, condition: {type: exists, var: max_created_at}, then_expr: {type: datetime_format, value: {type: var, name: max_created_at}, format: "%Y-%m-%d"}, else_expr: {type: const, value: null}}]
+    - [min_created_at, {type: if, condition: {type: exists, var: min_created_at}, then_expr: {type: datetime_format, value: {type: var, name: min_created_at}, format: "%Y-%m-%d"}, else_expr: {type: const, value: null}}]
+    - [deleted, {type: if, condition: {type: exists, var: deleted}, then_expr: {type: var, name: deleted}, else_expr: {type: const, value: null}}]
     - - query
       - type: if
         condition:
@@ -622,6 +632,8 @@ payment_create:
   body:
     type: object
     fields:
+    - [file_system_access_token, {type: if, condition: {type: exists, var: file_system_access_token}, then_expr: {type: var, name: file_system_access_token}, else_expr: {type: const, value: null}}]
+    - [receipt_file_path, {type: if, condition: {type: exists, var: receipt_file_path}, then_expr: {type: var, name: receipt_file_path}, else_expr: {type: const, value: null}}]
     - - payer_email
       - type: var
         name: payer_email
@@ -1095,6 +1107,7 @@ user_search:
   query:
     type: object
     fields:
+    - [include_self, {type: if, condition: {type: exists, var: include_self}, then_expr: {type: var, name: include_self}, else_expr: {type: const, value: null}}]
     - - query
       - type: if
         condition:
@@ -1125,6 +1138,7 @@ group_balance_get:
   query:
     type: object
     fields:
+    - [email, {type: if, condition: {type: exists, var: email}, then_expr: {type: var, name: email}, else_expr: {type: const, value: null}}]
     - [group_id, {type: var, name: group_id}]
   response:
     response_preprocess:
@@ -1355,3 +1369,11 @@ notification_count:
         else_expr:
           type: const
           value: null
+
+balance_summary_get:
+  method: GET
+  path:
+  - {type: literal, value: splitwise}
+  - {type: literal, value: balance}
+  - {type: literal, value: people}
+  auth: *request_auth

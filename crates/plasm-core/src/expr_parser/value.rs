@@ -5,7 +5,7 @@
 //! - [`Parser::parse_value`]: strict — Get `Entity(id)`, search `~`, inner id of `Team(42)`.
 //!   When the bare token names a **CGS entity**, `Entity(...)` is parsed as an entity-reference
 //!   constructor: compound `key_vars` use `k=v,…` (strict key set) with recursive values; otherwise
-//!   the legacy single-argument unwrap applies. Non-entity tokens keep the unwrap behavior.
+//!   declared entity identity grammar applies. Unknown constructors are rejected.
 //!   String literals: normal quoted `"` / `'` with **JSON-style escapes** (`\n`, `\t`, `\r`, `\\`, `\"`, `\'`,
 //!   `\uXXXX`, …); unknown `\x` is a parse error (use a tagged heredoc for multiline bodies). Plus **structured
 //!   heredocs** `<<TAG` … `TAG` (tagged, bash-inspired) for multiline or quote-heavy payloads without escape rules
@@ -13,7 +13,8 @@
 //!   newline — not `<<` + newline alone. For CGS slots with presentation profiles (`markdown`, `document`, …), teaching
 //!   prompts prefer a heredoc; plain `string` scalars use normal quotes.
 //! - [`Parser::parse_predicate_value_rhs`] / [`Parser::parse_dotted_call_arg_value_rhs`]: `Entity{…}` and
-//!   dotted-call `method(k=v,…)` allow unquoted phrases (spaces) until top-level `,` or `}` / `)`.
+//!   dotted-call `method(k=v,…)` allow bare word/hyphen phrases until `,` or `}` / `)`.
+//!   Unescaped structural punctuation is rejected in both strict and phrase lanes.
 //!   RHS may also be an **array literal** `[v1, v2]` (comma-separated; same strict [`Parser::parse_value`]
 //!   tokens per element). Unary `Entity($)` is allowed here (teaching table fill-in, same as scalar `$`).
 //!
@@ -197,39 +198,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// JSON-style escape after a consumed `\` inside a quoted string.
-    fn parse_quoted_string_escape(&mut self) -> Result<char, ParseError> {
-        let Some(esc) = self.consume_char() else {
-            return Err(self.err(ParseErrorKind::UnterminatedEscape));
-        };
-        if let Some(ch) = crate::string_unescape::json_escape_simple(esc) {
-            return Ok(ch);
-        }
-        if esc != 'u' {
-            return Err(self.err(ParseErrorKind::UnknownEscape { escape: esc }));
-        }
-        let mut h = String::with_capacity(4);
-        for _ in 0..4 {
-            match self.consume_char() {
-                Some(ch) if ch.is_ascii_hexdigit() => h.push(ch),
-                Some(_) | None => {
-                    return Err(self.err(ParseErrorKind::Other {
-                        message: format!(
-                            "invalid unicode escape `\\u{h}…`; need four hex digits, or use a tagged heredoc (`<<TAG` … `TAG`) for multiline bodies"
-                        ),
-                    }));
-                }
-            }
-        }
-        crate::string_unescape::unicode_escape_from_hex(&h).ok_or_else(|| {
-            self.err(ParseErrorKind::Other {
-                message: format!(
-                    "invalid unicode code point `\\u{h}`; use a tagged heredoc (`<<TAG` … `TAG`) for multiline bodies"
-                ),
-            })
-        })
-    }
-
     fn reject_unfilled_teaching_hole(&self, token: &str) -> Result<(), ParseError> {
         if crate::taught_seat::is_teaching_angle_hole(token) {
             Err(self.err(ParseErrorKind::UnfilledTeachingHole {
@@ -251,16 +219,7 @@ impl<'a> Parser<'a> {
         }
         match self.peek_char() {
             Some('"') | Some('\'') => {
-                let quote = self.consume_char().unwrap();
-                let mut s = String::new();
-                loop {
-                    match self.consume_char() {
-                        None => return Err(self.err(ParseErrorKind::UnterminatedString)),
-                        Some(c) if c == quote => break,
-                        Some('\\') => s.push(self.parse_quoted_string_escape()?),
-                        Some(c) => s.push(c),
-                    }
-                }
+                let s = super::quoted::parse(self.input, &mut self.pos)?;
                 self.reject_unfilled_teaching_hole(&s)?;
                 Value::program_string(s).map_err(|error| {
                     self.err(ParseErrorKind::InvalidProgramString {
@@ -347,8 +306,8 @@ impl<'a> Parser<'a> {
                 let token = self.parse_bare_value_token()?;
                 self.reject_unfilled_teaching_hole(&token)?;
                 self.skip_ws();
-                // `Foo(bar)` unwraps to a single inner value (entity ref id, etc.). It is not a
-                // generic function call — no commas; use `field=now` or quoted text for dates.
+                // Only declared entity constructors may consume a parenthesized value.
+                // Unknown function-shaped syntax must never erase its head.
                 if self.peek_char() == Some('(') {
                     use super::entity_ref_parse::EntityRefRhsMode;
                     if let Some(v) =
@@ -361,9 +320,9 @@ impl<'a> Parser<'a> {
                     if self.cgs_for_entity(&canon).is_some() {
                         return self.parse_entity_constructor_value_after_open_paren(&canon);
                     }
-                    let id_val = self.parse_value()?;
-                    self.expect_char(')')?;
-                    return Ok(id_val);
+                    return Err(self.err(ParseErrorKind::Other {
+                        message: format!("unknown value constructor `{token}`; use a declared entity constructor, a binding reference, or quoted literal text"),
+                    }));
                 }
                 Ok(Value::String(token))
             }
@@ -401,6 +360,7 @@ impl<'a> Parser<'a> {
             {
                 break;
             }
+            self.check_bare_value_char(self.input[self.pos..].chars().next().unwrap())?;
             if let Some(ref mut s) = buf {
                 if b < 128 {
                     s.push(b as char);
@@ -411,7 +371,7 @@ impl<'a> Parser<'a> {
                     self.pos += ch.len_utf8();
                 }
             } else {
-                self.pos += 1;
+                self.pos += self.input[self.pos..].chars().next().unwrap().len_utf8();
             }
         }
         if self.pos == start && buf.is_none() {
@@ -745,80 +705,32 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Bare repair phrases contain words and hyphens only. All structural
+    /// punctuation must be quoted or explicitly escaped; references and typed
+    /// constructors have already been parsed before entering this lane.
     fn parse_phrase_value(&mut self, close: PhraseClose) -> Result<Value, ParseError> {
         let mut out = String::new();
-        let bytes = self.input.as_bytes();
-        let mut paren: i32 = 0;
-        let mut bracket: i32 = 0;
-        let mut brace: i32 = 0;
-        while self.pos < bytes.len() {
-            let b = bytes[self.pos];
-            if b == b'\\' {
-                self.pos += 1;
-                if self.pos >= bytes.len() {
-                    return Err(self.err(ParseErrorKind::UnterminatedEscape));
-                }
-                let ch = self.input[self.pos..].chars().next().unwrap();
-                self.pos += ch.len_utf8();
+        while let Some(ch) = self.peek_char() {
+            if ch == ','
+                || matches!(
+                    (close, ch),
+                    (PhraseClose::Predicate, '}')
+                        | (PhraseClose::DottedCallParen, ')')
+                        | (PhraseClose::ArrayElement, ']')
+                )
+            {
+                break;
+            }
+            if ch == '\\' {
+                self.consume_char();
+                let escaped = self
+                    .consume_char()
+                    .ok_or_else(|| self.err(ParseErrorKind::UnterminatedEscape))?;
+                out.push(escaped);
+            } else {
+                self.check_bare_value_char(ch)?;
+                self.consume_char();
                 out.push(ch);
-                continue;
-            }
-            if paren == 0 && bracket == 0 && brace == 0 {
-                if b == b',' {
-                    break;
-                }
-                match close {
-                    PhraseClose::Predicate if b == b'}' => break,
-                    PhraseClose::DottedCallParen if b == b')' => break,
-                    PhraseClose::ArrayElement if b == b']' => break,
-                    _ => {}
-                }
-            }
-            match b {
-                b'(' => {
-                    paren += 1;
-                    self.pos += 1;
-                    out.push('(');
-                }
-                b')' => {
-                    paren -= 1;
-                    if paren < 0 {
-                        return Err(self.err(ParseErrorKind::ExpectedValue));
-                    }
-                    self.pos += 1;
-                    out.push(')');
-                }
-                b'[' => {
-                    bracket += 1;
-                    self.pos += 1;
-                    out.push('[');
-                }
-                b']' => {
-                    bracket -= 1;
-                    if bracket < 0 {
-                        return Err(self.err(ParseErrorKind::ExpectedValue));
-                    }
-                    self.pos += 1;
-                    out.push(']');
-                }
-                b'{' => {
-                    brace += 1;
-                    self.pos += 1;
-                    out.push('{');
-                }
-                b'}' => {
-                    brace -= 1;
-                    if brace < 0 {
-                        break;
-                    }
-                    self.pos += 1;
-                    out.push('}');
-                }
-                _ => {
-                    let ch = self.input[self.pos..].chars().next().unwrap();
-                    self.pos += ch.len_utf8();
-                    out.push(ch);
-                }
             }
         }
         let t = out.trim();
@@ -831,5 +743,19 @@ impl<'a> Parser<'a> {
         } else {
             Ok(Value::String(t.to_string()))
         }
+    }
+
+    fn check_bare_value_char(&self, ch: char) -> Result<(), ParseError> {
+        if ch == '<' {
+            if let Some(end) = self.input[self.pos..].find('>') {
+                self.reject_unfilled_teaching_hole(&self.input[self.pos..=self.pos + end])?;
+            }
+        }
+        if ch.is_alphanumeric() || ch == '_' || ch == '-' || ch.is_whitespace() || ch == '$' {
+            return Ok(());
+        }
+        Err(self.err(ParseErrorKind::Other {
+            message: format!("unexpected `{ch}` in an unquoted value: use a declared binding/field reference, or quote literal text. String transformations belong inside a quoted Minijinja template, for example \"{{{{ path | split_part('/', 0) }}}}\", not an argument pipe"),
+        }))
     }
 }

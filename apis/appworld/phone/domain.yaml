@@ -1,4 +1,4 @@
-version: 15
+version: 17
 entry_id: phone
 auth:
   scheme: none
@@ -79,6 +79,7 @@ entities:
       birthday:
         required: false
         value_ref: nv_str
+        description: "Calendar date of this contact's birthday."
       home_address:
         required: false
         value_ref: nv_str
@@ -96,6 +97,16 @@ entities:
       - alarm
       - alarms
     fields:
+      user_name:
+        required: false
+        value_ref: nv_str
+        description: Owner of this alarm display name.
+        path: [user, name]
+      user_phone_number:
+        required: false
+        value_ref: nv_phone
+        description: Phone number of the alarm owner.
+        path: [user, phone_number]
       alarm_id:
         required: true
         value_ref: nv_alarm_id
@@ -111,12 +122,15 @@ entities:
       enabled:
         required: false
         value_ref: nv_bool
+        description: "Whether this alarm is active."
       snooze_minutes:
         required: false
         value_ref: nv_int
+        description: "Minutes until the snoozed alarm rings again; zero disables snooze."
       vibration:
         required: false
         value_ref: nv_bool
+        description: "Whether the device vibrates when this alarm rings."
       created_at:
         required: false
         value_ref: nv_datetime
@@ -891,7 +905,6 @@ values:
     description: Account owner phone number.
   nv_str:
     type: string
-    description: Free-form string.
   nv_email:
     type: email
     description: Email address of a user or counterparty.
@@ -978,13 +991,10 @@ values:
     description: Recorded relationship memberships; use these labels to resolve named groups.
   nv_bool:
     type: boolean
-    description: Boolean flag.
   nv_int:
     type: integer
-    description: Integer.
   nv_datetime:
     type: rfc3339
-    description: ISO datetime string.
   prerequisite_principal_email:
     type: email
     description: Account holder email.

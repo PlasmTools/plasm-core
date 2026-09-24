@@ -1362,3 +1362,44 @@ fn lang_take_one_method_invoke_live() {
         .join()
         .expect("join take-1 method invoke harness");
 }
+
+/// Closed scalar syntax: invalid expressions cannot become mutation payloads.
+#[test]
+fn lang_scalar_expression_cannot_become_literal_payload() {
+    let cgs = language_matrix::load_language_matrix_cgs();
+    let es = language_matrix::matrix_execute_session(cgs);
+    for program in [
+        r#"items = LangItem
+out = items => LangItem.create(title=_.title | split_part("/") | last, score=0, owner="test")
+out"#,
+        r#"LangItem.create(title=unknown(value), score=0, owner="test")"#,
+        r#"LangItem{owner=missing.field}"#,
+        r#"LangItem(unknown(value))"#,
+    ] {
+        let error = compile_plasm_program(
+            &PromptPipelineConfig::default(),
+            None,
+            &es,
+            "closed_scalar_syntax",
+            program,
+        )
+        .expect_err("invalid scalar syntax must not produce an executable plan");
+        let message = error.to_string();
+        assert!(
+            message.contains("unquoted value") || message.contains("unknown value constructor"),
+            "must diagnose the scalar boundary: {message}"
+        );
+    }
+    compile_plasm_program(
+        &PromptPipelineConfig::default(),
+        None,
+        &es,
+        "explicit_scalar_template",
+        r#"items = LangItem("i1")
+rendered = items => <<BODY
+{{ title | split_part('/', 0) }}
+BODY
+LangItem.create(title=rendered.content, score=0, owner="test")"#,
+    )
+    .expect("explicit template transformation must remain executable");
+}

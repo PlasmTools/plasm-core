@@ -491,7 +491,16 @@ pub fn validate_cgs_views(cgs: &plasm_core::CGS) -> Result<(), CmlError> {
             prior_nodes.insert(node.id.clone());
         }
 
-        for (field, binding) in &view.output {
+        for (kind, field, binding) in view
+            .locals
+            .iter()
+            .map(|(field, binding)| ("local", field, binding))
+            .chain(
+                view.output
+                    .iter()
+                    .map(|(field, binding)| ("output", field, binding)),
+            )
+        {
             match binding {
                 ViewOutputBinding::NodeRowCount { node }
                 | ViewOutputBinding::NodeField { node, .. }
@@ -504,14 +513,14 @@ pub fn validate_cgs_views(cgs: &plasm_core::CGS) -> Result<(), CmlError> {
                     if !all_node_ids.contains(node) {
                         return Err(CmlError::InvalidTemplate {
                             message: format!(
-                                "view `{view_key}` output `{field}` references unknown node `{node}`"
+                                "view `{view_key}` {kind} `{field}` references unknown node `{node}`"
                             ),
                         });
                     }
                 }
                 ViewOutputBinding::Computed { template } => {
                     validate_view_template_syntax(
-                        &format!("view `{view_key}` output `{field}` computed"),
+                        &format!("view `{view_key}` {kind} `{field}` computed"),
                         template,
                     )?;
                 }
@@ -669,6 +678,39 @@ mod tests {
         .expect("load matrix views");
         validate_cgs_capability_templates(&cgs).expect("templates");
         validate_cgs_views(&cgs).expect("views valid");
+    }
+
+    #[test]
+    fn view_private_computed_bindings_receive_template_validation() {
+        use plasm_core::schema::ViewOutputBinding;
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let original = plasm_core::load_schema_dir(
+            &root.join("../../fixtures/schemas/plasm_language_matrix_views"),
+        )
+        .expect("load matrix views");
+        for template in ["{{ broken".to_owned(), "x".repeat(32_769)] {
+            let mut cgs = original.clone();
+            cgs.views.get_mut("lang_digest").unwrap().locals.insert(
+                "private_value".into(),
+                ViewOutputBinding::Computed { template },
+            );
+            cgs.validate().expect("structural schema is valid");
+            let cgs = serde_json::from_slice(&serde_json::to_vec(&cgs).unwrap()).unwrap();
+            let error = validate_cgs_views(&cgs)
+                .expect_err("invalid private templates must fail before backend execution");
+            assert!(
+                error.to_string().contains("local `private_value`"),
+                "{error}"
+            );
+        }
+        let mut valid = original;
+        valid.views.get_mut("lang_digest").unwrap().locals.insert(
+            "private_value".into(),
+            ViewOutputBinding::Computed {
+                template: "{{ 1 + 2 }}".into(),
+            },
+        );
+        validate_cgs_views(&valid).expect("valid private template");
     }
 
     #[test]

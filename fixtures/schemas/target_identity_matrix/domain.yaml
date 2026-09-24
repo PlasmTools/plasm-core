@@ -1,0 +1,25 @@
+version: 1
+auth: {scheme: none}
+http_backend: http://fixture.invalid
+entities:
+  Document:
+    id_field: path
+    fields:
+      path: {value_ref: path, required: true}
+      id: {value_ref: opaque_number, required: false}
+capabilities:
+  document_get:
+    kind: get
+    entity: Document
+    provides: [path]
+  document_delete:
+    kind: delete
+    entity: Document
+  document_touch:
+    receiver: {kind: entity, entity: Document}
+    kind: action
+    entity: Document
+    output: {type: side_effect, description: Touches the selected document.}
+values:
+  path: {type: string}
+  opaque_number: {type: integer}

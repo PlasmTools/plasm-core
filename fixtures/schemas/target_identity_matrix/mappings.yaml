@@ -1,0 +1,12 @@
+document_get:
+  method: GET
+  path: [{type: literal, value: document}]
+  query: {type: object, fields: [[path, {type: var, name: id}]]}
+document_delete:
+  method: DELETE
+  path: [{type: literal, value: document}]
+  query: {type: object, fields: [[path, {type: var, name: id}]]}
+document_touch:
+  method: POST
+  path: [{type: literal, value: document}]
+  body: {type: object, fields: [[path, {type: var, name: id}]]}

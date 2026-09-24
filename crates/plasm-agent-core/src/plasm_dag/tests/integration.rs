@@ -3740,3 +3740,74 @@ mod review_execution;
 mod scalar_predicates;
 
 mod compiler_contracts;
+
+#[test]
+fn data_expression_boundary_rejects_nested_executable_syntax() {
+    for rhs in ["{ a: LangItem(_.id).lines }", "{ a: [LangItem(_.id).lines] }", "{ a: _.title | split_part(\"/\", 0) }", "{ a: _.title, a: 3 }"] {
+        let program = format!("rows = LangItem\nout = rows => {rhs}\nout");
+        assert!(compile_plasm_dag_to_plan(&PromptPipelineConfig::default(), None, &test_session(), "closed-data", &program).is_err(), "accepted {rhs}");
+    }
+}
+
+#[test]
+fn data_expression_boundary_preserves_quoted_operational_text() {
+    let program = "rows = LangItem\nout = rows => { a: \"LangItem(_.id).lines\", b: [\"_.lines\"] }\nout";
+    compile_plasm_dag_to_plan(&PromptPipelineConfig::default(), None, &test_session(), "quoted-data", program).expect("quoted text stays data");
+}
+
+#[test]
+fn terminal_union_cannot_regain_relation_continuation() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let dir = root.join("../../fixtures/schemas/plasm_language_matrix");
+    let cgs_a = Arc::new(plasm_core::loader::load_schema_dir(&dir).expect("langmatrix_a"));
+    let cgs_b = Arc::new(plasm_core::loader::load_schema_dir(&dir).expect("langmatrix_b"));
+    let mut ctxs = indexmap::IndexMap::new();
+    ctxs.insert(
+        "langmatrix_a".into(),
+        Arc::new(CgsContext::entry("langmatrix_a", cgs_a.clone())),
+    );
+    ctxs.insert(
+        "langmatrix_b".into(),
+        Arc::new(CgsContext::entry("langmatrix_b", cgs_b.clone())),
+    );
+    let layers: Vec<&CGS> = vec![cgs_a.as_ref(), cgs_b.as_ref()];
+    let mut exp = TeachingExposureSession::new(cgs_a.as_ref(), "langmatrix_a", &["LangItem"]);
+    exp.expose_entities(&layers, cgs_b.clone(), "langmatrix_b", &["LangItem"]);
+    let session = ExecuteSession::new(
+        "ph".into(),
+        "p".into(),
+        cgs_a.clone(),
+        ctxs,
+        "langmatrix_a".into(),
+        String::new(),
+        String::new(),
+        None,
+        vec!["LangItem".into()],
+        Some(exp),
+        None,
+        cgs_a.catalog_cgs_hash_hex(),
+        None,
+    );
+    let map = session
+        .teaching_exposure
+        .as_ref()
+        .expect("exposure")
+        .symbol_map_arc();
+    let e2 = map.entity_sym_for("langmatrix_b", "LangItem");
+    let r_sym = map.ident_sym_relation_for("langmatrix_b", "LangItem", "children");
+    for suffix in [
+        "", " | take 40", " | take 1", " | where score > 0",
+        " | order by score", " | select id", " | distinct",
+        " | where score > 0 | take 1 | select id",
+    ] {
+        let (stage, receiver) = if suffix.is_empty() {
+            (String::new(), "both")
+        } else {
+            (format!("\ncut = both{suffix}"), "cut")
+        };
+        let source = format!("left = {e2}{{owner=\"alice\"}}\nright = {e2}{{owner=\"bob\"}}\nboth = left | union right{stage}\nkids = {receiver} => _.{r_sym}\nkids");
+        let result = compile_plasm_dag_to_plan(&PromptPipelineConfig::default(), None, &session, "union-continuation", &source);
+        let error = result.expect_err("terminal union must remain non-continuable");
+        assert!(error.contains("PLP-4:") && error.contains("entity continuation evidence"), "{suffix}: {error}");
+    }
+}

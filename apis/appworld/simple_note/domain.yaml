@@ -1,4 +1,4 @@
-version: 10
+version: 12
 entry_id: simple_note
 auth:
   scheme: none
@@ -73,6 +73,7 @@ entities:
       pinned:
         required: false
         value_ref: nv_bool
+        description: "Whether this note is pinned for quick access."
       created_at:
         required: false
         value_ref: nv_datetime
@@ -303,6 +304,10 @@ capabilities:
       value_ref: nv_bool
       required: false
     controls:
+    - name: dont_reorder_pinned
+      value_ref: nv_bool
+      required: false
+      description: Keep pinned notes in the requested ordering instead of moving them ahead of other notes.
     - name: sort_by
       value_ref: nv_str
       required: false
@@ -448,7 +453,6 @@ values:
     description: Whether account ownership has been verified.
   nv_str:
     type: string
-    description: Free-form string.
   nv_email:
     type: email
     description: Email address of a user or counterparty.
@@ -477,13 +481,10 @@ values:
     description: Note tags.
   nv_bool:
     type: boolean
-    description: Boolean flag.
   nv_int:
     type: integer
-    description: Integer.
   nv_datetime:
     type: rfc3339
-    description: ISO datetime string.
   nv_append_mode:
     type: enum
     description: Whether to append or prepend content.

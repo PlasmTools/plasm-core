@@ -29,7 +29,7 @@ try {
   let previousRun: string | undefined;
   let previousRead: string | undefined;
   for (const size of [0, 1, 32, 3240]) {
-    snapshot = { rows: Array.from({ length: size }, (_, i) => ({
+    snapshot = { entities: Array.from({ length: size }, (_, i) => ({
       id: i % 7, content: `ARTIFACT_ONLY_${i}: 漢字🦾\n${"x".repeat(256)}`,
     })) };
     const run = await runtime.plasmRun({ logicalSessionRef: session.logicalSessionRef, runRef: "pc0" });
@@ -52,7 +52,7 @@ try {
     assert.ok(pinLocalArtifactImageSync());
     const locator = previousRead!.match(/^File: (.+)$/m)![1]!;
     const derived = await runArtefactTransform(path.join(root, "work"),
-      "export default ([snapshot]: {rows: {id: number}[]}[]) => ({count: snapshot.rows.length, first: snapshot.rows[0].id, last: snapshot.rows.at(-1)?.id})", [locator]);
+      "export default ([snapshot]: {entities: {id: number}[]}[]) => ({count: snapshot.entities.length, first: snapshot.entities[0].id, last: snapshot.entities.at(-1)?.id})", [locator]);
     assert.deepEqual(JSON.parse(derived), {count: 3240, first: 0, last: 5});
     assert.ok(!derived.includes("ARTIFACT_ONLY_"));
   }

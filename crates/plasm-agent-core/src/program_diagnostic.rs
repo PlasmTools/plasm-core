@@ -780,6 +780,27 @@ mod tests {
     }
 
     #[test]
+    fn get_suffix_diagnostic_preserves_selection_during_repair() {
+        let session = reject_memory_session();
+        let pipeline = PromptPipelineConfig::default();
+        let invalid = r#"item = LangItem("i1"){title="Chosen"}
+item"#;
+        let error =
+            crate::compile_plasm_expression(&pipeline, None, &session, "get-suffix", invalid)
+                .expect_err("Get does not accept query braces");
+        assert!(
+            error.correction().contains("Get accepts identity only"),
+            "{}",
+            error.correction()
+        );
+        assert!(error.correction().contains("| where"));
+        let repaired = r#"item = LangItem("i1") | where title = "Chosen"
+item"#;
+        crate::compile_plasm_expression(&pipeline, None, &session, "get-suffix-repair", repaired)
+            .expect("repair retains both identity and selection");
+    }
+
+    #[test]
     fn compile_select_split_part_replay_names_closed_form() {
         let session = reject_memory_session();
         let pipeline = PromptPipelineConfig::default();

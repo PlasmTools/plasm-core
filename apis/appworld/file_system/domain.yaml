@@ -1,4 +1,4 @@
-version: 15
+version: 17
 entry_id: file_system
 auth:
   scheme: none
@@ -110,6 +110,7 @@ entities:
       exists:
         required: true
         value_ref: nv_bool
+        description: "Whether a file or directory exists at the requested path."
   Profile:
     id_field: email
     description: File System user public profile.
@@ -361,6 +362,10 @@ capabilities:
       input_type:
         type: object
         fields:
+        - name: allow_if_exists
+          value_ref: nv_bool
+          required: false
+          description: Succeed when the directory already exists.
         - name: access_token
           value_ref: nv_access_token
           required: true
@@ -417,6 +422,14 @@ capabilities:
       input_type:
         type: object
         fields:
+        - name: retain_dates
+          value_ref: nv_bool
+          required: false
+          description: Whether to preserve source creation and modification timestamps.
+        - name: overwrite
+          value_ref: nv_bool
+          required: false
+          description: Whether an existing destination may be replaced.
         - name: access_token
           value_ref: nv_access_token
           required: true
@@ -437,6 +450,14 @@ capabilities:
       input_type:
         type: object
         fields:
+        - name: retain_dates
+          value_ref: nv_bool
+          required: false
+          description: Whether to preserve source creation and modification timestamps.
+        - name: overwrite
+          value_ref: nv_bool
+          required: false
+          description: Whether an existing destination may be replaced.
         - name: access_token
           value_ref: nv_access_token
           required: true
@@ -598,6 +619,14 @@ capabilities:
       input_type:
         type: object
         fields:
+        - name: retain_dates
+          value_ref: nv_bool
+          required: false
+          description: Whether to preserve source creation and modification timestamps.
+        - name: overwrite
+          value_ref: nv_bool
+          required: false
+          description: Whether an existing destination may be replaced.
         - name: access_token
           value_ref: nv_access_token
           required: true
@@ -618,6 +647,14 @@ capabilities:
       input_type:
         type: object
         fields:
+        - name: retain_dates
+          value_ref: nv_bool
+          required: false
+          description: Whether to preserve source creation and modification timestamps.
+        - name: overwrite
+          value_ref: nv_bool
+          required: false
+          description: Whether an existing destination may be replaced.
         - name: access_token
           value_ref: nv_access_token
           required: true
@@ -638,6 +675,10 @@ capabilities:
       input_type:
         type: object
         fields:
+        - name: overwrite
+          value_ref: nv_bool
+          required: false
+          description: Whether extracted files may replace existing destination files.
         - name: access_token
           value_ref: nv_access_token
           required: true
@@ -697,7 +738,6 @@ values:
     description: Whether account ownership has been verified.
   nv_str:
     type: string
-    description: Free-form string.
   nv_email:
     type: email
     description: Email address of a user or counterparty.
@@ -728,10 +768,8 @@ values:
     - directories
   nv_bool:
     type: boolean
-    description: Boolean flag.
   nv_datetime:
     type: rfc3339
-    description: ISO datetime string.
   prerequisite_principal_email:
     type: email
     description: Account holder email.

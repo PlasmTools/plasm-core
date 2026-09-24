@@ -334,27 +334,6 @@ pub(crate) fn render_context_hint(
     out
 }
 
-pub(crate) fn resolve_inferred_render_columns(
-    session: &ExecuteSession,
-    symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
-    qe: Option<&QualifiedEntityKey>,
-    raw_tokens: &[String],
-) -> Result<RenderColumns, String> {
-    let pairs: Vec<(String, String)> = raw_tokens
-        .iter()
-        .map(|raw| {
-            let wire = crate::plasm_plan_run::resolve_wire_field_token(
-                session,
-                symbol_map_cross_cache,
-                qe,
-                raw.as_str(),
-            )?;
-            Ok::<(String, String), String>((raw.clone(), wire))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    RenderColumns::from_field_pairs(&pairs)
-}
-
 /// Plan JSON `depends_on` / `uses_result` edges for a render compute node.
 pub(crate) fn render_plan_graph_edges(
     source: &str,

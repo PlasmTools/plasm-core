@@ -7,9 +7,8 @@ use crate::view_preflight::{preflight_view_get, preflight_view_query};
 
 /// Compile capability templates for `expr` without dispatching HTTP.
 ///
-/// Identity GETs inherit session-stamped capability params from `mat` (explicit
-/// Session capability params overlay identity at CML populate (`path_vars` deleted from AST).
-/// Dry-run and live share this gate.
+/// Identity GETs inherit non-identity capability params from `mat`.
+/// Canonical target identity is sealed after input binding. Dry-run and live share this gate.
 pub fn preflight_compile_expr(
     expr: &Expr,
     cgs: &CGS,
@@ -208,11 +207,6 @@ fn preflight_compile_invoke(
     )?;
     if let Some(input) = &input_for_env {
         env.insert("input".to_string(), input.clone());
-        if let Value::Object(map) = input {
-            for (k, v) in map {
-                env.insert(k.clone(), v.clone());
-            }
-        }
     }
     normalize_cml_env_scope_entity_refs(&mut env, cgs, capability)?;
     plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {

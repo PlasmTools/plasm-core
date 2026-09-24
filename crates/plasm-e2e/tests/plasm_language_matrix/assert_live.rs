@@ -50,6 +50,23 @@ pub(crate) fn assert_row(row: &MatrixRow, out: &PlasmPlanRunResult) -> Result<()
             ));
         }
     }
+    if row.id == "lang_bind_filter_continuation" {
+        // Continuation is a data contract, independent of the inline preview threshold.
+        let tags = out
+            .return_steps
+            .iter()
+            .find(|step| step.entity.as_deref() == Some("LangTag"))
+            .ok_or("filtered continuation must return LangTag rows")?;
+        if tags.result.entities.is_empty()
+            || tags
+                .result
+                .entities
+                .iter()
+                .any(|entity| entity.reference.entity_type.as_str() != "LangTag")
+        {
+            return Err("filtered continuation returned no tags or the wrong entity type".into());
+        }
+    }
     if out.node_results.len() < row.min_node_results {
         return Err(format!(
             "row {}: expected at least {} node_results, got {}",

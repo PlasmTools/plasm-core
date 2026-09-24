@@ -303,6 +303,7 @@ player_play:
   body:
     type: object
     fields:
+    - [queue_position, {type: if, condition: {type: exists, var: queue_position}, then_expr: {type: var, name: queue_position}, else_expr: {type: const, value: null}}]
     - - song_id
       - type: if
         condition: { type: exists, var: song_id }
@@ -496,6 +497,24 @@ song_library_query:
   auth: *request_auth
   pagination: *appworld_page_index_limit
 
+  query:
+    type: object
+    fields:
+    - [artist_id, {type: if, condition: {type: exists, var: artist_id}, then_expr: {type: var, name: artist_id}, else_expr: {type: const, value: null}}]
+    - [max_play_count, {type: if, condition: {type: exists, var: max_play_count}, then_expr: {type: var, name: max_play_count}, else_expr: {type: const, value: null}}]
+    - [min_play_count, {type: if, condition: {type: exists, var: min_play_count}, then_expr: {type: var, name: min_play_count}, else_expr: {type: const, value: null}}]
+    - [max_duration, {type: if, condition: {type: exists, var: max_duration}, then_expr: {type: var, name: max_duration}, else_expr: {type: const, value: null}}]
+    - [min_duration, {type: if, condition: {type: exists, var: min_duration}, then_expr: {type: var, name: min_duration}, else_expr: {type: const, value: null}}]
+    - [album_id, {type: if, condition: {type: exists, var: album_id}, then_expr: {type: var, name: album_id}, else_expr: {type: const, value: null}}]
+    - [max_like_count, {type: if, condition: {type: exists, var: max_like_count}, then_expr: {type: var, name: max_like_count}, else_expr: {type: const, value: null}}]
+    - [min_like_count, {type: if, condition: {type: exists, var: min_like_count}, then_expr: {type: var, name: min_like_count}, else_expr: {type: const, value: null}}]
+    - [max_rating, {type: if, condition: {type: exists, var: max_rating}, then_expr: {type: var, name: max_rating}, else_expr: {type: const, value: null}}]
+    - [min_rating, {type: if, condition: {type: exists, var: min_rating}, then_expr: {type: var, name: min_rating}, else_expr: {type: const, value: null}}]
+    - [max_release_date, {type: if, condition: {type: exists, var: max_release_date}, then_expr: {type: var, name: max_release_date}, else_expr: {type: const, value: null}}]
+    - [min_release_date, {type: if, condition: {type: exists, var: min_release_date}, then_expr: {type: var, name: min_release_date}, else_expr: {type: const, value: null}}]
+    - [genre, {type: if, condition: {type: exists, var: genre}, then_expr: {type: var, name: genre}, else_expr: {type: const, value: null}}]
+    - [sort_by, {type: if, condition: {type: exists, var: sort_by}, then_expr: {type: var, name: sort_by}, else_expr: {type: const, value: null}}]
+    - [query, {type: if, condition: {type: exists, var: query}, then_expr: {type: var, name: query}, else_expr: {type: const, value: null}}]
 song_library_add:
   method: POST
   path:
@@ -529,6 +548,18 @@ album_library_query:
   auth: *request_auth
   pagination: *appworld_page_index_limit
 
+  query:
+    type: object
+    fields:
+    - [max_like_count, {type: if, condition: {type: exists, var: max_like_count}, then_expr: {type: var, name: max_like_count}, else_expr: {type: const, value: null}}]
+    - [min_like_count, {type: if, condition: {type: exists, var: min_like_count}, then_expr: {type: var, name: min_like_count}, else_expr: {type: const, value: null}}]
+    - [max_rating, {type: if, condition: {type: exists, var: max_rating}, then_expr: {type: var, name: max_rating}, else_expr: {type: const, value: null}}]
+    - [min_rating, {type: if, condition: {type: exists, var: min_rating}, then_expr: {type: var, name: min_rating}, else_expr: {type: const, value: null}}]
+    - [max_release_date, {type: if, condition: {type: exists, var: max_release_date}, then_expr: {type: var, name: max_release_date}, else_expr: {type: const, value: null}}]
+    - [min_release_date, {type: if, condition: {type: exists, var: min_release_date}, then_expr: {type: var, name: min_release_date}, else_expr: {type: const, value: null}}]
+    - [genre, {type: if, condition: {type: exists, var: genre}, then_expr: {type: var, name: genre}, else_expr: {type: const, value: null}}]
+    - [sort_by, {type: if, condition: {type: exists, var: sort_by}, then_expr: {type: var, name: sort_by}, else_expr: {type: const, value: null}}]
+    - [query, {type: if, condition: {type: exists, var: query}, then_expr: {type: var, name: query}, else_expr: {type: const, value: null}}]
 album_library_add:
   method: POST
   path:
@@ -562,6 +593,11 @@ playlist_library_query:
   query:
     type: object
     fields:
+    - [max_like_count, {type: if, condition: {type: exists, var: max_like_count}, then_expr: {type: var, name: max_like_count}, else_expr: {type: const, value: null}}]
+    - [min_like_count, {type: if, condition: {type: exists, var: min_like_count}, then_expr: {type: var, name: min_like_count}, else_expr: {type: const, value: null}}]
+    - [max_rating, {type: if, condition: {type: exists, var: max_rating}, then_expr: {type: var, name: max_rating}, else_expr: {type: const, value: null}}]
+    - [min_rating, {type: if, condition: {type: exists, var: min_rating}, then_expr: {type: var, name: min_rating}, else_expr: {type: const, value: null}}]
+    - [owner_email, {type: if, condition: {type: exists, var: owner_email}, then_expr: {type: var, name: owner_email}, else_expr: {type: const, value: null}}]
     - - query
       - type: if
         condition: { type: exists, var: query }
@@ -611,6 +647,14 @@ following_artist_query:
   auth: *request_auth
   pagination: *appworld_page_index_limit
 
+  query:
+    type: object
+    fields:
+    - [max_follower_count, {type: if, condition: {type: exists, var: max_follower_count}, then_expr: {type: var, name: max_follower_count}, else_expr: {type: const, value: null}}]
+    - [min_follower_count, {type: if, condition: {type: exists, var: min_follower_count}, then_expr: {type: var, name: min_follower_count}, else_expr: {type: const, value: null}}]
+    - [genre, {type: if, condition: {type: exists, var: genre}, then_expr: {type: var, name: genre}, else_expr: {type: const, value: null}}]
+    - [sort_by, {type: if, condition: {type: exists, var: sort_by}, then_expr: {type: var, name: sort_by}, else_expr: {type: const, value: null}}]
+    - [query, {type: if, condition: {type: exists, var: query}, then_expr: {type: var, name: query}, else_expr: {type: const, value: null}}]
 artist_search:
   method: GET
   path:
@@ -619,6 +663,10 @@ artist_search:
   query:
     type: object
     fields:
+    - [sort_by, {type: if, condition: {type: exists, var: sort_by}, then_expr: {type: var, name: sort_by}, else_expr: {type: const, value: null}}]
+    - [max_follower_count, {type: if, condition: {type: exists, var: max_follower_count}, then_expr: {type: var, name: max_follower_count}, else_expr: {type: const, value: null}}]
+    - [min_follower_count, {type: if, condition: {type: exists, var: min_follower_count}, then_expr: {type: var, name: min_follower_count}, else_expr: {type: const, value: null}}]
+    - [genre, {type: if, condition: {type: exists, var: genre}, then_expr: {type: var, name: genre}, else_expr: {type: const, value: null}}]
     - [query, { type: var, name: q }]
   pagination: *appworld_page_index_limit
 
@@ -1438,12 +1486,35 @@ artist_membership_get:
 artist_songs_query:
   method: GET
   path:
-  - { type: literal, value: spotify }
-  - { type: literal, value: songs }
-  auth: *request_auth
+  - type: literal
+    value: spotify
+  - type: literal
+    value: songs
+  auth:
+    scheme: bearer
+    token:
+      type: var
+      name: access_token
   query:
     type: object
     fields:
     - - artist_id
-      - { type: var, name: artist_id }
+      - type: var
+        name: artist_id
+  pagination:
+    params:
+      page_index:
+        counter: 0
+      page_limit:
+        fixed: 20
+        role: page_size
+    strategy: page_number
+user_search:
+  method: GET
+  path: [{type: literal, value: spotify}, {type: literal, value: users}]
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - [query, {type: var, name: query}]
   pagination: *appworld_page_index_limit

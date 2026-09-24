@@ -549,13 +549,11 @@ pub(crate) fn summary_string_needs_full_fidelity_restore(
     }
 }
 
-/// UTF-8 bytes of string cells that full-fidelity MCP rendering would restore in-band.
-///
-/// Includes schema `ReferenceOnly` / `Lossy` strings and default strings past
-/// [`SUMMARY_DEFAULT_STRING_OMIT_CHARS`]. Measured before TSV whitespace normalisation.
+/// Encoded UTF-8 bytes of all string cells admitted by full-fidelity MCP rendering.
+/// Budget the actual escaped representation, including short strings and layout.
 pub(crate) fn summary_sensitive_string_bytes(
     result: &ExecutionResult,
-    cgs: Option<&CGS>,
+    _cgs: Option<&CGS>,
     max_entity_rows: Option<usize>,
 ) -> usize {
     result
@@ -563,12 +561,15 @@ pub(crate) fn summary_sensitive_string_bytes(
         .iter()
         .take(max_entity_rows.unwrap_or(usize::MAX))
         .flat_map(|entity| {
-            entity.fields.iter().filter_map(|(field, value)| {
+            entity.fields.iter().filter_map(|(_field, value)| {
                 let Value::String(s) = value.to_value() else {
                     return None;
                 };
-                let presentation = field_presentation(cgs, &entity.reference.entity_type, field);
-                summary_string_needs_full_fidelity_restore(presentation, &s).then_some(s.len())
+                Some(
+                    serde_json::to_string(&s)
+                        .expect("string serialization")
+                        .len(),
+                )
             })
         })
         .sum()
@@ -756,6 +757,7 @@ mod tests {
         PLASM_ATTACHMENT_KEY,
     };
     use plasm_runtime::{ExecutionSource, ExecutionStats, ResultCoverage};
+    use std::collections::BTreeMap;
 
     use super::in_band_fidelity::SummaryFidelityLoss;
 
@@ -1236,6 +1238,39 @@ mod tests {
             "mime must not duplicate on the ref column: {s}"
         );
         assert!(omitted.contains(&"content".to_string()));
+        // Synthetic MIME columns obey the same lossless cell codec as stored values.
+        let mime = "application/pdf\tprofile=example\nrevision=1";
+        cgs.entities
+            .get_mut("File")
+            .unwrap()
+            .fields
+            .get_mut("content")
+            .unwrap()
+            .mime_type_hint = Some(mime.into());
+        let (tsv, _, _) = format_result_tsv_with_cgs(&result, Some(&cgs), None);
+        let lines = tsv.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 2);
+        let cells = lines[0]
+            .split('\t')
+            .zip(lines[1].split('\t'))
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(
+            serde_json::from_str::<String>(cells["content_mime"]).unwrap(),
+            mime
+        );
+        assert_eq!(cells["content_ref"], REFERENCE_ONLY_PLACEHOLDER);
+        let mut unavailable = result;
+        unavailable.entities[0]
+            .unavailable_fields
+            .insert("content".into());
+        let (tsv, _, _) = format_result_tsv_with_cgs(&unavailable, Some(&cgs), None);
+        let lines = tsv.lines().collect::<Vec<_>>();
+        let cells = lines[0]
+            .split('\t')
+            .zip(lines[1].split('\t'))
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(cells["content_mime"], UNAVAILABLE_FIELD_PLACEHOLDER);
+        assert_eq!(cells["content_ref"], UNAVAILABLE_FIELD_PLACEHOLDER);
     }
 
     #[test]
@@ -1334,8 +1369,9 @@ mod tests {
         let row1 = tsv.lines().nth(1).expect("row");
         assert!(row1.contains('\t'), "two cells: {row1}");
         assert!(
-            row1.ends_with("a b") || row1.contains("\ta b") || row1.contains("a b\t"),
-            "inner tab collapsed to space: {row1}"
+            row1.split('\t')
+                .any(|cell| serde_json::from_str::<String>(cell).ok().as_deref() == Some("a\tb")),
+            "inner tab must round trip: {row1}"
         );
     }
 

@@ -66,17 +66,6 @@ pub(crate) fn reject_derive_map_invalid_rhs(
     source_relation_wires: &[String],
 ) -> Result<(), String> {
     match value {
-        PlanValue::Literal { value } => {
-            let Some(s) = value.as_str() else {
-                return Ok(());
-            };
-            let t = s.trim();
-            if derive_rhs_literal_looks_like_surface_call(t)
-                || rhs_text_looks_like_relation_hop_trap(t, source_relation_wires)
-            {
-                return Err(derive_map_invalid_rhs_err(Some(t)));
-            }
-        }
         PlanValue::NodeSymbol { path, .. } | PlanValue::BindingSymbol { path, .. }
             if path.first().is_some_and(|seg| {
                 path_segment_looks_like_relation_hop(seg.as_str(), source_relation_wires)
@@ -116,24 +105,6 @@ fn path_segment_looks_like_relation_hop(seg: &str, source_relation_wires: &[Stri
 
 fn teaching_relation_symbol(seg: &str) -> bool {
     seg.len() > 1 && seg.starts_with('r') && seg[1..].chars().all(|c| c.is_ascii_digit())
-}
-
-fn derive_rhs_literal_looks_like_surface_call(s: &str) -> bool {
-    if !s.contains('(') {
-        return false;
-    }
-    let head = s.split('(').next().unwrap_or("").trim();
-    if head.is_empty() {
-        return false;
-    }
-    let mut chars = head.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    if first == 'e' && chars.next().is_some_and(|c| c.is_ascii_digit()) {
-        return true;
-    }
-    first.is_ascii_uppercase() && head.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -208,7 +179,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_teaching_relation_symbol_in_literal_rhs() {
+    fn quoted_relation_text_remains_literal() {
         let wires: Vec<String> = Vec::new();
         let value = PlanValue::Literal {
             value: plasm_core::operand_binding::ResolvedValue::from_wire(serde_json::json!(
@@ -216,8 +187,7 @@ mod tests {
             ))
             .expect("literal data"),
         };
-        let err = reject_derive_map_invalid_rhs(&value, &wires).unwrap_err();
-        assert!(err.contains(DERIVE_MAP_RELATION_HOP_MSG), "{err}");
+        reject_derive_map_invalid_rhs(&value, &wires).unwrap();
     }
 
     #[test]

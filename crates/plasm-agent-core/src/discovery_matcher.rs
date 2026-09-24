@@ -28,7 +28,7 @@ const CRITERIA: [(&str, &str); 3] = [
         "The supplied evidence does not establish relevance or unrelatedness.",
     ),
 ];
-const QUESTION_FORMAT: &str = "Each question names a capability key. Assess its operation and collection meaning under state.rule. Resolve collection_ref in state.collections. Use state.criteria for choice meanings.";
+const QUESTION_FORMAT: &str = "For each question, resolve its capability key in state.capabilities and collection_ref in state.collections. Apply state.rule and state.criteria. Read state.intent_provenance.turns in order: each index refers to a complete text in state.intent_provenance.texts. The last turn is the current discovery need. Earlier turns supply context for references and constraints; explicit revisions in later turns supersede earlier goals. Judge contribution to the current need, not to every historical goal.";
 
 const RUBRIC: &str = "Is this capability relevant to the current discovery need? Relevant means its documented operation or information can contribute to that need, including information used to choose the target collection. Judge relevance, not necessity, workflow completeness, or permission to execute. Respect documented collection meanings and explicit exclusions. Current intent governs; provenance supplies context and explicit revisions replace earlier goals. Choose relevant, unrelated, or uncertain from the supplied evidence.";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -176,9 +176,33 @@ struct JevState<'a> {
     rule: &'static str,
     question_format: &'static str,
     criteria: BTreeMap<&'static str, &'static str>,
-    intent_provenance: &'a IntentProvenance,
+    intent_provenance: JevProvenance<'a>,
     capabilities: BTreeMap<String, JevCard<'a>>,
     collections: BTreeMap<String, &'a str>,
+}
+/// Wire-only interning: preserve every turn, including A -> B -> A revisions.
+/// The authoritative provenance chain and its session identity are unchanged.
+#[derive(Serialize)]
+struct JevProvenance<'a> {
+    texts: Vec<&'a str>,
+    turns: Vec<usize>,
+}
+impl<'a> From<&'a IntentProvenance> for JevProvenance<'a> {
+    fn from(provenance: &'a IntentProvenance) -> Self {
+        let mut texts = Vec::new();
+        let mut indices = BTreeMap::new();
+        let turns = provenance
+            .turns()
+            .map(|text| {
+                *indices.entry(text).or_insert_with(|| {
+                    let index = texts.len();
+                    texts.push(text);
+                    index
+                })
+            })
+            .collect();
+        Self { texts, turns }
+    }
 }
 #[derive(Serialize)]
 struct JevCard<'a> {
@@ -240,11 +264,16 @@ fn issue_batch(
         );
         let key = format!("q{i}");
         bindings.insert(key.clone(), c.id.clone());
-        wire_questions.insert(key, JevQuestion {
-            kind: ChoiceQuestion::Choice,
-            instructions: format!("Is capability {alias} relevant to the current discovery need? Judge its documented operation and collection meaning under state.rule. Choose relevant, unrelated, or uncertain."),
-            criteria: ANSWERS.into_iter().map(|label| (label,label)).collect(),
-        });
+        wire_questions.insert(
+            key,
+            JevQuestion {
+                kind: ChoiceQuestion::Choice,
+                instructions: format!(
+                    "Is capability {alias} relevant? Apply state.question_format."
+                ),
+                criteria: ANSWERS.into_iter().map(|label| (label, label)).collect(),
+            },
+        );
     }
     let body = JevCodec::encode(&JevRequest {
         model,
@@ -252,14 +281,14 @@ fn issue_batch(
             rule: RUBRIC,
             question_format: QUESTION_FORMAT,
             criteria: CRITERIA.into_iter().collect(),
-            intent_provenance: intent,
+            intent_provenance: intent.into(),
             capabilities: cards,
             collections,
         },
         questions: wire_questions,
     })?;
     Ok(IssuedBatch {
-        cache_key: content_hash(format!("jev-relevance-v5\n{body}").as_bytes()),
+        cache_key: content_hash(format!("jev-relevance-v6\n{body}").as_bytes()),
         body,
         model: model.into(),
         bindings,
@@ -654,6 +683,33 @@ mod tests {
         }
     }
 
+    proptest! {
+        #[test]
+        fn interned_provenance_preserves_every_turn(
+            texts in prop::collection::vec("[a-zA-Z ]{1,80}", 1..8),
+            choices in prop::collection::vec(0usize..64, 1..32),
+        ) {
+            let turns: Vec<_> = choices.iter().map(|i| format!("Need {}", texts[i % texts.len()])).collect();
+            let provenance = IntentProvenance::from_turns(turns.clone()).unwrap();
+            let wire = serde_json::to_value(JevProvenance::from(&provenance)).unwrap();
+            let restored: Vec<_> = wire["turns"].as_array().unwrap().iter()
+                .map(|index| wire["texts"][index.as_u64().unwrap() as usize].as_str().unwrap().to_owned()).collect();
+            prop_assert_eq!(restored, turns);
+            prop_assert_eq!(wire["texts"].as_array().unwrap().len(), provenance.turns().collect::<BTreeSet<_>>().len());
+        }
+    }
+
+    #[test]
+    fn repeated_and_revised_intents_keep_chronology() {
+        let provenance =
+            IntentProvenance::from_turns(["First", "First", "Revised", "First"].map(str::to_owned))
+                .unwrap();
+        assert_eq!(
+            serde_json::to_value(JevProvenance::from(&provenance)).unwrap(),
+            json!({"texts": ["First", "Revised"], "turns": [0, 0, 1, 0]})
+        );
+    }
+
     #[test]
     fn collection_descriptions_are_interned_without_truncation() {
         let (intent, mut retrieval) = fixture();
@@ -695,7 +751,13 @@ mod tests {
                 .unwrap()
                 .split_whitespace()
                 .collect();
-            assert_eq!(question["instructions"], format!("Is capability {} relevant to the current discovery need? Judge its documented operation and collection meaning under state.rule. Choose relevant, unrelated, or uncertain.", parts[2]));
+            assert_eq!(
+                question["instructions"],
+                format!(
+                    "Is capability {} relevant? Apply state.question_format.",
+                    parts[2]
+                )
+            );
             assert!(body["state"].get("evidence").is_none());
             let reference: CapabilityRef = serde_json::from_value(
                 body["state"]["capabilities"][parts[2]]["reference"].clone(),

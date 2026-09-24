@@ -1010,15 +1010,10 @@ mod tests {
         );
         preflight_compile_expr(&written_search.expr, &cgs, &compiled, &ambient, &mat)
             .expect("Search with written access_token compiles after login");
-        match sess_search {
-            Ok(parsed) => {
-                preflight_compile_expr(&parsed.expr, &cgs, &compiled, &ambient, &mat)
-                    .expect("Search with written access_token=sess.access_token compiles");
-            }
-            Err(err) => {
-                panic!("SecuredNote~\"q\"{{access_token=sess.access_token}} must parse: {err}");
-            }
-        }
+        assert!(
+            sess_search.is_err(),
+            "undeclared session binding must not become a literal"
+        );
     }
 
     /// Written Search `{access_token=…}` after login must put that same Bearer on

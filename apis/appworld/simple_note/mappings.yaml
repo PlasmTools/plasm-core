@@ -52,6 +52,7 @@ note_query:
   query:
     type: object
     fields:
+    - [dont_reorder_pinned, {type: if, condition: {type: exists, var: dont_reorder_pinned}, then_expr: {type: var, name: dont_reorder_pinned}, else_expr: {type: const, value: null}}]
     - - query
       - type: if
         condition: { type: exists, var: query }

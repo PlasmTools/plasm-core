@@ -823,14 +823,18 @@ views:
         id:
           kind: scope
           param: item_id
+    locals:
+      source_title:
+        kind: node_field
+        node: item_node
+        field: title
     output:
       item_id:
         kind: scope
         param: item_id
       echo_title:
-        kind: node_field
-        node: item_node
-        field: title
+        kind: computed
+        template: '{{ source_title }}'
       echo_slug:
         kind: computed
         template: '{{ item_id }}-{{ echo_title }}'

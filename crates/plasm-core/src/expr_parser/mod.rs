@@ -96,6 +96,9 @@ pub use program_surface::{
 };
 pub use value_expr::{RenderExpr, ValueExpr};
 
+pub mod data;
+mod quoted;
+
 use crate::cgs_federation::CgsLayer;
 use crate::schema::{
     capability_is_zero_arity_invoke, capability_path_method_segment,
@@ -804,6 +807,17 @@ fn parse_with_cgs_layers_program_opts(
     }
     let remainder = p.classify_remainder();
     if !remainder.acceptable_for_program_line() {
+        if matches!(&parsed.expr, Expr::Get(_))
+            && matches!(&remainder, ParseRemainder::Syntax { head: '{', .. })
+        {
+            return Err(ParseError {
+                kind: ParseErrorKind::Other { message: format!(
+                    "unexpected trailing query braces after Get `{}`: Get accepts identity only. Bind required provisions through their declared capabilities before this Get; use `| where` for row selection. Do not discard selection criteria during repair.",
+                    input[..p.pos].trim()
+                ) },
+                offset: p.pos,
+            });
+        }
         return Err(ParseError {
             kind: ParseErrorKind::Other {
                 message: format!(
@@ -7178,3 +7192,6 @@ mod tests {
 
 #[cfg(test)]
 mod chained_groups_tests;
+
+#[cfg(test)]
+mod value_boundary_tests;

@@ -391,7 +391,13 @@ fn inherit_row_preserving_contract(
         row_cardinality,
         value_kind,
         continuation: parent.continuation,
-        anchor,
+        // RA-10 preserves existing continuation evidence; it cannot manufacture
+        // an anchor after a terminal row-plane operation (RA-7 / RA-14).
+        anchor: if parent.anchor.is_present() {
+            anchor
+        } else {
+            ContinuationAnchor::None
+        },
     }
 }
 
@@ -436,6 +442,52 @@ mod tests {
     use super::*;
     use crate::plasm_dag::types::DagNodeSource;
     use crate::plasm_plan::{ComputeOp, SyntheticResultSchema};
+
+    #[test]
+    fn row_preserving_contract_never_creates_continuation_evidence() {
+        let schema = SyntheticResultSchema {
+            entity: Some("Item".into()),
+            fields: vec![],
+        };
+        for continuation in [
+            ContinuationCapability::Terminal,
+            ContinuationCapability::PostfixOnly,
+            ContinuationCapability::RenderContentScalar,
+            ContinuationCapability::RelationDot {
+                segments: SegmentPolicy::SingleSegment,
+                method_invoke: true,
+            },
+        ] {
+            for anchor in [
+                ContinuationAnchor::None,
+                ContinuationAnchor::BindingLabel,
+                ContinuationAnchor::RootSurface("e2".into()),
+            ] {
+                let mut parent = synthetic_terminal_contract("parent", &schema);
+                parent.continuation = continuation;
+                parent.anchor = anchor;
+                for cardinality in [
+                    RowCardinalityProof::StaticPlural,
+                    RowCardinalityProof::BoundedSingleton {
+                        kind: BoundedSingletonKind::LimitOne,
+                        from_plural_source: true,
+                    },
+                ] {
+                    let child = inherit_row_preserving_contract(
+                        "child",
+                        BindingValueKind::EntityRow,
+                        &parent,
+                        cardinality,
+                        ContinuationAnchor::BindingLabel,
+                    );
+                    assert_eq!(child.continuation, parent.continuation);
+                    assert_eq!(child.anchor.is_present(), parent.anchor.is_present());
+                    assert_eq!(child.row_entity, parent.row_entity);
+                    assert_eq!(child.row_cardinality, cardinality);
+                }
+            }
+        }
+    }
 
     #[test]
     fn binding_value_kind_table() {

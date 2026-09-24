@@ -102,7 +102,7 @@ export function createEvalTerminalTools(gate?: EvalTerminalGate): ToolSet {
   };
 }
 
-export const PLASM_ARTEFACT_TRANSFORM_TOOL_DESCRIPTION = `Process materialized artifacts with TypeScript. Pass their file locators in paths and export a default function receiving the parsed JSON artifacts in the same order. Example: export default ([snapshot]: any[]) => Object.keys(snapshot). The function may be async. Return only the needed JSON summary (maximum 8192 bytes). Inputs stay outside model context. No network or external side effects; execution is isolated and bounded to 30 seconds. This is harness computation, not Plasm language.`;
+export const PLASM_ARTEFACT_TRANSFORM_TOOL_DESCRIPTION = `Process materialized artifacts with TypeScript. Pass their file locators in paths and export a default function receiving the parsed JSON artifacts in the same order. A Plasm snapshot is an envelope: snapshot.entities is Row[], with fields from the taught row type; snapshot.coverage describes collection completeness. Example: export default ([snapshot]: any[]) => ({coverage: snapshot.coverage, count: snapshot.entities.length}). Relation values such as "Entity:123" are identity references, not embedded rows; use taught Plasm relation traversal/Get for their fields. A partial or unknown collection cannot establish absence; use the run response's continuation when available. The function may be async. Return only the needed JSON summary (maximum 8192 bytes). Inputs stay outside model context. No network or external side effects; execution is isolated and bounded to 30 seconds. This is harness computation, not Plasm language.`;
 
 export function createArtefactTransformTool(workspaceRoot: string): ToolSet {
   return {

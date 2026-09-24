@@ -1,4 +1,4 @@
-version: 21
+version: 23
 entry_id: splitwise
 auth:
   scheme: none
@@ -11,6 +11,111 @@ data_classes:
     description: Settlement payment recorded between group members.
     severity: critical
 entities:
+  ActivityDebtor:
+    abstract: true
+    id_field: email
+    key_vars: [record_type, record_id, email]
+    description: A person owing money on one expense or payment activity record.
+    fields:
+      record_type: {required: true, value_ref: nv_activity_record_type}
+      record_id: {required: true, value_ref: nv_int}
+      email: {required: true, value_ref: nv_email}
+      name: {value_ref: nv_str, description: Debtor display name.}
+      amount: {value_ref: nv_number, description: Amount this person owes on the activity record.}
+  GroupIncomingDebt:
+    abstract: true
+    id_field: counterparty_email
+    key_vars: [group_id, participant_email, counterparty_email]
+    description: Amount this counterparty owes the participant.
+    fields:
+      group_id: {required: true, value_ref: nv_group_id}
+      participant_email: {required: true, value_ref: nv_email}
+      counterparty_email: {required: true, value_ref: nv_email, path: [email]}
+      counterparty_name: {value_ref: nv_str, path: [name], description: Counterparty display name.}
+      amount: {value_ref: nv_number, description: Amount this counterparty owes the participant.}
+  GroupOutgoingDebt:
+    abstract: true
+    id_field: counterparty_email
+    key_vars: [group_id, participant_email, counterparty_email]
+    description: Amount this participant owes the counterparty.
+    fields:
+      group_id: {required: true, value_ref: nv_group_id}
+      participant_email: {required: true, value_ref: nv_email}
+      counterparty_email: {required: true, value_ref: nv_email, path: [email]}
+      counterparty_name: {value_ref: nv_str, path: [name], description: Counterparty display name.}
+      amount: {value_ref: nv_number, description: Amount this participant owes the counterparty.}
+  GroupBalanceParticipant:
+    abstract: true
+    id_field: participant_email
+    key_vars: [group_id, participant_email]
+    description: One group member's incoming and outgoing debt totals.
+    fields:
+      group_id: {required: true, value_ref: nv_group_id}
+      participant_email: {required: true, value_ref: nv_email, path: [source, email]}
+      participant_name: {value_ref: nv_str, path: [source, name], description: Group member display name.}
+      owes: {value_ref: nv_number, path: [source_owes_to_targets, total], description: Total this member owes other group members.}
+      is_owed: {value_ref: nv_number, path: [targets_owe_to_source, total], description: Total other group members owe this member.}
+    relations:
+      incoming:
+        description: Amount this counterparty owes the participant.
+        target: GroupIncomingDebt
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path: [{key: targets_owe_to_source}, {key: breakdown}, {wildcard: true}]
+      outgoing:
+        description: Amount this participant owes the counterparty.
+        target: GroupOutgoingDebt
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path: [{key: source_owes_to_targets}, {key: breakdown}, {wildcard: true}]
+  BalanceSummary:
+    id_field: access_token
+    implicit_request_identity: true
+    description: Account-wide interpersonal debt totals and the counterparty breakdown.
+    fields:
+      access_token: {required: true, value_ref: nv_access_token}
+      you_owe_others: {value_ref: nv_number, description: Total amount the account holder owes other people.}
+      others_owe_you: {value_ref: nv_number, description: Total amount other people owe the account holder.}
+    relations:
+      people:
+        target: PeerBalance
+        cardinality: many
+        description: Counterparty identities, debt directions and amounts contributing to the totals.
+        materialize:
+          kind: from_parent_get
+          path: [{key: breakdown}, {wildcard: true}]
+  DownloadedFile:
+    abstract: true
+    id_field: file_path
+    description: File written by a download operation in the account file system.
+    fields:
+      file_path:
+        required: true
+        value_ref: downloaded_file_path
+        description: Actual destination path, including an automatically chosen path when none was supplied.
+  ExpenseShare:
+    abstract: true
+    id_field: debtor_email
+    key_vars: [expense_id, debtor_email]
+    description: One person's allocated debt within a particular expense.
+    fields:
+      expense_id:
+        required: true
+        value_ref: nv_expense_id
+      debtor_email:
+        required: true
+        value_ref: nv_email
+        path: [debtor, email]
+        description: Person who owes this expense share.
+      debtor_name:
+        value_ref: nv_str
+        path: [debtor, name]
+        description: Display name of the person owing this share.
+      debt_amount:
+        value_ref: nv_number
+        description: Amount allocated to this person for this expense.
   NotificationSummary:
     id_field: access_token
     implicit_request_identity: true
@@ -70,6 +175,16 @@ entities:
       - trip
       - household
     fields:
+      creator_name:
+        required: false
+        value_ref: nv_str
+        description: Creator of this group display name.
+        path: [creator, name]
+      creator_email:
+        required: false
+        value_ref: nv_email
+        description: Creator of this group email address.
+        path: [creator, email]
       group_id:
         required: true
         value_ref: nv_group_id
@@ -86,6 +201,7 @@ entities:
       deleted:
         required: false
         value_ref: nv_bool
+        description: "Whether this group has been deleted."
       invitation_code:
         required: false
         value_ref: nv_str
@@ -149,6 +265,30 @@ entities:
       - cost
       - split
     fields:
+      payer_name:
+        required: false
+        value_ref: nv_str
+        description: Payer of this expense display name.
+        path: [payer, name]
+      payer_email:
+        required: false
+        value_ref: nv_email
+        description: Payer of this expense email address.
+        path: [payer, email]
+      creator_name:
+        required: false
+        value_ref: nv_str
+        description: Creator of this expense display name.
+        path: [creator, name]
+      creator_email:
+        required: false
+        value_ref: nv_email
+        description: Creator of this expense email address.
+        path: [creator, email]
+      receipt_file_name:
+        required: false
+        value_ref: nv_str
+        description: Filename of the receipt attached to this expense.
       expense_id:
         required: true
         value_ref: nv_expense_id
@@ -156,7 +296,7 @@ entities:
         required: false
         value_ref: nv_group_ref
       description:
-        required: true
+        required: false
         value_ref: nv_body
         data_class: untrusted
       paid_amount:
@@ -165,10 +305,18 @@ entities:
       deleted:
         required: false
         value_ref: nv_bool
+        description: "Whether this expense has been deleted."
       created_at:
         required: false
         value_ref: nv_datetime
     relations:
+      shares:
+        description: Debtors and the amount each owes for this expense.
+        target: ExpenseShare
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path: [{key: shares}, {wildcard: true}]
       comments:
         target: ExpenseComment
         cardinality: many
@@ -187,6 +335,40 @@ entities:
       - settle
       - repayment
     fields:
+      receiver_name:
+        required: false
+        value_ref: nv_str
+        description: Receiver of this payment display name.
+        path: [receiver, name]
+      receiver_email:
+        required: false
+        value_ref: nv_email
+        description: Receiver of this payment email address.
+        path: [receiver, email]
+      payer_name:
+        required: false
+        value_ref: nv_str
+        description: Payer of this payment display name.
+        path: [payer, name]
+      payer_email:
+        required: false
+        value_ref: nv_email
+        description: Payer of this payment email address.
+        path: [payer, email]
+      creator_name:
+        required: false
+        value_ref: nv_str
+        description: Creator of this payment display name.
+        path: [creator, name]
+      creator_email:
+        required: false
+        value_ref: nv_email
+        description: Creator of this payment email address.
+        path: [creator, email]
+      receipt_file_name:
+        required: false
+        value_ref: nv_str
+        description: Filename of the receipt attached to this payment.
       payment_id:
         required: true
         value_ref: nv_payment_id
@@ -290,6 +472,46 @@ entities:
       - alert
       - inbox
     fields:
+      exited_member_id:
+        required: false
+        value_ref: nv_int
+        description: Backend identifier of the member who left.
+        path: [data, exited_member_id]
+      joined_member_id:
+        required: false
+        value_ref: nv_int
+        description: Backend identifier of the member who joined.
+        path: [data, joined_member_id]
+      action_by_id:
+        required: false
+        value_ref: nv_int
+        description: Backend identifier of the person who caused this notification; this is not an email identity.
+        path: [data, action_by_id]
+      payment_comment_id:
+        required: false
+        value_ref: notification_payment_comment_id_ref
+        description: PaymentComment referenced by this notification, when applicable.
+        path: [data, payment_comment_id]
+      payment_id:
+        required: false
+        value_ref: notification_payment_id_ref
+        description: Payment referenced by this notification, when applicable.
+        path: [data, payment_id]
+      expense_comment_id:
+        required: false
+        value_ref: notification_expense_comment_id_ref
+        description: ExpenseComment referenced by this notification, when applicable.
+        path: [data, expense_comment_id]
+      expense_id:
+        required: false
+        value_ref: notification_expense_id_ref
+        description: Expense referenced by this notification, when applicable.
+        path: [data, expense_id]
+      group_id:
+        required: false
+        value_ref: notification_group_id_ref
+        description: Group referenced by this notification, when applicable.
+        path: [data, group_id]
       notification_id:
         required: true
         value_ref: nv_notification_id
@@ -310,7 +532,8 @@ entities:
         required: false
         value_ref: nv_datetime
   Activity:
-    id_field: created_at
+    id_field: record_id
+    key_vars: [record_type, record_id]
     primary_query: activity_query
     description: Combined expense and payment history for the authenticated account.
     discovery:
@@ -319,18 +542,26 @@ entities:
       - history
       - ledger
     fields:
+      paid_by_name:
+        required: false
+        value_ref: nv_str
+        description: Payer on this activity entry display name.
+        path: [paid_by, name]
+      paid_by_email:
+        required: false
+        value_ref: nv_email
+        description: Payer on this activity entry email address.
+        path: [paid_by, email]
+      record_id:
+        required: false
+        value_ref: nv_int
+        description: Identifier of the expense or payment, interpreted using record_type.
       record_type:
         required: true
         value_ref: nv_activity_record_type
       amount:
         required: true
         value_ref: nv_number
-      paid_by:
-        required: true
-        value_ref: nv_activity_paid_by
-      owed_by:
-        required: true
-        value_ref: nv_activity_owed_by
       description:
         required: false
         value_ref: nv_body
@@ -344,6 +575,14 @@ entities:
       created_at:
         required: true
         value_ref: nv_datetime
+    relations:
+      owed_by:
+        description: Debtor identities and amounts on this activity record.
+        target: ActivityDebtor
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path: [{key: owed_by}, {wildcard: true}]
   Balance:
     id_field: access_token
     implicit_request_identity: true
@@ -375,9 +614,14 @@ entities:
       group_id:
         required: true
         value_ref: nv_group_id
+    relations:
       participants:
-        required: false
-        value_ref: nv_group_balance_participants
+        description: Group members, their debt totals and typed counterparty breakdowns.
+        target: GroupBalanceParticipant
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path: [{key: participants}, {wildcard: true}]
   User:
     id_field: email
     description: Splitwise person with optional balance direction toward the authenticated user.
@@ -393,15 +637,6 @@ entities:
       name:
         required: false
         value_ref: nv_str
-      first_name:
-        required: false
-        value_ref: nv_str
-      last_name:
-        required: false
-        value_ref: nv_str
-      registered_at:
-        required: false
-        value_ref: nv_datetime
       direction:
         required: false
         value_ref: nv_balance_direction
@@ -467,6 +702,18 @@ entities:
         required: false
         value_ref: nv_balance_breakdown
 capabilities:
+  balance_summary_get:
+    kind: get
+    entity: BalanceSummary
+    description: Read account-wide debt totals and counterparty balances.
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides: [you_owe_others, others_owe_you]
   expense_comment_get:
     kind: get
     entity: ExpenseComment
@@ -901,6 +1148,18 @@ capabilities:
     kind: query
     entity: Expense
     selection:
+    - name: max_created_at
+      value_ref: nv_datetime
+      required: false
+      description: Inclusive creation-date bound; the backend compares calendar dates.
+    - name: min_created_at
+      value_ref: nv_datetime
+      required: false
+      description: Inclusive creation-date bound; the backend compares calendar dates.
+    - name: deleted
+      value_ref: nv_bool
+      required: false
+      description: Select deleted or active records.
     - name: access_token
       value_ref: nv_access_token
       required: true
@@ -957,6 +1216,14 @@ capabilities:
       input_type:
         type: object
         fields:
+        - name: file_system_access_token
+          value_ref: nv_file_access_token
+          required: false
+          description: File-system session authorizing the receipt read.
+        - name: receipt_file_path
+          value_ref: nv_file_path
+          required: false
+          description: Receipt file to attach from the account file system.
         - name: access_token
           value_ref: nv_access_token
           required: true
@@ -1096,14 +1363,32 @@ capabilities:
         - name: file_system_access_token
           value_ref: nv_file_access_token
           required: false
-    output:
-      type: side_effect
-      description: Writes the expense receipt to the given file path.
+    output: {type: entity, entity_type: DownloadedFile}
   payment_query:
     description: List payments — with group_id for a group, or ungrouped when omitted.
     kind: query
     entity: Payment
     selection:
+    - name: max_amount
+      value_ref: nv_number
+      required: false
+      description: Maximum settlement payment amount.
+    - name: min_amount
+      value_ref: nv_number
+      required: false
+      description: Minimum settlement payment amount.
+    - name: max_created_at
+      value_ref: nv_datetime
+      required: false
+      description: Inclusive creation-date bound; the backend compares calendar dates.
+    - name: min_created_at
+      value_ref: nv_datetime
+      required: false
+      description: Inclusive creation-date bound; the backend compares calendar dates.
+    - name: deleted
+      value_ref: nv_bool
+      required: false
+      description: Select deleted or active records.
     - name: access_token
       value_ref: nv_access_token
       required: true
@@ -1154,6 +1439,14 @@ capabilities:
       input_type:
         type: object
         fields:
+        - name: file_system_access_token
+          value_ref: nv_file_access_token
+          required: false
+          description: File-system session authorizing the receipt read.
+        - name: receipt_file_path
+          value_ref: nv_file_path
+          required: false
+          description: Receipt file to attach from the account file system.
         - name: access_token
           value_ref: nv_access_token
           required: true
@@ -1279,9 +1572,7 @@ capabilities:
         - name: file_system_access_token
           value_ref: nv_file_access_token
           required: true
-    output:
-      type: side_effect
-      description: Writes the payment receipt to the given file path.
+    output: {type: entity, entity_type: DownloadedFile}
   settle_up:
     description: Settle up balances with a person (optionally within a group).
     kind: action
@@ -1471,8 +1762,8 @@ capabilities:
     provides:
     - record_type
     - amount
-    - paid_by
-    - owed_by
+    - paid_by_email
+    - paid_by_name
     - description
     - group_id
     - group_name
@@ -1555,6 +1846,10 @@ capabilities:
     kind: query
     entity: User
     selection:
+    - name: include_self
+      value_ref: nv_bool
+      required: false
+      description: Include the signed-in account in user results.
     - name: access_token
       value_ref: nv_access_token
       required: true
@@ -1598,10 +1893,14 @@ capabilities:
       input_type:
         type: object
         fields:
+        - name: email
+          value_ref: nv_email
+          required: false
+          description: Limit the group balance to this participant.
         - name: access_token
           value_ref: nv_access_token
           required: true
-    provides: [group_id, participants]
+    provides: [group_id]
   peer_balance_query:
     description: List each counterparty's interpersonal debt direction and amount.
     kind: query
@@ -1624,6 +1923,29 @@ capabilities:
           required: true
     provides: [email, direction, total, breakdown]
 values:
+  downloaded_file_path:
+    type: string
+    description: Absolute path of the downloaded file in the account file system.
+  notification_payment_comment_id_ref:
+    type: entity_ref
+    target: PaymentComment
+    description: PaymentComment referenced by this notification, if applicable to its type.
+  notification_payment_id_ref:
+    type: entity_ref
+    target: Payment
+    description: Payment referenced by this notification, if applicable to its type.
+  notification_expense_comment_id_ref:
+    type: entity_ref
+    target: ExpenseComment
+    description: ExpenseComment referenced by this notification, if applicable to its type.
+  notification_expense_id_ref:
+    type: entity_ref
+    target: Expense
+    description: Expense referenced by this notification, if applicable to its type.
+  notification_group_id_ref:
+    type: entity_ref
+    target: Group
+    description: Group referenced by this notification, if applicable to its type.
   notification_count:
     type: number
     description: Number of notifications matching the selected read status.
@@ -1659,12 +1981,8 @@ values:
   nv_balance_breakdown:
     type: json
     description: Full balance entries with their group context, directions and amounts.
-  nv_group_balance_participants:
-    type: json
-    description: Group participants with their outgoing and incoming debt breakdowns.
   nv_str:
     type: string
-    description: Free-form string.
   nv_login_username:
     type: email
     description: Task-principal email from Supervisor — the login username for this service (not a counterparty).
@@ -1725,13 +2043,10 @@ values:
     description: List of numeric amounts.
   nv_bool:
     type: boolean
-    description: Boolean flag.
   nv_int:
     type: integer
-    description: Integer.
   nv_datetime:
     type: rfc3339
-    description: ISO datetime string.
   nv_file_path:
     type: string
     description: Receipt file path for upload — absolute /home/… (or resolved ~/… with a subpath). Relative paths and bare ~ are rejected.
@@ -1791,12 +2106,6 @@ values:
     enum:
     - expense
     - payment
-  nv_activity_paid_by:
-    type: json
-    description: Payer identity on an activity entry.
-  nv_activity_owed_by:
-    type: json
-    description: Debtor identities and amounts on an activity entry.
   nv_balance_shelf:
     type: enum
     enum:
@@ -1838,6 +2147,14 @@ prerequisites:
       outputs:
         token: access_token
   requirements:
+    balance_summary_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path: [access_token]
+        output: token
     expense_comment_get:
     - id: session
       contract: appworld.session
@@ -2048,6 +2365,13 @@ prerequisites:
           path:
           - access_token
         output: token
+    - id: file_session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path: [file_system_access_token]
+        output: token
     expense_update:
     - id: session
       contract: appworld.session
@@ -2144,6 +2468,13 @@ prerequisites:
           lane: payload
           path:
           - access_token
+        output: token
+    - id: file_session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path: [file_system_access_token]
         output: token
     payment_delete:
     - id: session

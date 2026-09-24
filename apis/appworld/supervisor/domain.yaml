@@ -1,4 +1,4 @@
-version: 7
+version: 9
 entry_id: supervisor
 auth:
   scheme: none
@@ -202,7 +202,6 @@ capabilities:
 values:
   nv_str:
     type: string
-    description: Free-form AppWorld string field.
   nv_email:
     type: email
     description: Task principal email (usual login id for per-app services).
@@ -238,13 +237,12 @@ values:
     description: Password for one app key; pair with the matching account_name after get.
   nv_int:
     type: integer
-    description: Integer field.
   nv_card_number:
     type: digit_id
     description: Payment card primary account number.
   nv_cvv:
     type: integer
-    description: Card CVV digits as integer.
+    description: Card verification code (CVV).
   nv_month:
     type: integer
     description: Card expiry month.
