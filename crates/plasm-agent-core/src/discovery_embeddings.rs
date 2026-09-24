@@ -401,7 +401,6 @@ mod tests {
             collection: plasm_core::catalog_discovery::CollectionEvidence {
                 meaning: text.into(),
             },
-            related_entities: vec![],
         }
     }
 

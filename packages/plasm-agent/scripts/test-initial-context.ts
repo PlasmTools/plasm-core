@@ -38,7 +38,7 @@ try {
     agent.runtime.hasOpenWorkflow = () => opened;
     agent.runtime.plasmContext = async (input) => {
       initialized++;
-      assert.deepEqual(input, {intent: task, effectSlots: [task], sessionMode: "new", logicalSessionRef: undefined});
+      assert.deepEqual(input, {intent: task, sessionMode: "new", logicalSessionRef: undefined});
       opened = true;
       return context;
     };

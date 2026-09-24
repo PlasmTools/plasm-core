@@ -182,7 +182,6 @@ pub struct IntentDiscoveryRequest {
     #[serde(default)]
     pub principal: Option<String>,
     pub intent: String,
-    pub effect_slots: Vec<String>,
     #[serde(default)]
     pub allowed_entry_ids: Option<Vec<String>>,
 }
@@ -243,7 +242,6 @@ async fn route_http_intent(
         .route_turn(RouteTurn {
             new_generation: &generation,
             intent_provenance: &provenance,
-            effect_slots: &body.effect_slots,
             logical_session,
             allowed: &allowed,
             exposed: &exposed,
@@ -502,16 +500,15 @@ mod requirement_outcome_protocol_tests {
     #[test]
     fn intent_round_trips_and_conversational_inputs_are_rejected() {
         let request: IntentDiscoveryRequest = serde_json::from_value(json!({
-            "intent":"inspect records",
-            "effect_slots":["Inspect records"]
+            "intent":"inspect records"
         }))
         .unwrap();
         assert_eq!(request.intent, "inspect records");
         for invalid in [
-            json!({"intent":"inspect records","effect_slots":["Inspect records"],"routing_ref":"receipt","clarify_choice":1}),
-            json!({"intent":"inspect records","effect_slots":["Inspect records"],"routing_ref":"receipt","clarify_choices":1}),
-            json!({"intent":"inspect records","effect_slots":["Inspect records"],"routing_ref":"receipt","clarify_choices":[1.5]}),
-            json!({"intent":"inspect records","effect_slots":["Inspect records"],"routing_ref":"receipt","clarify_choices":[-1]}),
+            json!({"intent":"inspect records","routing_ref":"receipt","clarify_choice":1}),
+            json!({"intent":"inspect records","routing_ref":"receipt","clarify_choices":1}),
+            json!({"intent":"inspect records","routing_ref":"receipt","clarify_choices":[1.5]}),
+            json!({"intent":"inspect records","routing_ref":"receipt","clarify_choices":[-1]}),
         ] {
             assert!(serde_json::from_value::<IntentDiscoveryRequest>(invalid).is_err());
         }

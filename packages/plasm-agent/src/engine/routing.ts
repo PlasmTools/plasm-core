@@ -2,25 +2,6 @@ import { z } from "zod";
 import { workflowIntentSchema, intentProvenanceSchema } from "../runtime/session-contract.js";
 
 const capability = z.object({ catalog: z.string().min(1), capability: z.string().min(1) }).strict();
-const slot = z.object({ id: z.string().min(1), statement: workflowIntentSchema }).strict();
-export const discoveryCoverageSchema = z.object({
-  obligations: z.array(z.object({ slot, matched_capabilities: z.array(capability) }).strict()),
-  current_slots: z.array(z.string().min(1)),
-}).strict().superRefine((coverage, ctx) => {
-  const declared = new Set(coverage.obligations.map((entry) => entry.slot.id));
-  if (new Set(coverage.current_slots).size !== coverage.current_slots.length
-    || coverage.current_slots.some((id) => !declared.has(id))) {
-    ctx.addIssue({ code: "custom", message: "current coverage slots must be unique declared identities" });
-  }
-  const statements = new Set<string>();
-  coverage.obligations.forEach((entry, index) => {
-    if (entry.slot.id !== `s${index}` || statements.has(entry.slot.statement)
-      || new Set(entry.matched_capabilities.map(capabilityKey)).size !== entry.matched_capabilities.length) {
-      ctx.addIssue({ code: "custom", message: "coverage has invalid slot identity or duplicate statements/matches" });
-    }
-    statements.add(entry.slot.statement);
-  });
-});
 export const prerequisiteClosureSchema = z.object({
   business: z.array(capability),
   input_sources: z.array(capability),
@@ -35,50 +16,13 @@ export const prerequisiteClosureSchema = z.object({
 });
 
 const match = z.object({
-  slot_id: z.string().min(1), capability_id: z.string().min(1),
-  choice: z.enum(["direct_match", "does_not_match", "uncertain"]),
+  capability_id: z.string().min(1),
+  choice: z.enum(["relevant", "unrelated", "uncertain"]),
   probabilities: z.record(z.string(), z.number()), confidence: z.number().min(0).max(1),
 }).strict();
 
-const inputPath = z.object({
-  lane: z.enum(["scope", "selection", "controls", "arguments", "payload"]),
-  path: z.array(z.string().min(1)).min(1),
-}).strict();
-
-const inputSourceBinding = z.object({
-  consumer: capability,
-  input: z.discriminatedUnion("kind", [
-    z.object({ kind: z.literal("argument"), input: inputPath }).strict(),
-    z.object({ kind: z.literal("receiver"), entity: z.string().min(1) }).strict(),
-  ]),
-  provider: capability,
-  output_field: z.string().min(1),
-  collect: z.boolean(),
-}).strict();
-
-const rowIdentity = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("field"), field: z.string().min(1) }).strict(),
-  z.object({ kind: z.literal("relation"), relation: z.string().min(1) }).strict(),
-]);
-const inputSourceCandidate = z.object({
-  provider: capability,
-  projection: z.object({
-    entity: z.string().min(1),
-    fields: z.record(z.string(), z.discriminatedUnion("kind", [
-      z.object({ kind: z.literal("direct") }).strict(),
-      z.object({ kind: z.literal("hydrated"), capability: z.string().min(1) }).strict(),
-      z.object({ kind: z.literal("unavailable") }).strict(),
-    ])),
-  }).strict(),
-  bindings: z.array(inputSourceBinding),
-  membership: z.array(z.object({
-    source: capability, source_identity: rowIdentity, provider_identity: rowIdentity,
-  }).strict()),
-}).strict().refine(value => value.bindings.length + value.membership.length > 0, "source requires typed evidence");
-
 const probabilityChoices = {
-  capability: ["direct_match", "does_not_match", "uncertain"],
-  inputSource: ["required_source", "not_required", "uncertain"],
+  capability: ["relevant", "unrelated", "uncertain"],
 } as const;
 
 function capabilityKey(value: z.infer<typeof capability>): string {
@@ -117,140 +61,54 @@ const routingSchema = z.object({
   intent: workflowIntentSchema,
   pin_id: z.string().uuid(),
   authorization: z.object({ catalogs: z.array(z.string()), capabilities: z.record(z.string(), z.array(z.string())) }).strict(),
-  coverage: discoveryCoverageSchema,
   retrieval: z.object({
     generation: z.string(),
     candidates: z.array(z.object({
       id: z.string(), reference: capability,
       document: z.object({ entity: z.string() }).passthrough(),
-    }).passthrough()),
+    }).passthrough()).max(128),
   }).passthrough(),
   matching: z.object({
-    slots: z.array(z.object({ id: z.string().min(1), statement: z.string().min(1) }).strict()).min(1),
     matches: z.array(match),
-    complete: z.boolean(),
-    unmatched_slot_ids: z.array(z.string().min(1)),
-    additional_capability_ids: z.array(z.string()),
-  }).strict(),
-  input_source_projection: z.array(inputSourceCandidate),
-  input_source_matching: z.object({
-    matches: z.array(z.object({
-      provider: capability,
-      choice: z.enum(probabilityChoices.inputSource),
-      probabilities: z.record(z.string(), z.number()),
-      confidence: z.number().min(0).max(1),
-    }).strict()),
-    selected: z.array(capability),
   }).strict(),
   closure: prerequisiteClosureSchema.nullable(),
   recovery: z.object({
-    unmatched_slots: z.array(z.object({
-      slot_id: z.string().min(1), statement: z.string().min(1),
-      candidates: z.array(z.object({
-        reference: capability,
-        choice: z.enum(["does_not_match", "uncertain"]),
-        direct_match_probability: z.number().min(0).max(1),
-      }).strict()),
-    }).strict()),
+    candidates: z.array(z.object({ reference: capability, choice: z.enum(["relevant", "unrelated", "uncertain"]), relevance_probability: z.number().min(0).max(1) }).strict()),
     available_catalogs: z.array(z.object({
       entry_id: z.string().min(1),
       description: z.string().min(1),
     }).strict()),
     guidance: z.string().min(1),
   }).strict().optional().nullable(),
-}).superRefine((routing, ctx) => {
-  const slotIds = new Set(routing.matching.slots.map((slot) => slot.id));
-  const candidateIds = new Set(routing.retrieval.candidates.map((candidate) => candidate.id));
-  const pairKeys = new Set<string>();
-  const directSlots = new Set<string>();
-  const directCandidates = new Set<string>();
-  routing.matching.matches.forEach((candidateMatch, index) => {
-    const pairKey = `${candidateMatch.slot_id}\0${candidateMatch.capability_id}`;
-    if (!slotIds.has(candidateMatch.slot_id) || !candidateIds.has(candidateMatch.capability_id)) {
-      ctx.addIssue({ code: "custom", path: ["matching", "matches", index], message: "match references an unknown slot or candidate" });
-    }
-    if (pairKeys.has(pairKey)) {
-      ctx.addIssue({ code: "custom", path: ["matching", "matches", index], message: "duplicate slot/candidate match" });
-    }
-    pairKeys.add(pairKey);
-    validateProbabilities(candidateMatch.probabilities, probabilityChoices.capability, ctx, ["matching", "matches", index, "probabilities"]);
-    if (candidateMatch.choice === "direct_match") {
-      directSlots.add(candidateMatch.slot_id);
-      directCandidates.add(candidateMatch.capability_id);
-    }
+}).strict().superRefine((routing, ctx) => {
+  const candidates = new Map(routing.retrieval.candidates.map(c => [c.id, c]));
+  const matches = routing.matching.matches;
+  const selected = matches.filter(m => m.choice === "relevant").flatMap(m => {
+    const c = candidates.get(m.capability_id); return c ? [capabilityKey(c.reference)] : [];
   });
-  const expectedPairs = slotIds.size * candidateIds.size;
-  if (pairKeys.size !== expectedPairs) {
-    ctx.addIssue({ code: "custom", path: ["matching", "matches"], message: "match matrix is incomplete" });
+  if (candidates.size !== routing.retrieval.candidates.length
+    || new Set(routing.retrieval.candidates.map(c => capabilityKey(c.reference))).size !== candidates.size
+    || new Set(matches.map(m => m.capability_id)).size !== matches.length
+    || !sameSet(matches.map(m => m.capability_id), candidates.keys())) {
+    ctx.addIssue({code:"custom",path:["matching"],message:"relevance decisions must cover each candidate exactly once"});
   }
-  const unmatched = [...slotIds].filter((slotId) => !directSlots.has(slotId));
-  if (routing.matching.complete !== (unmatched.length === 0)
-    || !sameSet(routing.matching.unmatched_slot_ids, unmatched)) {
-    ctx.addIssue({ code: "custom", path: ["matching"], message: "completion fields contradict match choices" });
+  matches.forEach((m,i) => validateProbabilities(m.probabilities, probabilityChoices.capability, ctx, ["matching","matches",i,"probabilities"]));
+  if (!sameSet(selected, routing.closure?.business.map(capabilityKey) ?? [])
+    || (routing.closure?.input_sources.length ?? 0) !== 0) {
+    ctx.addIssue({code:"custom",path:["closure"],message:"closure must retain exactly the current relevant capabilities"});
   }
-  if (routing.matching.additional_capability_ids.some((id) => !directCandidates.has(id))) {
-    ctx.addIssue({ code: "custom", path: ["matching", "additional_capability_ids"], message: "additional capabilities must be direct matches" });
+  if (Boolean(routing.recovery) !== (selected.length === 0)) {
+    ctx.addIssue({code:"custom",path:["recovery"],message:"empty-selection diagnostic contradicts relevance decisions"});
   }
-
-  const projectedProviders = new Set(routing.input_source_projection.map((entry) => capabilityKey(entry.provider)));
-  const matchedProviders = new Set<string>();
-  const requiredProviders = new Set<string>();
-  routing.input_source_matching.matches.forEach((sourceMatch, index) => {
-    const provider = capabilityKey(sourceMatch.provider);
-    if (!projectedProviders.has(provider) || matchedProviders.has(provider)) {
-      ctx.addIssue({ code: "custom", path: ["input_source_matching", "matches", index], message: "input-source match references an unknown or duplicate provider" });
-    }
-    matchedProviders.add(provider);
-    validateProbabilities(sourceMatch.probabilities, probabilityChoices.inputSource, ctx, ["input_source_matching", "matches", index, "probabilities"]);
-    if (sourceMatch.choice === "required_source") requiredProviders.add(provider);
-  });
-  if (!sameSet(projectedProviders, matchedProviders)) {
-    ctx.addIssue({ code: "custom", path: ["input_source_matching", "matches"], message: "input-source match matrix is incomplete" });
-  }
-  if (!sameSet(routing.input_source_matching.selected.map(capabilityKey), requiredProviders)) {
-    ctx.addIssue({ code: "custom", path: ["input_source_matching", "selected"], message: "selected input sources contradict match choices" });
-  }
-  const obligations = new Map(routing.coverage.obligations.map((entry) => [entry.slot.id, entry]));
-  for (const slot of routing.matching.slots) {
-    if (obligations.get(slot.id)?.slot.statement !== slot.statement) {
-      ctx.addIssue({ code: "custom", path: ["coverage"], message: "matching changed an obligation" });
-    }
-  }
-  for (const entry of routing.matching.matches.filter((entry) => entry.choice === "direct_match")) {
-    const candidate = routing.retrieval.candidates.find((candidate) => candidate.id === entry.capability_id);
-    if (candidate && !obligations.get(entry.slot_id)?.matched_capabilities.some((ref) => capabilityKey(ref) === capabilityKey(candidate.reference))) {
-      ctx.addIssue({ code: "custom", path: ["coverage"], message: "coverage omitted a direct match" });
-    }
-  }
-  const unresolved = routing.coverage.obligations.filter((entry) =>
-    routing.coverage.current_slots.includes(entry.slot.id) && entry.matched_capabilities.length === 0);
-  if ((unresolved.length > 0) !== Boolean(routing.recovery)
-    || !sameSet(unresolved.map((entry) => entry.slot.id), routing.recovery?.unmatched_slots.map((entry) => entry.slot_id) ?? [])) {
-    ctx.addIssue({ code: "custom", path: ["recovery"], message: "recovery must preserve every unresolved obligation" });
-  }
-  for (const entry of routing.recovery?.unmatched_slots ?? []) {
-    if (obligations.get(entry.slot_id)?.slot.statement !== entry.statement) {
-      ctx.addIssue({ code: "custom", path: ["recovery"], message: "recovery changed an obligation" });
-    }
-    const judgments = routing.matching.matches.filter((match) => match.slot_id === entry.slot_id);
-    const expected = judgments.map((match) => {
-      const candidate = routing.retrieval.candidates.find((candidate) => candidate.id === match.capability_id);
-      return candidate && JSON.stringify([capabilityKey(candidate.reference), match.choice, match.probabilities.direct_match]);
-    });
-    if (!sameSet(expected.filter((key): key is string => Boolean(key)), entry.candidates.map((candidate) =>
-      JSON.stringify([capabilityKey(candidate.reference), candidate.choice, candidate.direct_match_probability])))) {
-      ctx.addIssue({ code: "custom", path: ["recovery"], message: "recovery judgments contradict matching" });
-    }
+  if (routing.recovery) {
+    const expected = matches.flatMap(m => { const c = candidates.get(m.capability_id); return c ? [JSON.stringify([capabilityKey(c.reference),m.choice,m.probabilities.relevant])] : []; });
+    const actual = routing.recovery.candidates.map(c => JSON.stringify([capabilityKey(c.reference),c.choice,c.relevance_probability]));
+    if (!sameSet(expected,actual)) ctx.addIssue({code:"custom",path:["recovery"],message:"diagnostics contradict relevance decisions"});
   }
   const permitted = (ref: z.infer<typeof capability>): boolean => routing.authorization.catalogs.includes(ref.catalog)
     && (routing.authorization.capabilities[ref.catalog]?.includes(ref.capability) ?? true);
   const closure = routing.closure;
-  if (routing.input_source_projection.some(candidate => !permitted(candidate.provider)
-      || Object.values(candidate.projection.fields).some(field => field.kind === "hydrated"
-        && !permitted({catalog: candidate.provider.catalog, capability: field.capability}))
-      || candidate.bindings.some(binding => !permitted(binding.consumer) || !permitted(binding.provider))
-      || candidate.membership.some(witness => !permitted(witness.source)))
-    || routing.retrieval.candidates.some((candidate) => !permitted(candidate.reference))
+  if (routing.retrieval.candidates.some((candidate) => !permitted(candidate.reference))
     || (closure && [...closure.business, ...closure.input_sources, ...closure.prerequisites].some((ref) => !permitted(ref)))) {
     ctx.addIssue({ code: "custom", path: ["authorization"], message: "routing exposed an unauthorized capability" });
   }
@@ -265,38 +123,10 @@ export type RoutingPacket = z.infer<typeof routingPacketSchema>;
 export type PrerequisiteClosure = z.infer<typeof prerequisiteClosureSchema>;
 
 export function routingExplanationLines(matching: RoutingPacket["routing"]["matching"]): string[] {
-  return matching.complete
-    ? []
-    : matching.unmatched_slot_ids.map((slotId) => `No retrieved capability matched effect slot: ${slotId}`);
+  return matching.matches.some(m => m.choice === "relevant") ? [] : ["No relevant capability selected from the current bounded packet."];
 }
-
-/** Lead with unresolved needs + coverage audit + available integration descriptions. */
 export function routingRecoveryMarkdown(routing: RoutingPacket["routing"]): string | null {
-  const recovery = routing.recovery;
+  const recovery=routing.recovery;
   if (!recovery) return null;
-  const lines = [
-    `**plasm_context:** ${routing.closure ? "teaching available; unresolved discovery slots remain" : "unresolved discovery slots"}`,
-    recovery.unmatched_slots.length
-      ? "**Unmatched affirmative effect slots** (bounded packet result):"
-      : "",
-    ...recovery.unmatched_slots.flatMap((slot) => {
-      const candidates = [...slot.candidates].sort((left, right) => right.direct_match_probability - left.direct_match_probability
-        || capabilityKey(left.reference).localeCompare(capabilityKey(right.reference)));
-      return [
-        `- \`${slot.slot_id}\` — ${slot.statement}`,
-        ...(candidates.length ? candidates.slice(0, 3).map((candidate) =>
-          `  - \`${candidate.reference.catalog}/${candidate.reference.capability}\` — ${candidate.choice === "does_not_match" ? "rejected" : "uncertain"} (match probability ${candidate.direct_match_probability.toFixed(2)})`)
-          : ["  - No authorized candidates retrieved in this packet."]),
-        ...(candidates.length > 3 ? [`  - ${candidates.length - 3} other judgments in the routing receipt.`] : []),
-      ];
-    }),
-    recovery.guidance,
-    recovery.available_catalogs.length
-      ? "**Available integrations** (descriptions for broader rediscovery):"
-      : "",
-    ...recovery.available_catalogs.map(
-      (catalog) => `- \`${catalog.entry_id}\` — ${catalog.description}`,
-    ),
-  ].filter(Boolean);
-  return lines.join("\n\n");
+  return [recovery.guidance,...[...recovery.candidates].sort((a,b)=>b.relevance_probability-a.relevance_probability).slice(0,3).map(c=>`- \`${c.reference.catalog}/${c.reference.capability}\`: ${c.choice} (relevance ${c.relevance_probability.toFixed(2)})`),...recovery.available_catalogs.map(c=>`- \`${c.entry_id}\`: ${c.description}`)].join("\n\n");
 }

@@ -9,7 +9,7 @@ import { sessionCases } from "./test-session-contract.js";
 const engine = new PlasmEngine();
 for (const state of sessionCases(128)) {
   await assert.rejects(
-    engine.routeIntent(JSON.stringify(state.intentProvenance), ["Read records"]),
+    engine.routeIntent(JSON.stringify(state.intentProvenance)),
     /activateDiscovery/,
   );
 }
@@ -21,7 +21,7 @@ for (const nodes of [
   [{ parent: null, intent: "root\0" }],
   [{ parent: null, intent: "root\ud800" }],
 ]) {
-  await assert.rejects(engine.routeIntent(JSON.stringify({ nodes }), ["Read records"]),
+  await assert.rejects(engine.routeIntent(JSON.stringify({ nodes })),
     (error: unknown) => error instanceof Error && !error.message.includes("activateDiscovery"));
 }
 console.log("intent-native: 128 generated TypeScript -> JSON -> Rust chains accepted; malformed ancestry and Unicode rejected");
@@ -30,6 +30,6 @@ console.log("intent-native: 128 generated TypeScript -> JSON -> Rust chains acce
 // trim differs for NEXT LINE and ZERO WIDTH NO-BREAK SPACE.
 for (const [intent, accepted] of [["\u0085", false], ["\ufeff", true], [" \u0085 ", false], ["  intent  ", true]] as const) {
   assert.equal(workflowIntentSchema.safeParse(intent).success, accepted);
-  await assert.rejects(engine.routeIntent(JSON.stringify({ nodes: [{ parent: null, intent }] }), ["Read records"]),
+  await assert.rejects(engine.routeIntent(JSON.stringify({ nodes: [{ parent: null, intent }] })),
     (error: unknown) => error instanceof Error && error.message.includes("activateDiscovery") === accepted);
 }

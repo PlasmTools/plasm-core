@@ -1,11 +1,5 @@
-**Returns a language card** with a session symbol table, selected business capabilities, declared prerequisites and input bindings. Call before `plasm` / `plasm_run`; this tool performs no acquisition or business calls.
+Returns an incremental language card and session symbol table for capabilities relevant to the current `intent`, with declared prerequisites and typed input bindings. Call before `plasm` / `plasm_run`; discovery performs no acquisition or business calls.
 
-**Required semantic input:**
-- `intent`: the original task on `new`, and the current need on `extend`; the runtime preserves the original. It does not select the session.
-- `effect_slots`: every affirmative effect and explicitly requested information outcome, one complete statement per slot. Preserve branch, order, constraints and prohibitions.
+Use `session_mode: "new"` with the original intent once per workflow. Later discovery uses `session_mode: "extend"`, the same `logical_session_ref`, and the current need. Intent ancestry supplies context; explicit revisions may replace earlier goals. Existing symbols retain their meaning. Intent does not select the session.
 
-Use `session_mode: "new"` once per workflow. Later needs use `session_mode: "extend"`, the same `logical_session_ref`, current `intent`, and current `effect_slots`; existing symbols remain unchanged.
-
-Jev classifies retrieved capabilities against current and unresolved slots. Matched capabilities receive typed input-source projection, prerequisite closure and teaching independently of unresolved slots. The response reports unresolved work and retrieved candidates rejected or judged uncertain. Continue using available teaching within the intent constraints; extend only for missing capabilities. Earlier slots, matches and symbols persist. Capability coverage is not task completion.
-
-Discovery does not choose records, authorize substitute work, acquire data, or execute effects. Ask when needed, then write taught provider and business calls as ordinary Plasm, submit to `plasm`, and execute reviewed `run_ref` plans with `plasm_run`.
+Authorized retrieval and typed graph connections nominate candidates. Jev judges relevance; teaching does not establish necessity, collection membership, task completeness, or permission to execute. Use available teaching and extend for missing capabilities. Write provider and business calls as ordinary Plasm, submit to `plasm`, and execute returned reviewed plans with `plasm_run`.

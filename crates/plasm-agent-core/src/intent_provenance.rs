@@ -77,30 +77,6 @@ impl IntentProvenance {
             .expect("validated nonempty provenance")
             .intent
     }
-
-    /// Ancestry is judgment evidence, never a retrieval query or authorization grant.
-    pub fn judgment_context(&self) -> Result<String> {
-        Ok(serde_json::to_string(self)?)
-    }
-
-    pub fn retrieval_queries(&self, slots: &[String]) -> Result<Vec<String>> {
-        ensure!(
-            (1..=64).contains(&slots.len()),
-            "one to 64 effect slots required"
-        );
-        let mut queries = Vec::new();
-        // Slots lead so a broad current intent cannot consume their first recall positions.
-        for text in slots.iter().map(String::as_str).chain([self.current()]) {
-            ensure!(
-                !text.trim().is_empty() && !text.contains('\0'),
-                "invalid discovery query"
-            );
-            if !queries.iter().any(|q| q == text) {
-                queries.push(text.to_owned());
-            }
-        }
-        Ok(queries)
-    }
 }
 
 #[cfg(test)]
@@ -121,8 +97,6 @@ mod tests {
             let altered = IntentProvenance::from_turns(["Different ancestry".into(), "Next need".into()]).unwrap();
             prop_assert!(!altered.is_continuation_of(&chain));
             prop_assert_eq!(decoded.current(), turns.last().unwrap());
-            let queries = decoded.retrieval_queries(&["resolve current relation".into()]).unwrap();
-            prop_assert_eq!(queries, vec!["resolve current relation".to_owned(), turns.last().unwrap().clone()]);
         }
     }
 

@@ -104,13 +104,6 @@ pub struct ContextArgs {
         help = "Current business intent (required for new and extension)"
     )]
     pub intent: Option<String>,
-
-    #[arg(
-        long = "effect-slot",
-        value_name = "TEXT",
-        help = "Affirmative effect or requested information outcome; repeat for every slot"
-    )]
-    pub effect_slots: Vec<String>,
 }
 
 pub fn validate_context_args(args: &ContextArgs) -> Result<()> {
@@ -120,12 +113,6 @@ pub fn validate_context_args(args: &ContextArgs) -> Result<()> {
         .is_none_or(|intent| intent.trim().is_empty())
     {
         bail!("context requires --intent (-i)");
-    }
-    if args.effect_slots.is_empty()
-        || args.effect_slots.len() > 64
-        || args.effect_slots.iter().any(|slot| slot.trim().is_empty())
-    {
-        bail!("context requires one to 64 non-empty --effect-slot values");
     }
     Ok(())
 }
@@ -177,13 +164,6 @@ pub enum Cmd {
             help = "Natural-language goal for capability discovery"
         )]
         intent: String,
-        #[arg(
-            long = "effect-slot",
-            value_name = "TEXT",
-            required = true,
-            help = "Affirmative effect or requested information outcome; repeat for every slot"
-        )]
-        effect_slots: Vec<String>,
     },
     #[command(
         about = "Select capabilities and expose server-owned teaching",
@@ -264,29 +244,19 @@ mod tests {
     }
 
     #[test]
-    fn context_requires_explicit_effect_slots_with_continuation() {
-        let cli = Cli::try_parse_from([
-            "plasm",
-            "context",
-            "--new",
-            "--intent",
-            "read records",
-            "--effect-slot",
-            "Read records",
-        ])
-        .unwrap();
+    fn context_requires_current_intent_with_continuation() {
+        let cli =
+            Cli::try_parse_from(["plasm", "context", "--new", "--intent", "read records"]).unwrap();
         let Cmd::Context { context } = cli.cmd else {
             panic!()
         };
         validate_context_args(&context).unwrap();
-        assert!(
-            Cli::try_parse_from(["plasm", "context", "--new", "--intent", "read records"])
-                .map(|cli| match cli.cmd {
-                    Cmd::Context { context } => validate_context_args(&context).is_err(),
-                    _ => false,
-                })
-                .unwrap_or(false)
-        );
+        assert!(Cli::try_parse_from(["plasm", "context", "--new"])
+            .map(|cli| match cli.cmd {
+                Cmd::Context { context } => validate_context_args(&context).is_err(),
+                _ => false,
+            })
+            .unwrap_or(false));
         assert!(
             Cli::try_parse_from(["plasm", "context", "--intent", "read", "matrix:Record"]).is_err()
         );

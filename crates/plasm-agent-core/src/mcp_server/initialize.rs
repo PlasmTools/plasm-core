@@ -37,7 +37,7 @@ pub(crate) fn mcp_initialize_result() -> InitializeResult {
             version: crate::release_version::RELEASE_VERSION.into(),
             title: Some("Plasm agent".into()),
             description: Some(
-                "**`session_mode: \"new\"`** once per workflow with current **`intent`** and explicit **`effect_slots`**, then **`\"extend\"`** + **`logical_session_ref`** with current slots. **`plasm`** (plan) and **`plasm_run`** (execute) reuse the same ref. **`intent`** extends a lossless provenance chain per turn; current intent and slots drive retrieval, ancestry informs judgment. Intent does not select the session."
+                "**`session_mode: \"new\"`** once per workflow with current **`intent`**, then **`\"extend\"`** + **`logical_session_ref`** with the current need. **`plasm`** (plan) and **`plasm_run`** (execute) reuse the same ref. **`intent`** extends a lossless provenance chain per turn; current intent drives retrieval, ancestry informs judgment. Intent does not select the session."
                     .into(),
             ),
             icons: vec![],

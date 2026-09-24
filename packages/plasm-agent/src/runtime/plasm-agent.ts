@@ -265,7 +265,6 @@ export class PlasmAgent {
       if (!initialize) throw new Error("Initial context requires the plasm_context executor");
       this.initialContext ??= Promise.resolve(initialize({
         intent: prompt,
-        effect_slots: [prompt],
         session_mode: "new",
       }, { toolCallId: "host-initial-context", messages, context: {} })).then((result) => {
         if (typeof result !== "string") throw new Error("Initial context must return discovery text");

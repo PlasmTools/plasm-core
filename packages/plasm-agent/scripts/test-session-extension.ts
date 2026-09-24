@@ -13,14 +13,12 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
   const root = await mkdtemp(path.join(tmpdir(), "plasm-extension-"));
   const routed: IntentProvenance[] = [];
   let insufficient = false;
-  let partial = false;
   const provenanceBySession = new Map<string, IntentProvenance>();
-  const coverageBySession = new Map<string, Array<{ slot: { id: string; statement: string }; matched_capabilities: Array<{ catalog: string; capability: string }> }>>();
   const unused = async (): Promise<never> => { throw new Error("unexpected engine operation"); };
   const engine: PlasmEngine = {
     loadCatalog: unused, synthesizeTeaching: unused, dryRun: unused,
     activateDiscovery: unused, runPlan: unused, run: unused, introspectCatalog: unused,
-    async routeIntent(provenance, slots, sessionId) {
+    async routeIntent(provenance, sessionId) {
       const intent = provenance.nodes.at(-1)!.intent;
       // PostgreSQL rejects a NUL in the text-search query parameter. Exercise the
       // real runtime + filesystem path before crossing this native boundary.
@@ -28,43 +26,19 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
       await observe(intent);
       routed.push(provenance);
       const pin = sessionId ?? randomUUID();
-      const coverage = structuredClone(coverageBySession.get(pin) ?? []);
-      for (const statement of slots) {
-        if (!coverage.some((entry) => entry.slot.statement === statement)) {
-          coverage.push({ slot: { id: `s${coverage.length}`, statement }, matched_capabilities: [] });
-        }
-      }
-      const active = coverage.filter((entry) => !entry.matched_capabilities.length || slots.includes(entry.slot.statement));
-      const matches = active.map((entry, i) => {
-        const direct = !insufficient && (!partial || i === 0);
-        if (direct) entry.matched_capabilities = [{ catalog: "matrix", capability: "read" }];
-        return { slot_id: entry.slot.id, capability_id: "matrix:read", choice: direct ? "direct_match" : "does_not_match",
-          probabilities: { direct_match: direct ? 1 : 0, does_not_match: direct ? 0 : 1, uncertain: 0 }, confidence: 1 };
-      });
-      const unresolved = coverage.filter((entry) => !entry.matched_capabilities.length);
+      const matches=[{capability_id:"matrix:read",choice:insufficient?"unrelated":"relevant",probabilities:{relevant:insufficient?0:1,unrelated:insufficient?1:0,uncertain:0},confidence:1}];
       const packet = routingPacketSchema.parse({
         routing: {
           intent_provenance: provenance, intent, pin_id: pin,
           authorization: { catalogs: ["matrix"], capabilities: {} },
-          coverage: { obligations: coverage },
           retrieval: {
             generation: "fixture", candidates: [{
               id: "matrix:read", reference: { catalog: "matrix", capability: "read" },
               document: { entity: "Record" },
             }]
           },
-          matching: {
-            slots: active.map((entry) => entry.slot), matches,
-            complete: matches.every((entry) => entry.choice === "direct_match"),
-            unmatched_slot_ids: matches.filter((entry) => entry.choice !== "direct_match").map((entry) => entry.slot_id),
-            additional_capability_ids: matches.some((entry) => entry.choice === "direct_match") ? ["matrix:read"] : [],
-          },
-          recovery: unresolved.length ? {
-            unmatched_slots: unresolved.map((entry) => ({ slot_id: entry.slot.id, statement: entry.slot.statement,
-              candidates: [{ reference: { catalog: "matrix", capability: "read" }, choice: "does_not_match", direct_match_probability: 0 }] })),
-            available_catalogs: [], guidance: "Use available teaching while retaining unresolved obligations.",
-          } : null,
-          input_source_projection: [], input_source_matching: { matches: [], selected: [] },
+          matching: {matches},
+          recovery: insufficient ? {candidates:[{reference:{catalog:"matrix",capability:"read"},choice:"unrelated",relevance_probability:0}],available_catalogs:[],guidance:"No relevant capability in this bounded packet."}:null,
           closure: insufficient ? null : { business: [{ catalog: "matrix", capability: "read" }], input_sources: [], prerequisites: [], acquisitions: [], edges: [] },
         },
         teaching: insufficient ? null : { tsv: "e1\tRecord", delta_refs: ["matrix:Record"] },
@@ -75,68 +49,63 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
           "intent provenance rewrites or omits pinned ancestry");
       }
       provenanceBySession.set(pin, structuredClone(provenance));
-      coverageBySession.set(pin, coverage);
       return packet;
     },
   };
   try {
-    partial = true;
     const partialRuntime = new AgentRuntime({ agentRoot: root, engine, archive: null, hostTransport: null });
-    const partiallyOpened = await partialRuntime.plasmContext({ intent: "Read selected records then publish them", effectSlots: ["Read selected records", "Publish selected records"] });
+    const partiallyOpened = await partialRuntime.plasmContext({ intent: "Read selected records then publish them",  });
     assert.ok(partiallyOpened.includes("e1\tRecord"));
-    assert.ok(partiallyOpened.includes("Publish selected records"));
-    assert.ok(partiallyOpened.includes("rejected"));
     const partialRef = partiallyOpened.match(/l_[A-Za-z0-9_-]{22}/)?.[0];
     assert.ok(partialRef);
     const beforePartial = await partialRuntime.sessionManager.getByLogicalRef(partialRef);
     assert.ok(beforePartial);
     assert.ok(beforePartial.teachingTsv.includes("Record"));
     insufficient = true;
-    const unresolved = await partialRuntime.plasmContext({ intent: "Find a related record", effectSlots: ["Read related records"], sessionMode: "extend", logicalSessionRef: partialRef });
-    assert.ok(unresolved.includes("Publish selected records"), "omitted unresolved obligation remains visible");
+    const unresolved = await partialRuntime.plasmContext({ intent: "Find a related record",  sessionMode: "extend", logicalSessionRef: partialRef });
+    assert.ok(unresolved.includes("No relevant capability"));
     assert.equal((await partialRuntime.sessionManager.getByLogicalRef(partialRef))?.teachingTsv, beforePartial.teachingTsv);
     insufficient = false;
-    partial = false;
     routed.length = 0;
     const initial = "Only selected records may be changed.";
     const runtime = new AgentRuntime({ agentRoot: root, initialIntent: initial, engine, archive: null, hostTransport: null });
     const original = "Read the records matching my original selection.";
-    const opened = await runtime.plasmContext({ intent: original, effectSlots: ["Read records"] });
+    const opened = await runtime.plasmContext({ intent: original,  });
     const ref = opened.match(/l_[A-Za-z0-9_-]{22}/)?.[0];
     assert.ok(ref);
     assert.equal((await runtime.sessionManager.getByLogicalRef(ref))?.intent, initial);
-    await runtime.plasmContext({ intent: "Read related details.", effectSlots: ["Read details"], sessionMode: "extend", logicalSessionRef: ref });
+    await runtime.plasmContext({ intent: "Read related details.",  sessionMode: "extend", logicalSessionRef: ref });
     assert.deepEqual(routed.map(p => p.nodes.map(n => n.intent)), [[initial, original], [initial, original, "Read related details."]]);
-    const second = await runtime.plasmContext({ intent: original, effectSlots: ["Read records"] });
+    const second = await runtime.plasmContext({ intent: original,  });
     const secondRef = second.match(/l_[A-Za-z0-9_-]{22}/)?.[0];
     assert.ok(secondRef);
     assert.notEqual(secondRef, ref, "new workflows with the same intent remain distinct");
     assert.equal((await runtime.sessionManager.store.listSessions()).length, 3);
-    await runtime.plasmContext({ intent: "Read more details.", effectSlots: ["Read details"], sessionMode: "extend", logicalSessionRef: ref });
+    await runtime.plasmContext({ intent: "Read more details.",  sessionMode: "extend", logicalSessionRef: ref });
     assert.deepEqual(routed.at(-1)?.nodes.map(n => n.intent), [initial, original, "Read related details.", "Read more details."]);
     insufficient = true;
-    await runtime.plasmContext({ intent: "Resolve missing relation.", effectSlots: ["Read relation"], sessionMode: "extend", logicalSessionRef: ref });
+    await runtime.plasmContext({ intent: "Resolve missing relation.",  sessionMode: "extend", logicalSessionRef: ref });
     insufficient = false;
-    await runtime.plasmContext({ intent: "Read another relation.", effectSlots: ["Read relation"], sessionMode: "extend", logicalSessionRef: ref });
+    await runtime.plasmContext({ intent: "Read another relation.",  sessionMode: "extend", logicalSessionRef: ref });
     assert.deepEqual(routed.at(-1)?.nodes.map(n => n.intent), [initial, original, "Read related details.", "Read more details.", "Resolve missing relation.", "Read another relation."]);
     const stored = await runtime.sessionManager.store.get((await runtime.sessionManager.getByLogicalRef(ref))!.logicalSessionRef);
     assert.deepEqual(stored?.intentProvenance, routed.at(-1));
     insufficient = true;
     const missingIntent = "  Resolve only the selected records.  ";
-    const missing = await runtime.plasmContext({ intent: missingIntent, effectSlots: ["Read unknown relation"] });
+    const missing = await runtime.plasmContext({ intent: missingIntent,  });
     const missingRef = missing.match(/l_[A-Za-z0-9_-]{22}/)?.[0];
     assert.ok(missingRef, "insufficient new discovery retains its session reference");
     insufficient = false;
-    await runtime.plasmContext({ intent: "Resolve the related records.", effectSlots: ["Read relation"], sessionMode: "extend", logicalSessionRef: missingRef });
+    await runtime.plasmContext({ intent: "Resolve the related records.",  sessionMode: "extend", logicalSessionRef: missingRef });
     assert.deepEqual(routed.at(-1)?.nodes.map(n => n.intent), [initial, missingIntent, "Resolve the related records."]);
     for (const invalid of ["\0", "\ud800"]) {
       const before = routed.length;
-      await assert.rejects(() => runtime.plasmContext({ intent: `Read${invalid}`, effectSlots: ["Read records"] }));
+      await assert.rejects(() => runtime.plasmContext({ intent: `Read${invalid}`,  }));
       assert.equal(routed.length, before, "invalid text fails before native discovery");
     }
     const concurrentIntents = Array.from({ length: 12 }, (_, i) => `Resolve independent relation ${i}`);
     const concurrentResults = await Promise.allSettled(concurrentIntents.map((intent) => runtime.plasmContext({
-      intent, effectSlots: [intent], sessionMode: "extend", logicalSessionRef: ref,
+      intent,  sessionMode: "extend", logicalSessionRef: ref,
     })));
     for (const result of concurrentResults) {
       if (result.status === "rejected") throw result.reason;
@@ -146,29 +115,25 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
     assert.deepEqual(afterConcurrent.intentProvenance.nodes.slice(-concurrentIntents.length).map(n => n.intent), concurrentIntents);
     const committed = provenanceBySession.get(afterConcurrent.logicalSessionId);
     assert.deepEqual(afterConcurrent.intentProvenance, committed, "filesystem and native provenance must agree");
-    const obligations = coverageBySession.get(afterConcurrent.logicalSessionId)!;
-    for (const intent of concurrentIntents) assert.ok(obligations.some(entry => entry.slot.statement === intent));
     const beforeDuplicates = routed.length;
-    const duplicateRequest = { intent: "Resolve the same relation", effectSlots: ["Read one relation"], sessionMode: "extend" as const, logicalSessionRef: ref };
+    const duplicateRequest = { intent: "Resolve the same relation",  sessionMode: "extend" as const, logicalSessionRef: ref };
     const duplicates = await Promise.all(Array.from({ length: 80 }, () =>
       runtime.plasmContext(JSON.parse(JSON.stringify(duplicateRequest)))));
     assert.equal(routed.length - beforeDuplicates, 1, "identical pending requests share one native discovery");
     assert.ok(duplicates.every(result => result === duplicates[0]));
     await runtime.plasmContext(duplicateRequest);
     assert.equal(routed.length - beforeDuplicates, 2, "completed discovery is not cached");
-    const beforeDifferentSlots = routed.length;
-    await Promise.all(["Read left relation", "Read right relation"].map(slot =>
-      runtime.plasmContext({ ...duplicateRequest, effectSlots: [slot] })));
-    assert.equal(routed.length - beforeDifferentSlots, 2, "different slots must never coalesce");
-    const mutableRequest = { ...duplicateRequest, effectSlots: ["Preserve submitted slot"] };
+    const beforeDifferentNeeds = routed.length;
+    await Promise.all(["Read left relation", "Read right relation"].map(intent =>
+      runtime.plasmContext({ ...duplicateRequest, intent })));
+    assert.equal(routed.length - beforeDifferentNeeds, 2, "different needs must never coalesce");
+    const mutableRequest = { ...duplicateRequest };
     const pending = runtime.plasmContext(mutableRequest);
     mutableRequest.intent = "Changed after submission";
-    mutableRequest.effectSlots[0] = "Changed after submission";
     await pending;
     assert.equal(routed.at(-1)?.nodes.at(-1)?.intent, duplicateRequest.intent);
-    assert.ok(coverageBySession.get(afterConcurrent.logicalSessionId)!.some(entry => entry.slot.statement === "Preserve submitted slot"));
     const newWorkflows = await Promise.all([0, 1].map(() => runtime.plasmContext({
-      intent: "Same new workflow", effectSlots: ["Read records"],
+      intent: "Same new workflow",
     })));
     assert.notEqual(newWorkflows[0]!.match(/l_[A-Za-z0-9_-]{22}/)?.[0], newWorkflows[1]!.match(/l_[A-Za-z0-9_-]{22}/)?.[0]);
     console.log("session-extension: new -> persist -> concurrent extend passed");

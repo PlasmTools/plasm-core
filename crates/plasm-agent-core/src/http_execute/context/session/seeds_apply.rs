@@ -546,7 +546,7 @@ pub async fn apply_capability_seeds(
 #[cfg(test)]
 mod sufficiency_tests {
     use super::*;
-    use crate::discovery_matcher::{CapabilityMatchReceipt, EffectSlot};
+    use crate::discovery_matcher::CapabilityMatchReceipt;
     use crate::discovery_service::RoutingReceipt;
     use crate::discovery_store::{DiscoveryAuthorization, RetrievalReceipt};
     use crate::http::{build_plasm_host_state, PlasmHostBootstrap};
@@ -613,25 +613,9 @@ mod sufficiency_tests {
                 vector_count: 0,
                 lexical_truncated: false,
                 vector_truncated: false,
-                fusion_truncated: 0,
-                relation_truncated: 0,
             },
-            matching: CapabilityMatchReceipt {
-                slots: vec![EffectSlot {
-                    id: "s0".into(),
-                    statement: "continue with existing tools".into(),
-                }],
-                matches: vec![],
-                complete: true,
-                unmatched_slot_ids: vec![],
-                additional_capability_ids: vec![],
-            },
-            coverage: Default::default(),
-            input_source_projection: vec![],
-            input_source_matching: crate::discovery_matcher::InputSourceMatchReceipt {
-                matches: vec![],
-                selected: vec![],
-            },
+            matching: CapabilityMatchReceipt { matches: vec![] },
+
             closure: Some(plasm_core::prerequisites::PrerequisiteClosure {
                 business: vec![],
                 input_sources: vec![],

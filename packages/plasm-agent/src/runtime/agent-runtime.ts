@@ -66,7 +66,6 @@ export interface DiscoverInput {
 
 export interface PlasmContextInput {
   intent: string;
-  effectSlots: string[];
   sessionMode?: "new" | "extend";
   logicalSessionRef?: string;
 }
@@ -272,25 +271,20 @@ export class AgentRuntime {
     const request: PlasmContextInput = {
       ...input,
       intent: workflowIntentSchema.parse(input.intent),
-      effectSlots: input.effectSlots.map((slot) => workflowIntentSchema.parse(slot)),
     };
     if (request.sessionMode !== "extend") return this.plasmContextTurn(request);
     const ref = logicalSessionRefSchema.parse(request.logicalSessionRef);
     return this.discoveryQueue.run(
       ref,
-      JSON.stringify([request.intent, request.effectSlots]),
+      request.intent,
       () => this.plasmContextTurn(request),
     );
   }
 
   private async plasmContextTurn(input: PlasmContextInput): Promise<string> {
     const intent = workflowIntentSchema.parse(input.intent);
-    const effectSlots = input.effectSlots.map((slot) => workflowIntentSchema.parse(slot));
     const mode = input.sessionMode ?? "new";
     if (!intent) throw new Error("plasm_context requires intent");
-    if (effectSlots.length < 1 || effectSlots.length > 64 || effectSlots.some((slot) => !slot)) {
-      throw new Error("plasm_context requires one to 64 non-empty effect slots");
-    }
     return plasmSpans.toolContext({ intent }, async (span) => {
       const started = Date.now();
       const existing = mode === "extend"
@@ -302,7 +296,6 @@ export class AgentRuntime {
       const provenance = deriveIntent(existing?.intentProvenance ?? this.initialProvenance, intent);
       const packet = await this.engine.routeIntent(
         provenance,
-        effectSlots,
         existing?.logicalSessionId,
       );
       const { routing, teaching } = packet;
@@ -328,7 +321,7 @@ export class AgentRuntime {
         });
         return [
           routing.intent_analysis,
-          recoveryMarkdown ?? "**plasm_context:** insufficient effect-slot coverage",
+          recoveryMarkdown ?? "**plasm_context:** no relevant capabilities selected",
           `**logical_session_ref:** \`${session.logicalSessionRef}\``,
           ...(recoveryMarkdown ? [] : routingExplanationLines(routing.matching)),
         ].filter(Boolean).join("\n\n");

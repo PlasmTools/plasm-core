@@ -5,9 +5,12 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
 
-pub const DISCOVERY_RENDERER_VERSION: u32 = 7;
+mod input_projection;
+mod relation_use;
+mod retrieval_text;
+
+pub const DISCOVERY_RENDERER_VERSION: u32 = 18;
 pub const EMBEDDING_DIMENSIONS: usize = 1536;
 pub const EMBEDDING_MODEL: &str = "openai/text-embedding-3-small";
 
@@ -63,7 +66,6 @@ pub struct CapabilityDocument {
     pub text_hash: String,
     pub operation: OperationEvidence,
     pub collection: CollectionEvidence,
-    pub related_entities: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -145,6 +147,7 @@ pub fn validate_embedding(embedding: &[f32], dimensions: usize) -> Result<(), St
 
 /// Render only catalog semantics: never mappings, runtime values, or examples.
 pub fn capability_documents(cgs: &crate::CGS) -> Result<Vec<CapabilityDocument>, String> {
+    cgs.prerequisites.validate(cgs)?;
     let mut capabilities: Vec<_> = cgs.capabilities.values().collect();
     capabilities.sort_by(|a, b| a.name.cmp(&b.name));
     capabilities
@@ -154,141 +157,21 @@ pub fn capability_documents(cgs: &crate::CGS) -> Result<Vec<CapabilityDocument>,
                 .entities
                 .get(&cap.domain)
                 .ok_or_else(|| format!("missing entity {}", cap.domain))?;
-            let mut lines = vec![
-                format!("Catalog: {}", cgs.entry_id.as_deref().unwrap_or_default()),
-                format!("Entity: {}", cap.domain),
-                format!("Entity purpose: {}", entity.description),
-                format!("Capability: {} ({:?})", cap.name, cap.kind),
-                format!("Purpose: {}", cap.description),
-            ];
-            if let Some(hints) = &entity.discovery {
-                let names: BTreeSet<_> = hints.names.iter().chain(&hints.qualifier_names).collect();
-                lines.push(format!(
-                    "Names: {}",
-                    names.into_iter().cloned().collect::<Vec<_>>().join(", ")
-                ));
-            }
-            if let Some(hints) = &cap.discovery {
-                let aliases: BTreeSet<_> = hints
-                    .operation_terms
-                    .iter()
-                    .chain(&hints.target_terms)
-                    .collect();
-                lines.push(format!(
-                    "Capability aliases: {}",
-                    aliases.into_iter().cloned().collect::<Vec<_>>().join(", ")
-                ));
-            }
-            let contract_start = lines.len();
-            lines.push(format!("Receiver: {:?}", cap.inputs.receiver));
-            for (lane, fields) in [
-                ("scope", &cap.inputs.scope.0),
-                ("selection", &cap.inputs.selection.0),
-                ("controls", &cap.inputs.controls.0),
-            ] {
-                for field in fields {
-                    let value = field.named_value(cgs).map_err(|e| e.to_string())?;
-                    lines.push(format!(
-                        "Input {lane}.{}: {:?}; required={}",
-                        field.name, value.field_type, field.required
-                    ));
-                    render_value_evidence(
-                        cgs,
-                        &format!("Input {lane}.{}", field.name),
-                        value,
-                        &mut lines,
-                    )?;
-                    render_slot_description(
-                        &format!("Input {lane}.{}", field.name),
-                        field.description.as_deref(),
-                        &mut lines,
-                    );
-                }
-            }
-            for (lane, schema) in [
-                ("arguments", &cap.inputs.arguments),
-                ("payload", &cap.inputs.payload),
-            ] {
-                if let Some(schema) = schema {
-                    // Type rendering intentionally excludes examples and default values.
-                    render_input_type(cgs, lane, &schema.input_type, &mut lines)?;
-                }
-            }
-            if let Some(output) = &cap.output_schema {
-                // Only the typed projection is evidence, never its transport decoder.
-                match &output.output_type {
-                    crate::schema::OutputType::SideEffect { description } => {
-                        lines.push(format!("Output: side effect; {description}"))
-                    }
-                    crate::schema::OutputType::Entity { entity_type } => {
-                        lines.push(format!("Output: single entity {entity_type}"))
-                    }
-                    crate::schema::OutputType::Collection {
-                        entity_type,
-                        max_count,
-                    } => lines.push(format!(
-                        "Output: collection {entity_type}; max_count={max_count:?}"
-                    )),
-                    crate::schema::OutputType::Status { .. } => lines.push("Output: status".into()),
-                    crate::schema::OutputType::Custom { .. } => {
-                        lines.push("Output: custom structure".into())
-                    }
-                }
-            }
-            let mut provided: Vec<_> = cap.provides.iter().map(|field| field.as_str()).collect();
-            provided.sort_unstable();
-            lines.push(format!("Populates: {}", provided.join(", ")));
+            let rendered = retrieval_text::render(cgs, cap, entity)?;
             let operation = OperationEvidence {
                 kind: cap.kind,
                 receiver: cap.inputs.receiver.clone(),
-                contract: format!(
-                    "Purpose: {}\n{}",
-                    cap.description,
-                    lines[contract_start..].join("\n")
-                ),
+                contract: rendered.operation,
             };
-            let collection_start = lines.len();
-            for field in entity.fields.values() {
-                let value = field.named_value(cgs).map_err(|e| e.to_string())?;
-                lines.push(format!(
-                    "Entity field {}: {:?}",
-                    field.name, value.field_type
-                ));
-                render_value_evidence(
-                    cgs,
-                    &format!("Entity field {}", field.name),
-                    value,
-                    &mut lines,
-                )?;
-                render_slot_description(
-                    &format!("Entity field {}", field.name),
-                    Some(&field.description),
-                    &mut lines,
-                );
-            }
-            let mut related_entities = BTreeSet::new();
-            for (wire, relation) in &entity.relations {
-                lines.push(format!(
-                    "Relation {wire} -> {}: {}",
-                    relation.target_resource, relation.description
-                ));
-                related_entities.insert(relation.target_resource.to_string());
-            }
             let collection = CollectionEvidence {
-                meaning: format!(
-                    "Entity: {}\nEntity purpose: {}\n{}",
-                    cap.domain,
-                    entity.description,
-                    lines[collection_start..].join("\n")
-                ),
+                meaning: rendered.collection,
             };
-            let text = lines.join("\n");
+            let text = rendered.text;
             Ok(CapabilityDocument {
                 capability: cap.name.to_string(),
                 entity: cap.domain.to_string(),
                 text_hash: content_hash(text.as_bytes()),
                 text,
-                related_entities: related_entities.into_iter().collect(),
                 operation,
                 collection,
             })
@@ -296,135 +179,132 @@ pub fn capability_documents(cgs: &crate::CGS) -> Result<Vec<CapabilityDocument>,
         .collect()
 }
 
-/// Semantic evidence from CGS only; JSON quoting preserves metadata line boundaries.
-fn render_slot_description(label: &str, description: Option<&str>, lines: &mut Vec<String>) {
-    if let Some(description) = description.filter(|text| !text.trim().is_empty()) {
-        lines.push(format!(
-            "{label} meaning: {}",
-            serde_json::json!(description)
-        ));
-    }
-}
-
-fn render_members(label: &str, members: Option<&[String]>, lines: &mut Vec<String>) {
-    if let Some(members) = members.filter(|members| !members.is_empty()) {
-        lines.push(format!("{label} members: {}", serde_json::json!(members)));
-    }
-}
-
-fn render_value_evidence(
-    cgs: &crate::CGS,
-    label: &str,
-    value: &crate::schema::NamedValueSchema,
-    lines: &mut Vec<String>,
-) -> Result<(), String> {
-    let mut value = value;
-    let mut label = label.to_string();
-    let mut seen = BTreeSet::new();
-    loop {
-        render_slot_description(&label, Some(&value.description), lines);
-        render_members(&label, value.allowed_values.as_deref(), lines);
-        let Some(items) = &value.array_items else {
-            break;
-        };
-        use crate::schema::ValueDomainSlot;
-        let key = items.value_domain_key().as_str();
-        if !seen.insert(key) {
-            return Err(format!("cyclic discovery array value domain: {key}"));
-        }
-        value = cgs
-            .named_value_for_slot(items)
-            .map_err(|error| error.to_string())?;
-        label.push_str("[]");
-        lines.push(format!("{label}: {:?}", value.field_type));
-    }
-    Ok(())
-}
-
-fn render_input_type(
-    cgs: &crate::CGS,
-    path: &str,
-    ty: &crate::InputType,
-    lines: &mut Vec<String>,
-) -> Result<(), String> {
-    use crate::schema::{InputFieldWire, InputType};
-    match ty {
-        InputType::None => {}
-        InputType::Value {
-            field_type,
-            allowed_values,
-        } => {
-            lines.push(format!("Input {path}: {field_type:?}"));
-            render_members(&format!("Input {path}"), allowed_values.as_deref(), lines);
-        }
-        InputType::Object { fields, .. } => {
-            for field in fields {
-                let path = format!("{path}.{}", field.name);
-                match &field.wire {
-                    InputFieldWire::Registry(_) => {
-                        let value = field.named_value(cgs).map_err(|e| e.to_string())?;
-                        lines.push(format!(
-                            "Input {path}: {:?}; required={}",
-                            value.field_type, field.required
-                        ));
-                        render_value_evidence(cgs, &format!("Input {path}"), value, lines)?;
-                    }
-                    InputFieldWire::Inline(ty) => render_input_type(cgs, &path, ty, lines)?,
-                }
-                render_slot_description(
-                    &format!("Input {path}"),
-                    field.description.as_deref(),
-                    lines,
-                );
-            }
-        }
-        InputType::Array { element_type, .. } => {
-            render_input_type(cgs, &format!("{path}[]"), element_type, lines)?
-        }
-        InputType::Union { variants } => {
-            for variant in variants {
-                render_input_type(
-                    cgs,
-                    &format!("{path}.{}", variant.name),
-                    &InputType::Object {
-                        fields: variant.fields.clone(),
-                        additional_fields: false,
-                    },
-                    lines,
-                )?;
-            }
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn role_fixture() -> crate::CGS {
-        crate::load_schema(
+        let mut cgs = crate::load_schema(
             &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../fixtures/schemas/discovery_value_roles"),
         )
-        .expect("abstract discovery role fixture")
+        .expect("abstract discovery role fixture");
+        cgs.bind_registry_entry_id("role_fixture");
+        cgs
     }
 
     proptest::proptest! {
         #[test]
-        fn collection_semantics_cannot_rewrite_operation_contract(meaning in "[a-zA-Z ]{1,120}") {
+        fn entity_meaning_changes_index_without_rewriting_operation_contract(meaning in ".{0,150}") {
             let mut cgs = role_fixture();
             let before = capability_documents(&cgs).unwrap();
             for entity in cgs.entities.values_mut() {
+                proptest::prop_assume!(entity.description != meaning);
                 entity.description = meaning.clone();
             }
             let after = capability_documents(&cgs).unwrap();
             for (old, new) in before.iter().zip(&after) {
                 proptest::prop_assert_eq!(&old.operation, &new.operation);
                 proptest::prop_assert_ne!(&old.collection, &new.collection);
+                proptest::prop_assert_ne!(&old.text, &new.text);
+                proptest::prop_assert_ne!(&old.text_hash, &new.text_hash);
+                proptest::prop_assert!(new.text.contains(&meaning));
                 let decoded: CapabilityDocument = serde_json::from_str(&serde_json::to_string(new).unwrap()).unwrap();
                 proptest::prop_assert_eq!(new, &decoded);
             }
+        }
+    }
+
+    #[test]
+    fn retrieval_text_contains_only_declared_capability_meanings() {
+        let cgs = role_fixture();
+        let documents = capability_documents(&cgs).unwrap();
+        let query = documents
+            .iter()
+            .find(|d| d.capability == "record_query")
+            .unwrap();
+        assert!(query
+            .text
+            .contains("Works with Record records. Relationship-classified record"));
+        assert!(query.text.contains(
+            "Matching records are selected using Recorded relationship to the account holder"
+        ));
+        assert!(query
+            .text
+            .contains("Recorded relationship to the account holder"));
+        assert!(query.text.contains("Recorded relationship labels"));
+        assert!(!query.text.starts_with('{'));
+        assert!(query
+            .operation
+            .contract
+            .contains("Recorded relationship to the account holder"));
+        assert!(query.operation.contract.contains("Read consistency mode"));
+        assert!(query
+            .collection
+            .meaning
+            .contains("Relationship-classified record"));
+        assert_eq!(query.text_hash, content_hash(query.text.as_bytes()));
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn input_descriptions_survive_indexing_and_serialization(description in ".{1,150}") {
+            let mut cgs = role_fixture();
+            let before = capability_documents(&cgs).unwrap();
+            cgs.capabilities.get_mut("record_get").unwrap().inputs.arguments.as_mut().unwrap().description = Some(description.clone());
+            cgs.capabilities.get_mut("record_create").unwrap().inputs.payload.as_mut().unwrap().description = Some(description.clone());
+            let after = capability_documents(&cgs).unwrap();
+            for (name, lane) in [("record_get", "arguments_description"), ("record_create", "payload_description")] {
+                let old = before.iter().find(|d| d.capability == name).unwrap();
+                let new = after.iter().find(|d| d.capability == name).unwrap();
+                proptest::prop_assert_ne!(&old.text_hash, &new.text_hash);
+                let decoded: CapabilityDocument = serde_json::from_slice(&serde_json::to_vec(new).unwrap()).unwrap();
+                let _ = lane;
+                proptest::prop_assert!(decoded.operation.contract.contains(&description));
+                proptest::prop_assert_eq!(new, &decoded);
+            }
+        }
+
+        #[test]
+        fn declared_controls_change_retrieval_and_cache_identity(description in "[a-zA-Z ]{1,120}") {
+            let mut cgs = role_fixture();
+            proptest::prop_assume!(description != cgs.values["mode"].description);
+            let before = capability_documents(&cgs).unwrap();
+            cgs.values.get_mut("mode").unwrap().description = description;
+            let after = capability_documents(&cgs).unwrap();
+            let old = before.iter().find(|d| d.capability == "record_query").unwrap();
+            let new = after.iter().find(|d| d.capability == "record_query").unwrap();
+            proptest::prop_assert_ne!(&old.text, &new.text);
+            proptest::prop_assert_ne!(&old.text_hash, &new.text_hash);
+            proptest::prop_assert_eq!(&old.collection, &new.collection);
+        }
+
+        #[test]
+        fn unobserved_entity_attributes_do_not_change_mutator_index(description in "[a-zA-Z ]{1,120}") {
+            let mut cgs = role_fixture();
+            let before = capability_documents(&cgs).unwrap();
+            cgs.values.get_mut("mode").unwrap().description = description.clone();
+            cgs.entities.get_mut("Record").unwrap().fields.get_mut("roles").unwrap().description = description;
+            let after = capability_documents(&cgs).unwrap();
+            let old = before.iter().find(|d| d.capability == "record_create").unwrap();
+            let new = after.iter().find(|d| d.capability == "record_create").unwrap();
+            proptest::prop_assert_eq!(&old.text, &new.text);
+            proptest::prop_assert_eq!(&old.operation, &new.operation);
+            proptest::prop_assert_eq!(&old.collection, &new.collection);
+            let old_query = before.iter().find(|d| d.capability == "record_query").unwrap();
+            let new_query = after.iter().find(|d| d.capability == "record_query").unwrap();
+            proptest::prop_assert_ne!(&old_query.text, &new_query.text);
+        }
+
+        #[test]
+        fn retrieval_meanings_preserve_exact_authored_text(description in ".{0,150}") {
+            let mut cgs = role_fixture();
+            cgs.values.get_mut("owner").unwrap().description = description.clone();
+            let doc = capability_documents(&cgs).unwrap().into_iter().find(|d| d.capability == "record_query").unwrap();
+            let decoded: CapabilityDocument = serde_json::from_slice(&serde_json::to_vec(&doc).unwrap()).unwrap();
+            proptest::prop_assert_eq!(&doc, &decoded);
+            proptest::prop_assert!(decoded.text.contains(&description));
+            proptest::prop_assert_eq!(decoded.text_hash, content_hash(decoded.text.as_bytes()));
         }
     }
 
@@ -457,35 +337,25 @@ mod tests {
             .iter()
             .find(|doc| doc.capability == "record_query")
             .unwrap();
-        assert!(query
-            .text
-            .contains("Input scope.owner_email meaning: \"Owner of the collection being read\""));
-        assert!(query
-            .text
-            .contains("Input scope.owner_email meaning: \"Select whose collection is read\""));
-        assert!(query.text.contains(
-            "Input selection.relationship members: [\"colleague\",\"relative\",\"neighbor\"]"
+        assert!(query.operation.contract.contains("The collection is scoped by Select whose collection is read Owner of the collection being read"));
+        assert!(query.operation.contract.contains("Matching records are selected using Recorded relationship to the account holder Allowed values: colleague, relative, neighbor."));
+        assert!(query.operation.contract.contains(
+            "Execution is controlled by Read consistency mode Allowed values: fresh, cached."
         ));
-        assert!(query
-            .text
-            .contains("Input controls.mode members: [\"fresh\",\"cached\"]"));
-        assert!(query
-            .text
-            .contains("Entity field roles[] members: [\"colleague\",\"relative\",\"neighbor\"]"));
+        assert!(query.operation.contract.contains("Each element describes Recorded relationship to the account holder Allowed values: colleague, relative, neighbor."));
         let get = documents
             .iter()
-            .find(|doc| doc.capability == "record_get")
+            .find(|d| d.capability == "record_get")
             .unwrap();
-        assert!(get.text.contains(
-            "Input arguments.owner_email meaning: \"Owner of the collection being read\""
-        ));
+        assert!(get
+            .operation
+            .contract
+            .contains("The operation accepts Owner of the collection being read"));
         let create = documents
             .iter()
-            .find(|doc| doc.capability == "record_create")
+            .find(|d| d.capability == "record_create")
             .unwrap();
-        assert!(create.text.contains(
-            "Input payload.relationships[] members: [\"colleague\",\"relative\",\"neighbor\"]"
-        ));
+        assert!(create.operation.contract.contains("Each element describes Recorded relationship to the account holder Allowed values: colleague, relative, neighbor."));
         assert!(documents
             .iter()
             .all(|doc| !doc.text.contains("private-default@example.com")
@@ -532,10 +402,20 @@ mod tests {
     }
 
     #[test]
-    fn value_role_evidence_quotes_multiline_metadata() {
-        let mut lines = Vec::new();
-        render_slot_description("Input owner", Some("owner\nsecond line"), &mut lines);
-        assert_eq!(lines, vec!["Input owner meaning: \"owner\\nsecond line\""]);
+    fn value_role_evidence_preserves_multiline_metadata() {
+        let mut cgs = role_fixture();
+        cgs.values.get_mut("owner").unwrap().description = "owner\nsecond line".into();
+        let docs = capability_documents(&cgs).unwrap();
+        let doc = docs
+            .iter()
+            .find(|d| d.capability == "record_query")
+            .unwrap();
+        assert!(doc.text.contains("owner\nsecond line"));
+        let wire = serde_json::to_vec(doc).unwrap();
+        assert_eq!(
+            *doc,
+            serde_json::from_slice::<CapabilityDocument>(&wire).unwrap()
+        );
     }
 
     #[test]
@@ -544,6 +424,42 @@ mod tests {
         assert!(validate_embedding(&[f32::NAN], 1).is_err());
         assert!(validate_embedding(&[0.0], 1).is_err());
         assert!(validate_embedding(&[1.0, -1.0], 2).is_ok());
+    }
+
+    #[test]
+    fn enum_member_meanings_survive_projection_and_codec() {
+        let mut cgs = role_fixture();
+        let before = capability_documents(&cgs).unwrap();
+        let role = cgs.values.get_mut("role").unwrap();
+        role.domain.enum_membership = Some(
+            crate::value_domain::EnumMembership::try_new(
+                vec!["colleague".into(), "relative".into(), "neighbor".into()],
+                Some(indexmap::IndexMap::from([(
+                    "colleague".into(),
+                    "Person employed alongside the account holder".into(),
+                )])),
+            )
+            .unwrap(),
+        );
+        let after = capability_documents(&cgs).unwrap();
+        let prior = before
+            .iter()
+            .find(|d| d.capability == "record_query")
+            .unwrap();
+        let current = after
+            .iter()
+            .find(|d| d.capability == "record_query")
+            .unwrap();
+        assert!(current
+            .text
+            .contains("colleague: Person employed alongside the account holder"));
+        assert_ne!(prior.text_hash, current.text_hash);
+        let decoded: crate::CGS =
+            serde_json::from_slice(&serde_json::to_vec(&cgs).unwrap()).unwrap();
+        assert_eq!(after, capability_documents(&decoded).unwrap());
+        let mut stale = serde_json::to_value(current).unwrap();
+        stale["related_entities"] = serde_json::json!([]);
+        assert!(serde_json::from_value::<CapabilityDocument>(stale).is_err());
     }
 
     #[test]
@@ -561,7 +477,6 @@ mod tests {
                 meaning: "Records".into(),
             },
             text_hash: content_hash(b"Read records"),
-            related_entities: vec![],
         };
         let first = EmbeddingProfile::default();
         let mut second = first.clone();

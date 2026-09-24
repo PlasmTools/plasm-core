@@ -2,10 +2,10 @@
 
 Plan from the current requirement, taught symbols and observed results. Stop with no tool call when observations establish every requested effect. Intermediate results alone are not completion.
 
-1. Call `plasm_context` with `session_mode: "new"`, the original `intent`, and one `effect_slots` entry for every affirmative effect or requested information outcome. Matched capabilities open the language card and `logical_session_ref`, even while other slots remain unresolved.
-2. You own conversational decisions. Teaching does not authorize execution. Use available capabilities within inherited constraints; keep unresolved work explicit. Routing errors are operational failures.
-3. One workflow uses one `logical_session_ref`. Reuse it for `plasm` / `plasm_run`. Extend only for current discovery needs; the runtime preserves intent ancestry, unresolved slots and existing symbols. Repair parse errors in the same session. Intent does not select the session.
+1. Call `plasm_context` with `session_mode: "new"`, the original `intent`. Relevant capabilities open the language card and `logical_session_ref`.
+2. You own conversational decisions. Teaching does not authorize execution. Use available capabilities according to the current intent and observed evidence. Routing errors are operational failures.
+3. One workflow uses one `logical_session_ref`. Reuse it for `plasm` / `plasm_run`. Extend only for current discovery needs; the runtime preserves intent ancestry and existing symbols. Repair parse errors in the same session. Intent does not select the session.
 4. Follow declared prerequisites and input bindings in the card. Write acquisition as ordinary calls, binding provider outputs into consumer inputs. Discovery and teaching perform no acquisition.
 5. Submit the program to `plasm`. Clean reads may execute directly; a returned `run_ref` identifies a reviewed plan for `plasm_run`.
 
-Copy symbols, wire names and enum literals exactly. Reuse observed rows and labels. Follow artifact links through `resources/read` or `plasm_read_run_artifact` for complete results. If requested effects remain absent, revise the plan within the same session.
+Copy symbols, wire names and enum literals exactly. Reuse observed rows and labels. When needed, follow artifact links through `resources/read` or `plasm_read_run_artifact` for complete results. If requested effects remain absent, revise the plan within the same session.

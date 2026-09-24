@@ -19,9 +19,7 @@ use crate::session_identity::{
 };
 use crate::trace_hub::PlasmContextTrace;
 
-use super::tool_parse::{
-    parse_effect_slots, parse_optional_principal, parse_plasm_context_session_mode,
-};
+use super::tool_parse::{parse_optional_principal, parse_plasm_context_session_mode};
 use super::transport::PlasmExecBinding;
 use super::{PlasmMcpHandler, MAX_MCP_EXEC_BINDINGS};
 use crate::discovery_service::{DiscoveryService, RouteTurn};
@@ -39,10 +37,12 @@ impl PlasmMcpHandler {
         let intent = v.get("intent").and_then(|x| x.as_str()).ok_or_else(|| {
             CallToolError::invalid_arguments(tname, Some("missing `intent`".into()))
         })?;
-        let effect_slots = parse_effect_slots(tname, v)?;
         let (session_mode, extend_ref) = parse_plasm_context_session_mode(tname, v)?;
-        if v.get("seeds").is_some() || v.get("ranked_capabilities").is_some() {
-            return Err(CallToolError::invalid_arguments(tname, Some("plasm_context accepts current intent, affirmative effect slots, and continuation fields; explicit seed selection has been removed".into())));
+        if v.get("seeds").is_some()
+            || v.get("ranked_capabilities").is_some()
+            || v.get("effect_slots").is_some()
+        {
+            return Err(CallToolError::invalid_arguments(tname, Some("plasm_context accepts current intent and continuation fields; explicit seed selection has been removed".into())));
         }
         let principal = parse_optional_principal(v);
         let tcfg = self.tenant_mcp_cfg(runtime).await?;
@@ -155,7 +155,10 @@ impl PlasmMcpHandler {
         {
             return Err(CallToolError::invalid_arguments(
                 tname,
-                Some("Discovery accepts current intent plus affirmative effect slots; conversational choices belong to the agent".into()),
+                Some(
+                    "Discovery accepts current intent; conversational choices belong to the agent"
+                        .into(),
+                ),
             ));
         }
         let store = self
@@ -179,7 +182,6 @@ impl PlasmMcpHandler {
             .route_turn(RouteTurn {
                 new_generation: &generation,
                 intent_provenance: &provenance,
-                effect_slots: &effect_slots,
                 logical_session: logical_id.as_deref(),
                 allowed: &allowed,
                 exposed: &exposed,

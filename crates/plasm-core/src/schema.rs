@@ -466,6 +466,12 @@ pub struct NamedValueSchema {
 }
 
 impl NamedValueSchema {
+    /// Whether this registry row carries authored meaning rather than only an
+    /// interned wire shape. Registry key equality alone is not semantic evidence.
+    pub fn has_authored_meaning(&self) -> bool {
+        !self.description.trim().is_empty()
+    }
+
     /// Build from resolved domain + array items (loader path).
     pub fn from_domain(
         description: String,

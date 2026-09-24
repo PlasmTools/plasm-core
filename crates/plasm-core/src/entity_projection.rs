@@ -95,8 +95,7 @@ impl CGS {
                     .input_fields()
                     .filter(|field| field.required && field.default.is_none())
                     .all(|field| {
-                        field.name == "id"
-                            || field.name == entity.id_field.as_str()
+                        field.name == entity.id_field.as_str()
                             || entity.key_vars.iter().any(|key| key.as_str() == field.name)
                             || source.input_fields().any(|parent| {
                                 parent.name == field.name
@@ -155,6 +154,47 @@ mod tests {
         assert!(!candidates
             .iter()
             .any(|candidate| candidate.provider.capability == "operation_get"));
+    }
+
+    #[test]
+    fn arbitrary_id_argument_is_not_declared_receiver_identity() {
+        let mut cgs = fixture();
+        let entity = cgs.entities.get_mut("Record").unwrap();
+        entity.id_field = "key".into();
+        let mut identity = entity.fields.shift_remove("id").unwrap();
+        identity.name = "key".into();
+        entity.fields.insert("key".into(), identity);
+        for cap in cgs
+            .capabilities
+            .values_mut()
+            .filter(|cap| cap.domain.as_str() == "Record")
+        {
+            for field in &mut cap.provides {
+                if field == "id" {
+                    *field = "key".into();
+                }
+            }
+        }
+        let secret = cgs.capabilities.get_mut("secret").unwrap();
+        let crate::schema::InputType::Object { fields, .. } =
+            &mut secret.inputs.arguments.as_mut().unwrap().input_type
+        else {
+            unreachable!()
+        };
+        fields[0].name = "id".into();
+        let projection = cgs.entity_read_projection(&cgs.capabilities["list"], |_| true);
+        assert_eq!(
+            projection.fields["email"],
+            FieldAvailability::Hydrated {
+                capability: "detail".into()
+            }
+        );
+        assert_eq!(projection.fields["secret"], FieldAvailability::Unavailable);
+        let wire: CGS = serde_json::from_slice(&serde_json::to_vec(&cgs).unwrap()).unwrap();
+        assert_eq!(
+            projection,
+            wire.entity_read_projection(&wire.capabilities["list"], |_| true)
+        );
     }
 
     #[test]

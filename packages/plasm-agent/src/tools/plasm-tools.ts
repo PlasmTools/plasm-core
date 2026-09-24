@@ -15,14 +15,7 @@ const plasmContextInputSchema = z.object({
     .string()
     .min(1)
     .describe(
-      "The current intent for this discovery turn. The runtime appends it to the workflow provenance chain and preserves ancestor constraints.",
-    ),
-  effect_slots: z
-    .array(z.string().trim().min(1))
-    .min(1)
-    .max(64)
-    .describe(
-      "Every affirmative effect or explicitly requested information outcome, one complete statement per slot. Preserve branch and ordering context; attach constraints to the effect they constrain.",
+      "The current intent for this discovery turn. The runtime appends it to the workflow provenance chain and retains ancestor context; explicit revisions may replace earlier goals.",
     ),
   session_mode: z
     .enum(["new", "extend"])
@@ -102,7 +95,6 @@ export function createPlasmTools(
     execute: async (args) =>
       runtime.plasmContext({
         intent: args.intent,
-        effectSlots: args.effect_slots,
         sessionMode: args.session_mode ?? "new",
         logicalSessionRef: args.logical_session_ref,
       }),

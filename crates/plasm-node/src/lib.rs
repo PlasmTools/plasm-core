@@ -229,13 +229,12 @@ impl PlasmEngine {
         Ok(generation)
     }
 
-    /// Typed intent provenance plus current affirmative effect slots; selection runs
+    /// Typed intent provenance with its current discovery need; selection runs
     /// outside the execution mutex.
     #[napi]
     pub async fn route_intent(
         &self,
         intent_provenance_json: String,
-        effect_slots: Vec<String>,
         logical_session_id: Option<String>,
     ) -> Result<String> {
         let provenance: plasm_agent_core::intent_provenance::IntentProvenance =
@@ -255,7 +254,6 @@ impl PlasmEngine {
             .route_turn(RouteTurn {
                 new_generation: &generation,
                 intent_provenance: &provenance,
-                effect_slots: &effect_slots,
                 logical_session: logical_session_id.as_deref(),
                 allowed: &allowed,
                 exposed: &exposed,

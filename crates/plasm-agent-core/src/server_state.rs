@@ -794,11 +794,7 @@ mod tests {
             );
         }
         for (suffix, content_type, body) in [
-            (
-                "/context",
-                "application/json",
-                r#"{"intent":"read","effect_slots":["Read records"]}"#,
-            ),
+            ("/context", "application/json", r#"{"intent":"read"}"#),
             ("", "text/plain", "e1{}"),
         ] {
             let response = router

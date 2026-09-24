@@ -1,2 +1,2 @@
-**Not the default open step.** Use **`plasm_context`** with original **`intent`** plus explicit **`effect_slots`**. If matching is insufficient, report the unmatched slots; do not infer that partial teaching exists.
+**Not the default open step.** Use **`plasm_context`** with the current **`intent`**. A bounded relevance result does not establish task completeness or catalog absence.
 This browse surface is secondary diagnostics only. It does not mint program symbols or replace Jev capability matching.

@@ -15,9 +15,7 @@ use plasm_core::prompt_render::{
     PLASM_RUN_TOOL_ARTIFACT_TOOL, PLASM_RUN_TOOL_DESCRIPTION_BASE, PLASM_TOOL_DESCRIPTION,
 };
 
-use super::schema::{
-    json_schema_non_empty_string_array, json_schema_non_empty_string_type, json_schema_string_type,
-};
+use super::schema::{json_schema_non_empty_string_type, json_schema_string_type};
 
 pub(crate) fn plasm_run_tool_description(mode: ArtifactAccessMode) -> String {
     let suffix = match mode {
@@ -49,13 +47,7 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
     context_props.insert(
         "intent".into(),
         json_schema_non_empty_string_type(
-            "This turn's current intent. Appended to the workflow provenance chain; current intent and slots drive retrieval, ancestry preserves constraints for judgment. Independent of session identity.",
-        ),
-    );
-    context_props.insert(
-        "effect_slots".into(),
-        json_schema_non_empty_string_array(
-            "Every affirmative effect or explicitly requested information outcome in this turn, one complete statement per item. Preserve conditional branch context and ordering in each affected statement. Do not make prohibitions or selection constraints standalone slots; incorporate them into the effect they constrain. The host rejects partial capability coverage across these slots.",
+            "This turn's current intent. Appended to the workflow provenance chain; current intent drives retrieval, ancestry supplies context for judgment. Independent of session identity.",
         ),
     );
     context_props.insert(
@@ -95,11 +87,7 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
         title: Some("Open or extend Plasm context".into()),
         description: Some(PLASM_CONTEXT_TOOL_DESCRIPTION.into()),
         input_schema: ToolInputSchema::new(
-            vec![
-                "session_mode".into(),
-                "intent".into(),
-                "effect_slots".into(),
-            ],
+            vec!["session_mode".into(), "intent".into()],
             Some(context_props),
             None,
         ),

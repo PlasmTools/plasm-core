@@ -1,6 +1,6 @@
 //! PostgreSQL publication and retrieval. No acquisition capabilities execute here.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use plasm_core::catalog_discovery::{
     content_hash, validate_embedding, CapabilityDocument, CatalogDiscoveryArtifact,
     EmbeddingProfile,
@@ -20,7 +20,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 const CHANNEL_LIMIT: i64 = 64;
-const SELECTOR_LIMIT: usize = 128;
+pub const CANDIDATE_LIMIT: usize = 2 * CHANNEL_LIMIT as usize;
 
 /// Server-derived policy applied inside both retrieval channels and prerequisite closure.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -122,6 +122,75 @@ pub struct RetrievedCapability {
     pub admissions: BTreeSet<String>,
 }
 
+/// Channel cutoffs are the only admission cutoffs. Identity order is stable;
+/// overlap merges provenance, never suppresses a unique candidate.
+fn union_candidates(
+    lexical: Vec<RetrievedCapability>,
+    vector: Vec<RetrievedCapability>,
+) -> Result<Vec<RetrievedCapability>> {
+    ensure!(
+        lexical.len() <= CHANNEL_LIMIT as usize && vector.len() <= CHANNEL_LIMIT as usize,
+        "retrieval channel exceeds its admission bound"
+    );
+    let mut union: BTreeMap<String, RetrievedCapability> = BTreeMap::new();
+    for (channel, candidates) in [("lexical", lexical), ("vector", vector)] {
+        let mut seen = BTreeSet::new();
+        for mut candidate in candidates {
+            ensure!(
+                seen.insert(candidate.id.clone()),
+                "duplicate retrieval channel identity"
+            );
+            candidate.admissions = BTreeSet::from([channel.into()]);
+            if let Some(existing) = union.get_mut(&candidate.id) {
+                ensure!(
+                    existing.reference == candidate.reference
+                        && existing.document == candidate.document,
+                    "retrieval channels disagree on candidate identity or document"
+                );
+                existing.admissions.insert(channel.into());
+            } else {
+                union.insert(candidate.id.clone(), candidate);
+            }
+        }
+    }
+    Ok(union.into_values().collect())
+}
+
+impl RetrievalReceipt {
+    /// Validate the admission boundary independently of downstream selection.
+    pub fn validate(&self, allowed: &DiscoveryAuthorization) -> Result<()> {
+        ensure!(
+            self.candidates.len() <= CANDIDATE_LIMIT,
+            "retrieval candidate bound exceeded"
+        );
+        let mut ids = BTreeSet::new();
+        let mut references = BTreeSet::new();
+        for candidate in &self.candidates {
+            ensure!(
+                allowed.permits(&candidate.reference),
+                "unauthorized retrieval candidate"
+            );
+            ensure!(
+                ids.insert(&candidate.id) && references.insert(&candidate.reference),
+                "duplicate retrieval candidate"
+            );
+            ensure!(
+                candidate.reference.capability == candidate.document.capability,
+                "retrieval document identity mismatch"
+            );
+            ensure!(
+                !candidate.document.text.trim().is_empty(),
+                "empty retrieval document"
+            );
+            ensure!(
+                content_hash(candidate.document.text.as_bytes()) == candidate.document.text_hash,
+                "retrieval document digest mismatch"
+            );
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RetrievalReceipt {
     pub generation: String,
@@ -130,8 +199,6 @@ pub struct RetrievalReceipt {
     pub vector_count: usize,
     pub lexical_truncated: bool,
     pub vector_truncated: bool,
-    pub fusion_truncated: usize,
-    pub relation_truncated: usize,
 }
 
 impl DiscoveryStore {
@@ -144,46 +211,26 @@ impl DiscoveryStore {
         Ok(serde_json::from_value(value)?)
     }
 
-    pub async fn discovery_coverage(
-        &self,
-        session: &str,
-    ) -> Result<crate::discovery_coverage::DiscoveryCoverage> {
-        let value: Option<serde_json::Value> = sqlx::query_scalar("SELECT p.coverage FROM discovery_intent_provenance p JOIN discovery_session_pins s USING (session_id) WHERE session_id=$1 AND s.expires_at > now()")
-            .bind(session).fetch_one(&mut *self.pool.acquire().await?).await?;
-        Ok(serde_json::from_value(value.context(
-            "session has no discovery coverage; open a new context",
-        )?)?)
-    }
-
     /// Serialize ancestry commits on the existing session pin. A stale or rewritten
     /// chain cannot become the context for an exposed capability surface.
     pub async fn commit_discovery_progress(
         &self,
         session: &str,
         provenance: &crate::intent_provenance::IntentProvenance,
-        coverage: &crate::discovery_coverage::DiscoveryCoverage,
         extending: bool,
     ) -> Result<()> {
         let mut connection = self.pool.acquire().await?;
         let mut tx = connection.begin().await?;
         sqlx::query("SELECT session_id FROM discovery_session_pins WHERE session_id=$1 AND expires_at > now() FOR UPDATE")
             .bind(session).fetch_one(&mut *tx).await?;
-        let previous: Option<(serde_json::Value, Option<serde_json::Value>)> = sqlx::query_as(
-            "SELECT provenance,coverage FROM discovery_intent_provenance WHERE session_id=$1",
+        let previous: Option<serde_json::Value> = sqlx::query_scalar(
+            "SELECT provenance FROM discovery_intent_provenance WHERE session_id=$1",
         )
         .bind(session)
         .fetch_optional(&mut *tx)
         .await?;
-        if let Some((previous, previous_coverage)) = previous {
+        if let Some(previous) = previous {
             let previous = serde_json::from_value(previous)?;
-            let previous_coverage = serde_json::from_value(
-                previous_coverage
-                    .context("session has no discovery coverage; open a new context")?,
-            )?;
-            anyhow::ensure!(
-                coverage.is_continuation_of(&previous_coverage),
-                "discovery coverage rewrites or omits pinned obligations or matches"
-            );
             anyhow::ensure!(
                 provenance.is_continuation_of(&previous),
                 "intent provenance rewrites or omits pinned ancestry"
@@ -194,25 +241,10 @@ impl DiscoveryStore {
                 "session has no intent provenance; open a new context"
             );
         }
-        sqlx::query("INSERT INTO discovery_intent_provenance (session_id,provenance,coverage) VALUES ($1,$2,$3) ON CONFLICT (session_id) DO UPDATE SET provenance=EXCLUDED.provenance,coverage=EXCLUDED.coverage")
-            .bind(session).bind(serde_json::to_value(provenance)?).bind(serde_json::to_value(coverage)?).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO discovery_intent_provenance (session_id,provenance) VALUES ($1,$2) ON CONFLICT (session_id) DO UPDATE SET provenance=EXCLUDED.provenance")
+            .bind(session).bind(serde_json::to_value(provenance)?).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(())
-    }
-
-    /// Independent current-slot recall, fairly interleaved under the selector bound.
-    pub async fn retrieve_queries(
-        &self,
-        generation: &str,
-        queries: &[String],
-        allowed: &DiscoveryAuthorization,
-    ) -> Result<RetrievalReceipt> {
-        anyhow::ensure!(!queries.is_empty(), "discovery queries required");
-        let mut receipts = Vec::new();
-        for query in queries {
-            receipts.push(self.retrieve(generation, query, allowed).await?);
-        }
-        merge_query_receipts(receipts, allowed)
     }
 
     pub async fn connect(url: &str) -> Result<Self> {
@@ -387,12 +419,7 @@ impl DiscoveryStore {
         BTreeMap<String, Arc<plasm_compile::CompiledCatalog>>,
         DeploymentBindings,
     )> {
-        let bindings: serde_json::Value =
-            sqlx::query_scalar("SELECT bindings FROM discovery_generations WHERE generation_id=$1")
-                .bind(generation)
-                .fetch_optional(&mut *self.pool.acquire().await?)
-                .await?
-                .context("unknown discovery generation")?;
+        let bindings = self.generation_bindings(generation).await?;
         let rows = sqlx::query("SELECT g.entry_id,r.cgs,r.manifest,p.recipes FROM discovery_generation_catalogs g JOIN discovery_revisions r USING(revision_id) JOIN discovery_compiled_recipes p USING(revision_id) WHERE g.generation_id=$1 ORDER BY g.entry_id")
             .bind(generation).fetch_all(&mut *self.pool.acquire().await?).await?;
         let mut catalogs = BTreeMap::new();
@@ -412,11 +439,42 @@ impl DiscoveryStore {
             catalogs.insert(entry_id.clone(), cgs);
             compiled_catalogs.insert(entry_id, Arc::new(compiled));
         }
-        Ok((
-            catalogs,
-            compiled_catalogs,
-            serde_json::from_value(bindings)?,
-        ))
+        Ok((catalogs, compiled_catalogs, bindings))
+    }
+
+    async fn generation_bindings(&self, generation: &str) -> Result<DeploymentBindings> {
+        let bindings: serde_json::Value =
+            sqlx::query_scalar("SELECT bindings FROM discovery_generations WHERE generation_id=$1")
+                .bind(generation)
+                .fetch_optional(&mut *self.pool.acquire().await?)
+                .await?
+                .context("unknown discovery generation")?;
+        Ok(serde_json::from_value(bindings)?)
+    }
+
+    /// Discovery consumes semantic CGS only. Compiled IO recipes are loaded and
+    /// verified by the execution path, not decoded on every relevance request.
+    pub async fn load_discovery_generation(
+        &self,
+        generation: &str,
+        allowed: &DiscoveryAuthorization,
+    ) -> Result<(BTreeMap<String, CGS>, DeploymentBindings)> {
+        let bindings = self.generation_bindings(generation).await?;
+        let allowed: Vec<_> = allowed.catalogs.iter().collect();
+        let rows = sqlx::query("SELECT g.entry_id,r.cgs,r.manifest FROM discovery_generation_catalogs g JOIN discovery_revisions r USING(revision_id) WHERE g.generation_id=$1 AND g.entry_id=ANY($2) ORDER BY g.entry_id")
+            .bind(generation).bind(allowed).fetch_all(&mut *self.pool.acquire().await?).await?;
+        let catalogs = rows
+            .into_iter()
+            .map(|row| {
+                let bytes: Vec<u8> = row.try_get("cgs")?;
+                let manifest: CatalogManifest = serde_json::from_value(row.try_get("manifest")?)?;
+                let cgs =
+                    plasm_core::catalog_il::load_catalog_il_verified(&bytes, &manifest.cgs_hash)
+                        .map_err(anyhow::Error::msg)?;
+                Ok((row.try_get("entry_id")?, cgs))
+            })
+            .collect::<Result<BTreeMap<_, _>>>()?;
+        Ok((catalogs, bindings))
     }
 
     pub async fn pin_generation(
@@ -520,44 +578,7 @@ impl DiscoveryStore {
         Ok(())
     }
 
-    /// Existing teaching is selectable evidence, resolved against the same authorized generation.
-    pub async fn include_exposed(
-        &self,
-        receipt: &mut RetrievalReceipt,
-        exposed: &[CapabilityRef],
-        allowed: &DiscoveryAuthorization,
-    ) -> Result<()> {
-        let mut existing = BTreeMap::new();
-        for reference in exposed {
-            if !allowed.permits(reference) {
-                bail!("exposed capability is no longer authorized");
-            }
-            let row = sqlx::query("SELECT c.*,g.entry_id FROM discovery_capabilities c JOIN discovery_generation_catalogs g USING (revision_id) WHERE g.generation_id=$1 AND g.entry_id=$2 AND c.capability=$3")
-                .bind(&receipt.generation).bind(&reference.catalog).bind(&reference.capability).fetch_optional(&mut *self.pool.acquire().await?).await?.context("exposed capability does not belong to the pinned generation")?;
-            let mut candidate = candidate_from_row(&row)?;
-            candidate.admissions.insert("already_exposed".into());
-            existing.insert(candidate.id.clone(), candidate);
-        }
-        if existing.len() > SELECTOR_LIMIT {
-            bail!("routing incomplete: exposed capabilities exceed the selector budget");
-        }
-        let mut remaining = Vec::new();
-        for candidate in std::mem::take(&mut receipt.candidates) {
-            if let Some(prior) = existing.get_mut(&candidate.id) {
-                prior.admissions.extend(candidate.admissions);
-            } else {
-                remaining.push(candidate);
-            }
-        }
-        let available = SELECTOR_LIMIT - existing.len();
-        receipt.relation_truncated += remaining.len().saturating_sub(available);
-        receipt.candidates = existing
-            .into_values()
-            .chain(remaining.into_iter().take(available))
-            .collect();
-        Ok(())
-    }
-
+    /// Rank within the authorized generation. Typed graph expansion belongs to the routing layer.
     async fn retrieve_vector(
         &self,
         generation: &str,
@@ -577,51 +598,16 @@ impl DiscoveryStore {
         vector.truncate(CHANNEL_LIMIT as usize);
         let lexical_count = lexical.len();
         let vector_count = vector.len();
-        let mut documents = BTreeMap::new();
-        let mut ranks = BTreeMap::<String, f64>::new();
-        for (channel, rows) in [("lexical", lexical), ("vector", vector)] {
-            for (rank, row) in rows.into_iter().enumerate() {
-                let mut candidate = candidate_from_row(&row)?;
-                *ranks.entry(candidate.id.clone()).or_default() += 1.0 / (60.0 + rank as f64 + 1.0);
-                candidate.admissions.insert(channel.into());
-                documents
-                    .entry(candidate.id.clone())
-                    .and_modify(|existing: &mut RetrievedCapability| {
-                        existing.admissions.insert(channel.into());
-                    })
-                    .or_insert(candidate);
-            }
-        }
-        let mut ranked: Vec<_> = ranks.into_iter().collect();
-        ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        let fusion_truncated = ranked.len().saturating_sub(CHANNEL_LIMIT as usize);
-        let mut candidates: Vec<_> = ranked
-            .into_iter()
-            .take(CHANNEL_LIMIT as usize)
-            .filter_map(|(id, _)| documents.remove(&id))
-            .collect();
-        let mut admitted: BTreeSet<_> = candidates.iter().map(|c| c.id.clone()).collect();
-        let mut relation_targets = BTreeSet::new();
-        for candidate in &candidates {
-            for entity in &candidate.document.related_entities {
-                relation_targets.insert((candidate.reference.catalog.clone(), entity.clone()));
-            }
-        }
-        let mut expanded = BTreeMap::new();
-        for (catalog, entity) in relation_targets {
-            let rows = sqlx::query("SELECT c.*,g.entry_id FROM discovery_capabilities c JOIN discovery_generation_catalogs g USING (revision_id) WHERE g.generation_id=$1 AND g.entry_id=ANY($2) AND g.entry_id=$3 AND c.entity=$4 AND (NOT ($5::jsonb ? g.entry_id) OR ($5::jsonb -> g.entry_id) ? c.capability) ORDER BY c.revision_id,c.capability")
-                .bind(generation).bind(&allowed).bind(catalog).bind(entity).bind(&restrictions).fetch_all(&mut *self.pool.acquire().await?).await?;
-            for row in rows {
-                let mut candidate = candidate_from_row(&row)?;
-                if admitted.insert(candidate.id.clone()) {
-                    candidate.admissions.insert("relation".into());
-                    expanded.insert(candidate.id.clone(), candidate);
-                }
-            }
-        }
-        let remaining = SELECTOR_LIMIT.saturating_sub(candidates.len());
-        let relation_truncated = expanded.len().saturating_sub(remaining);
-        candidates.extend(expanded.into_values().take(remaining));
+        let candidates = union_candidates(
+            lexical
+                .iter()
+                .map(candidate_from_row)
+                .collect::<Result<Vec<_>>>()?,
+            vector
+                .iter()
+                .map(candidate_from_row)
+                .collect::<Result<Vec<_>>>()?,
+        )?;
         Ok(RetrievalReceipt {
             generation: generation.into(),
             candidates,
@@ -629,8 +615,6 @@ impl DiscoveryStore {
             vector_count,
             lexical_truncated,
             vector_truncated,
-            fusion_truncated,
-            relation_truncated,
         })
     }
 }
@@ -657,6 +641,100 @@ fn candidate_from_row(row: &sqlx::postgres::PgRow) -> Result<RetrievedCapability
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    fn union_fixture(id: usize) -> RetrievedCapability {
+        let packet: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../fixtures/discovery/partial-routing.json"
+        ))
+        .unwrap();
+        let mut c: RetrievedCapability =
+            serde_json::from_value(packet["routing"]["retrieval"]["candidates"][0].clone())
+                .unwrap();
+        c.id = format!("candidate{id:03}");
+        c.reference.capability = format!("read{id}");
+        c.document.capability = c.reference.capability.clone();
+        c
+    }
+
+    #[test]
+    fn retrieval_boundary_rejects_corruption_after_codec() {
+        let packet: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../fixtures/discovery/partial-routing.json"
+        ))
+        .unwrap();
+        let mut receipt: RetrievalReceipt =
+            serde_json::from_value(packet["routing"]["retrieval"].clone()).unwrap();
+        for candidate in &mut receipt.candidates {
+            candidate.document.text_hash = content_hash(candidate.document.text.as_bytes());
+        }
+        let allowed = DiscoveryAuthorization::catalogs(
+            receipt
+                .candidates
+                .iter()
+                .map(|c| c.reference.catalog.clone())
+                .collect(),
+        );
+        receipt.validate(&allowed).unwrap();
+        let decoded: RetrievalReceipt =
+            serde_json::from_slice(&serde_json::to_vec(&receipt).unwrap()).unwrap();
+        decoded.validate(&allowed).unwrap();
+        assert!(decoded
+            .validate(&DiscoveryAuthorization::catalogs(BTreeSet::new()))
+            .is_err());
+        for defect in 0..5 {
+            let mut corrupt: RetrievalReceipt =
+                serde_json::from_slice(&serde_json::to_vec(&decoded).unwrap()).unwrap();
+            match defect {
+                0 => corrupt.candidates[0].document.text.push_str("altered"),
+                1 => corrupt.candidates[0].document.capability.push_str("other"),
+                2 => corrupt.candidates[0].document.text.clear(),
+                3 => corrupt.candidates.push(corrupt.candidates[0].clone()),
+                _ => {
+                    let mut duplicate = corrupt.candidates[0].clone();
+                    duplicate.id.push_str("different");
+                    corrupt.candidates.push(duplicate);
+                }
+            }
+            let wire: RetrievalReceipt =
+                serde_json::from_slice(&serde_json::to_vec(&corrupt).unwrap()).unwrap();
+            assert!(wire.validate(&allowed).is_err(), "defect {defect}");
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn bounded_union_preserves_every_channel_identity_and_codec(
+            lexical in prop::collection::btree_set(0usize..128, 0..65),
+            vector in prop::collection::btree_set(0usize..128, 0..65),
+        ) {
+            let candidates = union_candidates(lexical.iter().copied().map(union_fixture).collect(), vector.iter().copied().map(union_fixture).collect()).unwrap();
+            let decoded: Vec<RetrievedCapability> = serde_json::from_slice(&serde_json::to_vec(&candidates).unwrap()).unwrap();
+            prop_assert_eq!(decoded.len(), lexical.union(&vector).count());
+            prop_assert!(decoded.len() <= CANDIDATE_LIMIT);
+            for c in decoded {
+                let id=c.reference.capability.trim_start_matches("read").parse::<usize>().unwrap();
+                prop_assert_eq!(c.admissions.contains("lexical"),lexical.contains(&id));
+                prop_assert_eq!(c.admissions.contains("vector"),vector.contains(&id));
+                prop_assert_eq!(c.document.capability,c.reference.capability);
+            }
+        }
+    }
+
+    #[test]
+    fn disjoint_channels_retain_all_128_and_reject_corruption() {
+        let result = union_candidates(
+            (0..64).map(union_fixture).collect(),
+            (64..128).map(union_fixture).collect(),
+        )
+        .unwrap();
+        assert_eq!(result.len(), 128);
+        assert!(union_candidates((0..65).map(union_fixture).collect(), vec![]).is_err());
+        assert!(union_candidates(vec![union_fixture(0), union_fixture(0)], vec![]).is_err());
+        let mut corrupt = union_fixture(0);
+        corrupt.document.text.push_str("different");
+        assert!(union_candidates(vec![union_fixture(0)], vec![corrupt]).is_err());
+    }
     use plasm_core::catalog_discovery::{
         capability_documents, EmbeddedCapability, DISCOVERY_RENDERER_VERSION,
     };
@@ -736,72 +814,6 @@ mod tests {
         }
     }
 
-    fn recall_receipt(catalog: &str, count: usize) -> RetrievalReceipt {
-        RetrievalReceipt {
-            generation: "matrix".into(),
-            lexical_count: count,
-            vector_count: 0,
-            lexical_truncated: false,
-            vector_truncated: false,
-            fusion_truncated: 0,
-            relation_truncated: 0,
-            candidates: (0..count)
-                .map(|index| RetrievedCapability {
-                    id: format!("{catalog}/{index}"),
-                    reference: CapabilityRef {
-                        catalog: catalog.into(),
-                        capability: format!("read_{index}"),
-                    },
-                    document: CapabilityDocument {
-                        capability: format!("read_{index}"),
-                        entity: "Record".into(),
-                        text: "Read abstract records".into(),
-                        operation: plasm_core::catalog_discovery::OperationEvidence {
-                            kind: plasm_core::schema::CapabilityKind::Query,
-                            receiver: None,
-                            contract: "Read abstract records".into(),
-                        },
-                        collection: plasm_core::catalog_discovery::CollectionEvidence {
-                            meaning: "Abstract records".into(),
-                        },
-                        text_hash: "fixture".into(),
-                        related_entities: Vec::new(),
-                    },
-                    admissions: BTreeSet::from(["lexical".into()]),
-                })
-                .collect(),
-        }
-    }
-
-    proptest::proptest! {
-        #[test]
-        fn current_slot_recall_survives_broad_query_and_stays_bounded(broad in 1usize..256, narrow in 1usize..64) {
-            let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["broad".into(), "current".into()]));
-            let receipt = merge_query_receipts(vec![recall_receipt("broad", broad), recall_receipt("current", narrow)], &allowed).unwrap();
-            proptest::prop_assert!(receipt.candidates.len() <= SELECTOR_LIMIT);
-            proptest::prop_assert!(receipt.candidates.iter().any(|candidate| candidate.reference.catalog == "current"));
-            proptest::prop_assert_eq!(receipt.candidates.len() + receipt.fusion_truncated, broad + narrow);
-            proptest::prop_assert!(receipt.candidates.iter().all(|candidate| allowed.permits(&candidate.reference)));
-        }
-    }
-
-    #[test]
-    fn query_merge_rejects_out_of_scope_and_keeps_all_admission_witnesses() {
-        let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
-        assert!(merge_query_receipts(vec![recall_receipt("forbidden", 1)], &allowed).is_err());
-        let merged = merge_query_receipts(
-            vec![recall_receipt("matrix", 2), recall_receipt("matrix", 2)],
-            &allowed,
-        )
-        .unwrap();
-        assert_eq!(merged.candidates.len(), 2);
-        assert_eq!(merged.fusion_truncated, 0);
-        for candidate in merged.candidates {
-            assert!(candidate.admissions.contains("query:0"));
-            assert!(candidate.admissions.contains("query:1"));
-        }
-    }
-
     #[test]
     fn pinned_authorization_intersection_never_broadens_capabilities() {
         let pinned = DiscoveryAuthorization {
@@ -845,6 +857,97 @@ mod tests {
         }
         assert_eq!(pinned.intersection(&pinned), pinned);
         assert!(narrowed.capabilities["denied"].is_empty());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires an isolated PLASM_TEST_POSTGRES_URL with pgvector"]
+    async fn postgres_union_routes_every_candidate_through_paged_judgment() {
+        let store = DiscoveryStore::connect(&std::env::var("PLASM_TEST_POSTGRES_URL").unwrap())
+            .await
+            .unwrap();
+        store.migrate().await.unwrap();
+        let catalogs: Vec<_> = (0..64)
+            .map(|i| prepared(&format!("union-{i:02}"), 1))
+            .collect();
+        let names: BTreeSet<_> = catalogs
+            .iter()
+            .map(|c| c.manifest.entry_id.clone())
+            .collect();
+        let bindings = DeploymentBindings {
+            bindings: names
+                .iter()
+                .map(|name| DeploymentBinding {
+                    consumer: CapabilityRef {
+                        catalog: name.clone(),
+                        capability: "read".into(),
+                    },
+                    requirement: "scoped_access".into(),
+                    provider_catalog: name.clone(),
+                    provider: "value_source".into(),
+                })
+                .collect(),
+        };
+        let generation = store
+            .import("union-contract", catalogs, &bindings)
+            .await
+            .unwrap();
+        let intent = "Read selected records";
+        let profile = EmbeddingProfile::default();
+        let key = content_hash(&serde_json::to_vec(&(intent, &profile)).unwrap());
+        let mut vector = vec![0.0; 1536];
+        vector[1] = 1.0;
+        sqlx::query("INSERT INTO discovery_intent_embeddings VALUES ($1,$2,$3::text::vector) ON CONFLICT DO NOTHING")
+            .bind(key).bind(serde_json::to_value(profile).unwrap()).bind(vector_literal(&vector).unwrap())
+            .execute(&mut *store.pool.acquire().await.unwrap()).await.unwrap();
+        let allowed = DiscoveryAuthorization::catalogs(names);
+        let retrieval = store.retrieve(&generation, intent, &allowed).await.unwrap();
+        retrieval.validate(&allowed).unwrap();
+        assert!(retrieval.candidates.len() > 32);
+        assert!(retrieval.candidates.len() <= 128);
+        let provenance =
+            crate::intent_provenance::IntentProvenance::from_turns([intent.into()]).unwrap();
+        let batches = crate::discovery_matcher::issue_batches(
+            crate::discovery_matcher::JEV_MODEL,
+            &provenance,
+            &retrieval,
+        )
+        .unwrap();
+        assert!(batches.len() > 2);
+        for batch in batches {
+            let body: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
+            let answers: BTreeMap<_, _> = body["questions"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(|key| {
+                    (
+                        key.clone(),
+                        serde_json::json!({
+                            "type":"choice","choice":"relevant","confidence":1.0,
+                            "probabilities":{"relevant":1.0,"unrelated":0.0,"uncertain":0.0}
+                        }),
+                    )
+                })
+                .collect();
+            let raw=serde_json::json!({"model":crate::discovery_matcher::JEV_MODEL,"provider":"TypeSafe","answers":answers}).to_string();
+            store
+                .store_selector_envelope(batch.cache_key(), &raw)
+                .await
+                .unwrap();
+        }
+        let expected = retrieval.candidates.len();
+        let service = crate::discovery_service::DiscoveryService::cached_test_service(store);
+        let receipt = service
+            .route(&generation, &provenance, &allowed, &[])
+            .await
+            .unwrap();
+        assert_eq!(receipt.matching.matches.len(), expected);
+        assert_eq!(receipt.closure.as_ref().unwrap().business.len(), expected);
+        let wire = serde_json::to_value(&receipt).unwrap();
+        assert!(wire.get("reranking").is_none());
+        let decoded: crate::discovery_service::RoutingReceipt =
+            serde_json::from_value(wire).unwrap();
+        assert_eq!(decoded.retrieval.candidates.len(), expected);
     }
 
     #[tokio::test]
@@ -897,42 +1000,38 @@ mod tests {
                 ["Read selected records".into()],
             )
             .unwrap();
-        let mut coverage = crate::discovery_coverage::DiscoveryCoverage::default();
-        coverage
-            .slots_for_turn(&["Read selected records".into()])
-            .unwrap();
         store
-            .commit_discovery_progress(&session, &root, &coverage, false)
+            .commit_discovery_progress(&session, &root, false)
             .await
             .unwrap();
         let child = root
             .derived("Resolve the required relation".into())
             .unwrap();
         store
-            .commit_discovery_progress(&session, &child, &coverage, true)
+            .commit_discovery_progress(&session, &child, true)
             .await
             .unwrap();
         store
-            .commit_discovery_progress(&session, &child, &coverage, true)
+            .commit_discovery_progress(&session, &child, true)
             .await
             .unwrap();
         assert_eq!(store.intent_provenance(&session).await.unwrap(), child);
         assert!(store
-            .commit_discovery_progress(&session, &root, &coverage, true)
+            .commit_discovery_progress(&session, &root, true)
             .await
             .is_err());
         let rewritten =
             crate::intent_provenance::IntentProvenance::from_turns(["Read all records".into()])
                 .unwrap();
         assert!(store
-            .commit_discovery_progress(&session, &rewritten, &coverage, true)
+            .commit_discovery_progress(&session, &rewritten, true)
             .await
             .is_err());
         let left = child.derived("Left next need".into()).unwrap();
         let right = child.derived("Right next need".into()).unwrap();
         let (left_result, right_result) = tokio::join!(
-            store.commit_discovery_progress(&session, &left, &coverage, true),
-            store.commit_discovery_progress(&session, &right, &coverage, true),
+            store.commit_discovery_progress(&session, &left, true),
+            store.commit_discovery_progress(&session, &right, true),
         );
         assert_ne!(
             left_result.is_ok(),
@@ -941,16 +1040,6 @@ mod tests {
         );
         let winner = if left_result.is_ok() { left } else { right };
         assert_eq!(store.intent_provenance(&session).await.unwrap(), winner);
-        assert_eq!(store.discovery_coverage(&session).await.unwrap(), coverage);
-        assert!(store
-            .commit_discovery_progress(
-                &session,
-                &winner,
-                &crate::discovery_coverage::DiscoveryCoverage::default(),
-                true
-            )
-            .await
-            .is_err());
         let next = store
             .import(
                 "matrix-deployment",
@@ -973,6 +1062,18 @@ mod tests {
             .await
             .unwrap();
         let (loaded, compiled, _) = store.load_generation(&generation).await.unwrap();
+        let (semantic, _) = store
+            .load_discovery_generation(
+                &generation,
+                &DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()])),
+            )
+            .await
+            .unwrap();
+        assert_eq!(semantic.keys().collect::<Vec<_>>(), vec!["matrix"]);
+        assert_eq!(
+            semantic["matrix"].catalog_cgs_hash_hex(),
+            loaded["matrix"].catalog_cgs_hash_hex()
+        );
         assert_eq!(
             loaded["matrix"].catalog_cgs_hash_hex(),
             prepared("matrix", 1).manifest.cgs_hash
@@ -998,7 +1099,14 @@ mod tests {
             receipt.candidates.len(),
             prepared("matrix", 1).discovery.capabilities.len()
         );
-        assert_eq!(receipt.candidates[0].reference.capability, "read");
+        assert!(receipt
+            .candidates
+            .iter()
+            .any(|candidate| candidate.reference.capability == "read"));
+        assert!(receipt
+            .candidates
+            .windows(2)
+            .all(|pair| pair[0].id < pair[1].id));
         assert!(receipt
             .candidates
             .iter()
@@ -1127,28 +1235,6 @@ mod tests {
             .execute(&mut *store.pool.acquire().await.unwrap())
             .await
             .unwrap();
-        let mut empty_candidates = empty;
-        let exposed = [CapabilityRef {
-            catalog: "matrix".into(),
-            capability: "read".into(),
-        }];
-        store
-            .include_exposed(&mut empty_candidates, &exposed, &allowed)
-            .await
-            .unwrap();
-        assert_eq!(empty_candidates.candidates.len(), 1);
-        assert!(empty_candidates.candidates[0]
-            .admissions
-            .contains("already_exposed"));
-        assert!(store
-            .include_exposed(
-                &mut empty_candidates,
-                &exposed,
-                &DiscoveryAuthorization::catalogs(BTreeSet::new())
-            )
-            .await
-            .is_err());
-
         sqlx::query(
             "UPDATE discovery_compiled_recipes SET recipes=$1 WHERE revision_id=(SELECT revision_id FROM discovery_generation_catalogs WHERE generation_id=$2 AND entry_id='matrix')",
         )
@@ -1168,65 +1254,4 @@ mod tests {
             "{error:#}"
         );
     }
-}
-
-/// Round-robin prevents one broad query from excluding every specific-slot result.
-fn merge_query_receipts(
-    receipts: Vec<RetrievalReceipt>,
-    allowed: &DiscoveryAuthorization,
-) -> Result<RetrievalReceipt> {
-    let generation = receipts
-        .first()
-        .context("discovery queries required")?
-        .generation
-        .clone();
-    let mut merged = RetrievalReceipt {
-        generation,
-        candidates: Vec::new(),
-        lexical_count: 0,
-        vector_count: 0,
-        lexical_truncated: false,
-        vector_truncated: false,
-        fusion_truncated: 0,
-        relation_truncated: 0,
-    };
-    let mut queues = Vec::new();
-    for receipt in receipts {
-        anyhow::ensure!(
-            receipt.generation == merged.generation,
-            "cannot merge registry generations"
-        );
-        merged.lexical_count += receipt.lexical_count;
-        merged.vector_count += receipt.vector_count;
-        merged.lexical_truncated |= receipt.lexical_truncated;
-        merged.vector_truncated |= receipt.vector_truncated;
-        merged.fusion_truncated += receipt.fusion_truncated;
-        merged.relation_truncated += receipt.relation_truncated;
-        queues.push(std::collections::VecDeque::from(receipt.candidates));
-    }
-    let mut seen = BTreeMap::<CapabilityRef, usize>::new();
-    let mut dropped = BTreeSet::new();
-    while queues.iter().any(|queue| !queue.is_empty()) {
-        for (query_index, queue) in queues.iter_mut().enumerate() {
-            if let Some(mut candidate) = queue.pop_front() {
-                anyhow::ensure!(
-                    allowed.permits(&candidate.reference),
-                    "retrieval escaped authorization scope"
-                );
-                candidate.admissions.insert(format!("query:{query_index}"));
-                if let Some(index) = seen.get(&candidate.reference) {
-                    merged.candidates[*index]
-                        .admissions
-                        .extend(candidate.admissions);
-                } else if merged.candidates.len() < SELECTOR_LIMIT {
-                    seen.insert(candidate.reference.clone(), merged.candidates.len());
-                    merged.candidates.push(candidate);
-                } else {
-                    dropped.insert(candidate.reference);
-                }
-            }
-        }
-    }
-    merged.fusion_truncated += dropped.len();
-    Ok(merged)
 }

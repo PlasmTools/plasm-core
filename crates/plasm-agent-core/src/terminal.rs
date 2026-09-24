@@ -423,7 +423,6 @@ async fn run_context_command(
     let payload = IntentDiscoveryRequest {
         principal: None,
         intent: intent.into(),
-        effect_slots: args.effect_slots,
         allowed_entry_ids: None,
     };
     let (status, _, body) = send_bytes(
@@ -453,7 +452,7 @@ async fn run_context_command(
     let reply: ContextReply = serde_json::from_slice(&body)?;
     let Some(context) = reply.context else {
         anyhow::ensure!(
-            reply.routing.coverage.unresolved().next().is_some(),
+            reply.routing.recovery.is_some(),
             "matching routing response is missing its execution context"
         );
         // Preserve the full insufficiency receipt; no execution binding is opened or replaced.
@@ -652,10 +651,7 @@ pub async fn run_terminal() -> Result<()> {
         }
         Cmd::Login => run_device_login(cli.profile.as_str(), &mut profile).await,
         Cmd::Doctor => run_doctor(cli.profile.as_str(), &profile).await,
-        Cmd::Search {
-            intent,
-            effect_slots,
-        } => {
+        Cmd::Search { intent } => {
             let utterance = intent.trim().to_string();
             if utterance.is_empty() {
                 return Err(anyhow!("search: intent text required"));
@@ -667,7 +663,6 @@ pub async fn run_terminal() -> Result<()> {
             let payload = serde_json::to_vec(&IntentDiscoveryRequest {
                 principal: None,
                 intent: utterance.clone(),
-                effect_slots,
                 allowed_entry_ids: None,
             })?;
             let (st, _, body) = send_bytes(
@@ -916,11 +911,8 @@ mod routed_terminal_tests {
                                 "intent_analysis":"fixture",
                                 "intent_provenance":crate::intent_provenance::IntentProvenance::from_turns([payload["intent"].as_str().unwrap().to_owned()]).unwrap(),
                                 "intent":payload["intent"],"pin_id":"pin",
-                                "retrieval":{"generation":"generation-one","candidates":[],"lexical_count":0,"vector_count":0,"lexical_truncated":false,"vector_truncated":false,"fusion_truncated":0,"relation_truncated":0},
-                                "matching":{"slots":[{"id":"s0","statement":payload["effect_slots"][0]}],"matches":[],"complete":!insufficient,"unmatched_slot_ids":if insufficient { json!(["s0"]) } else { json!([]) },"additional_capability_ids":[]},
-                                "coverage":{"current_slots":["s0"],"obligations":[{"slot":{"id":"s0","statement":payload["effect_slots"][0]},"matched_capabilities":if insufficient {json!([])} else {json!([{"catalog":"matrix","capability":"read"}])}}]},
-                                "input_source_projection":[],
-                                "input_source_matching":{"matches":[],"selected":[]},
+                                "retrieval":{"generation":"generation-one","candidates":[],"lexical_count":0,"vector_count":0,"lexical_truncated":false,"vector_truncated":false},
+                                "matching":{"matches":[]},
                                 "closure":null
                             }
                         });
@@ -928,7 +920,7 @@ mod routed_terminal_tests {
                             reply["routing"]["retrieval"]["generation"] = json!("generation-two");
                         }
                         if insufficient {
-                            reply["routing"]["recovery"] = json!({"unmatched_slots":[{"slot_id":"s0","statement":payload["effect_slots"][0],"candidates":[]}],"available_catalogs":[],"guidance":"Continue available work while preserving unresolved obligations."});
+                            reply["routing"]["recovery"] = json!({"candidates":[],"available_catalogs":[],"guidance":"No relevant capability selected from this bounded packet."});
                         }
                         if !missing {
                             reply["routing"]["closure"] = json!({"business":[{"catalog":"matrix","capability":"read"}],"input_sources":[],"prerequisites":[],"acquisitions":[],"edges":[]});
@@ -947,7 +939,6 @@ mod routed_terminal_tests {
                     new,
                     verbose: false,
                     intent: Some(intent.into()),
-                    effect_slots: vec![intent.into()],
                 };
                 run_context_command(&client, &server, &profile, args(true,"unavailable")).await.unwrap();
                 assert!(read_current_session_pointer(&server).unwrap().is_none());

@@ -3,9 +3,9 @@
 /**
  * In-process Plasm engine for NAPI.
  *
- * **Mutex law (full cutover):** `inner` / `sessions` are `std::sync::Mutex`
- * held only for short critical sections. Never hold them across JS host-transport
- * awaits. Occupancy is `Ready | Live` — concurrent live callers fail closed.
+ * Each engine has a FIFO asynchronous admission queue. A live HTTP callback may
+ * await JavaScript while retaining its session engine; queued callers yield the
+ * executor instead of blocking it. Independent logical sessions remain concurrent.
  */
 export declare class PlasmEngine {
   constructor()
@@ -13,10 +13,10 @@ export declare class PlasmEngine {
   /** Activate the complete loaded manifest set using explicit deployment bindings. */
   activateDiscovery(deploymentId: string, bindingsJson: string): Promise<string>
   /**
-   * Typed intent provenance plus current affirmative effect slots; selection runs
+   * Typed intent provenance with its current discovery need; selection runs
    * outside the execution mutex.
    */
-  routeIntent(intentProvenanceJson: string, effectSlots: Array<string>, logicalSessionId?: string | undefined | null): Promise<string>
+  routeIntent(intentProvenanceJson: string, logicalSessionId?: string | undefined | null): Promise<string>
   exposeSeeds(intent: string, seeds: Array<JsSeed>): Promise<JsTeachingResult>
   introspectCatalog(entryId: string): Promise<string>
   dryRun(program: string, logicalSessionId?: string | undefined | null): Promise<JsDryRunResult>

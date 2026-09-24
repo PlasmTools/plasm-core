@@ -22,7 +22,7 @@ fn cli_routed_context_and_plan_protocol() {
                     "routing": {
                         "authorization":{"catalogs":["matrix"],"capabilities":{}},
                         "intent":payload["intent"],"pin_id":"pin","routing_ref":null,
-                        "retrieval":{"generation":"generation-one","candidates":[],"lexical_count":0,"vector_count":0,"lexical_truncated":false,"vector_truncated":false,"fusion_truncated":0,"relation_truncated":0},
+                        "retrieval":{"generation":"generation-one","candidates":[],"lexical_count":0,"vector_count":0,"lexical_truncated":false,"vector_truncated":false},
                         "selection":{"status":"ready","requirements":[{"requirement":"inspect records","resolution":{"status":"supported","candidate_ids":["read"]}}]},
                         "closure":{"acquisitions":[],"business":[{"catalog":"matrix","capability":"read"}],"prerequisites":[],"edges":[]}
                     },

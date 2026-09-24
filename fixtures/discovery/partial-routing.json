@@ -31,7 +31,6 @@
             "entity": "Record",
             "text": "Read selected records.",
             "text_hash": "fixture",
-            "related_entities": [],
             "operation": {
               "kind": "query",
               "receiver": null,
@@ -47,84 +46,21 @@
       "lexical_count": 1,
       "vector_count": 0,
       "lexical_truncated": false,
-      "vector_truncated": false,
-      "fusion_truncated": 0,
-      "relation_truncated": 0
+      "vector_truncated": false
     },
     "matching": {
-      "slots": [
-        {
-          "id": "s0",
-          "statement": "Read selected records"
-        },
-        {
-          "id": "s1",
-          "statement": "Publish the selected records after inspection"
-        }
-      ],
       "matches": [
         {
-          "slot_id": "s0",
           "capability_id": "matrix/record_read",
-          "choice": "direct_match",
+          "choice": "relevant",
           "probabilities": {
-            "direct_match": 1,
-            "does_not_match": 0,
-            "uncertain": 0
-          },
-          "confidence": 1
-        },
-        {
-          "slot_id": "s1",
-          "capability_id": "matrix/record_read",
-          "choice": "does_not_match",
-          "probabilities": {
-            "direct_match": 0,
-            "does_not_match": 1,
+            "relevant": 1,
+            "unrelated": 0,
             "uncertain": 0
           },
           "confidence": 1
         }
-      ],
-      "complete": false,
-      "unmatched_slot_ids": [
-        "s1"
-      ],
-      "additional_capability_ids": [
-        "matrix/record_read"
       ]
-    },
-    "coverage": {
-      "obligations": [
-        {
-          "slot": {
-            "id": "s0",
-            "statement": "Read selected records"
-          },
-          "matched_capabilities": [
-            {
-              "catalog": "matrix",
-              "capability": "record_read"
-            }
-          ]
-        },
-        {
-          "slot": {
-            "id": "s1",
-            "statement": "Publish the selected records after inspection"
-          },
-          "matched_capabilities": []
-        }
-      ],
-      "current_slots": [
-        "s0",
-        "s1"
-      ]
-    },
-    "input_source_projection": [],
-    "input_source_matching": {
-      "matches": [],
-      "selected": []
     },
     "closure": {
       "business": [
@@ -138,26 +74,7 @@
       "acquisitions": [],
       "edges": []
     },
-    "recovery": {
-      "unmatched_slots": [
-        {
-          "slot_id": "s1",
-          "statement": "Publish the selected records after inspection",
-          "candidates": [
-            {
-              "reference": {
-                "catalog": "matrix",
-                "capability": "record_read"
-              },
-              "choice": "does_not_match",
-              "direct_match_probability": 0
-            }
-          ]
-        }
-      ],
-      "available_catalogs": [],
-      "guidance": "Continue with available capabilities while retaining unresolved obligations."
-    }
+    "recovery": null
   },
   "teaching": {
     "tsv": "e1\tRecord",
