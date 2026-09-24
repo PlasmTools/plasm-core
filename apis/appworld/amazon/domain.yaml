@@ -1,4 +1,4 @@
-version: 16
+version: 20
 entry_id: amazon
 auth:
   scheme: none
@@ -14,6 +14,106 @@ data_classes:
     description: Outbound purchase that charges a payment card.
     severity: critical
 entities:
+  DownloadedFile:
+    abstract: true
+    id_field: file_path
+    description: File written by a download operation in the account file system.
+    fields:
+      file_path:
+        required: true
+        value_ref: downloaded_file_path
+        description: Actual destination path, including an automatically chosen path when none was supplied.
+  ProductVariant:
+    abstract: true
+    id_field: product_id
+    description: A size and color variation of a product listing.
+    fields:
+      product_id:
+        required: true
+        value_ref: nv_product_id
+      product:
+        value_ref: nv_product_ref
+        path: [product_id]
+        description: Product listing for this variation, including price and inventory.
+      relative_size:
+        value_ref: nv_relative_size
+        description: Size of this product variation.
+      color:
+        value_ref: nv_product_color
+        description: Color of this product variation.
+  LastPurchase:
+    id_field: requested_product_id
+    implicit_request_identity: true
+    description: Latest purchase of a requested product or one of its size and color variations; the purchased product may differ from the requested product.
+    fields:
+      requested_product_id:
+        required: true
+        value_ref: nv_product_id
+        description: Product used to look up purchase history, including its variations.
+      product_id:
+        required: true
+        value_ref: nv_product_ref
+        description: Actual product variation purchased.
+      order_id:
+        required: true
+        value_ref: nv_order_ref
+      ordered_at:
+        required: true
+        value_ref: nv_datetime
+      product_name:
+        required: true
+        value_ref: nv_product_name
+      product_relative_size:
+        required: false
+        value_ref: nv_relative_size
+      product_color:
+        required: false
+        value_ref: nv_product_color
+  RatingDistribution:
+    id_field: product_id
+    implicit_request_identity: true
+    description: Review rating average, total review count and star-by-star distribution for one product.
+    fields:
+      product_id:
+        required: true
+        value_ref: nv_product_id
+      rating:
+        required: true
+        value_ref: nv_number
+        description: Average rating across the product's reviews.
+      num_product_reviews:
+        required: true
+        value_ref: nv_int
+        description: Total number of reviews of this product.
+    relations:
+      breakdown:
+        description: Counts and percentages for each star rating within this product.
+        target: RatingBucket
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path: [{key: breakdown}, {wildcard: true}]
+  RatingBucket:
+    abstract: true
+    id_field: rating
+    key_vars: [product_id, rating]
+    description: Review count and percentage for one star rating of one product.
+    fields:
+      product_id:
+        required: true
+        value_ref: nv_product_id
+      rating:
+        required: true
+        value_ref: nv_int
+        description: Number of stars, from one to five.
+      percentage:
+        required: true
+        value_ref: nv_number
+        description: Percentage of this product's reviews with this star rating, from zero to one hundred.
+      count:
+        required: true
+        value_ref: nv_int
+        description: Number of reviews of this product with this star rating.
   AuthSession:
     id_field: access_token
     description: Authenticated session for Amazon.
@@ -57,9 +157,15 @@ entities:
       verified:
         required: false
         value_ref: nv_bool
+        description: "Whether this account has completed ownership verification."
       is_prime:
         required: false
         value_ref: nv_bool
+        description: "Whether this user has an active Prime subscription."
+      track_browsing_history:
+        required: false
+        value_ref: nv_bool
+        description: Whether the account records products in browsing history.
   Product:
     id_field: product_id
     description: Amazon retail catalog listing.
@@ -71,53 +177,73 @@ entities:
       - product search
       - catalog search
       - browse products
-    fields:
+    fields: &product_fields
+      shareable_link:
+        required: false
+        value_ref: nv_str
+        description: Public link to this product listing.
+      num_product_questions:
+        required: false
+        value_ref: nv_int
+        description: Number of questions posted about this product.
+      num_product_reviews:
+        required: false
+        value_ref: nv_int
+        description: Number of reviews submitted for this product.
       product_id:
         required: true
         value_ref: nv_product_id
       seller_id:
         required: false
-        value_ref: nv_int
+        value_ref: nv_seller_id
       product_type:
         required: false
-        value_ref: nv_str
+        value_ref: nv_product_type
       name:
         required: true
-        value_ref: nv_str
+        value_ref: nv_product_name
       description:
         required: false
-        value_ref: nv_body
+        value_ref: nv_product_description
         data_class: untrusted
       price:
         required: false
-        value_ref: nv_number
+        value_ref: nv_product_price
       delivery_days:
         required: false
-        value_ref: nv_int
+        value_ref: nv_product_delivery_days
       inventory_quantity:
         required: false
-        value_ref: nv_int
+        value_ref: nv_product_stock
       weight:
         required: false
         value_ref: nv_product_weight_kg
       length:
         required: false
-        value_ref: nv_product_dimension_inches
+        value_ref: nv_product_length_inches
       width:
         required: false
-        value_ref: nv_product_dimension_inches
+        value_ref: nv_product_width_inches
       height:
         required: false
-        value_ref: nv_product_dimension_inches
+        value_ref: nv_product_height_inches
       color:
         required: false
-        value_ref: nv_str
+        value_ref: nv_product_color
       relative_size:
         required: false
         value_ref: nv_relative_size
       rating:
         required: false
-        value_ref: nv_number
+        value_ref: nv_product_rating
+    relations:
+      variations:
+        description: Other size and color variations of this product.
+        target: ProductVariant
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path: [{key: variations}, {wildcard: true}]
   Seller:
     id_field: seller_id
     description: Third-party seller on Amazon.
@@ -135,7 +261,7 @@ entities:
         value_ref: nv_str
       rating:
         required: false
-        value_ref: nv_number
+        value_ref: nv_seller_rating
   ProductType:
     id_field: name
     description: Product category in the retail catalog.
@@ -147,7 +273,7 @@ entities:
     fields:
       name:
         required: true
-        value_ref: nv_str
+        value_ref: nv_product_type
   ProductFeatureChoices:
     id_field: product_type
     implicit_request_identity: true
@@ -160,7 +286,7 @@ entities:
     fields:
       product_type:
         required: true
-        value_ref: nv_str
+        value_ref: nv_product_type
       colors:
         required: false
         value_ref: nv_str_list
@@ -191,19 +317,21 @@ entities:
         value_ref: nv_product_id
       product_name:
         required: false
-        value_ref: nv_str
+        value_ref: nv_product_name
       delivery_days:
         required: false
         value_ref: nv_int
       quantity:
         required: false
         value_ref: nv_int
+        description: "Units of this product in the cart."
       price:
         required: false
         value_ref: nv_number
       gift_wrap_quantity:
         required: false
         value_ref: nv_int
+        description: "Units of this cart item to gift-wrap."
   WishListItem:
     id_field: product_id
     description: A product saved on the wish list.
@@ -213,26 +341,51 @@ entities:
       - wishlist
       - wish list item
     fields:
+      inventory_quantity:
+        required: false
+        value_ref: nv_int
+        description: Units of this wished-for product available for purchase.
+      color:
+        required: false
+        value_ref: nv_product_color
+        description: Color of this wished-for product.
+      relative_size:
+        required: false
+        value_ref: nv_relative_size
+        description: Size of this wished-for product.
+      rating:
+        required: false
+        value_ref: nv_number
+        description: Average customer rating of this wished-for product.
+      product_type:
+        required: false
+        value_ref: nv_product_type
+        description: Retail category of this wished-for product.
       product_id:
         required: true
         value_ref: nv_product_id
       product_name:
         required: false
-        value_ref: nv_str
+        value_ref: nv_product_name
       quantity:
         required: false
         value_ref: nv_int
+        description: "Desired units of this product."
       price:
         required: false
         value_ref: nv_number
   Cart:
-    id_field: total_cost
-    description: Current shopping cart.
+    id_field: access_token
+    implicit_request_identity: true
+    description: Current shopping cart for the authenticated account, including the complete checkout cost.
     discovery:
       names:
       - cart
       - basket
     fields:
+      access_token:
+        required: true
+        value_ref: nv_access_token
       delivery_fee:
         required: false
         value_ref: nv_number
@@ -257,6 +410,7 @@ entities:
       promo_valid:
         required: false
         value_ref: nv_bool
+        description: "Whether the supplied promotion code is valid for this cart."
     relations:
       cart_items:
         description: Line items currently in the cart.
@@ -285,9 +439,6 @@ entities:
       payment_card_id:
         required: false
         value_ref: nv_card_id
-      name:
-        required: false
-        value_ref: nv_str
       tax:
         required: false
         value_ref: nv_number
@@ -313,6 +464,63 @@ entities:
       created_at:
         required: false
         value_ref: nv_datetime
+    relations:
+      items:
+        description: Products purchased in this order, with order-specific quantities, prices and delivery dates.
+        target: OrderItem
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path: [{key: order_items}, {wildcard: true}]
+  OrderItem:
+    abstract: true
+    id_field: product_id
+    key_vars: [order_id, product_id]
+    description: A purchased product line identified within its order; prices and quantities belong to that purchase.
+    fields:
+      order_id:
+        required: true
+        value_ref: nv_order_id
+      product_id:
+        required: true
+        value_ref: nv_product_id
+      product:
+        required: true
+        value_ref: nv_product_ref
+        path: [product_id]
+        description: Catalogue product purchased on this line; follow it for seller and product details.
+      product_name:
+        required: false
+        value_ref: nv_product_name
+        description: Name of the purchased product.
+      product_review_id:
+        required: false
+        value_ref: nv_review_id
+        description: Review written for this purchased product, if present.
+      ordered_quantity:
+        required: false
+        value_ref: nv_int
+        description: Number of units purchased on this order line.
+      returned_quantity:
+        required: false
+        value_ref: nv_int
+        description: Number of purchased units returned.
+      gift_wrap_quantity:
+        required: false
+        value_ref: nv_int
+        description: Number of purchased units gift wrapped.
+      price:
+        required: false
+        value_ref: nv_number
+        description: Product price recorded for this order line.
+      expected_delivery_at:
+        required: false
+        value_ref: nv_datetime
+        description: Expected delivery time for this order line.
+      delivered_at:
+        required: false
+        value_ref: nv_datetime
+        description: Actual delivery time, when delivered.
   Address:
     id_field: address_id
     description: Shipping address on the account.
@@ -379,6 +587,16 @@ entities:
       - reviews
       - product review
     fields:
+      user_name:
+        required: false
+        value_ref: nv_str
+        description: Author of this review display name.
+        path: [user, name]
+      user_email:
+        required: false
+        value_ref: nv_email
+        description: Author of this review email address.
+        path: [user, email]
       review_id:
         required: true
         value_ref: nv_review_id
@@ -388,9 +606,11 @@ entities:
       is_verified:
         required: false
         value_ref: nv_bool
+        description: "Whether the reviewer has purchased this product."
       rating:
         required: false
         value_ref: nv_int
+        description: "Reviewer score from 1 to 5."
       title:
         required: false
         value_ref: nv_str
@@ -437,10 +657,11 @@ entities:
         value_ref: nv_product_ref
       product_name:
         required: false
-        value_ref: nv_str
+        value_ref: nv_product_name
       quantity:
         required: true
         value_ref: nv_int
+        description: "Units of the purchased product being returned."
       deliverer_id:
         required: true
         value_ref: nv_deliverer_id
@@ -468,6 +689,20 @@ entities:
       - questions
       - product question
     fields:
+      num_answers:
+        required: false
+        value_ref: nv_int
+        description: Number of answers posted to this product question.
+      user_name:
+        required: false
+        value_ref: nv_str
+        description: Author of this question display name.
+        path: [user, name]
+      user_email:
+        required: false
+        value_ref: nv_email
+        description: Author of this question email address.
+        path: [user, email]
       question_id:
         required: true
         value_ref: nv_question_id
@@ -499,6 +734,7 @@ entities:
       is_verified:
         required: false
         value_ref: nv_bool
+        description: "Whether the answer author has purchased this product."
       answer:
         required: false
         value_ref: nv_body
@@ -526,9 +762,11 @@ entities:
       monthly:
         required: true
         value_ref: nv_int
+        description: "Price of a monthly Prime subscription."
       yearly:
         required: true
         value_ref: nv_int
+        description: "Price of a yearly Prime subscription."
   PrimeSubscription:
     id_field: prime_subscription_id
     description: Amazon Prime subscription period.
@@ -554,7 +792,67 @@ entities:
       paid_amount:
         required: false
         value_ref: nv_number
+  RecommendedProduct:
+    id_field: product_id
+    description: A product recommended for the account holder.
+    fields: *product_fields
+    relations:
+      product:
+        description: Current catalogue details of this product.
+        target: Product
+        cardinality: one
+        materialize:
+          kind: from_parent_get
+          path: [{key: product_id}]
+  ViewedProduct:
+    id_field: product_id
+    description: A product in the account holder browsing history.
+    fields: *product_fields
+    relations:
+      product:
+        description: Current catalogue details of this product.
+        target: Product
+        cardinality: one
+        materialize:
+          kind: from_parent_get
+          path: [{key: product_id}]
+  PurchasedProduct:
+    id_field: product_id
+    description: A product previously purchased by the account holder; this collection is not an order-line ledger.
+    fields: *product_fields
+    relations:
+      product:
+        description: Current catalogue details of this product.
+        target: Product
+        cardinality: one
+        materialize:
+          kind: from_parent_get
+          path: [{key: product_id}]
 capabilities:
+  product_rating_distribution_get:
+    description: Read the average rating and star-by-star review distribution of a product.
+    kind: get
+    entity: RatingDistribution
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides: [product_id, rating, num_product_reviews]
+  product_last_purchase_get:
+    description: Read the most recent purchase of a product or its size and color variations.
+    kind: get
+    entity: LastPurchase
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    provides: [requested_product_id, product_id, order_id, ordered_at, product_name, product_relative_size, product_color]
   login:
     description: Login to Amazon; returns access_token for Bearer auth.
     kind: action
@@ -748,43 +1046,61 @@ capabilities:
       type: side_effect
       description: Replaces the account password.
   product_query:
-    description: Search the product catalog.
+    description: Search retail products by text and filter the matching catalog listings.
     kind: query
     entity: Product
     selection:
+    - name: max_seller_rating
+      value_ref: nv_seller_rating
+      required: false
+      description: Highest acceptable seller rating.
+    - name: min_seller_rating
+      value_ref: nv_seller_rating
+      required: false
+      description: Lowest acceptable seller rating.
+    - name: max_product_rating
+      value_ref: nv_product_rating
+      required: false
+      description: Highest acceptable product rating.
+    - name: min_product_rating
+      value_ref: nv_product_rating
+      required: false
+      description: Lowest acceptable product rating.
     - name: access_token
       value_ref: nv_access_token
       required: true
     - name: query
-      value_ref: nv_str
+      value_ref: nv_product_search_text
       required: false
     - name: product_type
-      value_ref: nv_str
+      value_ref: nv_product_type
       required: false
     - name: color
-      value_ref: nv_str
+      value_ref: nv_product_color
       required: false
     - name: relative_size
       value_ref: nv_relative_size
       required: false
     - name: min_price
-      value_ref: nv_number
+      value_ref: nv_product_price
       required: false
+      description: Lowest acceptable product price.
     - name: max_price
-      value_ref: nv_number
+      value_ref: nv_product_price
       required: false
+      description: Highest acceptable product price.
     - name: seller_id
-      value_ref: nv_int
+      value_ref: nv_seller_id
       required: false
     controls:
     - name: page_index
-      value_ref: nv_int
+      value_ref: nv_page_index
       required: false
     - name: page_limit
-      value_ref: nv_int
+      value_ref: nv_page_limit
       required: false
     - name: sort_by
-      value_ref: nv_str
+      value_ref: nv_product_sort
       required: false
     provides:
     - product_id
@@ -917,7 +1233,7 @@ capabilities:
     - colors
     - relative_sizes
   cart_get:
-    description: Show the current shopping cart.
+    description: Read the current cart and total payable amount, including delivery, tax, gift wrapping and discounts.
     kind: get
     entity: Cart
     arguments:
@@ -1225,7 +1541,6 @@ capabilities:
     - order_id
     - address_id
     - payment_card_id
-    - name
     - tax
     - delivery_fee
     - gift_wrap_fee
@@ -1249,7 +1564,6 @@ capabilities:
     - order_id
     - address_id
     - payment_card_id
-    - name
     - tax
     - delivery_fee
     - gift_wrap_fee
@@ -1299,9 +1613,7 @@ capabilities:
         - name: file_system_access_token
           value_ref: nv_file_access_token
           required: false
-    output:
-      type: side_effect
-      description: Writes the order receipt to the given file path.
+    output: {type: entity, entity_type: DownloadedFile}
   address_query:
     description: List shipping addresses.
     kind: query
@@ -1751,9 +2063,7 @@ capabilities:
         - name: file_system_access_token
           value_ref: nv_file_access_token
           required: false
-    output:
-      type: side_effect
-      description: Writes the Prime subscription receipt to the given file path.
+    output: {type: entity, entity_type: DownloadedFile}
   product_question_query:
     description: List questions for a product.
     kind: query
@@ -1912,16 +2222,155 @@ capabilities:
         - name: access_token
           value_ref: nv_access_token
           required: true
+  product_recommendations_query:
+    description: Products recommended for the account holder.
+    kind: query
+    entity: RecommendedProduct
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides: [product_id, seller_id, product_type, name, description, price, rating, inventory_quantity]
+  product_history_query:
+    description: Products recorded in the account holder browsing history.
+    kind: query
+    entity: ViewedProduct
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides: [product_id, seller_id, product_type, name, description, price, rating, inventory_quantity]
+  product_purchases_query:
+    description: Products the account holder purchased previously; follow order items for purchase-specific quantities and prices.
+    kind: query
+    entity: PurchasedProduct
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    provides: [product_id, seller_id, product_type, name, description, price, rating, inventory_quantity]
+  history_clear:
+    description: Clear the account holder browsing history.
+    kind: action
+    entity: User
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Clear the account holder browsing history.
+  history_add_product:
+    receiver: {kind: entity, entity: Product}
+    description: Add this product to the account holder browsing history.
+    kind: action
+    entity: Product
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Add this product to the account holder browsing history.
+  history_remove_product:
+    receiver: {kind: entity, entity: Product}
+    description: Remove this product from the account holder browsing history.
+    kind: action
+    entity: Product
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Remove this product from the account holder browsing history.
+  history_set_tracking:
+    description: Enable or disable recording products in browsing history.
+    kind: action
+    entity: User
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: track_browsing_history
+          value_ref: nv_bool
+          required: true
+    output:
+      type: side_effect
+      description: Enable or disable recording products in browsing history.
 values:
+  downloaded_file_path:
+    type: string
+    description: Absolute path of the downloaded file in the account file system.
+  nv_order_ref:
+    type: entity_ref
+    target: Order
+    description: Purchase order containing this product purchase.
+  nv_product_type:
+    type: string
+    description: Product category used to classify and filter catalog listings.
+  nv_product_name:
+    type: string
+    description: Name of the product listing.
+  nv_product_description:
+    type: markdown
+    description: Description of the product and its features.
+  nv_product_price:
+    type: number
+    description: Price of one unit of the product.
+  nv_product_rating:
+    type: number
+    description: Product rating on a 0 to 5 scale.
+  nv_seller_rating:
+    type: number
+    description: Seller rating on a 0 to 5 scale.
+  nv_product_color:
+    type: string
+    description: Color of the product variation.
+  nv_product_delivery_days:
+    type: integer
+    description: Number of days required to deliver the product.
+  nv_product_stock:
+    type: integer
+    description: Units currently available for purchase.
+  nv_product_length_inches:
+    type: number
+    description: Product length in inches.
+  nv_product_width_inches:
+    type: number
+    description: Product width in inches.
+  nv_product_height_inches:
+    type: number
+    description: Product height in inches.
+  nv_product_search_text:
+    type: string
+    description: Text query used to find relevant product listings.
+  nv_page_index:
+    type: integer
+    description: Zero-based result page index.
+  nv_page_limit:
+    type: integer
+    description: Maximum results per page, from 1 to 20.
+  nv_product_sort:
+    type: string
+    description: Product ordering by rating, price or delivery_days, prefixed with + for ascending or - for descending. With a non-empty text query, relevance determines pagination and this ordering applies only within each page.
   nv_product_weight_kg:
     type: number
     description: Product weight in kilograms.
-  nv_product_dimension_inches:
-    type: number
-    description: Product length, width or height in inches.
   nv_str:
     type: string
-    description: Free-form string.
   nv_login_username:
     type: email
     description: Task-principal email from Supervisor — the login username for this service (not a counterparty).
@@ -2017,10 +2466,8 @@ values:
     description: Numeric amount or rating.
   nv_bool:
     type: boolean
-    description: Boolean flag.
   nv_int:
     type: integer
-    description: Integer.
   nv_card_number:
     type: digit_id
     description: Linked payment card primary account number.
@@ -2032,7 +2479,7 @@ values:
     description: Cardholder display name.
   nv_cvv:
     type: integer
-    description: Card CVV digits as integer.
+    description: Card verification code (CVV).
   nv_month:
     type: integer
     description: Card expiry month.
@@ -2041,7 +2488,6 @@ values:
     description: Card expiry year.
   nv_datetime:
     type: rfc3339
-    description: ISO datetime string.
   prerequisite_principal_email:
     type: email
     description: Account holder email.
@@ -2087,6 +2533,78 @@ prerequisites:
       outputs:
         token: access_token
   requirements:
+    product_rating_distribution_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path: [access_token]
+        output: token
+    product_last_purchase_get:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: arguments
+          path: [access_token]
+        output: token
+    product_recommendations_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path: [access_token]
+        output: token
+    product_history_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path: [access_token]
+        output: token
+    product_purchases_query:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path: [access_token]
+        output: token
+    history_clear:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path: [access_token]
+        output: token
+    history_add_product:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path: [access_token]
+        output: token
+    history_remove_product:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path: [access_token]
+        output: token
+    history_set_tracking:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path: [access_token]
+        output: token
     login:
     - id: principal
       contract: appworld.principal

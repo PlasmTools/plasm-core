@@ -242,7 +242,7 @@ async fn hydrate_invoke_target(
             mode,
             Some(get_cap),
             false,
-            Some(cache),
+            cache,
             &ViewAmbientContext::default(),
         )
         .await?;
@@ -287,7 +287,7 @@ async fn hydrate_entity_ref_param(
             mode,
             Some(get_cap),
             false,
-            Some(cache),
+            cache,
             &ViewAmbientContext::default(),
         )
         .await?;

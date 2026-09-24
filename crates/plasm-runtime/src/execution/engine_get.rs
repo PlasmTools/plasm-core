@@ -56,7 +56,7 @@ impl ExecutionEngine {
                 mode,
                 get.capability_name.as_deref(),
                 true,
-                Some(mat),
+                mat,
                 ambient,
             )
             .await?;
@@ -146,14 +146,7 @@ impl ExecutionEngine {
             });
         }
         let (cached, source) = self
-            .fetch_http_transport_get_decoded(
-                &request,
-                cgs,
-                mode,
-                &capability_template,
-                true,
-                Some(mat),
-            )
+            .fetch_http_transport_get_decoded(&request, cgs, mode, &capability_template, true, mat)
             .await?;
         mat.insert(cached.clone())?;
         stamp_get_capability_params(mat, cgs, get, &ambient, &cached);
@@ -258,7 +251,7 @@ impl ExecutionEngine {
         mode: ExecutionMode,
         capability_template: &CapabilityTemplate,
         validate_identity: bool,
-        mut cache: Option<&mut SessionMaterialization>,
+        cache: &mut SessionMaterialization,
     ) -> Result<(CachedEntity, ExecutionSource), RuntimeError> {
         let get = request.get;
         let capability = request.capability;
@@ -276,7 +269,7 @@ impl ExecutionEngine {
         }
         let (response, source) = with_dispatch_entity(
             Some(get.reference.entity_type.as_str()),
-            self.execute_with_replay(&compiled, mode, cache.as_deref_mut()),
+            self.execute_with_replay(&compiled, mode, Some(cache)),
         )
         .await?;
         if hydration_trace::active() {
@@ -343,22 +336,12 @@ impl ExecutionEngine {
             });
         }
         let timestamp = current_timestamp();
-        let cached = if let Some(session) = cache {
-            cache_decoded_entity_tree(
-                session,
-                decoded.clone(),
-                timestamp,
-                EntityCompleteness::Complete,
-            )?
-        } else {
-            CachedEntity::from_decoded(
-                decoded.reference.clone(),
-                decoded.fields.clone(),
-                decoded.relations.clone(),
-                timestamp,
-                EntityCompleteness::Complete,
-            )
-        };
+        let cached = cache_decoded_entity_tree(
+            cache,
+            decoded.clone(),
+            timestamp,
+            EntityCompleteness::Complete,
+        )?;
         Ok((cached, source))
     }
 
@@ -377,7 +360,7 @@ impl ExecutionEngine {
         mode: ExecutionMode,
         hydrate_capability: Option<&str>,
         inject_execute_session_env: bool,
-        cache: Option<&mut SessionMaterialization>,
+        cache: &mut SessionMaterialization,
         ambient: &ViewAmbientContext,
     ) -> Result<(CachedEntity, ExecutionSource), RuntimeError> {
         let purpose = if inject_execute_session_env {
@@ -385,20 +368,13 @@ impl ExecutionEngine {
         } else {
             GetPurpose::Hydration
         };
-        let request = match cache.as_deref() {
-            Some(session) => {
-                ResolvedGet::resolve(get, cgs, hydrate_capability, session, ambient, purpose)
-            }
-            None => ResolvedGet::resolve(get, cgs, hydrate_capability, ambient, ambient, purpose),
-        }?;
+        let request = ResolvedGet::resolve(get, cgs, hydrate_capability, cache, ambient, purpose)?;
         let capability = request.capability;
         let ambient = &request.ambient;
 
         if let Some(plan) = capability.derived.as_ref() {
-            let mut ephemeral = SessionMaterialization::new();
-            let cache_ref = cache.unwrap_or(&mut ephemeral);
             return crate::derived_get::execute_derived_get(
-                self, plan, get, cgs, cache_ref, mode, ambient,
+                self, plan, get, cgs, cache, mode, ambient,
             )
             .await;
         }
@@ -406,14 +382,12 @@ impl ExecutionEngine {
         let capability_template = compiled_capability_template(capability)?;
 
         if let CapabilityTemplate::View(vt) = &capability_template {
-            let mut ephemeral = SessionMaterialization::new();
-            let cache_ref = cache.unwrap_or(&mut ephemeral);
             let res = crate::view_execution::execute_view_get(
                 self,
                 vt.view.as_str(),
                 get,
                 cgs,
-                cache_ref,
+                cache,
                 mode,
                 ambient,
             )

@@ -1,6 +1,7 @@
 ---
 name: plasm-authoring
-description: Author and validate Plasm domain models (CGS, `domain.yaml`), capability mappings (CML, `mappings.yaml`: HTTP REST, GraphQL via `transport: graphql`, composed reads via `transport: view`), and `views:` DAGs. Test interactively with `plasm-repl` against Hermit mocks or live/sandbox backends. Use when extracting schemas from OpenAPI specs, writing or editing `domain.yaml` / `mappings.yaml`, validating mappings, iteratively developing typed agent tooling, or driving Cursor / Claude / Codex / other coding agents — point them at this skill as the full playbook; do not duplicate per-API runbooks into agent prompts.
+description: >-
+  Author and validate Plasm domain models (CGS, `domain.yaml`), capability mappings (CML, `mappings.yaml`: HTTP REST, GraphQL via `transport: graphql`, composed reads via `transport: view`), and `views:` DAGs. Test interactively with `plasm-repl` against Hermit mocks or live/sandbox backends. Use when extracting schemas from OpenAPI specs, writing or editing `domain.yaml` / `mappings.yaml`, validating mappings, iteratively developing typed agent tooling, or driving Cursor / Claude / Codex / other coding agents — point them at this skill as the full playbook; do not duplicate per-API runbooks into agent prompts.
 ---
 
 # Plasm Authoring
@@ -356,6 +357,7 @@ See [reference.md](reference.md) for the full pattern catalogue (index-only, fil
 - [ ] Human-visible keys are `id_field` where the vendor accepts them on get/create
 - [ ] Write surface uses domain verbs, not per-input-field mutation explosion
 - [ ] Mutating APIs: `data_classes:` registry + field `data_class:` on sensitive reads + `sink_class:` on outbound/destructive inputs (see [Information-flow annotations](reference.md#information-flow-annotations-guardians--plan-flow-typing))
+- [ ] Semantic annotation review: inspect inherited field/lane glosses for type-only filler; verify scope, polarity and units from the API. Check authored meaning in retrieval documents, selector evidence and full/incremental teaching, including Get operation descriptions. Follow [Semantic annotation review](reference.md#semantic-annotation-review).
 - [ ] Teachability proof: dump the teaching card under realistic seeds; every task-critical list polarity and mutator is expressible from the card (discriminant or other entity) — not a phantom second query line
 - [ ] Token / auth args on actions/gets do not look like list filters on sibling entities (document in entity/cap descriptions)
 
@@ -434,6 +436,19 @@ cargo run -p plasm-cli --bin plasm-cgs -- validate --spec path/to/openapi.json a
 cargo run -p plasm-repl -- --schema apis/<api> --backend http://localhost:1080 --help
 ```
 
+### Contract completeness is distinct from schema validity
+
+Before claiming a catalogue complete, audit the pinned backend contract in both directions:
+
+- Every supported operation and selector has an explicit mapping or a documented exclusion.
+- Every domain-relevant response field, nested person, collection and relationship is preserved in typed CGS or explicitly excluded with a reason. A scalar-only projection of a rich response is not complete.
+- List/detail variants preserve truthful identity and cardinality. Parent-scoped children use compound identities; embedded-only rows must be executable without an invented Get endpoint.
+- Advertised fields actually occur in the response or have a declared derivation. Never fabricate a thread-level field merely because its messages contain it.
+- Typed temporal and numeric inputs are encoded at the CML boundary according to the backend's documented wire format.
+- Validation exercises every Query and Search, secondary capabilities, and nested traversal. Record skips and separate structural validity, operation coverage, mock conformance and pinned-backend execution evidence.
+
+Do not attribute agent failures to reasoning limits while necessary catalogue evidence is absent or unverified. Preserve an auditable list of remaining gaps; passing YAML/schema validation alone cannot close it.
+
 ## Step 5: End-to-End Testing
 
 Hand off to [plasm-catalog-e2e-test](../plasm-catalog-e2e-test/SKILL.md), which is the operational source of truth for the testing ladder:
@@ -468,3 +483,11 @@ Then fix `domain.yaml` or `mappings.yaml` and re-run from Step 4.
 If the desired API shape **cannot** be modeled with today's CGS + CML + runtime (missing expressiveness, not just tediousness), **stop**. Document the gap as a short blocker note (what shape is needed, which capability/entity breaks, which validator or runtime behavior is insufficient). **Do not** patch `plasm-core`, `plasm-cml`, `plasm-runtime`, or validators yourself to "unstick" the mapping unless explicitly directed in a separate task.
 
 After a difficult or interesting catalog, run [plasm-catalog-retro](../plasm-catalog-retro/SKILL.md) to capture systemic improvements.
+
+
+**Embedded execution gate:** follow [Embedded identity proof and observation ownership](reference.md#embedded-identity-proof-and-observation-ownership).
+Require pack/codec identity checks and an abstract direct/scoped/hydrated relation witness.
+Report backend-schema evidence, mock evidence and real-backend evidence separately;
+operation coverage alone never establishes complete response or mutation semantics.
+
+When a catalogue declares prerequisites, verify the deployment manifest covers every requirement and exercise federated discovery bootstrap. Direct engine/catalogue tests do not establish deployment closure.

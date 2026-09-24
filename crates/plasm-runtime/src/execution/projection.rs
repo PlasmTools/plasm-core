@@ -121,7 +121,7 @@ impl ExecutionEngine {
                                         mode,
                                         get.capability_name.as_deref(),
                                         false,
-                                        Some(&mut branch),
+                                        &mut branch,
                                         &ambient,
                                     )
                                     .await?;

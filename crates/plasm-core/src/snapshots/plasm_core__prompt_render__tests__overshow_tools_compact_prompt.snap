@@ -1,5 +1,6 @@
 ---
-source: crates/plasm-core/src/prompt_render/tests.rs
+source: plasm-oss/crates/plasm-core/src/prompt_render/tests.rs
+assertion_line: 4120
 expression: prompt
 ---
 plasm_expr	Meaning
@@ -18,7 +19,7 @@ start_time	v10
 id	v11
 content_type	v21
 text_preview	v40
-e1(id=<id>, content_type=<id>)[id,content_type,text_preview]	→ e1 · One capture pipeline item.
+e1(id=<id>, content_type=<id>)[id,content_type,text_preview]	→ e1 · capture-item-get · One capture pipeline item.
 e1{limit=<wire>, app_name=<wire>, start_time=<wire>, end_time=<wire>}[id,content_type,text_preview]	↣ [e1] · capture-item-query · optional: app_name,end_time,limit,start_time
 v32	string
 v4	boolean
@@ -54,7 +55,7 @@ meeting_id	v14
 status	v19
 summary	v28
 e4{status="<member>", start_date=<wire>, end_date=<wire>, limit=<wire>}[meeting_uuid,meeting_id,status,summary]	↣ [e4] · query · optional: end_date,limit,start_date,status
-e4(<id>)[meeting_uuid,meeting_id,status,summary]	→ e4 · A detected meeting.
+e4(<id>)[meeting_uuid,meeting_id,status,summary]	→ e4 · get · A detected meeting.
 v23	enum · debug | info | warning | error | critical
 v35	string
 v39	string
@@ -77,15 +78,17 @@ display_name	v31
 profile_type	v25
 r1	recorded_matches · Content scoped to this profile.
 e7{profile_type="<member>", limit=<wire>}[id,display_name,profile_type]	↣ [e7] · query · optional: limit,profile_type
-e7(<id>)[id,display_name,profile_type]	→ e7 · A person, organisation, or project profile.
+e7(<id>)[id,display_name,profile_type]	→ e7 · get · A person, organisation, or project profile.
 e7(<id>).r1	relation e7 ↣ [e9]
 rows = e7{profile_type="<member>", limit=<wire>}	↣ [e7]
 rows => _.r1	relation e7 ↣ [e9]
 v1	array[integer]
 v38	string
+v26	markdown
 meeting_ids	v1
+output	v26
 slug	v38
-PromptRun	Action prompt execution result.
+e8 row[id,output,slug]	PromptRun · Action prompt execution result.
 e8.m11(slug=<wire>, meeting_id=<wire>, meeting_uuid=<wire>, meeting_ids=[<wire>], start_time=<wire>, end_time=<wire>)	↠ () · prompt-run-create · optional: end_time,meeting_id,meeting_ids,meeting_uuid,start_time
 v22	enum · auto | keyword | natural
 v37	string
@@ -105,7 +108,7 @@ profile_id	v43
 text	v29
 window_name	v41
 RecordedContent	A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text.
-e9{profile_id=e7(<id>), query=<wire>, limit=<wire>, mode="<member>"}[id,app_name,captured_at,content_type,profile_id,text,window_name]	↣ [e9] · optional: limit,mode,query
+e9{profile_id=e7(<id>), query=<wire>, limit=<wire>, mode="<member>"}[id,app_name,captured_at,content_type,profile_id,text,window_name]	↣ [e9] · Search content scoped to one profile. · optional: limit,mode,query
 e9~"<query>"[id,app_name,captured_at,content_type,profile_id,text,window_name]	↣ [e9] · Search recorded OCR, transcripts, and UI text. · optional: app_name,content_type,end_time,limit,max_length,min_length,offset,start_time,window_name
-e9~"<query>"{content_type="<member>", limit=<wire>, offset=<wire>, start_time=<wire>, end_time=<wire>, app_name=<wire>, window_name=<wire>, min_length=<wire>, max_length=<wire>}[id,app_name,captured_at,content_type,profile_id,text,window_name]	↣ [e9] · optional: app_name,content_type,end_time,limit,max_length,min_length,offset,start_time,window_name
+e9~"<query>"{content_type="<member>", limit=<wire>, offset=<wire>, start_time=<wire>, end_time=<wire>, app_name=<wire>, window_name=<wire>, min_length=<wire>, max_length=<wire>}[id,app_name,captured_at,content_type,profile_id,text,window_name]	↣ [e9] · Search recorded OCR, transcripts, and UI text. · optional: app_name,content_type,end_time,limit,max_length,min_length,offset,start_time,window_name
 e9(<id>).profile_id	→ relation e9 → e7

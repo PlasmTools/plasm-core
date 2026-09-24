@@ -336,9 +336,19 @@ pub struct TeachingPromptBundle {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EntityTeachingBlock {
+    /// Returned row shape, independent of executable capability examples.
+    pub row_type: Option<TeachingRowType>,
     pub heading: TeachingHeading,
     pub field_gloss_rows: Vec<TeachingFieldGloss>,
     pub teaching_rows: Vec<EntityTeachingExprRow>,
+}
+
+/// A type declaration, never an executable expression or capability grant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeachingRowType {
+    pub entity: crate::symbol_tuning::ExposureEntityKey,
+    pub symbol: String,
+    pub fields: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

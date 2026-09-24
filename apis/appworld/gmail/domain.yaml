@@ -1,4 +1,4 @@
-version: 13
+version: 16
 entry_id: gmail
 auth:
   scheme: none
@@ -14,6 +14,15 @@ data_classes:
     description: Outbound email body delivered outside the mailbox.
     severity: critical
 entities:
+  DownloadedFile:
+    abstract: true
+    id_field: file_path
+    description: File written by a download operation in the account file system.
+    fields:
+      file_path:
+        required: true
+        value_ref: downloaded_file_path
+        description: Actual destination path, including an automatically chosen path when none was supplied.
   AuthSession:
     id_field: access_token
     description: Authenticated session for Gmail.
@@ -32,7 +41,7 @@ entities:
   EmailThread:
     id_field: email_thread_id
     primary_query: email_thread_query
-    description: Inbox conversation thread.
+    description: Mailbox conversation; traverse emails for message subjects, bodies and participants.
     discovery:
       names:
       - thread
@@ -43,36 +52,44 @@ entities:
       email_thread_id:
         required: true
         value_ref: nv_thread_id
-      subject:
-        required: false
-        value_ref: nv_str
       label:
         required: false
         value_ref: nv_str
+        description: "Label assigned to this thread in the account holder's mailbox."
       read:
         required: false
         value_ref: nv_bool
+        description: "Whether the account holder has marked this thread as read."
       starred:
         required: false
         value_ref: nv_bool
+        description: "Whether the account holder has starred this thread."
       archived:
         required: false
         value_ref: nv_bool
+        description: "Whether the thread is archived in the account holder's mailbox."
       spam:
         required: false
         value_ref: nv_bool
+        description: "Whether the thread is marked as spam in the account holder's mailbox."
       incoming:
         required: false
         value_ref: nv_bool
+        description: "Whether the thread contains mail received by the account holder."
       outgoing:
         required: false
         value_ref: nv_bool
+        description: "Whether the thread contains mail sent by the account holder."
       created_at:
         required: false
         value_ref: nv_datetime
       updated_at:
         required: false
         value_ref: nv_datetime
+      snoozed_until:
+        required: false
+        value_ref: nv_datetime
+        description: Time when the snoozed thread returns to the inbox.
     relations:
       emails:
         description: Messages in this thread.
@@ -80,14 +97,14 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
-          path: [{key: emails}, {wildcard: true}, {key: email_id}]
+          path: [{key: emails}, {wildcard: true}]
       drafts:
         description: Draft messages in this thread.
         target: Draft
         cardinality: many
         materialize:
           kind: from_parent_get
-          path: [{key: drafts}, {wildcard: true}, {key: draft_id}]
+          path: [{key: drafts}, {wildcard: true}]
   Email:
     id_field: email_id
     description: A single email message.
@@ -113,9 +130,34 @@ entities:
       created_at:
         required: false
         value_ref: nv_datetime
+      sender_email:
+        required: false
+        value_ref: nv_email
+        path: [sender, email]
+        description: Email address of the person who sent this message.
+      sender_name:
+        required: false
+        value_ref: nv_str
+        path: [sender, name]
+        description: Display name of this message's sender.
+    relations:
+      recipients:
+        description: People addressed by this message, with their names and email addresses.
+        target: Correspondent
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path: [{key: recipients}, {wildcard: true}]
+      attachments:
+        description: Files attached to this message, including filenames and download identities.
+        target: Attachment
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path: [{key: attachments}, {wildcard: true}]
   Draft:
     id_field: draft_id
-    description: Unsent draft email.
+    description: Unsent email, optionally scheduled for automatic delivery.
     discovery:
       names:
       - draft
@@ -134,9 +176,37 @@ entities:
       scheduled_send_at:
         required: false
         value_ref: nv_datetime
+        description: Future time for automatic delivery; absent means the draft waits for manual sending.
       created_at:
         required: false
         value_ref: nv_datetime
+      belongs_to_email_thread_id:
+        required: false
+        value_ref: nv_thread_id
+        description: Conversation containing this draft, when it belongs to an existing thread.
+      response_to_email_id:
+        required: false
+        value_ref: nv_email_id
+        description: Message this draft replies to, when it is a reply.
+      updated_at:
+        required: false
+        value_ref: nv_datetime
+        description: Time of the most recent draft update.
+    relations:
+      recipients:
+        description: People addressed by this message, with their names and email addresses.
+        target: Correspondent
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path: [{key: recipients}, {wildcard: true}]
+      attachments:
+        description: Files attached to this message, including filenames and download identities.
+        target: Attachment
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path: [{key: attachments}, {wildcard: true}]
   Profile:
     id_field: email
     description: Gmail user profile.
@@ -153,6 +223,10 @@ entities:
       registered_at:
         required: false
         value_ref: nv_datetime
+      status:
+        required: false
+        value_ref: nv_availability_status
+        description: Availability status shown for this user.
   Account:
     id_field: email
     description: Signed-in Gmail account.
@@ -176,6 +250,10 @@ entities:
       last_logged_in:
         required: false
         value_ref: nv_datetime
+      status:
+        required: false
+        value_ref: nv_availability_status
+        description: Availability status shown for this user.
   User:
     id_field: email
     description: Gmail directory person for addressing mail.
@@ -197,6 +275,10 @@ entities:
       registered_at:
         required: false
         value_ref: nv_datetime
+      status:
+        required: false
+        value_ref: nv_availability_status
+        description: Availability status shown for this user.
   CategorySizes:
     id_field: inbox
     description: Mailbox category size snapshot.
@@ -210,21 +292,35 @@ entities:
       inbox:
         required: true
         value_ref: nv_int
+        description: "Number of threads in the inbox."
       outbox:
         required: true
         value_ref: nv_int
+        description: "Number of threads in the outbox."
       archived:
         required: true
         value_ref: nv_int
+        description: "Number of archived threads."
       spam:
         required: true
         value_ref: nv_int
+        description: "Number of spam threads."
       unscheduled_drafts:
         required: true
         value_ref: nv_int
+        description: "Number of drafts without a scheduled send time."
       scheduled_drafts:
         required: true
         value_ref: nv_int
+        description: "Number of drafts scheduled for sending."
+      snoozed:
+        required: true
+        value_ref: nv_int
+        description: Number of currently snoozed threads.
+      starred:
+        required: true
+        value_ref: nv_int
+        description: Number of starred threads.
   Attachment:
     id_field: attachment_id
     description: File attachment on an email message.
@@ -236,6 +332,30 @@ entities:
       attachment_id:
         required: true
         value_ref: nv_attachment_id
+        path: [id]
+      file_name:
+        required: false
+        value_ref: nv_str
+        description: Filename of the attached file, including its extension.
+  Correspondent:
+    abstract: true
+    id_field: email
+    description: A message recipient identified by email address, as recorded on an email or draft.
+    fields:
+      email:
+        required: true
+        value_ref: nv_email
+      name:
+        required: false
+        value_ref: nv_str
+        description: Recipient display name recorded on the message.
+  Label:
+    id_field: name
+    description: Label assigned to mailbox threads, searchable by name.
+    fields:
+      name:
+        required: true
+        value_ref: nv_str
 capabilities:
   login:
     description: Login to Gmail; returns access_token for Bearer auth.
@@ -272,7 +392,7 @@ capabilities:
       type: side_effect
       description: Ends the Gmail session for this token.
   email_thread_query:
-    description: 'List email threads by mailbox (inbox/outbox/archived/spam) with optional query/label filters.
+    description: 'List threads in a mailbox category. The optional query ranks text matches; inspect message content to verify exact identity.
 
       '
     kind: query
@@ -289,22 +409,61 @@ capabilities:
       - archived
       - spam
     selection:
+    - name: snoozed
+      value_ref: nv_bool
+      required: false
+      description: Select by snooze status in inbox, outbox or starred.
+    - name: spam
+      value_ref: nv_bool
+      required: false
+      description: Select by spam status in inbox, outbox or starred.
+    - name: archived
+      value_ref: nv_bool
+      required: false
+      description: Select by archive status in inbox, outbox or starred.
+    - name: starred
+      value_ref: nv_bool
+      required: false
+      description: Select by starred status; supported in categories other than starred.
     - name: access_token
       value_ref: nv_access_token
       required: true
     - name: mailbox
       value_ref: nv_email_thread_mailbox
       required: true
-      description: inbox | outbox | archived | spam
+      description: inbox | outbox | archived | spam | starred | snoozed
     - name: query
       value_ref: nv_str
       required: false
     - name: label
       value_ref: nv_str
       required: false
+    - name: read
+      value_ref: nv_bool
+      required: false
+      description: Select threads by whether they have been marked read.
+    - name: attachment
+      value_ref: nv_bool
+      required: false
+      description: Select threads by whether their messages have attachments.
+    - name: from_email
+      value_ref: nv_email
+      required: false
+      description: Select threads containing messages from this sender address.
+    - name: to_email
+      value_ref: nv_email
+      required: false
+      description: Select threads containing messages addressed to this recipient.
+    - name: min_created_at
+      value_ref: nv_datetime
+      required: false
+      description: Earliest thread creation time to include.
+    - name: max_created_at
+      value_ref: nv_datetime
+      required: false
+      description: Latest thread creation time to include.
     provides:
     - email_thread_id
-    - subject
     - label
     - read
     - starred
@@ -314,6 +473,11 @@ capabilities:
     - outgoing
     - created_at
     - updated_at
+    controls:
+    - name: sort_by
+      value_ref: email_thread_query_ordering
+      required: false
+      description: Thread ordering; with query, relevance determines pages and ordering applies within each page.
   email_thread_get:
     description: Show one email thread including messages.
     kind: get
@@ -454,6 +618,8 @@ capabilities:
     - body
     - response_to_email_id
     - created_at
+    - sender_email
+    - sender_name
   email_send:
     description: Send a new email to one or more addresses.
     kind: action
@@ -462,6 +628,14 @@ capabilities:
       input_type:
         type: object
         fields:
+        - name: file_system_access_token
+          value_ref: nv_file_access_token
+          required: false
+          description: File-system session authorizing attachment reads.
+        - name: attachment_file_paths
+          value_ref: nv_file_path_list
+          required: false
+          description: Files to attach from the account file system.
         - name: access_token
           value_ref: nv_access_token
           required: true
@@ -487,6 +661,14 @@ capabilities:
       input_type:
         type: object
         fields:
+        - name: file_system_access_token
+          value_ref: nv_file_access_token
+          required: false
+          description: File-system session authorizing attachment reads.
+        - name: attachment_file_paths
+          value_ref: nv_file_path_list
+          required: false
+          description: Files to attach from the account file system.
         - name: access_token
           value_ref: nv_access_token
           required: true
@@ -522,6 +704,38 @@ capabilities:
     kind: query
     entity: Draft
     selection:
+    - name: max_created_at
+      value_ref: nv_datetime
+      required: false
+      description: Inclusive creation-date bound; the backend compares calendar dates.
+    - name: min_created_at
+      value_ref: nv_datetime
+      required: false
+      description: Inclusive creation-date bound; the backend compares calendar dates.
+    - name: response_to_email_id
+      value_ref: nv_email_id
+      required: false
+      description: Select drafts replying to this message.
+    - name: belongs_to_email_thread_id
+      value_ref: nv_thread_id
+      required: false
+      description: Select drafts belonging to this thread.
+    - name: recipient_email
+      value_ref: nv_email
+      required: false
+      description: Select drafts addressed to this recipient.
+    - name: scheduled
+      value_ref: nv_bool
+      required: false
+      description: Select scheduled or unscheduled drafts.
+    - name: attachment
+      value_ref: nv_bool
+      required: false
+      description: Select drafts by presence of attachments.
+    - name: query
+      value_ref: nv_str
+      required: false
+      description: Rank drafts by text relevance; verify exact identity in returned content.
     - name: access_token
       value_ref: nv_access_token
       required: true
@@ -531,6 +745,11 @@ capabilities:
     - body
     - scheduled_send_at
     - created_at
+    controls:
+    - name: sort_by
+      value_ref: draft_query_ordering
+      required: false
+      description: Draft ordering; with query, relevance determines pages and ordering applies within each page.
   draft_get:
     description: Show one draft.
     kind: get
@@ -549,13 +768,21 @@ capabilities:
     - scheduled_send_at
     - created_at
   draft_create:
-    description: Create a draft.
+    description: Create an unsent draft; setting scheduled_send_at schedules automatic delivery without a separate send.
     kind: create
     entity: Draft
     payload:
       input_type:
         type: object
         fields:
+        - name: file_system_access_token
+          value_ref: nv_file_access_token
+          required: false
+          description: File-system session authorizing attachment reads.
+        - name: attachment_file_paths
+          value_ref: nv_file_path_list
+          required: false
+          description: Files to attach from the account file system.
         - name: access_token
           value_ref: nv_access_token
           required: true
@@ -577,16 +804,25 @@ capabilities:
         - name: scheduled_send_at
           value_ref: nv_datetime
           required: false
+          description: Future time for automatic delivery; no separate send operation is needed.
     provides:
     - draft_id
   draft_update:
-    description: Update a draft.
+    description: Update an unsent draft or its automatic delivery schedule.
     kind: update
     entity: Draft
     payload:
       input_type:
         type: object
         fields:
+        - name: response_to_email_id
+          value_ref: nv_email_id
+          required: false
+          description: Message this draft replies to.
+        - name: belongs_to_email_thread_id
+          value_ref: nv_thread_id
+          required: false
+          description: Thread to associate with this draft.
         - name: access_token
           value_ref: nv_access_token
           required: true
@@ -602,6 +838,7 @@ capabilities:
         - name: scheduled_send_at
           value_ref: nv_datetime
           required: false
+          description: Future time for automatic delivery; no separate send operation is needed.
   draft_delete:
     description: Delete a draft.
     kind: delete
@@ -615,19 +852,23 @@ capabilities:
           required: true
   draft_send:
     receiver: {kind: entity, entity: Draft}
-    description: Send an existing draft.
+    description: Send an existing draft immediately, even if scheduled for later.
     kind: action
     entity: Draft
     payload:
       input_type:
         type: object
         fields:
+        - name: file_system_access_token
+          value_ref: nv_file_access_token
+          required: false
+          description: File-system session authorizing attachment reads.
         - name: access_token
           value_ref: nv_access_token
           required: true
     output:
       type: side_effect
-      description: Sends the draft as an email.
+      description: Sends the email immediately and removes the draft.
   profile_get:
     description: Show Gmail profile for an email.
     kind: get
@@ -783,6 +1024,10 @@ capabilities:
       input_type:
         type: object
         fields:
+        - name: read
+          value_ref: nv_bool
+          required: false
+          description: Count read or unread threads; omit to count both.
         - name: access_token
           value_ref: nv_access_token
           required: true
@@ -924,9 +1169,7 @@ capabilities:
         - name: file_system_access_token
           value_ref: nv_file_access_token
           required: true
-    output:
-      type: side_effect
-      description: Writes the attachment bytes to the given file path.
+    output: {type: entity, entity_type: DownloadedFile}
   draft_attachment_upload:
     description: Upload file-system paths as attachments on a draft.
     kind: action
@@ -970,7 +1213,85 @@ capabilities:
       type: side_effect
       description: Removes the named attachment from the draft.
 
+  label_search:
+    description: Find mailbox thread labels by a text query.
+    kind: search
+    entity: Label
+    selection:
+    - name: access_token
+      value_ref: nv_access_token
+      required: true
+    - name: query
+      value_ref: nv_str
+      required: true
+    provides: [name]
+  account_set_status:
+    description: Set the account holder's availability status.
+    kind: action
+    entity: Account
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: status
+          value_ref: nv_availability_status
+          required: true
+    output:
+      type: side_effect
+      description: Changes the account holder's availability status.
+  email_thread_snooze:
+    receiver: {kind: entity, entity: EmailThread}
+    description: Hide a thread until a future time, when it returns unread to its inbox or outbox and leaves archived or spam categories.
+    kind: action
+    entity: EmailThread
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+        - name: snooze_until
+          value_ref: nv_datetime
+          required: true
+    output:
+      type: side_effect
+      description: Snoozes the thread until the specified future instant.
+  email_thread_unsnooze:
+    receiver: {kind: entity, entity: EmailThread}
+    description: Return a snoozed thread to its mailbox now.
+    kind: action
+    entity: EmailThread
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: access_token
+          value_ref: nv_access_token
+          required: true
+    output:
+      type: side_effect
+      description: Removes the thread snooze.
+
 values:
+  draft_query_ordering:
+    type: enum
+    description: Draft ordering; with query, relevance determines pages and ordering applies within each page.
+    enum: ['+created_at', '-created_at', '+updated_at', '-updated_at']
+  email_thread_query_ordering:
+    type: enum
+    description: Thread ordering; with query, relevance determines pages and ordering applies within each page.
+    enum: ['+created_at', '-created_at', '+updated_at', '-updated_at']
+  downloaded_file_path:
+    type: string
+    description: Absolute path of the downloaded file in the account file system.
+  nv_availability_status:
+    type: enum
+    enum: [active, do_not_disturb, away]
+    description: Availability displayed to other Gmail users.
   nv_email_thread_mailbox:
     type: enum
     enum:
@@ -978,10 +1299,11 @@ values:
     - outbox
     - archived
     - spam
-    description: Mailbox shelf for listing email threads (OpenAPI category paths).
+    - starred
+    - snoozed
+    description: Mailbox shelf used to select email threads.
   nv_str:
     type: string
-    description: Free-form string.
   nv_email:
     type: email
     description: Email address of a user or counterparty.
@@ -1016,13 +1338,10 @@ values:
     description: List of email addresses.
   nv_bool:
     type: boolean
-    description: Boolean flag.
   nv_int:
     type: integer
-    description: Integer.
   nv_datetime:
     type: rfc3339
-    description: ISO datetime string.
   nv_attachment_file_name:
     type: string
     description: Filename of an attachment on a draft.
@@ -1129,6 +1448,38 @@ prerequisites:
           path:
           - access_token
         output: token
+    email_thread_unsnooze:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path: [access_token]
+        output: token
+    email_thread_snooze:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path: [access_token]
+        output: token
+    account_set_status:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path: [access_token]
+        output: token
+    label_search:
+    - id: session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: selection
+          path: [access_token]
+        output: token
     email_thread_query:
     - id: session
       contract: appworld.session
@@ -1228,6 +1579,13 @@ prerequisites:
           path:
           - access_token
         output: token
+    - id: file_session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path: [file_system_access_token]
+        output: token
     email_reply:
     - id: session
       contract: appworld.session
@@ -1236,6 +1594,13 @@ prerequisites:
           lane: payload
           path:
           - access_token
+        output: token
+    - id: file_session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path: [file_system_access_token]
         output: token
     email_delete_in_thread:
     - id: session
@@ -1273,6 +1638,13 @@ prerequisites:
           path:
           - access_token
         output: token
+    - id: file_session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path: [file_system_access_token]
+        output: token
     draft_update:
     - id: session
       contract: appworld.session
@@ -1299,6 +1671,13 @@ prerequisites:
           lane: payload
           path:
           - access_token
+        output: token
+    - id: file_session
+      contract: appworld.session
+      bindings:
+      - input:
+          lane: payload
+          path: [file_system_access_token]
         output: token
     category_sizes_get:
     - id: session

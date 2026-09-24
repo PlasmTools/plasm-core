@@ -45,6 +45,11 @@ email_thread_query:
   query: &thread_search_query
     type: object
     fields:
+    - [sort_by, {type: if, condition: {type: exists, var: sort_by}, then_expr: {type: var, name: sort_by}, else_expr: {type: const, value: null}}]
+    - [snoozed, {type: if, condition: {type: exists, var: snoozed}, then_expr: {type: var, name: snoozed}, else_expr: {type: const, value: null}}]
+    - [spam, {type: if, condition: {type: exists, var: spam}, then_expr: {type: var, name: spam}, else_expr: {type: const, value: null}}]
+    - [archived, {type: if, condition: {type: exists, var: archived}, then_expr: {type: var, name: archived}, else_expr: {type: const, value: null}}]
+    - [starred, {type: if, condition: {type: exists, var: starred}, then_expr: {type: var, name: starred}, else_expr: {type: const, value: null}}]
     - - query
       - type: if
         condition: { type: exists, var: query }
@@ -55,6 +60,36 @@ email_thread_query:
         condition: { type: exists, var: label }
         then_expr: { type: var, name: label }
         else_expr: { type: const, value: null }
+    - - read
+      - type: if
+        condition: {type: exists, var: read}
+        then_expr: {type: var, name: read}
+        else_expr: {type: const, value: null}
+    - - attachment
+      - type: if
+        condition: {type: exists, var: attachment}
+        then_expr: {type: var, name: attachment}
+        else_expr: {type: const, value: null}
+    - - from_email
+      - type: if
+        condition: {type: exists, var: from_email}
+        then_expr: {type: var, name: from_email}
+        else_expr: {type: const, value: null}
+    - - to_email
+      - type: if
+        condition: {type: exists, var: to_email}
+        then_expr: {type: var, name: to_email}
+        else_expr: {type: const, value: null}
+    - - min_created_at
+      - type: if
+        condition: {type: exists, var: min_created_at}
+        then_expr: {type: datetime_format, value: {type: var, name: min_created_at}, format: "%Y-%m-%d"}
+        else_expr: {type: const, value: null}
+    - - max_created_at
+      - type: if
+        condition: {type: exists, var: max_created_at}
+        then_expr: {type: datetime_format, value: {type: var, name: max_created_at}, format: "%Y-%m-%d"}
+        else_expr: {type: const, value: null}
   pagination: *appworld_page_index_limit
 email_thread_get:
   method: GET
@@ -143,6 +178,8 @@ email_send:
   body:
     type: object
     fields:
+    - [file_system_access_token, {type: if, condition: {type: exists, var: file_system_access_token}, then_expr: {type: var, name: file_system_access_token}, else_expr: {type: const, value: null}}]
+    - [attachment_file_paths, {type: if, condition: {type: exists, var: attachment_file_paths}, then_expr: {type: var, name: attachment_file_paths}, else_expr: {type: const, value: null}}]
     - [email_addresses, { type: var, name: email_addresses }]
     - [subject, { type: var, name: subject }]
     - [body, { type: var, name: body }]
@@ -160,6 +197,8 @@ email_reply:
   body:
     type: object
     fields:
+    - [file_system_access_token, {type: if, condition: {type: exists, var: file_system_access_token}, then_expr: {type: var, name: file_system_access_token}, else_expr: {type: const, value: null}}]
+    - [attachment_file_paths, {type: if, condition: {type: exists, var: attachment_file_paths}, then_expr: {type: var, name: attachment_file_paths}, else_expr: {type: const, value: null}}]
     - [body, { type: var, name: body }]
     - - email_addresses
       - type: if
@@ -185,6 +224,18 @@ draft_query:
   auth: *request_auth
   pagination: *appworld_page_index_limit
 
+  query:
+    type: object
+    fields:
+    - [sort_by, {type: if, condition: {type: exists, var: sort_by}, then_expr: {type: var, name: sort_by}, else_expr: {type: const, value: null}}]
+    - [max_created_at, {type: if, condition: {type: exists, var: max_created_at}, then_expr: {type: datetime_format, value: {type: var, name: max_created_at}, format: "%Y-%m-%d"}, else_expr: {type: const, value: null}}]
+    - [min_created_at, {type: if, condition: {type: exists, var: min_created_at}, then_expr: {type: datetime_format, value: {type: var, name: min_created_at}, format: "%Y-%m-%d"}, else_expr: {type: const, value: null}}]
+    - [response_to_email_id, {type: if, condition: {type: exists, var: response_to_email_id}, then_expr: {type: var, name: response_to_email_id}, else_expr: {type: const, value: null}}]
+    - [belongs_to_email_thread_id, {type: if, condition: {type: exists, var: belongs_to_email_thread_id}, then_expr: {type: var, name: belongs_to_email_thread_id}, else_expr: {type: const, value: null}}]
+    - [recipient_email, {type: if, condition: {type: exists, var: recipient_email}, then_expr: {type: var, name: recipient_email}, else_expr: {type: const, value: null}}]
+    - [scheduled, {type: if, condition: {type: exists, var: scheduled}, then_expr: {type: var, name: scheduled}, else_expr: {type: const, value: null}}]
+    - [attachment, {type: if, condition: {type: exists, var: attachment}, then_expr: {type: var, name: attachment}, else_expr: {type: const, value: null}}]
+    - [query, {type: if, condition: {type: exists, var: query}, then_expr: {type: var, name: query}, else_expr: {type: const, value: null}}]
 draft_get:
   method: GET
   path:
@@ -202,6 +253,8 @@ draft_create:
   body:
     type: object
     fields:
+    - [file_system_access_token, {type: if, condition: {type: exists, var: file_system_access_token}, then_expr: {type: var, name: file_system_access_token}, else_expr: {type: const, value: null}}]
+    - [attachment_file_paths, {type: if, condition: {type: exists, var: attachment_file_paths}, then_expr: {type: var, name: attachment_file_paths}, else_expr: {type: const, value: null}}]
     - - recipient_email_addresses
       - type: if
         condition: { type: exists, var: recipient_email_addresses }
@@ -230,7 +283,7 @@ draft_create:
     - - scheduled_send_at
       - type: if
         condition: { type: exists, var: scheduled_send_at }
-        then_expr: { type: var, name: scheduled_send_at }
+        then_expr: { type: datetime_format, value: { type: var, name: scheduled_send_at }, format: "%Y-%m-%d|%H:%M:%S" }
         else_expr: { type: const, value: null }
 
 draft_update:
@@ -243,6 +296,8 @@ draft_update:
   body:
     type: object
     fields:
+    - [response_to_email_id, {type: if, condition: {type: exists, var: response_to_email_id}, then_expr: {type: var, name: response_to_email_id}, else_expr: {type: const, value: null}}]
+    - [belongs_to_email_thread_id, {type: if, condition: {type: exists, var: belongs_to_email_thread_id}, then_expr: {type: var, name: belongs_to_email_thread_id}, else_expr: {type: const, value: null}}]
     - - email_addresses
       - type: if
         condition: { type: exists, var: email_addresses }
@@ -261,7 +316,7 @@ draft_update:
     - - scheduled_send_at
       - type: if
         condition: { type: exists, var: scheduled_send_at }
-        then_expr: { type: var, name: scheduled_send_at }
+        then_expr: { type: datetime_format, value: { type: var, name: scheduled_send_at }, format: "%Y-%m-%d|%H:%M:%S" }
         else_expr: { type: const, value: null }
 
 draft_delete:
@@ -281,6 +336,10 @@ draft_send:
   - { type: literal, value: send }
   auth: *request_auth
 
+  body:
+    type: object
+    fields:
+    - [file_system_access_token, {type: if, condition: {type: exists, var: file_system_access_token}, then_expr: {type: var, name: file_system_access_token}, else_expr: {type: const, value: null}}]
 profile_get:
   method: GET
   path:
@@ -383,6 +442,10 @@ category_sizes_get:
   - { type: literal, value: category_sizes }
   auth: *request_auth
 
+  query:
+    type: object
+    fields:
+    - [read, {type: if, condition: {type: exists, var: read}, then_expr: {type: var, name: read}, else_expr: {type: const, value: null}}]
 email_thread_label:
   method: POST
   path:
@@ -510,4 +573,35 @@ draft_attachment_remove:
   - { type: var, name: draft_id }
   - { type: literal, value: attachments }
   - { type: var, name: attachment_file_name }
+  auth: *request_auth
+
+label_search:
+  method: GET
+  path: [{type: literal, value: gmail}, {type: literal, value: labels}]
+  auth: *request_auth
+  query:
+    type: object
+    fields:
+    - [query, {type: var, name: query}]
+  pagination: *appworld_page_index_limit
+  response: bare_list
+account_set_status:
+  method: POST
+  path: [{type: literal, value: gmail}, {type: literal, value: status}]
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [status, {type: var, name: status}]
+email_thread_snooze:
+  method: POST
+  path: [{type: literal, value: gmail}, {type: literal, value: email_threads}, {type: var, name: id}, {type: literal, value: snooze}]
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [snooze_until, {type: datetime_format, value: {type: var, name: snooze_until}, format: "%Y-%m-%d|%H:%M:%S"}]
+email_thread_unsnooze:
+  method: POST
+  path: [{type: literal, value: gmail}, {type: literal, value: email_threads}, {type: var, name: id}, {type: literal, value: unsnooze}]
   auth: *request_auth

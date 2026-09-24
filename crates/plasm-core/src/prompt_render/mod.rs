@@ -124,7 +124,7 @@ pub use types::{
     EntityTeachingExprRow, EntityTeachingPrompt, PromptRenderMode, PromptSurfaceStats,
     RelationMaterializationSummary, RenderConfig, TeachingFieldGloss, TeachingHeading,
     TeachingLineMeta, TeachingPromptBundle, TeachingPromptModel, TeachingPromptSettings,
-    TeachingPromptSource, TSV_TEACHING_TABLE_HEADER,
+    TeachingPromptSource, TeachingRowType, TSV_TEACHING_TABLE_HEADER,
 };
 
 pub use capability_delta::{

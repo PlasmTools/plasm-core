@@ -3716,6 +3716,159 @@
       "requirement": "session",
       "provider_catalog": "venmo",
       "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "product_rating_distribution_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "product_last_purchase_get"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "product_recommendations_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "product_history_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "product_purchases_query"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "history_clear"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "history_add_product"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "history_remove_product"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "amazon",
+        "capability": "history_set_tracking"
+      },
+      "requirement": "session",
+      "provider_catalog": "amazon",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "email_thread_unsnooze"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "email_thread_snooze"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "account_set_status"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "label_search"
+      },
+      "requirement": "session",
+      "provider_catalog": "gmail",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "email_send"
+      },
+      "requirement": "file_session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "email_reply"
+      },
+      "requirement": "file_session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "draft_create"
+      },
+      "requirement": "file_session",
+      "provider_catalog": "file_system",
+      "provider": "session"
+    },
+    {
+      "consumer": {
+        "catalog": "gmail",
+        "capability": "draft_send"
+      },
+      "requirement": "file_session",
+      "provider_catalog": "file_system",
+      "provider": "session"
     }
   ]
 }

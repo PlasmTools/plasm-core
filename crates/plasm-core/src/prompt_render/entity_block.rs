@@ -178,6 +178,7 @@ pub(crate) fn collect_entity_teaching_block(
 
     let Some(ent) = cgs.get_entity(ename) else {
         return EntityTeachingBlock {
+            row_type: None,
             heading: TeachingHeading::default(),
             field_gloss_rows: Vec::new(),
             teaching_rows,
@@ -235,6 +236,10 @@ pub(crate) fn collect_entity_teaching_block(
         .resolved_primary_get_for_projection(ename, ent)
         .filter(|cap| surface_allows_capability(surface_filter, catalog_entry_id, cap));
 
+    let primary_get_legend = primary_get_cap.and_then(|cap| {
+        capability_legend_with_session_gloss(map, cgs, cap, ename, ident_meta, catalog_entry_id)
+    });
+
     let mut query_caps: Vec<_> = cgs
         .find_capabilities(ename, CapabilityKind::Query)
         .into_iter()
@@ -288,10 +293,9 @@ pub(crate) fn collect_entity_teaching_block(
                 cgs,
                 &with_wires(cmp),
                 get_gloss.clone(),
-                None,
+                primary_get_legend.clone(),
                 None,
                 primary_name,
-                true,
                 line_valid_cache,
                 line_valid_cache_seed,
                 map_arc,
@@ -312,10 +316,9 @@ pub(crate) fn collect_entity_teaching_block(
                 cgs,
                 &with_wires(line_base),
                 get_gloss.clone(),
-                None,
+                primary_get_legend.clone(),
                 None,
                 primary_name,
-                true,
                 line_valid_cache,
                 line_valid_cache_seed,
                 map_arc,
@@ -360,7 +363,6 @@ pub(crate) fn collect_entity_teaching_block(
                             None => base,
                         }
                     };
-                    let is_primary_query = primary_q_name.as_deref() == Some(cap.name.as_str());
                     let mut added = false;
                     if let Some(line) = query_expr_maximal(cap, &es, cgs, map, catalog_entry_id) {
                         if local_seen.insert(line.clone())
@@ -378,7 +380,6 @@ pub(crate) fn collect_entity_teaching_block(
                                 qgloss.clone(),
                                 cap_leg.clone(),
                                 None,
-                                !is_primary_query,
                                 line_valid_cache,
                                 line_valid_cache_seed,
                                 map_arc,
@@ -408,7 +409,6 @@ pub(crate) fn collect_entity_teaching_block(
                                     qgloss.clone(),
                                     cap_leg.clone(),
                                     None,
-                                    !is_primary_query,
                                     line_valid_cache,
                                     line_valid_cache_seed,
                                     map_arc,
@@ -439,7 +439,6 @@ pub(crate) fn collect_entity_teaching_block(
                                     qgloss.clone(),
                                     cap_leg.clone(),
                                     None,
-                                    !is_primary_query,
                                     line_valid_cache,
                                     line_valid_cache_seed,
                                     map_arc,
@@ -523,7 +522,6 @@ pub(crate) fn collect_entity_teaching_block(
                 cap_leg,
                 None,
                 Some(&cap.name),
-                false,
                 line_valid_cache,
                 line_valid_cache_seed,
                 map_arc,
@@ -578,7 +576,6 @@ pub(crate) fn collect_entity_teaching_block(
             cap_leg,
             None,
             Some(&cap_name),
-            false,
             line_valid_cache,
             line_valid_cache_seed,
             map_arc,
@@ -603,10 +600,9 @@ pub(crate) fn collect_entity_teaching_block(
             cgs,
             &keyed_with_wires,
             get_gloss.clone(),
-            None,
+            primary_get_legend,
             None,
             primary_name,
-            true,
             line_valid_cache,
             line_valid_cache_seed,
             map_arc,
@@ -662,7 +658,6 @@ pub(crate) fn collect_entity_teaching_block(
             cap_leg.clone(),
             None,
             scap.map(|c| &c.name),
-            false,
             line_valid_cache,
             line_valid_cache_seed,
             map_arc,
@@ -686,7 +681,6 @@ pub(crate) fn collect_entity_teaching_block(
                 sg,
                 cap_leg,
                 None,
-                true,
                 line_valid_cache,
                 line_valid_cache_seed,
                 map_arc,
@@ -791,6 +785,29 @@ pub(crate) fn collect_entity_teaching_block(
         );
     }
 
+    // Returned row shape is admitted by the exposure surface, not by the set of
+    // executable examples. Preserve it even for embed-only relation targets.
+    let row_fields: Vec<String> = CGS::default_ordered_entity_field_names(ent)
+        .into_iter()
+        .filter(|field| surface_allows_entity_field(surface_filter, catalog_entry_id, ename, field))
+        .map(|field| id_sym_entity(map, catalog_entry_id, ename, &field))
+        .collect();
+    let row_type = (!row_fields.is_empty()).then(|| super::types::TeachingRowType {
+        entity: crate::symbol_tuning::ExposureEntityKey {
+            entry_id: catalog_entry_id.to_owned(),
+            entity: ename.into(),
+        },
+        symbol: es.clone(),
+        fields: row_fields,
+    });
+    let row_surface = row_type
+        .as_ref()
+        .map(|row| format!("{}[{}]", row.symbol, row.fields.join(",")))
+        .unwrap_or_else(|| es.clone());
+    if let Some(gs) = gloss_emit.as_mut() {
+        gs.emit_before_teaching_example(&row_surface, None, None, &[]);
+    }
+
     let mut field_gloss_rows = gloss_emit
         .as_mut()
         .map(|gs| std::mem::take(gs.field_gloss))
@@ -798,13 +815,14 @@ pub(crate) fn collect_entity_teaching_block(
     field_gloss_rows = gloss_filter::filter_field_gloss_to_referenced_symbols(
         &field_gloss_rows,
         &teaching_rows,
-        &es,
+        &row_surface,
         map,
         catalog_entry_id,
         ename,
     );
 
     EntityTeachingBlock {
+        row_type,
         heading,
         field_gloss_rows,
         teaching_rows,

@@ -104,6 +104,13 @@ impl<'a> TeachingSynthesisSession<'a> {
         if rep.is_empty() {
             return;
         }
+        for block in teaching_blocks_out.iter_mut() {
+            if let Some(row) = &mut block.row_type {
+                for field in &mut row.fields {
+                    *field = crate::symbol_tuning::rewrite_opaque_ident_tokens(field, &rep);
+                }
+            }
+        }
         if self.collect_meta {
             debug_assert_eq!(
                 teaching_blocks_out.len(),
@@ -251,11 +258,10 @@ pub(crate) fn render_teaching_table_resolved<'b, F>(
             session.surface_filter,
             Some(catalog_entry_id),
         );
-        if block.teaching_rows.is_empty() {
+        if block.teaching_rows.is_empty() && block.row_type.is_none() {
             // Validation probe: empty block is the authoring signal for EntityExpressionIncomplete.
-            // Live MCP / incremental surfaces: mute entities can appear if exposure admitted an
-            // entity seat without teachable caps — skip without panicking (request path must not
-            // abort the process). Prefer fixing exposure admission so this warn stays rare.
+            // A row type is useful without capabilities. Only an entity with neither
+            // admitted fields nor executable examples is an empty teaching block.
             tracing::warn!(
                 target: "plasm_core::prompt_render",
                 entity = ename,
@@ -276,6 +282,7 @@ pub(crate) fn render_teaching_table_resolved<'b, F>(
             }
         }
         teaching_blocks_out.push(EntityTeachingBlock {
+            row_type: block.row_type,
             heading: block.heading,
             field_gloss_rows: block.field_gloss_rows,
             teaching_rows: kept_rows,

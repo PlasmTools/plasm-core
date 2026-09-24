@@ -318,7 +318,9 @@ pub(crate) fn collect_expr_vars(expr: &CmlExpr, vars: &mut IndexSet<String>) {
             collect_expr_vars(parent, vars);
             collect_expr_vars(overrides, vars);
         }
-        CmlExpr::Base64 { value, .. } => collect_expr_vars(value, vars),
+        CmlExpr::Base64 { value, .. } | CmlExpr::DateTimeFormat { value, .. } => {
+            collect_expr_vars(value, vars)
+        }
     }
 }
 

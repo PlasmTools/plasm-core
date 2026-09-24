@@ -88,6 +88,7 @@ impl CompiledCatalog {
     }
 
     pub fn validate_against(&self, cgs: &plasm_core::CGS) -> Result<(), CmlError> {
+        crate::embed_target_decoder::validate_embedded_identity_contracts(cgs)?;
         let actual_hash = cgs.catalog_cgs_hash_hex();
         if self.cgs_hash != actual_hash {
             return Err(CmlError::InvalidTemplate {
@@ -178,6 +179,7 @@ pub fn compile_cgs_capability_templates(
 fn compile_capability_templates(
     cgs: &plasm_core::CGS,
 ) -> Result<BTreeMap<String, CapabilityTemplate>, CmlError> {
+    crate::embed_target_decoder::validate_embedded_identity_contracts(cgs)?;
     let mut capabilities = BTreeMap::new();
     for (name, cap) in &cgs.capabilities {
         // Domain-authored derived Gets have no CML mapping.

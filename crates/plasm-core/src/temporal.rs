@@ -431,6 +431,54 @@ fn parse_to_utc(val: &Value) -> Result<chrono::DateTime<chrono::Utc>, String> {
     parse_to_utc_at_reference(val, reference)
 }
 
+/// Validated, explicit UTC datetime layout used only at a transport boundary.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct TemporalPattern(String);
+
+impl TryFrom<String> for TemporalPattern {
+    type Error = String;
+    fn try_from(pattern: String) -> Result<Self, Self::Error> {
+        if pattern.is_empty()
+            || chrono::format::StrftimeItems::new(&pattern)
+                .any(|item| matches!(item, chrono::format::Item::Error))
+        {
+            return Err("datetime format must be a nonempty valid strftime layout".into());
+        }
+        Ok(Self(pattern))
+    }
+}
+
+impl From<TemporalPattern> for String {
+    fn from(pattern: TemporalPattern) -> Self {
+        pattern.0
+    }
+}
+
+impl TemporalPattern {
+    /// Encode an already resolved RFC3339 instant. No clock lookup or NL interpretation.
+    pub fn encode(&self, value: Value) -> Result<Value, String> {
+        match value {
+            Value::Null => Ok(Value::Null),
+            Value::String(text) => {
+                let instant = chrono::DateTime::parse_from_rfc3339(&text).map_err(|_| {
+                    "datetime formatter requires a resolved RFC3339 instant".to_string()
+                })?;
+                let mut out = String::new();
+                use std::fmt::Write;
+                write!(
+                    &mut out,
+                    "{}",
+                    instant.with_timezone(&chrono::Utc).format(&self.0)
+                )
+                .map_err(|_| "datetime format cannot encode this instant".to_string())?;
+                Ok(Value::String(out))
+            }
+            _ => Err("datetime formatter requires a resolved RFC3339 instant".into()),
+        }
+    }
+}
+
 /// Parse `val` into UTC, then encode per `fmt` (predicate / expression **input** only).
 pub fn normalize_temporal_value(val: Value, fmt: TemporalWireFormat) -> Result<Value, String> {
     let dt = parse_to_utc(&val)?;
@@ -850,5 +898,26 @@ mod tests {
         .unwrap();
         assert_eq!(yesterday, one, "1d ago must be calendar yesterday midnight");
         assert_eq!(one, one_long);
+    }
+}
+
+#[cfg(test)]
+mod wire_pattern_laws {
+    use super::*;
+    use proptest::prelude::*;
+    proptest! {
+        #[test]
+        fn offset_equivalence_and_serialization_preserve_wire_instant(
+            seconds in 0i64..4_000_000_000,
+            offset_hours in -12i32..15,
+        ) {
+            let utc = chrono::DateTime::from_timestamp(seconds,0).unwrap();
+            let offset = chrono::FixedOffset::east_opt(offset_hours*3600).unwrap();
+            let pattern = TemporalPattern::try_from("%Y-%m-%d|%H:%M:%S".to_string()).unwrap();
+            let decoded:TemporalPattern=serde_json::from_slice(&serde_json::to_vec(&pattern).unwrap()).unwrap();
+            let expected=Value::String(utc.format("%Y-%m-%d|%H:%M:%S").to_string());
+            prop_assert_eq!(decoded.encode(Value::String(utc.with_timezone(&offset).to_rfc3339())).unwrap(),expected);
+            prop_assert_eq!(decoded.encode(Value::Null).unwrap(),Value::Null);
+        }
     }
 }

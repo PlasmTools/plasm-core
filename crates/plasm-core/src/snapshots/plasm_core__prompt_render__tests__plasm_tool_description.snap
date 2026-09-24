@@ -8,6 +8,8 @@ expression: "super::PLASM_TOOL_DESCRIPTION"
 
 **Program shape:** one `plasm_expr`, or `label = …` bindings (e.g. `items_1`; whole names `[emprv][0-9]+` are reserved) then **one** final return line (comma-separated roots on that line only). No prose, `return` keyword, fences, or table rows.
 
+**Results:** `e# row[...]` is a returned type, not a call.
+
 **Strings:** JSON escapes in quotes (`\n` `\t` `\\` `\"`); tagged `<<TAG` … `TAG` heredocs (real newlines). **Minijinja only** (`{{ wire }}` / `{{ binding.content }}` / `| split_part`); marker-free opaque; `${…}`/`$$` abolished. **`=>` applies once per row; a plain template evaluates once.** Lanes:
 - Plain — `body = <<TAG` … `TAG` → **string** (`{% for item in items %}` inside that one evaluation); `param=body` (never `body.content`)
 - Per-row arg — `rows => _.m#(param=<<TAG` … `TAG)` — once per invocation

@@ -11,6 +11,13 @@ pub enum CmlExpr {
     #[serde(rename = "var")]
     Var { name: String },
 
+    /// Encode a resolved RFC3339 instant in an explicit UTC transport layout.
+    #[serde(rename = "datetime_format")]
+    DateTimeFormat {
+        value: Box<CmlExpr>,
+        format: plasm_core::temporal::TemporalPattern,
+    },
+
     /// String whitespace normalization; null stays null, blank becomes null.
     #[serde(rename = "trim")]
     Trim { value: Box<CmlExpr> },
@@ -1027,6 +1034,9 @@ pub fn eval_cml(expr: &CmlExpr, env: &CmlEnv) -> Result<Value, CmlError> {
                 other => Ok(other),
             }
         }
+        CmlExpr::DateTimeFormat { value, format } => format
+            .encode(eval_cml(value, env)?)
+            .map_err(|message| CmlError::SerializationError { message }),
         CmlExpr::Format { template, vars } => {
             template.validate_vars(vars)?;
             let rendered = template.render(|name| {

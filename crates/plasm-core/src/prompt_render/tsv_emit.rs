@@ -224,6 +224,27 @@ pub(crate) fn render_prompt_tsv_from_bundle(bundle: &TeachingPromptBundle) -> St
                 }
             }
         }
+        // A returned type can exist without an operation on that type. Reuse an
+        // existing projection when it covers the shape; otherwise declare it as
+        // non-executable metadata, never as a fabricated Query or Get.
+        let declared_projection = block
+            .row_type
+            .as_ref()
+            .map(|row| format!("[{}]", row.fields.join(",")));
+        let needs_row_declaration = declared_projection.as_ref().is_some_and(|declared| {
+            !block.teaching_rows.iter().any(|row| {
+                matches!(
+                    row.meta.kind,
+                    super::DomainLineKind::Get
+                        | super::DomainLineKind::Query
+                        | super::DomainLineKind::Search
+                ) && parse_trailing_projection_bracket(row.teaching_expr.expression.trim()).as_ref()
+                    == Some(declared)
+            })
+        });
+        if let Some(declared) = declared_projection {
+            proj = declared;
+        }
         let projection_symbols = parse_projection_symbols(&proj);
         let projection_set: HashSet<&str> = projection_symbols.iter().map(|s| s.as_str()).collect();
         let mut field_gloss_by_symbol: HashMap<String, TeachingFieldGloss> = HashMap::new();
@@ -278,7 +299,17 @@ pub(crate) fn render_prompt_tsv_from_bundle(bundle: &TeachingPromptBundle) -> St
         // Phase B.5: `r#` gloss — stable numeric order (alias → wire name on the Meaning cell).
         write_sorted_symbol_prefix_gloss_rows(&mut out, field_gloss_rows, 'r');
 
-        if entity_desc_attach_idx.is_none() {
+        if needs_row_declaration {
+            let row = block.row_type.as_ref().expect("row declaration");
+            write_teaching_tsv_row(
+                &mut out,
+                DomainTsvRow::EntityBanner {
+                    name: &format!("{} row[{}]", row.symbol, row.fields.join(",")),
+                    description: &format!("{} · {}", row.entity.entity, heading.description),
+                },
+            );
+        }
+        if entity_desc_attach_idx.is_none() && !needs_row_declaration {
             let d = heading.description.trim();
             if !d.is_empty() {
                 let name = bundle
@@ -302,7 +333,8 @@ pub(crate) fn render_prompt_tsv_from_bundle(bundle: &TeachingPromptBundle) -> St
         for &row_idx in &union_ctor_row_idxs {
             let row = teaching_expr_rows[row_idx];
             let identity_returns_row = Some(row_idx) == identity_idx;
-            let attach_entity_heading = Some(row_idx) == entity_desc_attach_idx;
+            let attach_entity_heading =
+                !needs_row_declaration && Some(row_idx) == entity_desc_attach_idx;
             write_teaching_tsv_row(
                 &mut out,
                 DomainTsvRow::TeachingExpr {
@@ -328,7 +360,8 @@ pub(crate) fn render_prompt_tsv_from_bundle(bundle: &TeachingPromptBundle) -> St
             }
             let row = teaching_expr_rows[row_idx];
             let identity_returns_row = Some(row_idx) == identity_idx;
-            let attach_entity_heading = Some(row_idx) == entity_desc_attach_idx;
+            let attach_entity_heading =
+                !needs_row_declaration && Some(row_idx) == entity_desc_attach_idx;
             write_teaching_tsv_row(
                 &mut out,
                 DomainTsvRow::TeachingExpr {
@@ -569,12 +602,7 @@ fn push_teaching_meaning_result_atom(
     });
     let desc = row.legend.description.trim();
     if !desc.is_empty() {
-        if row.is_singleton_row_fetch {
-            // `→ e · {capability gloss}` — arrow already means one entity row; no redundant mark.
-            atoms.push(TeachingMeaningAtom::CapabilityGloss(desc.to_string()));
-        } else if row.arrow == ReturnArrow::Terminal || row.arrow == ReturnArrow::List {
-            atoms.push(TeachingMeaningAtom::CapabilityGloss(desc.to_string()));
-        }
+        atoms.push(TeachingMeaningAtom::CapabilityGloss(desc.to_string()));
     }
 }
 

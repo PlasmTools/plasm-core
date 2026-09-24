@@ -2,6 +2,20 @@
 
 use super::*;
 
+/// An observed row is reusable when complete, or when the catalogue declares
+/// no richer Get projection. The latter preserves Summary; it does not promote it.
+fn observed_row_needs_no_detail_get(row: Option<&CachedEntity>, cgs: &CGS) -> bool {
+    row.is_some_and(|row| {
+        row.completeness == crate::EntityCompleteness::Complete
+            || cgs
+                .find_capability(
+                    row.reference.entity_type.as_str(),
+                    plasm_core::CapabilityKind::Get,
+                )
+                .is_none()
+    })
+}
+
 impl ExecutionEngine {
     /// Execute a chain expression (Kleisli EntityRef navigation).
     ///
@@ -336,10 +350,7 @@ impl ExecutionEngine {
             .iter()
             .filter(|id| {
                 let r = Ref::new(&target_entity_name, id.as_str());
-                if matches!(
-                    mat.get(&r).map(|e| e.completeness),
-                    Some(crate::EntityCompleteness::Complete)
-                ) {
+                if observed_row_needs_no_detail_get(mat.get(&r), cgs) {
                     cached_hits += 1;
                     false
                 } else {
@@ -376,7 +387,9 @@ impl ExecutionEngine {
             let concurrency = self
                 .config
                 .effective_hydrate_concurrency(cgs.entry_id.as_deref());
+            let (branch_seed, _) = crate::BranchMaterializationBase::fork_from(mat);
             let mut stream = stream::iter(to_fetch.into_iter().map(|reference| {
+                let mut branch = branch_seed.clone();
                 let inherit = inherit_by_id
                     .get(reference.primary_slot_str().as_str())
                     .cloned()
@@ -386,8 +399,9 @@ impl ExecutionEngine {
                 let ambient = ViewAmbientContext::default()
                     .with_capability_params(inherit.bindings().clone());
                 async move {
-                    self.fetch_get_decoded(&get, cgs, mode, None, false, None, &ambient)
+                    self.fetch_get_decoded(&get, cgs, mode, None, false, &mut branch, &ambient)
                         .await
+                        .map(|(entity, source)| (entity, source, branch))
                         .map_err(|e| {
                             wrap_synthesized_get_error(
                                 cap_name.as_str(),
@@ -401,7 +415,8 @@ impl ExecutionEngine {
 
             while let Some(res) = stream.next().await {
                 cooperative_cancel_check()?;
-                let (entity, source) = res?;
+                let (entity, source, branch) = res?;
+                mat.absorb_branch(branch)?;
                 if source == ExecutionSource::Live {
                     any_live = true;
                     extra_network += 1;
@@ -869,13 +884,24 @@ impl ExecutionEngine {
 
         let cap_named = capability.clone();
         let entity_type = target_key.to_string();
+        let (branch_seed, _) = crate::BranchMaterializationBase::fork_from(mat);
         let mut stream = stream::iter(gets.into_iter().map(move |(get, ambient)| {
+            let mut branch = branch_seed.clone();
             let c = cap_named.clone();
             let entity_type = entity_type.clone();
             async move {
-                self.fetch_get_decoded(&get, cgs, mode, Some(c.as_str()), false, None, &ambient)
-                    .await
-                    .map_err(|e| wrap_synthesized_get_error(c.as_str(), &entity_type, e))
+                self.fetch_get_decoded(
+                    &get,
+                    cgs,
+                    mode,
+                    Some(c.as_str()),
+                    false,
+                    &mut branch,
+                    &ambient,
+                )
+                .await
+                .map(|(entity, source)| (entity, source, branch))
+                .map_err(|e| wrap_synthesized_get_error(c.as_str(), &entity_type, e))
             }
         }))
         .buffered(concurrency);
@@ -884,7 +910,8 @@ impl ExecutionEngine {
         let mut extra_cache_hits = 0usize;
         while let Some(res) = stream.next().await {
             cooperative_cancel_check()?;
-            let (entity, source) = res?;
+            let (entity, source, branch) = res?;
+            mat.absorb_branch(branch)?;
             if source == ExecutionSource::Live {
                 any_live = true;
                 extra_network += 1;
@@ -1030,10 +1057,7 @@ impl ExecutionEngine {
         let to_fetch: Vec<Ref> = unique_refs
             .iter()
             .filter(|r| {
-                if matches!(
-                    mat.get(r).map(|e| e.completeness),
-                    Some(crate::EntityCompleteness::Complete)
-                ) {
+                if observed_row_needs_no_detail_get(mat.get(r), cgs) {
                     cached_hits += 1;
                     false
                 } else {
@@ -1066,14 +1090,16 @@ impl ExecutionEngine {
             let concurrency = self
                 .config
                 .effective_hydrate_concurrency(cgs.entry_id.as_deref());
+            let (branch_seed, _) = crate::BranchMaterializationBase::fork_from(mat);
             let mut stream = stream::iter(to_fetch.into_iter().map(|reference| {
+                let mut branch = branch_seed.clone();
                 let inherit = inherit_by_ref.get(&reference).cloned().unwrap_or_default();
                 let get = GetExpr::from_ref(reference.clone());
                 let cap_name = get_cap_name.clone();
                 let ambient = ViewAmbientContext::default()
                     .with_capability_params(inherit.bindings().clone());
                 async move {
-                    self.fetch_get_decoded(&get, cgs, mode, None, false, None, &ambient)
+                    self.fetch_get_decoded(&get, cgs, mode, None, false, &mut branch, &ambient)
                         .await
                         .and_then(|(entity, source)| {
                             if entity.reference != reference {
@@ -1081,7 +1107,7 @@ impl ExecutionEngine {
                                     message: format!("relation GET identity mismatch: requested {reference}, returned {}", entity.reference),
                                 });
                             }
-                            Ok((entity, source))
+                            Ok((entity, source, branch))
                         })
                         .map_err(|e| {
                             wrap_synthesized_get_error(
@@ -1096,7 +1122,8 @@ impl ExecutionEngine {
 
             while let Some(res) = stream.next().await {
                 cooperative_cancel_check()?;
-                let (entity, source) = res?;
+                let (entity, source, branch) = res?;
+                mat.absorb_branch(branch)?;
                 if source == ExecutionSource::Live {
                     any_live = true;
                     extra_network += 1;

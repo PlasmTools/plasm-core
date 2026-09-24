@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 /// Entity decoder - specifies how to extract entities from API responses
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EntityDecoder {
     pub entity: String,
     pub source: PathExpr,
@@ -25,18 +26,17 @@ pub struct EntityDecoder {
     /// Scope / request bindings (CML env or GET ref) merged when a key part is missing from the row.
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub identity_ambient: IndexMap<String, String>,
-    /// Parent row field paths/derives for compound child refs (e.g. Issue `owner`/`repo` → Label).
+    /// Typed parent row fields for compound child refs (e.g. Issue `owner`/`repo` → Label).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub parent_identity_field_hints: Vec<ParentIdentityFieldHint>,
+    pub parent_identity_bindings: Vec<ParentIdentityBinding>,
 }
 
 /// Parent scalar slot used when decoding nested relation rows (compound child `key_vars`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ParentIdentityFieldHint {
+#[serde(deny_unknown_fields)]
+pub struct ParentIdentityBinding {
     pub slot: String,
-    pub from: PathExpr,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub derive: Option<FieldDeriveRule>,
+    pub parent_field: String,
 }
 
 /// Field decoder - specifies how to extract a single field
@@ -234,12 +234,12 @@ impl EntityDecoder {
             request_identity_override: None,
             key_vars: Vec::new(),
             identity_ambient: IndexMap::new(),
-            parent_identity_field_hints: Vec::new(),
+            parent_identity_bindings: Vec::new(),
         }
     }
 
-    pub fn with_parent_identity_field_hints(mut self, hints: Vec<ParentIdentityFieldHint>) -> Self {
-        self.parent_identity_field_hints = hints;
+    pub fn with_parent_identity_bindings(mut self, bindings: Vec<ParentIdentityBinding>) -> Self {
+        self.parent_identity_bindings = bindings;
         self
     }
 
@@ -886,7 +886,11 @@ mod tests {
         let sheet_decoder = EntityDecoder::new("Sheet", PathExpr::from_slice(&["sheets", "*"]))
             .with_id_field("sheetId")
             .with_id_path(PathExpr::from_slice(&["properties", "sheetId"]))
-            .with_key_vars(vec!["spreadsheetId".into(), "sheetId".into()]);
+            .with_key_vars(vec!["spreadsheetId".into(), "sheetId".into()])
+            .with_parent_identity_bindings(vec![ParentIdentityBinding {
+                slot: "spreadsheetId".into(),
+                parent_field: "spreadsheetId".into(),
+            }]);
 
         let parent_decoder = EntityDecoder::new("Spreadsheet", PathExpr::empty())
             .with_fields(vec![FieldDecoder::new(
@@ -941,7 +945,11 @@ mod tests {
         let sheet_decoder = EntityDecoder::new("Sheet", PathExpr::from_slice(&["sheets", "*"]))
             .with_id_field("sheetId")
             .with_id_path(PathExpr::from_slice(&["properties", "sheetId"]))
-            .with_key_vars(vec!["spreadsheetId".into(), "sheetId".into()]);
+            .with_key_vars(vec!["spreadsheetId".into(), "sheetId".into()])
+            .with_parent_identity_bindings(vec![ParentIdentityBinding {
+                slot: "spreadsheetId".into(),
+                parent_field: "spreadsheetId".into(),
+            }]);
 
         let parent_decoder = EntityDecoder::new("Spreadsheet", PathExpr::empty())
             .with_fields(vec![

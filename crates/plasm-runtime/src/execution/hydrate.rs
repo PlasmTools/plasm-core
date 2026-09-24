@@ -390,7 +390,9 @@ impl ExecutionEngine {
 
         use futures_util::stream::{self, StreamExt};
 
+        let (branch_seed, _) = crate::BranchMaterializationBase::fork_from(mat);
         let mut stream = stream::iter(to_fetch.into_iter().map(|reference| {
+            let mut branch = branch_seed.clone();
             let requested = reference.clone();
             let get = GetExpr::from_ref(reference);
             let cap_name = cap_name.clone();
@@ -398,13 +400,13 @@ impl ExecutionEngine {
                 ViewAmbientContext::default().with_capability_params(inherit.bindings().clone());
             async move {
                 let attempt = hydration_trace::next_id();
-                let fetch = self.fetch_get_decoded(&get, cgs, mode, None, false, None, &ambient);
+                let fetch = self.fetch_get_decoded(&get, cgs, mode, None, false, &mut branch, &ambient);
                 let result = if let Some(id) = attempt {
                     hydration_trace::emit_for(id, "start", serde_json::json!({"entity":entity_type,
                         "capability":cap_name.as_str(), "identity_digest":blake3::hash(requested.to_string().as_bytes()).to_hex().to_string()}));
                     hydration_trace::scope(id, fetch).await
                 } else { fetch.await };
-                (attempt, requested.clone(), result.map(|(entity, source)| (requested, entity, source)))
+                (attempt, requested.clone(), result.map(|(entity, source)| (requested, entity, source, branch)))
             }
         }))
         .buffer_unordered(concurrency);
@@ -413,7 +415,7 @@ impl ExecutionEngine {
             cooperative_cancel_check()?;
             if let Some(id) = attempt {
                 let facts = match &res {
-                    Ok((requested, entity, source)) => serde_json::json!({
+                    Ok((requested, entity, source, _)) => serde_json::json!({
                         "disposition":if entity.reference == *requested { "merge_pending" } else { "identity_mismatch_summary_retained" },
                         "source":source, "fields":entity.fields.keys().map(|k| k.as_str()).collect::<Vec<_>>() }),
                     Err(e) => {
@@ -423,7 +425,7 @@ impl ExecutionEngine {
                 hydration_trace::emit_for(id, "merge_decision", facts);
             }
             match res {
-                Ok((requested, mut entity, source)) => {
+                Ok((requested, mut entity, source, mut branch)) => {
                     if source == ExecutionSource::Live {
                         extra_network += 1;
                     }
@@ -452,6 +454,11 @@ impl ExecutionEngine {
                     }
                     entity.clear_unavailable_fields();
                     workspace.insert(requested.clone(), entity.clone());
+                    // Publish descendants even when the hydrated root is scanned-only.
+                    if mat.get(&requested).is_none() {
+                        branch.graph_mut().remove(&requested);
+                    }
+                    mat.absorb_branch(branch)?;
                     // Upgrade an already-cached row; do not insert scanned-only refs.
                     if mat.get(&requested).is_some() {
                         mat.insert(entity)?;

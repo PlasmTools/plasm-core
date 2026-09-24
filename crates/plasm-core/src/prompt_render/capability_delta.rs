@@ -267,6 +267,8 @@ pub(crate) fn filter_teaching_bundle_to_new_capabilities(
             lines: kept_rows.iter().map(|r| r.meta.clone()).collect(),
         });
         teaching_blocks.push(EntityTeachingBlock {
+            // This wave teaches capabilities on an already exposed row type.
+            row_type: None,
             heading: block.heading,
             field_gloss_rows,
             teaching_rows: kept_rows,

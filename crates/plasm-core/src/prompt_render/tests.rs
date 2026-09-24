@@ -2720,7 +2720,7 @@ fn auth_bearer_search_literal_get_vs_search_tsv_seats() {
     assert_eq!(
         note_lines,
         [
-            "e2(<id>)[note_id,title]\t→ e2 · Secured note",
+            "e2(<id>)[note_id,title]\t→ e2 · Continue from a known secured-note identity. · Secured note",
             "e2~\"<query>\"{access_token=<wire>}[note_id,title]\t↣ [e2] · Search notes; Bearer token required; free-text query required for ~ search.",
         ],
         "Get Meaning is identity, not collection/search; Search writes required Bearer selection; prompt=\n{prompt}"
@@ -2730,7 +2730,6 @@ fn auth_bearer_search_literal_get_vs_search_tsv_seats() {
     assert!(
         !get_lc.contains("search")
             && !get_lc.contains("list")
-            && !get_lc.contains("bearer")
             && !get_lc.contains("send money")
             && !get_lc.contains("or send")
             && !get_lc.contains("deposit or withdraw")
@@ -2740,7 +2739,7 @@ fn auth_bearer_search_literal_get_vs_search_tsv_seats() {
     );
 }
 
-/// Federated hole-fill twin: `LangSecuredNote` Get Meaning is the identity noun; Search keeps
+/// Federated hole-fill twin: Get retains its operation description; Search keeps
 /// `↣ [e#]` + `{access_token=}`. Same law as [`auth_bearer_search_literal_get_vs_search_tsv_seats`].
 #[test]
 fn language_matrix_secured_note_literal_get_vs_search_tsv_seats() {
@@ -2758,7 +2757,7 @@ fn language_matrix_secured_note_literal_get_vs_search_tsv_seats() {
         assert_eq!(
             note_lines,
             [
-                "e1(<id>)[note_id,body,title]\t→ e1 · Secured note",
+                "e1(<id>)[note_id,body,title]\t→ e1 · Get a secured note including body; Bearer access_token required (summary-hydrate witness). · Secured note",
                 if fixture == "plasm_language_matrix" { "e1~\"<query>\"{access_token=<wire>}[note_id,body,title]\t↣ [e1] · Search secured notes; Bearer access_token required ahead of optional search text." } else { "e1~\"<query>\"{access_token=<wire>}[note_id,body,title]\t↣ [e1] · Search secured notes; Bearer access_token and free-text query required for ~ search." },
             ],
             "{fixture}: Get Meaning is identity, not collection/search; Search writes required Bearer; prompt=\n{prompt}"
@@ -2768,7 +2767,6 @@ fn language_matrix_secured_note_literal_get_vs_search_tsv_seats() {
         assert!(
             !get_lc.contains("search")
                 && !get_lc.contains("list")
-                && !get_lc.contains("bearer")
                 && !get_lc.contains("send money")
                 && !get_lc.contains("or send")
                 && !get_lc.contains("deposit or withdraw")
@@ -2780,7 +2778,7 @@ fn language_matrix_secured_note_literal_get_vs_search_tsv_seats() {
 }
 
 /// Get-bearing language-matrix entities must not inherit a collection/search
-/// banner or sibling create-shelf verbs on Get Meaning (identity What only).
+/// result cardinality. Authored Get descriptions remain visible.
 #[test]
 fn language_matrix_get_meaning_stays_identity_polarity() {
     for fixture in ["plasm_language_matrix", "plasm_language_matrix_views"] {
@@ -2796,21 +2794,13 @@ fn language_matrix_get_meaning_stays_identity_polarity() {
                 continue;
             };
             let is_get_meaning =
-                meaning.contains("→ e") && !expr.contains(".m") && !expr.contains('~');
+                meaning.starts_with("→ e") && !expr.contains(".m") && !expr.contains('~');
             if !is_get_meaning {
                 continue;
             }
-            let lc = meaning.to_ascii_lowercase();
             assert!(
-                !lc.contains("search")
-                    && !lc.contains("list")
-                    && !lc.contains("bearer")
-                    && !lc.contains("send money")
-                    && !lc.contains("or send")
-                    && !lc.contains("deposit or withdraw")
-                    && !lc.contains("or move")
-                    && !lc.contains("creates"),
-                "{fixture}: Get Meaning must stay identity polarity: {line}"
+                meaning.starts_with("→ e") && !meaning.contains("↣ ["),
+                "{fixture}: Get must retain singleton result polarity: {line}"
             );
         }
         let group_prompt = render_prompt_tsv_with_config(
@@ -2836,7 +2826,7 @@ fn language_matrix_get_meaning_stays_identity_polarity() {
                 let lc = meaning.to_ascii_lowercase();
                 !lc.contains("search")
                     && !lc.contains("list")
-                    && !lc.contains("bearer")
+
                     && !lc.contains("send money")
                     && !lc.contains("or send")
                     && !lc.contains("deposit or withdraw")
@@ -3011,7 +3001,7 @@ fn selected_entity_ref_source_and_mutator_compose_without_siblings() {
     let prompt = render_prompt_tsv_from_bundle(&bundle);
     let lines: Vec<&str> = prompt.lines().collect();
     assert!(
-        lines.contains(&"e1{parent_id=e2(<id>)}[id]\t↣ [e1]"),
+        lines.contains(&"e1{parent_id=e2(<id>)}[id]\t↣ [e1] · List records owned by a parent"),
         "Child Query must teach parent_id=e2(<id>), not a bare <wire>; prompt:\n{prompt}"
     );
     assert!(
@@ -3019,7 +3009,7 @@ fn selected_entity_ref_source_and_mutator_compose_without_siblings() {
         "Parent Query must be first-wave; prompt:\n{prompt}"
     );
     assert!(
-        lines.contains(&"e2(<id>)[id]\t→ e2 · An owning record"),
+        lines.contains(&"e2(<id>)[id]\t→ e2 · get · An owning record"),
         "Parent Get must be first-wave; prompt:\n{prompt}"
     );
     assert!(
@@ -3508,8 +3498,7 @@ fn langitem_domain_includes_materialized_tags_nav() {
     );
 }
 
-/// `team_query` is query-shaped (`e1` in teaching table); capability prose is intentionally omitted from
-/// `Meaning` (types teach shape); see `omit_capability_prose` in teaching synthesis.
+/// Query teaching preserves both collection shape and authored operation semantics.
 #[test]
 fn langitem_domain_gloss_and_symbol_map_queries() {
     let dir = fixtures_schemas_dir("plasm_language_matrix");
@@ -3565,7 +3554,7 @@ fn langitem_domain_gloss_and_symbol_map_queries() {
                     && meaning.contains(&format!("[{team_sym}]"))
             })
         }),
-        "TSV langitem_query should teach collection result gloss for LangItem (`[{team_sym}]`) without capability prose"
+        "TSV langitem_query should teach collection result gloss for LangItem (`[{team_sym}]`) with capability prose"
     );
     assert!(
         !domain_block.contains(" -> "),
@@ -4431,4 +4420,119 @@ fn search_teaching_preserves_candidate_selection_semantics() {
             .contains(meaning.trim_end_matches('.'))),
         "search must teach selection semantics: {rows:?}"
     );
+}
+
+/// An embedded target's row type must not require selecting a target operation.
+#[test]
+fn returned_row_teaching_without_target_capability() {
+    use crate::capability_exposure::selected_capability_surface;
+    use crate::symbol_tuning::ExposureEntityKey;
+    let mut cgs = load_schema_dir(&fixture_schema_dir("from_parent_get_nav")).unwrap();
+    cgs.bind_registry_entry_id("row_types");
+    let mut delta =
+        selected_capability_surface(&cgs, "row_types", &["parent_item_get".into()]).unwrap();
+    let key = ExposureEntityKey {
+        entry_id: "row_types".into(),
+        entity: "Tag".into(),
+    };
+    delta.required.entities.insert(key.clone());
+    for field in cgs.get_entity("Tag").unwrap().fields.keys() {
+        delta.required.slots.insert(ExposureSlotKey::EntityField {
+            entity: key.clone(),
+            field: field.clone(),
+        });
+    }
+    delta.required.slots.insert(ExposureSlotKey::Relation {
+        source: ExposureEntityKey {
+            entry_id: "row_types".into(),
+            entity: "ParentItem".into(),
+        },
+        relation: "tags".into(),
+    });
+    let exposure = TeachingExposureSession::new_with_intent_delta(
+        &cgs,
+        "row_types",
+        &["ParentItem", "Tag"],
+        delta,
+    );
+    let pipeline = PromptPipelineConfig::default();
+    let full =
+        pipeline.render_teaching_exposure_delta(&cgs, &exposure, &["ParentItem", "Tag"], None);
+    let incremental = pipeline.render_teaching_exposure_delta(&cgs, &exposure, &["Tag"], None);
+    for card in [&full, &incremental] {
+        assert!(card.contains("e2 row[id,color,name]"), "{card}");
+        for meaning in ["Tag name", "Tag color", "embed-only target"] {
+            assert!(card.contains(meaning), "missing {meaning}: {card}");
+        }
+        assert!(!card.contains("e2{"), "must not invent a Query: {card}");
+        assert!(!card.contains("e2("), "must not invent a Get: {card}");
+    }
+    assert!(full.contains(".r1"));
+    assert!(
+        !incremental.contains("e1("),
+        "incremental wave reprinted parent"
+    );
+    assert_eq!(exposure.surface.capabilities.len(), 1);
+}
+
+proptest::proptest! {
+    #[test]
+    fn returned_row_contract_respects_slots_and_codec(mask in 1u8..8) {
+        use crate::symbol_tuning::{ExposureEntityKey, ExposureSurfaceDelta};
+        let mut cgs = load_schema_dir(&fixture_schema_dir("from_parent_get_nav")).unwrap();
+        cgs.bind_registry_entry_id("row_types");
+        let cgs: CGS = serde_json::from_slice(&serde_json::to_vec(&cgs).unwrap()).unwrap();
+        let key = ExposureEntityKey { entry_id: "row_types".into(), entity: "Tag".into() };
+        let mut surface = ExposureSurface::default();
+        surface.entities.insert(key.clone());
+        let fields = ["id", "color", "name"];
+        let expected: Vec<String> = fields.iter().enumerate().filter(|(i, _)| mask & (1 << i) != 0).map(|(_, f)| f.to_string()).collect();
+        for field in &expected {
+            surface.slots.insert(ExposureSlotKey::EntityField { entity: key.clone(), field: field.as_str().into() });
+        }
+        let exposure = TeachingExposureSession::new_with_intent_delta(&cgs, "row_types", &["Tag"], ExposureSurfaceDelta { required: surface });
+        let bundle = render_teaching_prompt_bundle_for_exposure(&cgs, RenderConfig::default(), &exposure, None);
+        proptest::prop_assert_eq!(bundle.teaching_blocks.len(), 1);
+        let block = &bundle.teaching_blocks[0];
+        let row = block.row_type.as_ref().unwrap();
+        proptest::prop_assert_eq!(&row.entity, &key);
+        proptest::prop_assert_eq!(&row.fields, &expected);
+        proptest::prop_assert!(block.teaching_rows.is_empty());
+        let wire: super::types::TeachingRowType = serde_json::from_slice(&serde_json::to_vec(row).unwrap()).unwrap();
+        proptest::prop_assert_eq!(row, &wire);
+        for (field, description) in [("color", "Tag color"), ("name", "Tag name")] {
+            let taught = render_prompt_tsv_from_bundle(&bundle);
+            proptest::prop_assert_eq!(taught.contains(description), expected.iter().any(|f| f == field));
+        }
+    }
+}
+
+proptest::proptest! {
+    #[test]
+    fn primary_get_teaching_preserves_operation_meaning_through_codec(suffix in "[a-z]{1,24}") {
+        for (fixture, entity, capability) in [
+            ("session_token_get", "Wallet", "wallet_get"),
+            ("plasm_language_matrix", "LangItem", "langitem_get"),
+        ] {
+            let mut cgs = load_schema_dir(&fixture_schema_dir(fixture)).unwrap();
+            let meaning = format!("Observe the selected record with scope {suffix}");
+            cgs.capabilities.get_mut(capability).unwrap().description = meaning.clone();
+            cgs.bind_registry_entry_id("meaning");
+            let decoded: CGS = serde_json::from_slice(&serde_json::to_vec(&cgs).unwrap()).unwrap();
+            for schema in [&cgs, &decoded] {
+                let delta = crate::capability_exposure::selected_capability_surface(schema, "meaning", &[capability.into()]).unwrap();
+                let exposure = TeachingExposureSession::new_with_intent_delta(schema, "meaning", &[entity], delta);
+                let bundle = render_teaching_prompt_bundle_for_exposure(schema, RenderConfig::default(), &exposure, None);
+                let rows: Vec<_> = bundle.teaching_blocks.iter().flat_map(|b| &b.teaching_rows).filter(|r| r.meta.source_capability.as_deref() == Some(capability)).collect();
+                proptest::prop_assert!(!rows.is_empty());
+                for row in rows {
+                    proptest::prop_assert!(row.teaching_expr.legend.description.contains(&meaning), "missing operation: {:?}", row);
+                }
+                let full = render_prompt_tsv_with_config(schema, RenderConfig::for_eval_seeds(&[entity]));
+                proptest::prop_assert!(full.contains(&meaning));
+                let card = PromptPipelineConfig::default().render_teaching_exposure_delta(schema, &exposure, &[entity], None);
+                proptest::prop_assert!(card.contains(&meaning));
+            }
+        }
+    }
 }

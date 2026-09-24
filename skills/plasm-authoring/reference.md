@@ -167,6 +167,21 @@ Single Get, single Query, single Search — **no annotation needed**. There is *
 
 Optional **`primary_read:`** on entities with one Get still overrides projection witness field order when set explicitly.
 
+#### Current-state readers and identity
+
+An amount, count, status or current timestamp is observation data, not an identity
+merely because it is always present. For a current resource scoped by a request
+key, use the existing `implicit_request_identity` contract and its declared key
+field; keep changing observations as ordinary fields. Use a receiver-free read
+when the capability has no resource receiver. Do not invent a keyed Get whose
+argument is the unknown value the read is intended to discover.
+
+Prove the teaching can be executed without already knowing the response. Check
+that changing the response preserves resource identity and that different request
+scopes stay distinct, including after catalog serialization. Optional selectors
+must retain their semantics; do not flatten differently scoped observations into
+one identity without an explicit model.
+
 #### Teaching-table-facing descriptions (entities and capabilities)
 
 Symbolic teaching table / TSV teaching attaches **`entities.<Name>.description`** to the **projection witness** banner line. **`capabilities.<id>.description`** feeds compact capability legends. Both must stay **agentic**: short, imperative, domain-vocabulary — not implementation manuals and not vendor documentation.
@@ -178,7 +193,7 @@ Symbolic teaching table / TSV teaching attaches **`entities.<Name>.description`*
 | Surface | Write | Do **not** write |
 |---------|-------|-------------------|
 | **Entity `description`** | Identity noun: what **one row** is (role / intent only) — no relation, field, or parameter names that teaching table already prints. The renderer attaches this banner to **Get Meaning** (`→ e# · …`) when a Get exists. Sibling Query/Search list polarity (received-only, inbox-only) belongs on those capabilities, not as an “or” mash-up on the entity | Payload inventories, relation "next step" hints, lists of related entities, REST-ish tours, capability ids, step-by-step APIs, HTTP status codes, `transport:`, explicit MCP seed instructions, **other catalogs / `entry_id`s / foreign entity names**, **collection / search / list banners** on a Get-bearing entity (Get Meaning would inherit the list lie), **create / send / record (or deposit / withdraw) verbs** on a Get-bearing entity (Get Meaning is identity, not the sibling mutator shelf), **credential-seat copy** (`access_token`, Bearer) on the entity noun, **conflating sibling Query/Search surfaces** (“received or sent”, “inbox/outbox/spam…”) on one entity banner |
-| **Capability `description`** | What this operation **does** or **when** to pick it, in user/domain terms (roles: account holder vs recipient, public vs private, …) | "Call `foo_query` first", URL paths, error-code trivia (use `discovery.target_terms` for NL hints), **cross-catalog playbooks** (“get X from catalog Y then call this”) |
+| **Capability `description`** | What this operation **does** or **when** to pick it, in user/domain terms (roles: account holder vs recipient, public vs private, …). Preserve automatic versus manual effects and immediate versus scheduled execution; a parameter that triggers an effect must say so | "Call `foo_query` first", URL paths, error-code trivia (use `discovery.target_terms` for NL hints), **cross-catalog playbooks** (“get X from catalog Y then call this”) |
 
 **Compositional catalogs — never cross-annotate:** CGS strings are **local** to this `entry_id`. Federation stitches catalogs at session time; authors must **not** hard-wire foreign catalog or entity names into `description` / value glosses / instructional discovery prose. Teach **semantic roles** this surface owns (“login username is the account holder’s email, never a payment counterparty”; “`account_name` is an app key, not a login id”). Product docs may describe multi-catalog rites; **`domain.yaml` must not**.
 
@@ -279,6 +294,16 @@ Parameter and value descriptions must explain the domain role and accepted selec
 Entity field descriptions (and similar gloss fed from slots) must not inventory shapes the schema already teaches (e.g. "map keyed by …", "JSON containing …", repeating enum alternatives). Prefer **omitting** the field `description` when the parent entity (or `values:` row) carries enough agent-facing meaning; use one sentence only when the slot needs workflow nuance beyond type (staleness, trust boundary, "refresh before …"). Primitive semantics stay on `values:` rows (profile `type:`, `enum:`, temporal profiles).
 
 **Prompt-facing copy (symbolic TSV / MCP teaching table):** Treat `description` on entities, read capabilities (`query` / `get` / `search`), and `values:` slots as **agent selection hints only**. Do not explain list-vs-detail payload shapes, cursor/page mechanics, request-body JSON shapes, "full vs summary" list entries, or `provides:` behavior there. `create` / `update` / `delete` / `action` capability descriptions may stay richer where they disambiguate `m#` choice.
+
+#### Semantic annotation review
+
+Review effective descriptions after `value_ref` inheritance, not only explicit field prose. A shared primitive gloss can pollute hundreds of fields and parameters. “Boolean flag”, “Integer”, “Free-form string”, and “ISO datetime string” add no meaning; omit them. Anonymous wire-type sharing remains unlabelled. Give distinct domain concepts their own semantic value identities rather than attaching a misleading universal gloss to a shared primitive.
+
+Author only distinctions an agent needs: whose membership or state is observed, which collection an operation selects, units and positional addressing, identity roles, and domain effects. Verify these against the API specification or implementation. Do not infer units, polarity, completeness, or accepted values from names. A self-explanatory field needs no extra sentence.
+
+Verify the same authored meaning in three generated surfaces: embedding/retrieval documents, selector evidence, and executable teaching. Inspect both first exposure and incremental capability exposure. A Get must preserve its operation description just as Query/Search/actions do; a broad entity banner does not replace it. If the renderer loses an authored distinction, fix that boundary rather than duplicating prose across entity and capability descriptions. Descriptions must survive codec round-trips; use abstract fixtures for renderer tests.
+
+Boilerplate scans are review aids, not semantic validators or automatic annotation generators. Schema validation proves structural consistency, not annotation quality. Record reviewed generated examples and unresolved semantic gaps before calling a catalogue complete.
 
 ### Field Types
 
@@ -1757,3 +1782,46 @@ Hermit. A single `limit` parameter alone is not proof of pagination.
 Selected reads also expose read capabilities of embedded `from_parent_get`
 relation targets, recursively, so their navigation receives executable symbols;
 this closure does not expose mutations of the target entities.
+
+### Explicit datetime wire layouts
+
+Keep semantic date inputs typed as dates. When an API requires a non-RFC3339 transport
+layout, map the resolved instant with CML `datetime_format`:
+
+```yaml
+type: datetime_format
+value: {type: var, name: scheduled_at}
+format: "%Y-%m-%d|%H:%M:%S"
+```
+
+The format is validated at catalog decode. Encoding is UTC, consumes a resolved
+RFC3339 instant, preserves null, and never consults a clock or interprets natural
+language. Declare the backend's actual precision and timezone semantics; this is
+wire encoding, not a reason to weaken a date slot to an opaque string. Verify the
+compiled request body against the pinned backend, including offset equivalence
+and null omission. Operation coverage alone does not prove response-field,
+relationship, selector, identity, or wire-format completeness.
+
+
+### Embedded identity proof and observation ownership
+
+Embedded rows need the same identity discipline as directly fetched rows. Declare every
+`id_field` / compound `key_vars` slot as a typed field and give its actual `wire_path`
+when nested or renamed. The embedded row's primary identity always comes from the
+child projection; a same-named parent field must not replace it. Shared nonprimary
+compound slots are projected from decoded parent fields under the identity-slot
+convention, with matching scalar types and value formats. Parent request identities
+must first be decoded into typed fields; never search raw parent JSON for plausible names.
+
+Packing and compiled-artifact loading reject missing identity fields, empty identity
+paths and incompatible inherited slot types. These checks prove consistency of the
+**declared** projection, not that a vendor emits the promised fields. Verify that
+separately against independent response schemas and representative pinned-backend reads.
+
+Every runtime Get owns a materialization sink for its full decoded observation tree.
+Parallel callers use owned branches and merge them after identity validation. Returning
+only the root while discarding decoded descendants is invalid. Regression coverage must
+exercise direct Get, scoped Get and summary hydration through catalogue/decoder codecs,
+preserving identities, types, order, multiplicity, and the distinction between omitted
+relations and authoritative empty relations. Embedded-only targets remain Summary when
+no richer Get exists; observing them does not prove a complete entity projection.

@@ -150,6 +150,10 @@ product_query:
   query:
     type: object
     fields:
+    - [max_seller_rating, {type: if, condition: {type: exists, var: max_seller_rating}, then_expr: {type: var, name: max_seller_rating}, else_expr: {type: const, value: null}}]
+    - [min_seller_rating, {type: if, condition: {type: exists, var: min_seller_rating}, then_expr: {type: var, name: min_seller_rating}, else_expr: {type: const, value: null}}]
+    - [max_product_rating, {type: if, condition: {type: exists, var: max_product_rating}, then_expr: {type: var, name: max_product_rating}, else_expr: {type: const, value: null}}]
+    - [min_product_rating, {type: if, condition: {type: exists, var: min_product_rating}, then_expr: {type: var, name: min_product_rating}, else_expr: {type: const, value: null}}]
     - - query
       - type: if
         condition: { type: exists, var: query }
@@ -998,4 +1002,64 @@ product_question_answer_delete:
   - { type: literal, value: amazon }
   - { type: literal, value: question_answers }
   - { type: var, name: id }
+  auth: *request_auth
+
+product_recommendations_query:
+  method: GET
+  path: [{type: literal, value: amazon}, {type: literal, value: recommended_products}]
+  auth: *request_auth
+  pagination: *appworld_page_index_limit
+
+product_history_query:
+  method: GET
+  path: [{type: literal, value: amazon}, {type: literal, value: browsing_history}]
+  auth: *request_auth
+  pagination: *appworld_page_index_limit
+
+product_purchases_query:
+  method: GET
+  path: [{type: literal, value: amazon}, {type: literal, value: product_purchases}]
+  auth: *request_auth
+  pagination: *appworld_page_index_limit
+
+history_clear:
+  method: DELETE
+  path: [{type: literal, value: amazon}, {type: literal, value: browsing_history}]
+  auth: *request_auth
+
+history_add_product:
+  method: POST
+  path: [{type: literal, value: amazon}, {type: literal, value: browsing_history}, {type: var, name: id}]
+  auth: *request_auth
+
+history_remove_product:
+  method: DELETE
+  path: [{type: literal, value: amazon}, {type: literal, value: browsing_history}, {type: var, name: id}]
+  auth: *request_auth
+
+history_set_tracking:
+  method: PATCH
+  path: [{type: literal, value: amazon}, {type: literal, value: browsing_history}, {type: literal, value: tracking}]
+  auth: *request_auth
+  body:
+    type: object
+    fields:
+    - [track_browsing_history, {type: var, name: track_browsing_history}]
+
+product_last_purchase_get:
+  method: GET
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: products }
+  - { type: var, name: id }
+  - { type: literal, value: last_purchase }
+  auth: *request_auth
+
+product_rating_distribution_get:
+  method: GET
+  path:
+  - { type: literal, value: amazon }
+  - { type: literal, value: products }
+  - { type: var, name: id }
+  - { type: literal, value: rating_distribution }
   auth: *request_auth

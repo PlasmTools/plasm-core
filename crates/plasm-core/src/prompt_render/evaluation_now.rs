@@ -85,6 +85,7 @@ mod tests {
     fn bundle_with_gloss(rows: Vec<TeachingFieldGloss>) -> TeachingPromptBundle {
         TeachingPromptBundle {
             teaching_blocks: vec![EntityTeachingBlock {
+                row_type: None,
                 heading: TeachingHeading {
                     description: String::new(),
                 },

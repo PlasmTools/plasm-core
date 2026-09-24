@@ -109,9 +109,6 @@ pub(crate) fn try_push_teaching_example(
     cap_leg: Option<String>,
     relation: Option<&RelationSchema>,
     source_capability: Option<&CapabilityName>,
-    // When true: strip [`TeachingExprLine::description`] from capability legend (Query/Get/Search);
-    // scope / optional params / compact args remain.
-    omit_capability_prose: bool,
     line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
     line_valid_cache_seed: u64,
     map_arc: Option<&std::sync::Arc<SymbolMap>>,
@@ -164,9 +161,6 @@ pub(crate) fn try_push_teaching_example(
         && !teaching_expr_demonstrates_optional_params(expr, &optional_syms)
     {
         teaching_line.legend.optional_params.clear();
-    }
-    if omit_capability_prose {
-        teaching_line.legend.description.clear();
     }
     let dedupe_key = TeachingRowDedupeKey::new(expr, gloss.as_ref(), cap_leg.as_ref());
 

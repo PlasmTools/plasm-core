@@ -65,7 +65,8 @@ fn decode_single_entity(
                 ),
             });
         }
-        let child_decoder = child_decoder_with_parent_ambient(source, &relation_decoder.decoder);
+        let child_decoder =
+            child_decoder_with_parent_ambient(&core.fields, &relation_decoder.decoder);
         let child_sources = extract_path(&child_decoder.source, source)?;
         let mut refs = Vec::new();
         for child_source in child_sources {
@@ -208,8 +209,31 @@ fn decode_entity_fields_and_ref(
 
     if decoder.id_path.is_some() || decoder.request_identity_override.is_some() {
         if let Some(ref name) = decoder.id_field {
-            if !fields.contains_key(name) {
-                fields.insert(name.clone(), Value::String(id_value.clone()));
+            if fields
+                .get(name)
+                .is_none_or(|value| matches!(value, Value::Null))
+            {
+                let raw = Value::String(id_value.clone());
+                let value = if let (Some(cgs), Some(entity)) = (cgs, entity_def) {
+                    let schema = entity
+                        .fields
+                        .get(name.as_str())
+                        .and_then(|field| field.named_value(cgs).ok())
+                        .ok_or_else(|| DecodeError::InvalidStructure {
+                            message: format!("identity field `{name}` has no declared value type"),
+                        })?;
+                    let (value, diagnostic) =
+                        plasm_core::decode_coerce_and_validate_field(name, schema, raw);
+                    if let Some(diagnostic) = diagnostic {
+                        return Err(DecodeError::InvalidStructure {
+                            message: diagnostic.message,
+                        });
+                    }
+                    value
+                } else {
+                    raw
+                };
+                fields.insert(name.clone(), value);
             }
         }
     }
@@ -221,6 +245,41 @@ fn decode_entity_fields_and_ref(
         .collect();
     if !money_specs.is_empty() {
         plasm_core::decode_coerce_money_fields(&mut fields, money_specs, &mut field_diagnostics);
+    }
+
+    // Parent-scoped identity components are also observable typed fields.
+    // Materialize only declared key slots; never infer types from their spelling.
+    for key in &decoder.key_vars {
+        if fields
+            .get(key)
+            .is_some_and(|value| !matches!(value, Value::Null))
+        {
+            continue;
+        }
+        let Some(slot) = decoder.identity_ambient.get(key) else {
+            continue;
+        };
+        let raw = Value::String(slot.clone());
+        let value = if let (Some(cgs), Some(entity)) = (cgs, entity_def) {
+            let schema = entity
+                .fields
+                .get(key.as_str())
+                .and_then(|field| field.named_value(cgs).ok())
+                .ok_or_else(|| DecodeError::InvalidStructure {
+                    message: format!("identity field `{key}` has no declared value type"),
+                })?;
+            let (value, diagnostic) =
+                plasm_core::decode_coerce_and_validate_field(key, schema, raw);
+            if let Some(diagnostic) = diagnostic {
+                return Err(DecodeError::InvalidStructure {
+                    message: diagnostic.message,
+                });
+            }
+            value
+        } else {
+            raw
+        };
+        fields.insert(key.clone(), value);
     }
 
     let reference = build_decoded_reference(decoder, &fields, &id_value)?;
@@ -265,56 +324,23 @@ fn build_decoded_reference(
     }
 }
 
-fn json_value_identity_slot_string(v: &serde_json::Value) -> Option<String> {
-    match v {
-        serde_json::Value::String(s) => Some(s.clone()),
-        serde_json::Value::Number(n) => Some(n.to_string()),
-        serde_json::Value::Bool(b) => Some(b.to_string()),
-        serde_json::Value::Null | serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
-            None
-        }
-    }
-}
-
 fn child_decoder_with_parent_ambient(
-    parent: &serde_json::Value,
+    parent_fields: &IndexMap<String, Value>,
     child: &EntityDecoder,
 ) -> EntityDecoder {
     let mut out = child.clone();
     if child.key_vars.len() < 2 {
         return out;
     }
-    let Some(parent_obj) = parent.as_object() else {
-        return out;
-    };
-    for kv in &child.key_vars {
-        if out.identity_ambient.contains_key(kv) {
+    for binding in &child.parent_identity_bindings {
+        if out.identity_ambient.contains_key(&binding.slot) {
             continue;
         }
-        if let Some(v) = parent_obj.get(kv.as_str()) {
-            if let Some(s) = json_value_identity_slot_string(v) {
-                out.identity_ambient.insert(kv.clone(), s);
-            }
-        }
-    }
-    for hint in &child.parent_identity_field_hints {
-        if out.identity_ambient.contains_key(&hint.slot) {
-            continue;
-        }
-        let Ok(vals) = extract_path(&hint.from, parent) else {
-            continue;
-        };
-        let Some(first) = vals.first() else {
-            continue;
-        };
-        let mut raw = first.clone();
-        if let Some(ref dr) = hint.derive {
-            if let Ok(derived) = apply_field_derive_rule(dr, &raw) {
-                raw = derived;
-            }
-        }
-        if let Ok(s) = json_scalar_to_id_string(&raw) {
-            out.identity_ambient.insert(hint.slot.clone(), s);
+        if let Some(slot) = parent_fields
+            .get(&binding.parent_field)
+            .and_then(value_to_key_slot)
+        {
+            out.identity_ambient.insert(binding.slot.clone(), slot);
         }
     }
     out
@@ -376,6 +402,7 @@ fn expand_transitive_from_parent_get_embeds(
             };
             let child_decoder =
                 entity_decoder_for_from_parent_get_target(target_ent, def, rel_path.clone());
+            let child_decoder = child_decoder_with_parent_ambient(&entity.fields, &child_decoder);
             let child_sources = extract_path(&rel_path, &wire)?;
             let mut refs = Vec::new();
             for child_wire in child_sources {
@@ -394,12 +421,10 @@ fn expand_transitive_from_parent_get_embeds(
                 child_path.push(child_idx);
                 queue.push_back((child_path, child_wire, target_type.to_string(), depth + 1));
             }
-            if !refs.is_empty() {
-                entity.relations.insert(
-                    rel_name.as_str().to_string(),
-                    DecodedRelation::Specified(refs),
-                );
-            }
+            entity.relations.insert(
+                rel_name.as_str().to_string(),
+                DecodedRelation::Specified(refs),
+            );
         }
     }
     Ok(())
@@ -469,6 +494,41 @@ mod tests {
     use plasm_core::Cardinality;
     use serde_json::json;
 
+    proptest::proptest! {
+        #[test]
+        fn parent_identity_fields_preserve_declared_types_across_codec(
+            item_id in 0i64..1_000_000,
+            owner in "[0-9]{1,8}",
+            explicit_null in proptest::bool::ANY,
+        ) {
+            let mut cgs = plasm_core::load_schema_dir(&std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/plasm_language_matrix")).unwrap();
+            cgs.values.get_mut("nv_compound_branch_item_id").unwrap().field_type=plasm_core::FieldType::Integer;
+            let entity=cgs.get_entity("CompoundBranch").unwrap();
+            let decoder=crate::embed_target_decoder::entity_decoder_for_from_parent_get_target(
+                entity,entity,PathExpr::empty()).with_identity_ambient(IndexMap::from([
+                    ("owner".into(),owner.clone()),("item_id".into(),item_id.to_string())]));
+            let packed:EntityDecoder=serde_json::from_slice(&serde_json::to_vec(&decoder).unwrap()).unwrap();
+            let mut body=json!({"name":"branch","color":"green"});
+            if explicit_null { body["item_id"]=serde_json::Value::Null; }
+            let decoded=decode_entities_with_cgs(&packed,&body,Some(&cgs)).unwrap();
+            proptest::prop_assert_eq!(&decoded[0].fields["owner"],&Value::String(owner));
+            proptest::prop_assert_eq!(&decoded[0].fields["item_id"],&Value::Integer(item_id));
+            let original=decode_entities_with_cgs(&decoder,&body,Some(&cgs)).unwrap();
+            proptest::prop_assert_eq!(&decoded[0].reference,&original[0].reference);
+            proptest::prop_assert_eq!(&decoded[0].fields,&original[0].fields);
+            // Parent identity can originate in the request, with no wire identity at all.
+            // Every embedding level inherits the already decoded, typed slots.
+            let child=crate::embed_target_decoder::entity_decoder_for_from_parent_get_target(
+                entity,entity,PathExpr::empty());
+            let inherited=child_decoder_with_parent_ambient(&decoded[0].fields,&child);
+            let inherited:EntityDecoder=serde_json::from_slice(&serde_json::to_vec(&inherited).unwrap()).unwrap();
+            let nested=decode_entities_with_cgs(&inherited,&body,Some(&cgs)).unwrap();
+            proptest::prop_assert_eq!(&nested[0].reference,&original[0].reference);
+            proptest::prop_assert_eq!(&nested[0].fields,&original[0].fields);
+        }
+    }
+
     #[test]
     fn transitive_from_parent_get_expand_with_cgs() {
         use plasm_core::loader::load_schema_dir;
@@ -509,6 +569,38 @@ mod tests {
                 .any(|e| e.reference.primary_slot_str() == "det-i1"),
             "detail entity must be in embedded_entities"
         );
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn transitive_collection_codec_preserves_order_duplicates_and_empty(ids in proptest::collection::vec(0u8..5, 0..12)) {
+            let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/plasm_language_matrix");
+            let mut cgs = plasm_core::loader::load_schema_dir(&dir).unwrap();
+            let relation = cgs.entities.get_mut("LangSummary").unwrap().relations.get_mut("detail").unwrap();
+            relation.cardinality = Cardinality::Many;
+            relation.materialize = Some(serde_json::from_value(json!({
+                "kind":"from_parent_get", "path":[{"key":"detail"},{"wildcard":true}]
+            })).unwrap());
+            let cgs = serde_json::from_slice(&serde_json::to_vec(&cgs).unwrap()).unwrap();
+            let decoder = EntityDecoder::new("LangItem", PathExpr::empty()).with_id_field("id")
+                .with_relations(vec![RelationDecoder {
+                    relation: "summary".into(),
+                    decoder: EntityDecoder::new("LangSummary", PathExpr::from_slice(&["summary"])).with_id_field("id"),
+                    cardinality: Cardinality::One,
+                }]);
+            let decoder = serde_json::from_slice(&serde_json::to_vec(&decoder).unwrap()).unwrap();
+            let children: Vec<_> = ids.iter().map(|id| json!({"id":format!("d{id}"),"body":"detail"})).collect();
+            let body = json!({"id":"i1","summary":{"id":"s1","detail":children}});
+            let rows = decode_entities_with_cgs(&decoder,&body,Some(&cgs)).unwrap();
+            let summary = &rows[0].embedded_entities[0];
+            let expected: Vec<_> = ids.iter().map(|id| Ref::new("LangDetail",format!("d{id}"))).collect();
+            proptest::prop_assert_eq!(summary.relations.get("detail"),Some(&DecodedRelation::Specified(expected)));
+            proptest::prop_assert_eq!(summary.embedded_entities.len(),ids.len());
+            let omitted = json!({"id":"i1","summary":{"id":"s1"}});
+            let rows = decode_entities_with_cgs(&decoder,&omitted,Some(&cgs)).unwrap();
+            proptest::prop_assert!(!matches!(rows[0].embedded_entities[0].relations.get("detail"),Some(DecodedRelation::Specified(_))));
+        }
     }
 
     #[test]

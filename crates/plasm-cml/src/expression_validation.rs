@@ -23,7 +23,9 @@ fn condition(condition: &CmlCond) -> Result<(), CmlError> {
 fn expression(expr: &CmlExpr) -> Result<(), CmlError> {
     match expr {
         CmlExpr::Var { .. } | CmlExpr::Const { .. } => Ok(()),
-        CmlExpr::Trim { value } | CmlExpr::Base64 { value, .. } => expression(value),
+        CmlExpr::Trim { value }
+        | CmlExpr::Base64 { value, .. }
+        | CmlExpr::DateTimeFormat { value, .. } => expression(value),
         CmlExpr::Field { value, path } => {
             if path.is_empty() || path.iter().any(String::is_empty) {
                 return Err(invalid("field projection requires nonempty field names"));
@@ -214,6 +216,40 @@ mod tests {
             let template = json!({"method":"POST","path":[],"body":{"type":"if","condition":{"type":"bool","expr":{"type":"const","value":true}},"then_expr":{"type":"const","value":"ok"},"else_expr":invalid}});
             assert!(parse_capability_template(&template).is_err());
         }
+    }
+
+    #[test]
+    fn datetime_wire_format_is_typed_null_preserving_and_codec_stable() {
+        let wire = json!({"method":"POST","path":[],"body":{"type":"object","fields":[["at",{
+            "type":"datetime_format","value":{"type":"var","name":"instant"},"format":"%Y-%m-%d|%H:%M:%S"
+        }]]}});
+        let template = parse_capability_template(&wire).unwrap();
+        let mut bytes = Vec::new();
+        ciborium::into_writer(&template, &mut bytes).unwrap();
+        let packed: CapabilityTemplate = ciborium::from_reader(bytes.as_slice()).unwrap();
+        for input in [json!(null), json!("2026-01-02T03:04:05+02:00")] {
+            let env = serde_json::from_value(json!({"instant":input})).unwrap();
+            let result = compile_operation(&template, &env).unwrap();
+            assert_eq!(result, compile_operation(&packed, &env).unwrap());
+            let encoded = serde_json::to_string(&result).unwrap();
+            if input.is_null() {
+                let crate::CompiledOperation::Http(request) = result else {
+                    panic!("expected HTTP");
+                };
+                assert_eq!(
+                    request.body,
+                    Some(plasm_core::Value::Object(Default::default()))
+                );
+            } else {
+                assert!(encoded.contains("2026-01-02|01:04:05"));
+            }
+        }
+        let bad = serde_json::from_value(json!({"instant":"tomorrow"})).unwrap();
+        assert!(compile_operation(&template, &bad).is_err());
+        let mut invalid = wire;
+        invalid["body"]["fields"][0][1]["format"] = json!("%Q");
+        assert!(parse_capability_template(&invalid).is_err());
+        assert_eq!(crate::template_var_names(&packed), ["instant"]);
     }
 
     #[test]
