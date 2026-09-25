@@ -117,17 +117,33 @@ pub(crate) async fn plasm_language_matrix_live_runs_body(base: String) {
             (Arc::clone(&es), Arc::clone(&st))
         };
 
-        // PLP-8 iterate rows must not inherit Completeness::Complete LangCursor rows
-        // from a prior program on the shared suite host.
-        let isolated_iterate_host;
-        let (row_es, row_st) = if row.federated {
-            (row_es, row_st)
-        } else if row
-            .features
-            .iter()
-            .any(|t| t.starts_with("iterate_until_") || *t == "iterate_bound_exhausted")
+        // The earlier CRUD rows mutate the shared Hermit backend. The nested
+        // relation witness needs the original item and embedded summary/detail.
+        let (row_es, row_st) = if row.id == "lang_relation_one_chain" {
+            let relation_base = hermit_lang_matrix::fresh_language_matrix_hermit_base_url().await;
+            let mut relation_cgs = (*cgs).clone();
+            relation_cgs.http_backend = relation_base.clone();
+            let relation_cgs = Arc::new(relation_cgs);
+            let relation_host = language_matrix::matrix_host_state(
+                ExecutionEngine::new(ExecutionConfig {
+                    base_url: Some(relation_base),
+                    ..Default::default()
+                })
+                .expect("ExecutionEngine"),
+                relation_cgs.clone(),
+            );
+            (
+                Arc::new(language_matrix::matrix_execute_session(relation_cgs)),
+                Arc::new(relation_host),
+            )
+        } else if !row.federated
+            && row
+                .features
+                .iter()
+                .any(|t| t.starts_with("iterate_until_") || *t == "iterate_bound_exhausted")
         {
-            isolated_iterate_host = Arc::new(language_matrix::matrix_host_state(
+            // PLP-8 must not inherit completed cursor rows from prior programs.
+            let isolated_host = Arc::new(language_matrix::matrix_host_state(
                 ExecutionEngine::new(ExecutionConfig {
                     base_url: Some(base.clone()),
                     ..Default::default()
@@ -137,7 +153,7 @@ pub(crate) async fn plasm_language_matrix_live_runs_body(base: String) {
             ));
             (
                 Arc::new(language_matrix::matrix_execute_session(cgs_live.clone())),
-                isolated_iterate_host,
+                isolated_host,
             )
         } else {
             (row_es, row_st)

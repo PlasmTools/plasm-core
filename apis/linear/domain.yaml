@@ -1,4 +1,4 @@
-version: 14
+version: 15
 http_backend: https://api.linear.app
 data_classes:
   untrusted:
@@ -410,7 +410,7 @@ capabilities:
       value_ref: nv_wire_str_short
       required: false
     - name: cycle
-      value_ref: nv_cycle_id
+      value_ref: nv_cycle_ref
       required: false
     provides:
     - identifier
@@ -431,7 +431,6 @@ capabilities:
     - team
     - project
     - assignee
-    - state
     - cycle
     - parent
   user_viewer:
@@ -730,7 +729,6 @@ capabilities:
     - identifier
     - title
     - description
-    - state
     preflight:
     - kind: hydrate_entity_ref_param
       param: team
@@ -811,7 +809,6 @@ capabilities:
     - identifier
     - title
     - description
-    - state
     preflight:
     - kind: hydrate_invoke_target
       get: issue_get
@@ -1005,7 +1002,7 @@ capabilities:
     entity: CycleBoardSnapshot
     scope:
     - name: cycle
-      value_ref: nv_cycle_id
+      value_ref: nv_cycle_ref
       required: true
     provides:
     - cycle_id
@@ -1185,7 +1182,7 @@ views:
     entity: CycleBoardSnapshot
     scope:
     - name: cycle
-      value_ref: nv_cycle_id
+      value_ref: nv_cycle_ref
     nodes:
     - id: cycle_row
       capability: cycle_get
@@ -1480,6 +1477,8 @@ values:
   nv_comment_id:
     type: uuid
   nv_cycle_id:
+    type: uuid
+  nv_cycle_ref:
     type: entity_ref
     target: Cycle
   nv_cycle_number:

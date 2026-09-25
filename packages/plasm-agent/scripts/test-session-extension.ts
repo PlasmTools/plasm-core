@@ -41,7 +41,7 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
           recovery: insufficient ? {candidates:[{reference:{catalog:"matrix",capability:"read"},choice:"unrelated",relevance_probability:0}],available_catalogs:[],guidance:"No relevant capability in this bounded packet."}:null,
           closure: insufficient ? null : { business: [{ catalog: "matrix", capability: "read" }], input_sources: [], prerequisites: [], acquisitions: [], edges: [] },
         },
-        teaching: insufficient ? null : { tsv: "e1\tRecord", delta_refs: ["matrix:Record"] },
+        teaching: insufficient ? null : { prompt: "e1\tRecord", delta_refs: ["matrix:Record"] },
       });
       const previous = provenanceBySession.get(pin);
       if (previous) {
@@ -60,11 +60,11 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
     assert.ok(partialRef);
     const beforePartial = await partialRuntime.sessionManager.getByLogicalRef(partialRef);
     assert.ok(beforePartial);
-    assert.ok(beforePartial.teachingTsv.includes("Record"));
+    assert.ok(beforePartial.teachingPrompt.includes("Record"));
     insufficient = true;
     const unresolved = await partialRuntime.plasmContext({ intent: "Find a related record",  sessionMode: "extend", logicalSessionRef: partialRef });
     assert.ok(unresolved.includes("No relevant capability"));
-    assert.equal((await partialRuntime.sessionManager.getByLogicalRef(partialRef))?.teachingTsv, beforePartial.teachingTsv);
+    assert.equal((await partialRuntime.sessionManager.getByLogicalRef(partialRef))?.teachingPrompt, beforePartial.teachingPrompt);
     insufficient = false;
     routed.length = 0;
     const initial = "Only selected records may be changed.";

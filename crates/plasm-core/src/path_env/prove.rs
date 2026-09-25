@@ -3,7 +3,7 @@
 use crate::path_env::names::{
     identity_env_var_names, identity_wire_names, is_identity_projectable, IdentityWireNames,
 };
-use crate::path_env::project::capability_declared_input_names;
+use crate::path_env::project::capability_env_input_names;
 use crate::schema::{CapabilitySchema, EntityDef, CGS};
 
 /// Pack-time coverage failures (invented transport names, unknown domain).
@@ -53,6 +53,14 @@ pub fn prove_path_env_coverage(
     cap: &CapabilitySchema,
     ent: &EntityDef,
 ) -> Result<(), PathEnvProofError> {
+    prove_with_inputs(cap, ent, capability_env_input_names(cap))
+}
+
+fn prove_with_inputs(
+    cap: &CapabilitySchema,
+    ent: &EntityDef,
+    declared: std::collections::HashSet<String>,
+) -> Result<(), PathEnvProofError> {
     let Some(mapping) = &cap.mapping else {
         return Ok(());
     };
@@ -61,7 +69,6 @@ pub fn prove_path_env_coverage(
         return Ok(());
     }
 
-    let declared = capability_declared_input_names(cap);
     let identity = identity_wire_names(ent);
     let policy = cap.kind.domain_path_env_alias_policy();
 
@@ -93,7 +100,21 @@ pub fn prove_path_env_coverage_in_cgs(
             domain: cap.domain.to_string(),
         });
     };
-    prove_path_env_coverage(cap, ent)
+    let mut declared = capability_env_input_names(cap);
+    for scope in cap.scope_params() {
+        if let Ok(value) = scope.named_value(cgs) {
+            if let Some(target) = value
+                .field_type
+                .entity_ref_target()
+                .and_then(|name| cgs.get_entity(name))
+            {
+                if target.key_vars.len() > 1 {
+                    declared.extend(target.key_vars.iter().map(ToString::to_string));
+                }
+            }
+        }
+    }
+    prove_with_inputs(cap, ent, declared)
 }
 
 #[cfg(test)]

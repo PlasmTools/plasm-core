@@ -2633,6 +2633,8 @@ impl<'a> Parser<'a> {
         Ok(g)
     }
 
+    // Parser state components mirror the validated call boundary.
+    #[allow(clippy::too_many_arguments)]
     fn finish_dotted_call_with_payload_value_inner(
         &mut self,
         source: Expr,

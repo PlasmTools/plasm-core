@@ -402,7 +402,7 @@ mod tests {
         let mut cache = HashMap::new();
         for expr in [
             format!("e1{{}} => _.{}", r),
-            format!("rows => {{ t: _.id }}"),
+            "rows => { t: _.id }".to_string(),
             "rows => <<TAG\n{{ _.id }}\nTAG".to_string(),
         ] {
             assert!(

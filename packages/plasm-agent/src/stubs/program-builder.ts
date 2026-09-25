@@ -56,22 +56,18 @@ function cloneBuilder(
       return cloneBuilder(opts, source);
     },
     async dryRun() {
-      return engine.dryRun(programSource);
+      return engine.dryRun(programSource, opts.logicalSessionRef);
     },
     async run(planCommitRef: string, transport?: HostTransportFn) {
       const hostTransport = transport ?? createDefaultHostTransport();
       if (typeof engine.runPlanLive === "function") {
-        const live = await engine.runPlanLive(planCommitRef, hostTransport);
+        const live = await engine.runPlanLive(planCommitRef, hostTransport, opts.logicalSessionRef);
         if (!live.ok) {
           throw new Error(live.message);
         }
         return live;
       }
-      const validation = await engine.runPlan(planCommitRef);
-      if (!validation.ok) {
-        throw new Error(validation.message);
-      }
-      return validation;
+      throw new Error("Generated catalog clients require live execution support");
     },
   };
 }

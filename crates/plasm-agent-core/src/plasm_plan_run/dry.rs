@@ -31,134 +31,12 @@ pub fn evaluate_executable_comp_dry(
             .map_err(|e| ProgramStageError::plan(format!("evidence comp_committed: {e}")))?;
     }
     let version = serde_json::json!(comp.version);
-    let mut out = Vec::new();
-    let mut staged_nodes = Vec::new();
     let execution_unsupported = Vec::new();
     let prepared = crate::plan_prepare::prepare_executable_plan_for_session(es, comp, executable)
         .map_err(ProgramStageError::plan)?;
     crate::plan_session_provisions::validate(es, prepared.validated.nodes(), &executable.bind)
         .map_err(ProgramStageError::plan)?;
-    let dry_session = crate::plan_session_provisions::DryProvisionSession::new(es)
-        .map_err(ProgramStageError::plan)?;
-    let es = dry_session.session();
-    for (step_idx, n) in prepared.validated.artifact().nodes.iter().enumerate() {
-        ensure_node_dispatchable(es, n, step_idx).map_err(ProgramStageError::plan)?;
-        if let ValidatedPlanNode::RelationTraversal(relation) = n {
-            let pe = ParsedExpr {
-                expr: relation.relation.ir.expr.clone(),
-                projection: relation.relation.ir.projection.clone(),
-                field_dot_extract: None,
-            };
-            typecheck_parsed_for_session(es, &pe).map_err(|e| ProgramStageError::Type {
-                correction: crate::program_diagnostic::format_session_symbolic_type_error(
-                    es, None, &e,
-                ),
-            })?;
-            ensure_relation_expr_matches_plan(es, relation, &pe, step_idx)
-                .map_err(ProgramStageError::plan)?;
-        }
-        let nested_effect = match n {
-            ValidatedPlanNode::ForEach(node) => Some(&node.effect_template),
-            ValidatedPlanNode::IterateUntil(node) => Some(&node.effect_template),
-            _ => None,
-        };
-        if let Some(effect) = nested_effect {
-            let scoped = entry_scoped_execute_session(es, Some(&effect.qualified_entity))
-                .map_err(ProgramStageError::plan)?;
-            let parsed = ParsedExpr {
-                expr: effect.ir_template.expr.clone(),
-                projection: effect.ir_template.projection.clone(),
-                field_dot_extract: None,
-            };
-            crate::execute_pipeline::PlasmPreflight::preflight_template_surface(
-                es, &scoped, &parsed, step_idx,
-            )?;
-        }
-        if let Some(surface) = n.as_surface() {
-            match surface_parsed_expr(surface, step_idx) {
-                Ok(Some(pe)) => {
-                    let scoped_es =
-                        entry_scoped_execute_session(es, surface.qualified_entity.as_ref())
-                            .map_err(ProgramStageError::plan)?;
-                    let normalized = if surface.ir.is_some() {
-                        crate::execute_pipeline::PlasmPreflight::preflight_node_compile_dispatch(
-                            es, &scoped_es, surface, &pe, step_idx,
-                        )?
-                    } else {
-                        crate::execute_pipeline::PlasmPreflight::preflight_template_surface(
-                            es, &scoped_es, &pe, step_idx,
-                        )?
-                    };
-                    let parsed = normalized.parsed();
-                    let simulation = if normalized.is_simulatable() {
-                        let (intent, il, bindings) =
-                            dry_run_simulation_for_session(&scoped_es, parsed);
-                        serde_json::json!({
-                            "intent": intent,
-                            "il": il,
-                            "bindings": bindings
-                        })
-                    } else {
-                        serde_json::json!({
-                            "kind": "template_stage",
-                            "execution": "typechecked only; row holes prevent CML compile at dry time"
-                        })
-                    };
-                    let expr = crate::plan_dry_display::render_executable_expr(
-                        &parsed.expr,
-                        parsed.projection.as_deref(),
-                        Some(&scoped_es),
-                    );
-                    let compact_expr = crate::plan_dry_compact::compact_agent_surface_expr(&expr);
-                    let compact_ir =
-                        crate::plan_dry_compact::compact_ir_expr_json_for_agent_snapshot(
-                            serde_json::to_value(&parsed.expr).unwrap_or_default(),
-                        );
-                    out.push(serde_json::json!({
-                        "index": step_idx,
-                        "ok": true,
-                        "id": n.id().as_str(),
-                        "kind": n.kind(),
-                        "operation": crate::plan_dry_compact::compact_agent_surface_expr(
-                            &render_node_operation(n),
-                        ),
-                        "qualified_entity": surface.qualified_entity,
-                        "effect_class": n.effect_class(),
-                        "result_shape": n.result_shape(),
-                        "projection": surface.projection,
-                        "predicates": surface.predicates,
-                        "ir": {
-                            "expr": compact_ir,
-                            "projection": parsed.projection
-                        },
-                        "execution_contract": {
-                            "entry_id": surface.qualified_entity.as_ref().map(|q| q.entry_id.as_str()).unwrap_or(es.entry_id.as_str()),
-                            "entity": surface.qualified_entity.as_ref().map(|q| q.entity.as_str()),
-                            "display_expr": compact_expr,
-                            "projection": parsed.projection
-                        },
-                        "type_check": "ok",
-                        "simulation": simulation
-                    }));
-                    dry_session.stage(n).map_err(ProgramStageError::plan)?;
-                    continue;
-                }
-                Ok(None) => {
-                    if n.depends_on().is_empty() && n.uses_result().is_empty() {
-                        return Err(ProgramStageError::plan(format!(
-                            "plan.nodes[{step_idx}] requires ir or ir_template for executable surface"
-                        )));
-                    }
-                }
-                Err(e) => return Err(ProgramStageError::plan(e)),
-            }
-        }
-
-        staged_nodes.push(format!("{} ({:?})", n.id(), n.kind()));
-        out.push(dry_stage_result(step_idx, n));
-    }
-    dry_validate_staged_surfaces(es, prepared.validated.artifact())
-        .map_err(ProgramStageError::plan)?;
+    let (mut out, staged_nodes) = preflight_nodes(es, prepared.validated.artifact())?;
     let flow_catalog = es.build_flow_catalog_view();
     let topological_order: Vec<String> = executable
         .steps_topo
@@ -444,6 +322,16 @@ pub(crate) fn graph_summary(
                 }
                 _ => {}
             }
+        }
+        if let ValidatedPlanNode::MapBody(map) = n {
+            template_nodes.push(n.id().as_str().into());
+            let bounds = crate::plan_prepare::analyze_read_boundedness(map.plan.artifact());
+            let (_, nested_review) = graph_summary(map.plan.artifact(), &bounds);
+            has_full_collection_compute |= nested_review.has_full_collection_compute;
+            boundedness_facts.push(format!(
+                "{}: at most {} parent invocations; child reads may paginate",
+                map.id, map.body.max_parents
+            ));
         }
         if let ValidatedPlanNode::Compute(c) = n {
             if matches!(c.compute.op, ComputeOp::Limit { .. }) {
@@ -921,4 +809,149 @@ pub(crate) fn validated_inputs_json(inputs: &[ValidatedPlanDataInput]) -> Vec<se
             })
         })
         .collect()
+}
+
+/// Shared admission for roots and scoped templates. Never executes Python on dry witnesses.
+pub(crate) fn preflight_nodes(
+    es: &ExecuteSession,
+    plan: &Plan<ValidatedPlanState>,
+) -> Result<(Vec<serde_json::Value>, Vec<String>), crate::program_diagnostic::ProgramStageError> {
+    use crate::program_diagnostic::ProgramStageError;
+    let mut out = Vec::new();
+    let mut staged_nodes = Vec::new();
+    let dry_session = crate::plan_session_provisions::DryProvisionSession::new(es)
+        .map_err(ProgramStageError::plan)?;
+    let es = dry_session.session();
+    for (step_idx, n) in plan.nodes.iter().enumerate() {
+        if let ValidatedPlanNode::MapBody(map) = n {
+            crate::map_body::validate(es, map, &plan.nodes).map_err(ProgramStageError::plan)?;
+            let (body_results, _) = preflight_nodes(es, map.plan.artifact())?;
+            out.push(serde_json::json!({"ok": true, "id": map.id.as_str(), "kind": "map_body", "body": body_results,
+                "capture": map.body.parent, "max_parents": map.body.max_parents}));
+            staged_nodes.push(format!("{} (map_body)", map.id));
+            continue;
+        }
+        ensure_node_dispatchable(es, n, step_idx).map_err(ProgramStageError::plan)?;
+        if let ValidatedPlanNode::Compute(compute) = n {
+            if matches!(compute.compute.op, ComputeOp::Python { .. }) {
+                crate::python_compute::validate_plan_compute(es, compute, &plan.nodes)
+                    .map_err(ProgramStageError::plan)?;
+            }
+        }
+        if let ValidatedPlanNode::RelationTraversal(relation) = n {
+            let pe = ParsedExpr {
+                expr: relation.relation.ir.expr.clone(),
+                projection: relation.relation.ir.projection.clone(),
+                field_dot_extract: None,
+            };
+            typecheck_parsed_for_session(es, &pe).map_err(|e| ProgramStageError::Type {
+                correction: crate::program_diagnostic::format_session_symbolic_type_error(
+                    es, None, &e,
+                ),
+            })?;
+            ensure_relation_expr_matches_plan(es, relation, &pe, step_idx)
+                .map_err(ProgramStageError::plan)?;
+        }
+        let nested_effect = match n {
+            ValidatedPlanNode::ForEach(node) => Some(&node.effect_template),
+            ValidatedPlanNode::IterateUntil(node) => Some(&node.effect_template),
+            _ => None,
+        };
+        if let Some(effect) = nested_effect {
+            let scoped = entry_scoped_execute_session(es, Some(&effect.qualified_entity))
+                .map_err(ProgramStageError::plan)?;
+            let parsed = ParsedExpr {
+                expr: effect.ir_template.expr.clone(),
+                projection: effect.ir_template.projection.clone(),
+                field_dot_extract: None,
+            };
+            crate::execute_pipeline::PlasmPreflight::preflight_template_surface(
+                es, &scoped, &parsed, step_idx,
+            )?;
+        }
+        if let Some(surface) = n.as_surface() {
+            match surface_parsed_expr(surface, step_idx) {
+                Ok(Some(pe)) => {
+                    let scoped_es =
+                        entry_scoped_execute_session(es, surface.qualified_entity.as_ref())
+                            .map_err(ProgramStageError::plan)?;
+                    let normalized = if surface.ir.is_some() {
+                        crate::execute_pipeline::PlasmPreflight::preflight_node_compile_dispatch(
+                            es, &scoped_es, surface, &pe, step_idx,
+                        )?
+                    } else {
+                        crate::execute_pipeline::PlasmPreflight::preflight_template_surface(
+                            es, &scoped_es, &pe, step_idx,
+                        )?
+                    };
+                    let parsed = normalized.parsed();
+                    let simulation = if normalized.is_simulatable() {
+                        let (intent, il, bindings) =
+                            dry_run_simulation_for_session(&scoped_es, parsed);
+                        serde_json::json!({
+                            "intent": intent,
+                            "il": il,
+                            "bindings": bindings
+                        })
+                    } else {
+                        serde_json::json!({
+                            "kind": "template_stage",
+                            "execution": "typechecked only; row holes prevent CML compile at dry time"
+                        })
+                    };
+                    let expr = crate::plan_dry_display::render_executable_expr(
+                        &parsed.expr,
+                        parsed.projection.as_deref(),
+                        Some(&scoped_es),
+                    );
+                    let compact_expr = crate::plan_dry_compact::compact_agent_surface_expr(&expr);
+                    let compact_ir =
+                        crate::plan_dry_compact::compact_ir_expr_json_for_agent_snapshot(
+                            serde_json::to_value(&parsed.expr).unwrap_or_default(),
+                        );
+                    out.push(serde_json::json!({
+                        "index": step_idx,
+                        "ok": true,
+                        "id": n.id().as_str(),
+                        "kind": n.kind(),
+                        "operation": crate::plan_dry_compact::compact_agent_surface_expr(
+                            &render_node_operation(n),
+                        ),
+                        "qualified_entity": surface.qualified_entity,
+                        "effect_class": n.effect_class(),
+                        "result_shape": n.result_shape(),
+                        "projection": surface.projection,
+                        "predicates": surface.predicates,
+                        "ir": {
+                            "expr": compact_ir,
+                            "projection": parsed.projection
+                        },
+                        "execution_contract": {
+                            "entry_id": surface.qualified_entity.as_ref().map(|q| q.entry_id.as_str()).unwrap_or(es.entry_id.as_str()),
+                            "entity": surface.qualified_entity.as_ref().map(|q| q.entity.as_str()),
+                            "display_expr": compact_expr,
+                            "projection": parsed.projection
+                        },
+                        "type_check": "ok",
+                        "simulation": simulation
+                    }));
+                    dry_session.stage(n).map_err(ProgramStageError::plan)?;
+                    continue;
+                }
+                Ok(None) => {
+                    if n.depends_on().is_empty() && n.uses_result().is_empty() {
+                        return Err(ProgramStageError::plan(format!(
+                            "plan.nodes[{step_idx}] requires ir or ir_template for executable surface"
+                        )));
+                    }
+                }
+                Err(e) => return Err(ProgramStageError::plan(e)),
+            }
+        }
+
+        staged_nodes.push(format!("{} ({:?})", n.id(), n.kind()));
+        out.push(dry_stage_result(step_idx, n));
+    }
+    dry_validate_staged_surfaces(es, plan).map_err(ProgramStageError::plan)?;
+    Ok((out, staged_nodes))
 }

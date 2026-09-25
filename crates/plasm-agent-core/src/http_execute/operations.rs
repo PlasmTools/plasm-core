@@ -89,10 +89,9 @@ pub async fn try_dispatch_operation_program(
     st: Option<&PlasmHostState>,
     trace: Option<&PlasmTraceContext>,
     program: &str,
-    symbol_map_cross_cache: Option<&plasm_core::SymbolMapCrossRequestCache>,
+    _symbol_map_cross_cache: Option<&plasm_core::SymbolMapCrossRequestCache>,
 ) -> Option<Result<crate::plasm_plan_run::PlasmPlanRunResult, String>> {
-    let expr =
-        crate::operation::try_parse_operation_continuation(sess, program, symbol_map_cross_cache)?;
+    let expr = crate::operation::try_parse_operation_continuation(program)?;
     Some(match expr {
         Expr::Wait(w) => handle_wait_operation(sess, st, trace, &w.handle)
             .await

@@ -448,6 +448,15 @@ pub(crate) fn compute_fingerprint(node: &ValidatedPlanNode, rows: &[serde_json::
             Err(e) => hasher.update(format!("compute-serialization-error:{e}").as_bytes()),
         }
     }
+    if let ValidatedPlanNode::MapBody(map) = node {
+        hasher.update(
+            serde_json::to_vec(&serde_json::json!({
+                "capture": map.body.parent, "max_parents": map.body.max_parents,
+                "body": plasm_core::plasm_comp_commit_canonical(&map.body.body),
+            }))
+            .expect("serializable map body"),
+        );
+    }
     match serde_json::to_vec(rows) {
         Ok(bytes) => hasher.update(bytes),
         Err(e) => hasher.update(format!("rows-serialization-error:{e}").as_bytes()),

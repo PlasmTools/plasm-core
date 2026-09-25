@@ -1,0 +1,55 @@
+version: 4
+auth: {scheme: none}
+http_backend: http://127.0.0.1:9
+entities:
+  Sample:
+    id_field: id
+    description: Abstract materialized type preservation matrix.
+    fields:
+      id: {required: true, value_ref: identifier}
+      text: {required: true, value_ref: text}
+      uuid: {required: true, value_ref: uuid}
+      date: {required: true, value_ref: date}
+      flag: {required: true, value_ref: flag}
+      count: {required: true, value_ref: count}
+      ratio: {required: true, value_ref: ratio}
+      address: {required: true, value_ref: address}
+      state: {required: true, value_ref: state}
+      states: {required: true, value_ref: states}
+      timestamp: {required: true, value_ref: timestamp}
+      epoch: {required: true, value_ref: epoch}
+      price: {required: true, value_ref: price}
+      reference: {required: true, value_ref: reference}
+      document: {required: true, value_ref: document}
+      attachment: {required: true, value_ref: attachment}
+      numbers: {required: true, value_ref: numbers}
+      matrix: {required: true, value_ref: matrix}
+      records: {required: true, value_ref: records}
+      optional_count: {required: false, value_ref: count}
+    relations: {}
+capabilities:
+  sample_get:
+    kind: get
+    entity: Sample
+    description: Read the complete typed fixture record.
+    provides: [id, text, uuid, date, flag, count, ratio, address, state, states, timestamp, epoch, price, reference, document, attachment, numbers, matrix, records, optional_count]
+values:
+  identifier: {type: digit_id}
+  text: {type: string}
+  uuid: {type: uuid}
+  date: {type: iso8601_date}
+  flag: {type: boolean}
+  count: {type: integer}
+  ratio: {type: number}
+  address: {type: email}
+  state: {type: enum, enum: [open, closed]}
+  states: {type: multi_enum, enum: [open, closed]}
+  timestamp: {type: rfc3339}
+  epoch: {type: unix_ms}
+  price: {type: money, currency: USD}
+  reference: {type: entity_ref, target: Sample}
+  document: {type: json}
+  attachment: {type: blob}
+  numbers: {type: array, items: {value_ref: count}}
+  matrix: {type: array, items: {value_ref: numbers}}
+  records: {type: array, items: {value_ref: document}}

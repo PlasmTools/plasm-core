@@ -13,6 +13,7 @@ pub(crate) struct PlanStepMaterializeOutcome {
     pub(crate) mat: MaterializedNode,
     pub(crate) evidence: StepExecutedRecord,
     pub(crate) approval: Option<PlasmPlanApprovalReceipt>,
+    pub(crate) scope_instances: Option<serde_json::Value>,
 }
 
 /// Shared session/host context for live plan step materialization.
@@ -25,6 +26,9 @@ pub(crate) struct PlanStepMaterializeCtx<'a> {
     pub flow: &'a crate::plan_flow::PlanFlowAnalysis,
     pub trace: Option<&'a PlasmTraceContext>,
     pub sink: Option<&'a McpPlasmTraceSink>,
+    pub python_host_calls: bool,
+    pub scope_path: Vec<String>,
+    pub occurrence_path: Vec<usize>,
     pub rows_progress: Option<plasm_runtime::RowsProgressFn>,
     pub execution_scope: Option<&'a crate::operation::ExecutionScope>,
 }
@@ -32,11 +36,15 @@ pub(crate) struct PlanStepMaterializeCtx<'a> {
 pub(crate) fn apply_step_materialize_outcomes(
     materialized: &mut BTreeMap<PlanNodeId, MaterializedNode>,
     evidence_steps: &mut Vec<StepExecutedRecord>,
+    scope_instances: &mut Vec<serde_json::Value>,
     approval_receipts: &mut Vec<PlasmPlanApprovalReceipt>,
     outcomes: impl IntoIterator<Item = PlanStepMaterializeOutcome>,
     execution_scope: Option<&crate::operation::ExecutionScope>,
 ) {
     for outcome in outcomes {
+        if let Some(instances) = outcome.scope_instances {
+            scope_instances.push(instances);
+        }
         if let Some(scope) = execution_scope {
             scope.sync_rows_materialized(
                 outcome
@@ -61,6 +69,15 @@ pub(crate) async fn materialize_executable_plan_step(
     node: ValidatedPlanNode,
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
 ) -> Result<PlanStepMaterializeOutcome, String> {
+    use crate::occurrence_progress::{OccurrenceGuard, OccurrencePhase, OccurrenceProgress};
+    let mut occurrence = OccurrenceGuard::new(
+        ctx.execution_scope,
+        OccurrenceProgress::running(
+            ctx.scope_path.clone(),
+            step_id.to_string(),
+            ctx.occurrence_path.clone(),
+        ),
+    );
     let source_line = render_node_operation(&node);
     let parsed_evidence = parsed_expr_for_plan_node(&node);
     let approval = ctx
@@ -70,15 +87,66 @@ pub(crate) async fn materialize_executable_plan_step(
     let node_id = node.id().clone();
     // Classify once: pure steps use the shared kernel; runtime steps stay inside this closed
     // execution machine until a compiled request reaches the transport boundary.
-    let mat = match ExecStep::classify(node) {
-        ExecStep::Pure(pure) => live_materialize_pure(ctx, pure, materialized).await?,
-        ExecStep::Io(io) => live_materialize_io(ctx, &io, step_idx, materialized).await?,
+    let mut scope_instances = None;
+    let execution = async {
+        Ok::<_, String>(match ExecStep::classify(node) {
+            ExecStep::Io(IoStep::MapBody(map)) => {
+                let (mat, instances) =
+                    super::map_body::materialize(ctx, &map, materialized).await?;
+                scope_instances = Some(instances);
+                mat
+            }
+            ExecStep::Pure(pure) => live_materialize_pure(ctx, pure, materialized).await?,
+            ExecStep::Io(io) => {
+                let operation = async {
+                    if ctx.python_host_calls {
+                        Box::pin(super::python_host::materialize(
+                            ctx,
+                            &io,
+                            step_idx,
+                            materialized,
+                        ))
+                        .await
+                    } else {
+                        Box::pin(live_materialize_io(ctx, &io, step_idx, materialized)).await
+                    }
+                };
+                if io.cancellable_read() {
+                    // Cooperatively checking between HTTP batches cannot interrupt
+                    // a suspended request. Only effect-free reads may be dropped.
+                    crate::python_compute::await_checked(ctx.execution_scope, operation).await?
+                } else {
+                    operation.await?
+                }
+            }
+        })
     };
+    let mat = match Box::pin(execution).await {
+        Ok(mat) => mat,
+        Err(error) => {
+            occurrence.fail(error.clone());
+            return Err(error);
+        }
+    };
+    if let Some(scope) = ctx.execution_scope {
+        if let Err(error) = scope.check() {
+            occurrence.fail(error.clone());
+            return Err(error);
+        }
+    }
+    occurrence.finish(
+        OccurrencePhase::Done,
+        Some(mat.result.count),
+        mat.artifact.as_ref().map(|a| a.plasm_uri.clone()),
+        mat.result.request_fingerprints.clone(),
+        None,
+    );
     let step_entry_id = mat.qualified_entity.entry_id.clone();
     let step_fps = mat.result.request_fingerprints.clone();
     Ok(PlanStepMaterializeOutcome {
         node_id,
         mat,
+        scope_instances,
         evidence: StepExecutedRecord {
             step_id: step_id.as_str().to_string(),
             step_index: step_idx as u32,
@@ -113,16 +181,95 @@ async fn live_materialize_pure(
         })?;
         let owner_entry_id = source_mat.qualified_entity.entry_id.clone();
         let binding_rows = binding_rows_for_compute(&compute.compute, materialized)?;
-        let rows = eval_compute_with_row_source(
-            &compute.compute,
-            &source_mat.row_source,
-            &binding_rows,
-            ctx.es,
-            ctx.st,
-            ctx.session_id,
-            ctx.es.cgs.as_ref(),
-        )
-        .await?;
+        let rows = if matches!(compute.compute.op, ComputeOp::Python { .. }) {
+            use crate::occurrence_progress::{ExecutionStage, OccurrenceProgress};
+            let report = |stage| {
+                if let Some(scope) = ctx.execution_scope {
+                    let mut event = OccurrenceProgress::running(
+                        ctx.scope_path.clone(),
+                        compute.id.to_string(),
+                        ctx.occurrence_path.clone(),
+                    );
+                    event.stage = Some(stage);
+                    scope.report_occurrence(event);
+                }
+            };
+            report(ExecutionStage::Materializing);
+            let checked = crate::python_compute::check_op(ctx.es, &compute.compute.op)?;
+            let owner = plasm_core::symbol_tuning::EntityBinding {
+                entry_id: source_mat.qualified_entity.entry_id.clone().into(),
+                entity: source_mat.qualified_entity.entity.clone().into(),
+            };
+            crate::python_compute::require_complete_collection(&source_mat.result)?;
+            if source_mat.result.count > crate::python_compute::MAX_INPUT_ROWS {
+                return Err("compute input row budget exceeded".into());
+            }
+            let scoped = entry_scoped_execute_session(ctx.es, Some(&source_mat.qualified_entity))?;
+            let input = crate::graph_rehydrate::GraphSurfaceRehydrator::new(
+                &scoped,
+                ctx.st,
+                ctx.session_id,
+                &scoped.cgs,
+            )
+            .resolve_row_source_rows(
+                &source_mat.row_source,
+                Some(crate::python_compute::MAX_INPUT_ROWS + 1),
+            )
+            .await?;
+            if input.len() != source_mat.result.count {
+                return Err(
+                    "Python compute materialization does not match the complete source count"
+                        .into(),
+                );
+            }
+            crate::python_compute::validate_input_budget(&input)?;
+            report(ExecutionStage::Executing);
+            let mut rendered = Vec::new();
+            if checked.per_row {
+                let mut bytes = 0usize;
+                for row in input {
+                    let content = crate::python_compute::await_checked(
+                        ctx.execution_scope,
+                        checked.run(
+                            &ctx.st.python_pool,
+                            &owner,
+                            source_mat.result.coverage,
+                            &[row],
+                        ),
+                    )
+                    .await?;
+                    bytes += content.len();
+                    if bytes > 1_048_576 {
+                        return Err("Python output byte budget exceeded".into());
+                    }
+                    rendered.push(serde_json::json!({"content": content}));
+                }
+            } else {
+                let content = crate::python_compute::run_worker(
+                    &ctx.st.python_pool,
+                    checked,
+                    owner,
+                    source_mat.result.coverage,
+                    input,
+                    ctx.execution_scope,
+                )
+                .await?;
+                rendered.push(serde_json::json!({"content": content}));
+            }
+            report(ExecutionStage::Validating);
+            rendered
+        } else {
+            eval_compute_with_row_source(
+                &compute.compute,
+                &source_mat.row_source,
+                &binding_rows,
+                ctx.es,
+                ctx.st,
+                ctx.session_id,
+                ctx.es.cgs.as_ref(),
+            )
+            .await?
+        };
         let row_identities =
             propagate_row_identities(&source_id, &compute.compute.op, materialized, rows.len())?;
         let entity_override = compute.compute.schema.entity.as_deref().map(str::to_string);
@@ -186,13 +333,15 @@ async fn live_materialize_pure(
     .await
 }
 
-async fn live_materialize_io(
+pub(super) async fn live_materialize_io(
     ctx: &PlanStepMaterializeCtx<'_>,
     step: &IoStep,
     step_idx: usize,
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
 ) -> Result<MaterializedNode, String> {
     match step {
+        IoStep::MapBody(_) => Err("map body must execute through scoped materialization".into()),
+        IoStep::Capture(_) => Err("capture must be installed by its enclosing scope".into()),
         IoStep::Surface(surface) => {
             let surface = (**surface).clone();
             let scoped_es =

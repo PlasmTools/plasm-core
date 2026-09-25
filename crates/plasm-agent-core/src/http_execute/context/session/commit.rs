@@ -2,9 +2,7 @@
 
 use super::super::super::*;
 
-use super::super::seeds::{
-    format_exposure_entity_cheat_sheet, wrap_teaching_markdown_literal_block,
-};
+use super::super::seeds::format_exposure_entity_cheat_sheet;
 /// Snapshot captured before an exposure wave mutates [`plasm_core::TeachingExposureSession`].
 pub(crate) struct ExposureWaveSnapshot {
     pub slots_before: std::collections::BTreeSet<plasm_core::symbol_tuning::ExposureSlotKey>,
@@ -62,83 +60,6 @@ fn compute_exposure_wave_changes(
     }
 }
 
-fn render_exposure_wave_markdown(
-    st: &PlasmHostState,
-    sess: &crate::execute_session::ExecuteSession,
-    exp: &plasm_core::TeachingExposureSession,
-    changes: &ExposureWaveChanges,
-) -> String {
-    let sym_cross = st.sessions.symbol_map_cross_cache();
-    let pipeline = st.engine.prompt_pipeline();
-
-    let delta = if !changes.added_entities.is_empty() || !changes.new_relation_slots.is_empty() {
-        if sess.contexts_by_entry.len() > 1 {
-            let by_entry: IndexMap<String, &CGS> = sess
-                .contexts_by_entry
-                .iter()
-                .map(|(k, v)| (k.clone(), v.cgs.as_ref()))
-                .collect();
-            pipeline.render_teaching_exposure_delta_federated_with_edges(
-                &by_entry,
-                exp,
-                &changes.added_entities,
-                &changes.new_relation_slots,
-                Some(sym_cross),
-            )
-        } else {
-            let added: Vec<&str> = changes
-                .added_entities
-                .iter()
-                .map(|k| k.entity.as_str())
-                .collect();
-            pipeline.render_teaching_exposure_delta_with_edges(
-                sess.cgs.as_ref(),
-                exp,
-                &added,
-                &changes.new_relation_slots,
-                Some(sym_cross),
-            )
-        }
-    } else if !changes.new_capabilities.is_empty() {
-        if sess.contexts_by_entry.len() > 1 {
-            let by_entry: IndexMap<String, &CGS> = sess
-                .contexts_by_entry
-                .iter()
-                .map(|(k, v)| (k.clone(), v.cgs.as_ref()))
-                .collect();
-            pipeline.render_teaching_new_capabilities_delta_federated(
-                &by_entry,
-                exp,
-                &changes.new_capabilities,
-                Some(sym_cross),
-            )
-        } else {
-            pipeline.render_teaching_new_capabilities_delta(
-                sess.cgs.as_ref(),
-                exp,
-                &changes.new_capabilities,
-                Some(sym_cross),
-            )
-        }
-    } else {
-        String::new()
-    };
-
-    let catalog_entry_id = changes
-        .added_entities
-        .first()
-        .map(|k| k.entry_id.as_str())
-        .or_else(|| {
-            changes
-                .new_capabilities
-                .iter()
-                .next()
-                .map(|c| c.entry_id.as_str())
-        })
-        .unwrap_or(sess.entry_id.as_str());
-    wrap_teaching_markdown_literal_block(&delta, catalog_entry_id)
-}
-
 /// Admit new relation slots, render + append the teaching delta, and persist the session.
 pub(crate) async fn commit_exposure_wave_delta(
     st: &PlasmHostState,
@@ -178,7 +99,17 @@ pub(crate) async fn commit_exposure_wave_delta(
         });
     }
 
-    let mut wave = render_exposure_wave_markdown(st, &sess, &exp, &changes);
+    let teaching = plasm_core::prompt_render::python::prepare_python_teaching_wave(
+        &exp,
+        &sess.python_teaching,
+    )
+    .map_err(super::SessionMutateError::from)?;
+    let mut wave = if teaching.declarations.is_empty() {
+        String::new()
+    } else {
+        format!("```pyi\n{}\n```", teaching.declarations)
+    };
+    sess.python_teaching = teaching.next_state;
     let cheat = format_exposure_entity_cheat_sheet(&exp);
     if !cheat.is_empty() {
         if !wave.trim().is_empty() {

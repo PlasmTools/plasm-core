@@ -1,0 +1,69 @@
+version: 1
+http_backend: http://127.0.0.1:9
+auth: {scheme: none}
+values:
+  id: {type: string}
+  text: {type: string, min_length: 1}
+  count: {type: integer, min: 0}
+  label: {type: enum, enum: [red, blue]}
+entities:
+  Record:
+    id_field: id
+    fields:
+      id: {value_ref: id, required: true}
+capabilities:
+  record_get:
+    entity: Record
+    kind: get
+    provides: [id]
+  record_write:
+    entity: Record
+    kind: update
+    scope:
+    - {name: tenant, value_ref: id, required: true}
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - {name: request_id, value_ref: id, required: true}
+    payload:
+      input_type: &choice
+        type: union
+        variants:
+        - name: text
+          description: Replace text while preserving its nested transport representation.
+          wire: {field: kind, value: text}
+          fields:
+          - name: text
+            value_ref: text
+            required: true
+            wire_json_path: [content, text]
+          - name: note
+            value_ref: text
+            required: false
+            wire_json_path: [content, note]
+        - name: count
+          wire: {field: kind, value: count}
+          fields:
+          - {name: count, value_ref: count, required: true}
+          - name: labels
+            required: true
+            input_type:
+              type: array
+              element_type: {type: value, field_type: select, allowed_values: [red, blue]}
+    output: {type: side_effect, description: Replaces the selected record content.}
+  record_batch:
+    receiver: {kind: entity, entity: Record}
+    entity: Record
+    kind: action
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: operations
+          required: true
+          input_type:
+            type: array
+            min_length: 1
+            element_type: *choice
+    output: {type: side_effect, description: Applies the ordered typed changes to the record.}

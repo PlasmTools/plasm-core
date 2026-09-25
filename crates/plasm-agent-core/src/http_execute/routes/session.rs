@@ -287,7 +287,7 @@ pub(crate) async fn post_execute_session_plan(
         let sid = sid_str.clone();
         st.live_plan_pool()
             .run(move || async move {
-                crate::plasm_plan_run::run_plasm_comp(
+                crate::plasm_plan_run::run_plasm_comp_python(
                     es.as_ref(),
                     st_arc.as_ref(),
                     ph.as_str(),

@@ -328,6 +328,61 @@ impl<'a, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, P> {
     fn transfer_node(&mut self, node: &ValidatedPlanNode) {
         let id = node.id().as_str().to_string();
         match node {
+            ValidatedPlanNode::Capture(_) => {
+                // The enclosing scope seeds this port's facts; never overwrite them.
+                self.node_dispositions
+                    .insert(id.clone(), NodeDisposition::Allow);
+                self.sink_proofs.insert(id, SinkProof::StaticClean);
+            }
+            ValidatedPlanNode::MapBody(n) => {
+                let incoming = self
+                    .facts
+                    .get(n.body.parent.source.as_str())
+                    .cloned()
+                    .unwrap_or_default();
+                let order: Vec<_> = n
+                    .plan
+                    .topological_order()
+                    .iter()
+                    .map(|id| id.as_str().to_string())
+                    .collect();
+                let checked = FlowPass {
+                    plan: n.plan.artifact(),
+                    topological_order: &order,
+                    catalog: self.catalog,
+                    policy: self.policy,
+                    topo_index: order
+                        .iter()
+                        .enumerate()
+                        .map(|(i, id)| (id.clone(), i))
+                        .collect(),
+                    facts: BTreeMap::from([(
+                        n.body.parent.local.as_str().to_string(),
+                        incoming.clone(),
+                    )]),
+                    node_dispositions: BTreeMap::new(),
+                    sink_proofs: BTreeMap::new(),
+                    violations: vec![],
+                }
+                .run();
+                let mut output = incoming;
+                for ret in n.plan.return_value().refs() {
+                    if let Some(facts) = checked.analysis.node_facts.get(ret.as_str()) {
+                        output.join(facts);
+                    }
+                }
+                self.facts.insert(id.clone(), output);
+                self.node_dispositions.insert(
+                    id.clone(),
+                    match checked.analysis.verdict {
+                        FlowVerdict::Clean => NodeDisposition::Allow,
+                        FlowVerdict::NeedsReview => NodeDisposition::Review,
+                        FlowVerdict::Denied => NodeDisposition::Deny,
+                    },
+                );
+                self.sink_proofs.insert(id, SinkProof::StaticClean);
+                self.violations.extend(checked.analysis.violations);
+            }
             ValidatedPlanNode::Surface(surface) => {
                 if is_read_kind(surface.kind) {
                     self.transfer_read_surface(surface);
@@ -354,6 +409,12 @@ impl<'a, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, P> {
                     .get(n.source.as_str())
                     .cloned()
                     .unwrap_or_default();
+                let mut source_facts = source_facts;
+                for input in &n.inputs {
+                    if let Some(facts) = self.facts.get(input.node.as_str()) {
+                        source_facts.join(facts);
+                    }
+                }
                 self.facts.insert(id.clone(), source_facts);
                 self.node_dispositions
                     .insert(id.clone(), NodeDisposition::Allow);
@@ -411,7 +472,21 @@ impl<'a, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, P> {
                     .get(n.relation.source.as_str())
                     .cloned()
                     .unwrap_or_default();
-                self.facts.insert(id.clone(), parent_facts);
+                let mut relation_facts = parent_facts;
+                relation_facts
+                    .residual
+                    .labels
+                    .extend(self.catalog.output_labels_for_entity(
+                        n.relation.target.entry_id.as_str(),
+                        n.relation.target.entity.as_str(),
+                    ));
+                relation_facts.residual.provenance.insert(format!(
+                    "{}.{}.relation:{}",
+                    n.relation.target.entry_id.as_str(),
+                    n.relation.target.entity.as_str(),
+                    n.relation.relation,
+                ));
+                self.facts.insert(id.clone(), relation_facts);
                 self.node_dispositions
                     .insert(id.clone(), NodeDisposition::Allow);
                 self.sink_proofs.insert(id, SinkProof::StaticClean);
@@ -685,7 +760,7 @@ impl<'a, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, P> {
                         .insert(vec![agg.name.as_str().to_string()], facts);
                 }
             }
-            ComputeOp::Render { .. } => {
+            ComputeOp::Render { .. } | ComputeOp::Python { .. } => {
                 out.residual = source_facts.row_join();
             }
         }

@@ -42,11 +42,10 @@ pub(crate) async fn handle_execute_session_get(
         );
     }
 
-    let render_mode = st.engine.prompt_pipeline().render_mode;
     Json(create_execute_session_response(
         &sess,
         session_id.to_string(),
-        wire_execute_session_prompt(&sess.prompt_text, render_mode),
+        sess.prompt_text.clone(),
         false,
     ))
     .into_response()

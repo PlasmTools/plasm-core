@@ -8,7 +8,7 @@
  * executor instead of blocking it. Independent logical sessions remain concurrent.
  */
 export declare class PlasmEngine {
-  constructor()
+  constructor(montyBinary?: string | undefined | null)
   loadCatalog(catalogDir: string): Promise<JsCatalogInfo>
   /** Activate the complete loaded manifest set using explicit deployment bindings. */
   activateDiscovery(deploymentId: string, bindingsJson: string): Promise<string>
@@ -50,7 +50,7 @@ export interface JsSeed {
 }
 
 export interface JsTeachingResult {
-  tsv: string
+  prompt: string
   deltaRefs: Array<string>
 }
 

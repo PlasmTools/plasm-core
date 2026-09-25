@@ -72,7 +72,7 @@ fn render_compute_named_binding_available_without_implicit_rows() {
         columns: &cols,
         template: "{{ name }} ({{ items | length }})",
         collection_alias: Some(&items),
-        render_bindings: &[items.clone()],
+        render_bindings: std::slice::from_ref(&items),
         binding_rows: &BTreeMap::from([("items".to_string(), rows.clone())]),
     })
     .expect("named binding");

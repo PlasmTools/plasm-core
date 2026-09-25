@@ -135,6 +135,7 @@ impl super::ExecuteSession {
                     auto_async: false,
                     mcp_transport_key: None,
                     progress_host: None,
+                    occurrences: desc.occurrences.clone(),
                     progress_tx,
                     terminal_tx: None,
                     comp: None,
@@ -327,6 +328,7 @@ mod tests {
                 dry_verdict: None,
                 display_map: Default::default(),
                 agent_seq: 0,
+                occurrences: Vec::new(),
                 agent_last_line: String::new(),
             });
         }

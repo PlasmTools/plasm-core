@@ -1,4 +1,4 @@
-version: 36
+version: 37
 http_backend: https://api.github.com
 data_classes:
   untrusted:
@@ -1687,14 +1687,14 @@ capabilities:
     - name: org
       value_ref: nv_github_account_login
       required: false
+    - name: repository
+      value_ref: nv_github_scope_repository
+      required: false
     selection:
     - name: shelf
       value_ref: nv_repository_query_shelf
       required: true
       description: user_repos | auth_user_repos | repo_forks | org_repos | org_public_repos
-    - name: repository
-      value_ref: nv_github_scope_repository
-      required: false
     controls:
     - name: type
       value_ref: nv_user_repos_query_type
@@ -1743,14 +1743,14 @@ capabilities:
     - name: org
       value_ref: nv_github_account_login
       required: false
+    - name: repository
+      value_ref: nv_github_scope_repository
+      required: false
     selection:
     - name: shelf
       value_ref: nv_user_query_shelf
       required: true
       description: repo_collaborators | org_members
-    - name: repository
-      value_ref: nv_github_scope_repository
-      required: true
     controls:
     - name: affiliation
       value_ref: nv_repo_collaborators_query_affiliation
@@ -1814,14 +1814,14 @@ capabilities:
     - name: issue_number
       value_ref: nv_issue_number
       required: false
+    - name: repository
+      value_ref: nv_github_scope_repository
+      required: false
     selection:
     - name: shelf
       value_ref: nv_issue_query_shelf
       required: true
       description: issue | issue_sub_issue
-    - name: repository
-      value_ref: nv_github_scope_repository
-      required: false
     - name: assignee
       value_ref: nv_issue_query_assignee
       required: false
@@ -1904,7 +1904,7 @@ capabilities:
     kind: query
     entity: PullRequest
     scope_aggregate_key_policy: omit_when_redundant
-    selection:
+    scope:
     - name: repository
       value_ref: nv_github_scope_repository
       required: true
@@ -1928,7 +1928,10 @@ capabilities:
     description: List PullRequest by shelf (pr | pr_touching_path).
     kind: search
     entity: PullRequest
-    scope: []
+    scope:
+    - name: repository
+      value_ref: nv_github_scope_repository
+      required: false
     selection:
     - name: shelf
       value_ref: nv_pullrequest_search_shelf
@@ -1937,9 +1940,6 @@ capabilities:
     - name: q
       value_ref: nv_wire_str_short
       required: true
-    - name: repository
-      value_ref: nv_github_scope_repository
-      required: false
     controls:
     - name: sort
       value_ref: nv_wire_sel_cecfba3d4d1c9fbf
@@ -2028,8 +2028,11 @@ capabilities:
       input_type:
         type: object
         fields:
-        - name: repository
-          value_ref: nv_github_scope_repository
+        - name: owner
+          value_ref: nv_github_account_login
+          required: true
+        - name: repo
+          value_ref: nv_github_repository_name
           required: true
         - name: filename
           value_ref: nv_wire_str_short
@@ -2153,6 +2156,9 @@ capabilities:
     entity: PullRequestReview
     scope_aggregate_key_policy: omit_when_redundant
     scope:
+    - name: repository
+      value_ref: nv_github_scope_repository
+      required: true
     - name: pull_number
       value_ref: nv_pull_request_number
       required: true
@@ -2160,9 +2166,6 @@ capabilities:
       input_type:
         type: object
         fields:
-        - name: repository
-          value_ref: nv_github_scope_repository
-          required: true
         - name: body
           value_ref: nv_wire_str_markdown
           required: false
@@ -2212,6 +2215,9 @@ capabilities:
     entity: PullRequestReviewComment
     scope_aggregate_key_policy: omit_when_redundant
     scope:
+    - name: repository
+      value_ref: nv_github_scope_repository
+      required: true
     - name: pull_number
       value_ref: nv_pull_request_number
       required: true
@@ -2219,9 +2225,6 @@ capabilities:
       input_type:
         type: object
         fields:
-        - name: repository
-          value_ref: nv_github_scope_repository
-          required: true
         - name: body
           value_ref: nv_wire_str_markdown
           required: true
@@ -2294,10 +2297,11 @@ capabilities:
     kind: query
     entity: RepositoryTag
     scope_aggregate_key_policy: omit_when_redundant
-    selection:
+    scope:
     - name: repository
       value_ref: nv_github_scope_repository
       required: true
+    selection:
   repo_tag_get:
     description: Resolve one git tag and its commit.
     kind: get
@@ -2676,6 +2680,9 @@ capabilities:
     entity: Label
     scope_aggregate_key_policy: omit_when_redundant
     scope:
+    - name: repository
+      value_ref: nv_github_scope_repository
+      required: false
     - name: owner
       value_ref: nv_github_account_login
       required: false
@@ -2690,9 +2697,6 @@ capabilities:
       value_ref: nv_label_query_shelf
       required: true
       description: label | issue_label
-    - name: repository
-      value_ref: nv_github_scope_repository
-      required: true
     controls: []
   label_get:
     description: Resolve one repository label by name.
@@ -2711,7 +2715,7 @@ capabilities:
     kind: query
     entity: Milestone
     scope_aggregate_key_policy: omit_when_redundant
-    selection:
+    scope:
     - name: repository
       value_ref: nv_github_scope_repository
       required: true
@@ -2747,15 +2751,16 @@ capabilities:
   milestone_create:
     description: Create a milestone in a repository.
     kind: create
+    scope:
+    - name: repository
+      value_ref: nv_github_scope_repository
+      required: true
     entity: Milestone
     scope_aggregate_key_policy: omit_when_redundant
     payload:
       input_type:
         type: object
         fields:
-        - name: repository
-          value_ref: nv_github_scope_repository
-          required: true
         - name: title
           value_ref: nv_wire_str_short
           required: true
@@ -2827,10 +2832,11 @@ capabilities:
     kind: query
     entity: Release
     scope_aggregate_key_policy: omit_when_redundant
-    selection:
+    scope:
     - name: repository
       value_ref: nv_github_scope_repository
       required: true
+    selection:
   release_get:
     description: Resolve one release.
     kind: get
@@ -2850,15 +2856,16 @@ capabilities:
   release_create:
     description: Create a GitHub release (tag).
     kind: create
+    scope:
+    - name: repository
+      value_ref: nv_github_scope_repository
+      required: true
     entity: Release
     scope_aggregate_key_policy: omit_when_redundant
     payload:
       input_type:
         type: object
         fields:
-        - name: repository
-          value_ref: nv_github_scope_repository
-          required: true
         - name: tag_name
           value_ref: nv_wire_str_short
           required: true
@@ -2947,6 +2954,9 @@ capabilities:
       - comment
       - issue comment
     scope:
+    - name: repository
+      value_ref: nv_github_scope_repository
+      required: false
     - name: owner
       value_ref: nv_github_account_login
       required: false
@@ -2961,9 +2971,6 @@ capabilities:
       value_ref: nv_issuecomment_query_shelf
       required: true
       description: issue_comment | repo_comment
-    - name: repository
-      value_ref: nv_github_scope_repository
-      required: false
     controls:
     - name: since
       value_ref: nv_issue_comment_query_since
@@ -2991,6 +2998,10 @@ capabilities:
   issue_create:
     description: Create an issue with optional initial labels.
     kind: create
+    scope:
+    - name: repository
+      value_ref: nv_github_scope_repository
+      required: true
     entity: Issue
     scope_aggregate_key_policy: omit_when_redundant
     discovery:
@@ -3005,9 +3016,6 @@ capabilities:
       input_type:
         type: object
         fields:
-        - name: repository
-          value_ref: nv_github_scope_repository
-          required: true
         - name: title
           value_ref: nv_wire_str_short
           required: true
@@ -3261,6 +3269,9 @@ capabilities:
       - comment
       - note
     scope:
+    - name: repository
+      value_ref: nv_github_scope_repository
+      required: true
     - name: issue_number
       value_ref: nv_issue_number
       required: true
@@ -3268,9 +3279,6 @@ capabilities:
       input_type:
         type: object
         fields:
-        - name: repository
-          value_ref: nv_github_scope_repository
-          required: true
         - name: body
           value_ref: nv_wire_str_markdown
           required: true
@@ -3284,15 +3292,16 @@ capabilities:
   issue_comment_update:
     description: Update an issue or pull request comment.
     kind: update
+    scope:
+    - name: repository
+      value_ref: nv_github_scope_repository
+      required: true
     entity: IssueComment
     scope_aggregate_key_policy: omit_when_redundant
     payload:
       input_type:
         type: object
         fields:
-        - name: repository
-          value_ref: nv_github_scope_repository
-          required: true
         - name: body
           value_ref: nv_wire_str_markdown
           required: true
@@ -3304,16 +3313,13 @@ capabilities:
     - updated_at
     - html_url
   issue_comment_delete:
+    scope:
+    - name: repository
+      value_ref: nv_github_scope_repository
+      required: true
     description: Remove an issue or pull request timeline comment.
     kind: delete
     entity: IssueComment
-    arguments:
-      input_type:
-        type: object
-        fields:
-        - name: repository
-          value_ref: nv_github_scope_repository
-          required: true
   pr_update:
     description: Update an open pull request — change title, body, state, or base branch.
     kind: update
@@ -3406,6 +3412,10 @@ capabilities:
   pr_create:
     description: Create a pull request from a head branch into a base branch.
     kind: create
+    scope:
+    - name: repository
+      value_ref: nv_github_scope_repository
+      required: true
     entity: PullRequest
     scope_aggregate_key_policy: omit_when_redundant
     discovery:
@@ -3422,11 +3432,8 @@ capabilities:
     payload:
       input_type:
         type: object
-        additional_fields: true
+        additional_fields: false
         fields:
-        - name: repository
-          value_ref: nv_github_scope_repository
-          required: true
         - name: title
           value_ref: nv_wire_str_short
           required: false
@@ -3477,6 +3484,10 @@ capabilities:
   label_create:
     description: Create a label in a repository.
     kind: create
+    scope:
+    - name: repository
+      value_ref: nv_github_scope_repository
+      required: true
     entity: Label
     scope_aggregate_key_policy: omit_when_redundant
     discovery:
@@ -3489,9 +3500,6 @@ capabilities:
       input_type:
         type: object
         fields:
-        - name: repository
-          value_ref: nv_github_scope_repository
-          required: true
         - name: name
           value_ref: nv_wire_str_short
           required: true
@@ -3554,6 +3562,9 @@ capabilities:
       - file
       - content
     scope:
+    - name: repository
+      value_ref: nv_github_scope_repository
+      required: true
     - name: path
       value_ref: nv_wire_str_short
       required: true
@@ -3561,9 +3572,6 @@ capabilities:
       input_type:
         type: object
         fields:
-        - name: repository
-          value_ref: nv_github_scope_repository
-          required: true
         - name: message
           value_ref: nv_wire_str_short
           required: true
@@ -3584,6 +3592,9 @@ capabilities:
     entity: Repository
     scope_aggregate_key_policy: omit_when_redundant
     scope:
+    - name: repository
+      value_ref: nv_github_scope_repository
+      required: true
     - name: path
       value_ref: nv_wire_str_short
       required: true
@@ -3591,9 +3602,6 @@ capabilities:
       input_type:
         type: object
         fields:
-        - name: repository
-          value_ref: nv_github_scope_repository
-          required: true
         - name: message
           value_ref: nv_wire_str_short
           required: true
@@ -3614,6 +3622,10 @@ capabilities:
     receiver: {kind: entity, entity: Repository}
     description: Create a branch ref in a repository from an existing commit SHA.
     kind: action
+    scope:
+    - name: repository
+      value_ref: nv_github_scope_repository
+      required: true
     entity: Repository
     scope_aggregate_key_policy: omit_when_redundant
     discovery:
@@ -3627,9 +3639,6 @@ capabilities:
       input_type:
         type: object
         fields:
-        - name: repository
-          value_ref: nv_github_scope_repository
-          required: true
         - name: name
           value_ref: nv_github_branch_name
           required: true
@@ -3649,6 +3658,9 @@ capabilities:
     entity: Repository
     scope_aggregate_key_policy: omit_when_redundant
     scope:
+    - name: repository
+      value_ref: nv_github_scope_repository
+      required: true
     - name: path
       value_ref: nv_wire_str_short
       required: true
@@ -3656,9 +3668,6 @@ capabilities:
       input_type:
         type: object
         fields:
-        - name: repository
-          value_ref: nv_github_scope_repository
-          required: true
         - name: message
           value_ref: nv_wire_str_short
           required: true
@@ -4319,6 +4328,7 @@ views:
     - id: labels
       capability: label_query
       bind:
+        shelf: {kind: literal, value: issue_label}
         owner:
           kind: scope
           param: owner
@@ -4331,6 +4341,7 @@ views:
     - id: comments
       capability: issue_comment_query
       bind:
+        shelf: {kind: literal, value: issue_comment}
         owner:
           kind: scope
           param: owner
@@ -4343,6 +4354,7 @@ views:
     - id: sub_issues
       capability: issue_sub_issue_query
       bind:
+        shelf: {kind: literal, value: issue_sub_issue}
         owner:
           kind: scope
           param: owner

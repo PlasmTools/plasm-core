@@ -155,9 +155,11 @@ pub(crate) use response_prep::{
     prepare_http_query_response, response_bare_array_wrap_key, single_response_path_step,
     unwrap_single_inner_payload, walk_json_path, wire_id_matches,
 };
+#[cfg(test)]
+use scoped_fanout::partition_scoped_query_fanout;
 pub(crate) use scoped_fanout::{
     build_scoped_query_from_fallback, chain_binding_plasm_value, chain_binding_raw_json,
-    chain_binding_value, partition_prefer_from_parent_get, partition_scoped_query_fanout,
+    chain_binding_value, partition_prefer_from_parent_get,
     ref_from_materialize_bindings_for_get_chain, resolve_cached_targets_from_relation_refs,
 };
 pub(crate) use template_env::{

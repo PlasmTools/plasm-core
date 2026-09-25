@@ -45,19 +45,32 @@ fn collect_get_exprs(expr: &Expr, out: &mut Vec<GetExpr>) {
 pub fn lowered_ir_digest_from_validated_plan(
     plan: &crate::plasm_plan::Plan<crate::plasm_plan::ValidatedPlanState>,
 ) -> LoweredIrDigest {
-    use crate::plasm_plan::ValidatedPlanNode;
     let mut gets = Vec::new();
+    collect_plan_gets(plan, &mut gets);
+    LoweredIrDigest::from_get_exprs(&gets)
+}
+
+fn collect_plan_gets(
+    plan: &crate::plasm_plan::Plan<crate::plasm_plan::ValidatedPlanState>,
+    gets: &mut Vec<GetExpr>,
+) {
+    use crate::plasm_plan::ValidatedPlanNode;
     for node in &plan.nodes {
+        if let ValidatedPlanNode::MapBody(map) = node {
+            collect_plan_gets(map.plan.artifact(), gets);
+        }
+        if let ValidatedPlanNode::RelationTraversal(rel) = node {
+            collect_get_exprs(&rel.relation.ir.expr, gets);
+        }
         if let ValidatedPlanNode::Surface(surface) = node {
             if let Some(ir) = &surface.ir {
-                collect_get_exprs(&ir.expr, &mut gets);
+                collect_get_exprs(&ir.expr, gets);
             }
             if let Some(t) = &surface.ir_template {
-                collect_get_exprs(&t.expr, &mut gets);
+                collect_get_exprs(&t.expr, gets);
             }
         }
     }
-    LoweredIrDigest::from_get_exprs(&gets)
 }
 
 #[cfg(test)]

@@ -22,7 +22,7 @@ pub enum CompEquivResult {
 }
 
 pub fn comp_semantic_eq(a: &PlasmComp, b: &PlasmComp) -> bool {
-    a.version == b.version && a.steps == b.steps && a.bind == b.bind && a.return_ == b.return_
+    crate::plasm_comp_commit_canonical(a) == crate::plasm_comp_commit_canonical(b)
 }
 
 pub fn comp_equivalent(a: &PlasmComp, b: &PlasmComp, policy: RewritePolicy) -> CompEquivResult {

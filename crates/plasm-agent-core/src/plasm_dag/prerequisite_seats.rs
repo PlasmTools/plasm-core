@@ -308,9 +308,10 @@ fn source_catalog(state: &CompileState<'_>, node: &str, depth: u8) -> Option<Str
         }
         | DagNodeSource::RelationTraversal {
             qualified_entity, ..
+        }
+        | DagNodeSource::ForEach {
+            qualified_entity, ..
         } => Some(qualified_entity.entry_id.clone()),
-        DagNodeSource::Data(_)
-        | DagNodeSource::ForEach { .. }
-        | DagNodeSource::IterateUntil { .. } => None,
+        DagNodeSource::Data(_) | DagNodeSource::IterateUntil { .. } => None,
     }
 }

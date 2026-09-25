@@ -158,7 +158,7 @@ function renderCapabilityFunction(
       : "return result.rows;";
   }
 
-  const desc = cap.input_schema?.description ?? cap.name;
+  const desc = cap.inputs.payload?.description ?? cap.inputs.arguments?.description ?? cap.name;
   return `/** ${desc} */
 export async function ${cap.name}(${params}): Promise<${returnTypeTs}> {
   ${programBody}

@@ -95,23 +95,23 @@ pub fn value_predicate_matches(
             Ok(values_eq_loose(lhs, rhs))
         }
     };
-    if matches!(lhs, plasm_core::Value::Money(_)) || matches!(rhs, plasm_core::Value::Money(_)) {
-        if matches!(
+    if (matches!(lhs, plasm_core::Value::Money(_)) || matches!(rhs, plasm_core::Value::Money(_)))
+        && matches!(
             op,
             plasm_core::PlanPredicateOp::Lt
                 | plasm_core::PlanPredicateOp::Lte
                 | plasm_core::PlanPredicateOp::Gt
                 | plasm_core::PlanPredicateOp::Gte
-        ) {
-            let ordering = plasm_core::money::values_ord(lhs, rhs)
-                .map_err(|e| crate::RuntimeError::from(plasm_core::TypeError::from(e)))?;
-            return Ok(ordering.is_some_and(|o| match op {
-                plasm_core::PlanPredicateOp::Lt => o.is_lt(),
-                plasm_core::PlanPredicateOp::Lte => o.is_le(),
-                plasm_core::PlanPredicateOp::Gt => o.is_gt(),
-                _ => o.is_ge(),
-            }));
-        }
+        )
+    {
+        let ordering = plasm_core::money::values_ord(lhs, rhs)
+            .map_err(|e| crate::RuntimeError::from(plasm_core::TypeError::from(e)))?;
+        return Ok(ordering.is_some_and(|o| match op {
+            plasm_core::PlanPredicateOp::Lt => o.is_lt(),
+            plasm_core::PlanPredicateOp::Lte => o.is_le(),
+            plasm_core::PlanPredicateOp::Gt => o.is_gt(),
+            _ => o.is_ge(),
+        }));
     }
     Ok(match op {
         plasm_core::PlanPredicateOp::Eq => equal(lhs, rhs)?,

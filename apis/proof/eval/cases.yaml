@@ -76,8 +76,11 @@
     for human review (do not apply yet).
   tags: [invoke, suggestion]
   covers: [invoke]
-  reference_expr: >
-    Document(iota).annotation-suggestion-insert(agent_id="plasm-bot",by="plasm-bot",quote="Status",content="Status: green")
+  reference_expr: |-
+    class Reference(Program):
+        def build(self):
+            state = e6.get('iota')
+            return e4.get('iota').m11(agent_id="plasm-bot",by="plasm-bot",quote="Status",content="Status: green", base_token=state.base_token)
   expect:
     entities_any: [Document]
 
@@ -88,8 +91,11 @@
     so collaborators can accept or reject removing that text.
   tags: [invoke, suggestion]
   covers: [invoke]
-  reference_expr: >
-    Document(kappa).annotation-suggestion-delete(agent_id="plasm-bot",by="plasm-bot",quote="Draft watermark")
+  reference_expr: |-
+    class Reference(Program):
+        def build(self):
+            state = e6.get('kappa')
+            return e4.get('kappa').m10(agent_id="plasm-bot",by="plasm-bot",quote="Draft watermark", base_token=state.base_token)
   expect:
     entities_any: [Document]
 
@@ -100,8 +106,11 @@
     edit becomes real document content.
   tags: [invoke, suggestion]
   covers: [invoke]
-  reference_expr: >
-    Document(lambda).annotation-suggestion-accept(agent_id="plasm-bot",by="plasm-bot",mark_id="sug-42")
+  reference_expr: |-
+    class Reference(Program):
+        def build(self):
+            state = e6.get('lambda')
+            return e4.get('lambda').m9(agent_id="plasm-bot",by="plasm-bot",mark_id="sug-42", base_token=state.base_token)
   expect:
     entities_any: [Document]
 
@@ -122,7 +131,9 @@
     to force that precondition for one request.
   tags: [invoke, suggestion]
   covers: [invoke]
-  reference_expr: >
-    Document(nu).annotation-suggestion-reject(agent_id="plasm-bot",by="plasm-bot",mark_id="sug-1",base_token="tok-override-9")
+  reference_expr: |-
+    class Reference(Program):
+        def build(self):
+            return e4.get('nu').m12(agent_id="plasm-bot",by="plasm-bot",mark_id="sug-1",base_token="tok-override-9")
   expect:
     entities_any: [Document]

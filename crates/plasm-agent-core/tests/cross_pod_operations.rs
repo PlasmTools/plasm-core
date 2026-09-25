@@ -335,6 +335,7 @@ async fn cross_pod_rehydrate_preserves_operation_handle_monotonicity() {
                 dry_verdict: None,
                 display_map: Default::default(),
                 agent_seq: 0,
+                occurrences: Vec::new(),
                 agent_last_line: String::new(),
             }),
         )

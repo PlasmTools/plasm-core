@@ -376,6 +376,8 @@ fn widget_for_node(
             _ => PlanUxWidgetKind::ReadSurface,
         },
         ValidatedPlanNode::RelationTraversal(_) => PlanUxWidgetKind::RelationHop,
+        ValidatedPlanNode::MapBody(_) => PlanUxWidgetKind::ForEach,
+        ValidatedPlanNode::Capture(_) => PlanUxWidgetKind::Data,
         ValidatedPlanNode::Compute(n)
             if matches!(n.compute.op, crate::plasm_plan::ComputeOp::Render { .. }) =>
         {

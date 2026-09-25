@@ -112,7 +112,7 @@ pub(crate) async fn post_run_execute_session_inner(
     let plan_name = "http_execute_program";
     let pipeline = st.engine.prompt_pipeline();
     let cross = st.sessions.symbol_map_cross_cache();
-    let bundle = match crate::plasm_compile::compile_plasm_expression(
+    let bundle = match crate::plasm_compile::compile_program(
         pipeline,
         Some(cross),
         &sess,

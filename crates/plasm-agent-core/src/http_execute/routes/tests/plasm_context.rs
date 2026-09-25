@@ -2,10 +2,7 @@ use super::*;
 use crate::test_support::block_on_worker_stack;
 
 #[tokio::test]
-async fn open_wire_is_table_only() {
-    use plasm_core::prompt_render::{catalog_teaching_fence_info, markdown_fence_body_inner};
-    use plasm_core::TSV_TEACHING_TABLE_HEADER;
-
+async fn open_wire_preserves_python_reference_and_declarations() {
     let st = test_state_with_registry();
     let out = apply_capability_seeds(
         &st,
@@ -28,38 +25,14 @@ async fn open_wire_is_table_only() {
         .iter()
         .find(|w| w.mode == "open")
         .expect("open wave");
-    assert!(
-        !open.markdown_delta.lines().any(|l| {
-            let t = l.trim_start();
-            t.starts_with('#') && t.contains("Valid Plasm")
-        }),
-        "open wire must not include global grammar contract: {}",
-        open.markdown_delta.chars().take(400).collect::<String>()
-    );
-    assert!(
-        open.markdown_delta
-            .contains(TSV_TEACHING_TABLE_HEADER.trim_end()),
-        "open wire must include teaching table header"
-    );
+    assert!(open.markdown_delta.contains("class Program:"));
+    assert!(open.markdown_delta.contains("class e1"));
+    assert!(!open.markdown_delta.contains("plasm_expr\tMeaning"));
     let created = st
         .get_execute_session(&out.prompt_hash, &out.session_id)
         .await
         .expect("session row");
-    // Inspect the raw stored body: TableOnly extraction would hide an unwanted
-    // grammar prefix before this assertion could detect it.
-    let body = markdown_fence_body_inner(
-        &created.prompt_text,
-        catalog_teaching_fence_info(&created.entry_id),
-    )
-    .expect("stored teaching block uses the catalog fence");
-    assert!(
-        body.starts_with(TSV_TEACHING_TABLE_HEADER),
-        "stored teaching body must start with its table header"
-    );
-    assert!(
-        !body.lines().any(|l| l.starts_with('#')),
-        "stored execute prompt is table-only"
-    );
+    assert_eq!(open.markdown_delta, created.prompt_text);
 }
 
 #[tokio::test]
@@ -92,15 +65,8 @@ async fn open_wire_includes_seeded_abstract_entity_row() {
         "langmatrix LangItem seed must assign e1: {}",
         open.markdown_delta.chars().take(500).collect::<String>()
     );
-    let data_rows: Vec<_> = open
-        .markdown_delta
-        .lines()
-        .filter(|l| !l.starts_with('#') && !l.starts_with("```") && l.contains('\t'))
-        .collect();
-    assert!(
-        !data_rows.is_empty(),
-        "expected executable teaching rows, not header-only TSV"
-    );
+    assert!(open.markdown_delta.contains("class e1"));
+    assert!(open.markdown_delta.contains("def query("));
 }
 
 #[test]

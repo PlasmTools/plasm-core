@@ -121,9 +121,21 @@ async fn run_native_hydration() {
         full_embed: true,
         delayed: true,
     });
-    let program = "auth = Session.login()\nsaved = SavedNote{access_token=auth.access_token}\nnotes = saved => Note(_.note_id)\nowners = notes => _.owners\nowners";
+    let exposure = engine.exposure.as_ref().unwrap();
+    let symbol = |name| exposure.qualified_entity_symbol("matrix", name).unwrap();
+    let session = symbol("Session");
+    let saved = symbol("SavedNote");
+    let note = symbol("Note");
+    let cgs = &engine.catalogs["matrix"];
+    let login = plasm_core::prompt_render::python::capability_method_name(
+        cgs,
+        &exposure.to_symbol_map(),
+        "matrix",
+        &cgs.capabilities["login"],
+    );
+    let program = format!("class Read(Program):\n    def build(self):\n        auth = {session}.{login}()\n        saved = {saved}.query(access_token=auth.access_token)\n        notes = saved.flat_map(lambda row: {note}.get(row.note_id))\n        return notes.flat_map(lambda row: row.owners)\n");
     for _ in 0..2 {
-        let dry = engine.dry_run(program).unwrap();
+        let dry = engine.dry_run(&program).unwrap();
         let result = engine
             .run_plan_live(&dry.plan_commit_ref, transport.clone())
             .await

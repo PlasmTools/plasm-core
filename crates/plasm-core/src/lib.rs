@@ -445,3 +445,6 @@ pub mod boolean_surface;
 pub use boolean_surface::parse_boolean_filter;
 
 pub mod entity_projection;
+
+/// Recursive materialized value contracts shared by source frontends.
+pub mod value_contract;

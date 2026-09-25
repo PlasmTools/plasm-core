@@ -1,4 +1,4 @@
-//! Interactive path-expression REPL (`plasm-eval` / BAML for `:llm` mode).
+//! Interactive Python DAG REPL (`plasm-eval` / BAML for `:llm` mode).
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

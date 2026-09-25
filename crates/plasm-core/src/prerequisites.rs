@@ -380,7 +380,17 @@ impl PrerequisiteCatalog {
                                 .ok_or("missing consumer identity field")?
                                 .named_value(cgs)
                                 .map_err(|e| e.to_string())?;
-                            same_type(expected, value, cap_name)?;
+                            // A complete local identity inhabits its entity-reference domain.
+                            // A component of a compound key does not.
+                            let identity_reference = entity.key_vars.len() <= 1
+                                && field.as_str() == entity.id_field.as_str()
+                                && expected.field_type.entity_ref_target()
+                                    == Some(cap.domain.as_str())
+                                && expected.field_type.entity_ref_entry_id()
+                                    == cgs.entry_id.as_deref();
+                            if !identity_reference {
+                                same_type(expected, value, cap_name)?;
+                            }
                         }
                         ArgumentSource::ConsumerInput { input } => {
                             same_type(expected, input_type(cgs, cap, input)?, cap_name)?
@@ -1246,6 +1256,8 @@ where
     Ok(evidence)
 }
 
+// Compare both catalog contracts and their projection provenance together.
+#[allow(clippy::too_many_arguments)]
 fn projected_type_compatibility(
     consumer_cgs: &CGS,
     provider_cgs: &CGS,
@@ -1640,8 +1652,12 @@ mod tests {
                 ("source".into(), &source),
                 ("directory".into(), &directory),
             ]);
-            let candidates =
-                project_input_source_candidates(&catalogs, &[business.clone()], &|_| true).unwrap();
+            let candidates = project_input_source_candidates(
+                &catalogs,
+                std::slice::from_ref(&business),
+                &|_| true,
+            )
+            .unwrap();
             let candidate = candidates
                 .iter()
                 .find(|c| c.provider.catalog == "directory" && c.provider.capability == "read")
@@ -1777,7 +1793,7 @@ mod tests {
             let target = if reverse { "read" } else { "owners" };
             let authorize = |reference: &CapabilityRef| permitted || reference.capability != target;
             let catalogs = BTreeMap::from([("matrix".into(), &cgs)]);
-            let candidates = project_input_source_candidates(&catalogs, &[business.clone()], &authorize).unwrap();
+            let candidates = project_input_source_candidates(&catalogs, std::slice::from_ref(&business), &authorize).unwrap();
             let roundtrip: CGS = serde_json::from_slice(&serde_json::to_vec(&cgs).unwrap()).unwrap();
             let decoded = project_input_source_candidates(&BTreeMap::from([("matrix".into(), &roundtrip)]), &[business], &authorize).unwrap();
             proptest::prop_assert_eq!(&candidates, &decoded);
@@ -1928,6 +1944,65 @@ mod tests {
     }
 
     #[test]
+    fn prerequisite_identity_reference_requires_complete_local_target() {
+        let mut cgs = fixture();
+        cgs.bind_registry_entry_id("matrix");
+        cgs.capabilities.get_mut("read").unwrap().kind = crate::CapabilityKind::Get;
+        let mut reference = cgs.values["text"].clone();
+        reference.field_type = FieldType::EntityRef {
+            entry_id: cgs.entry_id.clone().unwrap().into(),
+            target: "BusinessRecord".into(),
+        };
+        cgs.values.insert("record_ref".into(), reference);
+        cgs.prerequisites
+            .contracts
+            .get_mut("scoped_value")
+            .unwrap()
+            .inputs
+            .insert("account".into(), "record_ref".into());
+        let input = cgs
+            .capabilities
+            .get_mut("acquire")
+            .unwrap()
+            .inputs
+            .arguments
+            .as_mut()
+            .unwrap();
+        if let crate::schema::InputType::Object { fields, .. } = &mut input.input_type {
+            fields[0].wire = crate::schema::InputFieldWire::Registry(
+                crate::ValueDomainKey::new("record_ref").unwrap(),
+            );
+        } else {
+            panic!("fixture has an object input");
+        }
+        cgs.prerequisites.requirements.get_mut("read").unwrap()[0]
+            .arguments
+            .insert(
+                "account".into(),
+                ArgumentSource::ConsumerIdentity { field: "id".into() },
+            );
+        cgs.prerequisites.validate(&cgs).unwrap();
+
+        cgs.values.get_mut("record_ref").unwrap().field_type = FieldType::EntityRef {
+            entry_id: "foreign".into(),
+            target: "BusinessRecord".into(),
+        };
+        assert!(cgs.prerequisites.validate(&cgs).is_err());
+        cgs.values.get_mut("record_ref").unwrap().field_type = FieldType::EntityRef {
+            entry_id: cgs.entry_id.clone().unwrap().into(),
+            target: "ProviderResult".into(),
+        };
+        assert!(cgs.prerequisites.validate(&cgs).is_err());
+        cgs.values.get_mut("record_ref").unwrap().field_type = FieldType::EntityRef {
+            entry_id: cgs.entry_id.clone().unwrap().into(),
+            target: "BusinessRecord".into(),
+        };
+        cgs.entities.get_mut("BusinessRecord").unwrap().key_vars =
+            vec!["id".into(), "scope".into()];
+        assert!(cgs.prerequisites.validate(&cgs).is_err());
+    }
+
+    #[test]
     fn declared_dependency_needs_no_intent_terms() {
         let cgs = fixture();
         let catalogs = BTreeMap::from([("matrix".into(), &cgs)]);
@@ -1971,8 +2046,8 @@ mod tests {
             "action acquisitions use taught e#.m# not e# / m#:\n{guidance}"
         );
         assert!(
-            guidance.contains("{…}"),
-            "query consumers use taught e#{{…}} not e# / m#:\n{guidance}"
+            guidance.contains(".query(...)"),
+            "query consumers use taught e#.query(…) not e# / m#:\n{guidance}"
         );
         assert!(
             !guidance.contains(" / "),
@@ -2043,7 +2118,7 @@ mod tests {
             // Unrelated graph size and identity representation do not affect a scoped request.
             let root = CapabilityRef { catalog: "matrix".into(), capability: "operate".into() };
             let alone = prerequisite_closure(&BTreeMap::from([("matrix".into(), &original)]),
-                &DeploymentBindings::default(), &[root.clone()], &BTreeSet::from(["matrix".into()])).unwrap();
+                &DeploymentBindings::default(), std::slice::from_ref(&root), &BTreeSet::from(["matrix".into()])).unwrap();
             let together = prerequisite_closure(&refs, &DeploymentBindings::default(), &[root],
                 &BTreeSet::from(["matrix".into(), "unrelated".into()])).unwrap();
             proptest::prop_assert_eq!(alone, together);
@@ -2160,7 +2235,7 @@ mod tests {
         .unwrap();
         let get_sym = symbols.entity_sym_for("matrix", "ProviderResult");
         assert!(
-            guidance.contains(&format!("{get_sym}(<id>)")),
+            guidance.contains(&format!("{get_sym}.get(...)")),
             "Get acquisition must name taught e#(<id>), got:\n{guidance}"
         );
         assert!(
@@ -2215,11 +2290,11 @@ mod tests {
         .unwrap();
         let get_sym = symbols.entity_sym_for("matrix", "ProviderResult");
         assert!(
-            guidance.contains(&format!("{get_sym}(\"account-a\")")),
+            guidance.contains(&format!("{get_sym}.get(\"account-a\")")),
             "constant Get identity must fill e#(\"…\"), got:\n{guidance}"
         );
         assert!(
-            !guidance.contains(&format!("{get_sym}(<id>)")),
+            !guidance.contains(&format!("{get_sym}.get(...)")),
             "filled identity should not also show the hole:\n{guidance}"
         );
         assert!(!guidance.contains(" / "));

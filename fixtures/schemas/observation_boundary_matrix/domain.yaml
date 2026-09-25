@@ -13,6 +13,10 @@ entities:
       id: {value_ref: text, required: true}
       value: {value_ref: integer, required: true}
 capabilities:
+  wire_query:
+    kind: query
+    entity: Wire
+    provides: [id, value]
   counter_get:
     kind: get
     entity: Counter

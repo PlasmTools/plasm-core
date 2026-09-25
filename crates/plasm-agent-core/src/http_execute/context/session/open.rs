@@ -5,8 +5,7 @@ use super::super::super::*;
 use super::super::backend::tenant_outbound_hosted_kv_for_entries;
 use super::super::seeds::{
     build_capability_exposure_plan, dedup_preserve_arrival_order, process_order_for_expand_group,
-    seeds_fully_exposed, sorted_entity_set_for_reuse_key, wrap_teaching_markdown_literal_block,
-    STALE_EXECUTE_BINDING_NOTICE,
+    seeds_fully_exposed, sorted_entity_set_for_reuse_key, STALE_EXECUTE_BINDING_NOTICE,
 };
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn execute_session_create_response_inner(
@@ -141,12 +140,15 @@ pub(crate) async fn execute_session_create_response_inner(
             );
             (names.clone(), built)
         };
-    let sym_cross = st.sessions.symbol_map_cross_cache();
-    let teaching_prompt = st
-        .engine
-        .prompt_pipeline()
-        .render_teaching_first_wave_for_session(cgs.as_ref(), &teaching_exposure, Some(sym_cross));
-    let mut prompt = wrap_teaching_markdown_literal_block(&teaching_prompt, body.entry_id.as_str());
+    let wave = plasm_core::prompt_render::python::prepare_python_teaching_wave(
+        &teaching_exposure,
+        &Default::default(),
+    )?;
+    let mut prompt = format!(
+        "{}\n\n```pyi\n{}\n```",
+        wave.language.unwrap_or_default(),
+        wave.declarations
+    );
     if symbol_space_reset {
         prompt = format!(
             "{}{}",
@@ -199,6 +201,7 @@ pub(crate) async fn execute_session_create_response_inner(
         bindings_map,
         compiled_catalogs_by_entry,
     );
+    session.python_teaching = wave.next_state;
     if let Some(principal) = principal {
         session.flow_policy = if let Some((tenant_id, ws, ps)) = flow_policy_scope {
             crate::flow_policy_session::resolve_project_flow_policy(st, tenant_id, ws, ps).await

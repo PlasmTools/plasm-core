@@ -1,0 +1,5 @@
+sample_get:
+  method: GET
+  path:
+    - {type: literal, value: samples}
+    - {type: var, name: id}

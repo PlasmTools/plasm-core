@@ -39,6 +39,9 @@ pub fn node_dependencies(node: &ValidatedPlanNode) -> Vec<String> {
     );
     push_unique(&mut out, node.uses_result().iter().map(|u| u.node.clone()));
     match node {
+        ValidatedPlanNode::MapBody(n) => {
+            push_unique(&mut out, [n.body.parent.source.as_str().into()])
+        }
         ValidatedPlanNode::Derive(n) => {
             push_unique(&mut out, std::iter::once(n.source.as_str().to_string()));
             push_unique(

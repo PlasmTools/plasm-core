@@ -60,7 +60,9 @@ pub fn session_scope_for_node<'a>(
                 entry_scoped_execute_session(es, Some(&it.effect_template.qualified_entity))?;
             Ok(SessionScope::EntryScoped { session: scoped })
         }
-        ValidatedPlanNode::Compute(_)
+        ValidatedPlanNode::MapBody(_)
+        | ValidatedPlanNode::Capture(_)
+        | ValidatedPlanNode::Compute(_)
         | ValidatedPlanNode::Derive(_)
         | ValidatedPlanNode::Data(_) => {
             if let Some(fed) = federation {

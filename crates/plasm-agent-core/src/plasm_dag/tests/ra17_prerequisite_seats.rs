@@ -139,3 +139,24 @@ done"#
     )
     .expect("matching provider catalogs must compile");
 }
+
+#[test]
+fn python_writes_keep_qualified_prerequisite_seats() {
+    let session = dual_session();
+    let symbols = session.teaching_exposure.as_ref().unwrap().symbol_map_arc();
+    let consumer = symbols.entity_sym_for("consumer", "AuthSession");
+    let source = symbols.entity_sym_for("source", "AuthSession");
+    let record = symbols.entity_sym_for("consumer", "Record");
+    let consumer_login = symbols.method_sym_for("consumer", "AuthSession", "login");
+    let source_login = symbols.method_sym_for("source", "AuthSession", "login");
+    let attach = symbols.method_sym_for("consumer", "Record", "attach");
+    let code = format!("class Attach(Program):\n    def build(self):\n        sw = {consumer}.{consumer_login}()\n        fs = {source}.{source_login}()\n        row = {record}.get(\"rec-1\")\n        done = row.{attach}(access_token=sw.access_token, file_path=\"/tmp/a\", source_access_token=fs.access_token)\n        return done\n");
+    crate::plasm_compile::compile_python_program(&session, &code).expect("matching seats");
+    let fanout = code.replace("done = row.", "done = row.flat_map(lambda item: item.").replace("source_access_token=fs.access_token)", "source_access_token=fs.access_token))");
+    crate::plasm_compile::compile_python_program(&session, &fanout).expect("matching fanout captures");
+    let error = crate::plasm_compile::compile_python_program(&session, &fanout.replace("source_access_token=fs.", "source_access_token=sw.")).unwrap_err();
+    assert!(error.contains("source:session"), "{error}");
+
+    let error = crate::plasm_compile::compile_python_program(&session, &code.replace("source_access_token=fs.", "source_access_token=sw.")).unwrap_err();
+    assert!(error.contains("source:session"), "{error}");
+}

@@ -355,6 +355,21 @@ pub(super) fn validate_compute_template(
         ));
     }
     match &t.op {
+        ComputeOp::Python { .. } => {
+            if t.schema.entity.is_some()
+                || t.schema.fields.len() != 1
+                || t.schema.fields[0].name.as_str() != "content"
+                || t.schema.fields[0].value_kind != SyntheticValueKind::String
+                || t.schema.fields[0].source.is_some()
+                || t.page_size.is_some()
+                || t.collection_alias.is_some()
+            {
+                return Err(
+                    "Python reduction requires one synthetic string content field and no paging"
+                        .into(),
+                );
+            }
+        }
         ComputeOp::Project { fields } if fields.is_empty() => {
             return Err(format!(
                 "plan.nodes[{node_index}].compute.project.fields must be non-empty"

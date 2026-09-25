@@ -488,6 +488,7 @@ pub struct ExecuteSession {
     pub entities: Vec<String>,
     /// Monotonic symbol map for incremental exposure + expression expand (exact seeds, expanded in waves).
     pub teaching_exposure: Option<TeachingExposureSession>,
+    pub python_teaching: plasm_core::prompt_render::python::PythonTeachingState,
     /// Increments on each successful [`expand_execute_teaching_session`] wave.
     pub domain_revision: u32,
     /// Session-pinned flow policy snapshot (inactive by default).
@@ -623,6 +624,7 @@ impl ExecuteSession {
             http_backend,
             entities,
             teaching_exposure,
+            python_teaching: Default::default(),
             domain_revision: 0,
             flow_policy: FlowPolicySnapshot::inactive_default(),
             principal,
@@ -970,6 +972,7 @@ impl ExecuteSession {
                 auto_async: accept.auto_async,
                 mcp_transport_key: accept.mcp_transport_key,
                 progress_host: accept.host,
+                occurrences: Vec::new(),
                 progress_tx,
                 terminal_tx: Some(terminal_tx),
                 comp: accept.comp,
@@ -1110,6 +1113,64 @@ impl ExecuteSession {
         }
     }
 
+    pub fn update_occurrence_progress(
+        &self,
+        handle: &OperationHandle,
+        event: crate::occurrence_progress::OccurrenceProgress,
+    ) {
+        let stats = self.live_run_notify_stats(None);
+        let mut map = self
+            .operation_by_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let Some(op) = map.get_mut(handle) else {
+            return;
+        };
+        if op.phase != crate::operation::OperationPhase::Running
+            || !crate::occurrence_progress::update(&mut op.occurrences, event.clone())
+        {
+            return;
+        }
+        op.agent_emit.seq += 1;
+        let seq = op.agent_emit.seq;
+        let line = crate::operation_progress::render_op_wire_line(
+            handle,
+            crate::operation_progress::OpWireSig::Running,
+            Some(&op.progress),
+            op.plan_commit_ref.as_ref(),
+            op.dry_verdict,
+            None,
+        );
+        op.agent_emit.last_line = line.clone();
+        let host = op.progress_host.as_ref().and_then(|w| w.upgrade());
+        let tx = op.progress_tx.clone();
+        let transport = op.mcp_transport_key.clone();
+        let commit = op.plan_commit_ref.clone();
+        // Publish deltas under the sequence lock: a later delta must not overtake
+        // an earlier update for a different occurrence. These sends never await.
+        let _ = tx.send(crate::operation_progress::OpProgressEvent {
+            seq,
+            line: line.clone(),
+            terminal: false,
+            stats,
+            occurrences: vec![event.clone()],
+            occurrence_snapshot: false,
+        });
+        if let (Some(host), Some(transport)) = (host, transport) {
+            host.op_progress_hub.queue_mcp_notify(
+                &transport,
+                &line,
+                seq,
+                commit.as_ref(),
+                stats,
+                vec![event],
+                false,
+            );
+        }
+        drop(map);
+        self.persist_operation_state(handle, crate::operation_persist::PersistUrgency::Coalesced);
+    }
+
     fn fanout_op_line(
         &self,
         handle: &OperationHandle,
@@ -1131,6 +1192,8 @@ impl ExecuteSession {
                     line: line.to_string(),
                     terminal,
                     stats,
+                    occurrences: op.occurrences.clone(),
+                    occurrence_snapshot: true,
                 });
             if let (Some(st), Some(tk)) = (st, op.mcp_transport_key.as_deref()) {
                 st.op_progress_hub.queue_mcp_notify(
@@ -1139,6 +1202,8 @@ impl ExecuteSession {
                     seq,
                     op.plan_commit_ref.as_ref(),
                     stats,
+                    op.occurrences.clone(),
+                    true,
                 );
             }
         }
@@ -1425,6 +1490,13 @@ impl ExecuteSession {
             if op.phase != crate::operation::OperationPhase::Running {
                 return;
             }
+            for event in &mut op.occurrences {
+                if !event.terminal() {
+                    event.phase = crate::occurrence_progress::OccurrencePhase::Failed;
+                    event.error = Some(error.clone());
+                    event.stage = None;
+                }
+            }
             op.phase = crate::operation::OperationPhase::Failed;
             op.error = Some(error);
         }
@@ -1449,6 +1521,13 @@ impl ExecuteSession {
             return true;
         }
         op.cancel.cancel();
+        for event in &mut op.occurrences {
+            if !event.terminal() {
+                event.phase = crate::occurrence_progress::OccurrencePhase::Cancelled;
+                event.error = Some("operation cancelled".into());
+                event.stage = None;
+            }
+        }
         op.phase = crate::operation::OperationPhase::Cancelled;
         drop(map);
         self.notify_operation_terminal(handle, crate::operation::OperationPhase::Cancelled);

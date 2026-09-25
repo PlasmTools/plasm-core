@@ -111,9 +111,7 @@ pub fn quoted_literal_hint(
     quoted: &str,
     program_labels: Option<&BTreeSet<String>>,
 ) -> Option<String> {
-    let Some(head) = quoted.split('.').next() else {
-        return None;
-    };
+    let head = quoted.split('.').next()?;
     if !is_identifier_phrase(head) {
         return None;
     }

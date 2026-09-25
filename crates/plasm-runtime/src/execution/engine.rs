@@ -143,8 +143,10 @@ impl ExecutionEngine {
         // Keep the potentially large execution future out of each task-local wrapper.
         // Scope nesting alone establishes the poll-time context; intermediate async
         // blocks duplicated its state and debug poll frames at every level.
-        let fut = Box::pin(fut);
-        EXECUTION_COMPILED_CATALOG
+        // The result can also be large (ExecutionResult). Keep it indirect while
+        // it crosses the nested task-local poll frames on NAPI worker stacks.
+        let fut = Box::pin(async move { Box::new(fut.await) });
+        *EXECUTION_COMPILED_CATALOG
             .scope(
                 compiled_catalog,
                 EXECUTION_EXECUTE_SESSION.scope(
@@ -651,7 +653,7 @@ impl ExecutionEngine {
                 let get = get.clone();
                 let ambient = view_ambient;
                 let stream = Box::pin(async_stream::try_stream! {
-                    let res = self.execute_get(&get, cgs, mat, execution_mode, &ambient).await?;
+                    let res = Box::pin(self.execute_get(&get, cgs, mat, execution_mode, &ambient)).await?;
                     yield PageResult::from_execution_result(res);
                 });
                 Ok(stream)
@@ -659,7 +661,7 @@ impl ExecutionEngine {
             Expr::Create(create) => {
                 let create = create.clone();
                 let stream = Box::pin(async_stream::try_stream! {
-                    let res = self.execute_create(&create, cgs, mat, execution_mode).await?;
+                    let res = Box::pin(self.execute_create(&create, cgs, mat, execution_mode)).await?;
                     yield PageResult::from_execution_result(res);
                 });
                 Ok(stream)
@@ -667,7 +669,7 @@ impl ExecutionEngine {
             Expr::Delete(delete) => {
                 let delete = delete.clone();
                 let stream = Box::pin(async_stream::try_stream! {
-                    let res = self.execute_delete(&delete, cgs, mat, execution_mode).await?;
+                    let res = Box::pin(self.execute_delete(&delete, cgs, mat, execution_mode)).await?;
                     yield PageResult::from_execution_result(res);
                 });
                 Ok(stream)
@@ -675,7 +677,7 @@ impl ExecutionEngine {
             Expr::Invoke(invoke) => {
                 let invoke = invoke.clone();
                 let stream = Box::pin(async_stream::try_stream! {
-                    let res = self.execute_invoke(&invoke, cgs, mat, execution_mode).await?;
+                    let res = Box::pin(self.execute_invoke(&invoke, cgs, mat, execution_mode)).await?;
                     yield PageResult::from_execution_result(res);
                 });
                 Ok(stream)
@@ -683,9 +685,7 @@ impl ExecutionEngine {
             Expr::Chain(chain) => {
                 let chain = chain.clone();
                 let stream = Box::pin(async_stream::try_stream! {
-                    let res = self
-                        .execute_chain(&chain, cgs, mat, execution_mode, chain_consume, opts.clone())
-                        .await?;
+                    let res = Box::pin(self.execute_chain(&chain, cgs, mat, execution_mode, chain_consume, opts.clone())).await?;
                     yield PageResult::from_execution_result(res);
                 });
                 Ok(stream)

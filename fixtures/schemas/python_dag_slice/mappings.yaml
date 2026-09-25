@@ -1,0 +1,19 @@
+item_query:
+  method: GET
+  path: [{type: literal, value: items}]
+tag_query:
+  method: GET
+  path:
+    - {type: literal, value: items}
+    - {type: var, name: item_id}
+    - {type: literal, value: tags}
+
+item_get:
+  method: GET
+  path:
+    - {type: literal, value: items}
+    - {type: var, name: id}
+
+item_touch:
+  method: POST
+  path: [{type: literal, value: touch}]

@@ -1,0 +1,21 @@
+record_get:
+  method: GET
+  path:
+  - {type: literal, value: records}
+  - {type: var, name: id}
+  response: single
+record_write:
+  method: PATCH
+  path:
+  - {type: literal, value: records}
+  - {type: var, name: id}
+  body: {type: var, name: input}
+  response: single
+record_batch:
+  method: POST
+  path:
+  - {type: literal, value: records}
+  - {type: var, name: id}
+  - {type: literal, value: batch}
+  body: {type: var, name: input}
+  response: single

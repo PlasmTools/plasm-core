@@ -35,7 +35,7 @@ export async function ensureStubSession(builder: ProgramBuilder): Promise<void> 
     if (catalogRoot) {
       await engine.loadCatalog(await loadPackedCatalog(catalogRoot));
     }
-    const entities = [...(builder.stubEntities ?? [])].sort((a, b) => a.localeCompare(b));
+    const entities = [...(builder.stubEntities ?? [])].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
     if (!entities.length) return;
     await engine.synthesizeTeaching(
       "",
@@ -69,20 +69,24 @@ export interface ExecuteRowsResult<TRow> {
   rows: TRow[];
 }
 
-/** Plasm string literal from a TypeScript string (safe quoting). */
-export function plasmLiteral(value: string): string {
-  return JSON.stringify(value);
+/** Materialized values become Python literals without erasing nested types. */
+export function plasmLiteral(value: unknown): string {
+  if (value === null) return "None";
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "boolean") return value ? "True" : "False";
+  if (typeof value === "number") return plasmNumber(value);
+  if (Array.isArray(value)) return `[${value.map(plasmLiteral).join(", ")}]`;
+  if (value && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype)
+    return `{${Object.entries(value).map(([key, item]) => `${JSON.stringify(key)}: ${plasmLiteral(item)}`).join(", ")}}`;
+  throw new Error("Expected a materialized Python literal; undefined and executable objects are not values");
 }
-
-/** Plasm numeric literal from a TypeScript number. */
 export function plasmNumber(value: number | undefined): string {
-  if (value === undefined || Number.isNaN(value)) return "0";
+  if (typeof value !== "number" || !Number.isFinite(value)) throw new Error("Expected a finite number");
   return String(value);
 }
-
-/** Plasm boolean literal. */
 export function plasmBoolean(value: boolean | undefined): string {
-  return value ? "true" : "false";
+  if (typeof value !== "boolean") throw new Error("Expected a boolean");
+  return value ? "True" : "False";
 }
 
 export interface DottedArgSpec {
@@ -97,12 +101,13 @@ export function buildDottedArgs(specs: DottedArgSpec[]): string {
   const parts: string[] = [];
   for (const { key, value, kind = "literal", optional } of specs) {
     if (optional && value === undefined) continue;
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw new Error(`Invalid Python keyword: ${key}`);
     const emit =
       kind === "number"
         ? plasmNumber(value as number)
         : kind === "boolean"
           ? plasmBoolean(value as boolean)
-          : plasmLiteral(String(value ?? ""));
+          : plasmLiteral(value);
     parts.push(`${key}=${emit}`);
   }
   return parts.join(", ");
@@ -111,11 +116,13 @@ export function buildDottedArgs(specs: DottedArgSpec[]): string {
 function parseRowsJson<TRow>(rowsJson: string | undefined): TRow[] {
   if (!rowsJson?.trim()) return [];
   const parsed = JSON.parse(rowsJson) as unknown;
-  if (Array.isArray(parsed)) return parsed as TRow[];
-  if (parsed && typeof parsed === "object" && Array.isArray((parsed as { results?: unknown }).results)) {
-    return (parsed as { results: TRow[] }).results;
+  // A generated call has exactly one explicit return. Extra envelopes are
+  // operation receipts, appended by the host after that return.
+  const envelope = Array.isArray(parsed) ? parsed[0] : parsed;
+  if (envelope && typeof envelope === "object" && Array.isArray(envelope.rows)) {
+    return envelope.rows as TRow[];
   }
-  return [];
+  throw new Error("Expected a Plasm row-result envelope");
 }
 
 function extractRowsFromLive(live: {

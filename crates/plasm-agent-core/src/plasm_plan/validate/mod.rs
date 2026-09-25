@@ -467,6 +467,9 @@ fn validated_node_from_raw(
     let depends_on = typed_node_ids(&node.depends_on)?;
     let uses_result = enrich_uses_result_provenance(&node.uses_result, plan, node.id.as_str())?;
     match node.kind {
+        PlanNodeKind::MapBody | PlanNodeKind::Capture => {
+            Err("scoped nodes require the canonical comp interface".into())
+        }
         kind @ (PlanNodeKind::Query
         | PlanNodeKind::Search
         | PlanNodeKind::Get

@@ -56,20 +56,6 @@ pub(crate) fn taught_identity_mutator_invoke_seat(
     )
 }
 
-/// Prerequisite / legend basename: `{eN(<id>).mK}` without dummy args.
-pub(crate) fn taught_identity_mutator_basename(
-    entity: &str,
-    method: &str,
-    id_wire: &str,
-    ent: Option<&EntityDef>,
-    cgs: Option<&CGS>,
-) -> String {
-    format!(
-        "{}.{method}",
-        taught_get_identity_receiver(entity, id_wire, ent, cgs)
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use crate::loader::load_schema_dir;

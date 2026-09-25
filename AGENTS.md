@@ -42,8 +42,16 @@ Use Hermit for mock-backed transport checks when an OpenAPI spec is available, t
 ```bash
 hermit --specs path/to/openapi.json --port 9090 --use-examples
 cargo run -p plasm-repl --features baml -- --schema apis/<api> --backend http://localhost:9090
-# In-session: expressions from teaching table; optional :output table
+# In-session: :load program.py, :plan, then :run
 ```
+
+## Program admission
+
+Production entry points accept Python `Program` subclasses over the typed DAG.
+Serve the library reference once and add typed domain declarations incrementally;
+TSV remains a result format. Native syntax is an internal matrix oracle only.
+See `doc-site/docs/reference/plasm-language-definition.md` and
+`crates/plasm-e2e/tests/plasm_language_matrix/PYTHON-COVERAGE.md`.
 
 ## Core Boundaries
 
@@ -65,5 +73,5 @@ Durable, non-obvious notes for working in this OSS subtree on a Cursor Cloud VM.
 - **`plasm-trace-sink` (SaaS ops binary)**: durable Iceberg ingest for the execution-trace lane (`PLASM_TRACE_SINK_URL`); not OTEL and not a Cargo dep of the appliance. Often fails to build in this OSS subtree (floating `datafusion_iceberg` vs workspace `datafusion` pin). Build/lint/test with `--exclude plasm-trace-sink`.
 - **Schema overlay fixtures** live in this tree at `fixtures/schemas/*_overlay/` (not the parent monorepo). `plasm-core` / `plasm-runtime` lib tests `include_str!` them via `CARGO_MANIFEST_DIR/../../fixtures/schemas/`. `workflow_matrix` still lives only in the private super-repo, so some `plasm-e2e` tests that probe parent paths will skip or fail here. `plasm-agent-core`'s `cross_pod_operations` test overflows the type-layout recursion limit on current rustc. Overlay-free smoke: `cargo test --workspace --exclude plasm-trace-sink --no-fail-fast` (network/live tests self-ignore).
 - **Lint**: `scripts/ci/rust-quality.sh` runs `cargo fmt --all -- --check` + `cargo clippy --workspace --all-targets -- -D warnings`. Under this OSS subtree/newer clippy it will trip on the items above; `cargo clippy --workspace --exclude plasm-trace-sink` (lib/bins) is clean apart from one newer style lint in `plasm-runtime/src/view_template.rs`.
-- **Running live queries**: `plasm-cgs` (package `plasm-cli`) does schema validation/round-trips; after BAML generation, the live REPL is `cargo run -p plasm-repl --features baml -- --schema apis/<x> --backend <url>` (pipe an expression then `:quit` on stdin for non-interactive use; get-by-id form is `Entity(id)`). Debug builds can **stack-overflow** on large recursive catalogs (e.g. `pokeapi`) because debug stack frames are larger — use a small flat catalog (`xkcd`, backend `https://xkcd.com`) or build `--release` for those.
+- **Running live queries**: `plasm-cgs` (package `plasm-cli`) does schema validation/round-trips; after BAML generation, the live REPL is `cargo run -p plasm-repl --features baml -- --schema apis/<x> --backend <url>` (load a complete Python `Program` subclass with `:load`, then use `:plan` and `:run`; use the served entity Get signature). Debug builds can **stack-overflow** on large recursive catalogs (e.g. `pokeapi`) because debug stack frames are larger — use a small flat catalog (`xkcd`, backend `https://xkcd.com`) or build `--release` for those.
 - **Appliance**: `cargo run -p plasm-server -- --no-tui --schema fixtures/schemas/capability_with_input` boots headless, **auto-starts an embedded Postgres** (`pg-embed`), and serves HTTP+MCP on `127.0.0.1:3000` (`/v1/health`, `/v1/registry`, `/execute`). Pass a split catalog directory (`domain.yaml` + `mappings.yaml`) or a packaged plugin dir.

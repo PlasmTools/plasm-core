@@ -78,7 +78,7 @@ function renderBuildDottedArgsCall(args: DottedArgCodegen[]): string {
   return `buildDottedArgs([${entries}])`;
 }
 
-/** Generated TypeScript statements that set `program` (uses `buildDottedArgs`, `plasmLiteral`, …). */
+/** Generate one complete Python DAG using the compiler's declared binding. */
 export function renderProgramStatements(
   binding: CapabilityBinding,
   cap: CapabilityIntrospectionJson,
@@ -87,97 +87,32 @@ export function renderProgramStatements(
   entityIdField: string,
   inputVar: string,
 ): string {
-  const sym = binding.entitySymbol;
-  const dotted = renderBuildDottedArgsCall(
-    dottedArgsCodegen(cap, catalogValues, shape, entityIdField, inputVar),
-  );
-
-  switch (shape) {
-    case "RootQuery":
-      return `const program = ${JSON.stringify(sym)};`;
-    case "ScopedQuery": {
-      const args = dottedArgsCodegen(cap, catalogValues, shape, entityIdField, inputVar);
-      const dottedCall = renderBuildDottedArgsCall(args);
-      return `const preds = ${dottedCall};
-  const program = preds ? \`${sym}{\${preds}}\` : ${JSON.stringify(sym)};`;
-    }
-    case "GetById":
-      return `const program = \`${sym}(\${plasmLiteral(${inputVar}.${entityIdField})})\`;`;
-    case "SearchText": {
-      const q = searchFieldName(cap) ?? "q";
-      return `const program = \`${sym}~\${plasmLiteral(${inputVar}.${q})}\`;`;
-    }
-    case "SearchFiltered": {
-      const q = searchFieldName(cap) ?? "q";
-      if (binding.searchSurface === "named-dot" && binding.searchMethodSegment) {
-        const body = invokeBodyFields(cap, shape, entityIdField);
-        const allArgs = body.map((f) => ({
-          key: f.name,
-          valueExpr: `${inputVar}.${f.name}`,
-          kind: emissionKindForField(f, catalogValues),
-          optional: !f.required,
-        }));
-        const qField = body.find((f) => f.name === q);
-        if (!qField) {
-          allArgs.unshift({
-            key: q,
-            valueExpr: `${inputVar}.${q}`,
-            kind: "literal" as const,
-            optional: false,
-          });
+  const api = cap.python;
+  if (api.unavailable) return `const program: string = (() => { throw new Error(${JSON.stringify(`${cap.name}: ${api.unavailable}`)}); })();`;
+  const parameters = [...api.parameters];
+  for (const schema of [cap.inputs.payload, cap.inputs.arguments]) {
+    if (schema?.input_type.type !== "union") continue;
+    for (const variant of schema.input_type.variants) {
+      // Preserve supplied fields; Python rejects mixtures of alternatives.
+      for (const field of [{name: variant.wire.field, required: false,
+        input_type: {type: "value" as const, field_type: "string" as const}}, ...variant.fields]) {
+        if (!parameters.some(existing => existing.name === field.name)) {
+          parameters.push({...field, required: false});
         }
-        const dottedCall = renderBuildDottedArgsCall(allArgs);
-        return `const args = ${dottedCall};
-  const program = \`${sym}.${binding.searchMethodSegment}(\${args})\`;`;
       }
-      const args = dottedArgsCodegen(cap, catalogValues, shape, entityIdField, inputVar);
-      const dottedCall = renderBuildDottedArgsCall(args);
-      return `const filterArgs = ${dottedCall};
-  const program = filterArgs
-    ? \`${sym}~\${plasmLiteral(${inputVar}.${q})}{\${filterArgs}}\`
-    : \`${sym}~\${plasmLiteral(${inputVar}.${q})}\`;`;
     }
-    case "RootCreate":
-      return `const args = ${dotted};
-  const program = \`${sym}.create(\${args})\`;`;
-    case "ScopedUpdate":
-      return `const args = ${dotted};
-  const program = \`${sym}(\${plasmLiteral(${inputVar}.${entityIdField})}).update(\${args})\`;`;
-    case "ScopedAction": {
-      const wire = binding.methodWire;
-      const method = binding.methodSymbol ? `.${binding.methodSymbol}` : `.${wire}`;
-      return `const program = \`${sym}(\${plasmLiteral(${inputVar}.${entityIdField})})${method}()\`;`;
-    }
-    case "ScopedDelete":
-      return `const program = \`${sym}(\${plasmLiteral(${inputVar}.${entityIdField})}).delete()\`;`;
-    case "MethodUnion": {
-      const m = binding.methodSymbol ?? "m1";
-      return `const program = \`${sym}.${m}(\${plasmLiteral("v1")})\`;`;
-    }
-    case "MethodObject": {
-      const m = binding.methodSymbol ?? binding.methodWire;
-      return `const args = ${dotted};
-  const program = \`${sym}.${m}(\${args})\`;`;
-    }
-    default:
-      return `const program = ${JSON.stringify(sym)};`;
   }
-}
-
-/** @deprecated Prefer {@link renderProgramStatements} — avoids nested-template syntax errors. */
-export function renderProgramExpr(
-  binding: CapabilityBinding,
-  cap: CapabilityIntrospectionJson,
-  catalogValues: Record<string, import("./catalog-introspection.js").NamedValueSchemaJson>,
-  shape: CapabilityInvokeShape,
-  entityIdField: string,
-  inputVar: string,
-): string {
-  void binding;
-  void cap;
-  void catalogValues;
-  void shape;
-  void entityIdField;
-  void inputVar;
-  return '""';
+  const args = parameters
+    .filter(field => !((api.receiver || cap.kind === "get") && api.identity.includes(field.name)))
+    .map(field => ({ key: field.name, valueExpr: `${inputVar}[${JSON.stringify(field.name)}]`,
+      kind: emissionKindForField(field, catalogValues), optional: !field.required }));
+  const identity = api.identity.map(key => ({ key, valueExpr: `${inputVar}[${JSON.stringify(key)}]`, kind: "literal" as const, optional: false }));
+  const identityCode = identity.length === 1 ? `plasmLiteral(${identity[0]!.valueExpr})` : renderBuildDottedArgsCall(identity);
+  const receiver = api.receiver ? `${api.entity_symbol}.get(\${identity})` : api.entity_symbol;
+  const call = cap.kind === "get" ? `${api.entity_symbol}.${api.method}(\${[identity, args].filter(Boolean).join(", ")})` : `${receiver}.${api.method}(\${args})`;
+  return [
+    `const identity = ${cap.kind === "get" || api.receiver ? identityCode : '""'};`,
+    `const args = ${renderBuildDottedArgsCall(args)};`,
+    'const program = `class Invoke(Program):\\n    def build(self):\\n        return ' + call + '\\n`;',
+  ].join("\n  ");
 }

@@ -132,6 +132,10 @@ pub struct PlanDryStep {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanDryOp {
+    Python {
+        entity: String,
+        per_row: bool,
+    },
     Surface {
         kind: PlanNodeKind,
         expr: String,
@@ -320,6 +324,14 @@ pub fn render_plan_dry_compact_text(
 /// Operator-facing step title for synthetic IR nodes (not tuned `read_1`/`compute_2` labels).
 pub(crate) fn human_ux_headline_for_op(op: &PlanDryOp) -> String {
     match op {
+        PlanDryOp::Python { entity, per_row } => format!(
+            "Python {} of {entity}",
+            if *per_row {
+                "per-row rendering"
+            } else {
+                "reduction"
+            }
+        ),
         PlanDryOp::Surface { kind, .. } => match kind {
             PlanNodeKind::Query | PlanNodeKind::Search | PlanNodeKind::Get => "Read list".into(),
             PlanNodeKind::Create => "Create".into(),
@@ -362,6 +374,14 @@ pub(crate) fn human_ux_headline_for_op(op: &PlanDryOp) -> String {
 /// Secondary line for plan UX — resolved wire names in predicate/field text.
 pub(crate) fn human_ux_summary_for_op(op: &PlanDryOp) -> String {
     match op {
+        PlanDryOp::Python { entity, per_row } => format!(
+            "Python {} of {entity}",
+            if *per_row {
+                "per-row rendering"
+            } else {
+                "reduction"
+            }
+        ),
         PlanDryOp::Filter { predicates } if !predicates.is_empty() => {
             format!("Where {}", predicates.join(", "))
         }
@@ -413,6 +433,14 @@ pub(crate) fn human_ux_summary_for_op(op: &PlanDryOp) -> String {
 
 pub(crate) fn render_plan_dry_op(op: &PlanDryOp) -> String {
     match op {
+        PlanDryOp::Python { entity, per_row } => format!(
+            "{} {entity} -> str",
+            if *per_row {
+                "python_map"
+            } else {
+                "python_reduce"
+            }
+        ),
         PlanDryOp::Surface { kind, expr } => format!("{} {expr}", render_kind(*kind)),
         PlanDryOp::Project { fields } => format!("project {}", fields.join(", ")),
         PlanDryOp::Filter { predicates } => format!("filter {}", predicates.join(", ")),
@@ -472,6 +500,9 @@ fn compact_op_from_node(
     display_map: &HashMap<String, String>,
 ) -> PlanDryOp {
     match node {
+        ValidatedPlanNode::MapBody(_) | ValidatedPlanNode::Capture(_) => PlanDryOp::Data {
+            summary: crate::plasm_plan_run::render_node_operation(node),
+        },
         ValidatedPlanNode::Surface(s) => PlanDryOp::Surface {
             kind: s.kind,
             expr: surface_compact_expr(s, es),
@@ -517,11 +548,24 @@ fn compact_op_from_compute(
 ) -> PlanDryOp {
     let _ = display_map;
     match &compute.op {
+        ComputeOp::Python {
+            entity,
+            per_row,
+            input_schema,
+            ..
+        } => PlanDryOp::Python {
+            entity: if input_schema.is_some() {
+                "Row".into()
+            } else {
+                entity.clone()
+            },
+            per_row: *per_row,
+        },
         ComputeOp::Project { fields } => PlanDryOp::Project {
             fields: fields.keys().map(|k| k.as_str().to_string()).collect(),
         },
         ComputeOp::Filter { predicates } => PlanDryOp::Filter {
-            predicates: vec![predicates.render(&render_predicate_compact)].into(),
+            predicates: vec![predicates.render(&render_predicate_compact)],
         },
         ComputeOp::GroupBy { keys, aggregates } => PlanDryOp::GroupBy {
             keys: keys.iter().map(|k| k.dotted()).collect(),
@@ -816,6 +860,8 @@ fn render_kind(kind: PlanNodeKind) -> &'static str {
         PlanNodeKind::ForEach => "for_each",
         PlanNodeKind::IterateUntil => "iterate_until",
         PlanNodeKind::Relation => "relation",
+        PlanNodeKind::MapBody => "map_body",
+        PlanNodeKind::Capture => "capture",
     }
 }
 
@@ -884,6 +930,14 @@ fn next_synthetic_plan_label(
     counters: &mut SyntheticPlanLabelCounters,
 ) -> String {
     match node {
+        ValidatedPlanNode::MapBody(_) => {
+            counters.f += 1;
+            format!("map_body_{}", counters.f)
+        }
+        ValidatedPlanNode::Capture(_) => {
+            counters.x += 1;
+            format!("capture_{}", counters.x)
+        }
         ValidatedPlanNode::Surface(surface) => match surface.effect_class {
             EffectClass::Read => {
                 counters.r += 1;

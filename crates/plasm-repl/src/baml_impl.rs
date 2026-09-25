@@ -1,4 +1,4 @@
-//! Interactive REPL binary: path expressions, optional `:llm` mode via BAML (`plasm-eval`).
+//! Interactive REPL binary: Python Programs, optional `:llm` mode via BAML (`plasm-eval`).
 //!
 //! Split from `plasm` so HTTP/MCP builds and CI do not compile `plasm-eval` / generated `baml_client`.
 
@@ -8,7 +8,7 @@ use plasm_agent::output::OutputFormat;
 use plasm_agent::{
     backend_normalize, catalog_data, cli_builder, init_agent_runtime, AgentCliSurface,
 };
-use plasm_core::{PromptPipelineConfig, PromptRenderMode};
+use plasm_core::PromptPipelineConfig;
 use plasm_runtime::{AuthResolver, ExecutionConfig, ExecutionEngine, ExecutionMode};
 
 #[path = "repl.rs"]
@@ -100,12 +100,7 @@ pub async fn run_repl_main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let prompt_focus = matches.get_one::<String>("focus").cloned();
-    let render_mode = matches
-        .get_one::<String>("symbol_tuning")
-        .map(|s| PromptRenderMode::parse_user_facing_or_default(s))
-        .unwrap_or_default();
-    let prompt_pipeline =
-        PromptPipelineConfig::for_cli_focus(prompt_focus.as_deref()).with_render_mode(render_mode);
+    let prompt_pipeline = PromptPipelineConfig::default();
 
     let config = ExecutionConfig {
         base_url: Some(backend.to_string()),
@@ -128,7 +123,7 @@ pub async fn run_repl_main() -> Result<(), Box<dyn std::error::Error>> {
     .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
     plasm_agent::schema_overlay_session::eprint_schema_overlay_status(cgs.as_ref());
 
-    repl::run_repl(cgs.as_ref(), &engine, mode, output_format, prompt_focus).await?;
+    repl::run_repl(cgs.as_ref(), engine, mode, output_format, prompt_focus).await?;
 
     Ok(())
 }

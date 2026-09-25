@@ -4,6 +4,27 @@ use super::super::row::MatrixRow;
 
 pub(crate) const ROWS: &[MatrixRow] = &[
     MatrixRow {
+        id: "lang_relation_empty_fanout",
+        program: "items = LangItem | where id = \"missing\"\ntags = items => _.tags\ntags",
+        surface_line: false,
+        federated: false,
+        features: &["relation_empty_fanout", "dry_live_parity"],
+        min_node_results: 2,
+        expect_markdown_substrings: &["tags"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_relation_one_chain",
+        program:
+            "summary = LangItem(\"i1\").summary\ndetail = summary.detail\ndetail | select id, body",
+        surface_line: false,
+        federated: false,
+        features: &["relation_one_chain", "dry_live_parity"],
+        min_node_results: 2,
+        expect_markdown_substrings: &["```tsv", "body"],
+        expect_live_error: None,
+    },
+    MatrixRow {
         id: "lang_render_derived_shape",
         program: r#"items = LangItem("i1")
 mapped = items => { renamed: _.id }

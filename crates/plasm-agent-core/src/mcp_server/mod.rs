@@ -72,6 +72,7 @@ mod artifact_access;
 mod artifact_resolve;
 mod call_tool_dispatch;
 mod committed_plasm_run;
+pub use committed_plasm_run::compile_page_continuation;
 #[cfg(test)]
 mod future_size_probe;
 mod host_fault;

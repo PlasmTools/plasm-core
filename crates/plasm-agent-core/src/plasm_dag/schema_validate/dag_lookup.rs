@@ -117,10 +117,10 @@ pub(in crate::plasm_dag) fn resolve_qualified_entity_for_dag_source(
             } => {
                 return Some(qualified_entity.clone());
             }
-            DagNodeSource::Compute { source, .. } => node_id = source.clone(),
-            DagNodeSource::Derive { .. }
-            | DagNodeSource::ScalarExtract { .. }
-            | DagNodeSource::Data(_) => return None,
+            DagNodeSource::Compute { source, .. } | DagNodeSource::Derive { source, .. } => {
+                node_id = source.clone()
+            }
+            DagNodeSource::ScalarExtract { .. } | DagNodeSource::Data(_) => return None,
         }
     }
     None

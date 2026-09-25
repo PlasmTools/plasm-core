@@ -87,20 +87,15 @@ async fn execute_plasm_tool_dry_run_inner(
     let cross = ctx.host.sessions.symbol_map_cross_cache();
 
     let mut phase = Instant::now();
-    let bundle = match crate::compile_plasm_expression(
-        pipeline,
-        Some(cross),
-        ctx.es.as_ref(),
-        &plan_name,
-        program,
-    ) {
-        Ok(b) => b,
-        Err(stage) => {
-            record_mcp_plasm_dry_run_phase("compile", phase.elapsed());
-            record_mcp_plasm_dry_run_phase("total", total_started.elapsed());
-            return Ok(plan_result_from_stage(&ctx, program, stage));
-        }
-    };
+    let bundle =
+        match crate::compile_program(pipeline, Some(cross), ctx.es.as_ref(), &plan_name, program) {
+            Ok(b) => b,
+            Err(stage) => {
+                record_mcp_plasm_dry_run_phase("compile", phase.elapsed());
+                record_mcp_plasm_dry_run_phase("total", total_started.elapsed());
+                return Ok(plan_result_from_stage(&ctx, program, stage));
+            }
+        };
     record_mcp_plasm_dry_run_phase("compile", phase.elapsed());
 
     phase = Instant::now();

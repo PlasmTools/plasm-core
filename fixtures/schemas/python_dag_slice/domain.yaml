@@ -1,0 +1,61 @@
+version: 4
+auth:
+  scheme: none
+http_backend: http://127.0.0.1:9
+entities:
+  Item:
+    id_field: id
+    description: Parent row whose title survives tag reduction.
+    fields:
+      id: {required: true, value_ref: item_id}
+      title: {required: true, value_ref: title}
+      state: {required: true, value_ref: state}
+    relations:
+      tags:
+        description: Tags belonging to this item, in returned order.
+        target: Tag
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: tag_query
+          param: item_id
+  Tag:
+    id_field: id
+    description: A label attached to one item.
+    fields:
+      id: {required: true, value_ref: tag_id}
+      item_id: {required: true, value_ref: item_ref}
+      label: {required: true, value_ref: label}
+    relations: {}
+capabilities:
+  item_touch:
+    kind: action
+    entity: Item
+    description: Record a root effect before correlated child reads.
+    output:
+      type: side_effect
+      description: Records a touch for this fixture.
+  item_get:
+    kind: get
+    entity: Item
+    description: Read one parent row by identity.
+    provides: [id, title, state]
+  item_query:
+    kind: query
+    entity: Item
+    description: List parent rows.
+    provides: [id, title, state]
+  tag_query:
+    kind: query
+    entity: Tag
+    description: List tags belonging to one parent.
+    scope:
+      - {name: item_id, value_ref: item_ref, required: true}
+    provides: [id, item_id, label]
+values:
+  item_id: {type: string, description: Identity of a parent item.}
+  tag_id: {type: string, description: Identity of a tag.}
+  item_ref: {type: entity_ref, target: Item}
+  title: {type: string, description: Human title.}
+  label: {type: string, description: Human label.}
+  state: {type: enum, enum: [open, closed], description: Lifecycle state.}

@@ -51,18 +51,10 @@ impl RejectReplay {
 
 /// Normalize program / correction text for identical-reject comparison.
 ///
-/// Unifies newlines, trims per-line edges, drops leading/trailing blank lines.
+/// Unifies newline encodings only; indentation and string contents are semantic.
 /// Does not collapse interior tokens.
 pub fn normalize_reject_source(src: &str) -> String {
-    let unified = src.replace("\r\n", "\n").replace('\r', "\n");
-    let mut lines: Vec<&str> = unified.lines().map(str::trim).collect();
-    while lines.first().is_some_and(|l| l.is_empty()) {
-        lines.remove(0);
-    }
-    while lines.last().is_some_and(|l| l.is_empty()) {
-        lines.pop();
-    }
-    lines.join("\n")
+    src.replace("\r\n", "\n").replace('\r', "\n")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -131,10 +123,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn normalize_unifies_newlines_and_edges() {
+    fn normalize_preserves_python_indentation_and_string_whitespace() {
         let a = "rows = e1\r\n  dest = rows | select x = (path | split_part('/', 0))  \n\n";
         let b = "rows = e1\n dest = rows | select x = (path | split_part('/', 0))";
-        assert_eq!(normalize_reject_source(a), normalize_reject_source(b));
+        assert_ne!(normalize_reject_source(a), normalize_reject_source(b));
+        assert_eq!(normalize_reject_source("x\r\ny"), "x\ny");
     }
 
     #[test]
@@ -164,7 +157,7 @@ mod tests {
                 correction,
             )
             .expect("normalize-equal program is replay");
-        assert_eq!(third.kind, RejectReplayKind::ExactProgram);
+        assert_eq!(third.kind, RejectReplayKind::SameReject);
         assert_eq!(third.prior_count, 2);
     }
 

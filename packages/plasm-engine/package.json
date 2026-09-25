@@ -12,7 +12,7 @@
     "access": "public",
     "registry": "https://registry.npmjs.org/"
   },
-  "main": "index.js",
+  "main": "runtime.cjs",
   "types": "index.d.ts",
   "files": [
     "index.js",
@@ -20,11 +20,12 @@
     "napi.json",
     "LICENSE-MIT",
     "LICENSE-APACHE",
-    "README.md"
+    "README.md",
+    "runtime.cjs"
   ],
   "scripts": {
-    "build": "napi build --platform --release --manifest-path ../../crates/plasm-node/Cargo.toml -p plasm-node -o . && node -e \"const fs=require('fs');const p=['index.darwin-arm64.node','index.darwin-x64.node','index.linux-x64-gnu.node'].find(f=>fs.existsSync(f));if(p)fs.copyFileSync(p,'index.node');\"",
-    "build:debug": "napi build --platform --manifest-path ../../crates/plasm-node/Cargo.toml -p plasm-node -o . && node -e \"const fs=require('fs');const p=['index.darwin-arm64.node','index.darwin-x64.node','index.linux-x64-gnu.node'].find(f=>fs.existsSync(f));if(p)fs.copyFileSync(p,'index.node');\"",
+    "build": "napi build --platform --release --manifest-path ../../crates/plasm-node/Cargo.toml -p plasm-node -o . && node -e \"const fs=require('fs');const p=['index.darwin-arm64.node','index.darwin-x64.node','index.linux-x64-gnu.node'].find(f=>fs.existsSync(f));if(p)fs.copyFileSync(p,'index.node');\" && node scripts/prepare-runtime.mjs",
+    "build:debug": "napi build --platform --manifest-path ../../crates/plasm-node/Cargo.toml -p plasm-node -o . && node -e \"const fs=require('fs');const p=['index.darwin-arm64.node','index.darwin-x64.node','index.linux-x64-gnu.node'].find(f=>fs.existsSync(f));if(p)fs.copyFileSync(p,'index.node');\" && node scripts/prepare-runtime.mjs",
     "artifacts": "napi artifacts --manifest-path ../../crates/plasm-node/Cargo.toml -p plasm-node",
     "create-npm-dirs": "napi create-npm-dirs",
     "prepublishOnly": "napi prepublish -t npm --no-gh-release --skip-optional-publish"

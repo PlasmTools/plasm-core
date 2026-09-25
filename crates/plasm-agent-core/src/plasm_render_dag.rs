@@ -24,6 +24,7 @@ pub(in crate::plasm_dag) fn plan_render_content_schema() -> Result<SyntheticResu
     Ok(SyntheticResultSchema {
         entity: Some("PlanRender".to_string()),
         fields: vec![SyntheticFieldSchema {
+            value_type: None,
             name: OutputName::new("content".to_string()).map_err(|e| e.to_string())?,
             value_kind: SyntheticValueKind::String,
             source: None,

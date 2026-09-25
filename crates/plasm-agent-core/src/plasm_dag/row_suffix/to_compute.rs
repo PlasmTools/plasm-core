@@ -1,18 +1,130 @@
 //! Typed [`RowSuffix`] -> compute DAG node.
 
 use super::super::plan_serialize::{
-    parse_aggregates, parse_dedupe_key_paths, parse_field_list,
-    parse_group_by_key_and_aggregate_tail, parse_sort_field_and_direction, schema_from_aggregates,
-    schema_from_group_by, schema_from_output_fields,
+    parse_aggregates, parse_field_list, parse_group_by_key_and_aggregate_tail,
+    parse_sort_field_and_direction, schema_from_output_fields,
 };
 use super::super::prelude::*;
 use super::super::schema_validate::{
     cgs_for_qualified_entity, compute_passthrough_or_fallback_schema,
-    is_opaque_passthrough_compute_schema, resolve_compute_field_path,
-    resolve_immediate_compute_schema, resolve_qualified_entity_for_dag_source,
-    resolve_sort_field_path, validate_compute_paths_for_dag_source,
+    is_opaque_passthrough_compute_schema, resolve_immediate_compute_schema,
+    resolve_qualified_entity_for_dag_source, resolve_sort_field_path,
+    validate_compute_paths_for_dag_source,
 };
 use super::super::types::{CompileState, DagNode, DagNodeSource};
+
+/// Shared typed sort lowering for surface and Python programs.
+pub(in crate::plasm_dag) fn lower_sort_compute(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    staged: &[DagNode],
+    source: &str,
+    id: &str,
+    expr_display: &str,
+    (key, descending): (&str, bool),
+) -> Result<DagNode, String> {
+    if key.is_empty() {
+        return Err("sort(...) requires a non-empty field".into());
+    }
+    let qe = resolve_qualified_entity_for_dag_source(state, staged, source.to_string());
+    let source_schema = resolve_immediate_compute_schema(state, staged, source);
+    let key_fp = resolve_sort_field_path(
+        session,
+        state.cross_cache,
+        qe.as_ref(),
+        source_schema.as_ref(),
+        &FieldPath::from_dotted(key)?,
+    )?;
+    validate_compute_paths_for_dag_source(
+        session,
+        state,
+        staged,
+        source,
+        std::slice::from_ref(&key_fp),
+        "sort(...)",
+    )?;
+    let schema = compute_passthrough_or_fallback_schema(session, state, staged, source, "PlanSort");
+    Ok(DagNode {
+        id: id.to_owned(),
+        expr: expr_display.to_owned(),
+        singleton: false,
+        page_size: None,
+        source: DagNodeSource::Compute {
+            source: source.to_owned(),
+            op: ComputeOp::Sort {
+                key: key_fp,
+                descending,
+            },
+            schema,
+            collection_alias: None,
+        },
+    })
+}
+
+/// Lower typed derived columns while retaining source-field provenance.
+pub(in crate::plasm_dag) fn lower_with_compute(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    staged: &[DagNode],
+    source: &str,
+    id: &str,
+    expr_display: &str,
+    mut columns: Vec<plasm_core::WithColumn>,
+) -> Result<DagNode, String> {
+    let qe = resolve_qualified_entity_for_dag_source(state, staged, source.to_string());
+    let source_schema = resolve_immediate_compute_schema(state, staged, source);
+    for column in &mut columns {
+        column.expr = column.expr.try_map_fields(&mut |path| {
+            let resolved = resolve_sort_field_path(
+                session,
+                state.cross_cache,
+                qe.as_ref(),
+                source_schema.as_ref(),
+                path,
+            )?;
+            validate_compute_paths_for_dag_source(
+                session,
+                state,
+                staged,
+                source,
+                std::slice::from_ref(&resolved),
+                "computed expression",
+            )?;
+            Ok::<_, String>(resolved)
+        })?;
+    }
+    // Immediate grain when known (already-projected `| select`); else entity passthrough.
+    // Assignment onto an existing field name replaces — `| select receiver_email = sender_email`
+    // must not emit duplicate schema fields (plan validate rejects that as dishonest).
+    let mut schema =
+        compute_passthrough_or_fallback_schema(session, state, staged, source, "PlanWith");
+    for col in &columns {
+        let remat = rematerialize_with_column(&schema, col);
+        if let Some(existing) = schema
+            .fields
+            .iter_mut()
+            .find(|f| f.name.as_str() == col.name.as_str())
+        {
+            existing.value_type = remat.value_type;
+            existing.value_kind = remat.value_kind;
+            existing.source = remat.source;
+        } else {
+            schema.fields.push(remat);
+        }
+    }
+    Ok(DagNode {
+        id: id.to_owned(),
+        expr: expr_display.to_owned(),
+        singleton: false,
+        page_size: None,
+        source: DagNodeSource::Compute {
+            source: source.to_owned(),
+            op: ComputeOp::With { columns },
+            schema,
+            collection_alias: None,
+        },
+    })
+}
 
 /// Lower one typed [`RowSuffix`] transform into a compute DAG node.
 pub(in crate::plasm_dag) fn row_suffix_to_compute(
@@ -198,140 +310,57 @@ pub(in crate::plasm_dag) fn row_suffix_to_compute(
         }
         RowSuffix::Sort { args } => {
             let (key, descending) = parse_sort_field_and_direction(args)?;
-            if key.is_empty() {
-                return Err("sort(...) requires a non-empty field".into());
-            }
-            let qe = resolve_qualified_entity_for_dag_source(state, staged, source.to_string());
-            let source_schema = resolve_immediate_compute_schema(state, staged, source);
-            let key_fp = resolve_sort_field_path(
-                session,
-                state.cross_cache,
-                qe.as_ref(),
-                source_schema.as_ref(),
-                &FieldPath::from_dotted(&key)?,
-            )?;
-            validate_compute_paths_for_dag_source(
+            lower_sort_compute(
                 session,
                 state,
                 staged,
                 source,
-                std::slice::from_ref(&key_fp),
-                "sort(...)",
-            )?;
-            let schema =
-                compute_passthrough_or_fallback_schema(session, state, staged, source, "PlanSort");
-            Ok(mk(
-                ComputeOp::Sort {
-                    key: key_fp,
-                    descending,
-                },
-                schema,
-                false,
-            ))
+                id,
+                expr_display,
+                (&key, descending),
+            )
         }
-        RowSuffix::Aggregate { args } => {
-            let mut aggregates = parse_aggregates(args)?;
-            let qe = resolve_qualified_entity_for_dag_source(state, staged, source.to_string());
-            if let Some(qe) = qe.as_ref() {
-                for agg in &mut aggregates {
-                    if let Some(field) = agg.field.as_ref() {
-                        agg.field = Some(resolve_compute_field_path(
-                            session,
-                            state.cross_cache,
-                            Some(qe),
-                            field,
-                        )?);
-                    }
-                }
-                let paths: Vec<FieldPath> =
-                    aggregates.iter().filter_map(|a| a.field.clone()).collect();
-                validate_compute_paths_for_dag_source(
-                    session,
-                    state,
-                    staged,
-                    source,
-                    &paths,
-                    "aggregate(...)",
-                )?;
-            }
-            let schema = schema_from_aggregates("PlanAggregate", &aggregates);
-            Ok(mk(ComputeOp::Aggregate { aggregates }, schema, true))
-        }
+        RowSuffix::Aggregate { args } => super::lower_reduction_compute(
+            session,
+            state,
+            staged,
+            source,
+            id,
+            expr_display,
+            None,
+            parse_aggregates(args)?,
+        ),
         RowSuffix::GroupBy { args } => {
-            let (key_names, agg_tail) = parse_group_by_key_and_aggregate_tail(args)?;
-            let aggregates = if agg_tail.trim().is_empty() {
-                if key_names.len() != 1 {
-                    return Err(
-                        "group_by(k1, k2, …) without aggregates requires .aggregate(...) — use group_by(k1, k2).aggregate(n=count) or group_by(k1, k2, n=count)".into(),
-                    );
+            let (keys, tail) = parse_group_by_key_and_aggregate_tail(args)?;
+            let aggregates = if tail.trim().is_empty() {
+                if keys.len() != 1 {
+                    return Err("group_by with multiple keys requires explicit aggregates".into());
                 }
-                // Bare `group_by(key)` sugar alias (single key only).
                 parse_aggregates("count=count")?
             } else {
-                parse_aggregates(agg_tail.as_str())?
+                parse_aggregates(&tail)?
             };
-            let qe = resolve_qualified_entity_for_dag_source(state, staged, source.to_string());
-            let mut key_fps = Vec::new();
-            for key in &key_names {
-                key_fps.push(resolve_compute_field_path(
-                    session,
-                    state.cross_cache,
-                    qe.as_ref(),
-                    &FieldPath::from_dotted(key)?,
-                )?);
-            }
-            let mut aggregates = aggregates;
-            if let Some(qe) = qe.as_ref() {
-                for agg in &mut aggregates {
-                    if let Some(field) = agg.field.as_ref() {
-                        agg.field = Some(resolve_compute_field_path(
-                            session,
-                            state.cross_cache,
-                            Some(qe),
-                            field,
-                        )?);
-                    }
-                }
-                let mut paths = key_fps.clone();
-                paths.extend(aggregates.iter().filter_map(|a| a.field.clone()));
-                validate_compute_paths_for_dag_source(
-                    session,
-                    state,
-                    staged,
-                    source,
-                    &paths,
-                    "group_by(...)",
-                )?;
-            }
-            let schema = schema_from_group_by("PlanGroup", &key_fps, &aggregates);
-            Ok(mk(
-                ComputeOp::GroupBy {
-                    keys: key_fps,
-                    aggregates,
-                },
-                schema,
-                false,
-            ))
+            let keys = keys
+                .iter()
+                .map(|key| FieldPath::from_dotted(key))
+                .collect::<Result<_, _>>()?;
+            super::lower_reduction_compute(
+                session,
+                state,
+                staged,
+                source,
+                id,
+                expr_display,
+                Some(keys),
+                aggregates,
+            )
         }
         RowSuffix::Dedupe { keys } | RowSuffix::Distinct { keys: Some(keys) } => {
-            let qe = resolve_qualified_entity_for_dag_source(state, staged, source.to_string());
-            let key_fps = parse_dedupe_key_paths(session, state.cross_cache, qe.as_ref(), keys)?;
-            validate_compute_paths_for_dag_source(
-                session,
-                state,
-                staged,
-                source,
-                &key_fps,
-                "dedupe(...)",
-            )?;
-            let schema = compute_passthrough_or_fallback_schema(
-                session,
-                state,
-                staged,
-                source,
-                "PlanDedupe",
-            );
-            Ok(mk(ComputeOp::DedupeBy { keys: key_fps }, schema, false))
+            let keys = keys
+                .split(',')
+                .map(|key| FieldPath::from_dotted(key.trim()))
+                .collect::<Result<_, _>>()?;
+            super::lower_distinct_compute(session, state, staged, source, id, expr_display, keys)
         }
         RowSuffix::Distinct { keys: None } => {
             let schema = compute_passthrough_or_fallback_schema(
@@ -344,48 +373,8 @@ pub(in crate::plasm_dag) fn row_suffix_to_compute(
             Ok(mk(ComputeOp::DedupeBy { keys: vec![] }, schema, false))
         }
         RowSuffix::With { body } => {
-            let mut columns = plasm_core::parse_with_body(body).map_err(|e| e.to_string())?;
-            let qe = resolve_qualified_entity_for_dag_source(state, staged, source.to_string());
-            let source_schema = resolve_immediate_compute_schema(state, staged, source);
-            for column in &mut columns {
-                column.expr = column.expr.try_map_fields(&mut |path| {
-                    let resolved = resolve_sort_field_path(
-                        session,
-                        state.cross_cache,
-                        qe.as_ref(),
-                        source_schema.as_ref(),
-                        path,
-                    )?;
-                    validate_compute_paths_for_dag_source(
-                        session,
-                        state,
-                        staged,
-                        source,
-                        std::slice::from_ref(&resolved),
-                        "computed expression",
-                    )?;
-                    Ok::<_, String>(resolved)
-                })?;
-            }
-            // Immediate grain when known (already-projected `| select`); else entity passthrough.
-            // Assignment onto an existing field name replaces — `| select receiver_email = sender_email`
-            // must not emit duplicate schema fields (plan validate rejects that as dishonest).
-            let mut schema =
-                compute_passthrough_or_fallback_schema(session, state, staged, source, "PlanWith");
-            for col in &columns {
-                let remat = rematerialize_with_column(&schema, col);
-                if let Some(existing) = schema
-                    .fields
-                    .iter_mut()
-                    .find(|f| f.name.as_str() == col.name.as_str())
-                {
-                    existing.value_kind = remat.value_kind;
-                    existing.source = remat.source;
-                } else {
-                    schema.fields.push(remat);
-                }
-            }
-            Ok(mk(ComputeOp::With { columns }, schema, false))
+            let columns = plasm_core::parse_with_body(body).map_err(|e| e.to_string())?;
+            lower_with_compute(session, state, staged, source, id, expr_display, columns)
         }
         RowSuffix::Project { fields } => {
             let fields_joined = fields.join(",");
@@ -414,23 +403,34 @@ pub(in crate::plasm_dag) fn row_suffix_to_compute(
                     FieldPath::from_dotted(&field)?,
                 );
             }
-            if let Some(qe) = qe {
-                let paths: Vec<FieldPath> = map.values().cloned().collect();
-                validate_compute_paths_for_dag_source(
-                    session,
-                    state,
-                    staged,
-                    source,
-                    &paths,
-                    "postfix projection",
-                )?;
-                let entity = qe.entity.as_str();
-                let schema =
-                    schema_from_output_fields(entity, map.keys(), SyntheticValueKind::Unknown);
-                return Ok(mk(ComputeOp::Project { fields: map }, schema, false));
+            let paths: Vec<FieldPath> = map.values().cloned().collect();
+            validate_compute_paths_for_dag_source(
+                session,
+                state,
+                staged,
+                source,
+                &paths,
+                "postfix projection",
+            )?;
+            let input = compute_passthrough_or_fallback_schema(
+                session,
+                state,
+                staged,
+                source,
+                "PlanProject",
+            );
+            let mut schema = schema_from_output_fields(
+                input.entity.as_deref().unwrap_or("PlanProject"),
+                map.keys(),
+                SyntheticValueKind::Unknown,
+            );
+            for field in &mut schema.fields {
+                if let Some(original) = input.fields.iter().find(|f| f.name == field.name) {
+                    field.value_type = original.value_type.clone();
+                    field.value_kind = original.value_kind;
+                    field.source = original.source.clone();
+                }
             }
-            let schema =
-                schema_from_output_fields("PlanProject", map.keys(), SyntheticValueKind::Unknown);
             Ok(mk(ComputeOp::Project { fields: map }, schema, false))
         }
         RowSuffix::Union { rhs } => {
@@ -482,7 +482,7 @@ pub(in crate::plasm_dag) fn row_suffix_to_compute(
 }
 
 /// RA-13: membership RHS must project exactly one column.
-fn membership_rhs_column_path(
+pub(in crate::plasm_dag) fn membership_rhs_column_path(
     state: &CompileState<'_>,
     staged: &[DagNode],
     rhs: &str,
@@ -514,9 +514,22 @@ fn rematerialize_with_column(
     col: &plasm_core::WithColumn,
 ) -> plasm_core::SyntheticFieldSchema {
     let plasm_core::WithExpr::Field(fp) = &col.expr else {
+        let value_type =
+            plasm_core::value_contract::ValueContract::with_expr(&col.expr, &mut |path| {
+                schema
+                    .fields
+                    .iter()
+                    .find(|f| f.name.as_str() == path.dotted())
+                    .and_then(|f| f.value_type.clone())
+                    .ok_or_else(|| "unknown computed field type".into())
+            })
+            .ok();
         return plasm_core::SyntheticFieldSchema {
+            value_kind: value_type
+                .as_ref()
+                .map_or(SyntheticValueKind::Unknown, |t| t.summary()),
+            value_type,
             name: col.name.clone(),
-            value_kind: SyntheticValueKind::Unknown,
             source: None,
         };
     };
@@ -525,12 +538,14 @@ fn rematerialize_with_column(
             || f.source.as_ref().is_some_and(|s| s.dotted() == fp.dotted())
     }) {
         return plasm_core::SyntheticFieldSchema {
+            value_type: src.value_type.clone(),
             name: col.name.clone(),
             value_kind: src.value_kind,
             source: src.source.clone().or_else(|| Some(fp.clone())),
         };
     }
     plasm_core::SyntheticFieldSchema {
+        value_type: None,
         name: col.name.clone(),
         value_kind: SyntheticValueKind::Unknown,
         source: Some(fp.clone()),

@@ -58,6 +58,7 @@
 //! Program-stratum seats use [`parse_expr_node`](crate::expr_parser::parse_expr_node): `ident = <list Query>`
 //! (bind echoing the taught query) and `ident => _.r#` ([`Applicator::Relation`](crate::expr_parser::Applicator)
 //! + relation resolve/admissibility — the same surface parser that executes `ℓ => _.r#`).
+//!
 //! Arbitrary programs are not admitted as teaching lines.
 //!
 //! Zero-arity pipeline methods emit **one** `…()` expression per line (each line is fully validated).
@@ -87,6 +88,7 @@ mod line_validate;
 mod mcp_prompt_fragments;
 mod mcp_tool_descriptions;
 mod prerequisites;
+pub mod python;
 mod query_teaching;
 mod relation_teaching;
 mod row_producer;
@@ -102,8 +104,6 @@ pub use prerequisites::render_prerequisite_bindings;
 mod tsv_emit;
 mod types;
 
-#[cfg(test)]
-mod doc_fenced_examples_tests;
 #[cfg(test)]
 mod query_teaching_tests;
 
@@ -157,9 +157,7 @@ pub use stats::{
 
 pub(crate) use internal::*;
 
-pub(crate) use bundle_render::{
-    render_prompt_tsv_for_single_catalog_exposure, render_teaching_prompt_bundle_for_validation,
-};
+pub(crate) use bundle_render::render_prompt_tsv_for_single_catalog_exposure;
 pub(crate) use relation_teaching::render_relation_edge_delta_rows;
 #[cfg(test)]
 pub(crate) use tsv_emit::parse_trailing_projection_bracket;

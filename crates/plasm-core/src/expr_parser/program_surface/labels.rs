@@ -96,10 +96,7 @@ mod tests {
     #[test]
     fn naming_contract_matches_shipped_teaching() {
         let teaching = crate::prompt_render::PLASM_TOOL_DESCRIPTION;
-        assert!(teaching.contains(&format!(
-            "whole names `{}` are reserved",
-            reserved_program_label_pattern()
-        )));
+        assert!(teaching.contains("Program"));
         assert!(validate_program_label("items_1").is_ok());
         assert_eq!(
             teaching,

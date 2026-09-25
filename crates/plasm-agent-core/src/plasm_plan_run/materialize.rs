@@ -36,7 +36,7 @@ pub(crate) async fn materialize_synthetic_node(
             if let crate::plasm_plan::ComputeOp::Limit { count } = &compute.compute.op {
                 plasm_runtime::coverage_after_explicit_take(
                     source_coverage,
-                    *count as usize,
+                    *count,
                     full_entities.len(),
                 )
             } else {
@@ -744,6 +744,8 @@ fn for_each_execution_result(
     result
 }
 
+// Archive context and fanout evidence are passed together, as in adjacent helpers.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn archive_materialize_for_each_fanout(
     st: &PlasmHostState,
     es: &ExecuteSession,

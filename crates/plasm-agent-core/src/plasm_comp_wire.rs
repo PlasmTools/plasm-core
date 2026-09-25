@@ -182,6 +182,8 @@ fn add_program_order_effect_deps(
 
 fn primary_predecessor(node: &ValidatedPlanNode) -> Option<String> {
     match node {
+        ValidatedPlanNode::MapBody(n) => Some(n.body.parent.source.as_str().into()),
+        ValidatedPlanNode::Capture(_) => None,
         ValidatedPlanNode::Compute(n) => Some(n.compute.source.clone()),
         ValidatedPlanNode::Derive(n) => Some(n.source.as_str().to_string()),
         ValidatedPlanNode::ForEach(n) => Some(n.source.as_str().to_string()),

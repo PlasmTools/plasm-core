@@ -7,7 +7,7 @@ export default defineSchedule({
   name: "ping",
   cron: "*/5 * * * *",
   handler: async () => {
-    const dry = await dryRunProgram(executeTiny.builder, "e2");
+    const dry = await dryRunProgram(executeTiny.builder, "class Products(Program):\n    def build(self):\n        return e2.query()");
     console.log(`[plasm:schedule:ping] product_list dry-run ${dry.planCommitRef}`);
   },
 });

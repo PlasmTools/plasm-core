@@ -2,6 +2,7 @@
 
 use super::*;
 
+#[cfg(test)]
 pub(crate) fn partition_scoped_query_fanout<F>(
     parents: &[CachedEntity],
     mut build_scoped_query: F,

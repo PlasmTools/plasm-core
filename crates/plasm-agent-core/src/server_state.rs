@@ -73,6 +73,8 @@ pub struct PlasmOssHostState {
     pub trace_hub: Arc<TraceHub>,
     /// Queued MCP `notifications/plasm/op` payloads (drained by MCP session reporter).
     pub op_progress_hub: Arc<OperationProgressHub>,
+    /// Shared crash-isolated Python workers; native Monty state stays outside the server.
+    pub python_pool: Arc<crate::python_pool::PythonPool>,
     /// Debounced cross-pod async operation descriptor persistence.
     pub operation_persist: Arc<OperationPersistScheduler>,
     /// Effective [`TraceHubConfig`] after startup (matches [`TraceHub::bounds`] on the hub).

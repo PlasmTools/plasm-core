@@ -18,6 +18,170 @@ pub(crate) fn assert_comp_witness(dry: &DryPlasmPlanEvaluation) -> Result<(), St
 }
 
 pub(crate) fn assert_row(row: &MatrixRow, out: &PlasmPlanRunResult) -> Result<(), String> {
+    if row.id == "lang_group_then_global_aggregate" {
+        let step = out.return_steps.first().ok_or("missing global total")?;
+        if step.result.entities.len() != 1 {
+            return Err("global total must be a singleton".into());
+        }
+        let total = step.result.entities[0]
+            .fields
+            .get("total")
+            .ok_or("missing total field")?
+            .to_value();
+        if !matches!(total, plasm_core::Value::Integer(2))
+            && !matches!(total, plasm_core::Value::Float(n) if n == 2.0)
+        {
+            return Err(format!(
+                "expected two alpha lanes after group then sum, got {total:?}"
+            ));
+        }
+    }
+    if row.id == "lang_distinct_projected_values" {
+        let step = out.return_steps.first().ok_or("missing distinct result")?;
+        if step.result.entities.len() != 1
+            || step.result.entities[0]
+                .fields
+                .get("shelf")
+                .map(|v| v.to_value())
+                != Some(plasm_core::Value::String("alpha".into()))
+        {
+            return Err("distinct must collapse the two alpha shelf values into one row".into());
+        }
+    }
+    if row.id == "lang_relation_empty_fanout"
+        && out
+            .return_steps
+            .iter()
+            .any(|step| !step.result.entities.is_empty())
+    {
+        return Err("empty parent fanout must remain empty".into());
+    }
+    if row.id == "lang_relation_one_chain" {
+        let step = out.return_steps.first().ok_or("missing detail result")?;
+        if step.result.entities.len() != 1 || !step.result.entities[0].fields.contains_key("body") {
+            return Err(format!(
+                "one-to-one chain must return one detail row with body: {:?}",
+                step.result.entities
+            ));
+        }
+    }
+
+    if row.id == "lang_apply_query_multirow" {
+        let peers = out.return_steps.first().ok_or("missing peers result")?;
+        if peers.result.entities.is_empty()
+            || peers.result.entities.iter().any(|entity| {
+                entity.fields.get("owner").map(|v| v.to_value())
+                    != Some(plasm_core::Value::String("alice".into()))
+            })
+        {
+            return Err("per-row Query must retain its source owner selection".into());
+        }
+    }
+
+    if row.features.contains(&"exact_integer_identity")
+        || row.features.contains(&"boolean_identity_literal")
+    {
+        let expected = match row.id {
+            "lang_integer_identity" => "42",
+            "lang_boolean_identity_true" => "true",
+            "lang_boolean_identity_false" => "false",
+            "lang_negative_identity" => "-42",
+            "lang_large_identity" => "9007199254740993",
+            "lang_min_identity" => "-9223372036854775808",
+            _ => return Err("unregistered integer identity".into()),
+        };
+        let result = out.return_steps.first().ok_or("missing identity result")?;
+        let entity = result
+            .result
+            .entities
+            .first()
+            .ok_or("missing identity row")?;
+        if entity.fields.get("id").map(|v| v.to_value())
+            != Some(plasm_core::Value::String(expected.into()))
+        {
+            return Err(format!(
+                "materialized identity lost exact digits: {expected}"
+            ));
+        }
+    }
+
+    if row.features.contains(&"compound_get_identity") {
+        for step in &out.return_steps {
+            let entity = step
+                .result
+                .entities
+                .first()
+                .ok_or("missing compound Get row")?;
+            for key in ["owner", "item_id", "name"] {
+                if !entity.fields.contains_key(key) {
+                    return Err(format!("compound row lost {key}"));
+                }
+            }
+        }
+        if row.id == "lang_compound_bound" {
+            let [source, result] = out.return_steps.as_slice() else {
+                return Err("expected compound source and result".into());
+            };
+            for key in ["owner", "item_id", "name"] {
+                if source.result.entities[0].fields[key] != result.result.entities[0].fields[key] {
+                    return Err(format!("compound roundtrip changed {key}"));
+                }
+            }
+        }
+    }
+
+    if matches!(
+        row.id,
+        "lang_bound_get_field"
+            | "lang_bound_get_scalar"
+            | "lang_bound_query_field"
+            | "lang_bound_query_scalar"
+    ) {
+        let [source, result] = out.return_steps.as_slice() else {
+            return Err("bound read must return source and result witnesses".into());
+        };
+        let source = source.result.entities.first().ok_or("missing source row")?;
+        let field = if row.features.contains(&"bound_get_identity") {
+            "id"
+        } else {
+            "owner"
+        };
+        let expected = source.fields.get(field).ok_or("missing source operand")?;
+        if result.result.entities.is_empty()
+            || result
+                .result
+                .entities
+                .iter()
+                .any(|r| r.fields.get(field) != Some(expected))
+        {
+            return Err(format!("bound read did not resolve source {field}"));
+        }
+    }
+    if row.id == "lang_iterate_bound_identity" {
+        let result = out.return_steps.first().ok_or("missing iteration result")?;
+        let current = result
+            .result
+            .entities
+            .first()
+            .ok_or("missing observed cursor")?;
+        if current.fields.get("phase").map(|v| v.to_value())
+            != Some(plasm_core::Value::String("done".into()))
+        {
+            return Err("bound iteration failed to publish observed terminal state".into());
+        }
+        if result
+            .result
+            .operations
+            .entries()
+            .iter()
+            .map(|ack| ack.completed)
+            .sum::<usize>()
+            != 2
+        {
+            return Err("bound iteration must complete exactly two writes".into());
+        }
+    }
+
     if matches!(
         row.id,
         "lang_take_one_field_bind"
@@ -150,6 +314,7 @@ pub(crate) fn assert_row(row: &MatrixRow, out: &PlasmPlanRunResult) -> Result<()
                 "lang_federated_relation_target_entry"
                     | "lang_bind_relation_hop_one_one"
                     | "lang_federated_duplicate_entity_relation_r"
+                    | "lang_relation_empty_fanout"
             )
         {
             return Err(format!(
@@ -163,6 +328,7 @@ pub(crate) fn assert_row(row: &MatrixRow, out: &PlasmPlanRunResult) -> Result<()
                 "lang_federated_relation_target_entry"
                     | "lang_bind_relation_hop_one_one"
                     | "lang_federated_duplicate_entity_relation_r"
+                    | "lang_relation_empty_fanout"
             )
         {
             return Err(format!(

@@ -1,12 +1,7 @@
-//! CGS rules so schemas cannot load unless every entity and capability is teachable on the typed
-//! expression surface.
-//!
-//! Invoked from [`CGS::validate`](crate::schema::CGS::validate). Structural checks run first; witness +
-//! capability coverage share **one** [`crate::prompt_render::render_teaching_prompt_bundle`] (same synthesis as eval teaching table).
+//! Catalog obtainability and complete Python declaration coverage.
+use crate::prompt_render::python::{prepare_python_teaching_wave, PythonTeachingWave};
+use std::collections::HashSet;
 
-use std::collections::{HashMap, HashSet};
-
-use crate::prompt_render::{render_teaching_prompt_bundle_for_validation, TeachingPromptModel};
 use crate::schema::{CapabilityKind, InputFieldSchema};
 use crate::{FieldType, SchemaError, ValueWireFormat, CGS};
 
@@ -15,7 +10,7 @@ use crate::{FieldType, SchemaError, ValueWireFormat, CGS};
 pub fn validate_cgs_expression_surface(cgs: &CGS) -> Result<(), SchemaError> {
     validate_every_entity_has_capability(cgs)?;
     validate_query_search_scope_params_encodable(cgs)?;
-    validate_expression_surface_from_single_bundle(cgs)?;
+    validate_python_surface(cgs)?;
     Ok(())
 }
 
@@ -71,229 +66,114 @@ fn validate_query_search_scope_params_encodable(cgs: &CGS) -> Result<(), SchemaE
     Ok(())
 }
 
-/// One [`render_teaching_prompt_bundle`] pass for witness + capability coverage (was ~2× synthesis).
-fn validate_expression_surface_from_single_bundle(cgs: &CGS) -> Result<(), SchemaError> {
-    let bundle = render_teaching_prompt_bundle_for_validation(cgs);
-    validate_expression_witnesses_from_model(cgs, &bundle.model)?;
-    let missing = collect_uncovered_capabilities_with_model(cgs, &bundle.model);
-    if !missing.is_empty() {
-        return Err(SchemaError::CapabilityCoverageIncomplete { uncovered: missing });
-    }
-    Ok(())
+fn python_wave(cgs: &CGS) -> Result<PythonTeachingWave, SchemaError> {
+    let entry = cgs.entry_id.as_deref().unwrap_or("local");
+    let entities = cgs
+        .entities
+        .keys()
+        .map(|key| key.as_str())
+        .collect::<Vec<_>>();
+    let exposure = crate::TeachingExposureSession::new(cgs, entry, &entities);
+    prepare_python_teaching_wave(&exposure, &Default::default()).map_err(|detail| {
+        SchemaError::EntityExpressionIncomplete {
+            entity: "<catalog>".into(),
+            detail,
+        }
+    })
 }
 
-fn validate_expression_witnesses_from_model(
-    cgs: &CGS,
-    model: &TeachingPromptModel,
-) -> Result<(), SchemaError> {
-    let mut line_counts: HashMap<&str, usize> = HashMap::new();
-    for ep in &model.entities {
-        line_counts.insert(ep.entity.as_str(), ep.lines.len());
-    }
-    for (entity_name, ent) in &cgs.entities {
-        if ent.abstract_entity {
-            continue;
-        }
-        let n = line_counts.get(entity_name.as_str()).copied().unwrap_or(0);
-        if n == 0 {
-            return Err(SchemaError::EntityExpressionIncomplete {
-                entity: entity_name.to_string(),
-                detail: entity_expression_incomplete_detail(cgs, entity_name),
-            });
-        }
-    }
-    Ok(())
-}
-
-/// Authoring-grade diagnostic for an entity that synthesized **zero** teaching lines.
-///
-/// The dominant real cause is an entity declaring only *terminal* mutators (`update`/`delete`) with
-/// no way to **obtain** a receiver: Plasm does not fabricate an implicit get-by-id from `id_field`
-/// alone, so such an entity is genuinely untappable on the expression surface. The message
-/// enumerates the entity's declared capability kinds and points the author at the fix rather than
-/// leaving them with an opaque renderer reference.
-fn entity_expression_incomplete_detail(cgs: &CGS, entity_name: &str) -> String {
-    let mut kinds: Vec<String> = cgs
+fn validate_python_surface(cgs: &CGS) -> Result<(), SchemaError> {
+    let mut obtainable = HashSet::new();
+    let roots = cgs
         .capabilities
         .values()
-        .filter(|c| c.domain.as_str() == entity_name)
-        .map(|c| format!("{:?}", c.kind).to_ascii_lowercase())
-        .collect();
-    kinds.sort();
-    kinds.dedup();
-    let declared = if kinds.is_empty() {
-        "none".to_string()
-    } else {
-        kinds.join(", ")
-    };
-    format!(
-        "no type-checked teaching line could be synthesized. Entity '{entity_name}' declares only \
-         non-anchoring capabilities [{declared}] and therefore cannot be obtained on the typed \
-         expression surface. An entity is teachable only if an instance can be *produced* — through a \
-         `get` / `query` / `search` / `create` / `action` / singleton capability, or by being the \
-         target of a relation on some other teachable entity. Plasm does NOT synthesize an implicit \
-         get-by-id from `id_field` alone; obtainability must be declared. Remedy: add a `get` \
-         (GET-by-id) or a `query` / `search` capability so a receiver exists before any \
-         `update` / `delete` terminal applies. If '{entity_name}' is only an ephemeral value produced \
-         by another capability, model it as that capability's `output.type` instead of a standalone \
-         entity."
-    )
-}
-
-/// Collect capability ids taught by teaching lines, using renderer metadata (`source_capability`).
-fn covered_capabilities_from_model(cgs: &CGS, model: &TeachingPromptModel) -> HashSet<String> {
-    let mut covered = HashSet::new();
-    for entity in &model.entities {
-        for line in &entity.lines {
-            if let Some(cap) = &line.source_capability {
-                covered.insert(cap.clone());
-            }
-        }
-    }
-    expand_expression_family_coverage(cgs, &mut covered);
-    expand_query_get_domain_symmetry(cgs, &mut covered);
-    expand_query_only_entity_coverage(cgs, model, &mut covered);
-    covered
-}
-
-/// `Get`/`Query`/`Search` surface forms are capability-agnostic per domain — one taught cap of a
-/// kind implies every cap of that kind on the same entity row type is covered.
-fn expand_expression_family_coverage(cgs: &CGS, covered: &mut HashSet<String>) {
-    let domains_by_kind: HashSet<(String, CapabilityKind)> = covered
-        .iter()
-        .filter_map(|cap_name| cgs.get_capability(cap_name))
         .filter(|cap| {
             matches!(
                 cap.kind,
                 CapabilityKind::Get | CapabilityKind::Query | CapabilityKind::Search
-            )
+            ) || !cap.requires_receiver()
         })
-        .map(|cap| (cap.domain.to_string(), cap.kind))
-        .collect();
-    for (domain, kind) in domains_by_kind {
-        for cap in cgs.find_capabilities(domain.as_str(), kind) {
-            covered.insert(cap.name.to_string());
-        }
-    }
-}
-
-/// Fetch-by-id and list/search queries are compositional on the same row type — cover `Get` when
-/// any `Query`/`Search` is taught (and symmetrically cover `Query`/`Search` when any `Get` witness
-/// is present). Context-required search lines may fail bare teaching probes; a Get witness still
-/// implies the search family is available on the typed surface.
-fn expand_query_get_domain_symmetry(cgs: &CGS, covered: &mut HashSet<String>) {
-    let domains_with_query = domains_for_covered_kind(cgs, covered, CapabilityKind::Query);
-    let domains_with_search = domains_for_covered_kind(cgs, covered, CapabilityKind::Search);
-    let domains_with_get = domains_for_covered_kind(cgs, covered, CapabilityKind::Get);
-    insert_all_capabilities_on_domains(
-        cgs,
-        covered,
-        domains_with_query.clone(),
-        CapabilityKind::Get,
-    );
-    insert_all_capabilities_on_domains(
-        cgs,
-        covered,
-        domains_with_search.clone(),
-        CapabilityKind::Get,
-    );
-    insert_all_capabilities_on_domains(
-        cgs,
-        covered,
-        domains_with_get.clone(),
-        CapabilityKind::Query,
-    );
-    insert_all_capabilities_on_domains(cgs, covered, domains_with_get, CapabilityKind::Search);
-    insert_all_capabilities_on_domains(cgs, covered, domains_with_query, CapabilityKind::Search);
-    insert_all_capabilities_on_domains(cgs, covered, domains_with_search, CapabilityKind::Query);
-}
-
-/// Query-only entities: teaching lines without a `Get` witness still imply scoped list-query coverage.
-fn expand_query_only_entity_coverage(
-    cgs: &CGS,
-    model: &TeachingPromptModel,
-    covered: &mut HashSet<String>,
-) {
-    for ep in &model.entities {
-        if ep.lines.is_empty() {
-            continue;
-        }
-        let domain_has_get_witness = ep.lines.iter().any(|line| {
-            line.source_capability
-                .as_ref()
-                .and_then(|name| cgs.get_capability(name.as_str()))
-                .is_some_and(|cap| cap.kind == CapabilityKind::Get)
-        });
-        if domain_has_get_witness {
-            continue;
-        }
-        insert_all_capabilities_on_domains(
-            cgs,
-            covered,
-            HashSet::from([ep.entity.to_string()]),
-            CapabilityKind::Query,
-        );
-    }
-}
-
-fn domains_for_covered_kind(
-    cgs: &CGS,
-    covered: &HashSet<String>,
-    kind: CapabilityKind,
-) -> HashSet<String> {
-    covered
+        .collect::<Vec<_>>();
+    let root_domains = roots
         .iter()
-        .filter_map(|cap_name| cgs.get_capability(cap_name))
-        .filter(|cap| cap.kind == kind)
-        .map(|cap| cap.domain.to_string())
-        .collect()
-}
-
-fn insert_all_capabilities_on_domains(
-    cgs: &CGS,
-    covered: &mut HashSet<String>,
-    domains: HashSet<String>,
-    kind: CapabilityKind,
-) {
-    for domain in domains {
-        for cap in cgs.find_capabilities(domain.as_str(), kind) {
-            covered.insert(cap.name.to_string());
+        .map(|cap| cap.domain.as_str())
+        .collect::<HashSet<_>>();
+    for cap in roots {
+        if let Some(output) = &cap.output_schema {
+            match &output.output_type {
+                crate::OutputType::Entity { entity_type }
+                | crate::OutputType::Collection { entity_type, .. } => {
+                    obtainable.insert(entity_type.to_string());
+                }
+                _ => {}
+            }
+        } else {
+            obtainable.insert(cap.domain.to_string());
         }
     }
-}
-
-fn collect_uncovered_capabilities_with_model(
-    cgs: &CGS,
-    model: &TeachingPromptModel,
-) -> Vec<(String, String)> {
-    let covered = covered_capabilities_from_model(cgs, model);
-    let mut missing = Vec::new();
-    for (cap_name, cap) in &cgs.capabilities {
-        let Some(ent) = cgs.get_entity(cap.domain.as_str()) else {
-            continue;
-        };
-        if ent.abstract_entity {
-            continue;
+    loop {
+        let before = obtainable.len();
+        for (name, entity) in &cgs.entities {
+            if obtainable.contains(name.as_str()) {
+                for relation in entity.relations.values() {
+                    obtainable.insert(relation.target_resource.to_string());
+                }
+            }
         }
-        if !covered.contains(cap_name.as_str()) {
-            missing.push((cap_name.to_string(), cap.domain.to_string()));
+        if obtainable.len() == before {
+            break;
         }
     }
-    missing
+    for (name, entity) in &cgs.entities {
+        if !entity.abstract_entity
+            && !root_domains.contains(name.as_str())
+            && !obtainable.contains(name.as_str())
+        {
+            return Err(SchemaError::EntityExpressionIncomplete {
+                entity: name.to_string(),
+                detail: "No declared root capability or relation produces a receiver; add a get, query, search, create or declared entity output.".into(),
+            });
+        }
+    }
+    let wave = python_wave(cgs)?;
+    let covered = wave
+        .capabilities
+        .iter()
+        .filter(|cap| cap.unavailable.is_none() && cap.signature.is_some())
+        .map(|cap| cap.capability.as_str())
+        .collect::<HashSet<_>>();
+    let uncovered = cgs
+        .capabilities
+        .iter()
+        .filter(|(name, _)| !covered.contains(name.as_str()))
+        .map(|(name, cap)| (name.to_string(), cap.domain.to_string()))
+        .collect::<Vec<_>>();
+    if !uncovered.is_empty() {
+        return Err(SchemaError::CapabilityCoverageIncomplete { uncovered });
+    }
+    Ok(())
 }
 
-/// Strict per-capability coverage check (for tests). Returns uncovered capability names.
 #[cfg(test)]
 pub(crate) fn uncovered_capabilities(cgs: &CGS) -> Vec<(String, String)> {
-    let bundle = render_teaching_prompt_bundle_for_validation(cgs);
-    collect_uncovered_capabilities_with_model(cgs, &bundle.model)
+    let wave = python_wave(cgs).unwrap();
+    let covered = wave
+        .capabilities
+        .iter()
+        .filter(|cap| cap.unavailable.is_none() && cap.signature.is_some())
+        .map(|cap| cap.capability.as_str())
+        .collect::<HashSet<_>>();
+    cgs.capabilities
+        .iter()
+        .filter(|(name, _)| !covered.contains(name.as_str()))
+        .map(|(name, cap)| (name.to_string(), cap.domain.to_string()))
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::loader::load_schema_dir;
-    use crate::SchemaError;
     use std::path::Path;
 
     #[test]
@@ -357,7 +237,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_fails_when_teaching_bundle_omits_a_declared_capability() {
+    fn python_teaching_covers_secondary_get_without_native_alias() {
         let p = Path::new("../../fixtures/schemas/overshow_tools");
         if !p.exists() {
             return;
@@ -372,17 +252,9 @@ mod tests {
         let extra_key = extra_get.name.clone();
         cgs.capabilities.insert(extra_key.clone(), extra_get);
 
-        let err = cgs
-            .validate()
-            .expect_err("duplicate get should fail strict teaching-bundle capability coverage");
-        assert!(
-            matches!(
-                err,
-                SchemaError::CapabilityCoverageIncomplete { ref uncovered }
-                if uncovered.iter().any(|(cap, ent)| cap == extra_key.as_str() && ent == "CaptureItem")
-            ),
-            "expected strict coverage failure to mention synthetic capability; got: {err:?}"
-        );
+        cgs.validate()
+            .expect("secondary Get has its own Python method symbol");
+        assert!(uncovered_capabilities(&cgs).is_empty());
     }
 
     #[test]

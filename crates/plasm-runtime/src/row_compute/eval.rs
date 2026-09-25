@@ -255,16 +255,24 @@ fn apply_node(
         )),
         PlanNode::Limit { count } => Ok(lf.slice(0, count.get() as u32)),
         PlanNode::Dedupe { keys } | PlanNode::Distinct { keys } => {
-            let subset: Option<Vec<PlSmallStr>> = if keys.is_empty() {
-                None
+            // The transport row index and flattened helper columns are not
+            // language-visible row values and must never participate in distinct.
+            let subset: Vec<PlSmallStr> = if keys.is_empty() {
+                state
+                    .visible
+                    .iter()
+                    .filter(|name| name.as_str() != IDX_COL)
+                    .map(|name| PlSmallStr::from_str(name))
+                    .collect()
             } else {
-                Some(
-                    keys.iter()
-                        .map(|k| PlSmallStr::from_string(k.dotted()))
-                        .collect(),
-                )
+                keys.iter()
+                    .map(|key| PlSmallStr::from_string(key.dotted()))
+                    .collect()
             };
-            Ok(lf.unique_stable(subset, UniqueKeepStrategy::First))
+            if subset.is_empty() {
+                return Ok(lf.slice(0, 1));
+            }
+            Ok(lf.unique_stable(Some(subset), UniqueKeepStrategy::First))
         }
         PlanNode::Project(spec) => {
             let mut exprs = vec![col(IDX_COL)];
@@ -317,7 +325,23 @@ fn group_by_lf(
                 state.kinds.insert(name.as_str().to_string(), ColKind::Int);
             }
             TypedAggregate::Numeric { name, fn_, field } => {
-                if *fn_ == plasm_core::row_plan::NumericAgg::Sum
+                if matches!(
+                    fn_,
+                    plasm_core::row_plan::NumericAgg::First
+                        | plasm_core::row_plan::NumericAgg::Last
+                ) {
+                    let column = col_expr(field);
+                    let value = if *fn_ == plasm_core::row_plan::NumericAgg::First {
+                        column.first()
+                    } else {
+                        column.last()
+                    };
+                    agg_exprs.push(value.alias(name.as_str()));
+                    visible.push(name.as_str().to_string());
+                    if let Some(kind) = state.kinds.get(&field.dotted()).copied() {
+                        state.kinds.insert(name.as_str().to_string(), kind);
+                    }
+                } else if *fn_ == plasm_core::row_plan::NumericAgg::Sum
                     && state.kinds.get(&field.dotted()) == Some(&ColKind::Money)
                 {
                     push_money_sum(&mut agg_exprs, &mut visible, state, name.as_str(), field);
@@ -346,7 +370,7 @@ fn group_by_lf(
     state.visible = visible;
     if grouped {
         Ok(lf
-            .group_by(keys.iter().map(|k| col(k.dotted())).collect::<Vec<_>>())
+            .group_by_stable(keys.iter().map(|k| col(k.dotted())).collect::<Vec<_>>())
             .agg(agg_exprs))
     } else {
         Ok(lf.select(agg_exprs))
@@ -913,7 +937,8 @@ mod tests {
         let op = ComputeOp::Filter {
             predicates: vec![restored.clone()].into(),
         };
-        let ComputeEvalOutcome::Rows(actual) = eval_compute_ops(&[op.clone()], &rows).unwrap()
+        let ComputeEvalOutcome::Rows(actual) =
+            eval_compute_ops(std::slice::from_ref(&op), &rows).unwrap()
         else {
             panic!("filter")
         };
@@ -1191,9 +1216,9 @@ mod tests {
     #[test]
     fn group_by_count() {
         let rows = vec![
-            serde_json::json!({"owner":"a","score":1}),
+            serde_json::json!({"owner":"b","score":1}),
             serde_json::json!({"owner":"a","score":2}),
-            serde_json::json!({"owner":"b","score":3}),
+            serde_json::json!({"owner":"a","score":3}),
         ];
         let ops = vec![ComputeOp::GroupBy {
             keys: vec![FieldPath::from_dotted("owner").unwrap()],
@@ -1203,10 +1228,54 @@ mod tests {
                 field: None,
             }],
         }];
-        let ComputeEvalOutcome::Rows(out) = eval_compute_ops(&ops, &rows).unwrap() else {
-            panic!("rows");
-        };
-        assert_eq!(out.len(), 2);
+        // Stable first-seen group order keeps synthetic identities and tie ordering
+        // deterministic across repeated executions and source frontends.
+        for _ in 0..32 {
+            let ComputeEvalOutcome::Rows(out) = eval_compute_ops(&ops, &rows).unwrap() else {
+                panic!("rows");
+            };
+            assert_eq!(
+                out,
+                vec![
+                    serde_json::json!({"owner":"b","n":1}),
+                    serde_json::json!({"owner":"a","n":2})
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn first_last_preserve_values_and_types() {
+        use plasm_core::{AggregateFunction, AggregateSpec, OutputName};
+        let rows = vec![
+            serde_json::json!({"text":"alpha", "integer":9007199254740993_i64, "flag":true, "nested":{"x":[1,2]}, "array":["a"], "money":{"__plasm_money":"1.50","currency":"USD"}}),
+            serde_json::json!({"text":"omega", "integer":7, "flag":false, "nested":{"x":[]}, "array":["z"], "money":{"__plasm_money":"2.50","currency":"USD"}}),
+        ];
+        for (function, index) in [(AggregateFunction::First, 0), (AggregateFunction::Last, 1)] {
+            for field in ["text", "integer", "flag", "nested", "array", "money"] {
+                let ops = [ComputeOp::Aggregate {
+                    aggregates: vec![AggregateSpec {
+                        name: OutputName::new("value").unwrap(),
+                        function,
+                        field: Some(FieldPath::from_dotted(field).unwrap()),
+                    }],
+                }];
+                let ComputeEvalOutcome::Rows(out) = eval_compute_ops(&ops, &rows).unwrap() else {
+                    panic!("rows")
+                };
+                if field == "money" {
+                    let actual = &out[0]["value"];
+                    let expected = &rows[index][field];
+                    assert_eq!(actual["currency"], expected["currency"]);
+                    assert_eq!(
+                        Decimal::from_str(actual["__plasm_money"].as_str().unwrap()).unwrap(),
+                        Decimal::from_str(expected["__plasm_money"].as_str().unwrap()).unwrap()
+                    );
+                } else {
+                    assert_eq!(out[0]["value"], rows[index][field], "{function:?} {field}");
+                }
+            }
+        }
     }
 
     #[test]
@@ -1259,5 +1328,57 @@ mod tests {
             err.contains("currency") || err.contains("money"),
             "expected cross-currency error, got {err}"
         );
+    }
+    #[test]
+    fn distinct_ignores_internal_index_and_keeps_first_visible_rows() {
+        let rows = vec![
+            serde_json::json!({"owner":"alice"}),
+            serde_json::json!({"owner":"bob"}),
+            serde_json::json!({"owner":"alice"}),
+        ];
+        let ComputeEvalOutcome::Rows(actual) =
+            eval_compute_ops(&[ComputeOp::DedupeBy { keys: vec![] }], &rows).unwrap()
+        else {
+            panic!("rows")
+        };
+        assert_eq!(actual, rows[..2]);
+    }
+
+    #[test]
+    fn distinct_after_projection_and_empty_rows() {
+        use plasm_core::OutputName;
+        let ops = [
+            ComputeOp::Project {
+                fields: [(
+                    OutputName::new("owner").unwrap(),
+                    FieldPath::from_dotted("owner").unwrap(),
+                )]
+                .into_iter()
+                .collect(),
+            },
+            ComputeOp::DedupeBy { keys: vec![] },
+        ];
+        let rows = vec![
+            serde_json::json!({"id":"1", "owner":"alice"}),
+            serde_json::json!({"id":"2", "owner":"alice"}),
+        ];
+        let ComputeEvalOutcome::Rows(actual) = eval_compute_ops(&ops, &rows).unwrap() else {
+            panic!("rows")
+        };
+        assert_eq!(actual, vec![serde_json::json!({"owner":"alice"})]);
+        for (rows, expected) in [
+            (vec![], vec![]),
+            (
+                vec![serde_json::json!({}), serde_json::json!({})],
+                vec![serde_json::json!({})],
+            ),
+        ] {
+            let ComputeEvalOutcome::Rows(actual) =
+                eval_compute_ops(&[ComputeOp::DedupeBy { keys: vec![] }], &rows).unwrap()
+            else {
+                panic!("rows")
+            };
+            assert_eq!(actual, expected);
+        }
     }
 }

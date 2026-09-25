@@ -4,11 +4,11 @@
 
 **[Documentation (GitHub Pages)](https://plasmtools.github.io/plasm-core/)** · **[Source](https://github.com/PlasmTools/plasm-core)**
 
-Plasm is a **typed capability graph** (CGS), **wire mappings** (CML), and a **path-expression language** agents use against real APIs: validate before transport, compact session symbols, HTTP and MCP hosts, and **42 curated integration catalogs** under [`apis/`](apis/) (see the [full catalog table](apis/README.md#catalog)). Deep dives—**`plasm-server`**, **`plasm`** remote terminal, execute semantics, authoring, views, schema overlays, and env flags—live in the **[documentation site](https://plasmtools.github.io/plasm-core/)**.
+Plasm is a **typed capability graph** (CGS), **wire mappings** (CML), and a **Python DSL for typed DAGs** agents use against real APIs: validate before transport, compact session symbols, HTTP and MCP hosts, and **42 curated integration catalogs** under [`apis/`](apis/) (see the [full catalog table](apis/README.md#catalog)). Deep dives—**`plasm-server`**, **`plasm`** remote terminal, execute semantics, authoring, views, schema overlays, and env flags—live in the **[documentation site](https://plasmtools.github.io/plasm-core/)**.
 
 ### Why this exists
 
-Most agent stacks still center on **ad hoc JSON tools**: large schemas in context, fragile emitted payloads, and no shared model of entities and relations across vendors. If you want the **motivation and framing** for a typed interaction layer instead—one graph-shaped contract, validation before wire calls, and a path language that stays stable as you federate catalogs—read **[Plasm: a typed interaction layer for agents working across APIs](https://medium.com/@ryansroberts/plasm-a-typed-interaction-layer-for-agents-working-across-apis-38d9d90066a7)** (Medium). This repo and the docs site are where that story meets the implementation.
+Most agent stacks still center on **ad hoc JSON tools**: large schemas in context, fragile emitted payloads, and no shared model of entities and relations across vendors. If you want the **motivation and framing** for a typed interaction layer instead—one graph-shaped contract, validation before wire calls, and an authoring interface that stays stable as you federate catalogs—read **[Plasm: a typed interaction layer for agents working across APIs](https://medium.com/@ryansroberts/plasm-a-typed-interaction-layer-for-agents-working-across-apis-38d9d90066a7)** (Medium). This repo and the docs site are where that story meets the implementation.
 
 ## Quick start
 

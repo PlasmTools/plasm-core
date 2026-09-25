@@ -105,8 +105,11 @@ In a project directory:
 ```bash
 plasm init --server http://127.0.0.1:3000 --api-key "$PLASM_API_KEY"
 plasm search "pokeapi pokemon"
-plasm context -i "inspect pokemon" pokeapi:Pokemon
-echo 'e1(name=pikachu)[name,id]' | plasm run
+plasm context --new -i "inspect pokemon"
+# Read the returned Python declarations, then write program.py.
+plasm run --mode plan --file program.py
+# Use the returned plan commit reference when executing.
+plasm run --file program.py --plan-commit-ref pc0
 ```
 
 Full flow: [Remote terminal (`plasm`)](../reference/plasm-cgs-remote-terminal.md).

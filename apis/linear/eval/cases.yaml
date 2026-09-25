@@ -10,7 +10,10 @@
   goal: "Show open bugs in team ENG"
   tags: [search]
   covers: [search_text, query_filtered]
-  reference_expr: Issue.search(q=bug, team_key=ENG)
+  reference_expr: |-
+    class Reference(Program):
+        def build(self):
+            return e6.query(q="bug", team_key="ENG")
   expect:
     entities_any: [Issue]
 
@@ -19,7 +22,10 @@
   goal: "Get issue ENG-42"
   tags: [get]
   covers: [get]
-  reference_expr: Issue(ENG-42)
+  reference_expr: |-
+    class Reference(Program):
+        def build(self):
+            return e6.get("ENG-42")
   expect:
     entities_any: [Issue]
 
@@ -28,7 +34,10 @@
   goal: "What is ENG-42 and its comments?"
   tags: [get, multi_step]
   covers: [get, multi_step]
-  reference_expr: IssueContext(ENG-42)
+  reference_expr: |-
+    class Reference(Program):
+        def build(self):
+            return e7.get("ENG-42")
   expect:
     entities_any: [IssueContext, Issue, Comment]
 
@@ -37,7 +46,10 @@
   goal: "What should I work on?"
   tags: [multi_step]
   covers: [multi_step, query_filtered]
-  reference_expr: MyWorkSnapshot
+  reference_expr: |-
+    class Reference(Program):
+        def build(self):
+            return e10.query()
   expect:
     entities_any: [MyWorkSnapshot, Issue]
 
@@ -46,7 +58,10 @@
   goal: "List workflow columns for team ENG"
   tags: [query]
   covers: [query_filtered]
-  reference_expr: WorkflowState{team_key=ENG}
+  reference_expr: |-
+    class Reference(Program):
+        def build(self):
+            return e17.query(team_key="ENG")
   expect:
     entities_any: [WorkflowState]
 
@@ -55,7 +70,10 @@
   goal: "Create issue titled Sprint task on team ENG"
   tags: [create]
   covers: [create]
-  reference_expr: Issue.create(team=Team(ENG), title=Sprint task)
+  reference_expr: |-
+    class Reference(Program):
+        def build(self):
+            return e6.m13(team="ENG", title="Sprint task")
   expect:
     entities_any: [Issue]
 
@@ -64,7 +82,10 @@
   goal: "Rename issue ENG-42 to Renamed"
   tags: [update]
   covers: [update]
-  reference_expr: Issue(ENG-42).update(title=Renamed)
+  reference_expr: |-
+    class Reference(Program):
+        def build(self):
+            return e6.get("ENG-42").m17(title="Renamed")
   expect:
     entities_any: [Issue]
 
@@ -73,7 +94,10 @@
   goal: "Trash issue ENG-42"
   tags: [delete]
   covers: [delete]
-  reference_expr: Issue(ENG-42).delete
+  reference_expr: |-
+    class Reference(Program):
+        def build(self):
+            return e6.get("ENG-42").m14()
   expect:
     entities_any: [Issue]
 
@@ -82,7 +106,10 @@
   goal: "Comment on ENG-42 with body LGTM"
   tags: [create]
   covers: [create]
-  reference_expr: Comment.create(issue=Issue(ENG-42), body=LGTM)
+  reference_expr: |-
+    class Reference(Program):
+        def build(self):
+            return e1.m2(issue="ENG-42", body="LGTM")
   expect:
     entities_any: [Comment]
 
@@ -99,7 +126,10 @@
   goal: "Share the Linear web URL for ENG-42"
   tags: [view]
   covers: [get]
-  reference_expr: IssueNavigationLink(ENG-42)
+  reference_expr: |-
+    class Reference(Program):
+        def build(self):
+            return e8.get("ENG-42")
   expect:
     entities_any: [IssueNavigationLink]
 
@@ -108,7 +138,10 @@
   goal: "List issues for team ENG across pages"
   tags: [search, pagination]
   covers: [page_next, search_text, query_filtered]
-  reference_expr: Issue.search(team_key=ENG)
+  reference_expr: |-
+    class Reference(Program):
+        def build(self):
+            return e6.query(team_key="ENG")
   expect:
     entities_any: [Issue]
 
@@ -117,7 +150,10 @@
   goal: "Find projects matching Mobile"
   tags: [search]
   covers: [search_text]
-  reference_expr: Project.search(q=Mobile)
+  reference_expr: |-
+    class Reference(Program):
+        def build(self):
+            return e11.search(q="Mobile")
   expect:
     entities_any: [Project]
 
@@ -134,7 +170,10 @@
   goal: "Search documents for API spec"
   tags: [search]
   covers: [search_text]
-  reference_expr: Document.search(q=API spec)
+  reference_expr: |-
+    class Reference(Program):
+        def build(self):
+            return e4.query(q="API spec")
   expect:
     entities_any: [Document]
 
@@ -143,7 +182,10 @@
   goal: "Open issue ENG-42 then show assignee"
   tags: [chain]
   covers: [chain, get]
-  reference_expr: Issue(ENG-42).assignee
+  reference_expr: |-
+    class Reference(Program):
+        def build(self):
+            return e6.get("ENG-42").flat_map(lambda issue: issue.r15)
   expect:
     entities_any: [Issue, User]
 
@@ -152,7 +194,10 @@
   goal: "List sprint cycles for team ENG"
   tags: [query]
   covers: [query_filtered]
-  reference_expr: Cycle{team_key=ENG}
+  reference_expr: |-
+    class Reference(Program):
+        def build(self):
+            return e2.query(team_key="ENG")
   expect:
     entities_any: [Cycle, Team]
 
@@ -193,7 +238,10 @@
   goal: "Open ENG-42 and show its team"
   tags: [chain, reverse]
   covers: [reverse, chain, get]
-  reference_expr: Issue(ENG-42).team
+  reference_expr: |-
+    class Reference(Program):
+        def build(self):
+            return e6.get("ENG-42").flat_map(lambda issue: issue.r14)
   expect:
     entities_any: [Issue, Team]
 
@@ -202,7 +250,10 @@
   goal: "List issues in the workspace"
   tags: [search]
   covers: [query_all, search_text]
-  reference_expr: Issue.search
+  reference_expr: |-
+    class Reference(Program):
+        def build(self):
+            return e6.query()
   expect:
     entities_any: [Issue]
 
@@ -211,7 +262,10 @@
   goal: "List labels on issue ENG-42"
   tags: [get, relation]
   covers: [get, relation_nav]
-  reference_expr: Issue(ENG-42).labels
+  reference_expr: |-
+    class Reference(Program):
+        def build(self):
+            return e6.get("ENG-42").flat_map(lambda issue: issue.r12)
   expect:
     entities_any: [Issue, Label]
 
@@ -220,7 +274,10 @@
   goal: "Create issue titled 'WF identity demo' in team ENG (identity_key team+title)"
   tags: [workflow_identity, create]
   covers: [invoke]
-  reference_expr: Issue.issue-create(team="ENG", title="WF identity demo")
+  reference_expr: |-
+    class Reference(Program):
+        def build(self):
+            return e6.m13(team="ENG", title="WF identity demo")
   expect:
     entities_any: [Issue]
   notes: "Reference eval for issue_create identity_key + conflict_rules."

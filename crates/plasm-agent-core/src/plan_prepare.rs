@@ -83,6 +83,11 @@ pub(crate) fn build_prepared_validated_plan(
 ) -> Result<ValidatedPlan, String> {
     let mut validated = build_validated_plan_from_executable(comp, executable)?;
     apply_read_budgets(&mut validated);
+    for node in validated.nodes_mut() {
+        if let ValidatedPlanNode::MapBody(map) = node {
+            apply_read_budgets(&mut map.plan);
+        }
+    }
     Ok(validated)
 }
 
@@ -94,6 +99,13 @@ pub fn analyze_read_boundedness(plan: &Plan<ValidatedPlanState>) -> ReadBoundedn
     for n in &plan.nodes {
         if !reachable.contains(n.id().as_str()) {
             continue;
+        }
+        if let ValidatedPlanNode::MapBody(map) = n {
+            let nested = analyze_read_boundedness(map.plan.artifact());
+            out.has_unbounded_read_root |= nested.has_unbounded_read_root;
+            out.has_paginated_list_fetch_all_default |= nested.has_paginated_list_fetch_all_default;
+            out.has_relation_many_source_fanout |=
+                nested.has_relation_many_source_fanout || map.body.max_parents.get() > 1;
         }
         if let ValidatedPlanNode::RelationTraversal(rel) = n {
             if rel.relation.source_cardinality == crate::plasm_plan::RelationSourceCardinality::Many
@@ -323,6 +335,12 @@ pub(crate) fn return_path_has_unbounded_relation_embed_hydrate(
 pub fn collect_plan_entity_names(plan: &Plan<ValidatedPlanState>) -> HashSet<String> {
     let mut out = HashSet::new();
     for n in &plan.nodes {
+        if let ValidatedPlanNode::MapBody(map) = n {
+            out.extend(collect_plan_entity_names(map.plan.artifact()));
+        }
+        if let ValidatedPlanNode::Capture(capture) = n {
+            out.insert(capture.entity.entity.clone());
+        }
         if let ValidatedPlanNode::Surface(s) = n {
             if let Some(q) = &s.qualified_entity {
                 out.insert(q.entity.clone());

@@ -28,6 +28,10 @@ pub struct OpUiTelemetry {
     pub rows: Option<u64>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub terminal: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub occurrences: Vec<crate::occurrence_progress::OccurrenceProgress>,
+    #[serde(default)]
+    pub occurrence_snapshot: bool,
 }
 
 impl OpUiTelemetry {
@@ -44,6 +48,8 @@ impl OpUiTelemetry {
             elapsed_ms: ev.stats.elapsed_ms,
             rows: ev.stats.rows,
             terminal: ev.terminal,
+            occurrences: ev.occurrences.clone(),
+            occurrence_snapshot: ev.occurrence_snapshot,
         }
     }
 
@@ -76,6 +82,8 @@ impl OpUiTelemetry {
             elapsed_ms: stats.elapsed_ms,
             rows: stats.rows.or(rows),
             terminal: op.phase != OperationPhase::Running,
+            occurrences: op.occurrences.clone(),
+            occurrence_snapshot: true,
         })
     }
 
@@ -96,6 +104,8 @@ impl OpUiTelemetry {
             n: desc.agent_seq,
             rows: (progress.rows_materialized > 0).then_some(progress.rows_materialized),
             terminal: desc.phase.is_terminal(),
+            occurrences: desc.occurrences.clone(),
+            occurrence_snapshot: true,
             ..Default::default()
         }
     }
@@ -134,6 +144,7 @@ mod tests {
             dry_verdict: None,
             display_map: Default::default(),
             agent_seq: 2,
+            occurrences: Vec::new(),
             agent_last_line: "`l_AAAAAAAAQACAAAAAAAAAAQ_o1` ~ 1/2".into(),
         };
         let snap = OpUiTelemetry::from_persisted(&desc, &handle);
@@ -149,6 +160,8 @@ mod tests {
             seq: 5,
             line: "line".into(),
             terminal: false,
+            occurrences: Vec::new(),
+            occurrence_snapshot: true,
             stats: OpNotifyStats {
                 calls: Some(2),
                 last_ms: Some(100),

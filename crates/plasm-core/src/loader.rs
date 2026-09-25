@@ -1219,10 +1219,20 @@ fn parse_domain_array_items(
     let nv = map
         .get(name)
         .ok_or_else(|| format!("{context}: unknown `items.value_ref` '{name}'"))?;
-    if matches!(nv.field_type, FieldType::Array) {
-        return Err(format!(
-            "{context}: `items.value_ref` '{name}' must not reference an array-typed value domain"
-        ));
+    // Named values resolve against prior declarations, so forward/self references
+    // are rejected above. Bound nested chains as well, including prebuilt registries.
+    let mut current = nv;
+    let mut seen = std::collections::BTreeSet::from([name.to_owned()]);
+    while let Some(item) = &current.array_items {
+        let key = item.kind.registry_key().as_str();
+        if seen.len() >= 64 || !seen.insert(key.to_owned()) {
+            return Err(format!(
+                "{context}: recursive array domain exceeds nesting bounds"
+            ));
+        }
+        current = map
+            .get(key)
+            .ok_or_else(|| format!("{context}: unknown nested array element {key}"))?;
     }
     let vdk = ValueDomainKey::new(name.to_string()).map_err(|e| format!("{context}: {e}"))?;
     Ok(ArrayItemsSchema {

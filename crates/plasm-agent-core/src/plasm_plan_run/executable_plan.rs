@@ -23,6 +23,8 @@ pub(crate) enum PureStep {
 
 /// Runtime-orchestrated steps: backend reads/effects and their closed control-flow forms.
 pub(crate) enum IoStep {
+    MapBody(Box<crate::plasm_plan::ValidatedMapBodyNode>),
+    Capture(Box<crate::plasm_plan::ValidatedCaptureNode>),
     Surface(Box<ValidatedSurfaceNode>),
     Relation(Box<ValidatedRelationTraversalNode>),
     ForEach(Box<ValidatedForEachNode>),
@@ -61,6 +63,8 @@ impl ExecStep {
     /// left unclassified (and therefore silently skipped) by either execution mode.
     pub(crate) fn classify(node: ValidatedPlanNode) -> Self {
         match node {
+            ValidatedPlanNode::MapBody(n) => ExecStep::Io(IoStep::MapBody(Box::new(n))),
+            ValidatedPlanNode::Capture(n) => ExecStep::Io(IoStep::Capture(Box::new(n))),
             ValidatedPlanNode::Data(n) => ExecStep::Pure(PureStep::Data(Box::new(n))),
             ValidatedPlanNode::Derive(n) => ExecStep::Pure(PureStep::Derive(Box::new(n))),
             ValidatedPlanNode::Compute(n) => ExecStep::Pure(PureStep::Compute(Box::new(n))),
@@ -196,8 +200,23 @@ impl PureStep {
 }
 
 impl IoStep {
+    /// Only reads may be dropped while host I/O is pending. Writes must finish
+    /// their acknowledgement/accounting path even after cancellation is requested.
+    pub(crate) fn cancellable_read(&self) -> bool {
+        let effect = match self {
+            Self::MapBody(_) | Self::Capture(_) => return false,
+            Self::Surface(n) => n.effect_class,
+            Self::Relation(n) => n.effect_class,
+            Self::ForEach(n) => n.effect_class,
+            Self::IterateUntil(n) => n.effect_class,
+        };
+        matches!(effect, EffectClass::Read | EffectClass::ArtifactRead)
+    }
+
     fn kind_tag(&self) -> &'static str {
         match self {
+            IoStep::MapBody(_) => "map_body",
+            IoStep::Capture(_) => "capture",
             IoStep::Surface(_) => "surface",
             IoStep::Relation(_) => "relation",
             IoStep::ForEach(_) => "foreach",
@@ -207,6 +226,8 @@ impl IoStep {
 
     pub(crate) fn id(&self) -> &PlanNodeId {
         match self {
+            IoStep::MapBody(n) => &n.id,
+            IoStep::Capture(n) => &n.id,
             IoStep::Surface(n) => &n.id,
             IoStep::Relation(n) => &n.id,
             IoStep::ForEach(n) => &n.id,
@@ -241,6 +262,17 @@ impl ScheduleDigest {
                 continue;
             };
             let step = ExecStep::classify((*node).clone());
+            if let ValidatedPlanNode::MapBody(n) = node {
+                let order: Vec<_> = n
+                    .plan
+                    .topological_order()
+                    .iter()
+                    .map(|id| id.as_str().to_string())
+                    .collect();
+                hasher.update(Self::from_validated_plan(n.plan.artifact(), &order).0);
+                hasher.update(serde_json::to_vec(&n.body.parent).expect("serializable capture"));
+                hasher.update(serde_json::to_vec(&n.body.body.bind).expect("serializable bind"));
+            }
             hasher.update(step_id.as_bytes());
             hasher.update(b"\x1f");
             hasher.update(step.schedule_tag().as_bytes());

@@ -106,5 +106,6 @@ pub fn plan_node_from_compute(op: &ComputeOp) -> Result<PlanNode, RowComputeErro
         }
         ComputeOp::Render { .. } => Err(FusionError::RenderInPipeline.into()),
         ComputeOp::Union { .. } => Err(FusionError::UnionInPipeline.into()),
+        ComputeOp::Python { .. } => Err(FusionError::PythonInPipeline.into()),
     }
 }

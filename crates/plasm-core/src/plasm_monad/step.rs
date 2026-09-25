@@ -44,6 +44,7 @@ pub enum PlasmStepKind {
     FlatMapApply,
     /// PLP-8 state iterator (`iterate … until … take N`).
     UnfoldUntil,
+    MapBody,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

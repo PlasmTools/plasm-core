@@ -120,6 +120,18 @@ fn validate_array_item_value(
             field_type: format!("{:?}", spec.field_type),
         });
     }
+    if matches!(spec.field_type, FieldType::Array) {
+        let nested = cgs
+            .values
+            .get(spec.kind.registry_key().as_str())
+            .and_then(|domain| domain.array_items.as_ref())
+            .ok_or_else(|| TypeError::IncompatibleValue {
+                field: path.to_owned(),
+                value_type: value.type_name().to_owned(),
+                field_type: "array with a declared element type".into(),
+            })?;
+        validate_typed_array_value(value, nested, path, cgs)?;
+    }
     if matches!(spec.field_type, FieldType::Select) {
         if let (Some(allowed), Some(sv)) = (&spec.allowed_values, value.as_str()) {
             if !allowed.contains(&sv.to_string()) {
@@ -132,6 +144,28 @@ fn validate_array_item_value(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod recursive_array_contract_tests {
+    use super::*;
+
+    #[test]
+    fn nested_catalog_arrays_validate_each_leaf() {
+        let cgs = crate::loader::load_schema_dir(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/python_value_contract"),
+        )
+        .unwrap();
+        let spec = cgs.values["matrix"].array_items.as_ref().unwrap();
+        let good = Value::Array(vec![
+            Value::Array(vec![Value::Integer(1)]),
+            Value::Array(vec![]),
+        ]);
+        validate_typed_array_value(&good, spec, "matrix", &cgs).unwrap();
+        let bad = Value::Array(vec![Value::Array(vec![Value::Bool(true)])]);
+        assert!(validate_typed_array_value(&bad, spec, "matrix", &cgs).is_err());
+    }
 }
 
 pub(crate) fn validate_typed_array_value(
@@ -472,7 +506,10 @@ fn validate_capability_invocation_input_inner(
         return validate_capability_input_with_satisfied(input, schema, cgs, satisfied_fields);
     }
 
-    let object_schemas: Vec<&crate::InputSchema> = capability.invocation_object_schemas().collect();
+    let object_schemas: Vec<&crate::InputSchema> = capability
+        .invocation_input_schemas()
+        .filter(|schema| !matches!(schema.input_type, crate::InputType::None))
+        .collect();
 
     match object_schemas.as_slice() {
         [] => {
@@ -493,17 +530,40 @@ fn validate_capability_invocation_input_inner(
 
             let mut owner: IndexMap<&str, usize> = IndexMap::new();
             for (i, schema) in schemas.iter().enumerate() {
-                let crate::InputType::Object { fields, .. } = &schema.input_type else {
-                    // `invocation_object_schemas` already filters Object; skip defensively.
-                    continue;
+                let names: Vec<&str> = match &schema.input_type {
+                    crate::InputType::Object { fields, .. } => {
+                        fields.iter().map(|field| field.name.as_str()).collect()
+                    }
+                    crate::InputType::Union { variants } => variants
+                        .iter()
+                        .flat_map(|variant| {
+                            std::iter::once(variant.wire.field.as_str()).chain(
+                                variant.fields.iter().map(|field| {
+                                    field
+                                        .wire_json_path
+                                        .as_ref()
+                                        .and_then(|path| path.first())
+                                        .map(String::as_str)
+                                        .unwrap_or(field.name.as_str())
+                                }),
+                            )
+                        })
+                        .collect(),
+                    _ => {
+                        return Err(TypeError::IncompatibleValue {
+                            field: String::new(),
+                            value_type: "multiple invocation lanes".into(),
+                            field_type: "record-shaped input lanes".into(),
+                        })
+                    }
                 };
-                for f in fields {
-                    let replaced = owner.insert(f.name.as_str(), i);
-                    debug_assert!(
-                        replaced.is_none(),
-                        "duplicate field `{}` across invocation object lanes (CGS must keep lanes disjoint)",
-                        f.name
-                    );
+                for name in names {
+                    if owner.insert(name, i).is_some_and(|previous| previous != i) {
+                        return Err(TypeError::FieldNotFound {
+                            field: name.into(),
+                            entity: "ambiguous input lane ownership".into(),
+                        });
+                    }
                 }
             }
 

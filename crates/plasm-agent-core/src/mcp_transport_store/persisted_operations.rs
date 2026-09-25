@@ -87,6 +87,8 @@ pub struct PersistedOperationDescriptor {
     pub agent_seq: u64,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub agent_last_line: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub occurrences: Vec<crate::occurrence_progress::OccurrenceProgress>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -103,6 +105,7 @@ pub enum OperationPersistPatch {
         progress: PersistedOperationProgress,
         agent_seq: u64,
         agent_last_line: String,
+        occurrences: Vec<crate::occurrence_progress::OccurrenceProgress>,
     },
 }
 
@@ -140,6 +143,7 @@ pub fn descriptor_from_operation_state(
         display_map: op.display_map.clone(),
         agent_seq: op.agent_emit.seq,
         agent_last_line: op.agent_emit.last_line.clone(),
+        occurrences: op.occurrences.clone(),
     }
 }
 
@@ -183,11 +187,13 @@ pub fn merge_operation_patch(
             progress,
             agent_seq,
             agent_last_line,
+            occurrences,
         } => {
             if let Some(existing) = operations.iter_mut().find(|o| o.handle == handle) {
                 existing.progress = progress;
                 existing.agent_seq = agent_seq;
                 existing.agent_last_line = agent_last_line;
+                existing.occurrences = occurrences;
             }
         }
     }
@@ -217,6 +223,7 @@ mod tests {
                     dry_verdict: None,
                     display_map: HashMap::new(),
                     agent_seq: 0,
+                    occurrences: Vec::new(),
                     agent_last_line: String::new(),
                 }),
             );

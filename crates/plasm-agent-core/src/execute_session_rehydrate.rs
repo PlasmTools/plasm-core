@@ -346,6 +346,7 @@ pub async fn rehydrate_execute_session(
     session.registry_catalog_hashes_by_entry = desc.registry_catalog_hashes_by_entry.clone();
     session.materialized_outbound_hosted_kv_by_entry = desc.outbound_hosted_kv_by_entry.clone();
     session.domain_revision = desc.domain_revision;
+    session.python_teaching = desc.python_teaching.clone();
     session.restore_persisted_plan_commits(&desc.plan_commits, desc.plan_commit_next);
     session.restore_persisted_operations(&crate::mcp_transport_store::OperationPersistSnapshot {
         operations: desc.operations.clone(),
@@ -453,6 +454,7 @@ mod tests {
             plan_commit_next: 0,
             operations: Vec::new(),
             operation_handle_next: 0,
+            python_teaching: Default::default(),
             symbol_ledger_bytes: Vec::new(),
             prerequisite_deployments: Default::default(),
         };
@@ -549,6 +551,7 @@ mod tests {
             plan_commit_next: 0,
             operations: Vec::new(),
             operation_handle_next: 0,
+            python_teaching: Default::default(),
             symbol_ledger_bytes: Vec::new(),
             prerequisite_deployments: Default::default(),
         };
@@ -598,6 +601,7 @@ mod tests {
             plan_commit_next: 0,
             operations: Vec::new(),
             operation_handle_next: 0,
+            python_teaching: Default::default(),
             symbol_ledger_bytes: Vec::new(),
             prerequisite_deployments: Default::default(),
         };
@@ -693,6 +697,7 @@ mod tests {
             plan_commit_next: 0,
             operations: Vec::new(),
             operation_handle_next: 0,
+            python_teaching: Default::default(),
             symbol_ledger_bytes: Vec::new(),
             prerequisite_deployments: Default::default(),
         };

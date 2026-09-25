@@ -117,7 +117,7 @@ const routingSchema = z.object({
 /** The Rust router owns validation; this decoder also rejects mismatched native packages. */
 export const routingPacketSchema = z.object({
   routing: routingSchema,
-  teaching: z.object({ tsv: z.string(), delta_refs: z.array(z.string()) }).nullable(),
+  teaching: z.object({ prompt: z.string(), delta_refs: z.array(z.string()) }).nullable(),
 });
 export type RoutingPacket = z.infer<typeof routingPacketSchema>;
 export type PrerequisiteClosure = z.infer<typeof prerequisiteClosureSchema>;

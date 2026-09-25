@@ -36,7 +36,7 @@ export default defineChannel({
         const useDryRun = body.dryRun !== false;
 
         if (useDryRun) {
-          const dry = await dryRunProgram(executeTiny.builder, "e2");
+          const dry = await dryRunProgram(executeTiny.builder, "class Products(Program):\n    def build(self):\n        return e2.query()");
           res.statusCode = 200;
           res.setHeader("content-type", "application/json; charset=utf-8");
           res.end(

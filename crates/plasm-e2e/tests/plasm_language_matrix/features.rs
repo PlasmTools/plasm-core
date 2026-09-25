@@ -2,6 +2,15 @@
 
 /// Every tag listed here must appear on at least one passing matrix row (`features` column).
 pub(crate) const REQUIRED_FEATURE_TAGS: &[&str] = &[
+    "distinct_projected_values",
+    "relation_one_chain",
+    "relation_empty_fanout",
+    "boolean_identity_literal",
+    "exact_integer_identity",
+    "compound_get_identity",
+    "bound_get_identity",
+    "bound_query_operand",
+    "bound_iterate_identity",
     "bounded_singleton_field_extract",
     "parenthesized_row_expression",
     "bounded_singleton_method_invoke",

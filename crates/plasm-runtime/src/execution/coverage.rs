@@ -102,14 +102,14 @@ impl ConsumeStop {
     /// Partial with `has_more == false` when the driver was not consulted.
     #[must_use]
     pub fn has_more(self) -> bool {
-        match self {
-            Self::BackendHasMore => true,
-            Self::ItemCapHit {
-                driver_has_more: Some(true),
-                ..
-            } => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            Self::BackendHasMore
+                | Self::ItemCapHit {
+                    driver_has_more: Some(true),
+                    ..
+                }
+        )
     }
 }
 

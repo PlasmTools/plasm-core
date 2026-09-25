@@ -155,6 +155,25 @@ pub fn capability_declared_input_names(cap: &CapabilitySchema) -> HashSet<String
     cap.input_fields().map(|f| f.name.to_string()).collect()
 }
 
+/// Names supplied independently of receiver identity, including declared preflight outputs.
+pub(super) fn capability_env_input_names(cap: &CapabilitySchema) -> HashSet<String> {
+    let mut names = capability_declared_input_names(cap);
+    if let Some(plan) = &cap.preflight {
+        use crate::preflight::PreflightStep;
+        for step in &plan.0 {
+            match step {
+                PreflightStep::HydrateEntityRefParam { merge, .. }
+                | PreflightStep::QueryPick { merge, .. } => names.extend(merge.keys().cloned()),
+                PreflightStep::LabelIdsDelta { merge, .. } => {
+                    names.insert(merge.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+    names
+}
+
 /// Materialize identity once and project the capability's identity-env vars.
 pub fn project_capability_identity_env(
     cap: &CapabilitySchema,
@@ -166,7 +185,7 @@ pub fn project_capability_identity_env(
         .as_ref()
         .map(|m| identity_env_var_names(&m.template.0))
         .unwrap_or_default();
-    let declared = capability_declared_input_names(cap);
+    let declared = capability_env_input_names(cap);
     let policy = cap.kind.domain_path_env_alias_policy();
     let identity = ResolvedIdentity::from_ref(reference, ctx);
     let path_env = project_identity_onto_vars(

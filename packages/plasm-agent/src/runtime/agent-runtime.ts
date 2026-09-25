@@ -200,10 +200,10 @@ export class AgentRuntime {
     return this.committedWriteOps;
   }
 
-  /** Open-wave teaching TSV (empty before mint). */
-  openWorkflowTeachingTsv(): string | undefined {
-    const tsv = this.workflowSession?.teachingTsv?.trim();
-    return tsv || undefined;
+  /** Cached Python language reference and accumulated domain declaration waves (empty before mint). */
+  workflowTeachingPrompt(): string | undefined {
+    const prompt = this.workflowSession?.teachingPrompt?.trim();
+    return prompt || undefined;
   }
 
   constructor(config: AgentRuntimeConfig) {
@@ -326,7 +326,7 @@ export class AgentRuntime {
           ...(recoveryMarkdown ? [] : routingExplanationLines(routing.matching)),
         ].filter(Boolean).join("\n\n");
       }
-      if (!routing.closure || !teaching?.tsv.trim()) {
+      if (!routing.closure || !teaching?.prompt.trim()) {
         throw new Error("Routing is missing its prerequisite closure or canonical teaching");
       }
       // Keep exact capability and prerequisite distinctions as returned by Rust.
@@ -337,10 +337,10 @@ export class AgentRuntime {
         return { api: ref.slice(0, separator), entity: ref.slice(separator + 1) };
       });
       session.seeds = mergeSeeds(session.seeds, exposed);
-      session.teachingTsv = [session.teachingTsv.trim(), teaching.tsv.trim()].filter(Boolean).join("\n\n");
+      session.teachingPrompt = [session.teachingPrompt.trim(), teaching.prompt.trim()].filter(Boolean).join("\n\n");
       session.waves.push({
         entryId: exposed[0]?.api ?? "unknown", entities: exposed.map((entry) => entry.entity),
-        tsv: teaching.tsv, at: new Date().toISOString(),
+        prompt: teaching.prompt, at: new Date().toISOString(),
       });
       await this.sessionManager.update(session);
       this.workflowSession = session;
@@ -350,7 +350,7 @@ export class AgentRuntime {
         registry_generation: session.registryGeneration, routing: JSON.stringify(routing),
         trace_id: activeTraceId() ?? span.spanContext().traceId,
       });
-      const teachingMarkdown = formatPlasmContextMarkdown(session.logicalSessionRef, teaching.tsv, false);
+      const teachingMarkdown = formatPlasmContextMarkdown(session.logicalSessionRef, teaching.prompt, false);
       return [routing.intent_analysis, teachingMarkdown, recoveryMarkdown].filter(Boolean).join("\n\n");
     });
   }

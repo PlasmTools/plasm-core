@@ -103,6 +103,8 @@ pub fn merge_run_explorer_fields_into_plasm(
     op: &OperationState,
     progress: Option<&OperationProgress>,
 ) {
+    plasm.insert("occurrences".into(), json!(op.occurrences));
+
     if let Some(comp) = &op.comp {
         plasm.insert("comp".into(), comp.to_json_value());
     }

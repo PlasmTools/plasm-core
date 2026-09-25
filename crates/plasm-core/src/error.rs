@@ -507,7 +507,7 @@ pub enum SchemaError {
 
     /// One or more capabilities were not represented in teaching-line synthesis.
     #[error(
-        "Capability coverage incomplete: teaching-line synthesis omitted examples for {uncovered:?}"
+        "Capability coverage incomplete: Python teaching omitted signatures for {uncovered:?}"
     )]
     CapabilityCoverageIncomplete { uncovered: Vec<(String, String)> },
 

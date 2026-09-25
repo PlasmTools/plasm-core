@@ -1,16 +1,25 @@
-# plasm-eval
+# Python DAG evaluator
 
-Deterministic and LLM-backed evaluation harnesses over Plasm schemas and case files.
+`plasm-eval` translates goals to complete Python `Program` classes and compiles them
+with the same session, type checks, dry planning and structured corrections as HTTP/MCP.
+It never repairs source by retrying the retired native parser. Correction feedback
+preserves indentation and string contents; repeated rejection evidence is session-local.
 
-## Design boundary: no domain leakage
+```sh
+cargo run -p plasm-eval --features baml -- --schema fixtures/schemas/python_dag_slice --print-prompt
+cargo run -p plasm-eval --features baml -- --schema apis/example --cases apis/example/eval/cases.yaml --model MODEL
+```
 
-Plasm is a **general-purpose language and runtime for API mapping** (schema, expressions, CML, execution). **Domain-specific knowledge is forbidden in this crate:** no branches on particular CGS entity or capability names from `apis/…`, no field-alias or env-key hacks for one vendor’s HTTP templates, and no special transport cases tied to a single product.
+`--focus Entity` selects initial declarations. The first transcript turn supplies
+one Python library reference and domain declarations. Later turns reuse that context.
+Semantic scoring inspects compiled DAG operations, row filters, projections, relation
+traversals, effects and nested bodies. Source-text expectations inspect original Python.
 
-Catalog behavior belongs in **`apis/<name>/`**, fixtures, and optional **plugins**—expressed as data and schema-driven rules. Code here stays **agnostic**, driven only by loaded CGS and generic IR/types.
+`reference_expr` in case YAML now contains a complete Python Program, with the symbol
+allocation of this evaluator session. Old native references must be migrated; they
+are rejected, not silently rewritten. Coverage metadata (`covers`, `expect`) remains
+catalog-oriented. A deterministic coverage report is not an LLM benchmark.
 
-**LLM eval (`plasm-eval` default run):** all cases execute **in YAML order** on **one BAML `TranslatePlan` transcript** (teaching table/schema only in the first user turn; each case appends a `--- GOAL ---` turn, mirroring `plasm-repl` `:llm`). There is no parallel “job” mode.
-
-The library builds without generated BAML code. The CLI is opt-in: generate
-`crates/plasm-eval/baml_client`, then run with `--features baml`.
-
-See [AGENTS.md](../../AGENTS.md) for workspace layout and commands.
+`--print-prompt` prints Python teaching. Retired `--print-prompt-tsv` and
+`--symbol-tuning` authoring options are not supported. TSV remains a result encoding.
+Generate BAML with the pinned version declared by `baml_src/generators.baml`.

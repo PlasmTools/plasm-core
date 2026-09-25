@@ -52,15 +52,11 @@ fn published_fields(out: &[CachedEntity]) -> BTreeMap<String, BTreeMap<String, S
     for e in out {
         let id = e.reference.primary_slot_str().to_string();
         let mut fields = BTreeMap::new();
-        if let Some(v) = e.fields.get("title").map(|f| f.to_value()) {
-            if let Value::String(s) = v {
-                fields.insert("title".into(), s);
-            }
+        if let Some(Value::String(s)) = e.fields.get("title").map(|f| f.to_value()) {
+            fields.insert("title".into(), s);
         }
-        if let Some(v) = e.fields.get("body").map(|f| f.to_value()) {
-            if let Value::String(s) = v {
-                fields.insert("body".into(), s);
-            }
+        if let Some(Value::String(s)) = e.fields.get("body").map(|f| f.to_value()) {
+            fields.insert("body".into(), s);
         }
         map.insert(id, fields);
     }

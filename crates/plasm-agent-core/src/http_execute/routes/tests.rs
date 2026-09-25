@@ -372,7 +372,7 @@ async fn create_session_then_bad_expression_is_400() {
 }
 
 #[tokio::test]
-async fn get_execute_session_prompt_is_table_only() {
+async fn get_execute_session_preserves_cached_python_teaching() {
     let st = test_state_with_registry();
     let app = test_app_execute(st.clone());
 
@@ -395,13 +395,10 @@ async fn get_execute_session_prompt_is_table_only() {
         .to_owned();
 
     let full = get_execute_session_json(&app, loc.as_str()).await;
-    assert!(
-        !full
-            .prompt
-            .contains(plasm_core::prompt_render::TEACHING_VALID_EXPR_MARKER),
-        "execute session prompt is table-only; grammar is taught via MCP tools/list"
-    );
-    assert!(full.prompt.contains("plasm_expr"));
+    assert!(full.prompt.contains("class Program:"));
+    assert!(full.prompt.contains("class e1"));
+    assert!(full.prompt.contains("```pyi"));
+    assert!(!full.prompt.contains("plasm_expr\tMeaning"));
 
     let get = Request::builder()
         .method("GET")
@@ -416,13 +413,10 @@ async fn get_execute_session_prompt_is_table_only() {
         .unwrap();
     let cached: CreateExecuteSessionResponse = serde_json::from_slice(&body).expect("session JSON");
     assert_eq!(cached.prompt_hash, full.prompt_hash);
-    assert!(
-        !cached
-            .prompt
-            .contains(plasm_core::prompt_render::TEACHING_VALID_EXPR_MARKER),
-        "GET session stays table-only"
+    assert_eq!(
+        cached.prompt, full.prompt,
+        "GET must preserve reference and declaration text exactly"
     );
-    assert!(cached.prompt.contains("plasm_expr"));
 }
 
 #[tokio::test]
@@ -516,7 +510,7 @@ async fn program_parse_error_is_bad_request() {
     let doc: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let detail = doc.get("detail").and_then(|d| d.as_str()).unwrap_or("");
     assert!(
-        detail.contains("Expected identifier"),
+        detail.contains("Python") || detail.contains("Expected"),
         "expected parse detail: {detail:?}"
     );
 }
@@ -787,8 +781,8 @@ async fn expand_domain_session_updates_session_entities() {
     .await
     .expect("expand");
     assert!(
-        first_wave.markdown.contains("plasm_expr\tMeaning"),
-        "expected fenced language card (default TSV render): {}",
+        first_wave.markdown.contains("```pyi"),
+        "expected incremental Python declarations: {}",
         first_wave.markdown
     );
     assert!(

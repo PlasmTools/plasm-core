@@ -98,21 +98,6 @@ pub fn render_teaching_tsv(
     }
 }
 
-/// [`render_teaching_prompt_bundle`] with [`RenderConfig::for_expression_surface_validation`].
-///
-/// Centralizes the config [`crate::cgs_expression_validate::validate_cgs_expression_surface`] must stay aligned with.
-pub(crate) fn render_teaching_prompt_bundle_for_validation(cgs: &CGS) -> TeachingPromptBundle {
-    let config = RenderConfig::for_expression_surface_validation();
-    debug_assert!(
-        config.uses_symbols(),
-        "validation config must use the symbolic exposure path"
-    );
-    // Validation-probe render: an entity that synthesizes zero teaching rows is an authoring fault
-    // (surfaced by `validate_cgs_expression_surface` as `EntityExpressionIncomplete`).
-    let exposure = crate::symbol_tuning::teaching_exposure_session_from_focus(cgs, config.focus);
-    render_teaching_prompt_bundle_for_exposure_inner(cgs, config, &exposure, None, true)
-}
-
 /// Render teaching table (many-shot examples) and structured execution metadata.
 pub fn render_teaching_prompt_bundle(cgs: &CGS, config: RenderConfig<'_>) -> TeachingPromptBundle {
     let span = crate::spans::prompt_domain_bundle(

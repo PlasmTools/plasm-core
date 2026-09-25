@@ -329,13 +329,14 @@ fn source_value_ref_key(
         }
         | DagNodeSource::RelationTraversal {
             qualified_entity, ..
+        }
+        | DagNodeSource::ForEach {
+            qualified_entity, ..
         } => {
             let wire = path.last()?;
             field_value_ref_key(session, qualified_entity, wire)
         }
-        DagNodeSource::Data(_)
-        | DagNodeSource::ForEach { .. }
-        | DagNodeSource::IterateUntil { .. } => None,
+        DagNodeSource::Data(_) | DagNodeSource::IterateUntil { .. } => None,
     }
 }
 

@@ -24,6 +24,10 @@ pub(crate) fn validated_node_to_step_payload(
     node: &ValidatedPlanNode,
 ) -> Result<PlasmStepPayload, String> {
     match node {
+        ValidatedPlanNode::MapBody(n) => Ok(PlasmStepPayload::MapBody(n.body.clone())),
+        ValidatedPlanNode::Capture(_) => {
+            Err("capture ports cannot be serialized as root steps".into())
+        }
         ValidatedPlanNode::Surface(n) => Ok(PlasmStepPayload::Invoke(surface_to_invoke(n)?)),
         ValidatedPlanNode::Data(n) => Ok(PlasmStepPayload::Pure(data_to_pure(n)?)),
         ValidatedPlanNode::Compute(n) => Ok(PlasmStepPayload::Map(compute_to_map(n)?)),
@@ -274,6 +278,19 @@ fn step_payload_to_validated_node(
     let depends_on = step_depends_on(step_id, bind);
     let uses_result = step_uses_result(step_id, bind);
     match payload {
+        PlasmStepPayload::MapBody(body) => {
+            body.execution_layers()?;
+            let plan = lift_body(body)?;
+            Ok(ValidatedPlanNode::MapBody(
+                crate::plasm_plan::ValidatedMapBodyNode {
+                    id,
+                    body: body.clone(),
+                    plan: Box::new(plan),
+                    depends_on,
+                    uses_result,
+                },
+            ))
+        }
         PlasmStepPayload::Invoke(p) => Ok(ValidatedPlanNode::Surface(ValidatedSurfaceNode {
             id,
             kind: surface_kind_to_plan(p.plan_kind)?,
@@ -617,6 +634,45 @@ fn plan_result_shape(value: ResultShape) -> PlanResultShape {
     value
 }
 
+/// Lift a closed body with an explicit input port. No fake read/data step enters its wire plan.
+fn lift_body(body: &plasm_core::plasm_monad::CorrelatedBody) -> Result<ValidatedPlan, String> {
+    let capture = PlanNodeId::new(body.parent.local.as_str())?;
+    let mut nodes = vec![ValidatedPlanNode::Capture(
+        crate::plasm_plan::ValidatedCaptureNode {
+            id: capture.clone(),
+            entity: plan_qualified_entity_key(&body.parent.entity),
+        },
+    )];
+    let mut topo = vec![capture];
+    for id in body.execution_layers()?.iter().flatten() {
+        nodes.push(step_payload_to_validated_node(
+            id,
+            &body.body.steps[id.as_str()],
+            &body.body.bind,
+        )?);
+        topo.push(PlanNodeId::new(id.as_str())?);
+    }
+    let indices = nodes
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.id().clone(), i))
+        .collect();
+    let plan = Plan::new_program(
+        body.body.version,
+        body.body.name.clone(),
+        nodes,
+        plasm_return_to_validated(&body.body.return_)?,
+        body.body.metadata.clone(),
+    );
+    validate_rehydrated_cardinality_proofs(&plan)?;
+    Ok(ValidatedPlanArtifact::from_validated_parts(
+        plan,
+        topo,
+        indices,
+        vec![],
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -647,6 +703,7 @@ mod tests {
                 schema: SyntheticResultSchema {
                     entity: Some("PlanRender".into()),
                     fields: vec![SyntheticFieldSchema {
+                        value_type: None,
                         name: OutputName::new("content").expect("content"),
                         value_kind: SyntheticValueKind::String,
                         source: None,

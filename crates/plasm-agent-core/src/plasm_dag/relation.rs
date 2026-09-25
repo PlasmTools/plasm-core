@@ -39,6 +39,27 @@ pub(in crate::plasm_dag) fn relation_segment_context<'a>(
     }
 }
 
+/// Opaque relation symbols belong to a catalog as well as a source entity.
+/// Check before repair coercion can reinterpret an out-of-scope token.
+fn validate_relation_symbol_owner(
+    map: &dyn plasm_core::SymbolSession,
+    qe: &QualifiedEntityKey,
+    segment: &str,
+) -> Result<(), String> {
+    if plasm_core::SymbolMap::is_opaque_r_sym(segment) {
+        let binding = map
+            .resolve_session_relation(segment)
+            .map_err(|err| err.to_string())?;
+        if binding.entry_id.as_str() != qe.entry_id || binding.source_entity.as_str() != qe.entity {
+            return Err(format!(
+                "relation symbol `{segment}` does not belong to catalog `{}` entity `{}`",
+                qe.entry_id, qe.entity
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(in crate::plasm_dag) fn resolve_relation_wire_on_entity(
     session: &ExecuteSession,
     cross_cache: Option<&SymbolMapCrossRequestCache>,
@@ -49,6 +70,7 @@ pub(in crate::plasm_dag) fn resolve_relation_wire_on_entity(
     let cgs = resolve_cgs_for_qualified_entity(session, qe)?;
     let ent = cgs.get_entity(qe.entity.as_str())?;
     let map = symbol_map_for_plasm_surface_parse(session, cross_cache);
+    validate_relation_symbol_owner(map.as_ref(), qe, segment).ok()?;
     let ctx = relation_segment_context(map.as_ref(), qe, ent, binding_label, true);
     match plasm_core::resolve_relation_segment(&ctx, segment) {
         plasm_core::RelationSegmentOutcome::Wire(w) => Some(w),
@@ -76,6 +98,7 @@ pub(in crate::plasm_dag) fn resolve_relation_segment_for_continuation(
         )
     })?;
     let map = symbol_map_for_plasm_surface_parse(session, cross_cache);
+    validate_relation_symbol_owner(map.as_ref(), row_qe, segment)?;
     let ctx = relation_segment_context(map.as_ref(), row_qe, ent, binding_label, true);
     if let Some((relation, _)) = segment.split_once('{') {
         if let plasm_core::RelationSegmentOutcome::Wire(wire) =

@@ -32,6 +32,17 @@ async fn dry_stub_materialize_io(
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
 ) -> Result<Option<MaterializedNode>, String> {
     match step {
+        IoStep::MapBody(_) => Ok(None),
+        IoStep::Capture(capture) => {
+            let (rows, identities) = dry_stub_entity_rows_for(es, &capture.entity, 1)?;
+            Ok(Some(MaterializedNode::inline_cache(
+                capture.entity.clone(),
+                rows,
+                identities,
+                "capture".into(),
+                None,
+            )))
+        }
         IoStep::Surface(surface) => {
             let federated = es.contexts_by_entry.len() > 1;
             match crate::plan_surface_policy::surface_qualified_entity_policy_err(
@@ -289,7 +300,10 @@ pub(crate) fn dry_validate_staged_surfaces(
             synthetic.insert(n.id().clone());
         }
         let needs_real_values = has_synthetic_input && matches!(step, ExecStep::Pure(_));
-        if needs_real_values || n.depends_on().iter().any(|id| deferred.contains(id)) {
+        if matches!(n, ValidatedPlanNode::MapBody(_))
+            || needs_real_values
+            || n.depends_on().iter().any(|id| deferred.contains(id))
+        {
             deferred.insert(n.id().clone());
             continue;
         }

@@ -184,7 +184,7 @@ one identity without an explicit model.
 
 #### Teaching-table-facing descriptions (entities and capabilities)
 
-Symbolic teaching table / TSV teaching attaches **`entities.<Name>.description`** to the **projection witness** banner line. **`capabilities.<id>.description`** feeds compact capability legends. Both must stay **agentic**: short, imperative, domain-vocabulary — not implementation manuals and not vendor documentation.
+Python declarations attach entity and capability descriptions as compact CGS comments beside typed signatures. Keep them short, domain-oriented and useful for selecting the right operation.
 
 **Lint:** `plasm-oss/scripts/check_catalog_description_hygiene.py` flags antipatterns (identity restatement, eval-key examples, field inventories in parentheses, generic get boilerplate, composed-view duplication, scoping parentheticals, tabular jargon). Use `--fail-on error` before publish; pair with `apply_description_hygiene_fixes.py` for bulk remediation then hand-edit disambiguation.
 
@@ -231,7 +231,7 @@ History-browse phrases belong on the **Source** entity `names`. Materialize Quer
 
 **Teaching projection (default on):** For each entity with a primary Get and non-empty ordered **`F`** from `CGS::domain_projection_heading_fields` in [`crates/plasm-core/src/schema.rs`](../../../crates/plasm-core/src/schema.rs), the prompt renderer teaches **`F`** on the **projection witness row** — a validated get/query exemplar with trailing `[field,…]` in `plasm_expr` and `· projection` in Meaning (not a separate entity heading line). Expressions still use `Entity(…)[subset]` for actual reads. **`F`** comes from that Get's explicit **`provides:`** list (order preserved); if `provides` is empty, **`F`** defaults to `id_field` first, then remaining fields lexicographically. Set **`domain_projection_examples: false`** to suppress projection brackets. Declare **`primary_read` / `primary_query` / `primary_search`** when the entity has competing read capabilities (see Entities above).
 
-**TSV projection witness (query-only entities):** Symbolic `plasm_expr` / `Meaning` teaching uses `CGS::domain_projection_teaching_wire_fields`, which uses the declared primary Query/Search when no Get exists (including a sole scoped-only list when that is the only query on the entity). On query-only entities, the **primary query row** is taught **before** mutators; entity `description` attaches as the banner on that query witness (or on the identity get row when a Get exists) — **never** on `e#(<id>).m#(…)` mutator rows. Each mutator row carries its own capability `description` in Meaning (`↠ () · …` / `↠ e# · …`).
+**Python declaration coverage:** every exposed capability must have its exact typed signature or a visible unavailable reason. Entity receivers require a declared read, producer or relation; the renderer does not fabricate Get operations.
 
 **`from_parent_get` pitfall:** The JSON path must match the **parent GET response** for that relation. Array-of-ref shapes differ by API (e.g. PokéAPI Pokémon `moves[].move` vs Type `moves[]` as bare `{name,url}`). Copying one entity's `materialize.path` to another without checking the wire JSON yields empty relations at decode time.
 
@@ -293,7 +293,7 @@ Parameter and value descriptions must explain the domain role and accepted selec
 
 Entity field descriptions (and similar gloss fed from slots) must not inventory shapes the schema already teaches (e.g. "map keyed by …", "JSON containing …", repeating enum alternatives). Prefer **omitting** the field `description` when the parent entity (or `values:` row) carries enough agent-facing meaning; use one sentence only when the slot needs workflow nuance beyond type (staleness, trust boundary, "refresh before …"). Primitive semantics stay on `values:` rows (profile `type:`, `enum:`, temporal profiles).
 
-**Prompt-facing copy (symbolic TSV / MCP teaching table):** Treat `description` on entities, read capabilities (`query` / `get` / `search`), and `values:` slots as **agent selection hints only**. Do not explain list-vs-detail payload shapes, cursor/page mechanics, request-body JSON shapes, "full vs summary" list entries, or `provides:` behavior there. `create` / `update` / `delete` / `action` capability descriptions may stay richer where they disambiguate `m#` choice.
+**Prompt-facing copy (Python declarations / MCP teaching):** Treat `description` on entities, read capabilities (`query` / `get` / `search`), and `values:` slots as **agent selection hints only**. Do not explain list-vs-detail payload shapes, cursor/page mechanics, request-body JSON shapes, "full vs summary" list entries, or `provides:` behavior there. `create` / `update` / `delete` / `action` capability descriptions may stay richer where they disambiguate `m#` choice.
 
 #### Semantic annotation review
 
@@ -327,7 +327,7 @@ In split `domain.yaml`, the **`type:`** on a **`values:`** row is either a **ker
 
 | Category | YAML `type:` | Typical input | Notes |
 |----------|--------------|---------------|-------|
-| Presentation | `markdown`, `document`, `html`, `json_text` | string / heredoc | Multiline or structured text — not `blob` |
+| Presentation | `markdown`, `document`, `html`, `json_text` | Python string | Multiline or structured text — not `blob` |
 | Canned string | `uuid`, `digit_id`, `email`, `url`, `http_url`, `hostname`, `e164`, `ipv4`, `ipv6`, `hex`, `base64`, `base64url` | string | Validated string shapes. **`digit_id`** (RA-18): digit-string identity (PANs, similar wire keys) — exact ASCII digits, not a magnitude, not `integer` / IEEE float / JSON number. Taught literal is quoted digits (`"6419671322388907"`). Unquoted non-negative `i64` residual coerce is RA-8, not taught. |
 | Temporal | `rfc3339`, `iso8601_date`, `unix_ms`, `unix_sec` | string or integer per profile | Predicate inputs normalize to wire shape (UTC) |
 | Enum | `enum`, `multi_enum` | enum token(s) | Requires non-empty **`enum:`** list **or** token→gloss map |
@@ -436,7 +436,7 @@ entities:
 
 ### Authoring surface: Plasm expressions
 
-Validate catalogs with `plasm-repl`, MCP `execute`, or any host that evaluates Plasm programs against CGS — not by designing command-line flag matrices. Capability **input lanes**, relations, and `mappings.yaml` define what the compiler and runtime wire to HTTP; teaching table teaches the `e#` / `m#` / `r#` (+ wire names) shapes agents actually emit. Surface programs are a **SQL-shaped rowset algebra** — see [docs/plasm-language-definition.md](../../../docs/plasm-language-definition.md#relational-reading).
+Validate complete Python `Program` subclasses through the production frontend. CGS input lanes, relations and CML define the transport contract; incremental declarations teach the exact eN/mN/rN signatures. See the language definition.
 
 `entity_ref` enables forward relation navigation and reverse traversal when query parameters align with FK fields (see [Foreign key fields](#foreign-key-fields-entity_ref)).
 
@@ -469,7 +469,7 @@ Wire shape for each slot is `values[value_ref]`.
 
 **Capability-level `description:`** (the operation, not each parameter): keep short and imperative; see [Teaching-table-facing descriptions](#teaching-table-facing-descriptions-entities-and-capabilities).
 
-**`description` on lane fields:** Optional. When the prompt uses a symbolic `PromptRenderMode` (compact or tsv, via `--symbol-tuning compact|tsv` on `plasm-mcp` / `plasm-repl` / `plasm-eval`), each parameter gets a wire-name gloss line in teaching table. The gloss shows the parameter type and, after a middle dot, either this `description` or the wire `name`. Use the same style as entity field descriptions: short domain prose. **Do not** restate `name:`, wire type, or enum members.
+**`description` on lane fields:** optional domain prose, served as CGS comments beside typed Python parameters. Do not restate wire types or enum members; those are present in the signature.
 
 ### Capability input lanes
 
@@ -687,7 +687,7 @@ Built-in filters (view templates only):
 
 **Temporal:** Predicate slots and `value_ref: temporal` still use `normalize_temporal_value` at plan/compile time. View scope params typed as plain strings (e.g. `nv_grafana_time_range`) should use **`wire_time`** in templates when the wire may be relative (`now-1h`) or already epoch milliseconds. Relative phrases resolve against the same evaluation clock the language card names as `evaluation_now` when temporal profiles are taught (PLP-9). Do not put that clock or harness dates into `values:` descriptions.
 
-**Authoring pitfalls:** Do not use `\| default('')` on JSON scope fields you pass to `wire_query_suffix` — use `{% if query_params_json %}…{% endif %}` instead. Choose scope `TAG` names that cannot appear as trimmed lines inside heredoc payloads when binding row templates elsewhere.
+**Authoring pitfalls:** Do not use `\| default('')` on JSON scope fields you pass to `wire_query_suffix` — use `{% if query_params_json %}…{% endif %}` instead. User-authored rendering uses typed Python compute methods; catalog view templates remain CML-owned.
 
 Conformance fixture: `fixtures/schemas/plasm_language_matrix_views` (`echo_slug` computed field). Production examples: `apis/cloudflare` `security_surface_status`, `apis/grafana` `views.deeplink_generate.output.url`.
 
@@ -1094,7 +1094,7 @@ entities:
 
 **Scoped traversal:** parent id / scope fields fill the target capability's scope parameters automatically during relation chain execution.
 
-**Multiline / structured string values** in predicates and method arguments use a bash-inspired tagged `<<TAG` heredoc: `<<TAG\n` … `\nTAG\n` with `TAG` alone on a closing line (trimmed), or `TAG)` / `TAG,` / `TAG}` glued on that line.
+**Multiline string values:** use Python triple-quoted or raw strings. Runtime formatting is a typed `@compute` node with explicit dependencies; literal strings can be passed directly.
 
 **Compound `entity_ref` scope parameters** (one param that unpacks to several path/query slots, e.g. repository identity) use runtime scope splat and optional `scope_aggregate_key_policy` on the capability — distinct from `query_scoped_bindings`.
 
@@ -1766,7 +1766,7 @@ CGS owns invocation shape. CML path, query, header, and body variables never det
 - `receiver: {kind: none}` declares a receiver-free operation.
 - Omission follows domain-kind semantics: `get`, `update`, and `delete` receive their domain entity; `singleton`, `query`, `search`, `create`, and `action` do not.
 - An action operating on an existing entity must declare its receiver. A create may declare an existing parent entity as receiver. Otherwise parent/context inputs remain explicit typed scope or argument slots.
-- `item.m#(args)` uses the selected singleton's semantic identity; `rows => _.m#(args)` applies the same operation to every row. Row-preserving algebra retains identity even when visible columns are projected. Empty singleton use fails before the dependent mutation.
+- `item.mN(...)` uses the selected singleton's semantic identity; `rows.flat_map(lambda row: row.mN(...))` applies the same operation to every row. Row-preserving algebra retains identity even when visible columns are projected. Empty singleton use fails before the dependent mutation.
 - Receiver identity supplies matching CGS scope fields and same-entity EntityRef scope slots. Explicit payload fields remain distinct and are validated regardless of their eventual HTTP location.
 
 A mapping rewrite that moves the same identity from a path segment into a body must preserve the Plasm program and teaching. Test this through live requests, not merely matching compiler/card text. `semantic_receiver_transport_invariance_live` is the abstract fixture witness.

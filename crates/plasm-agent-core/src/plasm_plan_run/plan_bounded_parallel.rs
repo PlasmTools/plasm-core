@@ -91,13 +91,13 @@ where
 
     let semaphore = Arc::new(Semaphore::new(cfg.concurrency));
     let f = Arc::new(f);
-    let outcomes: Vec<Result<Result<T, E>, String>> = stream::iter(items)
+    let outcomes: Vec<Result<Box<Result<T, E>>, String>> = stream::iter(items)
         .map(move |item| {
             let f = Arc::clone(&f);
             let semaphore = Arc::clone(&semaphore);
             async move {
                 let _permit = semaphore.acquire_owned().await.map_err(|e| e.to_string())?;
-                Ok(f(item).await)
+                Ok(Box::new(Box::pin(f(item)).await))
             }
         })
         .buffer_unordered(cfg.concurrency)
@@ -106,7 +106,7 @@ where
     let mut completed = Vec::new();
     let mut failures = Vec::new();
     for outcome in outcomes {
-        match outcome? {
+        match *outcome? {
             Ok(ok) => completed.push(ok),
             Err(err) => failures.push(err),
         }

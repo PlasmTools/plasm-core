@@ -670,6 +670,30 @@ fn format_path_up_to(segments: &[PathSegment], up_to: &PathSegment) -> String {
     path_parts.join(".")
 }
 
+impl plasm_core::row_contract::EntityRow for DecodedEntity {
+    fn identity(&self) -> &Ref {
+        &self.reference
+    }
+    fn fields(&self) -> impl Iterator<Item = (&str, plasm_core::TypedFieldValue)> {
+        self.fields
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.clone().into()))
+    }
+    fn relations(&self) -> impl Iterator<Item = (&str, &[Ref])> {
+        self.relations
+            .iter()
+            .filter_map(|(key, relation)| match relation {
+                DecodedRelation::Unspecified => None,
+                DecodedRelation::Specified(references) => {
+                    Some((key.as_str(), references.as_slice()))
+                }
+            })
+    }
+    fn unavailable_fields(&self) -> impl Iterator<Item = &str> {
+        std::iter::empty()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1337,29 +1361,5 @@ mod tests {
             Some(&Value::String("Hello".to_string()))
         );
         assert_eq!(entities[0].reference.simple_id().unwrap().as_str(), "42");
-    }
-}
-
-impl plasm_core::row_contract::EntityRow for DecodedEntity {
-    fn identity(&self) -> &Ref {
-        &self.reference
-    }
-    fn fields(&self) -> impl Iterator<Item = (&str, plasm_core::TypedFieldValue)> {
-        self.fields
-            .iter()
-            .map(|(key, value)| (key.as_str(), value.clone().into()))
-    }
-    fn relations(&self) -> impl Iterator<Item = (&str, &[Ref])> {
-        self.relations
-            .iter()
-            .filter_map(|(key, relation)| match relation {
-                DecodedRelation::Unspecified => None,
-                DecodedRelation::Specified(references) => {
-                    Some((key.as_str(), references.as_slice()))
-                }
-            })
-    }
-    fn unavailable_fields(&self) -> impl Iterator<Item = &str> {
-        std::iter::empty()
     }
 }

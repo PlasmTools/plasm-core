@@ -84,7 +84,7 @@ pub use dry::{
     evaluate_plasm_comp_dry, node_dependencies, plan_dry_compact_view, render_node_operation,
     render_plasm_plan_dry_text, render_plasm_plan_dry_text_for_session,
 };
-pub use orchestrator::run_plasm_comp;
+pub use orchestrator::{run_plasm_comp, run_plasm_comp_python};
 pub use parse::{
     dry_run_simulation_for_session, expand_program_surface_for_session_lower,
     format_session_symbolic_parse_error, parse_parsed_expr_for_session,
@@ -448,3 +448,7 @@ mod tests {
 mod observation_honesty_tests;
 
 use crate::plan_node_graph::compute_binding_labels;
+
+mod map_body;
+
+mod python_host;

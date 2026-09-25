@@ -151,6 +151,7 @@ impl CapabilityParamEnv {
     /// parents keep that fetch's declared params so a later `ℓ.r#` hop does not
     /// drop parent-scoped credentials (RA-6). Unary Get parents stamp the same
     /// overlay so `.r#` inherits session / parent-row `request_auth`.
+    #[cfg(test)]
     pub(crate) fn for_entity_get(cgs: &CGS, entity: &str, env: &CmlEnv) -> Self {
         if let Some(get) = cgs.find_capability(entity, CapabilityKind::Get) {
             return Self::from_cml_env(env, get);

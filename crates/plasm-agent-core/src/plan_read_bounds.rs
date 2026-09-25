@@ -207,7 +207,8 @@ fn shared_collection_bindings(plan: &ValidatedPlanArtifact) -> HashSet<String> {
 pub(crate) fn compute_op_is_full_collection(op: &ComputeOp) -> bool {
     matches!(
         op,
-        ComputeOp::Aggregate { .. }
+        ComputeOp::Python { .. }
+            | ComputeOp::Aggregate { .. }
             | ComputeOp::Filter { .. }
             | ComputeOp::Project { .. }
             | ComputeOp::GroupBy { .. }

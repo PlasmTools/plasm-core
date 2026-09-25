@@ -53,19 +53,18 @@ pub const PLASM_TOOL_DESCRIPTION_WIDE_PREFIX_BYTES: usize = 4096;
 pub const MCP_INITIALIZE_WORKFLOW: &str = include_str!("assets/initialize_workflow.txt");
 
 /// Marker for tests; compact executable-syntax guard in [`PLASM_TOOL_DESCRIPTION`].
-pub const MCP_TOOL_SYNTAX_CONTRACT_MARKER: &str = "`program` is Plasm source text, not JSON data.";
+pub const MCP_TOOL_SYNTAX_CONTRACT_MARKER: &str = "`program` is Python source text, not JSON data.";
 
 /// Marker for tests; grammar contract opener in [`PLASM_TOOL_DESCRIPTION`].
-pub const TEACHING_VALID_EXPR_MARKER: &str =
-    "Grammar below; symbols from the language card. Reply with one valid plasm_program:";
+pub const TEACHING_VALID_EXPR_MARKER: &str = "Submit exactly one class derived from Program";
 
 /// Substrings that must appear in [`PLASM_PROGRAM_PARAM_DESCRIPTION`].
 const PROGRAM_PARAM_CONTRACT_MARKERS: &[&str] = &[
     "not JSON data",
     "plasm_context",
     "language card",
-    "final return line",
-    "<<TAG",
+    "explicit return",
+    "@compute",
     "session_mode: \"extend\"",
     "`plasm` tool description",
 ];

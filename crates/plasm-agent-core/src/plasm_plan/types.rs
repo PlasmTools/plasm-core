@@ -374,6 +374,24 @@ pub enum ValidatedPlanNode {
     ForEach(ValidatedForEachNode),
     IterateUntil(ValidatedIterateUntilNode),
     RelationTraversal(ValidatedRelationTraversalNode),
+    MapBody(ValidatedMapBodyNode),
+    /// Internal scope input; never admitted as a public wire operation.
+    Capture(ValidatedCaptureNode),
+}
+
+#[derive(Debug, Clone)]
+pub struct ValidatedMapBodyNode {
+    pub(crate) id: PlanNodeId,
+    pub(crate) body: Box<plasm_core::plasm_monad::CorrelatedBody>,
+    pub(crate) plan: Box<ValidatedPlan>,
+    pub(crate) depends_on: Vec<PlanNodeId>,
+    pub(crate) uses_result: Vec<PlanResultUse>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ValidatedCaptureNode {
+    pub(crate) id: PlanNodeId,
+    pub(crate) entity: QualifiedEntityKey,
 }
 
 #[derive(Debug, Clone)]
@@ -497,6 +515,8 @@ impl ValidatedPlanNode {
             Self::ForEach(n) => &n.id,
             Self::IterateUntil(n) => &n.id,
             Self::RelationTraversal(n) => &n.id,
+            Self::MapBody(n) => &n.id,
+            Self::Capture(n) => &n.id,
         }
     }
 
@@ -509,6 +529,8 @@ impl ValidatedPlanNode {
             Self::ForEach(_) => PlanNodeKind::ForEach,
             Self::IterateUntil(_) => PlanNodeKind::IterateUntil,
             Self::RelationTraversal(_) => PlanNodeKind::Relation,
+            Self::MapBody(_) => PlanNodeKind::MapBody,
+            Self::Capture(_) => PlanNodeKind::Capture,
         }
     }
 
@@ -521,6 +543,8 @@ impl ValidatedPlanNode {
             Self::ForEach(n) => n.effect_class,
             Self::IterateUntil(n) => n.effect_class,
             Self::RelationTraversal(n) => n.effect_class,
+            Self::MapBody(_) => EffectClass::Read,
+            Self::Capture(_) => EffectClass::ArtifactRead,
         }
     }
 
@@ -533,6 +557,8 @@ impl ValidatedPlanNode {
             Self::ForEach(n) => n.result_shape,
             Self::IterateUntil(n) => n.result_shape,
             Self::RelationTraversal(n) => n.result_shape,
+            Self::MapBody(_) => ResultShape::List,
+            Self::Capture(_) => ResultShape::Single,
         }
     }
 
@@ -545,6 +571,8 @@ impl ValidatedPlanNode {
             Self::ForEach(n) => &n.depends_on,
             Self::IterateUntil(n) => &n.depends_on,
             Self::RelationTraversal(n) => &n.depends_on,
+            Self::MapBody(n) => &n.depends_on,
+            Self::Capture(_) => &[],
         }
     }
 
@@ -557,6 +585,8 @@ impl ValidatedPlanNode {
             Self::ForEach(n) => &n.uses_result,
             Self::IterateUntil(n) => &n.uses_result,
             Self::RelationTraversal(n) => &n.uses_result,
+            Self::MapBody(n) => &n.uses_result,
+            Self::Capture(_) => &[],
         }
     }
 
@@ -637,6 +667,8 @@ pub enum PlanNodeKind {
     ForEach,
     IterateUntil,
     Relation,
+    MapBody,
+    Capture,
 }
 
 impl PlanNodeKind {

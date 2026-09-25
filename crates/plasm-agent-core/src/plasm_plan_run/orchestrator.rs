@@ -26,6 +26,65 @@ pub async fn run_plasm_comp(
     dry: Option<DryPlasmPlanEvaluation>,
     mcp_result_policy: Option<crate::mcp_run_markdown::McpResultTransportPolicy>,
 ) -> Result<PlasmPlanRunResult, String> {
+    run_plasm_comp_with_dispatch(
+        es,
+        st,
+        prompt_hash,
+        session_id,
+        bundle,
+        run,
+        mcp_tool_hooks,
+        execution_scope,
+        dry,
+        mcp_result_policy,
+        false,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn run_plasm_comp_python(
+    es: &ExecuteSession,
+    st: &PlasmHostState,
+    prompt_hash: &str,
+    session_id: &str,
+    bundle: &crate::plasm_comp_bundle::PlasmCompBundle,
+    run: bool,
+    mcp_tool_hooks: Option<PlanRunTraceHooks>,
+    execution_scope: Option<&crate::operation::ExecutionScope>,
+    dry: Option<DryPlasmPlanEvaluation>,
+    mcp_result_policy: Option<crate::mcp_run_markdown::McpResultTransportPolicy>,
+) -> Result<PlasmPlanRunResult, String> {
+    run_plasm_comp_with_dispatch(
+        es,
+        st,
+        prompt_hash,
+        session_id,
+        bundle,
+        run,
+        mcp_tool_hooks,
+        execution_scope,
+        dry,
+        mcp_result_policy,
+        true,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_plasm_comp_with_dispatch(
+    es: &ExecuteSession,
+    st: &PlasmHostState,
+    prompt_hash: &str,
+    session_id: &str,
+    bundle: &crate::plasm_comp_bundle::PlasmCompBundle,
+    run: bool,
+    mcp_tool_hooks: Option<PlanRunTraceHooks>,
+    execution_scope: Option<&crate::operation::ExecutionScope>,
+    dry: Option<DryPlasmPlanEvaluation>,
+    mcp_result_policy: Option<crate::mcp_run_markdown::McpResultTransportPolicy>,
+    python_host_calls: bool,
+) -> Result<PlasmPlanRunResult, String> {
     let dry = match dry {
         Some(d) => d,
         None => evaluate_plasm_comp_dry(es, bundle)?,
@@ -56,6 +115,7 @@ pub async fn run_plasm_comp(
         mcp_tool_hooks,
         execution_scope,
         mcp_result_policy,
+        python_host_calls,
     ))
     .instrument(crate::spans::plan_live_run())
     .await
@@ -71,6 +131,7 @@ pub(crate) async fn run_plasm_comp_scoped(
     mcp_tool_hooks: Option<PlanRunTraceHooks>,
     execution_scope: Option<&crate::operation::ExecutionScope>,
     mcp_result_policy: Option<crate::mcp_run_markdown::McpResultTransportPolicy>,
+    python_host_calls: bool,
 ) -> Result<PlasmPlanRunResult, String> {
     crate::operation::with_plan_execute_scope(execution_scope, async {
         Box::pin(run_executable_plan_phased(
@@ -82,6 +143,7 @@ pub(crate) async fn run_plasm_comp_scoped(
             mcp_tool_hooks,
             execution_scope,
             mcp_result_policy,
+            python_host_calls,
         ))
         .await
     })
@@ -191,6 +253,7 @@ pub(crate) async fn run_executable_plan_phased(
     mcp_tool_hooks: Option<PlanRunTraceHooks>,
     execution_scope: Option<&crate::operation::ExecutionScope>,
     mcp_result_policy: Option<crate::mcp_run_markdown::McpResultTransportPolicy>,
+    python_host_calls: bool,
 ) -> Result<PlasmPlanRunResult, String> {
     let executable = dry.executable.clone();
     if let Some(evidence) = active_chain(es, execution_scope) {
@@ -229,6 +292,7 @@ pub(crate) async fn run_executable_plan_phased(
         })
         .collect();
     let mut evidence_steps = Vec::with_capacity(step_total as usize);
+    let mut scope_instances = Vec::new();
     let step_topo_index: HashMap<StepId, usize> = executable
         .steps_topo
         .iter()
@@ -267,6 +331,9 @@ pub(crate) async fn run_executable_plan_phased(
         flow: &flow,
         trace: trace.as_ref(),
         sink: sink.as_ref(),
+        python_host_calls,
+        scope_path: Vec::new(),
+        occurrence_path: Vec::new(),
         rows_progress: rows_progress.clone(),
         execution_scope,
     };
@@ -329,6 +396,9 @@ pub(crate) async fn run_executable_plan_phased(
                         flow: &flow,
                         trace: trace_ctx.as_ref(),
                         sink: sink.as_ref(),
+                        python_host_calls,
+                        scope_path: Vec::new(),
+                        occurrence_path: Vec::new(),
                         rows_progress: rows_progress_step,
                         execution_scope: execution_scope_step.as_ref(),
                     };
@@ -348,6 +418,7 @@ pub(crate) async fn run_executable_plan_phased(
             apply_step_materialize_outcomes(
                 &mut materialized,
                 &mut evidence_steps,
+                &mut scope_instances,
                 &mut approval_receipts,
                 outcomes,
                 execution_scope,
@@ -378,6 +449,7 @@ pub(crate) async fn run_executable_plan_phased(
                 apply_step_materialize_outcomes(
                     &mut materialized,
                     &mut evidence_steps,
+                    &mut scope_instances,
                     &mut approval_receipts,
                     [outcome],
                     execution_scope,
@@ -532,6 +604,7 @@ pub(crate) async fn run_executable_plan_phased(
     } else {
         out.markdown
     };
+    dry.graph_summary["scope_instances"] = serde_json::json!(scope_instances);
     Ok(PlasmPlanRunResult {
         version: dry.version,
         agent_outcome: Default::default(),
@@ -581,6 +654,23 @@ fn plasm_return_names(ret: &PlasmReturn) -> Vec<Option<String>> {
             steps.iter().map(|s| Some(s.as_str().to_string())).collect()
         }
     }
+}
+
+/// Preserve acknowledgments from completed steps when a later step aborts the plan.
+/// These are confirmed effects, not a claim that the failing step had no effects.
+fn error_with_completed_operations(
+    error: String,
+    materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
+) -> String {
+    let completed: Vec<_> = materialized.iter().flat_map(|(node, value)| {
+        value.result.operations.entries().iter().filter(|ack| ack.completed > 0).map(move |ack| {
+            serde_json::json!({"node": node, "entry_id": ack.entry_id, "capability": ack.capability, "completed": ack.completed})
+        })
+    }).collect();
+    if completed.is_empty() {
+        return error;
+    }
+    format!("{error}\nConfirmed operations before failure (not rolled back): {}\nThe failing operation may require reconciliation; do not replay confirmed effects.", serde_json::Value::Array(completed))
 }
 
 #[cfg(test)]
@@ -633,21 +723,4 @@ mod tests {
             "CEP-9: same-layer materialization must not appear in the worker snapshot"
         );
     }
-}
-
-/// Preserve acknowledgments from completed steps when a later step aborts the plan.
-/// These are confirmed effects, not a claim that the failing step had no effects.
-fn error_with_completed_operations(
-    error: String,
-    materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
-) -> String {
-    let completed: Vec<_> = materialized.iter().flat_map(|(node, value)| {
-        value.result.operations.entries().iter().filter(|ack| ack.completed > 0).map(move |ack| {
-            serde_json::json!({"node": node, "entry_id": ack.entry_id, "capability": ack.capability, "completed": ack.completed})
-        })
-    }).collect();
-    if completed.is_empty() {
-        return error;
-    }
-    format!("{error}\nConfirmed operations before failure (not rolled back): {}\nThe failing operation may require reconciliation; do not replay confirmed effects.", serde_json::Value::Array(completed))
 }

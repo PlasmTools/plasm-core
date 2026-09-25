@@ -66,6 +66,7 @@ package_list="$(resolve_package_list)"
 echo "oss-release-pack-native: workspace=${workspace_root} apis=${apis_root}"
 
 build_binaries() {
+  bash "${oss_root}/scripts/ci/build-monty-runtime.sh" "${workspace_root}/target/monty-runtime"
   cargo build --release \
     -p plasm-server --bin plasm-server \
     -p plasm --bin plasm \
@@ -106,6 +107,8 @@ cgs="${pack_root}/cgs"
 mkdir -p "${appliance}" "${client}" "${cgs}"
 
 cp "${release_dir}/plasm-server" "${appliance}/"
+cp "${workspace_root}/target/monty-runtime/bin/monty" "${appliance}/"
+cp "${oss_root}/licenses/monty-MIT.txt" "${appliance}/monty-LICENSE.txt"
 if find "${pack_root}/catalogs" -maxdepth 1 -name '*.cgs.json' 2>/dev/null | grep -q .; then
   cp -R "${pack_root}/catalogs" "${appliance}/catalogs"
 fi

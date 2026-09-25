@@ -10,7 +10,6 @@ use crate::plan_commit_store::{dry_for_committed_plasm_run, CommittedPlan};
 use crate::plan_dry_display::{build_plan_dry_compact_view, PlanDryVerdict};
 use crate::plan_gate::{plan_requires_review_gate, PlanGateContext};
 use crate::plasm_comp_bundle::PlasmCompBundle;
-use crate::plasm_compile::compile_plasm_expression;
 use crate::plasm_plan_run::{evaluate_plasm_comp_dry, DryPlasmPlanEvaluation, PlasmPlanRunResult};
 use crate::run_artifacts::RunArtifactStore;
 use crate::run_delivery::{
@@ -70,28 +69,66 @@ pub struct ResolvedMcpLiveRunIngress {
     pub kind: McpLiveRunKind,
 }
 
+/// Host continuation is typed IR, never source text submitted to a language parser.
+pub fn compile_page_continuation(
+    session: &ExecuteSession,
+    handle: &PagingHandle,
+    call_index: u64,
+) -> Result<PlasmCompBundle, String> {
+    use plasm_core::plasm_monad::*;
+    let owner = session
+        .paging_qualified_entity(handle)
+        .ok_or_else(|| format!("page handle {handle} is not registered in this session"))?;
+    let id = StepId::new("page")?;
+    let mut comp = empty_comp(Some(format!("plasm_page_call_{call_index}")));
+    let payload = PlasmStepPayload::Invoke(InvokePayload {
+        plan_kind: SurfaceKind::Query,
+        qualified_entity: Some(PlanQualifiedEntityKey {
+            entry_id: owner.entry_id,
+            entity: owner.entity,
+        }),
+        ir: Some(PlanExprIr {
+            expr: plasm_core::Expr::Page(plasm_core::expr::PageExpr {
+                handle: handle.clone(),
+                limit: None,
+            }),
+            projection: None,
+            display_expr: None,
+        }),
+        ir_template: None,
+        projection: vec![],
+        predicates: vec![],
+        page_size: None,
+        approval: None,
+        display_expr: None,
+        effect_class: EffectClass::Read,
+        result_shape: ResultShape::Page,
+    });
+    plasm_pure_step(&mut comp, id.clone(), payload, "result continuation")
+        .map_err(|error| error.to_string())?;
+    comp.return_ = PlasmReturn::Step { step: id };
+    comp.validate()?;
+    PlasmCompBundle::new(PlasmCompArtifact {
+        comp,
+        approval_gates: vec![],
+    })
+}
+
 /// Resolve MCP `run_ref` (`pcN` or page handle) into a compile bundle and [`McpLiveRunKind`].
 pub async fn resolve_mcp_live_run_ingress(
     es: &ExecuteSession,
     mcp_trace: &PlasmTraceContext,
     run_target: &McpPlasmRunTarget,
-    pipeline: &PromptPipelineConfig,
-    symbol_map_cross_cache: &SymbolMapCrossRequestCache,
+    _pipeline: &PromptPipelineConfig,
+    _symbol_map_cross_cache: &SymbolMapCrossRequestCache,
     call_index: u64,
 ) -> Result<ResolvedMcpLiveRunIngress, String> {
     match run_target {
         McpPlasmRunTarget::Page(handle) => {
             crate::http_execute::resolve_paging_storage_handle(Some(mcp_trace), handle)
                 .map_err(crate::execute_pipeline::display_run_line_error)?;
-            let program = format!("page({handle})");
-            let plan_name = format!("plasm_page_call_{call_index}");
-            let bundle = compile_plasm_expression(
-                pipeline,
-                Some(symbol_map_cross_cache),
-                es,
-                &plan_name,
-                &program,
-            )?;
+            let program = format!("Continue result page {handle}");
+            let bundle = compile_page_continuation(es, handle, call_index)?;
             Ok(ResolvedMcpLiveRunIngress {
                 bundle,
                 program_for_trace: program,

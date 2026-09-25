@@ -36,7 +36,7 @@ const plasmInputSchema = z.object({
   program: z
     .string()
     .min(1)
-    .describe("Plasm source program using e#/m#/p#/r# from the session teaching TSV"),
+    .describe("Python Program subclass using e#/m#/r# and wire fields from the session domain declarations"),
   reasoning: z
     .string()
     .optional()

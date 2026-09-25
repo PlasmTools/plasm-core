@@ -15,6 +15,13 @@ use tracing_subscriber::Registry;
 pub struct SpanCapture {
     exporter: InMemorySpanExporter,
     provider: SdkTracerProvider,
+    // Keep the untraced case registered alongside the capture subscriber. In
+    // tracing-core 0.1.36, the single-dispatcher interest-cache optimization uses
+    // the registering thread's default subscriber. An untraced thread can then
+    // mark a shared callsite Never, disabling it for this capture as well.
+    // Registering both cases makes interest combine across dispatchers instead.
+    // This is not installed as a global or thread-local default.
+    _untraced_dispatch: tracing::Dispatch,
 }
 
 impl SpanCapture {
@@ -23,11 +30,17 @@ impl SpanCapture {
     /// Uses a provider-local tracer for the subscriber layer (no global tracer provider
     /// mutation — safe under parallel `cargo test`).
     pub fn install() -> Self {
+        let untraced_dispatch =
+            tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
         let exporter = InMemorySpanExporterBuilder::new().build();
         let provider = SdkTracerProvider::builder()
             .with_span_processor(SimpleSpanProcessor::new(exporter.clone()))
             .build();
-        Self { exporter, provider }
+        Self {
+            exporter,
+            provider,
+            _untraced_dispatch: untraced_dispatch,
+        }
     }
 
     /// Registry + `tracing-opentelemetry` layer bound to this capture's tracer.

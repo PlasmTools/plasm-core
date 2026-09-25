@@ -3,6 +3,36 @@ info:
   title: Plasm Language Matrix API
   version: "1.0.0"
 paths:
+  /language/v1/compound-branches:
+    get:
+      summary: Read a branch by all three identity components
+      parameters:
+        - name: owner
+          in: query
+          required: true
+          schema: {type: string}
+        - name: item_id
+          in: query
+          required: true
+          schema: {type: string}
+        - name: name
+          in: query
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: Branch identity and payload
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [owner, item_id, name, color]
+                properties:
+                  owner: {type: string, example: alice}
+                  item_id: {type: string, example: i1}
+                  name: {type: string, example: main}
+                  color: {type: string, example: blue}
+              example: {owner: alice, item_id: i1, name: main, color: blue}
   /language/v1/items:
     get:
       summary: List items

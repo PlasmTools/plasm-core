@@ -3,6 +3,9 @@
 //! LangCursor routes are served by an in-memory sidecar so PLP-8 iterate-until can re-observe
 //! advancing `phase` after each `tick` (Hermit schema examples are otherwise immutable).
 
+#[path = "hermit_lang_matrix_items.rs"]
+mod parity_items;
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -118,9 +121,39 @@ fn language_matrix_sidecar(lab: CursorLab) -> Router {
         .route("/language/v1/vaults", get(list_vaults))
         .route("/language/v1/vaults/{id}", get(get_vault))
         .route("/language/v1/vaults/{id}/unlock", post(unlock_vault))
+        .route("/language/v1/tags", get(list_tags))
+        .route("/language/v1/tags/{id}", get(get_tag))
         .route("/language/v1/lanes", get(list_lanes))
         .route("/language/v1/lane_stocks", get(list_lane_stocks))
         .with_state(lab)
+}
+
+// Relation reads must not grow the fixture collection. Hermit seeds unknown GET
+// identities into its CRUD collection; hydration of embedded tag references could
+// therefore change a later scoped query between the two source frontends.
+#[derive(Debug, Deserialize)]
+struct TagQuery {
+    item_id: Option<String>,
+    seq: Option<i64>,
+}
+
+fn tag_row(id: &str, item_id: &str, label: &str) -> Value {
+    json!({ "id": id, "item_id": item_id, "label": label })
+}
+
+async fn list_tags(Query(query): Query<TagQuery>) -> Json<Value> {
+    let parent = query
+        .item_id
+        .unwrap_or_else(|| format!("score-{}", query.seq.unwrap_or(0)));
+    Json(json!([
+        tag_row(&format!("{parent}::tag-urgent"), &parent, "urgent"),
+        tag_row(&format!("{parent}::tag-review"), &parent, "review"),
+    ]))
+}
+
+async fn get_tag(Path(id): Path<String>) -> Json<Value> {
+    let (parent, label) = id.rsplit_once("::tag-").unwrap_or(("i1", "urgent"));
+    Json(tag_row(&id, parent, label))
 }
 
 #[derive(Debug, Deserialize)]
@@ -180,17 +213,40 @@ async fn list_lane_stocks(Query(q): Query<ShelfQuery>) -> Json<Value> {
 }
 
 async fn spawn_hermit_host_root(spec_path: &std::path::Path) -> String {
+    spawn_hermit_host_root_with_bounds(spec_path, 1, 5).await
+}
+
+async fn spawn_hermit_host_root_with_bounds(
+    spec_path: &std::path::Path,
+    min: usize,
+    max: usize,
+) -> String {
+    spawn_hermit_host_root_configured(spec_path, min, max, false).await
+}
+
+async fn spawn_hermit_host_root_configured(
+    spec_path: &std::path::Path,
+    min: usize,
+    max: usize,
+    deterministic_items: bool,
+) -> String {
     // Hermit's schema faker may emit sparse objects; `for_each` templates read row JSON (`_.id`).
     // Prefer declared OpenAPI `example` payloads so list GETs return stable primary keys (i1, i2, …).
     beavuck_hermit::resource_generator::set_use_examples(true);
     let spec = beavuck_hermit::spec_loader::load(spec_path);
     let routes = beavuck_hermit::spec_parser::extract_routes(&spec);
-    let hermit_router = beavuck_hermit::router::build_with_bounds(routes, 1, 5);
+    let hermit_router = beavuck_hermit::router::build_with_bounds(routes, min, max);
     let lab = CursorLab {
         store: Arc::new(Mutex::new(HashMap::new())),
     };
     // Stateful cursor routes take precedence; unmatched paths fall through to Hermit.
-    let router = language_matrix_sidecar(lab).fallback_service(hermit_router);
+    let sidecar = language_matrix_sidecar(lab);
+    let sidecar = if deterministic_items {
+        sidecar.merge(parity_items::router(spec_path))
+    } else {
+        sidecar
+    };
+    let router = sidecar.fallback_service(hermit_router);
 
     // Bind the listener on the *server* runtime. Creating it on the caller's runtime and then
     // dropping that runtime (e.g. views `block_on_views_live` harness) orphans the IO driver and
@@ -246,4 +302,24 @@ pub async fn language_matrix_reset_lang_cursors_on(base: &str) {
         .post(format!("{base}/language/v1/cursors/_lab_reset"))
         .send()
         .await;
+}
+
+/// Isolated backend for Python/Plasm differential read conformance.
+#[allow(dead_code)] // Shared fixture helper; not every integration binary uses it.
+pub async fn language_matrix_python_hermit_base_url() -> &'static String {
+    static PYTHON_MATRIX: OnceCell<String> = OnceCell::const_new();
+    hermit_base_url(&PYTHON_MATRIX).await
+}
+
+/// Fresh state for each frontend in write differential cases.
+#[allow(dead_code)] // Shared fixture helper; not every integration binary uses it.
+pub async fn fresh_language_matrix_hermit_base_url() -> String {
+    // Fix collection cardinality across independent generators; payload projection excludes faker identities.
+    spawn_hermit_host_root_with_bounds(language_matrix_spec_path().as_path(), 2, 2).await
+}
+
+/// Independent identical state, including real item writes, for each frontend.
+#[allow(dead_code)] // Shared fixture helper; not every integration binary uses it.
+pub async fn fresh_python_parity_hermit_base_url() -> String {
+    spawn_hermit_host_root_configured(language_matrix_spec_path().as_path(), 5, 5, true).await
 }

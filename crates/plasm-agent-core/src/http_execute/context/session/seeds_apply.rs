@@ -7,7 +7,7 @@ use super::super::seeds::{
     apply_context_intent_session_update, build_capability_exposure_plan,
     format_session_unchanged_reuse_markdown, group_seed_entities_by_entry,
     primary_entry_id_for_grouped, seeds_exposure_ready_for_reuse, teaching_exposure_at,
-    unchanged_expand_wave, wrap_teaching_markdown_literal_block, STALE_EXECUTE_BINDING_NOTICE,
+    unchanged_expand_wave, STALE_EXECUTE_BINDING_NOTICE,
 };
 use super::expand::expand_execute_teaching_session;
 use super::federate::{commit_federate_wave, prepare_federate_wave, PreparedFederateWave};
@@ -398,32 +398,7 @@ pub async fn apply_capability_seeds(
                     .await?;
             open_md.push_str(&format_session_unchanged_reuse_markdown(exposure.as_ref()));
         } else {
-            let mode = st.engine.prompt_pipeline().render_mode;
-            if mode.is_tsv() {
-                if let Some(body_tsv) =
-                    plasm_core::prompt_render::teaching_tsv_table_from_wrapped_prompt_any(
-                        &created.prompt,
-                    )
-                {
-                    open_md.push_str(&wrap_teaching_markdown_literal_block(
-                        &body_tsv,
-                        created.entry_id.as_str(),
-                    ));
-                } else if let Some(body_tsv) = teaching_tsv_from_wrapped_prompt(
-                    &created.prompt,
-                    mode.markdown_fence_info_string(),
-                    TeachingFenceSlice::TableOnly,
-                ) {
-                    open_md.push_str(&wrap_teaching_markdown_literal_block(
-                        &body_tsv,
-                        created.entry_id.as_str(),
-                    ));
-                } else {
-                    open_md.push_str(&created.prompt);
-                }
-            } else {
-                open_md.push_str(&created.prompt);
-            }
+            open_md.push_str(&created.prompt);
         }
         let teaching_prompt_chars_added = if created.reused {
             0

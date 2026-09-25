@@ -3811,3 +3811,51 @@ fn terminal_union_cannot_regain_relation_continuation() {
         assert!(error.contains("PLP-4:") && error.contains("entity continuation evidence"), "{suffix}: {error}");
     }
 }
+
+#[test]
+fn python_write_inputs_preserve_password_domain() {
+    use plasm_core::symbol_tuning::SymbolRender;
+    let mut session = test_session();
+    let cgs = session.cgs.clone();
+    session.teaching_exposure.as_mut().unwrap().expose_entities(&[cgs.as_ref()], cgs.clone(), "langmatrix", &["LangVault"]);
+    let symbols = session.teaching_exposure.as_ref().unwrap().to_symbol_map();
+    let vault = symbols.entity_sym_for("langmatrix", "LangVault");
+    let item = symbols.entity_sym_for("langmatrix", "LangItem");
+    let update = symbols.method_sym_for("langmatrix", "LangItem", "update");
+    let unlock = symbols.method_sym_for("langmatrix", "LangVault", "unlock");
+    let prefix = format!("class Secret(Program):\n    def build(self):\n        v = {vault}.get(\"venmo\")\n        secret = v.password\n");
+    let bad = format!("{prefix}        row = {item}.get(\"i1\")\n        return row.{update}(title=secret, score=1, owner=\"a\")\n");
+    let error = crate::plasm_compile::compile_python_program(&session, &bad).unwrap_err();
+    assert!(error.contains("RA-9"), "{error}");
+    let good = format!("{prefix}        return v.{unlock}(secret=secret)\n");
+    crate::plasm_compile::compile_python_program(&session, &good).expect("matching password domain");
+    for value in ["renamed.secret", "cell"] {
+        let prefix = format!("class Alias(Program):\n    def build(self):\n        v = {vault}.get(\"venmo\")\n        renamed = v.select(secret=\"password\").take(1)\n        cell = renamed.secret\n");
+        let bad = format!("{prefix}        row = {item}.get(\"i1\")\n        return row.{update}(title={value}, score=1, owner=\"a\")\n");
+        let error = crate::plasm_compile::compile_python_program(&session, &bad).unwrap_err();
+        assert!(error.contains("RA-9"), "{error}");
+        let good = format!("{prefix}        return v.{unlock}(secret={value})\n");
+        crate::plasm_compile::compile_python_program(&session, &good).expect("aliased password keeps matching domain");
+    }
+
+}
+
+#[test]
+fn python_fanout_password_policy_survives_row_scope_and_application() {
+    use plasm_core::symbol_tuning::SymbolRender;
+    let mut session = test_session();
+    let cgs = session.cgs.clone();
+    session.teaching_exposure.as_mut().unwrap().expose_entities(&[cgs.as_ref()],cgs.clone(),"langmatrix", &["LangVault"]);
+    let symbols = session.teaching_exposure.as_ref().unwrap().to_symbol_map();
+    let vault = symbols.entity_sym_for("langmatrix","LangVault");
+    let item = symbols.entity_sym_for("langmatrix","LangItem");
+    let create = symbols.method_sym_for("langmatrix","LangItem","create");
+    let unlock = symbols.method_sym_for("langmatrix","LangVault","unlock");
+    for source in [format!("rows = {vault}.get(\"venmo\")"),format!("seed = {vault}.get(\"venmo\")\n        rows = seed.flat_map(lambda row: {vault}.get(row.id))")] {
+        let code=format!("class Passwords(Program):\n    def build(self):\n        {source}\n        return rows.flat_map(lambda row: {item}.{create}(title=row.password, score=1, owner=\"a\"))\n");
+        let error=crate::plasm_compile::compile_python_program(&session,&code).unwrap_err();
+        assert!(error.contains("RA-9"),"{error}");
+    }
+    let code=format!("class Passwords(Program):\n    def build(self):\n        rows = {vault}.get(\"venmo\")\n        return rows.flat_map(lambda row: row.{unlock}(secret=row.password))\n");
+    crate::plasm_compile::compile_python_program(&session,&code).expect("matching row policy");
+}

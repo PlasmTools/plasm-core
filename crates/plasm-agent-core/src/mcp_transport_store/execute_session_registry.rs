@@ -182,6 +182,8 @@ pub struct PersistedExecuteSessionDescriptor {
     pub prompt_hash: String,
     pub session_id: String,
     pub prompt_text: String,
+    /// Required: native-language sessions cannot rehydrate under Python teaching.
+    pub python_teaching: plasm_core::prompt_render::python::PythonTeachingState,
     pub entry_id: String,
     pub context_entry_ids: Vec<String>,
     pub entities: Vec<String>,
@@ -278,6 +280,7 @@ impl PersistedExecuteSessionDescriptor {
             prompt_hash: session.prompt_hash.clone(),
             session_id: session_id.to_string(),
             prompt_text: session.prompt_text.clone(),
+            python_teaching: session.python_teaching.clone(),
             entry_id: session.entry_id.clone(),
             context_entry_ids: session.contexts_by_entry.keys().cloned().collect(),
             entities,

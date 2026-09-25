@@ -214,7 +214,7 @@ peers"#,
         federated: false,
         features: &["row_apply_query", "pipe_where", "pipe_take", "dry_live_parity"],
         min_node_results: 2,
-        expect_markdown_substrings: &["```tsv", "peers"],
+        expect_markdown_substrings: &["peers"],
         expect_live_error: None,
     },
     MatrixRow {

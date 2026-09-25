@@ -25,7 +25,7 @@ pub fn render_prerequisite_bindings(
     };
     let mut lines = vec![
         "Declared prerequisites".into(),
-        "Write acquisition calls using the ordinary capability syntax in the teaching table. Bind their returned fields into the indicated existing inputs. Acquisition calls participate in normal plan review and execution.".into(),
+        "Write acquisition calls using the Python method signatures in the domain declarations. Bind their returned fields into the indicated existing inputs. Acquisition calls participate in normal plan review and execution.".into(),
     ];
     if !closure.input_sources.is_empty() {
         lines.push("Possible input sources".into());
@@ -235,24 +235,8 @@ impl BindingRenderer<'_> {
     }
 
     fn input(&self, reference: &CapabilityRef, input: &InputPath) -> Result<String, String> {
-        let cap = self.schema(reference)?;
         let (head, tail) = input.path.split_first().ok_or("empty input binding")?;
-        let param = if input.lane == crate::prerequisites::InputLane::Selection
-            && cap
-                .derived
-                .as_ref()
-                .is_some_and(|d| &d.identity_field == head)
-        {
-            self.symbols
-                .ident_sym_entity_field_for(&reference.catalog, cap.domain.as_str(), head)
-        } else {
-            self.symbols.ident_sym_cap_param_for(
-                &reference.catalog,
-                cap.domain.as_str(),
-                &reference.capability,
-                head,
-            )
-        };
+        let param = head.clone();
         let mut path = vec![param];
         path.extend(tail.iter().cloned());
         Ok(format!(
@@ -270,20 +254,14 @@ impl BindingRenderer<'_> {
             | Some(crate::schema::OutputType::Collection { entity_type, .. }) => entity_type,
             _ => return Err("provider has no declared entity output".into()),
         };
-        Ok(self
-            .symbols
-            .ident_sym_entity_field_for(&reference.catalog, entity, field))
+        let _ = entity;
+        Ok(field.into())
     }
 
     fn argument(&self, argument: &ResolvedArgument) -> Result<String, String> {
         match argument {
             ResolvedArgument::BusinessIdentity { consumer, field } => {
-                let cap = self.schema(consumer)?;
-                let symbol = self.symbols.ident_sym_entity_field_for(
-                    &consumer.catalog,
-                    cap.domain.as_str(),
-                    field,
-                );
+                let symbol = field;
                 Ok(format!(
                     "{} target identity {symbol}",
                     self.capability(consumer)?
@@ -323,7 +301,7 @@ fn taught_capability_seat(
                 .and_then(|g| crate::sole_nullary_singleton_get(g, cap.domain.as_str()))
                 .is_some_and(|sole| sole.name == cap.name);
             if pathless {
-                entity.to_string()
+                format!("{entity}.get()")
             } else {
                 taught_get_identity_seat(
                     entity,
@@ -333,16 +311,19 @@ fn taught_capability_seat(
                 )
             }
         }
-        CapabilityKind::Query => format!("{entity}{{…}}"),
-        CapabilityKind::Search => format!("{entity}~\"<query>\""),
-        _ if cap.requires_receiver() => crate::taught_seat::taught_identity_mutator_basename(
-            entity,
-            method,
-            id_wire,
-            cgs.and_then(|g| g.get_entity(cap.domain.as_str())),
-            cgs,
+        CapabilityKind::Query => format!("{entity}.query(...)"),
+        CapabilityKind::Search => format!("{entity}.search(...)"),
+        _ if cap.requires_receiver() => format!(
+            "{}.{}(...)",
+            taught_get_identity_seat(
+                entity,
+                id_wire,
+                cgs.and_then(|g| g.get_entity(cap.domain.as_str())),
+                cgs
+            ),
+            method
         ),
-        _ => format!("{entity}.{method}"),
+        _ => format!("{entity}.{method}(...)"),
     }
 }
 
@@ -352,7 +333,20 @@ fn taught_get_identity_seat(
     ent: Option<&EntityDef>,
     cgs: Option<&CGS>,
 ) -> String {
-    crate::taught_seat::taught_get_identity_receiver(entity, id_wire, ent, cgs)
+    let _ = (id_wire, cgs);
+    if let Some(entity_def) = ent.filter(|e| e.key_vars.len() > 1) {
+        format!(
+            "{entity}.get({})",
+            entity_def
+                .key_vars
+                .iter()
+                .map(|k| format!("{k}=..."))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    } else {
+        format!("{entity}.get(...)")
+    }
 }
 
 fn format_get_identity_call(
@@ -362,8 +356,7 @@ fn format_get_identity_call(
     cgs: Option<&CGS>,
     value: &serde_json::Value,
 ) -> String {
-    let token_braces = ent.is_some_and(|e| cgs.is_some_and(|g| e.teaches_token_identity_braces(g)))
-        && !id_wire.is_empty();
+    let compound = ent.is_some_and(|e| e.key_vars.len() > 1);
     let lit = match value {
         serde_json::Value::String(s) => {
             let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
@@ -375,9 +368,9 @@ fn format_get_identity_call(
             return taught_get_identity_seat(entity, id_wire, ent, cgs);
         }
     };
-    if token_braces {
-        format!("{entity}{{{id_wire}={lit}}}")
+    if compound {
+        format!("{entity}.get({id_wire}={lit})")
     } else {
-        format!("{entity}({lit})")
+        format!("{entity}.get({lit})")
     }
 }

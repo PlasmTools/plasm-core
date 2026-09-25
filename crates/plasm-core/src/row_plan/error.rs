@@ -106,6 +106,8 @@ pub enum FusionError {
     RenderInPipeline,
     #[error("union is a two-source collect, not a unary pipeline node")]
     UnionInPipeline,
+    #[error("Python reduction requires the host compute boundary")]
+    PythonInPipeline,
     #[error("derive remap cannot fold into a row-compute pipeline")]
     DeriveInPipeline,
 }

@@ -139,12 +139,18 @@ pub(in crate::plasm_dag) fn coalesce_group_by_aggregate_suffixes(
     let mut i = 0;
     while i < steps.len() {
         if let RowSuffix::GroupBy { args: gb } = &steps[i] {
-            if let Some(RowSuffix::Aggregate { args: agg }) = steps.get(i + 1) {
-                out.push(RowSuffix::GroupBy {
-                    args: format!("{gb},{agg}"),
-                });
-                i += 2;
-                continue;
+            // Only the unfinished repair-form group may absorb an aggregate.
+            // A completed summarize-by followed by summarize is two reductions.
+            if super::super::plan_serialize::parse_group_by_key_and_aggregate_tail(gb)
+                .is_ok_and(|(_, tail)| tail.trim().is_empty())
+            {
+                if let Some(RowSuffix::Aggregate { args: agg }) = steps.get(i + 1) {
+                    out.push(RowSuffix::GroupBy {
+                        args: format!("{gb},{agg}"),
+                    });
+                    i += 2;
+                    continue;
+                }
             }
         }
         out.push(steps[i].clone());

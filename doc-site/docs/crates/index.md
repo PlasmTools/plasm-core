@@ -22,7 +22,7 @@ Release binaries:
 | **`plasm-server`** | Appliance — HTTP/MCP, control station, embedded Postgres |
 | **`plasm`** | Remote HTTP terminal client |
 | **`plasm-cgs`** | Schema-driven one-shot CLI (dev) |
-| **`plasm-repl`** | Interactive path expressions (dev) |
+| **`plasm-repl`** | Interactive Python DAG programs (dev) |
 | **`plasm-pack-catalogs`** | Pack `apis/<name>/` to JSON IL + manifest artifacts |
 
 Operator docs: [Appliance quick start](../appliance/quickstart.md). Optional **features** — see each crate’s `Cargo.toml` on GitHub.

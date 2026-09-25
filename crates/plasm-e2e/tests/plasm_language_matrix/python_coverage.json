@@ -1,0 +1,2211 @@
+{
+  "rows": {
+    "lang_aggregate": {
+      "status": "covered",
+      "features": [
+        "pipe_summarize"
+      ],
+      "cases": [
+        "reduce_lang_aggregate"
+      ],
+      "reason": "Exact original source with shared planning/live assertions and typed Python reduction lowering."
+    },
+    "lang_aggregate_sugar_count": {
+      "status": "covered",
+      "features": [
+        "aggregate_sugar_count",
+        "pipe_summarize"
+      ],
+      "cases": [
+        "reduce_lang_aggregate_sugar_count"
+      ],
+      "reason": "Exact original source with shared planning/live assertions and typed Python reduction lowering."
+    },
+    "lang_aggregate_sum": {
+      "status": "covered",
+      "features": [
+        "aggregate_sum",
+        "pipe_summarize"
+      ],
+      "cases": [
+        "reduce_lang_aggregate_sum"
+      ],
+      "reason": "Exact original source with shared planning/live assertions and typed Python reduction lowering."
+    },
+    "lang_apply_get_multirow": {
+      "status": "covered",
+      "features": [
+        "dry_live_parity",
+        "pipe_take",
+        "pipe_where",
+        "row_apply_get"
+      ],
+      "cases": [
+        "cert_apply_get_multirow"
+      ],
+      "reason": "Coverage consolidation: exact original program and shared planning/live assertions exercised with the existing Python lowering."
+    },
+    "lang_apply_query_multirow": {
+      "status": "covered",
+      "features": [
+        "dry_live_parity",
+        "pipe_take",
+        "pipe_where",
+        "row_apply_query"
+      ],
+      "cases": [
+        "cert_apply_query_multirow"
+      ],
+      "reason": "Coverage consolidation: exact original program and shared planning/live assertions exercised with the existing Python lowering."
+    },
+    "lang_bind_dedupe": {
+      "status": "covered",
+      "features": [
+        "entity_search",
+        "pipe_distinct",
+        "search_then_group_by"
+      ],
+      "cases": [
+        "complete_bind_dedupe"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_bind_filter_continuation": {
+      "status": "covered",
+      "features": [
+        "bind_pipe_where_continuation",
+        "binding_continuation",
+        "pipe_where"
+      ],
+      "cases": [
+        "relation_bind_filter_continuation"
+      ],
+      "reason": "Canonical original relation row runs shared planning/live assertions and differential output/coverage checks."
+    },
+    "lang_bind_first_limit": {
+      "status": "covered",
+      "features": [
+        "bind_first_pipe_take",
+        "pipe_take"
+      ],
+      "cases": [
+        "take"
+      ],
+      "reason": "Canonical original row and Python counterpart run shared planning/live assertions and differential values/order/coverage."
+    },
+    "lang_bind_limit1_continuation": {
+      "status": "covered",
+      "features": [
+        "bind_pipe_take_continuation",
+        "pipe_take"
+      ],
+      "cases": [
+        "cert_bind_limit1_continuation"
+      ],
+      "reason": "Coverage consolidation: exact original program and shared planning/live assertions exercised with the existing Python lowering."
+    },
+    "lang_bind_method_invoke_field_ref": {
+      "status": "covered",
+      "features": [
+        "bind_method_invoke_field_ref",
+        "effect_update"
+      ],
+      "cases": [
+        "complete_bind_method_invoke_field_ref"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_bind_plural_relation_opaque_p": {
+      "status": "covered",
+      "features": [
+        "binding_continuation",
+        "binding_opaque_relation_ref",
+        "dry_live_parity",
+        "relation_many_from_plural",
+        "relation_prefer_from_parent_get"
+      ],
+      "cases": [
+        "complete_bind_plural_relation_opaque_p"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_bind_projection_then_relation": {
+      "status": "covered",
+      "features": [
+        "bind_projection_then_relation",
+        "pipe_select"
+      ],
+      "cases": [
+        "relation_bind_projection_then_relation"
+      ],
+      "reason": "Canonical original relation row runs shared planning/live assertions and differential output/coverage checks."
+    },
+    "lang_bind_relation_hop_one_one": {
+      "status": "covered",
+      "features": [
+        "bind_relation_hop_one_one",
+        "dry_live_parity",
+        "relation_one_opaque_r"
+      ],
+      "cases": [
+        "relation_bind_relation_hop_one_one"
+      ],
+      "reason": "Canonical original relation row runs shared planning/live assertions and differential output/coverage checks."
+    },
+    "lang_bind_singleton_field_scalar": {
+      "status": "covered",
+      "features": [
+        "bind_singleton_field_scalar",
+        "binding_continuation"
+      ],
+      "cases": [
+        "cert_bind_singleton_field_scalar"
+      ],
+      "reason": "Coverage consolidation: exact original program and shared planning/live assertions exercised with the existing Python lowering."
+    },
+    "lang_bind_template_inline_on_e1": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "bracket_render",
+        "bracket_render_inline_on_e",
+        "federated_duplicate_entity_symbol"
+      ],
+      "cases": [
+        "cert_federated_bound_render"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_binding_continuation": {
+      "status": "covered",
+      "features": [
+        "binding_continuation"
+      ],
+      "cases": [
+        "complete_binding_continuation"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_bindings_render": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "bracket_render",
+        "per_row_render"
+      ],
+      "cases": [
+        "text_bindings_row"
+      ],
+      "reason": "Exact original source, shared planning/live assertions, and typed per-row Python rendering."
+    },
+    "lang_boolean_identity_false": {
+      "status": "covered",
+      "features": [
+        "boolean_identity_literal",
+        "dry_live_parity",
+        "entity_get"
+      ],
+      "cases": [
+        "boolean_identity_false"
+      ],
+      "reason": "Original Boolean identity spelling and typed Python Boolean match exact planned and materialized identity."
+    },
+    "lang_boolean_identity_true": {
+      "status": "covered",
+      "features": [
+        "boolean_identity_literal",
+        "dry_live_parity",
+        "entity_get"
+      ],
+      "cases": [
+        "boolean_identity_true"
+      ],
+      "reason": "Original Boolean identity spelling and typed Python Boolean match exact planned and materialized identity."
+    },
+    "lang_bound_get_empty": {
+      "status": "covered",
+      "features": [
+        "bound_get_identity",
+        "dry_live_parity"
+      ],
+      "cases": [
+        "bound_get_empty"
+      ],
+      "reason": "Original bound-read obligation executes through both frontends with shared planning/live assertions."
+    },
+    "lang_bound_get_field": {
+      "status": "covered",
+      "features": [
+        "bound_get_identity",
+        "dry_live_parity"
+      ],
+      "cases": [
+        "bound_get_field"
+      ],
+      "reason": "Original bound-read obligation executes through both frontends with shared planning/live assertions."
+    },
+    "lang_bound_get_scalar": {
+      "status": "covered",
+      "features": [
+        "bound_get_identity",
+        "dry_live_parity"
+      ],
+      "cases": [
+        "bound_get_scalar"
+      ],
+      "reason": "Original bound-read obligation executes through both frontends with shared planning/live assertions."
+    },
+    "lang_bound_query_field": {
+      "status": "covered",
+      "features": [
+        "bound_query_operand",
+        "dry_live_parity"
+      ],
+      "cases": [
+        "bound_query_field"
+      ],
+      "reason": "Original bound-read obligation executes through both frontends with shared planning/live assertions."
+    },
+    "lang_bound_query_scalar": {
+      "status": "covered",
+      "features": [
+        "bound_query_operand",
+        "dry_live_parity"
+      ],
+      "cases": [
+        "bound_query_scalar"
+      ],
+      "reason": "Original bound-read obligation executes through both frontends with shared planning/live assertions."
+    },
+    "lang_compound_bound": {
+      "status": "covered",
+      "features": [
+        "compound_get_identity",
+        "dry_live_parity",
+        "entity_get"
+      ],
+      "cases": [
+        "compound_bound"
+      ],
+      "reason": "Canonical identity construction executes through both frontends with shared exact-slot planning and live assertions."
+    },
+    "lang_compound_literal": {
+      "status": "covered",
+      "features": [
+        "compound_get_identity",
+        "dry_live_parity",
+        "entity_get"
+      ],
+      "cases": [
+        "compound_literal"
+      ],
+      "reason": "Canonical identity construction executes through both frontends with shared exact-slot planning and live assertions."
+    },
+    "lang_cross_binding_render": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "bracket_render",
+        "per_row_render"
+      ],
+      "cases": [
+        "render_parity_lang_cross_binding_render"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_dedupe": {
+      "status": "covered",
+      "features": [
+        "pipe_distinct",
+        "pipe_take"
+      ],
+      "cases": [
+        "reduce_lang_dedupe"
+      ],
+      "reason": "Exact original source with shared planning/live assertions and typed Python reduction lowering."
+    },
+    "lang_derive_map_parallel": {
+      "status": "covered",
+      "features": [
+        "derive_map",
+        "parallel_final_roots"
+      ],
+      "cases": [
+        "render_parity_lang_derive_map_parallel"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_domain_symbol_page_size": {
+      "status": "covered",
+      "features": [
+        "domain_symbol_e1",
+        "pagination_page_size"
+      ],
+      "cases": [
+        "complete_page_size"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_effect_action_ping": {
+      "status": "covered",
+      "features": [
+        "effect_action"
+      ],
+      "cases": [
+        "cert_effect_action_ping"
+      ],
+      "reason": "Coverage consolidation: exact original program and shared planning/live assertions exercised with the existing Python lowering."
+    },
+    "lang_effect_create_literal": {
+      "status": "covered",
+      "features": [
+        "effect_create"
+      ],
+      "cases": [
+        "complete_effect_create_literal"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_effect_delete": {
+      "status": "covered",
+      "features": [
+        "effect_delete"
+      ],
+      "cases": [
+        "cert_effect_delete"
+      ],
+      "reason": "Coverage consolidation: exact original program and shared planning/live assertions exercised with the existing Python lowering."
+    },
+    "lang_effect_update": {
+      "status": "covered",
+      "features": [
+        "effect_update"
+      ],
+      "cases": [
+        "complete_effect_update"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_federated_auth_session_provides_mutation": {
+      "status": "covered",
+      "features": [
+        "effect_action",
+        "entity_get",
+        "entity_query",
+        "entity_search",
+        "federated_auth_session_provides_mutation",
+        "federated_dual_auth_bearer_holes",
+        "summary_hydrate_capability_params"
+      ],
+      "cases": [
+        "cert_federated_auth_sessions"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_federated_duplicate_entity_e1_query": {
+      "status": "covered",
+      "features": [
+        "domain_symbol_e1",
+        "entity_query",
+        "federated_duplicate_entity_symbol",
+        "predicate_brace_equality"
+      ],
+      "cases": [
+        "cert_federated_e1_query"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_federated_duplicate_entity_e2_search": {
+      "status": "covered",
+      "features": [
+        "entity_search",
+        "federated_duplicate_entity_symbol"
+      ],
+      "cases": [
+        "cert_federated_e2_search"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_federated_duplicate_entity_mutator_m": {
+      "status": "covered",
+      "features": [
+        "effect_create",
+        "federated_duplicate_entity_mutator_m",
+        "federated_duplicate_entity_symbol"
+      ],
+      "cases": [
+        "cert_federated_mutator_m"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_federated_duplicate_entity_pathless_action": {
+      "status": "covered",
+      "features": [
+        "effect_action",
+        "federated_duplicate_entity_pathless_action",
+        "federated_duplicate_entity_symbol"
+      ],
+      "cases": [
+        "cert_federated_pathless_action"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_federated_duplicate_entity_relation_r": {
+      "status": "covered",
+      "features": [
+        "federated_duplicate_entity_relation_r",
+        "federated_duplicate_entity_symbol",
+        "relation_from_parent_get"
+      ],
+      "cases": [
+        "cert_federated_relation_r"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_federated_group_by_on_e1": {
+      "status": "covered",
+      "features": [
+        "federated_duplicate_entity_symbol",
+        "federated_group_by_on_e1",
+        "pipe_summarize_by",
+        "pipe_summarize_chain"
+      ],
+      "cases": [
+        "cert_federated_group_by"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_federated_parallel_roots": {
+      "status": "covered",
+      "features": [
+        "entity_query",
+        "entity_search",
+        "federated_duplicate_entity_symbol",
+        "federated_parallel_roots",
+        "parallel_final_roots"
+      ],
+      "cases": [
+        "cert_federated_parallel_roots"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_federated_relation_target_entry": {
+      "status": "covered",
+      "features": [
+        "federated_relation_target_entry",
+        "relation_from_parent_get"
+      ],
+      "cases": [
+        "cert_federated_target_entry"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_for_each_auth_secured_touch": {
+      "status": "covered",
+      "features": [
+        "dry_live_parity",
+        "for_each_auth_outer_binding",
+        "for_each_effect",
+        "for_each_multirow",
+        "pipe_take",
+        "pipe_where"
+      ],
+      "cases": [
+        "complete_for_each_auth_secured_touch"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_for_each_empty_ping": {
+      "status": "covered",
+      "features": [
+        "effect_action",
+        "for_each_effect",
+        "pipe_where"
+      ],
+      "cases": [
+        "cert_for_each_empty_ping"
+      ],
+      "reason": "Coverage consolidation: exact original program and shared planning/live assertions exercised with the existing Python lowering."
+    },
+    "lang_for_each_multirow_update": {
+      "status": "covered",
+      "features": [
+        "dry_live_parity",
+        "for_each_effect",
+        "for_each_multirow",
+        "pipe_take",
+        "pipe_where"
+      ],
+      "cases": [
+        "complete_for_each_multirow_update"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_for_each_update": {
+      "status": "covered",
+      "features": [
+        "for_each_effect"
+      ],
+      "cases": [
+        "complete_for_each_update"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_get_by_id": {
+      "status": "covered",
+      "features": [
+        "entity_get"
+      ],
+      "cases": [
+        "get"
+      ],
+      "reason": "Executes the canonical original row and Python counterpart with shared live assertions and differential values/order/coverage."
+    },
+    "lang_get_singleton_field_argument": {
+      "status": "covered",
+      "features": [
+        "effect_update",
+        "get_singleton_field_scalar"
+      ],
+      "cases": [
+        "complete_get_singleton_field_argument"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_get_singleton_field_empty": {
+      "status": "covered",
+      "features": [
+        "get_singleton_field_scalar"
+      ],
+      "cases": [
+        "cert_get_singleton_field_empty"
+      ],
+      "reason": "Coverage consolidation: exact original program and shared planning/live assertions exercised with the existing Python lowering."
+    },
+    "lang_get_singleton_field_password": {
+      "status": "covered",
+      "features": [
+        "get_singleton_field_scalar"
+      ],
+      "cases": [
+        "cert_get_singleton_field_password"
+      ],
+      "reason": "Coverage consolidation: exact original program and shared planning/live assertions exercised with the existing Python lowering."
+    },
+    "lang_get_singleton_field_scalar": {
+      "status": "covered",
+      "features": [
+        "bind_singleton_field_scalar",
+        "get_singleton_field_scalar"
+      ],
+      "cases": [
+        "cert_get_singleton_field_scalar"
+      ],
+      "reason": "Coverage consolidation: exact original program and shared planning/live assertions exercised with the existing Python lowering."
+    },
+    "lang_group_by": {
+      "status": "covered",
+      "features": [
+        "pipe_summarize_by",
+        "pipe_summarize_chain"
+      ],
+      "cases": [
+        "reduce_lang_group_by"
+      ],
+      "reason": "Exact original source with shared planning/live assertions and typed Python reduction lowering."
+    },
+    "lang_group_by_aggregate_chain": {
+      "status": "covered",
+      "features": [
+        "agg_first_last",
+        "pipe_summarize_by_multi",
+        "pipe_summarize_chain"
+      ],
+      "cases": [
+        "reduce_lang_group_by_aggregate_chain"
+      ],
+      "reason": "Exact original source with shared planning/live assertions and typed Python reduction lowering."
+    },
+    "lang_group_by_first": {
+      "status": "covered",
+      "features": [
+        "agg_first_last",
+        "pipe_summarize_by"
+      ],
+      "cases": [
+        "reduce_lang_group_by_first"
+      ],
+      "reason": "Exact original source with shared planning/live assertions and typed Python reduction lowering."
+    },
+    "lang_group_by_multi": {
+      "status": "covered",
+      "features": [
+        "pipe_summarize_by",
+        "pipe_summarize_by_multi"
+      ],
+      "cases": [
+        "reduce_lang_group_by_multi"
+      ],
+      "reason": "Exact original source with shared planning/live assertions and typed Python reduction lowering."
+    },
+    "lang_group_by_sugar": {
+      "status": "covered",
+      "features": [
+        "pipe_summarize_by",
+        "pipe_summarize_by_count"
+      ],
+      "cases": [
+        "reduce_lang_group_by_sugar"
+      ],
+      "reason": "Exact original source with shared planning/live assertions and typed Python reduction lowering."
+    },
+    "lang_group_by_then_sort_agg_column": {
+      "status": "covered",
+      "features": [
+        "pipe_order_by",
+        "pipe_summarize_by",
+        "pipe_summarize_order_by"
+      ],
+      "cases": [
+        "reduce_lang_group_by_then_sort_agg_column"
+      ],
+      "reason": "Exact original source with shared planning/live assertions and typed Python reduction lowering."
+    },
+    "lang_heredoc_binding": {
+      "status": "covered",
+      "features": [
+        "parallel_final_roots",
+        "static_heredoc_binding"
+      ],
+      "cases": [
+        "text_literal_binding"
+      ],
+      "reason": "Native literal binding and parallel-return obligations compared against Python triple-quoted literals."
+    },
+    "lang_heredoc_body_with_equals": {
+      "status": "covered",
+      "features": [
+        "heredoc_body_with_equals",
+        "parallel_final_roots",
+        "static_heredoc_binding"
+      ],
+      "cases": [
+        "text_literal_equals"
+      ],
+      "reason": "Native literal binding and parallel-return obligations compared against Python triple-quoted literals."
+    },
+    "lang_heredoc_into_create": {
+      "status": "covered",
+      "features": [
+        "effect_create",
+        "heredoc_binding_string_param",
+        "static_heredoc_binding"
+      ],
+      "cases": [
+        "render_parity_lang_heredoc_into_create"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_homograph_lhs_coercion": {
+      "status": "covered",
+      "features": [
+        "binding_continuation",
+        "dry_live_parity",
+        "homograph_lhs_coercion",
+        "relation_many_from_plural",
+        "relation_prefer_from_parent_get",
+        "repair_sugar_homograph"
+      ],
+      "cases": [
+        "complete_homograph_lhs_coercion"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_inline_heredoc_method_arg": {
+      "status": "covered",
+      "features": [
+        "effect_create",
+        "inline_heredoc_method_arg"
+      ],
+      "cases": [
+        "render_parity_lang_inline_heredoc_method_arg"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_inline_heredoc_method_arg_github_shape": {
+      "status": "covered",
+      "features": [
+        "effect_create",
+        "inline_heredoc_method_arg_github_shape"
+      ],
+      "cases": [
+        "render_parity_lang_inline_heredoc_method_arg_github_shape"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_inline_heredoc_method_arg_same_line": {
+      "status": "covered",
+      "features": [
+        "effect_create",
+        "inline_heredoc_method_arg_same_line"
+      ],
+      "cases": [
+        "render_parity_lang_inline_heredoc_method_arg_same_line"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_integer_identity": {
+      "status": "covered",
+      "features": [
+        "dry_live_parity",
+        "entity_get",
+        "exact_integer_identity"
+      ],
+      "cases": [
+        "integer_identity"
+      ],
+      "reason": "Canonical identity construction executes through both frontends with shared exact-slot planning and live assertions."
+    },
+    "lang_integer_where_gt_dry_coerce": {
+      "status": "covered",
+      "features": [
+        "catalog_directed_coerce",
+        "dry_live_parity",
+        "pipe_where"
+      ],
+      "cases": [
+        "cert_integer_where_gt_dry_coerce"
+      ],
+      "reason": "Coverage consolidation: exact original program and shared planning/live assertions exercised with the existing Python lowering."
+    },
+    "lang_iterate_bound_exhausted": {
+      "status": "covered",
+      "features": [
+        "effect_action",
+        "entity_get",
+        "iterate_bound_exhausted"
+      ],
+      "cases": [
+        "iterate_exhausted"
+      ],
+      "reason": "Canonical original row and Python counterpart run shared planning/live assertions and differential values/order/coverage."
+    },
+    "lang_iterate_bound_identity": {
+      "status": "covered",
+      "features": [
+        "bound_iterate_identity",
+        "dry_live_parity"
+      ],
+      "cases": [
+        "iterate_bound_identity"
+      ],
+      "reason": "Original bound-read obligation executes through both frontends with shared planning/live assertions."
+    },
+    "lang_iterate_until_bound": {
+      "status": "covered",
+      "features": [
+        "dry_live_parity",
+        "effect_action",
+        "entity_get",
+        "iterate_until_bound"
+      ],
+      "cases": [
+        "iterate_success"
+      ],
+      "reason": "Canonical original row and Python counterpart run shared planning/live assertions and differential values/order/coverage."
+    },
+    "lang_iterate_until_zero_step": {
+      "status": "covered",
+      "features": [
+        "dry_live_parity",
+        "entity_get",
+        "iterate_until_zero_step"
+      ],
+      "cases": [
+        "iterate_zero"
+      ],
+      "reason": "Canonical original row and Python counterpart run shared planning/live assertions and differential values/order/coverage."
+    },
+    "lang_large_identity": {
+      "status": "covered",
+      "features": [
+        "dry_live_parity",
+        "entity_get",
+        "exact_integer_identity"
+      ],
+      "cases": [
+        "large_identity"
+      ],
+      "reason": "Canonical identity construction executes through both frontends with shared exact-slot planning and live assertions."
+    },
+    "lang_limit_projection": {
+      "status": "covered",
+      "features": [
+        "pipe_select",
+        "pipe_take"
+      ],
+      "cases": [
+        "projection"
+      ],
+      "reason": "Canonical original row and Python counterpart run shared planning/live assertions and differential values/order/coverage."
+    },
+    "lang_min_identity": {
+      "status": "covered",
+      "features": [
+        "dry_live_parity",
+        "entity_get",
+        "exact_integer_identity"
+      ],
+      "cases": [
+        "min_identity"
+      ],
+      "reason": "Canonical identity construction executes through both frontends with shared exact-slot planning and live assertions."
+    },
+    "lang_money_create_body": {
+      "status": "covered",
+      "features": [
+        "effect_create",
+        "money_create_body"
+      ],
+      "cases": [
+        "complete_money_create_body"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_money_predicate_gt": {
+      "status": "covered",
+      "features": [
+        "money_predicate",
+        "pipe_where"
+      ],
+      "cases": [
+        "complete_money_predicate_gt"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_negative_identity": {
+      "status": "covered",
+      "features": [
+        "dry_live_parity",
+        "entity_get",
+        "exact_integer_identity"
+      ],
+      "cases": [
+        "negative_identity"
+      ],
+      "reason": "Canonical identity construction executes through both frontends with shared exact-slot planning and live assertions."
+    },
+    "lang_per_row_arg_template": {
+      "status": "covered",
+      "features": [
+        "effect_update",
+        "for_each_effect",
+        "per_row_arg_template",
+        "row_identity_method_invoke"
+      ],
+      "cases": [
+        "render_parity_lang_per_row_arg_template"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_per_row_render_many": {
+      "status": "covered",
+      "features": [
+        "bracket_render",
+        "per_row_render",
+        "pipe_take"
+      ],
+      "cases": [
+        "text_per_row_many"
+      ],
+      "reason": "Exact original source, shared planning/live assertions, and typed per-row Python rendering."
+    },
+    "lang_per_row_render_zero": {
+      "status": "covered",
+      "features": [
+        "bracket_render",
+        "per_row_render"
+      ],
+      "cases": [
+        "text_per_row_zero"
+      ],
+      "reason": "Exact original source, shared planning/live assertions, and typed per-row Python rendering."
+    },
+    "lang_pipe_select_row_fields": {
+      "status": "covered",
+      "features": [
+        "binding_continuation",
+        "pipe_select",
+        "pipe_select_row_fields"
+      ],
+      "cases": [
+        "cert_pipe_select_row_fields"
+      ],
+      "reason": "Coverage consolidation: exact original program and shared planning/live assertions exercised with the existing Python lowering."
+    },
+    "lang_plain_template_foreach": {
+      "status": "covered",
+      "features": [
+        "pipe_take",
+        "plain_template_foreach",
+        "static_heredoc_binding"
+      ],
+      "cases": [
+        "text_collection_report"
+      ],
+      "reason": "Whole-collection typed Python string compute compared with the original once-per-collection template and shared assertions."
+    },
+    "lang_predicate_brace_owner": {
+      "status": "covered",
+      "features": [
+        "predicate_brace_equality"
+      ],
+      "cases": [
+        "selection"
+      ],
+      "reason": "Executes the canonical original row and Python counterpart with shared live assertions and differential values/order/coverage."
+    },
+    "lang_predicate_brace_score_cmp": {
+      "status": "covered",
+      "features": [
+        "pipe_where"
+      ],
+      "cases": [
+        "complete_predicate_contains"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_program_return_binding_only_last": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "dry_live_parity",
+        "pipe_select",
+        "pipe_take",
+        "program_return_binding_only_last"
+      ],
+      "cases": [
+        "complete_program_return_binding_only_last"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_program_return_consecutive_writes": {
+      "status": "covered",
+      "features": [
+        "dry_live_parity",
+        "effect_create",
+        "parallel_final_roots",
+        "program_return_consecutive_writes"
+      ],
+      "cases": [
+        "complete_program_return_consecutive_writes"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_program_return_pipeline_filter_sort": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "dry_live_parity",
+        "pipe_order_by",
+        "pipe_select",
+        "pipe_take",
+        "pipe_where",
+        "program_return_pipeline_filter_sort"
+      ],
+      "cases": [
+        "program_return_pipeline_filter_sort"
+      ],
+      "reason": "Explicit Python return preserves the original final-binding result; native-only coerced_default_return metadata is checked on the native frontend."
+    },
+    "lang_query_all": {
+      "status": "covered",
+      "features": [
+        "entity_query",
+        "pagination_fetch_all_default"
+      ],
+      "cases": [
+        "query"
+      ],
+      "reason": "Executes the canonical original row and Python counterpart with shared live assertions and differential values/order/coverage."
+    },
+    "lang_query_singleton": {
+      "status": "covered",
+      "features": [
+        "collect_singleton"
+      ],
+      "cases": [
+        "complete_query_singleton"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_quoted_binding_field_literal": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "dry_live_parity",
+        "effect_update",
+        "quoted_string_literal"
+      ],
+      "cases": [
+        "complete_quoted_binding_field_literal"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_quoted_binding_literal": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "dry_live_parity",
+        "pipe_where",
+        "quoted_string_literal"
+      ],
+      "cases": [
+        "cert_quoted_binding_literal"
+      ],
+      "reason": "Coverage consolidation: exact original program and shared planning/live assertions exercised with the existing Python lowering."
+    },
+    "lang_ra4_apply_bind_cut": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "derive_map",
+        "dry_live_parity",
+        "pipe_take",
+        "pipe_where",
+        "ra4_apply_factor"
+      ],
+      "cases": [
+        "render_parity_lang_ra4_apply_bind_cut"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_ra4_apply_derive_message_field": {
+      "status": "covered",
+      "features": [
+        "derive_map",
+        "dry_live_parity",
+        "pipe_take",
+        "pipe_where",
+        "ra4_apply_factor"
+      ],
+      "cases": [
+        "render_parity_lang_ra4_apply_derive_message_field"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_ra4_apply_foreach_bind_cut": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "dry_live_parity",
+        "for_each_effect",
+        "pipe_select",
+        "ra4_apply_factor"
+      ],
+      "cases": [
+        "complete_ra4_apply_foreach_bind_cut"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_ra4_apply_foreach_monolith": {
+      "status": "covered",
+      "features": [
+        "dry_live_parity",
+        "for_each_effect",
+        "pipe_select",
+        "ra4_apply_factor"
+      ],
+      "cases": [
+        "complete_ra4_apply_foreach_monolith"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_ra4_apply_monolith": {
+      "status": "covered",
+      "features": [
+        "derive_map",
+        "dry_live_parity",
+        "pipe_take",
+        "pipe_where",
+        "ra4_apply_factor"
+      ],
+      "cases": [
+        "render_parity_lang_ra4_apply_monolith"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_ra4_apply_relation_bind_cut": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "dry_live_parity",
+        "pipe_take",
+        "ra4_apply_factor",
+        "relation_many_from_plural"
+      ],
+      "cases": [
+        "relation_ra4_apply_relation_bind_cut"
+      ],
+      "reason": "Canonical original relation row runs shared planning/live assertions and differential output/coverage checks."
+    },
+    "lang_ra4_apply_relation_monolith": {
+      "status": "covered",
+      "features": [
+        "dry_live_parity",
+        "pipe_take",
+        "ra4_apply_factor",
+        "relation_many_from_plural"
+      ],
+      "cases": [
+        "relation_ra4_apply_relation_monolith"
+      ],
+      "reason": "Canonical original relation row runs shared planning/live assertions and differential output/coverage checks."
+    },
+    "lang_ra4_apply_render_bind_cut": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "bracket_render",
+        "dry_live_parity",
+        "pipe_select",
+        "ra4_apply_factor"
+      ],
+      "cases": [
+        "render_parity_lang_ra4_apply_render_bind_cut"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_ra4_pipe_bind_cut": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "dry_live_parity",
+        "pipe_order_by",
+        "pipe_select",
+        "pipe_take",
+        "pipe_where",
+        "ra4_pipe_factor"
+      ],
+      "cases": [
+        "cert_ra4_pipe_bind_cut"
+      ],
+      "reason": "Coverage consolidation: exact original program and shared planning/live assertions exercised with the existing Python lowering."
+    },
+    "lang_ra4_pipe_monolith": {
+      "status": "covered",
+      "features": [
+        "dry_live_parity",
+        "pipe_order_by",
+        "pipe_select",
+        "pipe_take",
+        "pipe_where",
+        "ra4_pipe_factor"
+      ],
+      "cases": [
+        "cert_ra4_pipe_monolith"
+      ],
+      "reason": "Coverage consolidation: exact original program and shared planning/live assertions exercised with the existing Python lowering."
+    },
+    "lang_relation_empty_fanout": {
+      "status": "covered",
+      "features": [
+        "dry_live_parity",
+        "relation_empty_fanout"
+      ],
+      "cases": [
+        "relation_empty_fanout"
+      ],
+      "reason": "Both frontends execute the original chain/empty relation obligation with shared planning/live assertions."
+    },
+    "lang_relation_integer_scoped_bindings": {
+      "status": "covered",
+      "features": [
+        "dry_live_parity",
+        "relation_binding_proof",
+        "relation_many_from_plural",
+        "relation_query_scoped_bindings"
+      ],
+      "cases": [
+        "relation_relation_integer_scoped_bindings"
+      ],
+      "reason": "Canonical original relation row runs shared planning/live assertions and differential output/coverage checks."
+    },
+    "lang_relation_lines": {
+      "status": "covered",
+      "features": [
+        "relation_from_parent_get"
+      ],
+      "cases": [
+        "relation_relation_lines"
+      ],
+      "reason": "Canonical original relation row runs shared planning/live assertions and differential output/coverage checks."
+    },
+    "lang_relation_many_from_plural_query": {
+      "status": "covered",
+      "features": [
+        "binding_continuation",
+        "dry_live_parity",
+        "relation_many_from_plural",
+        "relation_prefer_embed_miss",
+        "relation_prefer_from_parent_get"
+      ],
+      "cases": [
+        "relation_relation_many_from_plural_query"
+      ],
+      "reason": "Canonical original relation row runs shared planning/live assertions and differential output/coverage checks."
+    },
+    "lang_relation_one_chain": {
+      "status": "covered",
+      "features": [
+        "dry_live_parity",
+        "relation_one_chain"
+      ],
+      "cases": [
+        "relation_one_chain"
+      ],
+      "reason": "Both frontends execute the original chain/empty relation obligation with shared planning/live assertions."
+    },
+    "lang_relation_opaque_r_symbol": {
+      "status": "covered",
+      "features": [
+        "binding_continuation",
+        "dry_live_parity",
+        "relation_many_from_plural",
+        "relation_opaque_r_symbol",
+        "relation_prefer_from_parent_get"
+      ],
+      "cases": [
+        "cert_relation_opaque_r_symbol"
+      ],
+      "reason": "Coverage consolidation: exact original program and shared planning/live assertions exercised with the existing Python lowering."
+    },
+    "lang_relation_prefer_embed_hit": {
+      "status": "covered",
+      "features": [
+        "binding_continuation",
+        "dry_live_parity",
+        "relation_from_parent_get",
+        "relation_prefer_embed_hit",
+        "relation_prefer_from_parent_get"
+      ],
+      "cases": [
+        "relation_relation_prefer_embed_hit"
+      ],
+      "reason": "Canonical original relation row runs shared planning/live assertions and differential output/coverage checks."
+    },
+    "lang_relation_prefer_embed_miss": {
+      "status": "covered",
+      "features": [
+        "binding_continuation",
+        "dry_live_parity",
+        "relation_many_from_plural",
+        "relation_prefer_embed_miss",
+        "relation_prefer_from_parent_get",
+        "relation_query_scoped"
+      ],
+      "cases": [
+        "relation_relation_prefer_embed_miss"
+      ],
+      "reason": "Canonical original relation row runs shared planning/live assertions and differential output/coverage checks."
+    },
+    "lang_relation_tags_scoped": {
+      "status": "covered",
+      "features": [
+        "relation_from_parent_get",
+        "relation_prefer_embed_hit",
+        "relation_prefer_from_parent_get"
+      ],
+      "cases": [
+        "relation_relation_tags_scoped"
+      ],
+      "reason": "Canonical original relation row runs shared planning/live assertions and differential output/coverage checks."
+    },
+    "lang_render_aggregate_report": {
+      "status": "covered",
+      "features": [
+        "effect_update",
+        "for_each_effect",
+        "per_row_arg_template",
+        "plain_template_foreach",
+        "render_aggregate_report"
+      ],
+      "cases": [
+        "render_parity_lang_render_aggregate_report"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_render_content_into_create": {
+      "status": "covered",
+      "features": [
+        "bracket_render",
+        "bracket_render_content_ref",
+        "effect_create"
+      ],
+      "cases": [
+        "render_parity_lang_render_content_into_create"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_render_content_plural_reject": {
+      "status": "covered",
+      "features": [
+        "bracket_render_content_ref",
+        "render_content_plural_reject"
+      ],
+      "cases": [
+        "render_parity_lang_render_content_plural_reject"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_render_derived_shape": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "per_row_render"
+      ],
+      "cases": [
+        "text_derived_alias"
+      ],
+      "reason": "Exact original source, shared planning/live assertions, and typed per-row Python rendering."
+    },
+    "lang_render_name_collision": {
+      "status": "covered",
+      "features": [
+        "per_row_render",
+        "render_name_collision"
+      ],
+      "cases": [
+        "render_parity_lang_render_name_collision"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_render_projected_shape": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "per_row_render"
+      ],
+      "cases": [
+        "text_projected_alias"
+      ],
+      "reason": "Exact original source, shared planning/live assertions, and typed per-row Python rendering."
+    },
+    "lang_render_relation_shape": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "per_row_render"
+      ],
+      "cases": [
+        "render_parity_lang_render_relation_shape"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_render_split_part": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "bracket_render",
+        "per_row_render",
+        "render_minijinja_split_part"
+      ],
+      "cases": [
+        "text_split_part"
+      ],
+      "reason": "Exact original source, shared planning/live assertions, and typed per-row Python rendering."
+    },
+    "lang_render_undefined_field": {
+      "status": "covered",
+      "features": [
+        "per_row_render"
+      ],
+      "cases": [
+        "render_parity_lang_render_undefined_field"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_render_value_error_at_execution": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "per_row_render"
+      ],
+      "cases": [
+        "render_parity_lang_render_value_error_at_execution"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_required_selection_default": {
+      "status": "covered",
+      "features": [
+        "entity_query",
+        "required_selection_default"
+      ],
+      "cases": [
+        "cert_required_selection_default"
+      ],
+      "reason": "Coverage consolidation: exact original program and shared planning/live assertions exercised with the existing Python lowering."
+    },
+    "lang_required_selection_empty": {
+      "status": "covered",
+      "features": [
+        "entity_query",
+        "required_selection_default"
+      ],
+      "cases": [
+        "cert_required_selection_empty"
+      ],
+      "reason": "Coverage consolidation: exact original program and shared planning/live assertions exercised with the existing Python lowering."
+    },
+    "lang_required_selection_multi": {
+      "status": "covered",
+      "features": [
+        "entity_query",
+        "required_selection_default"
+      ],
+      "cases": [
+        "cert_required_selection_multi"
+      ],
+      "reason": "Coverage consolidation: exact original program and shared planning/live assertions exercised with the existing Python lowering."
+    },
+    "lang_row_filter_brace": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "pipe_where"
+      ],
+      "cases": [
+        "complete_row_filter_brace"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_row_filter_paren": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "pipe_where"
+      ],
+      "cases": [
+        "complete_row_filter_paren"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_rows_each_method_invoke": {
+      "status": "covered",
+      "features": [
+        "effect_update",
+        "for_each_effect",
+        "row_identity_method_invoke"
+      ],
+      "cases": [
+        "complete_rows_each_method_invoke"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_search": {
+      "status": "covered",
+      "features": [
+        "entity_search"
+      ],
+      "cases": [
+        "complete_search"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_search_brace_q": {
+      "status": "covered",
+      "features": [
+        "entity_search",
+        "search_brace_owns_text"
+      ],
+      "cases": [
+        "complete_search_brace_q"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_search_miss": {
+      "status": "covered",
+      "features": [
+        "entity_search",
+        "search_text_not_exact_match"
+      ],
+      "cases": [
+        "complete_search_miss"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_search_then_group_by": {
+      "status": "covered",
+      "features": [
+        "entity_search",
+        "pipe_summarize_by",
+        "search_then_group_by"
+      ],
+      "cases": [
+        "complete_search_then_group_by"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_search_then_group_by_team_key": {
+      "status": "covered",
+      "features": [
+        "entity_search",
+        "pipe_summarize_by",
+        "search_then_group_by"
+      ],
+      "cases": [
+        "complete_search_then_group_by_team_key"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_select_alias_where": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "pipe_select_alias_where",
+        "pipe_select_compute",
+        "pipe_where"
+      ],
+      "cases": [
+        "select_alias_where"
+      ],
+      "reason": "Canonical native alias/filter program and shared planning/live assertions match Python named projection."
+    },
+    "lang_sort_asc": {
+      "status": "covered",
+      "features": [
+        "pipe_order_by",
+        "pipe_order_by_ascending",
+        "pipe_select",
+        "pipe_take"
+      ],
+      "cases": [
+        "sort_asc"
+      ],
+      "reason": "Canonical original source and shared planning/live assertions paired with typed Python ordering."
+    },
+    "lang_sort_limit": {
+      "status": "covered",
+      "features": [
+        "pipe_order_by",
+        "pipe_select",
+        "pipe_take"
+      ],
+      "cases": [
+        "sort_limit"
+      ],
+      "reason": "Canonical original source and shared planning/live assertions paired with typed Python ordering."
+    },
+    "lang_surface_line_limit": {
+      "status": "covered",
+      "features": [
+        "pipe_take",
+        "surface_line_compile"
+      ],
+      "cases": [
+        "complete_surface_line_limit"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_take_one_field_argument": {
+      "status": "covered",
+      "features": [
+        "binding_continuation",
+        "bounded_singleton_field_extract"
+      ],
+      "cases": [
+        "complete_take_one_field_argument"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_take_one_field_bind": {
+      "status": "covered",
+      "features": [
+        "binding_continuation",
+        "bounded_singleton_field_extract"
+      ],
+      "cases": [
+        "cert_take_one_field_bind"
+      ],
+      "reason": "Coverage consolidation: exact original program and shared planning/live assertions exercised with the existing Python lowering."
+    },
+    "lang_take_one_field_bound_argument": {
+      "status": "covered",
+      "features": [
+        "binding_continuation",
+        "bounded_singleton_field_extract"
+      ],
+      "cases": [
+        "complete_take_one_field_bound_argument"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_take_one_field_empty_argument": {
+      "status": "covered",
+      "features": [
+        "binding_continuation",
+        "bounded_singleton_field_extract"
+      ],
+      "cases": [
+        "cert_take_one_field_empty_argument"
+      ],
+      "reason": "Coverage consolidation: exact original program and shared planning/live assertions exercised with the existing Python lowering."
+    },
+    "lang_take_one_field_empty_bind": {
+      "status": "covered",
+      "features": [
+        "binding_continuation",
+        "bounded_singleton_field_extract"
+      ],
+      "cases": [
+        "cert_take_one_field_empty_bind"
+      ],
+      "reason": "Coverage consolidation: exact original program and shared planning/live assertions exercised with the existing Python lowering."
+    },
+    "lang_take_one_method_invoke": {
+      "status": "covered",
+      "features": [
+        "bounded_singleton_method_invoke",
+        "effect_update",
+        "pipe_take"
+      ],
+      "cases": [
+        "complete_take_one_method_invoke"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_take_one_method_invoke_empty": {
+      "status": "covered",
+      "features": [
+        "bounded_singleton_method_invoke",
+        "effect_update"
+      ],
+      "cases": [
+        "cert_take_one_method_invoke_empty"
+      ],
+      "reason": "Coverage consolidation: exact original program and shared planning/live assertions exercised with the existing Python lowering."
+    },
+    "lang_union_empty_right": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "pipe_select",
+        "pipe_union_empty_right",
+        "pipe_union_rowset"
+      ],
+      "cases": [
+        "set_lanes_union_empty_right"
+      ],
+      "reason": "Canonical native empty union or asymmetric anti-membership with shared planning/live assertions."
+    },
+    "lang_union_rowset": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "dry_live_parity",
+        "pipe_select",
+        "pipe_union_rowset",
+        "pipe_where_in_rowset"
+      ],
+      "cases": [
+        "union_rowset"
+      ],
+      "reason": "Canonical native rowset set-operation program paired with Python and shared planning/live assertions."
+    },
+    "lang_union_rowset_alias": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "pipe_select_compute",
+        "pipe_union_rowset",
+        "pipe_where_in_rowset"
+      ],
+      "cases": [
+        "union_rowset_alias"
+      ],
+      "reason": "Canonical native rowset set-operation program paired with Python and shared planning/live assertions."
+    },
+    "lang_union_rowset_alias_distinct": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "pipe_distinct",
+        "pipe_select_compute",
+        "pipe_union_rowset",
+        "pipe_where_in_rowset"
+      ],
+      "cases": [
+        "union_rowset_alias_distinct",
+        "inline_alias_membership"
+      ],
+      "reason": "Canonical native rowset set-operation program paired with Python and shared planning/live assertions."
+    },
+    "lang_union_rowset_alias_existing": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "pipe_select",
+        "pipe_select_compute",
+        "pipe_union_rowset",
+        "pipe_where_in_rowset"
+      ],
+      "cases": [
+        "union_rowset_alias_existing"
+      ],
+      "reason": "Canonical native rowset set-operation program paired with Python and shared planning/live assertions."
+    },
+    "lang_union_rowset_paren": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "parenthesized_row_expression",
+        "pipe_select",
+        "pipe_union_rowset",
+        "pipe_where_in_rowset"
+      ],
+      "cases": [
+        "complete_union_rowset_paren"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_utf8_minijinja_content_stitch": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "bracket_render",
+        "bracket_render_content_ref",
+        "effect_create",
+        "utf8_minijinja_interpolate"
+      ],
+      "cases": [
+        "render_parity_lang_utf8_minijinja_content_stitch"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_where_boolean_rowset_sugar": {
+      "status": "covered",
+      "features": [
+        "dry_live_parity",
+        "pipe_where",
+        "pipe_where_in_rowset",
+        "repair_boolean_filter"
+      ],
+      "cases": [
+        "complete_boolean_rowset"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_where_in_rowset": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "dry_live_parity",
+        "pipe_select",
+        "pipe_where",
+        "pipe_where_in_rowset"
+      ],
+      "cases": [
+        "where_in_rowset"
+      ],
+      "reason": "Canonical native rowset set-operation program paired with Python and shared planning/live assertions."
+    },
+    "lang_where_in_rowset_paren": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "pipe_select",
+        "pipe_where",
+        "pipe_where_in_rowset"
+      ],
+      "cases": [
+        "where_in_rowset_paren",
+        "inline_membership"
+      ],
+      "reason": "Canonical native rowset set-operation program paired with Python and shared planning/live assertions."
+    },
+    "lang_where_literal_boolean_sugar": {
+      "status": "covered",
+      "features": [
+        "dry_live_parity",
+        "pipe_where",
+        "repair_boolean_filter",
+        "repair_literal_membership"
+      ],
+      "cases": [
+        "complete_boolean_literal"
+      ],
+      "reason": "Exact original program and shared planning/live assertions; canonical Python operation replaces original syntactic spelling."
+    },
+    "lang_where_not_in_rowset": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "pipe_select",
+        "pipe_where",
+        "pipe_where_not_in_rowset"
+      ],
+      "cases": [
+        "where_not_in_rowset"
+      ],
+      "reason": "Canonical native rowset set-operation program paired with Python and shared planning/live assertions."
+    },
+    "lang_where_not_in_universe_left": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "dry_live_parity",
+        "pipe_select",
+        "pipe_where",
+        "pipe_where_not_in_rowset",
+        "pipe_where_not_in_universe"
+      ],
+      "cases": [
+        "set_lanes_not_in_universe_left",
+        "set_lanes_inline_not_in_left"
+      ],
+      "reason": "Canonical native empty union or asymmetric anti-membership with shared planning/live assertions."
+    },
+    "lang_where_not_in_universe_right": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "dry_live_parity",
+        "pipe_select",
+        "pipe_where",
+        "pipe_where_not_in_rowset",
+        "pipe_where_not_in_universe"
+      ],
+      "cases": [
+        "set_lanes_not_in_universe_right",
+        "set_lanes_inline_not_in_right"
+      ],
+      "reason": "Canonical native empty union or asymmetric anti-membership with shared planning/live assertions."
+    },
+    "lang_with_concat": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "pipe_select_compute",
+        "pipe_take",
+        "pipe_where"
+      ],
+      "cases": [
+        "render_parity_lang_with_concat"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_with_div": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "pipe_select_compute",
+        "pipe_take"
+      ],
+      "cases": [
+        "render_parity_lang_with_div"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_with_mul": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "pipe_select_compute",
+        "pipe_take"
+      ],
+      "cases": [
+        "render_parity_lang_with_mul"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_with_when_len": {
+      "status": "covered",
+      "features": [
+        "bindings_assignment",
+        "pipe_select_compute",
+        "pipe_take",
+        "pipe_where"
+      ],
+      "cases": [
+        "render_parity_lang_with_when_len"
+      ],
+      "reason": "Original native obligation is executed alongside its Python semantic counterpart with explicit surface replacement expectations where diagnostic phase or qualification differs."
+    },
+    "lang_distinct_projected_values": {
+      "status": "covered",
+      "features": [
+        "pipe_distinct",
+        "distinct_projected_values",
+        "pipe_select",
+        "dry_live_parity"
+      ],
+      "cases": [
+        "set_lanes_distinct_projection"
+      ],
+      "reason": "Deterministic original fixture has two distinct lane identities with identical projected shelf values; shared live assertion requires one row."
+    },
+    "lang_group_then_global_aggregate": {
+      "status": "covered",
+      "features": [
+        "pipe_summarize",
+        "pipe_summarize_by",
+        "group_then_global_aggregate"
+      ],
+      "cases": [
+        "set_lanes_group_then_global_aggregate"
+      ],
+      "reason": "Shared regression for completed grouping followed by a global reduction; both frontend plans and live outputs compared."
+    }
+  },
+  "cases": [
+    "alias_replace_column",
+    "alias_reproject_sort",
+    "boolean_identity_false",
+    "boolean_identity_true",
+    "bound_get_empty",
+    "bound_get_field",
+    "bound_get_scalar",
+    "bound_query_field",
+    "bound_query_scalar",
+    "broadcast",
+    "cert_apply_get_multirow",
+    "cert_apply_query_multirow",
+    "cert_bind_limit1_continuation",
+    "cert_bind_singleton_field_scalar",
+    "cert_effect_action_ping",
+    "cert_effect_delete",
+    "cert_for_each_empty_ping",
+    "cert_get_singleton_field_empty",
+    "cert_get_singleton_field_password",
+    "cert_get_singleton_field_scalar",
+    "cert_integer_where_gt_dry_coerce",
+    "cert_pipe_select_row_fields",
+    "cert_quoted_binding_literal",
+    "cert_ra4_pipe_bind_cut",
+    "cert_ra4_pipe_monolith",
+    "cert_relation_opaque_r_symbol",
+    "cert_required_selection_default",
+    "cert_required_selection_empty",
+    "cert_required_selection_multi",
+    "cert_take_one_field_bind",
+    "cert_take_one_field_empty_argument",
+    "cert_take_one_field_empty_bind",
+    "cert_take_one_method_invoke_empty",
+    "coerce",
+    "compound_bound",
+    "compound_literal",
+    "create",
+    "delete",
+    "empty",
+    "empty_singleton",
+    "empty_write_receiver",
+    "fanout_delete",
+    "fanout_empty",
+    "fanout_read",
+    "fanout_update",
+    "field_input",
+    "get",
+    "grain",
+    "inline_alias_membership",
+    "inline_membership",
+    "integer_identity",
+    "iterate_bound_identity",
+    "iterate_exact",
+    "iterate_exhausted",
+    "iterate_success",
+    "iterate_zero",
+    "large_identity",
+    "min_identity",
+    "negative_identity",
+    "parallel",
+    "program_return_pipeline_filter_sort",
+    "projection",
+    "query",
+    "quoted",
+    "reduce_aggregate_alias",
+    "reduce_aggregate_empty",
+    "reduce_aggregate_functions",
+    "reduce_distinct_alias",
+    "reduce_distinct_multi",
+    "reduce_group_empty",
+    "reduce_lang_aggregate",
+    "reduce_lang_aggregate_sugar_count",
+    "reduce_lang_aggregate_sum",
+    "reduce_lang_dedupe",
+    "reduce_lang_group_by",
+    "reduce_lang_group_by_aggregate_chain",
+    "reduce_lang_group_by_first",
+    "reduce_lang_group_by_multi",
+    "reduce_lang_group_by_sugar",
+    "reduce_lang_group_by_then_sort_agg_column",
+    "relation_bind_filter_continuation",
+    "relation_bind_projection_then_relation",
+    "relation_bind_relation_hop_one_one",
+    "relation_empty_fanout",
+    "relation_one_chain",
+    "relation_ra4_apply_relation_bind_cut",
+    "relation_ra4_apply_relation_monolith",
+    "relation_relation_integer_scoped_bindings",
+    "relation_relation_lines",
+    "relation_relation_many_from_plural_query",
+    "relation_relation_prefer_embed_hit",
+    "relation_relation_prefer_embed_miss",
+    "relation_relation_tags_scoped",
+    "scalar_input",
+    "select_alias_where",
+    "selection",
+    "set_lanes_distinct_projection",
+    "set_lanes_group_then_global_aggregate",
+    "set_lanes_inline_not_in_left",
+    "set_lanes_inline_not_in_right",
+    "set_lanes_not_in_universe_left",
+    "set_lanes_not_in_universe_right",
+    "set_lanes_union_empty_right",
+    "singleton",
+    "sort_asc",
+    "sort_limit",
+    "take",
+    "text_bindings_row",
+    "text_collection_report",
+    "text_derived_alias",
+    "text_empty_aggregate",
+    "text_literal_binding",
+    "text_literal_equals",
+    "text_multiline_whitespace",
+    "text_per_row_many",
+    "text_per_row_zero",
+    "text_projected_alias",
+    "text_row_duplicates",
+    "text_split_part",
+    "text_synthetic_count",
+    "text_synthetic_group",
+    "text_write_reuse",
+    "union_collapses_duplicates",
+    "union_rowset",
+    "union_rowset_alias",
+    "union_rowset_alias_distinct",
+    "union_rowset_alias_existing",
+    "update",
+    "where",
+    "where_in_rowset",
+    "where_in_rowset_paren",
+    "where_not_in_rowset",
+    "type_projected_integer",
+    "type_projected_enum",
+    "type_projected_temporal",
+    "complete_take_one_field_bound_argument",
+    "complete_take_one_field_argument",
+    "complete_surface_line_limit",
+    "complete_search",
+    "complete_search_miss",
+    "complete_search_brace_q",
+    "complete_search_then_group_by",
+    "complete_search_then_group_by_team_key",
+    "complete_row_filter_brace",
+    "complete_row_filter_paren",
+    "complete_program_return_binding_only_last",
+    "complete_program_return_consecutive_writes",
+    "complete_quoted_binding_field_literal",
+    "complete_bind_method_invoke_field_ref",
+    "complete_take_one_method_invoke",
+    "complete_rows_each_method_invoke",
+    "complete_get_singleton_field_argument",
+    "complete_binding_continuation",
+    "complete_bind_plural_relation_opaque_p",
+    "complete_homograph_lhs_coercion",
+    "complete_bind_dedupe",
+    "complete_ra4_apply_foreach_monolith",
+    "complete_ra4_apply_foreach_bind_cut",
+    "complete_effect_create_literal",
+    "complete_money_predicate_gt",
+    "complete_money_create_body",
+    "complete_effect_update",
+    "complete_for_each_update",
+    "complete_for_each_multirow_update",
+    "complete_for_each_auth_secured_touch",
+    "complete_union_rowset_paren",
+    "render_parity_lang_cross_binding_render",
+    "render_parity_lang_ra4_apply_render_bind_cut",
+    "render_parity_lang_render_content_into_create",
+    "render_parity_lang_derive_map_parallel",
+    "render_parity_lang_ra4_apply_monolith",
+    "render_parity_lang_ra4_apply_bind_cut",
+    "render_parity_lang_ra4_apply_derive_message_field",
+    "render_parity_lang_with_mul",
+    "render_parity_lang_with_div",
+    "render_parity_lang_with_concat",
+    "render_parity_lang_with_when_len",
+    "render_parity_lang_heredoc_into_create",
+    "render_parity_lang_inline_heredoc_method_arg",
+    "render_parity_lang_inline_heredoc_method_arg_same_line",
+    "render_parity_lang_inline_heredoc_method_arg_github_shape",
+    "render_parity_lang_utf8_minijinja_content_stitch",
+    "render_parity_lang_per_row_arg_template",
+    "render_parity_lang_render_aggregate_report",
+    "render_parity_lang_render_relation_shape",
+    "render_parity_lang_render_value_error_at_execution",
+    "render_parity_lang_render_undefined_field",
+    "render_parity_lang_render_content_plural_reject",
+    "render_parity_lang_render_name_collision",
+    "cert_federated_e1_query",
+    "cert_federated_e2_search",
+    "cert_federated_relation_r",
+    "cert_federated_mutator_m",
+    "cert_federated_pathless_action",
+    "cert_federated_auth_sessions",
+    "cert_federated_parallel_roots",
+    "cert_federated_group_by",
+    "cert_federated_target_entry",
+    "cert_federated_bound_render",
+    "complete_predicate_contains",
+    "complete_boolean_literal",
+    "complete_boolean_rowset",
+    "complete_query_singleton",
+    "complete_page_size"
+  ],
+  "views": {
+    "lang_digest": {
+      "entity": "LangDigest",
+      "reason": "Covered by plasm_language_matrix_views::matrix_views_all_preflight: Python admission and dry planning; exact entity/scope equality; original view preflight on the lowered query. Live view/binding/relation tests in the same suite run both frontends."
+    },
+    "lang_triage_context": {
+      "entity": "LangTriageContext",
+      "reason": "Covered by plasm_language_matrix_views::matrix_views_all_preflight: Python admission and dry planning; exact entity/scope equality; original view preflight on the lowered query. Live view/binding/relation tests in the same suite run both frontends."
+    },
+    "lang_item_link": {
+      "entity": "LangItemLink",
+      "reason": "Covered by plasm_language_matrix_views::matrix_views_all_preflight: Python admission and dry planning; exact entity/scope equality; original view preflight on the lowered query. Live view/binding/relation tests in the same suite run both frontends."
+    },
+    "lang_owner_filter_demo": {
+      "entity": "LangOwnerFilterDemo",
+      "reason": "Covered by plasm_language_matrix_views::matrix_views_all_preflight: Python admission and dry planning; exact entity/scope equality; original view preflight on the lowered query. Live view/binding/relation tests in the same suite run both frontends."
+    },
+    "lang_tag_filter_demo": {
+      "entity": "LangTagFilterDemo",
+      "reason": "Covered by plasm_language_matrix_views::matrix_views_all_preflight: Python admission and dry planning; exact entity/scope equality; original view preflight on the lowered query. Live view/binding/relation tests in the same suite run both frontends."
+    },
+    "lang_work_snapshot": {
+      "entity": "LangWorkSnapshot",
+      "reason": "Covered by plasm_language_matrix_views::matrix_views_all_preflight: Python admission and dry planning; exact entity/scope equality; original view preflight on the lowered query. Live view/binding/relation tests in the same suite run both frontends."
+    },
+    "lang_work_snapshot_empty": {
+      "entity": "LangWorkSnapshotEmpty",
+      "reason": "Covered by plasm_language_matrix_views::matrix_views_all_preflight: Python admission and dry planning; exact entity/scope equality; original view preflight on the lowered query. Live view/binding/relation tests in the same suite run both frontends."
+    }
+  },
+  "non_row_features": {
+    "host_wait_cancel": "python_host_contract::python_http_wait_retrieves_actual_completed_python_result and python_http_cancel_interrupts_inflight_reviewed_read exercise real Python runs through the host operation dispatcher.",
+    "monadic_comp_witness": "python_host_contract::python_monadic_comp_witness_uses_production_admission verifies production Python admission retains the typed computation witness."
+  },
+  "supplemental_suites": {
+    "python_union_matrix": [
+      "tagged_union_overloads",
+      "nested_union_arrays",
+      "union_variant_rejection",
+      "union_wire_remapping",
+      "union_optional_remapped_fields",
+      "union_common_input_lanes"
+    ]
+  }
+}

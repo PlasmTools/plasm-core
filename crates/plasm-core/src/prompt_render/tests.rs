@@ -831,44 +831,34 @@ fn with_insta_snapshots<R>(f: impl FnOnce() -> R) -> R {
 }
 
 #[test]
-fn plasm_language_contract_is_tsv_first_and_avoids_legacy_terms() {
+fn plasm_language_contract_is_python_with_incremental_declarations() {
     let contract = super::PLASM_TOOL_DESCRIPTION;
-    assert!(
-        contract.contains("Language-card Meaning"),
-        "contract should teach Meaning marks once in plasm_tool"
-    );
-    assert!(
-        !contract.contains("TSV table semantics:"),
-        "retired per-wave TSV table semantics heading"
-    );
-    assert!(
-        contract.contains("Replace teaching placeholders")
-            || contract.contains("substitute placeholders")
-            || contract.contains("substitute session symbols")
-            || contract.contains("fill with real values")
-            || contract.contains("fill each from a bound value"),
-        "symbolic contract must teach placeholder substitution"
-    );
-    assert!(
-        contract.contains("run_ref"),
-        "MCP contract must teach paging via run_ref on plasm_run"
-    );
-    assert!(
-        !contract.contains("page_handle"),
-        "contract must not advertise removed page_handle param"
-    );
-    assert!(
-        !contract.contains("plan_commit_ref"),
-        "plasm tool contract must not advertise plan_commit_ref as plasm_run param"
-    );
-    assert!(
-        !contract.contains("program continuations"),
-        "MCP contract must not advertise legacy program continuations on plasm_run"
-    );
-    assert!(
-        !contract.contains("teaching table") && !contract.contains(";;") && !contract.contains("p#=v"),
-        "contract must not reintroduce legacy teaching table/compact separators or bare-v placeholders:\n{contract}"
-    );
+    for required in [
+        "Python source",
+        "Program",
+        "plasm_context",
+        "run_ref",
+        "logical_session_ref",
+        "needs_fix",
+    ] {
+        assert!(
+            contract.contains(required),
+            "missing protocol contract: {required}"
+        );
+    }
+    for retired in [
+        "Language-card Meaning",
+        "teaching table",
+        "<<TAG",
+        "| where",
+        "page_handle",
+        "plan_commit_ref",
+    ] {
+        assert!(
+            !contract.contains(retired),
+            "retired authoring contract: {retired}"
+        );
+    }
 }
 
 #[test]
@@ -2195,135 +2185,30 @@ fn plasm_tool_description_snapshot() {
 }
 
 #[test]
-fn plasm_tool_description_includes_composition_strata() {
-    let frontmatter = super::PLASM_TOOL_DESCRIPTION;
-    assert!(frontmatter.contains("Three strata"));
-    assert!(frontmatter.contains("| where"));
-    assert!(frontmatter.contains("| select"));
-    assert!(frontmatter.contains("| take"));
-    assert!(
-        frontmatter.contains("| union (other | select col)"),
-        "RA-14 must teach the executable `| union` skeleton"
-    );
-    assert!(frontmatter.contains("=>"));
-    assert!(frontmatter.contains("<<TAG"));
-    assert!(
-        !frontmatter.contains("context=ℓ") && !frontmatter.contains("(context="),
-        "RA-5 source frame abolished — no context= in tool card"
-    );
-    assert!(
-        frontmatter.contains("membership")
-            || frontmatter.contains("Membership")
-            || frontmatter.contains("membership holes"),
-        "must teach typed membership hole fill"
-    );
-    assert!(
-        frontmatter.contains("e#~\"q\"") || frontmatter.contains("e#~\"<query>\""),
-        "search exemplar must show a real-query hole, not metasyntax text/$"
-    );
-    assert!(
-        !frontmatter.contains("e#~$") && !frontmatter.contains("e#~\"text\""),
-        "must not teach literal e#~$ / e#~\"text\" placeholders that weak models copy"
-    );
-    assert!(
-        !frontmatter.contains("Session and symbol discipline"),
-        "session discipline belongs in tool workflow descriptions, not duplicated in grammar"
-    );
-    assert!(
-        !frontmatter.contains(" ::="),
-        "full pseudo-EBNF block retired; canonical syntax is three-strata surface"
-    );
-    assert!(
-        frontmatter.contains("label = e#") || frontmatter.contains("rows = e#"),
-        "must teach bind-before-filter preference"
-    );
-    assert!(
-        !frontmatter.contains("Entity heads vs rows:"),
-        "P06/P07 entity-head pedagogy is CEILING DROP — omit from rewrite"
-    );
-    assert!(
-        !frontmatter.contains("**SQL map:**"),
-        "P08 SQL map is DROP — omit from rewrite"
-    );
-    assert!(
-        !frontmatter.contains("PLASM_RPT_TAG"),
-        "worked row-to-text few-shot removed — composition_ladder owns template teachability"
-    );
-    assert!(
-        !frontmatter.contains("Worked row-to-text"),
-        "problem-shaped worked examples purged from production card"
-    );
-    assert!(
-        !frontmatter.contains("e2(p10="),
-        "canonical frontmatter must not hardcode catalog-specific symbol indices"
-    );
-    assert!(
-        frontmatter.contains("label.wire")
-            && !frontmatter.contains("label.field")
-            && !frontmatter.contains("e_issue.m_create"),
-        "post-write label.wire rite is LOAD-BEARING (P11); multi-write few-shot is DROP (P10)"
-    );
-    assert!(
-        !frontmatter.contains("e2.m2") && !frontmatter.contains("e3.m3"),
-        "P10 multi-write worked block must stay omitted"
-    );
-    assert!(
-        frontmatter.contains("never invent a `.wire`")
-            || frontmatter.contains("never invent a .wire"),
-        "must warn against inventing .wire from binding.wire prose"
-    );
-    assert!(
-        !frontmatter.contains("owner=\"org\"") && !frontmatter.contains("e_repo"),
-        "worked examples must stay domain-neutral (no github-shaped repo/issue)"
-    );
-    assert!(
-        !frontmatter.contains("```tsv"),
-        "P14 lookup mini-card few-shot is CEILING DROP"
-    );
-    assert!(
-        frontmatter.contains("| summarize") && frontmatter.contains("summarize [by keys]"),
-        "P19 Q5 row-op signatures must spell pipe summarize forms"
-    );
-    assert!(
-        frontmatter.contains("binding.content"),
-        "P21 R3 must teach .content for string params"
-    );
-    assert!(
-        !frontmatter.contains("access_token=sess.")
-            && !frontmatter.contains("user_email=peer.")
-            && !frontmatter.contains("token=sess.")
-            && !frontmatter.contains("sess.k")
-            && !frontmatter.contains("peer.id")
-            && !frontmatter.contains("peer_id=")
-            && !frontmatter.contains("user=\"u\"")
-            && !frontmatter.contains("secret=\"s\"")
-            && !frontmatter.contains("alice"),
-        "plasm_tool must not bake catalog or near-domain names into worked examples"
-    );
-    assert!(
-        !frontmatter.contains("co-committed gates"),
-        "retired undefined co-committed-gates phrasing"
-    );
-    assert!(
-        !frontmatter.contains("re-read `e#(id=…)` to continue"),
-        "↠ must not be framed as an in-program re-read ban"
-    );
-    assert!(
-        frontmatter.contains("done = iterate cur step e#(_.id).m#"),
-        "state iterate must teach the executable invoke-after-step form"
-    );
-    assert!(
-        !frontmatter.contains("`done = iterate cur step`"),
-        "must not close the iterate span after `step` (invites `step =` binder heresy)"
-    );
-    assert!(
-        frontmatter.contains("done = rows => _.m#(args)"),
-        "apply-bind must teach the executable rows=> method form"
-    );
-    assert!(
-        !frontmatter.contains("`done = rows =>`"),
-        "must not close the apply-bind span after `=>` (incomplete apply; same class as `step`)"
-    );
+fn python_reference_includes_composition_contract() {
+    let reference = include_str!("assets/python-plasm-dag.txt");
+    for required in [
+        "class Program:",
+        "class Rows[T]:",
+        "def where(",
+        "def select(",
+        "def take(",
+        "def union(",
+        "def flat_map",
+        "def compute(",
+        "def iterate(",
+        "max_steps",
+        "one-column RHS",
+        "immutable local assignments",
+        "explicit return",
+    ] {
+        assert!(
+            reference.contains(required),
+            "missing composition contract: {required}"
+        );
+    }
+    assert!(!reference.contains("<<TAG"));
+    assert!(!reference.contains("| where"));
 }
 
 #[test]
@@ -2364,104 +2249,39 @@ fn mcp_static_tool_descriptions_byte_budget() {
 }
 
 #[test]
-fn plasm_tool_description_truncation_prefix_has_composition_mandate() {
+fn plasm_tool_prefix_preserves_python_admission_and_review() {
     let full = super::PLASM_TOOL_DESCRIPTION;
-    let prefix_n = super::PLASM_TOOL_DESCRIPTION_PREFIX_BYTES;
-    let end = full.floor_char_boundary(full.len().min(prefix_n));
+    let end = full.floor_char_boundary(full.len().min(super::PLASM_TOOL_DESCRIPTION_PREFIX_BYTES));
     let prefix = &full[..end];
-    assert!(
-        prefix.contains("batch independent reads under shared scope"),
-        "batching mandate must be in first {prefix_n} bytes (host truncation)"
-    );
-    assert!(
-        prefix.contains("labels, branches")
-            || prefix.contains("a, b")
-            || prefix.contains("bars, bazs"),
-        "multi-root return example must be in first {prefix_n} bytes"
-    );
-    assert!(
-        prefix.contains("run_ref") && (prefix.contains("review") || prefix.contains("approval")),
-        "mutation/gate policy must be in first {prefix_n} bytes"
-    );
-    assert!(
-        prefix.contains("\\n") || prefix.contains("`\\n`"),
-        "JSON-style escape note must be in first {prefix_n} bytes"
-    );
-    assert!(
-        prefix.contains("<<TAG") || prefix.contains("heredoc"),
-        "heredoc pointer must be in first {prefix_n} bytes"
-    );
-    assert!(
-        prefix.contains("Program shape:"),
-        "program-shape contract must be in first {prefix_n} bytes (host truncation)"
-    );
-
-    let wide_n = super::PLASM_TOOL_DESCRIPTION_WIDE_PREFIX_BYTES;
-    let wide_end = full.floor_char_boundary(full.len().min(wide_n));
-    let wide = &full[..wide_end];
-    assert!(
-        wide.contains("Composition:") || wide.contains("Three strata"),
-        "composition strata must be in first {wide_n} bytes (host truncation)"
-    );
-    assert!(
-        wide.contains("| where") && wide.contains("=>"),
-        "pipe + apply surface must be in first {wide_n} bytes"
-    );
+    for required in [
+        "run_ref",
+        "review",
+        "Program",
+        "build(self)",
+        "explicit return",
+        "plasm_context",
+    ] {
+        assert!(
+            prefix.contains(required),
+            "missing early protocol instruction: {required}"
+        );
+    }
+    assert!(full.contains("completed writes"));
+    assert!(full.contains("same logical session"));
 }
 
 #[test]
 fn plasm_tool_description_stats() {
     let full = super::PLASM_TOOL_DESCRIPTION;
+    assert!(full.len() <= super::PLASM_TOOL_DESCRIPTION_MAX_BYTES);
+    let reference = include_str!("assets/python-plasm-dag.txt");
     assert!(
-        full.len() <= super::PLASM_TOOL_DESCRIPTION_MAX_BYTES,
-        "grammar contract grew past max budget: {} bytes",
-        full.len()
-    );
-
-    let full_stats = super::grammar_frontmatter_stats_from_contract(full);
-    assert!(
-        full_stats
-            .section_bytes
-            .get("core_surface")
-            .copied()
-            .unwrap_or(0)
-            > 400
+        reference.len() < 12_000,
+        "reference exceeded compact library budget"
     );
     assert!(
-        full_stats
-            .section_bytes
-            .get("composition")
-            .copied()
-            .unwrap_or(0)
-            > 100
-    );
-    assert!(
-        full_stats
-            .section_bytes
-            .get("tsv_semantics")
-            .copied()
-            .unwrap_or(0)
-            > 100
-    );
-
-    let dir = fixtures_schemas_dir("plasm_prompt_matrix");
-    if !dir.is_dir() {
-        return;
-    }
-    let cgs = load_schema_dir(&dir).unwrap();
-    let full_prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
-    let single_prompt = render_prompt_tsv_with_config(
-        &cgs,
-        RenderConfig {
-            focus: FocusSpec::Single("Ruleset"),
-            ..RenderConfig::for_eval(None)
-        },
-    );
-    let full_prompt_stats = super::grammar_frontmatter_stats_from_prompt(&full_prompt);
-    let single_stats = super::grammar_frontmatter_stats_from_prompt(&single_prompt);
-    assert!(
-        single_stats.contract_comment_bytes <= full_prompt_stats.contract_comment_bytes,
-        "single-entity slice should not add contract comments to language card"
+        !full.contains("class Rows"),
+        "library must be delivered by context, not repeated by tool"
     );
 }
 
@@ -2524,28 +2344,10 @@ fn language_matrix_search_tilde_teaches_search_text_not_exact_or_complete() {
             "Search Meaning must not claim completeness: {line}"
         );
     }
-    let card = super::PLASM_TOOL_DESCRIPTION;
-    assert!(card.contains("Search yields candidates, not verified identities."));
-    assert!(
-        card.contains(r#"selected = candidates | where title = "Chosen title" | where score > 0"#)
-    );
-    assert!(card.contains("then `selected => _.r#`"));
-    assert!(
-        card.contains(r#"`e#` / `e#{wire=value}` / `e#~"q"` / `e#(<id>)`"#),
-        "catalog-source line must list e#~\"q\" literally"
-    );
-    assert!(
-        card.contains("Backend WHERE only on an **entity head**."),
-        "catalog-source line must keep Backend WHERE seat"
-    );
-    assert!(
-        card.contains("**Row filters:**") && card.contains("| where wire in (other | select wire)"),
-        "card teaches membership via | where, not ~"
-    );
-    assert!(
-        !card.contains("exact match") && !card.contains("must contain the literal"),
-        "card must not claim ~ is exact slot match"
-    );
+    let card = include_str!("assets/python-plasm-dag.txt");
+    assert!(card.contains("Search yields candidates, not verified identities"));
+    assert!(card.contains("where filters rows already acquired"));
+    assert!(card.contains("one-column RHS rowset"));
     let run = include_str!("assets/plasm_run_tool_base.txt");
     assert!(
         run.contains(r#"more pages — call plasm_run with run_ref: "…""#),
@@ -2556,40 +2358,27 @@ fn language_matrix_search_tilde_teaches_search_text_not_exact_or_complete() {
 /// Receivers are domain entities; selected rows carry their own identity and scope.
 #[test]
 fn plasm_tool_teaches_semantic_operation_receivers() {
-    let card = super::PLASM_TOOL_DESCRIPTION;
-    for taught in [
-        "e#(<id>).m#(args)",
-        "item.m#(args)",
-        "singleton may use `| take 1`",
-        "rows => _.m#(args)",
-        "needs entity identity and scope",
-        "empty receivers fail",
-        "receiver-free `e#.m#(args)`",
-        "rows => e#.m#(recipient=_.field)",
+    let card = include_str!("assets/python-plasm-dag.txt");
+    for law in [
+        "Receiver-free calls use eN.mN",
+        "receiver-bound calls use a singleton",
+        "flat_map capture",
+        "fails on empty input",
+        "an id grants no authority",
+        "completed writes",
+        "never blindly replay",
     ] {
-        assert!(card.contains(taught), "missing receiver law: {taught}");
-    }
-    for transport_ceremony in [
-        "if pathless",
-        "retry with",
-        "path_vars",
-        "item = e#(row.id)",
-    ] {
-        assert!(
-            !card.contains(transport_ceremony),
-            "transport or identity reconstruction leaked: {transport_ceremony}"
-        );
+        assert!(card.contains(law), "missing receiver law: {law}");
     }
 }
 
 #[test]
 fn plasm_tool_teaches_typed_identity_holes() {
-    let card = super::PLASM_TOOL_DESCRIPTION;
-    assert!(card.contains("`e#(<id>)` takes only the taught `id_field`"));
-    assert!(card.contains("fill each from a bound value"));
-    assert!(card.contains("of that hole's sort"));
-    assert!(!card.contains("copy the card left-column seat exactly"));
-    assert!(!card.contains(r#"e#("…")"#));
+    let card = include_str!("assets/python-plasm-dag.txt");
+    assert!(card.contains("eN.get(identity) or exact compound named keys"));
+    assert!(card.contains("vN aliases retain Plasm domain identity"));
+    assert!(card.contains("not constructors or enum members"));
+    assert!(card.contains("Substitute only supplied symbols and fields"));
 }
 
 /// `plasm_prompt_matrix` TSV method rows follow catalog seat: pathless `eN.mK(` only when pathless.
@@ -3212,23 +3001,13 @@ fn return_projection_teaching_includes_every_authored_field() {
 
 #[test]
 fn static_grammar_includes_symbols_only_rule() {
-    let g = super::PLASM_TOOL_DESCRIPTION;
-    assert!(
-        g.contains("wire names"),
-        "canonical static grammar must teach wire names"
-    );
-    assert!(
-        g.contains("Never emit `v#`") || g.contains("Never emit v#"),
-        "canonical static grammar must forbid emitting v#"
-    );
-    assert!(
-        g.contains("→ e") && g.contains("label = e#"),
-        "bare-entity / bind-before-project rite must remain (P17)"
-    );
-    assert!(
-        !g.contains("Entity heads vs rows:") && !g.contains("↣ [e]"),
-        "P06/P07/P13 entity-head and arrow-legend pedagogy are CEILING DROP"
-    );
+    let tool = super::PLASM_TOOL_DESCRIPTION;
+    let reference = include_str!("assets/python-plasm-dag.txt");
+    assert!(tool.contains("wire names"));
+    assert!(reference.contains("session-local and append-only"));
+    assert!(reference.contains("No vendor namespaces or invented APIs"));
+    assert!(reference.contains("Locals must not shadow methods"));
+    assert!(!tool.contains("label = e#"));
 }
 
 #[test]

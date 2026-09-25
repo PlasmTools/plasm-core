@@ -11,7 +11,7 @@ import { workflowIntentSchema, intentProvenanceSchema, type IntentProvenance } f
 const nodeRequire = createRequire(import.meta.url);
 
 export interface TeachingExposureResult {
-  tsv: string;
+  prompt: string;
   deltaRefs: string[];
   executeSessionRef?: string;
 }
@@ -78,7 +78,7 @@ type NativePlasmEngine = {
     intent: string,
     seeds: Array<{ api: string; entity: string }>,
   ): Promise<{
-    tsv: string;
+    prompt: string;
     deltaRefs: string[];
   }>;
   dryRun(program: string, logicalSessionId?: string): Promise<{
@@ -152,7 +152,7 @@ export class NapiPlasmEngine implements PlasmEngine {
     void this.loaded;
     const result = await this.native.exposeSeeds(intent, seeds);
     return {
-      tsv: result.tsv,
+      prompt: result.prompt,
       deltaRefs: result.deltaRefs,
     };
   }

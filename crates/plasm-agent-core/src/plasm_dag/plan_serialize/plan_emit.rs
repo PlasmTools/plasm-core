@@ -109,7 +109,9 @@ impl PlanNodeEmitter for DagNodeSource {
                 collection_alias,
             } => {
                 out.kind = PlanNodeKind::Compute;
-                out.result_shape = if matches!(op, ComputeOp::Render { .. }) && node.singleton {
+                out.result_shape = if matches!(op, ComputeOp::Python { per_row: false, .. })
+                    || (matches!(op, ComputeOp::Render { .. }) && node.singleton)
+                {
                     ResultShape::Single
                 } else {
                     ResultShape::List

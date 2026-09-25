@@ -85,6 +85,19 @@ impl PlasmComp {
             }
         }
         self.bind.validate(&self.steps.keys().cloned().collect())?;
+        for (id, payload) in &self.steps {
+            if let PlasmStepPayload::MapBody(body) = payload {
+                body.execution_layers()?;
+                if !self
+                    .bind
+                    .deps
+                    .get(&StepId(id.clone()))
+                    .is_some_and(|deps| deps.contains(&body.parent.source))
+                {
+                    return Err(format!("map body {id} requires its parent dependency"));
+                }
+            }
+        }
         Ok(())
     }
 

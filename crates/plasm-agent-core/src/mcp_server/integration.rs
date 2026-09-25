@@ -1416,7 +1416,7 @@ async fn plasm_read_run_artifact_matches_resources_read() {
                 &runtime,
                 &json!({
                     "logical_session_ref": logical_session_ref,
-                    "program": "e1(\"a\")"
+                    "program": "class Read(Program):\n    def build(self):\n        return e1.get(\"a\")\n"
                 }),
                 "plasm",
                 true,

@@ -15,12 +15,14 @@
 pub mod baml_client;
 
 mod correction;
+mod program_facts;
+mod program_session;
+pub use program_session::ProgramSession;
 pub mod coverage;
 
 pub use correction::{
-    build_correction_feedback, build_correction_metrics, compute_pipeline_score,
-    validate_plan_steps, validate_plan_steps_with_lexicon_detailed, CorrectionMetrics,
-    EvalAttemptReport, EvalPlanStep, StepDiagnostic, StepLexiconNote,
+    build_correction_feedback, build_correction_metrics, compute_pipeline_score, validate_programs,
+    CorrectionMetrics, EvalAttemptReport, EvalPlanStep, StepDiagnostic,
 };
 pub use coverage::{
     apply_coverage_override, build_coverage_report, cases_with_effective_covers,
@@ -31,10 +33,9 @@ pub use coverage::{
     CoversSource, EvalFormId,
 };
 
+use plasm_agent_core::PlasmCompBundle;
 use plasm_core::expr::Expr;
-use plasm_core::expr_parser::ParsedExpr;
 use plasm_core::predicate::Predicate;
-use plasm_core::type_checker::type_check_expr;
 use plasm_core::CGS;
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -75,7 +76,7 @@ pub struct EvalCase {
     /// Which [`EvalFormId`] buckets this case is intended to cover (for `plasm-eval coverage`).
     #[serde(default)]
     pub covers: Vec<String>,
-    /// Optional ground-truth Plasm expression (parse/typecheck check; future: vs LLM output).
+    /// Optional ground-truth Python Program (compiled through the production frontend).
     #[serde(default)]
     pub reference_expr: Option<String>,
     pub expect: ExpectBlock,
@@ -195,17 +196,21 @@ pub fn load_cases_dir(dir: &Path) -> anyhow::Result<Vec<EvalCase>> {
     Ok(out)
 }
 
-/// Score parsed steps against expectations. `parsed` is one [`ParsedExpr`] per step.
+/// Score compiled Python programs against semantic expectations.
 ///
 /// When `final_step_source` is provided, it should be the concatenation of the successful plan’s
 /// step `text` fields (same surface the LLM produced), used only for [`ExpectBlock::step_text_contains_any`].
 pub fn score_case(
     expect: &ExpectBlock,
-    parsed: &[ParsedExpr],
+    programs: &[PlasmCompBundle],
     final_step_source: Option<&str>,
 ) -> CaseScore {
     let mut notes = Vec::new();
-    let n = parsed.len();
+    let mut facts = program_facts::ProgramFacts::default();
+    for program in programs {
+        facts.visit(&program.artifact().comp);
+    }
+    let n = facts.steps;
     let step_count_ok = expect.min_steps.map(|m| n >= m).unwrap_or(true)
         && expect.max_steps.map(|m| n <= m).unwrap_or(true);
     if !step_count_ok {
@@ -215,23 +220,19 @@ pub fn score_case(
         ));
     }
 
-    let mut entities: HashSet<String> = HashSet::new();
-    let mut pred_fields: HashSet<String> = HashSet::new();
-    let mut pred_values: HashSet<String> = HashSet::new();
-    let mut chains: HashSet<String> = HashSet::new();
-    let mut projections: Vec<Vec<String>> = Vec::new();
-
-    for p in parsed {
+    let mut entities = facts.entities;
+    let mut pred_fields = facts.fields;
+    let mut pred_values = facts.values;
+    let mut chains = facts.relations;
+    let projections = facts.projections;
+    for expr in &facts.expressions {
         collect_expr(
-            &p.expr,
+            expr,
             &mut entities,
             &mut pred_fields,
             &mut pred_values,
             &mut chains,
         );
-        if let Some(proj) = &p.projection {
-            projections.push(proj.clone());
-        }
     }
 
     let entity_match =
@@ -366,13 +367,20 @@ pub fn entities_from_expr(expr: &Expr) -> HashSet<String> {
     entities
 }
 
-/// Parse a Plasm expression against `cgs` and return entity names it references.
+/// Compile a Python Program against `cgs` and return entity names it references.
 pub fn entities_from_reference_expr(
     reference_expr: &str,
     cgs: &CGS,
-) -> Result<HashSet<String>, plasm_core::expr_parser::ParseError> {
-    let pe = plasm_core::expr_parser::parse(reference_expr, cgs)?;
-    Ok(entities_from_expr(&pe.expr))
+) -> Result<HashSet<String>, String> {
+    let program = ProgramSession::new(cgs, None)?
+        .compile(reference_expr)
+        .map_err(|error| error.agent_markdown())?;
+    let mut facts = program_facts::ProgramFacts::default();
+    facts.visit(&program.artifact().comp);
+    for expr in &facts.expressions {
+        facts.entities.extend(entities_from_expr(expr));
+    }
+    Ok(facts.entities)
 }
 
 /// Recursively collect all signals from an expression tree into the scoring sets.
@@ -537,88 +545,50 @@ pub fn finalize_case_score(
     s
 }
 
-pub fn typecheck_steps(cgs: &CGS, parsed: &[ParsedExpr]) -> Result<(), plasm_core::TypeError> {
-    for p in parsed {
-        type_check_expr(&p.expr, cgs)?;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use plasm_core::expr_parser;
     use plasm_core::loader::load_schema_dir;
-    use plasm_core::type_checker::type_check_expr as tc_expr;
 
-    #[test]
-    fn petstore_ps01_scores_on_golden_expr() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let p = expr_parser::parse("Pet{status=available}", &cgs).unwrap();
-        let ex = ExpectBlock {
-            entities_any: vec!["Pet".into()],
-            pred_fields_any: vec!["status".into()],
-            pred_values_any: vec!["available".into()],
-            ..Default::default()
-        };
-        let sc = score_case(&ex, std::slice::from_ref(&p), None);
-        assert!(sc.entity_match);
-        assert!(sc.pred_fields_match);
-        assert!(sc.pred_values_match);
+    fn matrix_session() -> ProgramSession {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/python_dag_slice");
+        let cgs = load_schema_dir(&path).unwrap();
+        ProgramSession::new(&cgs, Some("Item")).unwrap()
     }
 
     #[test]
-    fn step_text_contains_any_requires_heredoc_opener_in_surface_text() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let p = expr_parser::parse("Pet{status=available}", &cgs).unwrap();
-        let ex = ExpectBlock {
-            entities_any: vec!["Pet".into()],
-            pred_fields_any: vec!["status".into()],
-            pred_values_any: vec!["available".into()],
-            step_text_contains_any: vec!["<<".into()],
+    fn python_dag_scoring_observes_row_filters_and_projection() {
+        let session = matrix_session();
+        let source = "class Read(Program):\n    def build(self):\n        rows = e1.query().where(lambda row: row.title == \"chosen\")\n        return rows.select(\"id\", \"title\")\n";
+        let program = session.compile(source).unwrap();
+        let expect = ExpectBlock {
+            entities_any: vec!["Item".into()],
+            pred_fields_any: vec!["title".into()],
+            pred_values_any: vec!["chosen".into()],
+            projection_contains: vec!["title".into()],
             ..Default::default()
         };
-        let bad = score_case(&ex, std::slice::from_ref(&p), Some("Pet{status=available}"));
-        assert!(!bad.steps_ok);
-        let good = score_case(
-            &ex,
-            std::slice::from_ref(&p),
-            Some("Pet{status=<<S\navailable\nS\n}"),
+        let score = score_case(&expect, &[program], Some(source));
+        assert!(
+            score.entity_match
+                && score.pred_fields_match
+                && score.pred_values_match
+                && score.projection_match
         );
-        assert!(good.steps_ok);
     }
 
     #[test]
-    fn github_issue_update_and_comment_create_heredoc_reference_parse() {
-        let dir = std::path::Path::new("../../apis/github");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let update = concat!(
-            "Issue(owner=\"plasm\",repo=\"plasm\",number=7).update(body=<<U\n",
-            "## Notes\n\n- one\n",
-            "U\n",
-            ")",
-        );
-        let p1 = expr_parser::parse(update, &cgs).unwrap();
-        tc_expr(&p1.expr, &cgs).unwrap();
-
-        let create = concat!(
-            "IssueComment.issue-comment-create(repository=Repository(owner=\"plasm\",repo=\"plasm\"),",
-            "issue_number=99,body=<<C\n## Triage\n\nPlease see below.\nC\n",
-            ")",
-        );
-        let p2 = expr_parser::parse(create, &cgs).unwrap();
-        tc_expr(&p2.expr, &cgs).unwrap();
+    fn source_text_expectations_measure_the_original_python() {
+        let session = matrix_session();
+        let source = "class Read(Program):\n    def build(self):\n        return e1.query()\n";
+        let program = session.compile(source).unwrap();
+        let expect = ExpectBlock {
+            step_text_contains_any: vec!["class Read(Program)".into()],
+            ..Default::default()
+        };
+        assert!(score_case(&expect, std::slice::from_ref(&program), Some(source)).steps_ok);
+        assert!(!score_case(&expect, &[program], Some("e1")).steps_ok);
     }
 
     #[test]

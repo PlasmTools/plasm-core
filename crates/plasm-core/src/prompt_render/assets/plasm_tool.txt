@@ -1,49 +1,7 @@
-**Plasm** — **`logical_session_ref`** + **`program`**. Clean read-only plans execute inline (rows in tool **`content`**). Plans with any mutation / review gate return a **`run_ref`** (`pcN`, 10 min TTL) for **`plasm_run`**; do **not** echo the program.
+**Plasm** — `logical_session_ref` + `program`. Clean read-only plans execute inline. Plans containing mutations or a review gate return a `run_ref` for `plasm_run`; do not echo the program there.
 
-**`program` is Plasm source text, not JSON data.** Grammar below; symbols from the language card. Reply with one valid plasm_program:
+`program` is Python source text, not JSON data. Submit exactly one class derived from Program, with build(self), immutable bindings and an explicit return. The Python library reference and incremental domain declarations arrive through plasm_context. Do not copy those declarations, import libraries, instantiate the class or call build.
 
-**Program shape:** one `plasm_expr`, or `label = …` bindings (e.g. `items_1`; whole names `[emprv][0-9]+` are reserved) then **one** final return line (comma-separated roots on that line only). No prose, `return` keyword, fences, or table rows.
+Use only taught e#/m#/r# symbols and exact wire names. The class declares a deferred, typed DAG; @compute methods process materialized values later in bounded Monty. Python parse, type and plan failures return needs_fix with a correction; preserve selection criteria and repair within the same logical session. No other source syntax is accepted and failed Python is never retried as another language.
 
-**Results:** `e# row[...]` is a returned type, not a call. TSV cells are JSON values with the projected fields/types. Artifact reads are optional; links add no data to context.
-
-**Strings:** JSON escapes in quotes (`\n` `\t` `\\` `\"`); tagged `<<TAG` … `TAG` heredocs (real newlines). **Minijinja only** (`{{ wire }}` / `{{ binding.content }}` / `{{ _.path | split_part("/", 1) }}`; zero-based, non-negative index); marker-free opaque; `${…}`/`$$` abolished. **`=>` applies once per row; a plain template evaluates once.** Lanes:
-- Plain — `body = <<TAG` … `TAG` → **string** (`{% for item in items %}` inside that one evaluation); `param=body` (never `body.content`)
-- Per-row arg — `rows => _.m#(param=<<TAG` … `TAG)` — once per invocation
-- Render — `label = source => <<TAG` … `TAG` → one `{content}` per input row; params take **`label.content`**
-
-**Bindings and return:** batch independent reads under shared scope; one final return line.
-```
-foo = e1("a")
-bars = e2{foo=foo}
-bazs = e3{foo=foo}
-bars, bazs
-```
-After a write use **`label.wire`** from that binding — never invent a `.wire` not taught on the card.
-
-**Language-card Meaning:**
-- Header `plasm_expr<TAB>Meaning`; **left column is a template** — never copy Meaning.
-- Executable rows start with `e#`; `r#`/`v#`/`evaluation_now` are never roots. wire names appear on field-gloss / bracket rows by first use.
-- Never emit `v#`. `<id>` / `<wire>` / `<query>` are holes — fill each from a bound value, a row field, or a string of that hole's sort. `e#(<id>)` takes only the taught `id_field`, never extra arguments. Other inputs use their declared catalog lanes or provision bindings; do not append parameters to Get.
-
-**Row filters:** Search yields candidates, not verified identities. Narrow before traversal or mutation: `selected = candidates | where title = "Chosen title" | where score > 0`, then `selected => _.r#`. Preserve selection criteria during syntax repair. Set membership / difference against another rowset: `| where wire in (other | select wire)` / `| where wire not in (other | select wire)` — RHS is one column (or `peers = other | select wire` then `| where wire in peers`).
-
-**Date/time:** `| where ts >= "…"` with `"Nd ago"` / `"today"`·`"yesterday"`·`"last week"`·`"this year"` / `"last monday"` / RFC3339 (quote multi-word) — not brace `min_*`, not `now()`/`date_*`. **"Last N days (including today)" → `"Nd ago"` / `"N days ago"`** (inclusive lower bound; do **not** emit `N−1`). Relative phrases resolve against language-card `evaluation_now`.
-
-**Three strata** (catalog · `|` row algebra · `=>` application):
-
-1. **Catalog source** — `e#` / `e#{wire=value}` / `e#~"q"` / `e#(<id>)` — before `|` stages or bare (no `|`). Bare `e#` → e. Backend WHERE only on an **entity head**.
-2. **Row algebra** — `|` stages left-to-right (never after `=>`): `| where …` · `| select fields, name = expr` · `| summarize [by keys] n=count()` · `| order by f [desc]` · `| take n` · `| distinct [by f]` · `| union (other | select col)`. Bind cuts: `label = e# | where …` then `label | select …` or `label => …`.
-3. **Application `=>`** — once per row: `{ t: _.f }` · `<<TAG` · `e#(_.id)` Get · `e#{scope=_.f}` Query · `_.m#(args)` · `_.r#` / `_.wire`. `_` is the current row with identity and scope. Use only holes printed by the card. Singleton scalar: `one = rows | take 1`, then `one.field`; empty extraction errors. Project with `| select`; bracketed card fields describe returned columns, not executable suffixes.
-
-**Catalog vs row plane:** backend WHERE is `e#{wire=value}` on an entity head; row filter is `e# | where …` or `rows = e#` then `rows | where …`. Invalid: `rows{wire=…}` on a binding.
-
-**Forbidden as row algebra:** `.filter` / `.with` / `[proj]` / `.group_by` / `.sort` / `.limit`, `| update`, bare `=> tags` without `_`.
-
-**Composition:**
-- **Operation receivers:** Follow the card: receiver-bound `e#(<id>).m#(args)` or `item.m#(args)` needs entity identity and scope; receiver-free `e#.m#(args)` does not. Fan-out: bound `rows => _.m#(args)`; free `rows => e#.m#(recipient=_.field)`. A bound singleton may use `| take 1`; empty receivers fail.
-- **State iterate** (not foreach): `cur = e#(tok)` / `cur = e#("id")` / `cur = e#{id_field=tok}` then `done = iterate cur step e#(_.id).m#(…, _.f) until field = value take N` — Get-identity seed, not query / `| take` / relation. **`take N` required** (`N≥1`); re-Gets after each step; bound exhaustion without predicate is an error. No unbounded `while`.
-- Quote scalars in `{…}` and string params.
-
-**Apply vs return:** A bare line `lhs => rhs` (no `label =`) is itself a return root. When more steps follow, bind that apply (`done = rows => _.m#(args)`) and keep one final return line of roots.
-
-**Session:** `dry_verdict: needs_fix` → revise `program`, call **`plasm`** again on the same **`logical_session_ref`**. **`plasm_context`** `session_mode: "extend"` when symbols are missing — never **`new`**.
+Inspect coverage and operation outcomes. A failed or cancelled run can have completed writes: inspect evidence before issuing further effects. Extend the existing context for missing capabilities. Never open a new session to repair syntax.

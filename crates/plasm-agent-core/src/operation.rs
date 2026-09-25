@@ -213,6 +213,12 @@ impl ExecutionScope {
         }))
     }
 
+    pub fn report_occurrence(&self, event: crate::occurrence_progress::OccurrenceProgress) {
+        if let Some((es, handle)) = &self.operation_sink {
+            es.update_occurrence_progress(handle, event);
+        }
+    }
+
     pub fn cancellation_token(&self) -> CancellationToken {
         self.token.clone()
     }
@@ -267,6 +273,7 @@ pub struct OperationState {
     pub auto_async: bool,
     pub mcp_transport_key: Option<String>,
     pub progress_host: Option<std::sync::Weak<PlasmHostState>>,
+    pub occurrences: Vec<crate::occurrence_progress::OccurrenceProgress>,
     pub progress_tx: tokio::sync::broadcast::Sender<crate::operation_progress::OpProgressEvent>,
     /// Wakes server-side `await_operation_terminal` when phase becomes terminal.
     pub terminal_tx: Option<tokio::sync::watch::Sender<OperationPhase>>,
@@ -807,29 +814,21 @@ pub fn plasm_dry_run_continuation_error(program: &str) -> Option<&'static str> {
     }
 }
 
-pub(crate) fn try_parse_operation_continuation(
-    es: &ExecuteSession,
-    program: &str,
-    symbol_map_cross_cache: Option<&plasm_core::SymbolMapCrossRequestCache>,
-) -> Option<plasm_core::Expr> {
-    if !is_operation_continuation_program(program) {
-        return None;
-    }
+/// Parse only a complete host continuation. Host commands do not enter the
+/// native language parser or depend on catalog symbols.
+pub(crate) fn try_parse_operation_continuation(program: &str) -> Option<plasm_core::Expr> {
     let trimmed = program.trim();
-    let stack = crate::plasm_plan_run::session_cgs_layer_stack(es);
-    let map = crate::symbol_map_resolve::resolve_session_symbol_map(
-        &crate::symbol_map_resolve::SessionSymbolMapContext {
-            session: es,
-            cross_cache: symbol_map_cross_cache,
-        },
-    );
-    let parsed =
-        plasm_core::expr_parser::parse_with_cgs_layers_program(trimmed, &stack, map, None, false)
-            .ok()?;
-    match parsed.expr {
-        plasm_core::Expr::Wait(_) | plasm_core::Expr::Cancel(_) => Some(parsed.expr),
-        _ => None,
-    }
+    let (argument, wait) = if let Some(argument) = trimmed.strip_prefix("wait(") {
+        (argument, true)
+    } else {
+        (trimmed.strip_prefix("cancel(")?, false)
+    };
+    let handle = OperationHandle::parse(argument.strip_suffix(')')?).ok()?;
+    Some(if wait {
+        plasm_core::Expr::Wait(plasm_core::WaitExpr { handle })
+    } else {
+        plasm_core::Expr::Cancel(plasm_core::CancelExpr { handle })
+    })
 }
 
 /// Run one live plan on the host worker pool (shared by async spawn + stale-epoch retry).
@@ -849,7 +848,7 @@ async fn run_plasm_comp_on_pool(
 ) -> Result<PlasmPlanRunResult, String> {
     pool.run(move || async move {
         plasm_runtime::with_live_run_telemetry(telemetry, async move {
-            crate::plasm_plan_run::run_plasm_comp(
+            crate::plasm_plan_run::run_plasm_comp_python(
                 es.as_ref(),
                 st.as_ref(),
                 prompt_hash.as_str(),
@@ -990,6 +989,37 @@ mod tests {
         assert!(is_operation_continuation_program("  cancel(l_x_o1)"));
         assert!(!is_operation_continuation_program("e1"));
         assert!(!is_operation_continuation_program("page(l_x_pg1)"));
+    }
+
+    #[test]
+    fn operation_protocol_consumes_entire_command() {
+        for command in [
+            "wait(o1)",
+            " cancel( o2 ) ",
+            "wait(l_AAAAAAAAQACAAAAAAAAAAQ_o1)",
+        ] {
+            assert!(
+                try_parse_operation_continuation(command).is_some(),
+                "{command}"
+            );
+        }
+        for source in [
+            "wait(o1)\nLangItem",
+            "cancel(o1)\nreturn e1",
+            "wait(o1); cancel(o2)",
+            "wait(o1)(o2)",
+            "wait(o1, o2)",
+            "wait(\"o1\")",
+            "wait(o1) # trailing",
+            "wait(o1",
+            "wait()",
+            "class P(Program): pass",
+        ] {
+            assert!(
+                try_parse_operation_continuation(source).is_none(),
+                "{source}"
+            );
+        }
     }
 
     #[test]

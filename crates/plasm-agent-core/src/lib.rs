@@ -114,6 +114,7 @@ mod plan_dry_compact;
 mod plan_dry_display;
 pub mod program_diagnostic;
 pub(crate) mod program_reject_memory;
+mod python_program_diagnostic;
 pub mod release_version;
 mod session_credentials;
 pub(crate) mod tool_model_service;
@@ -179,7 +180,9 @@ pub use plasm_comp_wire::{
 };
 pub use plasm_compile::{
     compile_plasm_expression, compile_plasm_program, compile_plasm_surface_line_to_comp,
+    compile_program,
 };
+
 mod plan_surface_policy;
 pub(crate) mod plasm_dag;
 mod plasm_dag_surface_guards;
@@ -188,6 +191,8 @@ pub mod plasm_plan;
 pub mod plasm_plan_run;
 mod plasm_render_compile;
 mod program_binding;
+pub mod python_compute;
+pub mod python_pool;
 pub mod query_args;
 pub(crate) mod resolved_plan_http;
 pub(crate) mod row_predicate_lower;
@@ -282,3 +287,8 @@ pub async fn run_cgs_main() -> Result<(), Box<dyn std::error::Error>> {
         .await
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })
 }
+
+mod map_body;
+mod map_body_schema;
+
+pub mod occurrence_progress;

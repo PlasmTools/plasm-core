@@ -118,6 +118,7 @@ pub(crate) fn schedule_op_persist(
             progress: PersistedOperationProgress::from(&op.progress),
             agent_seq: op.agent_emit.seq,
             agent_last_line: op.agent_emit.last_line.clone(),
+            occurrences: op.occurrences.clone(),
         },
     };
     host.operation_persist
@@ -172,6 +173,7 @@ mod tests {
             auto_async: false,
             mcp_transport_key: None,
             progress_host: None,
+            occurrences: Vec::new(),
             progress_tx: tokio::sync::broadcast::channel(1).0,
             terminal_tx: None,
             comp: None,
@@ -222,6 +224,7 @@ mod tests {
             plan_commit_next: 0,
             operations: vec![],
             operation_handle_next: 1,
+            python_teaching: Default::default(),
             symbol_ledger_bytes: Vec::new(),
             prerequisite_deployments: Default::default(),
         };
@@ -288,6 +291,7 @@ mod tests {
                     rows_materialized: 0,
                 },
                 agent_seq: 1,
+                occurrences: Vec::new(),
                 agent_last_line: "a".into(),
             },
             PersistUrgency::Coalesced,
@@ -306,6 +310,7 @@ mod tests {
                     rows_materialized: 5,
                 },
                 agent_seq: 2,
+                occurrences: Vec::new(),
                 agent_last_line: "b".into(),
             },
             PersistUrgency::Coalesced,
@@ -352,6 +357,7 @@ mod tests {
                     rows_materialized: 0,
                 },
                 agent_seq: 1,
+                occurrences: Vec::new(),
                 agent_last_line: String::new(),
             },
             PersistUrgency::Coalesced,

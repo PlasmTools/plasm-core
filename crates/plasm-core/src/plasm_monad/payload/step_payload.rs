@@ -102,6 +102,7 @@ pub enum PlasmStepPayload {
     FlatMapRelation(FlatMapRelationPayload),
     FlatMapApply(FlatMapApplyPayload),
     UnfoldUntil(UnfoldUntilPayload),
+    MapBody(Box<super::super::CorrelatedBody>),
 }
 
 impl PlasmStepPayload {
@@ -114,6 +115,7 @@ impl PlasmStepPayload {
             Self::FlatMapRelation { .. } => PlasmStepKind::FlatMapRelation,
             Self::FlatMapApply { .. } => PlasmStepKind::FlatMapApply,
             Self::UnfoldUntil { .. } => PlasmStepKind::UnfoldUntil,
+            Self::MapBody(_) => PlasmStepKind::MapBody,
         }
     }
 
@@ -126,6 +128,7 @@ impl PlasmStepPayload {
             Self::FlatMapRelation(p) => p.effect_class,
             Self::FlatMapApply(p) => p.effect_class,
             Self::UnfoldUntil(p) => p.effect_class,
+            Self::MapBody(_) => EffectClass::Read,
         }
     }
 
@@ -138,6 +141,7 @@ impl PlasmStepPayload {
             Self::FlatMapRelation(p) => p.result_shape,
             Self::FlatMapApply(p) => p.result_shape,
             Self::UnfoldUntil(p) => p.result_shape,
+            Self::MapBody(_) => ResultShape::List,
         }
     }
 
@@ -153,6 +157,7 @@ impl PlasmStepPayload {
                 })
                 .unwrap_or_else(|| surface_label(p.plan_kind)),
             Self::Pure(_) => "pure".into(),
+            Self::MapBody(p) => format!("map body {} max {}", p.parent.source, p.max_parents),
             Self::Map(p) => compute_op_label(&p.compute.op),
             Self::Derive(p) => format!("derive {}", derive_kind_label(p.derive.kind)),
             Self::FlatMapRelation(p) => format!("relation {}", p.relation.relation),
@@ -198,5 +203,11 @@ fn compute_op_label(op: &super::compute::ComputeOp) -> String {
         ComputeOp::With { .. } => "with".into(),
         ComputeOp::Union { .. } => "union".into(),
         ComputeOp::Render { .. } => "render".into(),
+        ComputeOp::Python { per_row, .. } => if *per_row {
+            "python_map"
+        } else {
+            "python_reduce"
+        }
+        .into(),
     }
 }

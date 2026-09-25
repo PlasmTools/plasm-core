@@ -4,6 +4,8 @@ export type FieldTypeJson =
   | "boolean"
   | "number"
   | "integer"
+  | "digit_id"
+  | "money"
   | "uuid"
   | "blob"
   | "string"
@@ -91,7 +93,8 @@ export interface CapabilityIntrospectionJson {
   kind: string;
   entity: string;
   invoke_wire_name: string;
-  input_schema: InputSchemaJson | null;
+  python: { entity_symbol: string; method: string; receiver: boolean; identity: string[]; unavailable: string | null; parameters: InputFieldSchemaJson[] };
+  inputs: { arguments?: InputSchemaJson; payload?: InputSchemaJson };
   provides: string[];
   output_schema: OutputSchemaJson | null;
 }

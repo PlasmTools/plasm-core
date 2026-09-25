@@ -2,7 +2,6 @@
 //!
 //! Category is carried by [`ProgramStageError`] at the failing stage — never re-sniffed from prose.
 
-use plasm_core::error_render::{render_type_error_with_feedback, FeedbackStyle};
 use plasm_core::expr_parser::{collect_program_statement_lines, split_assignment_for_binding};
 use plasm_core::TypeError;
 use serde::Serialize;
@@ -13,8 +12,7 @@ use crate::mcp_agent_present::{AgentContent, PlanTokenRefs};
 use crate::plan_dry_display::PlanDryVerdict;
 use crate::plasm_plan_run::{
     format_session_symbolic_parse_error, parse_plasm_surface_line_program,
-    symbol_map_for_plasm_surface_parse, typecheck_parsed_for_session, DryPlasmPlanEvaluation,
-    PlasmPlanRunResult,
+    typecheck_parsed_for_session, DryPlasmPlanEvaluation, PlasmPlanRunResult,
 };
 use crate::program_reject_memory::RejectReplay;
 use plasm_core::{PromptPipelineConfig, SymbolMapCrossRequestCache};
@@ -202,19 +200,8 @@ pub fn format_session_symbolic_type_error(
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     err: &TypeError,
 ) -> String {
-    let sym_map = symbol_map_for_plasm_surface_parse(session, symbol_map_cross_cache);
-    let step = render_type_error_with_feedback(
-        err,
-        session.cgs.as_ref(),
-        FeedbackStyle::SymbolicLlm {
-            map: sym_map.as_ref(),
-        },
-    );
-    if step.correction.is_empty() {
-        err.to_string()
-    } else {
-        step.correction
-    }
+    let _ = symbol_map_cross_cache;
+    crate::python_program_diagnostic::type_correction(session, err)
 }
 
 /// Classify a compile `String` via typed parse/typecheck — bridge until DAG returns staged errors.
@@ -375,8 +362,8 @@ impl ProgramDiagnostic {
     }
 
     pub fn from_stage(
-        pipeline: &PromptPipelineConfig,
-        symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
+        _pipeline: &PromptPipelineConfig,
+        _symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
         session: &ExecuteSession,
         program: &str,
         stage: ProgramStageError,
@@ -384,7 +371,7 @@ impl ProgramDiagnostic {
         let category = stage.category();
         let understood = match category {
             ProgramErrorCategory::Parse => {
-                salvage_understood_prefix(pipeline, symbol_map_cross_cache, session, program)
+                crate::python_program_diagnostic::understood_prefix(program)
             }
             _ => None,
         };

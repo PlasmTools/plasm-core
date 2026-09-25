@@ -60,6 +60,13 @@ pub(crate) fn spawn_mcp_teaching_prompt_session_reporter(
                 if let Some(c) = pending.plan_commit {
                     op_params.insert("c".into(), json!(c));
                 }
+                op_params.insert(
+                    "occurrence_snapshot".into(),
+                    json!(pending.occurrence_snapshot),
+                );
+                if !pending.occurrences.is_empty() {
+                    op_params.insert("occurrences".into(), serde_json::json!(pending.occurrences));
+                }
                 if let Some(calls) = pending.stats.calls {
                     op_params.insert("calls".into(), json!(calls));
                 }

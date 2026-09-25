@@ -34,10 +34,7 @@ use crate::http_problem_util::{problem_response, problem_types};
 use crate::run_artifacts::RunArtifactHandle;
 use crate::trace_sink_emit::PlasmTraceContext;
 
-pub(crate) use wire::{
-    create_execute_session_response, problem_response_invalid_execute_path,
-    wire_execute_session_prompt,
-};
+pub(crate) use wire::{create_execute_session_response, problem_response_invalid_execute_path};
 
 /// Validated `/execute/:prompt_hash/:session_id` segments; rejects with RFC 7807 `problem+json`.
 pub(crate) struct ExecutePath {

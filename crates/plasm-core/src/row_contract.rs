@@ -60,6 +60,8 @@ impl RowRecord {
         }
     }
 
+    // Decomposition preserves the public row contract components.
+    #[allow(clippy::type_complexity)]
     pub fn into_parts(
         self,
     ) -> (

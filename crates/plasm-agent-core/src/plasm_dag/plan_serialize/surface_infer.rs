@@ -153,6 +153,7 @@ pub(in crate::plasm_dag) fn schema_from_output_fields<'a>(
         entity: Some(entity.to_string()),
         fields: fields
             .map(|name| SyntheticFieldSchema {
+                value_type: None,
                 name: name.clone(),
                 value_kind: kind,
                 source: None,
@@ -170,6 +171,7 @@ pub(in crate::plasm_dag) fn schema_from_aggregates(
         fields: aggregates
             .iter()
             .map(|agg| SyntheticFieldSchema {
+                value_type: None,
                 name: agg.name.clone(),
                 value_kind: if agg.function == AggregateFunction::Count {
                     SyntheticValueKind::Integer
@@ -193,6 +195,7 @@ pub(in crate::plasm_dag) fn schema_from_group_by(
             OutputName::new(k.dotted())
                 .ok()
                 .map(|name| SyntheticFieldSchema {
+                    value_type: None,
                     name,
                     value_kind: SyntheticValueKind::String,
                     source: None,
@@ -200,6 +203,7 @@ pub(in crate::plasm_dag) fn schema_from_group_by(
         })
         .collect();
     fields.extend(aggregates.iter().map(|agg| SyntheticFieldSchema {
+        value_type: None,
         name: agg.name.clone(),
         value_kind: if agg.function == AggregateFunction::Count {
             SyntheticValueKind::Integer
@@ -217,6 +221,7 @@ pub(in crate::plasm_dag) fn single_unknown_schema(entity: &str) -> SyntheticResu
     SyntheticResultSchema {
         entity: Some(entity.to_string()),
         fields: vec![SyntheticFieldSchema {
+            value_type: None,
             name: OutputName::new("value".to_string()).expect("constant non-empty"),
             value_kind: SyntheticValueKind::Unknown,
             source: None,

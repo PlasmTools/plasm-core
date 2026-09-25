@@ -9,3 +9,6 @@ advance:
   method: POST
   path: [{type: literal, value: advance}]
   body: {type: object, fields: [[id, {type: var, name: id}]]}
+wire_query:
+  method: GET
+  path: [{type: literal, value: counters}]

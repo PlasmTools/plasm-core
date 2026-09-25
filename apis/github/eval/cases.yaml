@@ -439,24 +439,16 @@
   goal: >-
     Replace issue plasm/plasm#2 body only with markdown: an H2 heading, a bullet list, and a fenced
     ```rust code block
-  tags: [update, write, heredoc]
+  tags: [update, write, multiline_string]
   covers: [update]
   reference_expr: |-
-    Issue(owner="plasm",repo="plasm",number=2).update(body=<<B
-    ## Rollout notes
-
-    - smoke
-    - canary
-
-    ```rust
-    fn main() {}
-    ```
-    B
-    )
+    class Reference(Program):
+        def build(self):
+            return e6.get(owner="plasm", repo="plasm", number=2).m20(body='## Rollout notes\n\n- smoke\n- canary\n\n```rust\nfn main() {}\n```\n')
   expect:
     entities_any: [Issue]
     step_text_contains_any:
-    - "<<"
+    - "Rollout notes"
 
 - id: gh-55
   schema: github
@@ -471,20 +463,16 @@
   goal: >-
     Create a new comment on plasm/plasm issue 99 (do not edit an existing comment) whose body is
     multiline markdown: a heading plus a short string / task list.
-  tags: [create, write, heredoc]
+  tags: [create, write, multiline_string]
   covers: [create]
   reference_expr: |-
-    IssueComment.issue-comment-create(repository=Repository(owner="plasm",repo="plasm"),issue_number=99,body=<<C
-    ## Heads-up
-
-    - [ ] verify
-    - [ ] ship
-    C
-    )
+    class Reference(Program):
+        def build(self):
+            return e7.m21(repository="plasm/plasm", issue_number=99, body='## Heads-up\n\n- [ ] verify\n- [ ] ship\n')
   expect:
     entities_any: [IssueComment]
     step_text_contains_any:
-    - "<<"
+    - "Heads-up"
 
 - id: gh-56
   schema: github
@@ -632,7 +620,10 @@
   tags: [action, write, branch]
   covers: [invoke]
   reference_expr: |-
-    Repository(owner="plasm",repo="plasm").repo-branch-create(name="feature/label-guide",sha="abc123def456")
+    class Reference(Program):
+        def build(self):
+            repo = e20.get(owner="plasm", repo="plasm")
+            return repo.m64(repository="plasm/plasm", name="feature/label-guide", sha="abc123def456")
   expect:
     entities_any: [Repository]
 
@@ -642,7 +633,9 @@
   tags: [query, view, triage]
   covers: [query_filtered, chain]
   reference_expr: |-
-    IssueTriageContext(owner="plasm",repo="plasm",number=42)[title,state,fetched_label_count,fetched_comment_count,fetched_sub_issue_count]
+    class Reference(Program):
+        def build(self):
+            return e8.query(owner="plasm", repo="plasm", number=42).select("title", "state", "fetched_label_count", "fetched_comment_count", "fetched_sub_issue_count")
   expect:
     entities_any: [IssueTriageContext, Issue, Label, IssueComment]
     projection_contains: [title, fetched_label_count, fetched_comment_count, fetched_sub_issue_count]
@@ -653,7 +646,9 @@
   tags: [query, view, pull_request]
   covers: [query_filtered, chain]
   reference_expr: |-
-    PullRequestContext(owner="plasm",repo="plasm",number=20)[title,state,draft,fetched_changed_file_count,fetched_review_count,fetched_review_comment_count]
+    class Reference(Program):
+        def build(self):
+            return e15.query(owner="plasm", repo="plasm", number=20).select("title", "state", "draft", "fetched_changed_file_count", "fetched_review_count", "fetched_review_comment_count")
   expect:
     entities_any: [PullRequestContext, PullRequest, PullRequestFile, PullRequestReview, PullRequestReviewComment]
     projection_contains: [title, fetched_changed_file_count, fetched_review_count, fetched_review_comment_count]
@@ -664,7 +659,9 @@
   tags: [query, view, actions]
   covers: [query_filtered, chain]
   reference_expr: |-
-    WorkflowRunContext(owner="plasm",repo="plasm",run_id=12345)[status,conclusion,fetched_job_count,fetched_artifact_count,run_duration_ms]
+    class Reference(Program):
+        def build(self):
+            return e27.query(owner="plasm", repo="plasm", run_id=12345).select("status", "conclusion", "fetched_job_count", "fetched_artifact_count", "run_duration_ms")
   expect:
     entities_any: [WorkflowRunContext, WorkflowRun, WorkflowJob, WorkflowArtifact, WorkflowRunUsage]
     projection_contains: [status, fetched_job_count, fetched_artifact_count, run_duration_ms]
@@ -675,12 +672,15 @@
   tags: [query, write, labels, multi_step]
   covers: [query_filtered, invoke, chain]
   reference_expr: |-
-    repo = Repository(owner="owner",repo="repo")
-    labels = Label{repository=repo.full_name}[name,description,color,default]
-    created = Issue.issue-create(repository=repo.full_name, title="Label guide", body="Demonstration issue")
-    updated = Issue(owner="owner",repo="repo",number=created.number).issue-update(labels=labels.name)
-    IssueComment.issue-comment-create(repository=repo.full_name, issue_number=created.number, body="Applied all labels")
-    labels, created[number,title]
+    class Reference(Program):
+        def build(self):
+            repo = e20.get(owner="owner", repo="repo")
+            labels = e10.query(repository=repo.full_name, shelf="label").select("name", "description", "color", "default")
+            names = labels.select("name")
+            created = e6.m12(repository=repo.full_name, title="Label guide", body="Demonstration issue")
+            updated = created.m20(labels=names)
+            comment = e7.m21(repository=repo.full_name, issue_number=created.number, body="Applied all labels")
+            return labels, created.select("number", "title")
   expect:
     entities_any: [Repository, Label, Issue, IssueComment]
     projection_contains: [name, color, number, title]
@@ -691,8 +691,10 @@
   tags: [workflow_identity, branch]
   covers: [invoke]
   reference_expr: |-
-    repo = Repository(owner="owner", repo="repo")
-    Repository(owner="owner", repo="repo").repo-branch-create(repository=repo.full_name, name="feature/wf-identity", sha="abc123")
+    class Reference(Program):
+        def build(self):
+            repo = e20.get(owner="owner", repo="repo")
+            return repo.m64(repository=repo.full_name, name="feature/wf-identity", sha="abc123")
   expect:
     entities_any: [Repository]
   notes: "Reference eval for identity_key + conflict_rules on repo_branch_create."

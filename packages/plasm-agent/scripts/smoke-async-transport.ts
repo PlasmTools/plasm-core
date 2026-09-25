@@ -28,7 +28,7 @@ async function main(): Promise<void> {
 
   const dryMd = await agent.runtime.plasm({
     logicalSessionRef,
-    program: "e1",
+    program: "class Read(Program):\n    def build(self):\n        return e1.query()",
   });
   const planCommitRef = extractPlanCommitRef(dryMd);
 

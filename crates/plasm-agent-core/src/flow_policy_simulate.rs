@@ -7,7 +7,7 @@ use crate::flow_policy_repository::FlowPolicyRow;
 use crate::http_execute::{apply_capability_seeds, CapabilitySeed};
 use crate::plan_flow_policy::{FlowPolicy, FlowPolicySnapshot, PolicyRevision};
 use crate::plan_ux_reflection::{plan_ux_reflection_value, PlanUxBuildContext};
-use crate::plasm_compile::compile_plasm_expression;
+use crate::plasm_compile::compile_program;
 use crate::plasm_plan_run::evaluate_plasm_comp_dry;
 use crate::server_state::PlasmHostState;
 
@@ -135,7 +135,7 @@ pub async fn simulate_flow_policy_with_options(
 
     let pipeline = st.engine.prompt_pipeline();
     let cross = st.sessions.symbol_map_cross_cache();
-    let bundle = compile_plasm_expression(
+    let bundle = compile_program(
         pipeline,
         Some(cross),
         es.as_ref(),

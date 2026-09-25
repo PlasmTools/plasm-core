@@ -16,18 +16,18 @@ export function gateArtefactTransform(tools: ToolSet, artefactReady: boolean): T
 
 export function formatPlasmContextMarkdown(
   logicalSessionRef: string,
-  tsv: string,
+  prompt: string,
   reused: boolean,
-  opts?: { teachingTsv?: string },
+  opts?: { teachingPrompt?: string },
 ): string {
-  const delta = tsv.trim();
+  const delta = prompt.trim();
   const header = `**logical_session_ref:** \`${logicalSessionRef}\``;
   // Live teaching delta (new open or real extend) — full language card, never a compressed roster.
   if (delta) {
     const reuseNote = reused
       ? `\n\nUnchanged — seeds already exposed. **Do not call plasm_context again** until you need new entities.\n`
       : `\n\n`;
-    return `${header}${reuseNote}\`\`\`tsv\n${delta}\n\`\`\`\n`;
+    return `${header}${reuseNote}${delta}\n`;
   }
   // Seedless reuse: protocol only. Re-dumping the full card rewards plasm_context spam
   // after successful reads (card already in transcript from the open wave).
@@ -39,9 +39,9 @@ export function formatPlasmContextMarkdown(
       "Reuse this ref on **plasm** / **plasm_run**.",
     ].join("\n");
   }
-  const card = (opts?.teachingTsv ?? "").trim();
+  const card = (opts?.teachingPrompt ?? "").trim();
   if (!card) return `${header}\n`;
-  return `${header}\n\n\`\`\`tsv\n${card}\n\`\`\`\n`;
+  return `${header}\n\n${card}\n`;
 }
 
 /** Protocol-only dry surface — domain meaning lives in the language card / CGS. */

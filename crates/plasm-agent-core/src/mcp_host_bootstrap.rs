@@ -9,7 +9,7 @@ use std::sync::Arc;
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use plasm_core::discovery::CgsRegistry;
 use plasm_core::schema::CGS;
-use plasm_core::{PromptPipelineConfig, PromptRenderMode};
+use plasm_core::PromptPipelineConfig;
 use plasm_runtime::{
     AuthResolver, ExecutionConfig, ExecutionEngine, ExecutionMode, SecretProvider,
 };
@@ -39,13 +39,6 @@ pub fn preparse_mcp_command() -> Command {
                 .help(
                     "Load catalogs from compiled JSON IL artifacts in this directory (.cgs.json + .manifest.json)",
                 ),
-        )
-        .arg(
-            Arg::new("symbol_tuning")
-                .long("symbol-tuning")
-                .value_name("MODE")
-                .num_args(1)
-                .required(false),
         )
         .arg(Arg::new("http").long("http").action(ArgAction::SetTrue))
         .arg(
@@ -230,12 +223,7 @@ pub fn build_execution_engine_from_matches(
     };
 
     let prompt_focus = matches.get_one::<String>("focus").cloned();
-    let render_mode = matches
-        .get_one::<String>("symbol_tuning")
-        .map(|s| PromptRenderMode::parse_user_facing_or_default(s))
-        .unwrap_or_default();
-    let prompt_pipeline =
-        PromptPipelineConfig::for_cli_focus(prompt_focus.as_deref()).with_render_mode(render_mode);
+    let prompt_pipeline = PromptPipelineConfig::for_cli_focus(prompt_focus.as_deref());
 
     let mut config = ExecutionConfig {
         base_url: Some(backend.to_string()),

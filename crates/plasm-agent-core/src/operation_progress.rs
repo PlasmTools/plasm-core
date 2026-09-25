@@ -26,6 +26,8 @@ pub struct McpOpPending {
     pub n: u64,
     pub plan_commit: Option<String>,
     pub stats: OpNotifyStats,
+    pub occurrences: Vec<crate::occurrence_progress::OccurrenceProgress>,
+    pub occurrence_snapshot: bool,
 }
 
 /// Global queue for MCP `notifications/plasm/op` (drained by MCP session reporter).
@@ -39,6 +41,8 @@ impl OperationProgressHub {
         Arc::new(Self::default())
     }
 
+    // Wire notification fields remain explicit at this protocol boundary.
+    #[allow(clippy::too_many_arguments)]
     pub fn queue_mcp_notify(
         &self,
         transport_key: &str,
@@ -46,6 +50,8 @@ impl OperationProgressHub {
         n: u64,
         plan_commit: Option<&PlanCommitRef>,
         stats: OpNotifyStats,
+        occurrences: Vec<crate::occurrence_progress::OccurrenceProgress>,
+        occurrence_snapshot: bool,
     ) {
         self.pending_mcp
             .lock()
@@ -56,6 +62,8 @@ impl OperationProgressHub {
                 n,
                 plan_commit: plan_commit.map(|c| c.as_str().to_string()),
                 stats,
+                occurrences,
+                occurrence_snapshot,
             });
     }
 
@@ -128,6 +136,8 @@ pub struct OpProgressEvent {
     pub line: String,
     pub terminal: bool,
     pub stats: OpNotifyStats,
+    pub occurrences: Vec<crate::occurrence_progress::OccurrenceProgress>,
+    pub occurrence_snapshot: bool,
 }
 
 #[must_use]
@@ -424,6 +434,8 @@ mod tests {
                 elapsed_ms: Some(4_500),
                 rows: Some(10),
             },
+            Vec::new(),
+            true,
         );
         let pending = hub.drain_mcp_pending();
         assert_eq!(pending.len(), 1);

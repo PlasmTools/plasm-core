@@ -207,13 +207,13 @@ fn mcp_tool_descriptions_are_self_contained_without_initialize() {
     let plasm_desc = plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION;
     assert!(plasm_desc.contains(plasm_core::prompt_render::MCP_TOOL_SYNTAX_CONTRACT_MARKER));
     assert!(plasm_desc.contains("logical_session_ref") && plasm_desc.contains("run_ref"));
-    assert!(plasm_desc.contains("<<TAG"));
-    assert!(plasm_desc.contains("binding.content"));
+    assert!(plasm_desc.contains("@compute"));
+    assert!(plasm_desc.contains("incremental domain declarations"));
     assert!(plasm_desc.contains(plasm_core::prompt_render::TEACHING_VALID_EXPR_MARKER));
 
     assert!(plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION
         .contains(plasm_core::prompt_render::MCP_TOOL_SYNTAX_CONTRACT_MARKER));
-    assert!(plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION.contains("pcN"));
+    assert!(plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION.contains("run_ref"));
     assert!(plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("symbol table"));
     assert!(
         plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("Call before `plasm`")
@@ -224,9 +224,7 @@ fn mcp_tool_descriptions_are_self_contained_without_initialize() {
     assert!(
         plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("Call before `plasm`")
     );
-    assert!(
-        plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION.contains("do **not** echo the program")
-    );
+    assert!(plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION.contains("do not echo the program"));
     assert!(!plasm_core::prompt_render::PLASM_RUN_TOOL_DESCRIPTION.contains("echo the program"));
     let program_param_violations = plasm_core::prompt_render::program_param_contract_violations(
         plasm_core::prompt_render::PLASM_PROGRAM_PARAM_DESCRIPTION,

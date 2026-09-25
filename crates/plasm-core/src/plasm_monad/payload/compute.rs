@@ -22,6 +22,17 @@ pub struct ComputeTemplate {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ComputeOp {
+    /// Pure bounded rendering, checked against catalog or inferred row fields before execution.
+    Python {
+        source: String,
+        entry_id: String,
+        entity: String,
+        catalog_hash: String,
+        /// Version 3 seals recursive value contracts and collection/per-row cardinality.
+        contract_version: u32,
+        input_schema: Option<SyntheticResultSchema>,
+        per_row: bool,
+    },
     Project {
         fields: std::collections::BTreeMap<OutputName, FieldPath>,
     },
@@ -118,6 +129,9 @@ pub struct SyntheticResultSchema {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SyntheticFieldSchema {
+    /// Authoritative recursive value type when known; value_kind is a display summary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value_type: Option<crate::value_contract::ValueContract>,
     pub name: OutputName,
     pub value_kind: SyntheticValueKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]

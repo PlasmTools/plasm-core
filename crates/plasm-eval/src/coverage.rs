@@ -3,7 +3,6 @@
 use std::collections::{HashMap, HashSet};
 
 use plasm_core::expr::{ChainStep, Expr};
-use plasm_core::expr_parser;
 use plasm_core::predicate::Predicate;
 use plasm_core::schema::CapabilityKind;
 use plasm_core::{Value, CGS};
@@ -17,17 +16,17 @@ type UnionCaseEntitiesResult = (HashSet<String>, HashMap<String, Vec<String>>);
 pub enum EvalFormId {
     /// List/query with no CGS input object (true unfiltered query — not pagination-only).
     QueryAll,
-    /// Predicate filters on a query (`Entity{field=…}`) — scope/filter/search params.
+    /// Predicate filters on a query (`eN.query(field=value)`) — scope/filter/search params.
     QueryFiltered,
-    /// Full-text / relevance search (`Entity~"…"`) — schema has Search capability.
+    /// Full-text / relevance search (`eN.search(...)`) — schema has Search capability.
     SearchText,
-    /// Fetch by id (`Entity(id)`).
+    /// Fetch by id (`eN.get(id)`).
     Get,
-    /// Forward relation / EntityRef navigation (`.field`).
+    /// Forward relation / EntityRef navigation (`row.rN`).
     Chain,
     /// Reverse traversal (`.^Entity`).
     Reverse,
-    /// Field projection (`[a,b]`) — required whenever Get or Query exists (expressible surface).
+    /// Field projection (`rows.select("a", "b")`) — required whenever Get or Query exists (expressible surface).
     Projection,
     /// Zero-arity or entity-scoped action (`invoke` IR / `E.method()`).
     Invoke,
@@ -397,18 +396,28 @@ pub enum CoversSource {
 
 /// Derive [`EvalFormId`] buckets from a static parse of `reference_expr` against `cgs`.
 ///
-/// Walks the [`Expr`] IR plus optional trailing `[a,b]` projection from [`expr_parser::parse`].
+/// Compile a Python reference and derive forms from its semantic DAG.
 pub fn derive_eval_form_ids_from_reference(
     reference_expr: &str,
     cgs: &CGS,
-) -> Result<HashSet<EvalFormId>, expr_parser::ParseError> {
-    let pe = expr_parser::parse(reference_expr, cgs)?;
+) -> Result<HashSet<EvalFormId>, String> {
+    let program = crate::ProgramSession::new(cgs, None)?
+        .compile(reference_expr)
+        .map_err(|e| e.agent_markdown())?;
+    let mut facts = crate::program_facts::ProgramFacts::default();
+    facts.visit(&program.artifact().comp);
     let mut out = HashSet::new();
-    collect_expr_forms(&pe.expr, cgs, &mut out);
-    if let Some(proj) = &pe.projection {
-        if !proj.is_empty() {
-            out.insert(EvalFormId::Projection);
-        }
+    for expr in &facts.expressions {
+        collect_expr_forms(expr, cgs, &mut out);
+    }
+    if facts.projections.iter().any(|p| !p.is_empty()) {
+        out.insert(EvalFormId::Projection);
+    }
+    if !facts.relations.is_empty() {
+        out.insert(EvalFormId::Chain);
+    }
+    if facts.steps > 1 {
+        out.insert(EvalFormId::MultiStep);
     }
     Ok(out)
 }
@@ -982,15 +991,32 @@ mod tests {
             return;
         }
         let cgs = load_schema_dir(dir).unwrap();
-        let g = derive_eval_form_ids_from_reference("Pet(3)", &cgs).unwrap();
+        let session = crate::ProgramSession::new(&cgs, None).unwrap();
+        let symbol = session
+            .execute
+            .teaching_exposure
+            .as_ref()
+            .unwrap()
+            .qualified_entity_symbol("local", "Pet")
+            .unwrap();
+        let source = |call: &str| {
+            format!("class Read(Program):\n    def build(self):\n        return {symbol}{call}\n")
+        };
+        let g = derive_eval_form_ids_from_reference(&source(".get(3)"), &cgs).unwrap();
         assert!(g.contains(&EvalFormId::Get));
-        let q = derive_eval_form_ids_from_reference("Pet", &cgs).unwrap();
+        let q = derive_eval_form_ids_from_reference(&source(".query()"), &cgs).unwrap();
         assert!(q.contains(&EvalFormId::QueryAll));
-        let qf = derive_eval_form_ids_from_reference("Pet{status=available}", &cgs).unwrap();
+        let qf = derive_eval_form_ids_from_reference(&source(".query(status=\"available\")"), &cgs)
+            .unwrap();
         assert!(qf.contains(&EvalFormId::QueryFiltered));
-        let gp = derive_eval_form_ids_from_reference("Pet(1)[name,status]", &cgs).unwrap();
+        let gp = derive_eval_form_ids_from_reference(
+            &source(".get(1).select(\"name\", \"status\")"),
+            &cgs,
+        )
+        .unwrap();
         assert!(gp.contains(&EvalFormId::Get));
         assert!(gp.contains(&EvalFormId::Projection));
+        assert!(derive_eval_form_ids_from_reference("Pet(3)", &cgs).is_err());
     }
 
     #[test]

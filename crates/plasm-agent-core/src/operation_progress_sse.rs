@@ -20,6 +20,7 @@ fn progress_events_from_broadcast<F>(
     rx: broadcast::Receiver<OpProgressEvent>,
     last_seq: u64,
     event_data: F,
+    recover: Option<Arc<dyn Fn() -> Option<OpUiTelemetry> + Send + Sync>>,
 ) -> SseBody
 where
     F: Fn(&OpProgressEvent) -> (String, &'static str) + Send + Sync + 'static,
@@ -29,6 +30,7 @@ where
         (rx, last_seq),
         move |(mut rx, mut last_seq)| {
             let event_data = event_data.clone();
+            let recover = recover.clone();
             async move {
                 loop {
                     match rx.recv().await {
@@ -43,7 +45,18 @@ where
                                 (rx, last_seq),
                             ));
                         }
-                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(broadcast::error::RecvError::Lagged(_)) => {
+                            if let Some(snapshot) = recover.as_ref().and_then(|read| read()) {
+                                last_seq = snapshot.n;
+                                return Some((
+                                    Ok(Event::default()
+                                        .event("snapshot")
+                                        .data(snapshot.json_line())),
+                                    (rx, last_seq),
+                                ));
+                            }
+                            continue;
+                        }
                         Err(broadcast::error::RecvError::Closed) => return None,
                     }
                 }
@@ -71,10 +84,15 @@ pub fn operation_progress_wire_sse(
     let first = stream::once(async move {
         Ok::<Event, Infallible>(Event::default().event("snapshot").data(initial_line))
     });
-    let body = first.chain(progress_events_from_broadcast(rx, initial_seq, |ev| {
-        let name = if ev.terminal { "terminal" } else { "progress" };
-        (ev.line.clone(), name)
-    }));
+    let body = first.chain(progress_events_from_broadcast(
+        rx,
+        initial_seq,
+        |ev| {
+            let name = if ev.terminal { "terminal" } else { "progress" };
+            (ev.line.clone(), name)
+        },
+        None,
+    ));
     Sse::new(body)
         .keep_alive(KeepAlive::default())
         .into_response()
@@ -85,15 +103,21 @@ pub fn operation_progress_json_sse(
     rx: broadcast::Receiver<OpProgressEvent>,
     initial_seq: u64,
     initial_json: String,
+    recover: Arc<dyn Fn() -> Option<OpUiTelemetry> + Send + Sync>,
 ) -> Response {
     let first = stream::once(async move {
         Ok::<Event, Infallible>(Event::default().event("snapshot").data(initial_json))
     });
-    let body = first.chain(progress_events_from_broadcast(rx, initial_seq, |ev| {
-        let json = OpUiTelemetry::from_progress_event(ev).json_line();
-        let name = if ev.terminal { "terminal" } else { "progress" };
-        (json, name)
-    }));
+    let body = first.chain(progress_events_from_broadcast(
+        rx,
+        initial_seq,
+        |ev| {
+            let json = OpUiTelemetry::from_progress_event(ev).json_line();
+            let name = if ev.terminal { "terminal" } else { "progress" };
+            (json, name)
+        },
+        Some(recover),
+    ));
     Sse::new(body)
         .keep_alive(KeepAlive::default())
         .into_response()
@@ -132,4 +156,43 @@ where
     Sse::new(body)
         .keep_alive(KeepAlive::default())
         .into_response()
+}
+
+#[cfg(test)]
+mod occurrence_tests {
+    use super::*;
+    #[tokio::test]
+    async fn occurrence_sse_recovers_full_snapshot_after_receiver_lag() {
+        let (tx, rx) = broadcast::channel(1);
+        for seq in 1..=3 {
+            tx.send(OpProgressEvent {
+                seq,
+                line: format!("{seq}"),
+                terminal: false,
+                stats: Default::default(),
+                occurrences: vec![],
+                occurrence_snapshot: false,
+            })
+            .unwrap();
+        }
+        let snapshot = OpUiTelemetry {
+            n: 3,
+            line: "recovered".into(),
+            occurrence_snapshot: true,
+            ..Default::default()
+        };
+        let response = operation_progress_json_sse(
+            rx,
+            0,
+            "{}".into(),
+            Arc::new(move || Some(snapshot.clone())),
+        );
+        let mut body = response.into_body().into_data_stream();
+        let first = body.next().await.unwrap().unwrap();
+        assert!(std::str::from_utf8(&first).unwrap().contains("snapshot"));
+        let recovered = body.next().await.unwrap().unwrap();
+        let text = std::str::from_utf8(&recovered).unwrap();
+        assert!(text.contains("recovered"));
+        assert!(text.contains("\"occurrence_snapshot\":true"));
+    }
 }

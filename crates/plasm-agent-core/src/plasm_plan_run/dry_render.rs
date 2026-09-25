@@ -7,6 +7,13 @@ use crate::plasm_plan::{
 
 pub fn render_node_operation(node: &ValidatedPlanNode) -> String {
     match node {
+        ValidatedPlanNode::MapBody(n) => format!(
+            "map body {} max {}",
+            n.body.parent.source, n.body.max_parents
+        ),
+        ValidatedPlanNode::Capture(n) => {
+            format!("capture {}.{}", n.entity.entry_id, n.entity.entity)
+        }
         ValidatedPlanNode::Surface(n) => render_surface_operation(n),
         ValidatedPlanNode::Data(n) => format!("data {}", render_plan_value(&n.data)),
         ValidatedPlanNode::Derive(n) => render_derive_template(n),
@@ -118,6 +125,24 @@ pub(crate) fn render_input_cardinality(
 
 pub(crate) fn render_compute_template(compute: &ComputeTemplate) -> String {
     match &compute.op {
+        ComputeOp::Python {
+            entity,
+            per_row,
+            input_schema,
+            ..
+        } => format!(
+            "{} {} -> str",
+            if *per_row {
+                "python_map"
+            } else {
+                "python_reduce"
+            },
+            if input_schema.is_some() {
+                "Row".to_owned()
+            } else {
+                format!("Value[{entity}]")
+            }
+        ),
         ComputeOp::Project { fields } => {
             let fields = fields
                 .iter()
@@ -328,6 +353,8 @@ pub(crate) fn render_kind(kind: PlanNodeKind) -> &'static str {
         PlanNodeKind::ForEach => "for_each",
         PlanNodeKind::IterateUntil => "iterate_until",
         PlanNodeKind::Relation => "relation",
+        PlanNodeKind::MapBody => "map_body",
+        PlanNodeKind::Capture => "capture",
     }
 }
 

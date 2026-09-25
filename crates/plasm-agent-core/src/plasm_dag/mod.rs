@@ -22,6 +22,8 @@ mod view_embed_proof;
 mod render_dag;
 
 mod pipeline;
+mod python;
+pub(crate) use python::{compile_python_program, compile_python_program_checked};
 
 // --- crate-visible entrypoints ---
 #[allow(unused_imports)]

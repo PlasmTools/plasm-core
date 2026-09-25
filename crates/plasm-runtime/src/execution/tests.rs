@@ -1064,7 +1064,7 @@ fn execute_operation_parents_http_compiled_request_on_live_get() {
             let cgs = create_test_cgs();
             let mut cache = SessionMaterialization::new();
             let expr = Expr::Get(GetExpr::new("Account", "1"));
-            let _ = engine
+            engine
                 .execute(
                     &expr,
                     &cgs,
@@ -1073,7 +1073,8 @@ fn execute_operation_parents_http_compiled_request_on_live_get() {
                     StreamConsumeOpts::default(),
                     ExecuteOptions::for_catalog(&cgs).unwrap(),
                 )
-                .await;
+                .await
+                .expect("traced Get must execute successfully");
         });
     });
 

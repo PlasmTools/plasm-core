@@ -24,9 +24,7 @@ export function inputTypeRoot(input: InputTypeJson | undefined): InputTypeJson |
 export function objectFieldsFromCap(
   cap: CapabilityIntrospectionJson,
 ): InputFieldSchemaJson[] {
-  const schema = cap.input_schema?.input_type;
-  if (!schema || schema.type !== "object") return [];
-  return schema.fields ?? [];
+  return cap.python.parameters;
 }
 
 function hasScopeOrFilterParams(fields: InputFieldSchemaJson[]): boolean {
@@ -47,7 +45,7 @@ function nonSearchParams(fields: InputFieldSchemaJson[]): InputFieldSchemaJson[]
 
 export function classifyInvokeShape(cap: CapabilityIntrospectionJson): CapabilityInvokeShape {
   const kind = cap.kind.toLowerCase();
-  const inputType = cap.input_schema?.input_type;
+  const inputType = cap.inputs.payload?.input_type ?? cap.inputs.arguments?.input_type;
 
   if (inputType?.type === "union") {
     return "MethodUnion";
@@ -69,7 +67,7 @@ export function classifyInvokeShape(cap: CapabilityIntrospectionJson): Capabilit
     case "update":
       return "ScopedUpdate";
     case "action":
-      return "ScopedAction";
+      return cap.python.receiver ? "ScopedAction" : "MethodObject";
     case "delete":
       return "ScopedDelete";
     default:
@@ -93,17 +91,9 @@ export function capabilityNeedsInput(
   shape: CapabilityInvokeShape,
   idField?: string,
 ): boolean {
-  if (shape === "RootQuery") return false;
-  if (shape === "GetById" || shape === "ScopedUpdate" || shape === "ScopedAction" || shape === "ScopedDelete") {
-    return true;
-  }
-  const fields = objectFieldsFromCap(cap);
-  if (fields.length > 0) return true;
-  if (shape === "ScopedQuery" || shape === "SearchText" || shape === "SearchFiltered") {
-    return fields.some((f) => f.required);
-  }
+  if (shape === "MethodUnion") return true;
   void idField;
-  return false;
+  return ((cap.kind === "get" || cap.python.receiver) && cap.python.identity.length > 0) || objectFieldsFromCap(cap).length > 0;
 }
 
 /** Body fields for dotted-arg emission (excludes scoped receiver id). */

@@ -302,19 +302,3 @@ pub(in crate::plasm_dag) fn parse_group_by_key_and_aggregate_tail(
     };
     Ok((keys, agg_tail))
 }
-
-pub(in crate::plasm_dag) fn parse_dedupe_key_paths(
-    session: &ExecuteSession,
-    cross_cache: Option<&SymbolMapCrossRequestCache>,
-    qe: Option<&QualifiedEntityKey>,
-    keys: &str,
-) -> Result<Vec<FieldPath>, String> {
-    let trimmed = keys.trim();
-    if trimmed.is_empty() {
-        return Err("dedupe(...) requires at least one key field".into());
-    }
-    parse_field_list(session, cross_cache, qe, trimmed)?
-        .into_iter()
-        .map(|field| FieldPath::from_dotted(&field))
-        .collect::<Result<Vec<_>, _>>()
-}

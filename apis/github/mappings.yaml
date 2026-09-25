@@ -70,8 +70,11 @@ user_repos_query:
           type: const
           value: repo_forks
       then_expr:
-        type: const
-        value: repos/{owner}/{repo}/forks
+        type: format
+        template: repos/{owner}/{repo}/forks
+        vars:
+          owner: { type: var, name: owner }
+          repo: { type: var, name: repo }
       else_expr:
         type: if
         condition:
@@ -83,8 +86,10 @@ user_repos_query:
             type: const
             value: org_repos
         then_expr:
-          type: const
-          value: orgs/{org}/repos
+          type: format
+          template: orgs/{org}/repos
+          vars:
+            org: { type: var, name: org }
         else_expr:
           type: if
           condition:
@@ -96,11 +101,15 @@ user_repos_query:
               type: const
               value: org_public_repos
           then_expr:
-            type: const
-            value: orgs/{org}/repos
+            type: format
+            template: orgs/{org}/repos
+            vars:
+              org: { type: var, name: org }
           else_expr:
-            type: const
-            value: users/{username}/repos
+            type: format
+            template: users/{username}/repos
+            vars:
+              username: { type: var, name: username }
   response: bare_list
   query:
     type: object
@@ -138,6 +147,16 @@ user_repos_query:
         else_expr:
           type: const
           value: null
+    - - visibility
+      - type: if
+        condition: { type: exists, var: visibility }
+        then_expr: { type: var, name: visibility }
+        else_expr: { type: const, value: null }
+    - - affiliation
+      - type: if
+        condition: { type: exists, var: affiliation }
+        then_expr: { type: var, name: affiliation }
+        else_expr: { type: const, value: null }
   pagination:
     params:
       page:
@@ -169,11 +188,16 @@ repo_collaborators_query:
         type: const
         value: org_members
     then_expr:
-      type: const
-      value: orgs/{org}/members
+      type: format
+      template: orgs/{org}/members
+      vars:
+        org: {type: var, name: org}
     else_expr:
-      type: const
-      value: repos/{owner}/{repo}/collaborators
+      type: format
+      template: repos/{owner}/{repo}/collaborators
+      vars:
+        owner: {type: var, name: owner}
+        repo: {type: var, name: repo}
   response: bare_list
   query:
     type: object
@@ -189,6 +213,16 @@ repo_collaborators_query:
         else_expr:
           type: const
           value: null
+    - - filter
+      - type: if
+        condition: {type: exists, var: filter}
+        then_expr: {type: var, name: filter}
+        else_expr: {type: const, value: null}
+    - - role
+      - type: if
+        condition: {type: exists, var: role}
+        then_expr: {type: var, name: role}
+        else_expr: {type: const, value: null}
   pagination:
     params:
       page:
@@ -224,12 +258,57 @@ issue_sub_issue_query:
         type: const
         value: issue_sub_issue
     then_expr:
-      type: const
-      value: repos/{owner}/{repo}/issues/{issue_number}/sub_issues
+      type: format
+      template: repos/{owner}/{repo}/issues/{issue_number}/sub_issues
+      vars:
+        owner: {type: var, name: owner}
+        repo: {type: var, name: repo}
+        issue_number: {type: var, name: issue_number}
     else_expr:
-      type: const
-      value: repos/{owner}/{repo}/issues
+      type: format
+      template: repos/{owner}/{repo}/issues
+      vars:
+        owner: {type: var, name: owner}
+        repo: {type: var, name: repo}
   response: bare_list
+  query:
+    type: object
+    fields:
+    - - assignee
+      - type: if
+        condition: {type: exists, var: assignee}
+        then_expr: {type: var, name: assignee}
+        else_expr: {type: const, value: null}
+    - - labels
+      - type: if
+        condition: {type: exists, var: labels}
+        then_expr: {type: var, name: labels}
+        else_expr: {type: const, value: null}
+    - - milestone
+      - type: if
+        condition: {type: exists, var: milestone}
+        then_expr: {type: var, name: milestone}
+        else_expr: {type: const, value: null}
+    - - state
+      - type: if
+        condition: {type: exists, var: state}
+        then_expr: {type: var, name: state}
+        else_expr: {type: const, value: null}
+    - - since
+      - type: if
+        condition: {type: exists, var: since}
+        then_expr: {type: var, name: since}
+        else_expr: {type: const, value: null}
+    - - sort
+      - type: if
+        condition: {type: exists, var: sort}
+        then_expr: {type: var, name: sort}
+        else_expr: {type: const, value: null}
+    - - direction
+      - type: if
+        condition: {type: exists, var: direction}
+        then_expr: {type: var, name: direction}
+        else_expr: {type: const, value: null}
   pagination:
     params:
       page:
@@ -400,8 +479,20 @@ pr_search:
     type: object
     fields:
     - - q
-      - type: var
-        name: q
+      - type: if
+        condition: {type: exists, var: repository}
+        then_expr:
+          type: format
+          template: "is:pr repo:{owner}/{repo} {q}"
+          vars:
+            owner: {type: var, name: owner}
+            repo: {type: var, name: repo}
+            q: {type: var, name: q}
+        else_expr:
+          type: format
+          template: "is:pr {q}"
+          vars:
+            q: {type: var, name: q}
     - - sort
       - type: if
         condition:
@@ -832,11 +923,18 @@ workflow_run_query:
         type: const
         value: workflow_run_by_workflow
     then_expr:
-      type: const
-      value: repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs
+      type: format
+      template: repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs
+      vars:
+        owner: {type: var, name: owner}
+        repo: {type: var, name: repo}
+        workflow_id: {type: var, name: workflow_id}
     else_expr:
-      type: const
-      value: repos/{owner}/{repo}/actions/runs
+      type: format
+      template: repos/{owner}/{repo}/actions/runs
+      vars:
+        owner: {type: var, name: owner}
+        repo: {type: var, name: repo}
   response:
     items: workflow_runs
   query:
@@ -1152,11 +1250,18 @@ label_query:
         type: const
         value: issue_label
     then_expr:
-      type: const
-      value: repos/{owner}/{repo}/issues/{issue_number}/labels
+      type: format
+      template: repos/{owner}/{repo}/issues/{issue_number}/labels
+      vars:
+        owner: {type: var, name: owner}
+        repo: {type: var, name: repo}
+        issue_number: {type: var, name: issue_number}
     else_expr:
-      type: const
-      value: repos/{owner}/{repo}/labels
+      type: format
+      template: repos/{owner}/{repo}/labels
+      vars:
+        owner: {type: var, name: owner}
+        repo: {type: var, name: repo}
   response: bare_list
   pagination:
     params:
@@ -1604,11 +1709,18 @@ issue_comment_query:
         type: const
         value: repo_comment
     then_expr:
-      type: const
-      value: repos/{owner}/{repo}/issues/comments
+      type: format
+      template: repos/{owner}/{repo}/issues/comments
+      vars:
+        owner: {type: var, name: owner}
+        repo: {type: var, name: repo}
     else_expr:
-      type: const
-      value: repos/{owner}/{repo}/issues/{issue_number}/comments
+      type: format
+      template: repos/{owner}/{repo}/issues/{issue_number}/comments
+      vars:
+        owner: {type: var, name: owner}
+        repo: {type: var, name: repo}
+        issue_number: {type: var, name: issue_number}
   response: bare_list
   query:
     type: object
@@ -1624,6 +1736,16 @@ issue_comment_query:
         else_expr:
           type: const
           value: null
+    - - sort
+      - type: if
+        condition: {type: exists, var: sort}
+        then_expr: {type: var, name: sort}
+        else_expr: {type: const, value: null}
+    - - direction
+      - type: if
+        condition: {type: exists, var: direction}
+        then_expr: {type: var, name: direction}
+        else_expr: {type: const, value: null}
   pagination:
     params:
       page:
@@ -2371,8 +2493,10 @@ pr_create:
     type: object
     fields:
     - - title
-      - type: var
-        name: title
+      - type: if
+        condition: {type: exists, var: title}
+        then_expr: {type: var, name: title}
+        else_expr: {type: const, value: null}
     - - head
       - type: var
         name: head

@@ -40,7 +40,7 @@ pub struct JsSeed {
 
 #[napi(object)]
 pub struct JsTeachingResult {
-    pub tsv: String,
+    pub prompt: String,
     pub delta_refs: Vec<String>,
 }
 
@@ -79,6 +79,7 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 /// executor instead of blocking it. Independent logical sessions remain concurrent.
 #[napi]
 pub struct PlasmEngine {
+    python_pool: Arc<plasm_agent_core::python_pool::PythonPool>,
     inner: Arc<AsyncMutex<InnerEngine>>,
     sessions: Mutex<HashMap<String, Arc<AsyncMutex<InnerEngine>>>>,
     discovery_store: Arc<OnceCell<DiscoveryStore>>,
@@ -92,6 +93,9 @@ impl Default for PlasmEngine {
 }
 
 impl PlasmEngine {
+    pub fn new() -> Self {
+        Self::with_runtime(None)
+    }
     fn session_engine(&self, id: &str) -> anyhow::Result<Arc<AsyncMutex<InnerEngine>>> {
         lock(&self.sessions).get(id).cloned().ok_or_else(|| {
             anyhow::anyhow!("unknown logical session `{id}`; open a session with plasm_context")
@@ -106,7 +110,8 @@ impl PlasmEngine {
             Some(id) => self.session_engine(id).map_err(map_err)?,
             None => Arc::clone(&self.inner),
         };
-        let engine = shared.lock_owned().await;
+        let mut engine = shared.lock_owned().await;
+        engine.set_python_pool(self.python_pool.clone());
         if logical_session_id.is_some() {
             self.refresh_discovery_session(&engine)
                 .await
@@ -165,9 +170,13 @@ impl PlasmEngine {
 #[napi]
 impl PlasmEngine {
     #[napi(constructor)]
-    pub fn new() -> Self {
+    pub fn with_runtime(monty_binary: Option<String>) -> Self {
         tracing_setup::init();
         Self {
+            python_pool: Arc::new(match monty_binary {
+                Some(path) => plasm_agent_core::python_pool::PythonPool::with_binary(path.into()),
+                None => Default::default(),
+            }),
             inner: Arc::new(AsyncMutex::new(InnerEngine::new())),
             sessions: Mutex::new(HashMap::new()),
             discovery_store: Arc::new(OnceCell::new()),
@@ -323,7 +332,7 @@ impl PlasmEngine {
             .expose_seeds(intent, &capability_seeds)
             .map_err(map_err)?;
         Ok(JsTeachingResult {
-            tsv: result.tsv,
+            prompt: result.prompt,
             delta_refs: result.delta_refs,
         })
     }

@@ -45,6 +45,22 @@ function resolveFieldType(
   return field.input_type;
 }
 
+function namedValueToTs(value: NamedValueSchemaJson | undefined, values: Record<string, NamedValueSchemaJson>, brands: BrandRegistry, input: boolean, seen = new Set<string>()): string {
+  if (value?.field_type === "array" && value.array_items) {
+    const item = value.array_items;
+    if (item.value_ref) {
+      if (seen.has(item.value_ref)) throw new Error(`Cyclic array value ${item.value_ref}`);
+      return `(${namedValueToTs(values[item.value_ref], values, brands, input, new Set([...seen, item.value_ref]))})[]`;
+    }
+    return `(${fieldTypeToTs(item.field_type, values, brands, input, item.allowed_values)})[]`;
+  }
+  return fieldTypeToTs(value?.field_type, values, brands, input, value?.allowed_values);
+}
+
+function inputFieldToTs(field: InputFieldSchemaJson, values: Record<string, NamedValueSchemaJson>, brands: BrandRegistry, input: boolean): string {
+  return field.value_ref ? namedValueToTs(values[field.value_ref], values, brands, input) : fieldTypeToTs(field.input_type, values, brands, input);
+}
+
 function fieldTypeToTs(
   ft: FieldTypeJson | InputTypeJson | undefined,
   values: Record<string, NamedValueSchemaJson>,
@@ -75,6 +91,8 @@ function fieldTypeToTs(
     case "number":
       return "number";
     case "string":
+    case "digit_id":
+    case "money":
     case "uuid":
     case "date":
       return "string";
@@ -115,13 +133,13 @@ export function inputTypeToTs(
           typeof ft === "string" || (typeof ft === "object" && !("type" in ft))
             ? values[f.value_ref ?? ""]?.allowed_values
             : undefined;
-        const ts = fieldTypeToTs(ft, values, brands, inputContext, allowed);
-        return `${f.name}${f.required ? "" : "?"}: ${ts};`;
+        const ts = inputFieldToTs(f, values, brands, inputContext);
+        return `${JSON.stringify(f.name)}${f.required ? "" : "?"}: ${ts};`;
       });
       return `{\n  ${lines.join("\n  ")}\n}`;
     }
     case "array":
-      return `${inputTypeToTs(input.element_type, values, brands, inputContext)}[]`;
+      return `(${inputTypeToTs(input.element_type, values, brands, inputContext)})[]`;
     case "union": {
       const variants = input.variants.map((v) => {
         const body = inputTypeToTs(
@@ -130,8 +148,8 @@ export function inputTypeToTs(
           brands,
           inputContext,
         );
-        const tag = v.constructor_symbol ?? v.name;
-        return `{ readonly kind: ${JSON.stringify(tag)}; ${body.slice(1, -1).trim()} }`;
+        const tag = v.wire;
+        return `{ readonly ${JSON.stringify(tag.field)}: ${JSON.stringify(tag.value)}; ${body.slice(1, -1).trim()} }`;
       });
       return variants.join(" | ");
     }
@@ -179,7 +197,7 @@ export function renderEntityRowType(
       continue;
     }
     const nv = values[field.value_ref];
-    const ts = fieldTypeToTs(nv?.field_type, values, buildBrandRegistry(catalog), false, nv?.allowed_values);
+    const ts = namedValueToTs(nv, values, buildBrandRegistry(catalog), false);
     lines.push(`${fieldName}${field.required ? "" : "?"}: ${ts};`);
   }
   const typeName = entityTypeName(entityName);
@@ -198,36 +216,27 @@ export function renderCapabilityInputType(
   const values = catalog.values;
   const lines: string[] = [];
 
-  if (
-    shape === "GetById" ||
-    shape === "ScopedUpdate" ||
-    shape === "ScopedAction" ||
-    shape === "ScopedDelete"
-  ) {
-    const ref = brands.get(cap.entity) ?? "string";
-    lines.push(`${entity.id_field}: ${ref};`);
-  }
-
-  const bodyFields = invokeBodyFields(cap, shape, entity.id_field);
-  for (const field of bodyFields) {
-    const ft = resolveFieldType(field, values);
-    const allowed = field.value_ref ? values[field.value_ref]?.allowed_values : undefined;
-    const ts = fieldTypeToTs(ft, values, brands, true, allowed);
-    lines.push(`${field.name}${field.required ? "" : "?"}: ${ts};`);
-  }
-
-  if (shape === "SearchText" || shape === "SearchFiltered") {
-    const q = searchFieldName(cap);
-    if (q && !lines.some((l) => l.startsWith(`${q}:`))) {
-      const field = objectFieldsFromCap(cap).find((f) => f.name === q);
-      if (field) {
-        const ft = resolveFieldType(field, values);
-        const ts = fieldTypeToTs(ft, values, brands, true);
-        lines.unshift(`${q}${field.required ? "" : "?"}: ${ts};`);
-      }
+  if (cap.kind === "get" || cap.python.receiver) {
+    for (const key of cap.python.identity) {
+      const field = entity.fields.find(f => f.name === key);
+      const value = field ? values[field.value_ref] : undefined;
+      const type = namedValueToTs(value, values, brands, true);
+      lines.push(`${JSON.stringify(key)}: ${type};`);
     }
   }
 
-  if (!lines.length) return null;
-  return `export type ${capabilityInputTypeName(cap.name)} = {\n  ${lines.join("\n  ")}\n};`;
+  const bodyFields = objectFieldsFromCap(cap).filter(f => !(cap.python.receiver || cap.kind === "get") || !cap.python.identity.includes(f.name));
+  for (const field of bodyFields) {
+    const ft = resolveFieldType(field, values);
+    const allowed = field.value_ref ? values[field.value_ref]?.allowed_values : undefined;
+    const ts = inputFieldToTs(field, values, brands, true);
+    lines.push(`${field.name}${field.required ? "" : "?"}: ${ts};`);
+  }
+
+  const unions = [cap.inputs.payload, cap.inputs.arguments]
+    .filter(schema => schema?.input_type.type === "union")
+    .map(schema => `(${inputTypeToTs(schema!.input_type, values, brands, true)})`);
+  if (!lines.length && !unions.length) return null;
+  const common = lines.length ? [`{\n  ${lines.join("\n  ")}\n}`] : [];
+  return `export type ${capabilityInputTypeName(cap.name)} = ${[...common, ...unions].join(" & ")};`;
 }

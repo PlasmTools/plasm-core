@@ -1,5 +1,1 @@
-Plasm source text, not JSON data — one expression, or `label = …` bindings (not `e#`/`m#`/`p#`/`r#`/`v#`) then ONE final return line (comma-separated roots on that line only). No prose, no `return` keyword, no code fences.
-
-Symbols from the `plasm_context` language card: `e#` entity, `m#` method, `r#` relation; **wire names** for fields, params, and filters. Fill card `<>` holes (`<id>` / `<wire>` / `<query>`) with real values; never emit leftover `<…>` placeholders.
-
-Full grammar (catalog · `|` row algebra · `=>` application) lives in the **`plasm` tool description** (not duplicated here). Multiline strings: `label = <<TAG` … `TAG`. Session: **`plasm_context`** (`session_mode: "extend"`, same `logical_session_ref` — not `new`).
+Python source text, not JSON data: one class derived from Program with build(self) and an explicit return. No prose or code fences. Use the library reference and language card supplied by plasm_context; e#/m#/r# are session symbols, fields and parameters use wire names. Multiline text uses ordinary Python string literals; deferred formatting uses @compute. Follow the `plasm` tool description. Repair with session_mode: "extend" and the same logical_session_ref when more declarations are needed, never a fresh session for a parse error.

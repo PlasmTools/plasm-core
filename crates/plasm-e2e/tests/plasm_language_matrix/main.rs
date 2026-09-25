@@ -17,6 +17,12 @@ mod features;
 mod harness;
 mod ir_helpers;
 mod program;
+mod python;
+mod python_completion;
+mod python_coverage;
+mod python_federated_parity;
+mod python_host_contract;
+mod python_render_parity;
 mod row;
 mod rows;
 
@@ -648,8 +654,8 @@ fn required_selection_omitted_is_compile_reject() {
         "RA-15 diagnostic must name the omitted parameter, got: {err}"
     );
     assert!(
-        err.contains("LangLane"),
-        "RA-15 diagnostic must point at the query expression, got: {err}"
+        err.contains("shelf=value") && err.contains("declared Python method"),
+        "RA-15 diagnostic must teach the required source-method argument, got: {err}"
     );
 }
 

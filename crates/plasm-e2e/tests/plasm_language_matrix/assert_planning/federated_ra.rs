@@ -449,8 +449,10 @@ pub(crate) fn assert_planning_federated_ra(
                     }
                 }
             }
-            if !saw_map {
-                return Err("expected derive map with fields t and o".into());
+            let projected = computes.iter().any(|c| matches!(&c.op, ComputeOp::Project { fields } if fields.keys().map(|name| name.as_str()).collect::<BTreeSet<_>>() == BTreeSet::from(["t", "o"])))
+                && computes.iter().any(|c| matches!(&c.op, ComputeOp::With { columns } if columns.iter().any(|c| c.name.as_str() == "t" && matches!(&c.expr, plasm_core::WithExpr::Field(p) if p.dotted() == "title")) && columns.iter().any(|c| c.name.as_str() == "o" && matches!(&c.expr, plasm_core::WithExpr::Field(p) if p.dotted() == "owner"))));
+            if !saw_map && !projected {
+                return Err("expected row mapping title -> t and owner -> o".into());
             }
         }
         "lang_ra4_apply_derive_message_field" => {
@@ -472,8 +474,11 @@ pub(crate) fn assert_planning_federated_ra(
                     }
                 }
             }
-            if !saw_derive {
-                return Err("expected derive (not for_each) with fields t and note".into());
+            let projected = computes.iter().any(|c| matches!(&c.op, ComputeOp::With { columns } if columns.iter().any(|c| c.name.as_str() == "t" && matches!(&c.expr, plasm_core::WithExpr::Field(p) if p.dotted() == "title")) && columns.iter().any(|c| c.name.as_str() == "note" && matches!(&c.expr, plasm_core::WithExpr::Literal(plasm_core::WithLiteral::String(s)) if s == "_.message"))));
+            if !saw_derive && !projected {
+                return Err(
+                    "expected typed row derivation with title and literal _.message".into(),
+                );
             }
             if dry
                 .node_results
@@ -494,10 +499,12 @@ pub(crate) fn assert_planning_federated_ra(
             }
         }
         "lang_ra4_apply_render_bind_cut" => {
-            if !computes
-                .iter()
-                .any(|c| matches!(c.op, ComputeOp::Render { .. }))
-            {
+            if !computes.iter().any(|c| {
+                matches!(
+                    c.op,
+                    ComputeOp::Render { .. } | ComputeOp::Python { per_row: true, .. }
+                )
+            }) {
                 return Err(format!("expected Render compute, got {:?}", computes));
             }
         }

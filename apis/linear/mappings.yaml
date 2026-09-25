@@ -58,6 +58,32 @@ issue_search:
                                   - type: var
                                     name: assignee_name
                       else_expr: { type: const, value: null }
+                  - - labels
+                    - type: if
+                      condition: { type: exists, var: label_name }
+                      then_expr:
+                        type: object
+                        fields:
+                          - - name
+                            - type: object
+                              fields:
+                                - - eq
+                                  - type: var
+                                    name: label_name
+                      else_expr: { type: const, value: null }
+                  - - project
+                    - type: if
+                      condition: { type: exists, var: project_name }
+                      then_expr:
+                        type: object
+                        fields:
+                          - - name
+                            - type: object
+                              fields:
+                                - - eq
+                                  - type: var
+                                    name: project_name
+                      else_expr: { type: const, value: null }
                   - - cycle
                     - type: if
                       condition: { type: exists, var: cycle }
@@ -94,11 +120,6 @@ issue_search:
             - - first
               - type: const
                 value: 50
-            - - after
-              - type: if
-                condition: { type: exists, var: after }
-                then_expr: { type: var, name: after }
-                else_expr: { type: const, value: null }
   response:
     items_path: [data, issues, nodes]
   pagination:

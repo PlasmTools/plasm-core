@@ -45,7 +45,7 @@ fn field_gloss_teaches_temporal(g: &TeachingFieldGloss) -> bool {
     let head = g
         .description
         .trim()
-        .split(|c: char| c == ' ' || c == '·' || c == '\t')
+        .split([' ', '·', '\t'])
         .find(|s| !s.is_empty())
         .unwrap_or("");
     profile_token_is_temporal(head)

@@ -20,12 +20,12 @@ export interface ExecuteSessionRef {
 export interface TeachingWave {
   entryId: string;
   entities: string[];
-  tsv: string;
+  prompt: string;
   at: string;
 }
 
 export interface AgentSessionState {
-  readonly schemaVersion: 2;
+  readonly schemaVersion: 3;
   intentProvenance: IntentProvenance;
   readonly intent: WorkflowIntent;
   readonly logicalSessionRef: LogicalSessionRef;
@@ -35,7 +35,7 @@ export interface AgentSessionState {
   engineInstanceId?: string;
   registryGeneration?: string;
   routingClosures?: PrerequisiteClosure[];
-  teachingTsv: string;
+  teachingPrompt: string;
   waves: TeachingWave[];
   symbolRegistry?: SymbolRegistrySnapshot;
   planCommits: Array<{ ref: string; program: string; at: string; writeCount?: number }>;
@@ -44,7 +44,7 @@ export interface AgentSessionState {
 
 /** Strict, versioned boundary shared by every persistence adapter. */
 const sessionSchema = z.object({
-  schemaVersion: z.literal(2),
+  schemaVersion: z.literal(3),
   intentProvenance: intentProvenanceSchema,
   intent: workflowIntentSchema,
   logicalSessionRef: logicalSessionRefSchema,
@@ -54,9 +54,9 @@ const sessionSchema = z.object({
   engineInstanceId: z.string().optional(),
   registryGeneration: z.string().optional(),
   routingClosures: z.array(prerequisiteClosureSchema).optional(),
-  teachingTsv: z.string(),
+  teachingPrompt: z.string(),
   waves: z.array(z.object({
-    entryId: z.string(), entities: z.array(z.string()), tsv: z.string(), at: z.string(),
+    entryId: z.string(), entities: z.array(z.string()), prompt: z.string(), at: z.string(),
   }).strict()),
   symbolRegistry: z.object({
     bindings: z.array(z.object({
@@ -192,8 +192,8 @@ export class SessionManager {
       return existing;
     }
     const fresh: AgentSessionState = {
-      schemaVersion: 2, ...input, tenantScope: this.tenantScope,
-      seeds: [], teachingTsv: "", waves: [], planCommits: [], updatedAt: new Date().toISOString(),
+      schemaVersion: 3, ...input, tenantScope: this.tenantScope,
+      seeds: [], teachingPrompt: "", waves: [], planCommits: [], updatedAt: new Date().toISOString(),
     };
     await this.store.put(fresh);
     this.byLogicalRef.set(fresh.logicalSessionRef, fresh);

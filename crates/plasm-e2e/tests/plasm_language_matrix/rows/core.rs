@@ -4,6 +4,26 @@ use super::super::row::MatrixRow;
 
 pub(crate) const ROWS: &[MatrixRow] = &[
     MatrixRow {
+        id: "lang_group_then_global_aggregate",
+        program: "LangLane {shelf=\"alpha\"} | summarize by shelf n=count() | summarize total=sum(n)",
+        surface_line: true,
+        federated: false,
+        features: &["pipe_summarize", "pipe_summarize_by", "group_then_global_aggregate"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "total"],
+        expect_live_error: None,
+    },
+    MatrixRow {
+        id: "lang_distinct_projected_values",
+        program: "rows = LangLane {shelf=\"alpha\"} | select shelf\nunique = rows | distinct\nunique",
+        surface_line: false,
+        federated: false,
+        features: &["pipe_distinct", "distinct_projected_values", "pipe_select", "dry_live_parity"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["alpha"],
+        expect_live_error: None,
+    },
+    MatrixRow {
         id: "lang_take_one_field_bound_argument",
         program: r#"items = LangItem
 one = items | order by id | take 1 | select id

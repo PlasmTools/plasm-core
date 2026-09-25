@@ -53,7 +53,7 @@ impl ExecutePipeline {
         execution_scope: Option<&crate::operation::ExecutionScope>,
         dry: Option<crate::plasm_plan_run::DryPlasmPlanEvaluation>,
     ) -> Result<PlasmPlanRunResult, String> {
-        crate::plasm_plan_run::run_plasm_comp(
+        crate::plasm_plan_run::run_plasm_comp_python(
             es,
             st,
             prompt_hash,

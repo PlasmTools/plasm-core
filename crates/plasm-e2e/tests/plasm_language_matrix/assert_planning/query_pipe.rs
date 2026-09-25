@@ -167,6 +167,12 @@ pub(crate) fn assert_planning_query_pipe(
             let Some(pred) = q.predicate.as_ref() else {
                 return Err("expected owner predicate".into());
             };
+            // Both frontends may wrap one clause in conjunction; additional clauses
+            // remain a mismatch rather than being ignored by this assertion.
+            let pred = match pred {
+                Predicate::And { args } if args.len() == 1 => &args[0],
+                other => other,
+            };
             let Predicate::Comparison {
                 field,
                 op: CompOp::Eq,
@@ -686,23 +692,13 @@ pub(crate) fn assert_planning_query_pipe(
         "lang_render_derived_shape"
         | "lang_render_value_error_at_execution"
         | "lang_render_projected_shape"
-        | "lang_render_relation_shape"
         | "lang_bindings_render"
         | "lang_render_split_part"
         | "lang_per_row_render_zero"
         | "lang_per_row_render_many" => {
-            let Some(ComputeTemplate {
-                op: ComputeOp::Render { .. },
-                ..
-            }) = computes
-                .iter()
-                .find(|c| matches!(c.op, ComputeOp::Render { .. }))
-            else {
-                return Err(format!(
-                    "expected per-row Render compute, got {:?}",
-                    computes
-                ));
-            };
+            if !computes.iter().any(|c| matches!(c.op, ComputeOp::Render { .. } | ComputeOp::Python { per_row: true, .. })) {
+                return Err(format!("expected per-row rendering compute, got {computes:?}"));
+            }
         }
         "lang_plain_template_foreach" => {
             if computes
@@ -718,25 +714,23 @@ pub(crate) fn assert_planning_query_pipe(
                 return Err("plain template must depend on named binding `items`".into());
             }
         }
-        "lang_cross_binding_render" => {
-            let Some(ComputeTemplate {
-                op: ComputeOp::Render {
-                    render_bindings, ..
-                },
-                ..
-            }) = computes
-                .iter()
-                .find(|c| matches!(c.op, ComputeOp::Render { .. }))
-            else {
-                return Err(format!("expected Render compute, got {:?}", computes));
-            };
-            let labels: Vec<_> = render_bindings.iter().map(|l| l.as_str()).collect();
-            if !labels.is_empty() {
-                return Err(format!(
-                    "per-row `{{{{ id }}}}` must not inject collection bindings, got {:?}",
-                    labels
-                ));
+        "lang_render_relation_shape" => {
+            let native = computes.iter().any(|c| matches!(c.op, ComputeOp::Render { .. }));
+            let explicit = computes.iter().any(|c| matches!(&c.op, ComputeOp::Python { per_row: true, source, .. } if c.source == "items" && source.contains("len(row.lines)") && source.contains("relation_count=")));
+            if !native && !explicit { return Err("expected relation-dependent per-row render".into()); }
+        }
+        "lang_render_name_collision" => {
+            if !computes.iter().any(|c| matches!(&c.op, ComputeOp::Python { per_row: true, source, .. } if c.source == "items" && source.contains("row.title"))) {
+                return Err("Python qualification must render items.row.title without capturing the outer title binding".into());
             }
+        }
+        "lang_cross_binding_render" => {
+            let valid = computes.iter().any(|c| match &c.op {
+                ComputeOp::Render { render_bindings, .. } => render_bindings.is_empty(),
+                ComputeOp::Python { per_row: true, .. } => c.source == "a",
+                _ => false,
+            });
+            if !valid { return Err("per-row render must read its explicit a source without collection capture".into()); }
         }
         "lang_render_content_into_create" => {
             let has_create_node = comp_has_invoke_plan_kind(comp, "create");
@@ -748,9 +742,9 @@ pub(crate) fn assert_planning_query_pipe(
             }
             if !computes
                 .iter()
-                .any(|c| matches!(c.op, ComputeOp::Render { .. }))
+                .any(|c| matches!(c.op, ComputeOp::Render { .. } | ComputeOp::Python { per_row: true, .. }))
             {
-                return Err("expected bracket Render compute before create".into());
+                return Err("expected typed row rendering before create".into());
             }
         }
         _ => return Ok(None),

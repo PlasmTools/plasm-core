@@ -45,7 +45,7 @@ pub(in crate::plasm_dag) fn infer_render_columns_for_node(
             ComputeOp::With { .. } | ComputeOp::Union { .. } => {
                 Ok(schema.fields.iter().map(|f| f.name.clone()).collect())
             }
-            ComputeOp::Render { .. } => Ok(schema.fields.iter().map(|f| f.name.clone()).collect()),
+            ComputeOp::Render { .. } | ComputeOp::Python { .. } => Ok(schema.fields.iter().map(|f| f.name.clone()).collect()),
         },
         DagNodeSource::Surface {
             qualified_entity, ..
@@ -103,11 +103,24 @@ pub(in crate::plasm_dag) fn synthetic_schema_passthrough_rows(
             qe.entity
         ));
     }
-    Ok(schema_from_output_fields(
-        qe.entity.as_str(),
-        cols.iter(),
-        SyntheticValueKind::Unknown,
-    ))
+    let mut schema =
+        schema_from_output_fields(qe.entity.as_str(), cols.iter(), SyntheticValueKind::Unknown);
+    let cgs =
+        crate::catalog_ownership::resolve_cgs_for_entry_entity(session, &qe.entry_id, &qe.entity)?;
+    let entity = cgs.get_entity(&qe.entity).ok_or("unknown schema entity")?;
+    for output in &mut schema.fields {
+        if let Some(field) = entity.fields.get(output.name.as_str()) {
+            let mut value_type = plasm_core::value_contract::ValueContract::from_domain(
+                cgs,
+                &qe.entry_id,
+                field.kind.registry_key(),
+            )?;
+            value_type.nullable = !field.required;
+            output.value_kind = value_type.summary();
+            output.value_type = Some(value_type);
+        }
+    }
+    Ok(schema)
 }
 
 /// Identity [`ComputeOp::Project`] map plus schema for passthrough compute nodes (e.g. bare-label

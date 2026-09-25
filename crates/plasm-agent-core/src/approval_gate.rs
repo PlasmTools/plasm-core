@@ -84,5 +84,7 @@ pub fn operation_name_for_kind(kind: PlanNodeKind) -> &'static str {
         PlanNodeKind::ForEach => "for_each",
         PlanNodeKind::IterateUntil => "iterate_until",
         PlanNodeKind::Relation => "relation",
+        PlanNodeKind::MapBody => "map_body",
+        PlanNodeKind::Capture => "capture",
     }
 }

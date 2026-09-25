@@ -5,11 +5,9 @@ mod dotenv_safe;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand, ValueEnum};
-use plasm_core::domain_lexicon::DomainLexicon;
 use plasm_core::loader::load_schema_dir;
-use plasm_core::CGS;
+use plasm_core::PromptPipelineConfig;
 use plasm_core::PLASM_TOOL_DESCRIPTION;
-use plasm_core::{PromptPipelineConfig, PromptRenderMode};
 use plasm_eval::baml_client::sync_client::B;
 use plasm_eval::baml_client::types::{PlanChatTurn, Union2KassistantOrKuser};
 use plasm_eval::baml_client::ClientRegistry;
@@ -23,7 +21,7 @@ use plasm_eval::{
 use plasm_eval::{
     build_correction_feedback, build_correction_metrics, failed_semantic_case_score,
     finalize_case_score, finalize_score, nl_translate_user_bundle, openrouter_eval_llm_options,
-    score_case, validate_plan_steps_with_lexicon_detailed, EvalAttemptReport, EvalPlanStep,
+    score_case, validate_programs, EvalAttemptReport, EvalPlanStep, ProgramSession,
     DEFAULT_OPENROUTER_EVAL_SEED, DEFAULT_OPENROUTER_EVAL_TEMPERATURE,
 };
 use std::collections::HashSet;
@@ -81,18 +79,12 @@ struct RunArgs {
     /// Focus entity for prompt rendering (optional)
     #[arg(long)]
     focus: Option<String>,
-    /// Prompt render mode for schema/session instructions.
-    #[arg(long, default_value = "tsv", value_parser = ["compact", "tsv"])]
-    symbol_tuning: String,
     /// Load schema + cases only; print prompt stats, no LLM
     #[arg(long, default_value_t = false)]
     dry_run: bool,
-    /// Print full teaching table prompt to stdout and exit (no `--cases`; no LLM). Same string as eval / REPL.
+    /// Print full Python reference and declarations prompt to stdout and exit (no `--cases`; no LLM). Same string as eval / REPL.
     #[arg(long, default_value_t = false)]
     print_prompt: bool,
-    /// Print teaching prompt as TSV (expression-first table) and exit.
-    #[arg(long, default_value_t = false)]
-    print_prompt_tsv: bool,
     /// Total LLM calls per case: 1 = no correction; 2+ = retry with structured errors + hints.
     #[arg(long, default_value_t = 2)]
     attempts: u32,
@@ -178,13 +170,12 @@ struct ScaffoldArgs {
 }
 
 fn run_one_case(
-    cgs: &CGS,
+    session: &ProgramSession,
     prompt: &str,
     case: &EvalCase,
     max_attempts: u32,
     registry: &ClientRegistry,
-    pipeline: &PromptPipelineConfig,
-    // One transcript for the whole run: first user = teaching table + goal; later users = `--- GOAL ---` only;
+    // One transcript for the whole run: first user = Python reference and declarations + goal; later users = `--- GOAL ---` only;
     // assistant = Plasm `text` only (no `reasoning`) to keep per-request size bounded.
     chat_session: &mut Vec<PlanChatTurn>,
 ) -> anyhow::Result<serde_json::Value> {
@@ -194,7 +185,6 @@ fn run_one_case(
     let mut last_failure_json: Option<serde_json::Value> = None;
     let mut rounds_used = 0u32;
     let mut attempt_trace: Vec<EvalAttemptReport> = Vec::new();
-    let lexicon = DomainLexicon::from_cgs(cgs);
 
     for attempt in 0..max_attempts {
         rounds_used = attempt + 1;
@@ -231,17 +221,16 @@ fn run_one_case(
         let texts = vec![text.clone()];
         let step_pairs: Vec<(&str, &str)> = vec![(text.as_str(), reasoning.as_str())];
 
-        let (validation, lexicon_notes) =
-            validate_plan_steps_with_lexicon_detailed(cgs, &texts, &lexicon, pipeline, None);
-        // First user: teaching table + `--- GOAL ---`; later users: goal only. Assistant: backtick `text` only
+        let validation = validate_programs(session, &texts);
+        // First user: Python reference and declarations + `--- GOAL ---`; later users: goal only. Assistant: backtick `text` only
         // (keeps later LLM calls from re-processing long reasoning; full steps stay in `attempt_trace`).
-        // On validation failure we must still append (user, assistant) or correction rounds resend the teaching table.
+        // On validation failure we must still append (user, assistant) or correction rounds resend the Python reference and declarations.
         let user_hist = if first_turn {
             format!("{prompt}\n--- GOAL ---\n{}", case.goal)
         } else {
             format!("--- GOAL ---\n{}", case.goal)
         };
-        let assistant_hist = format!("`{text}`");
+        let assistant_hist = text.clone();
         match validation {
             Ok(parsed) => {
                 chat_session.push(PlanChatTurn {
@@ -258,7 +247,6 @@ fn run_one_case(
                     validation_ok: true,
                     diagnostics: None,
                     correction_context_in,
-                    lexicon_notes,
                 });
                 first_success_at = Some(attempt);
                 final_parsed = Some(parsed);
@@ -281,7 +269,6 @@ fn run_one_case(
                     validation_ok: false,
                     diagnostics: Some(diags.clone()),
                     correction_context_in,
-                    lexicon_notes,
                 });
                 correction_context =
                     build_correction_feedback(&case.goal, attempt as usize, &step_pairs, &diags);
@@ -496,34 +483,25 @@ fn main() -> anyhow::Result<()> {
         Some(EvalSubcommand::Scaffold(s)) => cmd_scaffold(s),
         None => {
             let run = top.run;
-            if run.print_prompt || run.print_prompt_tsv {
+            if run.print_prompt {
                 let schema = run
                     .schema
                     .clone()
-                    .context("--print-prompt/--print-prompt-tsv requires --schema")?;
+                    .context("--print-prompt requires --schema")?;
                 let cgs =
                     load_schema_dir(&schema).map_err(|e| anyhow::anyhow!("load schema: {e}"))?;
                 plasm_compile::validate_cgs_capability_templates(&cgs)
                     .map_err(|e| anyhow::anyhow!("invalid CML capability templates: {e}"))?;
-                let render_mode = if run.print_prompt_tsv {
-                    PromptRenderMode::Tsv
-                } else {
-                    PromptRenderMode::parse_user_facing_or_default(run.symbol_tuning.as_str())
-                };
-                let pipeline = PromptPipelineConfig::for_cli_focus(run.focus.as_deref())
-                    .with_render_mode(render_mode);
-                let mut prompt = if run.print_prompt_tsv {
-                    pipeline.render_prompt_tsv(&cgs, None)
-                } else {
-                    pipeline.render_prompt(&cgs, None)
-                };
-                prompt = prepend_eval_grammar_contract(&prompt);
+                let pipeline = PromptPipelineConfig::default();
+                let session =
+                    ProgramSession::new(&cgs, run.focus.as_deref()).map_err(anyhow::Error::msg)?;
+                let prompt = prepend_eval_grammar_contract(session.prompt());
                 let st = pipeline.prompt_surface_stats(&cgs, None, &prompt);
-                // Write prompt first so a line-buffered terminal shows teaching table immediately; stats on
+                // Write prompt first so a line-buffered terminal shows Python reference and declarations immediately; stats on
                 // stderr last so they stay visible below the bundle (and after tracing lines).
                 print!("{prompt}");
                 std::io::stdout().flush().context(
-                    "flush stdout after --print-prompt/--print-prompt-tsv teaching table",
+                    "flush stdout after --print-prompt Python reference and declarations",
                 )?;
                 eprintln!("\nplasm-eval: schema prompt — {}", st.summary_line_body());
                 std::io::stderr()
@@ -565,10 +543,9 @@ fn run_eval_harness(schema: PathBuf, cases: PathBuf, cli: RunArgs) -> anyhow::Re
         );
     }
 
-    let pipeline = PromptPipelineConfig::for_cli_focus(cli.focus.as_deref()).with_render_mode(
-        PromptRenderMode::parse_user_facing_or_default(cli.symbol_tuning.as_str()),
-    );
-    let prompt = prepend_eval_grammar_contract(&pipeline.render_prompt(&cgs, None));
+    let pipeline = PromptPipelineConfig::default();
+    let session = ProgramSession::new(&cgs, cli.focus.as_deref()).map_err(anyhow::Error::msg)?;
+    let prompt = prepend_eval_grammar_contract(session.prompt());
     let st = pipeline.prompt_surface_stats(&cgs, None, &prompt);
     let prompt_stats = PromptStatsSnapshot::from(st);
     eprintln!("schema prompt: {}", st.summary_line_body());
@@ -617,7 +594,7 @@ fn run_eval_harness(schema: PathBuf, cases: PathBuf, cli: RunArgs) -> anyhow::Re
     );
 
     eprintln!(
-        "eval: {} cases, sequential transcript, {} attempt(s)/case (first user: teaching table+goal; later: `--- GOAL ---` only; assistant: Plasm `text` only — `attempt_trace` keeps full reasoning)",
+        "eval: {} cases, sequential transcript, {} attempt(s)/case (first user: Python reference and declarations+goal; later: `--- GOAL ---` only; assistant: Plasm `text` only — `attempt_trace` keeps full reasoning)",
         case_list.len(),
         max_attempts
     );
@@ -626,12 +603,11 @@ fn run_eval_harness(schema: PathBuf, cases: PathBuf, cli: RunArgs) -> anyhow::Re
     let mut report: Vec<serde_json::Value> = Vec::with_capacity(case_list.len());
     for (idx, case) in case_list.iter().enumerate() {
         let v = run_one_case(
-            &cgs,
+            &session,
             prompt.as_str(),
             case,
             max_attempts,
             &registry,
-            &pipeline,
             &mut chat,
         )
         .map_err(|e| anyhow::anyhow!("case index {idx}: {e:#}"))?;
@@ -759,7 +735,7 @@ fn prepend_eval_grammar_contract(teaching_table: &str) -> String {
     )
 }
 
-/// Schema prompt (full teaching table bundle) plus one-line summary and grouped failure blocks.
+/// Schema prompt (full Python reference and declarations bundle) plus one-line summary and grouped failure blocks.
 fn format_eval_report(model: &str, schema_prompt: &str, report: &[serde_json::Value]) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "model: {}", model);
@@ -767,7 +743,7 @@ fn format_eval_report(model: &str, schema_prompt: &str, report: &[serde_json::Va
     let _ = writeln!(out, "{}", "─".repeat(72));
     let _ = writeln!(
         out,
-        "Plasm eval first user turn: canonical `plasm` MCP tool description (grammar) + teaching table; later user turns are `--- GOAL ---` + goal; each assistant turn is the Plasm expression only, no reasoning — keeps requests small.)"
+        "Plasm eval first user turn: canonical `plasm` MCP tool description (grammar) + Python reference and declarations; later user turns are `--- GOAL ---` + goal; each assistant turn is the complete Python Program only, no reasoning — keeps requests small.)"
     );
     let _ = writeln!(out, "{}", "─".repeat(72));
     out.push_str(schema_prompt);
@@ -918,20 +894,6 @@ fn append_case_pipeline_failure(out: &mut String, v: &serde_json::Value) {
                     );
                     for line in format_truncated_multiline(ctx, 512, 48) {
                         let _ = writeln!(out, "      {}", line);
-                    }
-                }
-            }
-            if let Some(notes) = att.get("lexicon_notes").and_then(|x| x.as_array()) {
-                if !notes.is_empty() {
-                    let _ = writeln!(
-                        out,
-                        "    deterministic parse recovery (emitted → resolved):"
-                    );
-                    for n in notes {
-                        let si = n.get("step_index").and_then(|x| x.as_u64()).unwrap_or(0);
-                        let em = n.get("emitted").and_then(|x| x.as_str()).unwrap_or("");
-                        let res = n.get("resolved_to").and_then(|x| x.as_str()).unwrap_or("");
-                        let _ = writeln!(out, "      step {}: `{}` → `{}`", si, em, res);
                     }
                 }
             }

@@ -1,5 +1,4 @@
-//! Explorer / operator projection: same semantics as dynamic CLI (`cli_builder`) plus
-//! [`render_teaching_prompt_bundle`](plasm_core::prompt_render::render_teaching_prompt_bundle) for teaching table metadata.
+//! Explorer / operator projection with the same Python declarations as execute teaching.
 
 use plasm_compile::{
     pagination_config_for_capability, parse_capability_template, path_var_names_from_request,
@@ -7,14 +6,12 @@ use plasm_compile::{
 };
 use plasm_core::discovery::CatalogEntryMeta;
 use plasm_core::prompt_render::{
-    render_teaching_bundle, DomainLineKind, TeachingLineMeta, TeachingPromptModel,
-    TeachingPromptSettings, TeachingPromptSource,
+    DomainLineKind, EntityTeachingPrompt, TeachingLineMeta, TeachingPromptModel,
 };
 use plasm_core::schema::{
     input_variant_body_type, AuthScheme, EntityDef, FieldSchema, InputFieldSchema, InputFieldWire,
     InputType, OauthExtension, OutputType, RelationMaterialization, RelationSchema, CGS,
 };
-use plasm_core::symbol_tuning::FocusSpec;
 use plasm_core::value_domain::ProfileId;
 use plasm_core::{capability_method_label_kebab, CapabilityKind, CapabilitySchema, FieldType};
 use plasm_core::{catalog_connect_profile, CatalogConnectProfile};
@@ -157,6 +154,9 @@ impl ToolModelExecuteContinuations {
 
 #[derive(Debug, Serialize)]
 pub struct ToolModelDomainBlock {
+    pub language: &'static str,
+    pub reference: &'static str,
+    pub declarations: String,
     pub model: TeachingPromptModel,
 }
 
@@ -1002,83 +1002,72 @@ fn validate_entity_names(cgs: &CGS, names: &[String]) -> Result<(), ToolModelBui
 fn render_bundle_for_tool_model(
     cgs: &CGS,
     q: &ToolModelQuery,
-) -> Result<
-    (
-        plasm_core::prompt_render::TeachingPromptBundle,
-        &'static str,
-    ),
-    ToolModelBuildError,
-> {
+) -> Result<(TeachingPromptModel, String, &'static str), ToolModelBuildError> {
     let mode = ToolModelFocusMode::parse(&q.focus)?;
-    match mode {
-        ToolModelFocusMode::All => {
-            validate_entity_names(cgs, &q.entity)?;
-            if !q.entity.is_empty() {
-                return Err(ToolModelBuildError::BadRequest(
-                    "focus=all does not accept entity= parameters".into(),
-                ));
-            }
-            Ok((
-                render_teaching_bundle(
-                    cgs,
-                    TeachingPromptSource::Catalog {
-                        focus: FocusSpec::All,
-                    },
-                    TeachingPromptSettings {
-                        include_domain_execution_model: true,
-                        symbolic: false,
-                        symbol_map_cross_cache: None,
-                    },
-                ),
-                mode.as_str(),
+    validate_entity_names(cgs, &q.entity)?;
+    let mut names: Vec<String> = match mode {
+        ToolModelFocusMode::All if q.entity.is_empty() => {
+            cgs.entities.keys().map(ToString::to_string).collect()
+        }
+        ToolModelFocusMode::Single if q.entity.len() == 1 => q.entity.clone(),
+        ToolModelFocusMode::Seeds if !q.entity.is_empty() => q.entity.clone(),
+        _ => {
+            return Err(ToolModelBuildError::BadRequest(
+                "all accepts no entities; single needs one; seeds needs at least one".into(),
             ))
         }
-        ToolModelFocusMode::Single => {
-            if q.entity.len() != 1 {
-                return Err(ToolModelBuildError::BadRequest(
-                    "focus=single requires exactly one entity= parameter".into(),
-                ));
+    };
+    names.sort();
+    let refs = names.iter().map(String::as_str).collect::<Vec<_>>();
+    let exposure = plasm_core::TeachingExposureSession::new(cgs, "explorer", &refs);
+    let wave = plasm_core::prompt_render::python::prepare_python_teaching_wave(
+        &exposure,
+        &Default::default(),
+    )
+    .map_err(ToolModelBuildError::BadRequest)?;
+    let mut model = TeachingPromptModel::default();
+    for name in names {
+        let symbol = exposure
+            .qualified_entity_symbol("explorer", &name)
+            .expect("exposed entity");
+        let mut lines = Vec::new();
+        for covered in &wave.capabilities {
+            let cap = cgs
+                .get_capability(&covered.capability)
+                .expect("catalog capability");
+            if cap.domain.as_str() != name {
+                continue;
             }
-            validate_entity_names(cgs, &q.entity)?;
-            Ok((
-                render_teaching_bundle(
-                    cgs,
-                    TeachingPromptSource::Catalog {
-                        focus: FocusSpec::Single(q.entity[0].as_str()),
-                    },
-                    TeachingPromptSettings {
-                        include_domain_execution_model: true,
-                        symbolic: false,
-                        symbol_map_cross_cache: None,
-                    },
+            let expression = match &covered.signature {
+                Some(signature) => format!("class {symbol}:\n{signature}"),
+                None => format!(
+                    "# {symbol}: unavailable: {}",
+                    covered
+                        .unavailable
+                        .as_deref()
+                        .unwrap_or("no Python declaration")
                 ),
-                mode.as_str(),
-            ))
+            };
+            let kind = match cap.kind {
+                CapabilityKind::Get => DomainLineKind::Get,
+                CapabilityKind::Query => DomainLineKind::Query,
+                CapabilityKind::Search => DomainLineKind::Search,
+                _ => DomainLineKind::Method,
+            };
+            lines.push(TeachingLineMeta {
+                expression,
+                kind,
+                source_capability: Some(covered.capability.clone()),
+                cross_entity: None,
+                relation_materialization: None,
+            });
         }
-        ToolModelFocusMode::Seeds => {
-            if q.entity.is_empty() {
-                return Err(ToolModelBuildError::BadRequest(
-                    "focus=seeds requires at least one entity= parameter".into(),
-                ));
-            }
-            validate_entity_names(cgs, &q.entity)?;
-            let refs: Vec<&str> = q.entity.iter().map(|s| s.as_str()).collect();
-            Ok((
-                render_teaching_bundle(
-                    cgs,
-                    TeachingPromptSource::Catalog {
-                        focus: FocusSpec::Seeds(&refs),
-                    },
-                    TeachingPromptSettings {
-                        include_domain_execution_model: true,
-                        symbolic: false,
-                        symbol_map_cross_cache: None,
-                    },
-                ),
-                mode.as_str(),
-            ))
-        }
+        model.entities.push(EntityTeachingPrompt {
+            entity: name,
+            lines,
+        });
     }
+    Ok((model, wave.declarations, mode.as_str()))
 }
 
 /// Build JSON for the explorer UI; mirrors CLI affordances in [`crate::cli_builder`] and teaching model in prompt render.
@@ -1087,14 +1076,9 @@ pub fn build_tool_model(
     meta: &CatalogEntryMeta,
     q: &ToolModelQuery,
 ) -> Result<ToolModelResponse, ToolModelBuildError> {
-    let (bundle, mode_label) = render_bundle_for_tool_model(cgs, q)?;
+    let (model, declarations, mode_label) = render_bundle_for_tool_model(cgs, q)?;
 
-    let resolved_entities: Vec<String> = bundle
-        .model
-        .entities
-        .iter()
-        .map(|e| e.entity.clone())
-        .collect();
+    let resolved_entities: Vec<String> = model.entities.iter().map(|e| e.entity.clone()).collect();
 
     let invoke_by_domain = invoke_capabilities_by_domain(cgs);
 
@@ -1102,14 +1086,11 @@ pub fn build_tool_model(
     let mut relation_edge_count: usize = 0;
     let mut verb_count: usize = 0;
 
-    for edp in &bundle.model.entities {
+    for edp in &model.entities {
         let name = edp.entity.as_str();
         let Some(entity) = cgs.entities.get(name) else {
             continue;
         };
-        if entity.abstract_entity {
-            continue;
-        }
 
         let invoke_caps = invoke_by_domain
             .get(name)
@@ -1148,7 +1129,10 @@ pub fn build_tool_model(
         },
         entities: entities_out,
         domain: ToolModelDomainBlock {
-            model: bundle.model,
+            language: "python",
+            reference: plasm_core::prompt_render::python::LANGUAGE,
+            declarations,
+            model,
         },
     })
 }

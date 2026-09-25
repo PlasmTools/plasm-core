@@ -8,7 +8,7 @@ use std::collections::HashSet;
 
 use plasm_core::{
     capability_method_label_kebab, CapabilityKind, CapabilityParamName, CapabilitySchema,
-    EntityDef, FieldType, PromptRenderMode, RelationMaterialization, CGS,
+    EntityDef, FieldType, RelationMaterialization, CGS,
 };
 
 use crate::invoke_args::build_invoke_args;
@@ -515,7 +515,7 @@ pub fn build_app(cgs: &CGS, surface: AgentCliSurface) -> Command {
         ),
         AgentCliSurface::Repl => (
             "plasm-repl",
-            "Interactive path-expression REPL against a live backend",
+            "Interactive Python DAG REPL against a live backend",
         ),
     };
 
@@ -556,13 +556,7 @@ pub fn build_app(cgs: &CGS, surface: AgentCliSurface) -> Command {
                 .long("focus")
                 .help("Schema prompt: focus entity (same as plasm-eval --focus)"),
         )
-        .arg(
-            Arg::new("symbol_tuning")
-                .long("symbol-tuning")
-                .default_value("tsv")
-                .value_parser(PromptRenderMode::USER_FACING_VALUES)
-                .help("Prompt render mode for schema/session instructions"),
-        );
+        ;
 
     match surface {
         AgentCliSurface::CgsClient => {

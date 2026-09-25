@@ -75,6 +75,7 @@ pub fn matrix_federated_auth_session_session(cgs: Arc<plasm_core::CGS>) -> Execu
     )
 }
 
+#[allow(dead_code)] // Shared fixture helper; not every integration binary uses it.
 pub fn language_matrix_schema_dir() -> PathBuf {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let candidates = [
@@ -92,6 +93,7 @@ pub fn language_matrix_schema_dir() -> PathBuf {
     );
 }
 
+#[allow(dead_code)] // Shared fixture helper; not every integration binary uses it.
 pub fn load_language_matrix_cgs() -> Arc<plasm_core::CGS> {
     let dir = language_matrix_schema_dir();
     Arc::new(

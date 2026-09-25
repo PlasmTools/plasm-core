@@ -32,14 +32,14 @@ export function* sessionCases(count: number, seed = 0x51a17e): Generator<AgentSe
     let intentProvenance = deriveIntent(undefined, intent);
     for (let turn = next() % 8; turn > 0; turn--) intentProvenance = deriveIntent(intentProvenance, workflowIntentSchema.parse(`Resolve ${text()}`));
     yield {
-      schemaVersion: 2,
+      schemaVersion: 3,
       intentProvenance,
       intent,
       logicalSessionRef: logicalSessionRefSchema.parse(formatLogicalSessionWireRef(bytes)),
       logicalSessionId: `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`,
       tenantScope: `tenant:${text()}`,
-      seeds: [{ api: "matrix", entity: text() }], teachingTsv: text(),
-      waves: [{ entryId: "matrix", entities: [text()], tsv: text(), at: "2026-09-20T00:00:00.000Z" }],
+      seeds: [{ api: "matrix", entity: text() }], teachingPrompt: text(),
+      waves: [{ entryId: "matrix", entities: [text()], prompt: text(), at: "2026-09-20T00:00:00.000Z" }],
       planCommits: [{ ref: "pc0", program: text(), at: "2026-09-20T00:00:00.000Z", writeCount: i % 3 }],
       routingClosures: [{
         business: [{ catalog: "matrix", capability: "read" }], input_sources: [], prerequisites: [],
@@ -78,7 +78,7 @@ async function main(): Promise<void> {
         assert.throws(() => decodeSessionState({ ...state, seeds: "invalid" }, identity));
         for (const invalid of ["\0", "\ud800", "\udfff"]) {
           assert.throws(() => workflowIntentSchema.parse(`${state.intent}${invalid}`));
-          assert.throws(() => encodeSessionState({ ...state, teachingTsv: invalid }, identity));
+          assert.throws(() => encodeSessionState({ ...state, teachingPrompt: invalid }, identity));
           assert.throws(() => decodeSessionState({ ...state, intent: `${state.intent}${invalid}${state.logicalSessionRef}` }, identity));
         }
         const next = workflowIntentSchema.parse("Read related details.");

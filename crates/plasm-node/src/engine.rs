@@ -10,8 +10,8 @@ use plasm_agent_core::operation::{
     compute_plan_commit_id_from_dry, PlanCommitRecord, PLAN_COMMIT_TTL,
 };
 use plasm_agent_core::plan_commit_store::{dry_for_committed_plasm_run, resolve_committed_plan};
-use plasm_agent_core::plasm_compile::compile_plasm_expression;
-use plasm_agent_core::plasm_plan_run::run_plasm_comp;
+use plasm_agent_core::plasm_compile::compile_program;
+use plasm_agent_core::plasm_plan_run::run_plasm_comp_python as run_plasm_comp;
 use plasm_agent_core::plasm_plan_run::{
     evaluate_plasm_comp_dry, plan_dry_compact_view, render_plasm_plan_dry_text_for_session,
 };
@@ -20,9 +20,8 @@ use plasm_agent_core::run_artifacts::RunArtifactStore;
 use plasm_agent_core::server_state::CatalogBootstrap;
 use plasm_agent_core::PlasmCompBundle;
 use plasm_core::discovery::{CgsRegistry, RegistryEntryPair};
-use plasm_core::prompt_render::{teaching_tsv_from_wrapped_prompt, TeachingFenceSlice};
 use plasm_core::{
-    capability_method_label_kebab, ExposureEntityKey, InputSchema, NamedValueSchema, OutputSchema,
+    capability_method_label_kebab, ExposureEntityKey, NamedValueSchema, OutputSchema,
     PromptPipelineConfig, SymbolMapCrossRequestCache, TeachingExposureSession, CGS,
 };
 use plasm_core::{PagingHandle, PlanCommitRef};
@@ -49,12 +48,23 @@ pub struct EntityIntrospection {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
+pub struct PythonCapabilityBinding {
+    pub entity_symbol: String,
+    pub method: String,
+    pub receiver: bool,
+    pub identity: Vec<String>,
+    pub unavailable: Option<String>,
+    pub parameters: Vec<plasm_core::InputFieldSchema>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct CapabilityIntrospection {
     pub name: String,
     pub kind: String,
     pub entity: String,
     pub invoke_wire_name: String,
-    pub input_schema: Option<InputSchema>,
+    pub python: PythonCapabilityBinding,
+    pub inputs: plasm_core::CapabilityInputs,
     pub provides: Vec<String>,
     pub output_schema: Option<OutputSchema>,
 }
@@ -76,7 +86,7 @@ pub struct CatalogInfo {
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct TeachingExposureResult {
-    pub tsv: String,
+    pub prompt: String,
     pub delta_refs: Vec<String>,
 }
 
@@ -129,6 +139,7 @@ fn live_run_meta_json(
 
 /// Agent-global engine state: one monotonic symbol registry per agent catalog universe.
 pub struct AgentEngine {
+    python_pool: Arc<plasm_agent_core::python_pool::PythonPool>,
     session_id: String,
     discovery_pin: Option<DiscoverySessionPin>,
     intent: String,
@@ -138,6 +149,7 @@ pub struct AgentEngine {
     compiled_catalogs: IndexMap<String, Arc<plasm_compile::CompiledCatalog>>,
     catalog_digests: IndexMap<String, String>,
     exposure: Option<TeachingExposureSession>,
+    python_teaching: plasm_core::prompt_render::python::PythonTeachingState,
     pipeline: PromptPipelineConfig,
     sym_cross: SymbolMapCrossRequestCache,
     /// Cached execute session with registered plan commits (invalidated on exposure change).
@@ -153,6 +165,7 @@ impl Default for AgentEngine {
 impl AgentEngine {
     pub fn new() -> Self {
         Self {
+            python_pool: Arc::new(Default::default()),
             session_id: plasm_agent_core::session_identity::LogicalSessionId::new_v4()
                 .as_uuid()
                 .to_string(),
@@ -164,6 +177,7 @@ impl AgentEngine {
             compiled_catalogs: IndexMap::new(),
             catalog_digests: IndexMap::new(),
             exposure: None,
+            python_teaching: Default::default(),
             pipeline: PromptPipelineConfig::default(),
             sym_cross: SymbolMapCrossRequestCache::from_env(),
             execute_session: None,
@@ -172,6 +186,10 @@ impl AgentEngine {
 
     pub fn set_intent(&mut self, intent: impl Into<String>) {
         self.intent = intent.into();
+    }
+
+    pub(crate) fn set_python_pool(&mut self, pool: Arc<plasm_agent_core::python_pool::PythonPool>) {
+        self.python_pool = pool;
     }
 
     pub fn introspect_catalog(&self, entry_id: &str) -> Result<CatalogIntrospection> {
@@ -206,6 +224,22 @@ impl AgentEngine {
             .collect();
         entities.sort_by(|a, b| a.name.cmp(&b.name));
 
+        let names = entities
+            .iter()
+            .filter(|entity| {
+                cgs.capabilities
+                    .values()
+                    .any(|cap| cap.domain.as_str() == entity.name)
+            })
+            .map(|entity| entity.name.as_str())
+            .collect::<Vec<_>>();
+        let exposure = plasm_core::TeachingExposureSession::new(cgs, entry_id, &names);
+        let symbols = exposure.to_symbol_map();
+        let wave = plasm_core::prompt_render::python::prepare_python_teaching_wave(
+            &exposure,
+            &Default::default(),
+        )
+        .map_err(anyhow::Error::msg)?;
         let mut capabilities: Vec<CapabilityIntrospection> = cgs
             .capabilities
             .values()
@@ -217,12 +251,44 @@ impl AgentEngine {
                     .unwrap_or_else(|| format!("{:?}", cap.kind).to_lowercase()),
                 entity: cap.domain.to_string(),
                 invoke_wire_name: capability_method_label_kebab(cap),
-                // Prefer payload, else arguments (CapabilityInputs lanes — no legacy `input_schema`).
-                input_schema: cap
-                    .inputs
-                    .payload
-                    .clone()
-                    .or_else(|| cap.inputs.arguments.clone()),
+                python: PythonCapabilityBinding {
+                    entity_symbol: exposure
+                        .qualified_entity_symbol(entry_id, cap.domain.as_str())
+                        .expect("exposed capability"),
+                    method: plasm_core::prompt_render::python::capability_method_name(
+                        cgs, &symbols, entry_id, cap,
+                    ),
+                    receiver: cap.requires_receiver()
+                        && !matches!(
+                            cap.kind,
+                            plasm_core::CapabilityKind::Get
+                                | plasm_core::CapabilityKind::Query
+                                | plasm_core::CapabilityKind::Search
+                        ),
+                    identity: if (cap.kind == plasm_core::CapabilityKind::Get
+                        && !cap.get_requires_identity_anchor(cgs))
+                        || plasm_core::sole_nullary_singleton_get(cgs, cap.domain.as_str())
+                            .is_some()
+                    {
+                        vec![]
+                    } else {
+                        let entity = cgs
+                            .get_entity(cap.domain.as_str())
+                            .expect("capability entity");
+                        if entity.key_vars.len() > 1 {
+                            entity.key_vars.iter().map(ToString::to_string).collect()
+                        } else {
+                            vec![entity.id_field.to_string()]
+                        }
+                    },
+                    parameters: cap.input_fields().cloned().collect(),
+                    unavailable: wave
+                        .capabilities
+                        .iter()
+                        .find(|covered| covered.capability == cap.name.as_str())
+                        .and_then(|covered| covered.unavailable.clone()),
+                },
+                inputs: cap.inputs.clone(),
                 provides: cgs.effective_ordered_response_fields(cap),
                 output_schema: cap.output_schema.clone(),
             })
@@ -401,6 +467,7 @@ impl AgentEngine {
         let exposure = self
             .exposure
             .as_ref()
+            .cloned()
             .ok_or_else(|| anyhow!("ready routing has no teaching exposure"))?;
         if let Some(session) = &mut self.execute_session {
             // Keep graph state and reviewed plans while appending symbols.
@@ -409,7 +476,7 @@ impl AgentEngine {
             session.context_intent = Some(self.intent.clone());
             session.domain_revision += 1;
         }
-        let mut tsv = self.render_teaching_delta(&touched)?;
+        let mut prompt = self.render_teaching_delta(&touched)?;
         let catalogs = self
             .catalogs
             .iter()
@@ -423,11 +490,11 @@ impl AgentEngine {
         )
         .map_err(anyhow::Error::msg)?;
         if !guidance.is_empty() {
-            tsv.push_str("\n\n");
-            tsv.push_str(&guidance);
+            prompt.push_str("\n\n");
+            prompt.push_str(&guidance);
         }
         Ok(TeachingExposureResult {
-            tsv,
+            prompt,
             delta_refs: touched
                 .iter()
                 .map(|e| format!("{}:{}", e.entry_id, e.entity))
@@ -495,7 +562,7 @@ impl AgentEngine {
             return Err(anyhow!("program is empty"));
         }
         let es = self.ensure_execute_session()?;
-        let bundle = match compile_plasm_expression(
+        let bundle = match compile_program(
             &self.pipeline,
             Some(&self.sym_cross),
             &es,
@@ -584,15 +651,8 @@ impl AgentEngine {
                 .map_err(|e| anyhow!("dry evaluation for committed plan: {e}"))?;
             (bundle, dry)
         } else if let Ok(handle) = PagingHandle::parse(trimmed) {
-            let program = format!("page({handle})");
-            let bundle = compile_plasm_expression(
-                &self.pipeline,
-                Some(&self.sym_cross),
-                &es,
-                "plasm_node_page",
-                &program,
-            )
-            .map_err(|e| anyhow!("paging plan: {e}"))?;
+            let bundle = plasm_agent_core::mcp_server::compile_page_continuation(&es, &handle, 0)
+                .map_err(|e| anyhow!("paging plan: {e}"))?;
             let dry = evaluate_plasm_comp_dry(&es, &bundle)
                 .map_err(|e| anyhow!("dry evaluation for paging: {e}"))?;
             (bundle, dry)
@@ -673,7 +733,7 @@ impl AgentEngine {
         };
         config.apply_http_env_overrides();
         let engine = ExecutionEngine::new_with_transport(config, transport, None);
-        Ok(build_plasm_host_state(PlasmHostBootstrap {
+        let mut state = build_plasm_host_state(PlasmHostBootstrap {
             engine,
             mode: ExecutionMode::Live,
             registry: Arc::new(registry),
@@ -682,7 +742,9 @@ impl AgentEngine {
             run_artifacts: Arc::new(RunArtifactStore::memory()),
             session_graph_persistence: None,
             oss_local_filesystem_defaults: false,
-        }))
+        });
+        state.oss.python_pool = self.python_pool.clone();
+        Ok(state)
     }
 
     pub(crate) fn primary_entry_id(&self) -> Option<String> {
@@ -708,54 +770,30 @@ impl AgentEngine {
         self.execute_session = None;
     }
 
-    fn by_entry_cgs(&self) -> IndexMap<String, &CGS> {
-        self.catalogs
-            .iter()
-            .map(|(k, v)| (k.clone(), v.as_ref()))
-            .collect()
-    }
-
-    fn render_teaching_delta(&self, all_new_qualified: &[ExposureEntityKey]) -> Result<String> {
-        let exp = self
+    fn render_teaching_delta(
+        &mut self,
+        _all_new_qualified: &[ExposureEntityKey],
+    ) -> Result<String> {
+        let exposure = self
             .exposure
             .as_ref()
             .ok_or_else(|| anyhow!("exposure missing for render"))?;
-        let by_entry = self.by_entry_cgs();
-        let rendered = if by_entry.len() <= 1 {
-            let (_entry_id, cgs) = by_entry
-                .iter()
-                .next()
-                .ok_or_else(|| anyhow!("no catalogs loaded"))?;
-            let added_refs: Vec<&str> = all_new_qualified
-                .iter()
-                .map(|k| k.entity.as_str())
-                .collect();
-            self.pipeline.render_teaching_exposure_delta(
-                cgs,
-                exp,
-                &added_refs,
-                Some(&self.sym_cross),
-            )
+        let wave = plasm_core::prompt_render::python::prepare_python_teaching_wave(
+            exposure,
+            &self.python_teaching,
+        )
+        .map_err(anyhow::Error::msg)?;
+        let text = if wave.language.is_none() && wave.declarations.is_empty() {
+            String::new()
         } else {
-            self.pipeline.render_teaching_exposure_delta_federated(
-                &by_entry,
-                exp,
-                all_new_qualified,
-                Some(&self.sym_cross),
+            format!(
+                "{}\n\n```pyi\n{}\n```",
+                wave.language.unwrap_or_default(),
+                wave.declarations
             )
         };
-        let mode = self.pipeline.render_mode;
-        Ok(
-            plasm_core::teaching_tsv_table_from_wrapped_prompt_any(&rendered)
-                .or_else(|| {
-                    teaching_tsv_from_wrapped_prompt(
-                        &rendered,
-                        mode.markdown_fence_info_string(),
-                        TeachingFenceSlice::TableOnly,
-                    )
-                })
-                .unwrap_or(rendered),
-        )
+        self.python_teaching = wave.next_state;
+        Ok(text)
     }
 
     fn build_execute_session(&self) -> Result<ExecuteSession> {
@@ -946,6 +984,56 @@ mod tests {
     }
 
     #[test]
+    fn introspection_bindings_match_full_python_exposure() {
+        let (mut engine, _) = tiny_engine();
+        let catalog = engine.introspect_catalog("matrix").unwrap();
+        let seeds = catalog
+            .entities
+            .iter()
+            .filter(|entity| {
+                catalog
+                    .capabilities
+                    .iter()
+                    .any(|cap| cap.entity == entity.name)
+            })
+            .map(|entity| CapabilitySeed {
+                entry_id: "matrix".into(),
+                entity: entity.name.clone(),
+            })
+            .collect::<Vec<_>>();
+        let teaching = engine.expose_seeds("", &seeds).unwrap();
+        for cap in &catalog.capabilities {
+            if cap.python.unavailable.is_some() {
+                continue;
+            }
+            assert!(
+                teaching
+                    .prompt
+                    .contains(&format!("def {}(", cap.python.method)),
+                "missing {}",
+                cap.name
+            );
+            let exposure = engine.exposure.as_ref().unwrap();
+            assert_eq!(
+                exposure
+                    .qualified_entity_symbol("matrix", &cap.entity)
+                    .unwrap(),
+                cap.python.entity_symbol
+            );
+            let cgs = &engine.catalogs["matrix"];
+            assert_eq!(
+                plasm_core::prompt_render::python::capability_method_name(
+                    cgs,
+                    &exposure.to_symbol_map(),
+                    "matrix",
+                    &cgs.capabilities[cap.name.as_str()]
+                ),
+                cap.python.method
+            );
+        }
+    }
+
+    #[test]
     fn load_expose_and_dry_run_execute_tiny() {
         let (mut engine, info) = tiny_engine();
         assert!(!info.catalog_cgs_hash.is_empty());
@@ -958,8 +1046,10 @@ mod tests {
                 }],
             )
             .expect("expose");
-        assert!(teaching.tsv.contains("e1") || !teaching.tsv.is_empty());
-        let dry = engine.dry_run("e1").expect("dry run");
+        assert!(teaching.prompt.contains("e1") || !teaching.prompt.is_empty());
+        let dry = engine
+            .dry_run("class Read(Program):\n    def build(self):\n        return e1.query()\n")
+            .expect("dry run");
         assert!(dry.plan_commit_ref.starts_with("pc"));
         assert!(!dry.summary.is_empty());
         assert!(
@@ -981,13 +1071,13 @@ mod tests {
                 }],
             )
             .expect("expose");
-        let program = "rows = e1\nbad = rows | select not_a_taught_field\nbad";
+        let program = "class Read(Program):\n    def build(self):\n        return e1.query().select(\"not_a_taught_field\")\n";
         let first = engine
             .dry_run(program)
             .expect_err("unknown field is a compile reject")
             .to_string();
         assert!(
-            first.contains("not a row field"),
+            first.contains("not_a_taught_field"),
             "first reject names the field: {first}"
         );
         assert!(
@@ -1040,10 +1130,6 @@ mod tests {
     #[test]
     fn expose_seeds_teaches_ra12_return_projection_not_provides_subset() {
         let (mut engine, info) = return_projection_engine();
-        let notice_full = "[notice_id,author_email,body,created_at,title]";
-        let notice_summary = "[notice_id,title]";
-        let tx_full = "[transaction_id,amount,created_at,description,private]";
-        let tx_summary = "[transaction_id,amount,description]";
         let teaching = engine
             .expose_seeds(
                 "review transfers and notices",
@@ -1059,32 +1145,29 @@ mod tests {
                 ],
             )
             .expect("exposeSeeds");
+        for field in [
+            "notice_id",
+            "author_email",
+            "body",
+            "created_at",
+            "title",
+            "transaction_id",
+            "amount",
+            "description",
+            "private",
+        ] {
+            assert!(
+                teaching.prompt.contains(&format!("{field}:")),
+                "missing typed field {field}: {}",
+                teaching.prompt
+            );
+        }
         assert!(
-            teaching.tsv.contains(notice_full),
-            "exposeSeeds must teach RA-12 {notice_full}; card:\n{}",
-            teaching.tsv
-        );
-        assert!(
-            !teaching.tsv.contains(notice_summary),
-            "exposeSeeds must not teach provides {notice_summary}; card:\n{}",
-            teaching.tsv
-        );
-        assert!(
-            teaching.tsv.contains(tx_full),
-            "exposeSeeds must teach RA-12 {tx_full}; card:\n{}",
-            teaching.tsv
-        );
-        assert!(
-            !teaching.tsv.contains(tx_summary),
-            "exposeSeeds must not teach T132207 provides {tx_summary}; card:\n{}",
-            teaching.tsv
-        );
-        assert!(
-            teaching.tsv.contains("author_email")
-                && teaching.tsv.contains("created_at")
-                && teaching.tsv.contains("private"),
+            teaching.prompt.contains("author_email")
+                && teaching.prompt.contains("created_at")
+                && teaching.prompt.contains("private"),
             "sheared decode fields must appear on the exposeSeeds card:\n{}",
-            teaching.tsv
+            teaching.prompt
         );
     }
 
@@ -1156,7 +1239,9 @@ mod tests {
                 }],
             )
             .expect("expose");
-        let dry = engine.dry_run("e1").expect("dry run");
+        let dry = engine
+            .dry_run("class Read(Program):\n    def build(self):\n        return e1.query()\n")
+            .expect("dry run");
         let transport = Arc::new(MockProductListTransport);
         let live = engine
             .run_plan_live(&dry.plan_commit_ref, transport)
@@ -1243,7 +1328,9 @@ mod tests {
                     engine.expose_seeds("update items", &[CapabilitySeed {
                         entry_id: "matrix".into(), entity: "LangItem".into(),
                     }]).unwrap();
-                    let dry = engine.dry_run("items = LangItem\ndone = items => _.update(title=\"checked\", score=2, owner=\"alice\")\ndone").unwrap();
+                    let cgs = &engine.catalogs["matrix"];
+                    let symbol = plasm_core::prompt_render::python::capability_method_name(cgs, &engine.exposure.as_ref().unwrap().to_symbol_map(), "matrix", &cgs.capabilities["langitem_update"]);
+                    let dry = engine.dry_run(&format!("class Update(Program):\n    def build(self):\n        return e1.query().flat_map(lambda row: row.{symbol}(title=\"checked\", score=2, owner=\"alice\"))\n")).unwrap();
                     let transport = Arc::new(RecordingItemTransport(std::sync::Mutex::new(Vec::new())));
                     let live = engine.run_plan_live(&dry.plan_commit_ref, transport.clone()).await.unwrap();
                     assert!(live.ok, "{}", live.message);
@@ -1288,7 +1375,9 @@ mod tests {
             route("product_list").business
         );
         let initial_entities = engine.exposure.as_ref().unwrap().entities.clone();
-        let dry = engine.dry_run("e1").unwrap();
+        let dry = engine
+            .dry_run("class Read(Program):\n    def build(self):\n        return e1.query()\n")
+            .unwrap();
         assert_eq!(
             engine
                 .execute_session
@@ -1371,7 +1460,7 @@ mod tests {
             let eng = Arc::clone(&shared);
             handles.push(tokio::spawn(async move {
                 let mut g = eng.lock().await;
-                g.dry_run("e1")
+                g.dry_run("class Read(Program):\n    def build(self):\n        return e1.query()\n")
             }));
         }
         for (i, h) in handles.into_iter().enumerate() {
@@ -1462,7 +1551,9 @@ mod tests {
                 }],
             )
             .unwrap();
-        let dry = engine.dry_run("e1").unwrap();
+        let dry = engine
+            .dry_run("class Read(Program):\n    def build(self):\n        return e1.query()\n")
+            .unwrap();
         let first = engine
             .run_plan_live(&dry.plan_commit_ref, Arc::new(Pages))
             .await

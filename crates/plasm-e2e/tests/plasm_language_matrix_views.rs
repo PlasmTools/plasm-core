@@ -11,10 +11,10 @@ mod language_matrix_views;
 
 use std::sync::Arc;
 
-use plasm_agent::plasm_compile::compile_plasm_program;
+#[path = "plasm_language_matrix_views/python.rs"]
+mod python_parity;
 use plasm_agent::plasm_plan_run::{evaluate_plasm_comp_dry, run_plasm_comp};
 use plasm_compile::{validate_cgs_capability_templates, validate_cgs_views};
-use plasm_core::PromptPipelineConfig;
 use plasm_core::QueryExpr;
 use plasm_runtime::{
     preflight_view_query,
@@ -22,16 +22,17 @@ use plasm_runtime::{
     SessionMaterialization, ViewAmbientContext,
 };
 use plasm_runtime::{ExecutionConfig, ExecutionEngine};
+use python_parity::compile_views_program;
 
 use language_matrix_views::{
     language_matrix_views_schema_dir, load_language_matrix_views_cgs, views_execute_session,
     views_matrix_host_state, VIEWS_MATRIX_ENTRY_ID,
 };
 
-fn block_on_views_live<F>(fut: F) -> F::Output
+fn block_on_views_live<Make, F>(make: Make)
 where
-    F: std::future::Future + Send + 'static,
-    F::Output: Send + 'static,
+    Make: Fn(bool) -> F + Send + 'static,
+    F: std::future::Future<Output = ()> + Send + 'static,
 {
     std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)
@@ -40,7 +41,9 @@ where
                 .enable_all()
                 .build()
                 .expect("views live runtime");
-            rt.block_on(fut)
+            for python in [false, true] {
+                rt.block_on(make(python));
+            }
         })
         .expect("spawn views live harness")
         .join()
@@ -59,11 +62,51 @@ fn matrix_views_all_preflight() {
     let cgs = matrix_views_cgs();
     let compiled = plasm_compile::compile_cgs_capability_templates(&cgs).expect("compile CML");
     let ambient = ViewAmbientContext::default();
+    let entities: Vec<_> = MATRIX_VIEW_PREFLIGHT_CASES
+        .iter()
+        .map(|(_, entity)| *entity)
+        .collect();
+    let es = language_matrix_views::execute_session_for_entities(Arc::new(cgs.clone()), &entities);
+    let symbols = es.teaching_exposure.as_ref().unwrap().symbol_map_arc();
     for &(view_name, entity) in MATRIX_VIEW_PREFLIGHT_CASES {
         let query = matrix_view_query(entity);
+        let symbol = symbols.entity_sym_for(VIEWS_MATRIX_ENTRY_ID, entity);
+        // These are precisely matrix_view_query's scopes: item-1 for scoped views,
+        // no scope for the two dashboard views. Exercise public Python admission
+        // and planning before the same view-DAG preflight contract below.
+        let args = if matches!(entity, "LangWorkSnapshot" | "LangWorkSnapshotEmpty") {
+            ""
+        } else {
+            "item_id=\"item-1\""
+        };
+        let source = format!("class ViewPreflight(Program):\n    def build(self):\n        return {symbol}.query({args})\n");
+        let bundle = plasm_agent::plasm_compile::compile_python_program(&es, &source)
+            .unwrap_or_else(|err| panic!("{view_name} Python admission: {err}"));
+        evaluate_plasm_comp_dry(&es, &bundle)
+            .unwrap_or_else(|err| panic!("{view_name} Python dry: {err}"));
+        let lowered_query = bundle
+            .artifact()
+            .comp
+            .steps
+            .values()
+            .find_map(|step| {
+                let plasm_core::plasm_monad::PlasmStepPayload::Invoke(invoke) = step else {
+                    return None;
+                };
+                let plasm_core::Expr::Query(query) = &invoke.ir.as_ref()?.expr else {
+                    return None;
+                };
+                Some(query)
+            })
+            .expect("Python view query IR");
+        assert_eq!(lowered_query.entity, query.entity, "{view_name} entity");
+        assert_eq!(
+            lowered_query.predicate, query.predicate,
+            "{view_name} scope"
+        );
         preflight_view_query(
             view_name,
-            &query,
+            lowered_query,
             &cgs,
             &compiled,
             &ambient,
@@ -88,6 +131,15 @@ fn matrix_views_missing_scope_preflight_errors() {
     )
     .expect_err("missing scope");
     assert!(err.to_string().contains("item_id"), "{err}");
+    let es = language_matrix_views::execute_session_for_entities(Arc::new(cgs), &["LangDigest"]);
+    let symbols = es.teaching_exposure.as_ref().unwrap().symbol_map_arc();
+    let symbol = symbols.entity_sym_for(VIEWS_MATRIX_ENTRY_ID, "LangDigest");
+    let source = format!(
+        "class MissingScope(Program):\n    def build(self):\n        return {symbol}.query()\n"
+    );
+    let err = plasm_agent::plasm_compile::compile_python_program(&es, &source)
+        .expect_err("Python must reject missing required view scope");
+    assert!(err.to_string().contains("item_id"), "{err}");
 }
 
 /// Row-to-text render must persist wire-name column aliases in the comp wire. Fields bind by wire
@@ -95,7 +147,7 @@ fn matrix_views_missing_scope_preflight_errors() {
 /// wire names and the alias keys must be those wire names.
 #[test]
 fn matrix_views_row_to_text_wire_column_aliases() {
-    block_on_views_live(async {
+    block_on_views_live(|python| async move {
         let base = hermit_lang_matrix::language_matrix_hermit_base_url()
             .await
             .clone();
@@ -118,9 +170,8 @@ fn matrix_views_row_to_text_wire_column_aliases() {
         let program = format!(
             "items = LangItem(\"i1\") | select {f_id}, {f_title}\nreport = items => <<PLASM_VIEWS_WIRE_BODY\n- {{{{ {f_id} }}}}: {{{{ {f_title} }}}}\nPLASM_VIEWS_WIRE_BODY\nreport"
         );
-        let bundle = compile_plasm_program(
-            &PromptPipelineConfig::default(),
-            None,
+        let bundle = compile_views_program(
+            python,
             es.as_ref(),
             "matrix_views_wire_body_render",
             &program,
@@ -184,7 +235,7 @@ fn matrix_views_row_to_text_wire_column_aliases() {
 
 #[test]
 fn matrix_views_row_to_text_source_alias_iteration() {
-    block_on_views_live(async {
+    block_on_views_live(|python| async move {
         let base = hermit_lang_matrix::language_matrix_hermit_base_url()
             .await
             .clone();
@@ -202,14 +253,9 @@ fn matrix_views_row_to_text_source_alias_iteration() {
         let program = format!(
             "items = LangItem(\"i1\") | select {p_id}, {p_title}, {p_score}\nreport = <<PLASM_VIEWS_ALIAS_BODY\n{{% for r in items %}}- {{{{ r.{p_id} }}}}: {{{{ r.{p_title} }}}} (score: {{{{ r.{p_score} or \"—\" }}}})\n{{% endfor %}}\nPLASM_VIEWS_ALIAS_BODY\nreport"
         );
-        let bundle = compile_plasm_program(
-            &PromptPipelineConfig::default(),
-            None,
-            es.as_ref(),
-            "matrix_views_alias_render",
-            &program,
-        )
-        .expect("compile plain-template collection render");
+        let bundle =
+            compile_views_program(python, es.as_ref(), "matrix_views_alias_render", &program)
+                .expect("compile plain-template collection render");
         evaluate_plasm_comp_dry(es.as_ref(), &bundle)
             .expect("dry plain-template collection render");
         let comp_wire = serde_json::to_string(&bundle.artifact().comp).expect("comp json");
@@ -255,7 +301,7 @@ fn matrix_views_row_to_text_source_alias_iteration() {
 /// Whole-collection text is one template evaluation (PLP-12); there is no implicit `rows` list.
 #[test]
 fn matrix_views_row_to_text_named_loop_cursor() {
-    block_on_views_live(async {
+    block_on_views_live(|python| async move {
         let base = hermit_lang_matrix::language_matrix_hermit_base_url()
             .await
             .clone();
@@ -263,9 +309,8 @@ fn matrix_views_row_to_text_named_loop_cursor() {
         plasm_compile::validate_cgs_capability_templates(&cgs).expect("templates");
         let es = Arc::new(views_execute_session(cgs.clone()));
         let program = "items = LangItem(\"i1\") | select id, title\nreport = <<PLASM_VIEWS_NAMED_CURSOR\n{% for entry in items %}- {{ entry.id }}: {{ entry.title or \"—\" }}\n{% endfor %}\nPLASM_VIEWS_NAMED_CURSOR\nreport";
-        let bundle = compile_plasm_program(
-            &PromptPipelineConfig::default(),
-            None,
+        let bundle = compile_views_program(
+            python,
             es.as_ref(),
             "matrix_views_named_cursor_render",
             program,
@@ -308,7 +353,7 @@ fn matrix_views_row_to_text_named_loop_cursor() {
 /// View-backed many-relations must execute via `view_embed` (not Unavailable cached-embed side door).
 #[test]
 fn matrix_views_view_embed_relation_traversal() {
-    block_on_views_live(async {
+    block_on_views_live(|python| async move {
         let base = hermit_lang_matrix::language_matrix_hermit_base_url()
             .await
             .clone();
@@ -324,14 +369,9 @@ fn matrix_views_view_embed_relation_traversal() {
         ));
         let es = Arc::new(views_execute_session(cgs.clone()));
         let program = "LangTriageContext(\"i1\").tags";
-        let bundle = compile_plasm_program(
-            &PromptPipelineConfig::default(),
-            None,
-            es.as_ref(),
-            "matrix_views_view_embed_tags",
-            program,
-        )
-        .expect("compile view_embed relation traversal");
+        let bundle =
+            compile_views_program(python, es.as_ref(), "matrix_views_view_embed_tags", program)
+                .expect("compile view_embed relation traversal");
         evaluate_plasm_comp_dry(es.as_ref(), &bundle).expect("dry view_embed relation traversal");
         let st = Arc::new(views_matrix_host_state(
             ExecutionEngine::new(ExecutionConfig {
@@ -370,7 +410,7 @@ fn matrix_views_view_embed_relation_traversal() {
 
 #[test]
 fn matrix_views_query_parent_fanout_preserves_embeds() {
-    block_on_views_live(async {
+    block_on_views_live(|python| async move {
         let base = hermit_lang_matrix::language_matrix_hermit_base_url()
             .await
             .clone();
@@ -381,14 +421,8 @@ fn matrix_views_query_parent_fanout_preserves_embeds() {
             "parent = LangTriageContext{item_id=\"i1\"} | take 1\ntags = parent => _.tags\ntags",
         ] {
             let es = Arc::new(views_execute_session(cgs.clone()));
-            let bundle = compile_plasm_program(
-                &PromptPipelineConfig::default(),
-                None,
-                es.as_ref(),
-                "view_parent_fanout",
-                program,
-            )
-            .expect("compile view parent relation");
+            let bundle = compile_views_program(python, es.as_ref(), "view_parent_fanout", program)
+                .expect("compile view parent relation");
             evaluate_plasm_comp_dry(es.as_ref(), &bundle).expect("preflight view parent relation");
             let st = Arc::new(views_matrix_host_state(
                 ExecutionEngine::new(ExecutionConfig {
@@ -424,7 +458,7 @@ fn matrix_views_query_parent_fanout_preserves_embeds() {
 /// Parameterless dashboard view: nonempty assigned items via view_embed.
 #[test]
 fn matrix_views_parameterless_dashboard_view_embed_nonempty() {
-    block_on_views_live(async {
+    block_on_views_live(|python| async move {
         let base = hermit_lang_matrix::language_matrix_hermit_base_url()
             .await
             .clone();
@@ -445,9 +479,8 @@ fn matrix_views_parameterless_dashboard_view_embed_nonempty() {
             map.ident_sym_relation_for(VIEWS_MATRIX_ENTRY_ID, "LangWorkSnapshot", "items");
         // Pathless dashboard Get: taught `e#.m#().r#` (receiver none), not kebab `e#.slug()`.
         let program = format!("{esym}.{msym}().{items_rel}");
-        let bundle = compile_plasm_program(
-            &PromptPipelineConfig::default(),
-            None,
+        let bundle = compile_views_program(
+            python,
             es.as_ref(),
             "matrix_views_work_snapshot_items",
             &program,
@@ -493,7 +526,7 @@ fn matrix_views_parameterless_dashboard_view_embed_nonempty() {
 /// Parameterless dashboard view: zero assigned items still succeeds via present-empty provenance.
 #[test]
 fn matrix_views_parameterless_dashboard_view_embed_empty() {
-    block_on_views_live(async {
+    block_on_views_live(|python| async move {
         let base = hermit_lang_matrix::language_matrix_hermit_base_url()
             .await
             .clone();
@@ -514,9 +547,8 @@ fn matrix_views_parameterless_dashboard_view_embed_empty() {
             map.ident_sym_relation_for(VIEWS_MATRIX_ENTRY_ID, "LangWorkSnapshotEmpty", "items");
         // Pathless dashboard Get: taught `e#.m#().r#` (receiver none), not kebab `e#.slug()`.
         let program = format!("{esym}.{msym}().{items_rel}");
-        let bundle = compile_plasm_program(
-            &PromptPipelineConfig::default(),
-            None,
+        let bundle = compile_views_program(
+            python,
             es.as_ref(),
             "matrix_views_work_snapshot_empty_items",
             &program,
@@ -559,15 +591,12 @@ async fn matrix_views_scoped_view_embed_empty_relation_dry() {
     let cgs = load_language_matrix_views_cgs();
     let es = Arc::new(views_execute_session(cgs.clone()));
     let program = "LangTriageContext(\"i2\").tags";
-    let bundle = compile_plasm_program(
-        &PromptPipelineConfig::default(),
-        None,
-        es.as_ref(),
-        "matrix_views_empty_tags_dry",
-        program,
-    )
-    .expect("compile empty scoped tags relation");
-    evaluate_plasm_comp_dry(es.as_ref(), &bundle).expect("dry empty scoped tags");
+    for python in [false, true] {
+        let bundle =
+            compile_views_program(python, es.as_ref(), "matrix_views_empty_tags_dry", program)
+                .expect("compile empty scoped tags relation");
+        evaluate_plasm_comp_dry(es.as_ref(), &bundle).expect("dry empty scoped tags");
+    }
 }
 
 #[test]
@@ -601,6 +630,18 @@ fn matrix_views_parse_rejects_unmaterialized_many_relation_before_normalize() {
         "expected ManyRelationUnmaterialized, got {:?}",
         err.kind
     );
+    let es = views_execute_session(Arc::new(cgs));
+    let error = compile_views_program(
+        true,
+        &es,
+        "matrix_views_view_embed_tags",
+        "LangTriageContext(\"i1\").tags",
+    )
+    .expect_err("Python must also reject an unmaterialized many relation");
+    assert!(
+        error.contains("materializ"),
+        "unexpected rejection: {error}"
+    );
 }
 
 #[test]
@@ -612,25 +653,21 @@ fn matrix_views_rowsets_taught_navigation_compiles_and_preflights() {
         cgs,
         &["Library", "Item", "Collection"],
     );
-    for program in [
-        "items = Library{access_token=\"test-token\"}.items\nitems",
-        "library = Library{access_token=\"test-token\"}\nitems = library.items\nitems",
-    ] {
-        let bundle = compile_plasm_program(
-            &PromptPipelineConfig::default(),
-            None,
-            &session,
-            "rowset_view",
-            program,
-        )
-        .expect("ordinary taught query and relation navigation");
-        evaluate_plasm_comp_dry(&session, &bundle).expect("dry composed rowset view");
+    for python in [false, true] {
+        for program in [
+            "items = Library{access_token=\"test-token\"}.items\nitems",
+            "library = Library{access_token=\"test-token\"}\nitems = library.items\nitems",
+        ] {
+            let bundle = compile_views_program(python, &session, "rowset_view", program)
+                .expect("ordinary taught query and relation navigation");
+            evaluate_plasm_comp_dry(&session, &bundle).expect("dry composed rowset view");
+        }
     }
 }
 
 #[test]
 fn matrix_views_query_only_parent_relations_live() {
-    block_on_views_live(async {
+    block_on_views_live(|python| async move {
         let app =
             axum::Router::new().fallback(axum::routing::get(|uri: axum::http::Uri| async move {
                 let body = match uri.path() {
@@ -669,7 +706,7 @@ fn matrix_views_query_only_parent_relations_live() {
             "library = Library{access_token=\"test-token\"} | select access_token\nitems = library => _.items\nitems",
         ] {
             let es = language_matrix_views::execute_session_for_entities(cgs.clone(), &["Library", "Item", "Collection"]);
-            let bundle = compile_plasm_program(&PromptPipelineConfig::default(), None, &es, "query_only_view", program).unwrap_or_else(|e| panic!("compile {program}: {e}"));
+            let bundle = compile_views_program(python, &es, "query_only_view", program).unwrap_or_else(|e| panic!("compile {program}: {e}"));
             evaluate_plasm_comp_dry(&es, &bundle).unwrap();
             let st = views_matrix_host_state(ExecutionEngine::new(ExecutionConfig { base_url: Some(base.clone()), ..Default::default() }).unwrap(), cgs.clone());
             let live = run_plasm_comp(&es, &st, es.prompt_hash.as_str(), "query_only_view", &bundle, true, None, None, None, None).await
@@ -683,7 +720,7 @@ fn matrix_views_query_only_parent_relations_live() {
             "library = Library{access_token=\"test-token\"} | where access_token = \"absent\"\nitems = library => _.items\nitems",
         ] {
             let es = language_matrix_views::execute_session_for_entities(cgs.clone(), &["Library", "Item", "Collection"]);
-            let bundle = compile_plasm_program(&PromptPipelineConfig::default(), None, &es, "empty_query_view", program).unwrap();
+            let bundle = compile_views_program(python, &es, "empty_query_view", program).unwrap();
             evaluate_plasm_comp_dry(&es, &bundle).unwrap();
             let st = views_matrix_host_state(ExecutionEngine::new(ExecutionConfig { base_url: Some(base.clone()), ..Default::default() }).unwrap(), cgs.clone());
             let live = run_plasm_comp(&es, &st, es.prompt_hash.as_str(), "empty_query_view", &bundle, true, None, None, None, None).await
@@ -697,14 +734,7 @@ fn matrix_views_query_only_parent_relations_live() {
             &["Library", "Item", "Collection"],
         );
         let program = "library = Library{access_token=\"test-token\"} | where access_token = \"absent\" | take 1\nitems = library.items\nitems";
-        let bundle = compile_plasm_program(
-            &PromptPipelineConfig::default(),
-            None,
-            &es,
-            "empty_singleton_view",
-            program,
-        )
-        .unwrap();
+        let bundle = compile_views_program(python, &es, "empty_singleton_view", program).unwrap();
         evaluate_plasm_comp_dry(&es, &bundle).unwrap();
         let st = views_matrix_host_state(
             ExecutionEngine::new(ExecutionConfig {

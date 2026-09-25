@@ -70,6 +70,9 @@ impl<T> BooleanExpr<T> {
     }
 
     /// Kleene logic matches nullable row comparisons; only Some(true) selects a row.
+    // SQL three-valued logic must inspect later operands after Unknown; try_fold
+    // would stop at None and miss a later decisive false/true.
+    #[allow(clippy::manual_try_fold)]
     pub fn evaluate(&self, atom: &impl Fn(&T) -> Option<bool>) -> Option<bool> {
         match self {
             Self::Atom(value) => atom(value),

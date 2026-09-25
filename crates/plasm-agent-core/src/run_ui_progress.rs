@@ -72,13 +72,26 @@ async fn get_run_ui_progress_stream(
         resolve_for_http(&st, &logical_session_ref, query.plan_commit_ref.as_deref()).await?;
     let handle = resolved.handle.clone();
     let snapshot = st.snapshot_for_running_op(&resolved);
-    let initial_seq = snapshot.n;
-    let initial_line = snapshot.json_line();
 
     if let Some(sess) = resolved.live_session.clone() {
         if sess.operation_has_live_executor(&handle) {
             if let Some(rx) = sess.operation_progress_subscribe(&handle) {
-                return Ok(operation_progress_json_sse(rx, initial_seq, initial_line));
+                let recover_session = sess.clone();
+                let recover_handle = handle.clone();
+                // Subscribe before refreshing the snapshot, closing the snapshot/subscribe race.
+                let latest = crate::op_ui_telemetry::OpUiTelemetry::from_live(&sess, &handle)
+                    .unwrap_or(snapshot.clone());
+                return Ok(operation_progress_json_sse(
+                    rx,
+                    latest.n,
+                    latest.json_line(),
+                    Arc::new(move || {
+                        crate::op_ui_telemetry::OpUiTelemetry::from_live(
+                            &recover_session,
+                            &recover_handle,
+                        )
+                    }),
+                ));
             }
         }
     }

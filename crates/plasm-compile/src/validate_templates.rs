@@ -319,6 +319,45 @@ fn validate_capability_params_wired_in_cml(
         }
     }
 
+    // Preflight inputs are consumed by typed reads before the final request.
+    // Count only steps whose produced keys actually reach the final CML.
+    if let Some(plan) = &cap.preflight {
+        use plasm_core::preflight::PreflightStep;
+        for step in plan.0.iter().rev() {
+            match step {
+                PreflightStep::HydrateEntityRefParam { param, merge, .. }
+                    if merge.keys().any(|key| wired.contains(key)) =>
+                {
+                    wired.insert(param.clone());
+                }
+                PreflightStep::QueryPick {
+                    when,
+                    scope,
+                    pick,
+                    merge,
+                    ..
+                } if merge.keys().any(|key| wired.contains(key)) => {
+                    wired.extend(when.iter().cloned());
+                    wired.insert(pick.equals_param.clone());
+                    wired.extend(scope.values().filter_map(|bind| bind.from_param.clone()));
+                }
+                PreflightStep::LabelIdsDelta {
+                    add_when,
+                    remove_when,
+                    merge,
+                    ..
+                } if wired.contains(merge) => {
+                    wired.insert(add_when.clone());
+                    wired.insert(remove_when.clone());
+                }
+                PreflightStep::ExistenceCheck { .. } => {
+                    wired.extend(cap.identity_key.iter().flatten().cloned());
+                }
+                _ => {}
+            }
+        }
+    }
+
     let mut missing: Vec<&str> = params
         .iter()
         .filter(|p| !wired.contains(p.name.as_str()))
@@ -872,6 +911,33 @@ mod tests {
         let err = validate_capability_params_wired_in_cml(&cgs, "commit_query", cap, &template)
             .unwrap_err();
         assert!(err.to_string().contains("repository"), "{err}");
+    }
+
+    #[test]
+    fn preflight_inputs_must_reach_the_final_wire() {
+        let cgs = commit_matrix_cgs();
+        let mut cap = cgs.capabilities["commit_query"].clone();
+        cap.inputs = Default::default();
+        cap.inputs.selection.0.push(
+            serde_json::from_value(serde_json::json!({
+                "name":"selector", "required":true,
+                "input_type":{"type":"value","field_type":"string"}
+            }))
+            .unwrap(),
+        );
+        cap.preflight = Some(serde_json::from_value(serde_json::json!([
+            {"kind":"hydrate_entity_ref_param","param":"selector","get":"repo_get","merge":{"resolved_id":"id"}}
+        ])).unwrap());
+        for (key, accepted) in [("resolved_id", true), ("unrelated", false)] {
+            let template = parse_capability_template(&serde_json::json!({
+                "method":"GET", "path":[{"type":"var","name":key}], "response":"bare_list"
+            }))
+            .unwrap();
+            assert_eq!(
+                validate_capability_params_wired_in_cml(&cgs, "query", &cap, &template).is_ok(),
+                accepted
+            );
+        }
     }
 
     #[test]

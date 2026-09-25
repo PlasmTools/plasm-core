@@ -23,7 +23,7 @@ async function main(): Promise<void> {
     throw new Error("execute_tiny stub missing product_get export");
   }
 
-  const dry = await dryRunProgram(mod.execute_tiny.builder, "e2");
+  const dry = await dryRunProgram(mod.execute_tiny.builder, "class Products(Program):\n    def build(self):\n        return e2.query()");
   if (!/^pc\d+$/i.test(dry.planCommitRef)) {
     throw new Error(`unexpected plan_commit_ref: ${dry.planCommitRef}`);
   }

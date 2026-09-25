@@ -200,7 +200,7 @@ pub(in crate::plasm_dag) fn compile_node_expr(
 
 /// Apply the root read/operation per row, then lower relation hops through the
 /// same traversal nodes used by ordinary bindings. A chain is not a unary leaf.
-fn lower_catalog_application(
+pub(in crate::plasm_dag) fn lower_catalog_application(
     session: &ExecuteSession,
     state: &CompileState<'_>,
     id: &str,
@@ -548,7 +548,10 @@ fn dag_node_is_get_identity(node: &DagNode) -> bool {
     }
 }
 
-fn require_iterate_seed_get_identity(node: &DagNode, seed: &str) -> Result<(), String> {
+pub(in crate::plasm_dag) fn require_iterate_seed_get_identity(
+    node: &DagNode,
+    seed: &str,
+) -> Result<(), String> {
     if dag_node_is_get_identity(node) {
         return Ok(());
     }
@@ -853,14 +856,36 @@ pub(in crate::plasm_dag) fn compile_surface_nodes(
         expr,
     )
     .map_err(|e| e.to_string())?;
+    compile_parsed_nodes(session, state, id, expr, parsed)
+}
+
+/// Frontend-independent admission of a resolved catalog expression.
+pub(in crate::plasm_dag) fn validate_catalog_operands(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    id: &str,
+    expr: &Expr,
+) -> Result<(), String> {
+    validate_invoke_scalar_field_refs(session, state, id, expr)?;
+    super::password_domain::validate_password_domain_bind(session, state, id, expr)?;
+    super::prerequisite_seats::validate_prerequisite_seat_bind(session, state, id, expr)?;
+    Ok(())
+}
+
+/// Both textual and Python frontends enter the same cardinality/domain checks.
+pub(super) fn compile_parsed_nodes(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    id: &str,
+    expr: &str,
+    mut parsed: plasm_core::expr_parser::ParsedExpr,
+) -> Result<Vec<DagNode>, String> {
     if let Some(wire) = parsed.field_dot_extract.take() {
         return super::scalar_extract::compile_catalog_singleton_field_dot(
             session, state, id, expr, parsed, wire,
         );
     }
-    validate_invoke_scalar_field_refs(session, state, id, &parsed.expr)?;
-    super::password_domain::validate_password_domain_bind(session, state, id, &parsed.expr)?;
-    super::prerequisite_seats::validate_prerequisite_seat_bind(session, state, id, &parsed.expr)?;
+    validate_catalog_operands(session, state, id, &parsed.expr)?;
     let mut extra_nodes = super::scalar_extract::expand_get_scalar_extracts_in_expr(
         session,
         state,

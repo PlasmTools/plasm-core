@@ -138,11 +138,19 @@ impl ExecutionEngine {
                 let count = cached_entities.len();
                 let mut stats = ExecutionStats::from_telemetry(consult, 0);
                 stats.record_rows_materialized(count);
+                // QueryIndex is populated only from exhausted non-paginated responses below.
+                // Reusing that exact scoped membership preserves collection coverage; unavailable
+                // hydrated fields still make the observation partial. Row count is not the proof.
+                let coverage = if cached_entities.iter().any(CachedEntity::has_unavailable_detail_fields) {
+                    ResultCoverage::Partial
+                } else {
+                    ResultCoverage::Complete
+                };
                 yield PageResult {
                     entities: cached_entities,
                     page_index: 0,
                     has_more: false,
-                    coverage: ResultCoverage::Unknown,
+                    coverage,
                     pagination_resume: None,
                     stats,
                     operations: OperationLedger::empty(),

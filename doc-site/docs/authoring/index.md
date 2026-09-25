@@ -5,13 +5,13 @@ description: Author and validate Plasm domain models (CGS, `domain.yaml`), capab
 
 # Plasm Authoring
 
-Iteratively author, validate, and test a **typed agent surface** (path expressions + teaching) from an API specification. This skill is the **single source of truth** for CGS / CML authoring inside `plasm-core`. The monorepo root delegates to this file; do not re-author CGS doctrine elsewhere.
+Iteratively author, validate, and test a **typed agent surface** (Python Program classes + typed teaching) from an API specification. This skill is the **single source of truth** for CGS / CML authoring inside `plasm-core`. The monorepo root delegates to this file; do not re-author CGS doctrine elsewhere.
 
 The two authored files are:
 
 - **`domain.yaml`** — CGS, the semantic model. Entities, fields, relations, capability declarations (`query`, `get`, `search`, `create`, `update`, `delete`, `action`), top-level **`values:`** registry (semantic slots), optional top-level **`data_classes:`** (Guardians-style information-flow labels and sink roles), and optional top-level **`views:`** composed read DAGs.
 - **`mappings.yaml`** — CML, the transport wiring. HTTP / GraphQL templates per capability, plus **`transport: view`** stubs that point at a **`views:`** key (no `method` / `path` for those rows).
-- **Runtime query semantics** (no extra YAML file). **Pagination** lives on CML query mappings (`pagination:` block). **Hydration** (default concurrent GET per query row) applies when CGS declares **both** `query` and `get` for the same entity unless execution opts out. Continuations and page sizing are expressed in **Plasm** (teaching table / `page(pg#)` / postfix limits where taught) — not by authoring synthetic CLI flags.
+- **Runtime query semantics** (no extra YAML file). **Pagination** lives on CML query mappings (`pagination:` block). **Hydration** (default concurrent GET per query row) applies when CGS declares **both** `query` and `get` for the same entity unless execution opts out. Continuations and page sizing are expressed in **Plasm** (typed Python declarations / host continuation handles / `.take(n)` where taught) — not by authoring synthetic CLI flags.
 
 For complete schema reference (types, operators, CML grammar, variable resolution, pagination block, default query hydration, action output, views, auth schemes), read [reference.md](reference.md).
 
@@ -200,7 +200,7 @@ capabilities:
     entity: Pet
 ```
 
-**teaching projection (prompt teaching, not decode):** Optional per-entity **`domain_projection_examples`** (default **true**) and **`primary_read:`** select which Get capability's ordered **`provides:`** drives the canonical **`[field,…]`** bracket on the **projection witness row** in language card (`plasm_expr` + `· projection` in Meaning). Set **`domain_projection_examples: false`** to omit that bracket. Declare explicit ordered **`provides:`** on the primary Get so the witness matches the fields you materialize (see [reference.md — Entities](reference.md#entities)).
+**Teaching projection:** Python entity declarations expose typed catalog fields; use `.select(...)` for an explicit row projection. Primary read capabilities and `provides:` still describe materialization. Historical `domain_projection_examples` only affects the internal native teaching oracle.
 
 **String fields:** on the corresponding **`values:`** row with **`type: string`**, set **`string_semantics:`** for every non-trivial string (`short`, `markdown`, `document`, `html`, `json_text`, …); plain `short` is the default when omitted.
 

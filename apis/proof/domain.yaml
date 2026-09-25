@@ -1,4 +1,4 @@
-version: 29
+version: 30
 http_backend: https://www.proofeditor.ai
 auth:
   scheme: bearer_token
@@ -21,7 +21,7 @@ entities:
     description: Opaque session credential reference scoped to one document and catalog revision.
     fields:
       reference:
-        value_ref: nv_proof_access_ref
+        value_ref: nv_proof_access_id
         required: true
       document:
         value_ref: nv_proof_document_ref
@@ -37,7 +37,7 @@ entities:
       - shared document
     fields:
       slug:
-        value_ref: nv_proof_document_ref
+        value_ref: nv_proof_document_id
         required: true
       markdown:
         value_ref: nv_proof_markdown
@@ -80,7 +80,7 @@ entities:
     domain_projection_examples: false
     fields:
       slug:
-        value_ref: nv_proof_document_ref
+        value_ref: nv_proof_document_id
         required: true
       marks:
         value_ref: nv_proof_json
@@ -182,7 +182,7 @@ entities:
     description: Result of creating a new shared document (ids, link, token).
     fields:
       slug:
-        value_ref: nv_proof_document_ref
+        value_ref: nv_proof_document_id
         required: false
       url:
         value_ref: nv_proof_str
@@ -1058,6 +1058,12 @@ capabilities:
           required: false
           description: DocumentAccess.reference for this document; omit for configured host authentication.
 values:
+  nv_proof_access_id:
+    type: string
+    description: Opaque document session credential identity.
+  nv_proof_document_id:
+    type: string
+    description: Document slug or id.
   nv_proof_access_ref:
     type: entity_ref
     target: DocumentAccess

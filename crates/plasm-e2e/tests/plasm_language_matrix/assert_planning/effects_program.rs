@@ -51,10 +51,12 @@ pub(crate) fn assert_planning_effects_program(
                     comp.get("steps")
                 ));
             }
-            if !computes
-                .iter()
-                .any(|c| matches!(c.op, ComputeOp::Render { .. }))
-            {
+            if !computes.iter().any(|c| {
+                matches!(
+                    c.op,
+                    ComputeOp::Render { .. } | ComputeOp::Python { per_row: true, .. }
+                )
+            }) {
                 return Err("expected bracket Render compute before create".into());
             }
             let mut saw_utf8 = false;
@@ -277,8 +279,9 @@ pub(crate) fn assert_planning_effects_program(
                     }
                 }
             }
-            if !saw_map_object {
-                return Err("expected derive map object with field t".into());
+            let projected = computes.iter().any(|c| matches!(&c.op, ComputeOp::With { columns } if columns.iter().any(|c| c.name.as_str() == "t" && matches!(&c.expr, plasm_core::WithExpr::Field(p) if p.dotted() == "title"))));
+            if !saw_map_object && !projected {
+                return Err("expected row mapping title -> t".into());
             }
             let q = first_query(surfaces)?;
             if q.capability_name.as_ref().map(|c| c.as_str()) != Some("langitem_search") {
@@ -480,10 +483,20 @@ pub(crate) fn assert_planning_effects_program(
                     comp.get("return")
                 ));
             }
+            // Python requires an explicit return; only native admission coerces omission.
+            let expected_coercion = if comp
+                .pointer("/metadata/source_language")
+                .and_then(|v| v.as_str())
+                == Some("python")
+            {
+                None
+            } else {
+                Some("limited")
+            };
             if comp
                 .pointer("/metadata/coerced_default_return")
                 .and_then(|v| v.as_str())
-                != Some("limited")
+                != expected_coercion
             {
                 return Err(format!(
                     "expected coerced_default_return `limited`, got {:?}",
@@ -498,10 +511,20 @@ pub(crate) fn assert_planning_effects_program(
                     comp.get("return")
                 ));
             }
+            // Python requires an explicit return; only native admission coerces omission.
+            let expected_coercion = if comp
+                .pointer("/metadata/source_language")
+                .and_then(|v| v.as_str())
+                == Some("python")
+            {
+                None
+            } else {
+                Some("sorted")
+            };
             if comp
                 .pointer("/metadata/coerced_default_return")
                 .and_then(|v| v.as_str())
-                != Some("sorted")
+                != expected_coercion
             {
                 return Err(format!(
                     "expected coerced_default_return `sorted`, got {:?}",

@@ -50,8 +50,13 @@ pub(in crate::plasm_dag) fn validate_invoke_scalar_field_refs(
             }
             return Ok(());
         }
-        Expr::Query(_)
-        | Expr::Get(_)
+        Expr::Query(query) => {
+            if let Some(predicate) = &query.predicate {
+                validate_query_field_refs(session, state, node_id, predicate)?;
+            }
+            return Ok(());
+        }
+        Expr::Get(_)
         | Expr::Page(_)
         | Expr::Wait(_)
         | Expr::Cancel(_)
@@ -173,4 +178,83 @@ fn binding_permits_scalar_field_extract(state: &CompileState<'_>, label: &str) -
 
 fn binding_is_scalar_cell(state: &CompileState<'_>, label: &str) -> bool {
     binding_contract(state, label).is_some_and(|c| c.is_scalar_cell())
+}
+
+/// Query selection uses the same scalar-field extraction law as invoke arguments.
+/// Bare rowset bindings remain available to catalog-declared collection inputs.
+fn validate_query_field_refs(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    node_id: &str,
+    predicate: &plasm_core::Predicate,
+) -> Result<(), String> {
+    use plasm_core::Predicate;
+    match predicate {
+        Predicate::True | Predicate::False => Ok(()),
+        Predicate::Comparison { field, value, .. } => {
+            validate_query_value_fields(session, state, node_id, field, &value.to_value())
+        }
+        Predicate::And { args } | Predicate::Or { args } => {
+            for arg in args {
+                validate_query_field_refs(session, state, node_id, arg)?;
+            }
+            Ok(())
+        }
+        Predicate::Not { predicate } => {
+            validate_query_field_refs(session, state, node_id, predicate)
+        }
+        Predicate::ExistsRelation { predicate, .. } => {
+            if let Some(predicate) = predicate {
+                validate_query_field_refs(session, state, node_id, predicate)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn validate_query_value_fields(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    node_id: &str,
+    param: &str,
+    value: &Value,
+) -> Result<(), String> {
+    match value {
+        Value::PlasmInputRef(PlasmInputRef::NodeInput { node, path }) if !path.is_empty() => {
+            reject_non_scalar_cell_invoke_refs(state, node_id, param, value)?;
+            let contract = binding_contract(state, node).ok_or("unknown query operand binding")?;
+            let path = plasm_core::FieldPath::from_dotted(&path.join("."))?;
+            let path = super::schema_validate::resolve_compute_field_path(
+                session,
+                None,
+                Some(&contract.row_entity),
+                &path,
+            )?;
+            super::schema_validate::validate_compute_paths_for_dag_source(
+                session,
+                state,
+                &[],
+                node,
+                &[path],
+                "query operand",
+            )
+        }
+        Value::Array(items) => {
+            for item in items {
+                validate_query_value_fields(session, state, node_id, param, item)?;
+            }
+            Ok(())
+        }
+        Value::Object(fields)
+        | Value::UnionCtor {
+            ctor_fields: fields,
+            ..
+        } => {
+            for item in fields.values() {
+                validate_query_value_fields(session, state, node_id, param, item)?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
 }

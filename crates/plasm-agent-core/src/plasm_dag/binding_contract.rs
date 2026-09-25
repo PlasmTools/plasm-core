@@ -231,7 +231,7 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
         }
         DagNodeSource::Compute {
             source,
-            op: ComputeOp::Render { .. },
+            op: ComputeOp::Render { .. } | ComputeOp::Python { per_row: true, .. },
             ..
         } => {
             let parent_card = binding_contract(state, source)
@@ -273,26 +273,21 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
         }
         DagNodeSource::ForEach {
             qualified_entity,
-            effect_kind,
+            effect_kind:
+                PlanNodeKind::Get | PlanNodeKind::Query | PlanNodeKind::Search | PlanNodeKind::Create,
             ..
-        } if matches!(
-            effect_kind,
-            PlanNodeKind::Get | PlanNodeKind::Query | PlanNodeKind::Search | PlanNodeKind::Create
-        ) =>
-        {
-            ProgramBindingContract {
-                label: label.to_string(),
-                row_entity: qualified_entity.clone(),
-                result_shape: crate::plasm_plan::ResultShape::List,
-                row_cardinality: RowCardinalityProof::StaticPlural,
-                value_kind,
-                continuation: ContinuationCapability::RelationDot {
-                    segments: SegmentPolicy::SingleSegment,
-                    method_invoke: true,
-                },
-                anchor: ContinuationAnchor::BindingLabel,
-            }
-        }
+        } => ProgramBindingContract {
+            label: label.to_string(),
+            row_entity: qualified_entity.clone(),
+            result_shape: crate::plasm_plan::ResultShape::List,
+            row_cardinality: RowCardinalityProof::StaticPlural,
+            value_kind,
+            continuation: ContinuationCapability::RelationDot {
+                segments: SegmentPolicy::SingleSegment,
+                method_invoke: true,
+            },
+            anchor: ContinuationAnchor::BindingLabel,
+        },
         DagNodeSource::Derive { .. }
         | DagNodeSource::ForEach { .. }
         | DagNodeSource::IterateUntil { .. } => ProgramBindingContract {

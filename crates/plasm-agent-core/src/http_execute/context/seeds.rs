@@ -80,13 +80,7 @@ pub(crate) fn format_session_unchanged_reuse_markdown(
 ) -> String {
     if let Some(exp) = exp.filter(|e| !e.entities.is_empty()) {
         let map = plasm_core::prompt_render::render_compact_exposure_symbol_map(exp);
-        let active = plasm_core::prompt_render::render_active_mutator_surface_recap(exp);
-        let mut out = format!("Unchanged — {map}.");
-        if !active.is_empty() {
-            out.push_str("\n\nActive mutators (reuse):\n```tsv\nplasm_expr\tMeaning\n");
-            out.push_str(&active);
-            out.push_str("\n```\n");
-        }
+        let mut out = format!("Unchanged — {map}. Reuse the supplied Python declarations.\n");
         out.push_str("Next: `plasm` / `plasm_run`.\n");
         out
     } else {
@@ -416,39 +410,20 @@ pub(crate) fn build_plasm_context_tool_meta(
     plasm
 }
 
-/// Wrap teaching table / incremental delta in a Markdown fenced block so MCP and other Markdown UIs
-/// preserve newlines (CommonMark collapses single newlines in ordinary paragraphs).
-pub(super) fn wrap_teaching_markdown_literal_block(body: &str, catalog_entry_id: &str) -> String {
-    let t = body.trim_end();
-    let fence = plasm_core::catalog_teaching_fence_info(catalog_entry_id);
-    format!("```{fence}\n{t}\n```\n")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::http_execute::context::exposure_fixtures::{load_matrix_cgs, matrix_exp_explicit};
+    use crate::http_execute::context::exposure_fixtures::matrix_exp_explicit;
     use crate::http_execute::ApplyCapabilitySeedsOutcome;
 
     #[test]
-    fn reuse_markdown_includes_active_mutator_recap() {
-        let cgs = load_matrix_cgs();
+    fn reuse_markdown_preserves_symbols_without_reteaching_syntax() {
         let exp = matrix_exp_explicit();
         let md = format_session_unchanged_reuse_markdown(Some(&exp));
-        assert!(
-            md.contains("Active mutators"),
-            "reuse markdown must recap mutators: {md}"
-        );
-        let cap = cgs
-            .get_capability("langitem_create")
-            .expect("langitem_create");
-        let method_sym =
-            exp.symbol_map_arc()
-                .method_sym_for("matrix", "LangItem", cap.name.as_str());
-        assert!(
-            md.contains(&method_sym),
-            "reuse recap must include {method_sym}: {md}"
-        );
+        assert!(md.contains("Reuse the supplied Python declarations"));
+        assert!(md.contains("e1"));
+        assert!(!md.contains("plasm_expr"));
+        assert!(!md.contains("```"));
     }
 
     #[test]

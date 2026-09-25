@@ -1,6 +1,6 @@
 //! Bind-graph layer scheduling for parallel comp step execution.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use plasm_core::plasm_monad::{PlasmBindGraph, PlasmStepPayload, StepId};
 use plasm_core::EffectClass;
@@ -39,41 +39,13 @@ pub(crate) fn bind_execution_graph_summary(
 pub(crate) fn bind_topo_execution_layers(
     bind: &PlasmBindGraph,
 ) -> Result<Vec<Vec<StepId>>, String> {
-    let mut remaining: HashSet<StepId> = bind.topo.iter().cloned().collect();
-    let mut done: HashSet<StepId> = HashSet::new();
-    let mut layers = Vec::new();
-    while !remaining.is_empty() {
-        let mut layer = Vec::new();
-        for id in &bind.topo {
-            if !remaining.contains(id) {
-                continue;
-            }
-            let ready = bind
-                .deps
-                .get(id)
-                .map(|deps| deps.iter().all(|d| done.contains(d)))
-                .unwrap_or(true);
-            if ready {
-                layer.push(id.clone());
-            }
-        }
-        if layer.is_empty() {
-            return Err(
-                "plan bind graph has cyclic or unsatisfiable step dependencies".to_string(),
-            );
-        }
-        for id in &layer {
-            remaining.remove(id);
-            done.insert(id.clone());
-        }
-        layers.push(layer);
-    }
-    Ok(layers)
+    bind.execution_layers(&Default::default())
 }
 
 #[must_use]
 pub(crate) fn comp_step_parallel_safe(payload: &PlasmStepPayload) -> bool {
     match payload {
+        PlasmStepPayload::MapBody(_) => false,
         PlasmStepPayload::Invoke(p) => p.effect_class == EffectClass::Read,
         PlasmStepPayload::Pure(_) | PlasmStepPayload::Map(_) | PlasmStepPayload::Derive(_) => true,
         PlasmStepPayload::FlatMapRelation(_) => true,

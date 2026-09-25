@@ -284,7 +284,7 @@ mod tests {
                         let rows = collect_all_embedded_relation_targets(
                             "children",
                             "Child",
-                            &[parent.clone()],
+                            std::slice::from_ref(&parent),
                             &graph.lock().unwrap(),
                         )
                         .unwrap();
@@ -326,12 +326,12 @@ mod tests {
                     }]).unwrap();
                 }
             }
-            let rows = collect_all_embedded_relation_targets("children", "Child", &[parent.clone()], &graph).unwrap();
+            let rows = collect_all_embedded_relation_targets("children", "Child", std::slice::from_ref(&parent), &graph).unwrap();
             proptest::prop_assert_eq!(rows.iter().map(|r| r.reference.clone()).collect::<Vec<_>>(), refs);
             for (row, exists) in rows.iter().zip(&present) {
                 proptest::prop_assert_eq!(row.completeness, if *exists { plasm_runtime::EntityCompleteness::Complete } else { plasm_runtime::EntityCompleteness::Summary });
             }
-            proptest::prop_assert!(collect_all_embedded_relation_targets("missing", "Child", &[parent.clone()], &graph).is_none());
+            proptest::prop_assert!(collect_all_embedded_relation_targets("missing", "Child", std::slice::from_ref(&parent), &graph).is_none());
             if !present.is_empty() {
                 proptest::prop_assert!(collect_all_embedded_relation_targets("children", "Other", &[parent], &graph).is_none());
             }

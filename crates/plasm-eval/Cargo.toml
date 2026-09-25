@@ -16,6 +16,7 @@ default = []
 baml = ["dep:baml"]
 
 [dependencies]
+plasm-agent-core = { path = "../plasm-agent-core" }
 plasm-core = { path = "../plasm-core" }
 plasm-eval-common = { path = "../plasm-eval-common" }
 plasm-compile = { path = "../plasm-compile", features = ["evm"] }

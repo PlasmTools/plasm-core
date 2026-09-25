@@ -70,8 +70,12 @@ pub(super) fn analyze_static_cardinality(
                 .compute
                 .as_ref()
                 .map(|compute| match &compute.op {
-                    ComputeOp::Aggregate { .. } => RowCardinalityProof::StaticSingleton,
-                    ComputeOp::Render { .. } => inner(plan, by_id, &compute.source, memo),
+                    ComputeOp::Aggregate { .. } | ComputeOp::Python { per_row: false, .. } => {
+                        RowCardinalityProof::StaticSingleton
+                    }
+                    ComputeOp::Render { .. } | ComputeOp::Python { per_row: true, .. } => {
+                        inner(plan, by_id, &compute.source, memo)
+                    }
                     ComputeOp::Project { .. }
                     | ComputeOp::Filter { .. }
                     | ComputeOp::Sort { .. }
@@ -147,6 +151,7 @@ fn validated_analyze_static_cardinality(
         };
         let node = &plan.nodes[index];
         let proof = match node {
+            ValidatedPlanNode::Capture(_) => RowCardinalityProof::StaticSingleton,
             ValidatedPlanNode::Surface(s) if s.kind == PlanNodeKind::Get => {
                 RowCardinalityProof::StaticSingleton
             }
@@ -166,8 +171,11 @@ fn validated_analyze_static_cardinality(
             },
             ValidatedPlanNode::Derive(d) => inner(plan, by_id, d.source.as_str(), memo),
             ValidatedPlanNode::Compute(c) => match &c.compute.op {
-                ComputeOp::Aggregate { .. } | ComputeOp::Render { .. } => {
-                    RowCardinalityProof::StaticSingleton
+                ComputeOp::Aggregate { .. }
+                | ComputeOp::Render { .. }
+                | ComputeOp::Python { per_row: false, .. } => RowCardinalityProof::StaticSingleton,
+                ComputeOp::Python { per_row: true, .. } => {
+                    inner(plan, by_id, c.compute.source.as_str(), memo)
                 }
                 ComputeOp::Project { .. }
                 | ComputeOp::Filter { .. }
