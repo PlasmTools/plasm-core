@@ -56,6 +56,7 @@ values:
     type: string
   nv_grafana_time_range:
     type: string
+    description: Grafana-native relative range expression or Unix milliseconds string.
   nv_grafana_annotation_text:
     type: markdown
   nv_grafana_json_text:
@@ -2460,16 +2461,16 @@ views:
           {%- if resource_type == ''dashboard'' -%}
 
           {{ base }}/d/{{ dashboard_uid }}{% if from or to or query_params_json %}?{%
-          endif %}{% if from %}from={{ from | wire_time(''unix_ms'') }}{% endif %}{%
-          if from and to %}&{% endif %}{% if to %}to={{ to | wire_time(''unix_ms'')
+          endif %}{% if from %}from={{ from }}{% endif %}{%
+          if from and to %}&{% endif %}{% if to %}to={{ to
           }}{% endif %}{% if query_params_json %}{{ query_params_json | wire_query_suffix
           }}{% endif %}
 
           {%- elif resource_type == ''panel'' -%}
 
           {{ base }}/d/{{ dashboard_uid }}?viewPanel={{ panel_id }}{% if from or to
-          or query_params_json %}&{% endif %}{% if from %}from={{ from | wire_time(''unix_ms'')
-          }}{% endif %}{% if from and to %}&{% endif %}{% if to %}to={{ to | wire_time(''unix_ms'')
+          or query_params_json %}&{% endif %}{% if from %}from={{ from
+          }}{% endif %}{% if from and to %}&{% endif %}{% if to %}to={{ to
           }}{% endif %}{% if query_params_json %}{{ query_params_json | wire_query_suffix
           }}{% endif %}
 
@@ -2489,7 +2490,7 @@ views:
 
           {%- if from -%}
 
-          {%- set left = left ~ ''"from":'' ~ (from | wire_time(''unix_ms'') | json_encode)
+          {%- set left = left ~ ''"from":'' ~ (from | json_encode)
           -%}
 
           {%- endif -%}
@@ -2502,7 +2503,7 @@ views:
 
           {%- if to -%}
 
-          {%- set left = left ~ ''"to":'' ~ (to | wire_time(''unix_ms'') | json_encode)
+          {%- set left = left ~ ''"to":'' ~ (to | json_encode)
           -%}
 
           {%- endif -%}
