@@ -1,4 +1,4 @@
-version: 33
+version: 37
 entry_id: spotify
 auth:
   scheme: none
@@ -224,6 +224,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path:
           - key: artists
           - wildcard: true
@@ -289,6 +290,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path: [{key: artists}, {wildcard: true}]
       song:
         description: Catalog song for this liked shelf entry (genre and play stats live here on the Song GET).
@@ -343,6 +345,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path:
           - key: artists
           - wildcard: true
@@ -352,6 +355,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path:
           - key: songs
           - wildcard: true
@@ -397,6 +401,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path: [{key: song_ids}, {wildcard: true}]
       artists:
         description: Artists credited on this album.
@@ -404,6 +409,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path: [{key: artists}, {wildcard: true}]
   Artist:
     id_field: artist_id
@@ -527,10 +533,10 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path:
           - key: songs
           - wildcard: true
-          - key: id
   LikedPlaylist:
     id_field: playlist_id
     primary_query: liked_playlist_query
@@ -583,6 +589,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path: [{key: song_ids}, {wildcard: true}]
   DownloadedSong:
     id_field: song_id
@@ -619,6 +626,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path: [{key: artists}, {wildcard: true}]
   Player:
     # Identity is the Bearer token (RA-5 get arg), not song_id — current playback has no path id;
@@ -693,6 +701,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path: [{key: artists}, {wildcard: true}]
   QueueEntry:
     id_field: position
@@ -735,6 +744,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path: [{key: artists}, {wildcard: true}]
   SongReview:
     id_field: song_review_id
@@ -1460,7 +1470,10 @@ capabilities:
     - downloaded_at
   song_download:
     receiver: {kind: entity, entity: Song}
-    description: Download a song for offline playback.
+    description: >-
+      Download a song for offline playback. Rejects songs already downloaded.
+      For bulk downloads, select distinct song identities and exclude songs
+      already downloaded.
     kind: action
     entity: Song
     payload:
@@ -3023,7 +3036,7 @@ values:
     type: string
     description: Code delivered to the account owner to authorize a password change.
   account_timestamp:
-    type: rfc3339
+    type: iso8601_naive_datetime
     description: Account registration or last login time.
   account_verified:
     type: boolean
@@ -3036,7 +3049,7 @@ values:
     target: Album
     description: Album containing this recording.
   nv_release_date:
-    type: rfc3339
+    type: iso8601_naive_datetime
     description: Release time of a recording or album.
   nv_shareable_link:
     type: http_url
@@ -3177,7 +3190,7 @@ values:
     description: Community/social popularity tally for this item — how many users have liked it, not whether the current user
       hearted it.
   nv_datetime:
-    type: rfc3339
+    type: iso8601_naive_datetime
   prerequisite_principal_email:
     type: email
     description: Account holder email.

@@ -1,4 +1,4 @@
-version: 20
+version: 21
 entry_id: amazon
 auth:
   scheme: none
@@ -2487,7 +2487,7 @@ values:
     type: integer
     description: Card expiry year.
   nv_datetime:
-    type: rfc3339
+    type: iso8601_naive_datetime
   prerequisite_principal_email:
     type: email
     description: Account holder email.

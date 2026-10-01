@@ -83,12 +83,12 @@ email_thread_query:
     - - min_created_at
       - type: if
         condition: {type: exists, var: min_created_at}
-        then_expr: {type: datetime_format, value: {type: var, name: min_created_at}, format: "%Y-%m-%d"}
+        then_expr: {type: datetime_format, wire: iso8601_naive_datetime, value: {type: var, name: min_created_at}, format: "%Y-%m-%d"}
         else_expr: {type: const, value: null}
     - - max_created_at
       - type: if
         condition: {type: exists, var: max_created_at}
-        then_expr: {type: datetime_format, value: {type: var, name: max_created_at}, format: "%Y-%m-%d"}
+        then_expr: {type: datetime_format, wire: iso8601_naive_datetime, value: {type: var, name: max_created_at}, format: "%Y-%m-%d"}
         else_expr: {type: const, value: null}
   pagination: *appworld_page_index_limit
 email_thread_get:
@@ -228,8 +228,8 @@ draft_query:
     type: object
     fields:
     - [sort_by, {type: if, condition: {type: exists, var: sort_by}, then_expr: {type: var, name: sort_by}, else_expr: {type: const, value: null}}]
-    - [max_created_at, {type: if, condition: {type: exists, var: max_created_at}, then_expr: {type: datetime_format, value: {type: var, name: max_created_at}, format: "%Y-%m-%d"}, else_expr: {type: const, value: null}}]
-    - [min_created_at, {type: if, condition: {type: exists, var: min_created_at}, then_expr: {type: datetime_format, value: {type: var, name: min_created_at}, format: "%Y-%m-%d"}, else_expr: {type: const, value: null}}]
+    - [max_created_at, {type: if, condition: {type: exists, var: max_created_at}, then_expr: {type: datetime_format, wire: iso8601_naive_datetime, value: {type: var, name: max_created_at}, format: "%Y-%m-%d"}, else_expr: {type: const, value: null}}]
+    - [min_created_at, {type: if, condition: {type: exists, var: min_created_at}, then_expr: {type: datetime_format, wire: iso8601_naive_datetime, value: {type: var, name: min_created_at}, format: "%Y-%m-%d"}, else_expr: {type: const, value: null}}]
     - [response_to_email_id, {type: if, condition: {type: exists, var: response_to_email_id}, then_expr: {type: var, name: response_to_email_id}, else_expr: {type: const, value: null}}]
     - [belongs_to_email_thread_id, {type: if, condition: {type: exists, var: belongs_to_email_thread_id}, then_expr: {type: var, name: belongs_to_email_thread_id}, else_expr: {type: const, value: null}}]
     - [recipient_email, {type: if, condition: {type: exists, var: recipient_email}, then_expr: {type: var, name: recipient_email}, else_expr: {type: const, value: null}}]
@@ -283,7 +283,7 @@ draft_create:
     - - scheduled_send_at
       - type: if
         condition: { type: exists, var: scheduled_send_at }
-        then_expr: { type: datetime_format, value: { type: var, name: scheduled_send_at }, format: "%Y-%m-%d|%H:%M:%S" }
+        then_expr: { type: datetime_format, wire: iso8601_naive_datetime, value: { type: var, name: scheduled_send_at }, format: "%Y-%m-%d|%H:%M:%S" }
         else_expr: { type: const, value: null }
 
 draft_update:
@@ -316,7 +316,7 @@ draft_update:
     - - scheduled_send_at
       - type: if
         condition: { type: exists, var: scheduled_send_at }
-        then_expr: { type: datetime_format, value: { type: var, name: scheduled_send_at }, format: "%Y-%m-%d|%H:%M:%S" }
+        then_expr: { type: datetime_format, wire: iso8601_naive_datetime, value: { type: var, name: scheduled_send_at }, format: "%Y-%m-%d|%H:%M:%S" }
         else_expr: { type: const, value: null }
 
 draft_delete:
@@ -600,7 +600,7 @@ email_thread_snooze:
   body:
     type: object
     fields:
-    - [snooze_until, {type: datetime_format, value: {type: var, name: snooze_until}, format: "%Y-%m-%d|%H:%M:%S"}]
+    - [snooze_until, {type: datetime_format, wire: iso8601_naive_datetime, value: {type: var, name: snooze_until}, format: "%Y-%m-%d|%H:%M:%S"}]
 email_thread_unsnooze:
   method: POST
   path: [{type: literal, value: gmail}, {type: literal, value: email_threads}, {type: var, name: id}, {type: literal, value: unsnooze}]

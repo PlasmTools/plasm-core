@@ -1,4 +1,4 @@
-version: 17
+version: 19
 entry_id: phone
 auth:
   scheme: none
@@ -662,8 +662,7 @@ capabilities:
           value_ref: nv_access_token
           required: true
   text_message_query:
-    description: List text messages by shelf — browse/search (optional filters) or datetime
-      window with a contact.
+    description: Read text messages by ranked search or a datetime window with a contact.
     kind: query
     entity: TextMessage
     selection:
@@ -677,12 +676,15 @@ capabilities:
     - name: query
       value_ref: nv_str
       required: false
+      description: List shelf only. Rank text matches first; nonmatches remain, so fetching all pages does not filter by this text.
     - name: phone_number
       value_ref: nv_phone
       required: false
+      description: Restrict messages to the conversation with this phone number.
     - name: only_latest_per_contact
       value_ref: nv_bool
       required: false
+      description: List shelf only. Keep only the newest message per contact before search; older conversation messages are excluded.
     - name: min_datetime
       value_ref: nv_datetime
       required: false
@@ -756,8 +758,7 @@ capabilities:
           value_ref: nv_access_token
           required: true
   voice_message_query:
-    description: List voice messages by shelf — browse/search (optional filters) or
-      datetime window with a contact.
+    description: Read voice messages by ranked search or a datetime window with a contact.
     kind: query
     entity: VoiceMessage
     selection:
@@ -771,12 +772,15 @@ capabilities:
     - name: query
       value_ref: nv_str
       required: false
+      description: List shelf only. Rank text matches first; nonmatches remain, so fetching all pages does not filter by this text.
     - name: phone_number
       value_ref: nv_phone
       required: false
+      description: Restrict messages to the conversation with this phone number.
     - name: only_latest_per_contact
       value_ref: nv_bool
       required: false
+      description: List shelf only. Keep only the newest message per contact before search; older conversation messages are excluded.
     - name: min_datetime
       value_ref: nv_datetime
       required: false
@@ -895,7 +899,7 @@ values:
     type: string
     description: Code delivered to the account owner to authorize a password change.
   account_timestamp:
-    type: rfc3339
+    type: iso8601_naive_datetime
     description: Account registration or last login time.
   account_verified:
     type: boolean
@@ -994,7 +998,7 @@ values:
   nv_int:
     type: integer
   nv_datetime:
-    type: rfc3339
+    type: iso8601_naive_datetime
   prerequisite_principal_email:
     type: email
     description: Account holder email.

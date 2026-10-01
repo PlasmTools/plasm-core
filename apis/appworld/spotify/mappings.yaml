@@ -283,6 +283,7 @@ player_current_wire:
         title: [title]
         position: [played_seconds]
         is_playing: [is_playing]
+        artists: [artists]
   path:
   - { type: literal, value: spotify }
   - { type: literal, value: music_player }

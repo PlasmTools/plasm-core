@@ -1,4 +1,4 @@
-version: 30
+version: 31
 entry_id: venmo
 data_classes:
   untrusted:
@@ -59,7 +59,7 @@ values:
     type: string
     description: Code delivered to the account owner to authorize a password change.
   account_timestamp:
-    type: rfc3339
+    type: iso8601_naive_datetime
     description: Account registration or last login time.
   account_verified:
     type: boolean
@@ -77,7 +77,7 @@ values:
     type: enum
     description: OAuth token type from login.
     enum:
-    - bearer
+    - Bearer
   nv_email:
     type: email
     description: Venmo user email (directory profile or payment counterparty) — not the account-holder login username.
@@ -209,7 +209,7 @@ values:
     type: string
     description: Notification message body.
   nv_timestamp:
-    type: rfc3339
+    type: iso8601_naive_datetime
     description: Date and time when the event occurred, including its timezone.
   nv_filter_date:
     type: iso8601_date

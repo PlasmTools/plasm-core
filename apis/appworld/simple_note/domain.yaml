@@ -1,4 +1,4 @@
-version: 12
+version: 13
 entry_id: simple_note
 auth:
   scheme: none
@@ -446,7 +446,7 @@ values:
     type: string
     description: Code delivered to the account owner to authorize a password change.
   account_timestamp:
-    type: rfc3339
+    type: iso8601_naive_datetime
     description: Account registration or last login time.
   account_verified:
     type: boolean
@@ -484,7 +484,7 @@ values:
   nv_int:
     type: integer
   nv_datetime:
-    type: rfc3339
+    type: iso8601_naive_datetime
   nv_append_mode:
     type: enum
     description: Whether to append or prepend content.

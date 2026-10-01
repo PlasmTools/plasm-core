@@ -1,4 +1,4 @@
-version: 23
+version: 24
 entry_id: splitwise
 auth:
   scheme: none
@@ -1969,7 +1969,7 @@ values:
     type: string
     description: Code delivered to the account owner to authorize a password change.
   account_timestamp:
-    type: rfc3339
+    type: iso8601_naive_datetime
     description: Account registration or last login time.
   account_verified:
     type: boolean
@@ -2046,7 +2046,7 @@ values:
   nv_int:
     type: integer
   nv_datetime:
-    type: rfc3339
+    type: iso8601_naive_datetime
   nv_file_path:
     type: string
     description: Receipt file path for upload — absolute /home/… (or resolved ~/… with a subpath). Relative paths and bare ~ are rejected.

@@ -572,7 +572,7 @@ project_invite_accept:
   path:
   - { type: literal, value: todoist }
   - { type: literal, value: project_invites }
-  - { type: var, name: id }
+  - { type: var, name: invite_code }
   - { type: literal, value: accept }
   auth: *request_auth
 
@@ -581,7 +581,7 @@ project_invite_delete:
   path:
   - { type: literal, value: todoist }
   - { type: literal, value: project_invites }
-  - { type: var, name: id }
+  - { type: var, name: invite_code }
   - { type: literal, value: delete }
   auth: *request_auth
 

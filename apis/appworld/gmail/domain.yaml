@@ -1,4 +1,4 @@
-version: 16
+version: 17
 entry_id: gmail
 auth:
   scheme: none
@@ -1341,7 +1341,7 @@ values:
   nv_int:
     type: integer
   nv_datetime:
-    type: rfc3339
+    type: iso8601_naive_datetime
   nv_attachment_file_name:
     type: string
     description: Filename of an attachment on a draft.

@@ -251,8 +251,8 @@ expense_query:
   query:
     type: object
     fields:
-    - [max_created_at, {type: if, condition: {type: exists, var: max_created_at}, then_expr: {type: datetime_format, value: {type: var, name: max_created_at}, format: "%Y-%m-%d"}, else_expr: {type: const, value: null}}]
-    - [min_created_at, {type: if, condition: {type: exists, var: min_created_at}, then_expr: {type: datetime_format, value: {type: var, name: min_created_at}, format: "%Y-%m-%d"}, else_expr: {type: const, value: null}}]
+    - [max_created_at, {type: if, condition: {type: exists, var: max_created_at}, then_expr: {type: datetime_format, wire: iso8601_naive_datetime, value: {type: var, name: max_created_at}, format: "%Y-%m-%d"}, else_expr: {type: const, value: null}}]
+    - [min_created_at, {type: if, condition: {type: exists, var: min_created_at}, then_expr: {type: datetime_format, wire: iso8601_naive_datetime, value: {type: var, name: min_created_at}, format: "%Y-%m-%d"}, else_expr: {type: const, value: null}}]
     - [deleted, {type: if, condition: {type: exists, var: deleted}, then_expr: {type: var, name: deleted}, else_expr: {type: const, value: null}}]
     - - query
       - type: if
@@ -574,8 +574,8 @@ payment_query:
     fields:
     - [max_amount, {type: if, condition: {type: exists, var: max_amount}, then_expr: {type: var, name: max_amount}, else_expr: {type: const, value: null}}]
     - [min_amount, {type: if, condition: {type: exists, var: min_amount}, then_expr: {type: var, name: min_amount}, else_expr: {type: const, value: null}}]
-    - [max_created_at, {type: if, condition: {type: exists, var: max_created_at}, then_expr: {type: datetime_format, value: {type: var, name: max_created_at}, format: "%Y-%m-%d"}, else_expr: {type: const, value: null}}]
-    - [min_created_at, {type: if, condition: {type: exists, var: min_created_at}, then_expr: {type: datetime_format, value: {type: var, name: min_created_at}, format: "%Y-%m-%d"}, else_expr: {type: const, value: null}}]
+    - [max_created_at, {type: if, condition: {type: exists, var: max_created_at}, then_expr: {type: datetime_format, wire: iso8601_naive_datetime, value: {type: var, name: max_created_at}, format: "%Y-%m-%d"}, else_expr: {type: const, value: null}}]
+    - [min_created_at, {type: if, condition: {type: exists, var: min_created_at}, then_expr: {type: datetime_format, wire: iso8601_naive_datetime, value: {type: var, name: min_created_at}, format: "%Y-%m-%d"}, else_expr: {type: const, value: null}}]
     - [deleted, {type: if, condition: {type: exists, var: deleted}, then_expr: {type: var, name: deleted}, else_expr: {type: const, value: null}}]
     - - query
       - type: if

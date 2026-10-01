@@ -1,4 +1,4 @@
-version: 17
+version: 18
 entry_id: file_system
 auth:
   scheme: none
@@ -425,10 +425,12 @@ capabilities:
         - name: retain_dates
           value_ref: nv_bool
           required: false
-          description: Whether to preserve source creation and modification timestamps.
+          default: false
+          description: "Preserve source creation and modification timestamps when true. When false or omitted, copy/move assigns new timestamps, including on rename."
         - name: overwrite
           value_ref: nv_bool
           required: false
+          default: false
           description: Whether an existing destination may be replaced.
         - name: access_token
           value_ref: nv_access_token
@@ -453,10 +455,12 @@ capabilities:
         - name: retain_dates
           value_ref: nv_bool
           required: false
-          description: Whether to preserve source creation and modification timestamps.
+          default: false
+          description: "Preserve source creation and modification timestamps when true. When false or omitted, copy/move assigns new timestamps, including on rename."
         - name: overwrite
           value_ref: nv_bool
           required: false
+          default: false
           description: Whether an existing destination may be replaced.
         - name: access_token
           value_ref: nv_access_token
@@ -622,10 +626,12 @@ capabilities:
         - name: retain_dates
           value_ref: nv_bool
           required: false
-          description: Whether to preserve source creation and modification timestamps.
+          default: false
+          description: "Preserve source creation and modification timestamps when true. When false or omitted, copy/move assigns new timestamps, including on rename."
         - name: overwrite
           value_ref: nv_bool
           required: false
+          default: false
           description: Whether an existing destination may be replaced.
         - name: access_token
           value_ref: nv_access_token
@@ -650,10 +656,12 @@ capabilities:
         - name: retain_dates
           value_ref: nv_bool
           required: false
-          description: Whether to preserve source creation and modification timestamps.
+          default: false
+          description: "Preserve source creation and modification timestamps when true. When false or omitted, copy/move assigns new timestamps, including on rename."
         - name: overwrite
           value_ref: nv_bool
           required: false
+          default: false
           description: Whether an existing destination may be replaced.
         - name: access_token
           value_ref: nv_access_token
@@ -691,6 +699,8 @@ capabilities:
         - name: retain_dates
           value_ref: nv_bool
           required: false
+          default: true
+          description: "Preserve archived creation and modification timestamps when true (the default); false assigns new timestamps."
         - name: delete_compressed_file
           value_ref: nv_bool
           required: false
@@ -731,7 +741,7 @@ values:
     type: string
     description: Code delivered to the account owner to authorize a password change.
   account_timestamp:
-    type: rfc3339
+    type: iso8601_naive_datetime
     description: Account registration or last login time.
   account_verified:
     type: boolean
@@ -769,7 +779,7 @@ values:
   nv_bool:
     type: boolean
   nv_datetime:
-    type: rfc3339
+    type: iso8601_naive_datetime
   prerequisite_principal_email:
     type: email
     description: Account holder email.
