@@ -16,8 +16,8 @@ pub fn evaluate_with(
         WithExpr::Now => Value::String(now.to_rfc3339()),
         WithExpr::Literal(literal) => match literal {
             WithLiteral::Null => Value::Null,
-            WithLiteral::Bool(v) => Value::from(v.clone()),
-            WithLiteral::Integer(v) => Value::from(v.clone()),
+            WithLiteral::Bool(v) => Value::from(*v),
+            WithLiteral::Integer(v) => Value::from(*v),
             WithLiteral::Number(v) => finite(v.parse().map_err(|_| "invalid number literal")?)?,
             WithLiteral::String(v) => Value::from(v.clone()),
         },

@@ -14,7 +14,7 @@ pub enum RowComputeError {
     #[error("row engine execution: {0}")]
     Execution(String),
     #[error(transparent)]
-    Type(#[from] RowTypeError),
+    Type(Box<RowTypeError>),
     #[error(transparent)]
     Money(#[from] MoneyError),
     #[error("cannot compare money in {left} to money in {right}")]
@@ -124,6 +124,12 @@ impl From<CrossCurrencyError> for RowComputeError {
 impl RowComputeError {
     #[must_use]
     pub fn temporal_arith_not_temporal(got: ValueContract) -> Self {
-        Self::Type(RowTypeError::TemporalArithNotTemporal { got })
+        RowTypeError::TemporalArithNotTemporal { got }.into()
+    }
+}
+
+impl From<RowTypeError> for RowComputeError {
+    fn from(error: RowTypeError) -> Self {
+        Self::Type(Box::new(error))
     }
 }

@@ -71,7 +71,7 @@ pub enum RowSource {
 pub enum RowTransform {
     Relation { relation: RelationName },
     Filter { predicate: RowPredicate },
-    Compute { op: ComputeOp },
+    Compute { op: Box<ComputeOp> },
 }
 
 /// Terminal rowset operation.
