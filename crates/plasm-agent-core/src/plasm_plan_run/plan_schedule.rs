@@ -144,7 +144,10 @@ mod tests {
                     display_expr: None,
                 },
                 binding_proofs: Vec::new(),
-                materialize: Some(RelationMaterialization::FromParentGet { path: vec![] }),
+                materialize: Some(RelationMaterialization::FromParentGet {
+                    path: vec![],
+                    collection_coverage: Default::default(),
+                }),
                 view_embed_proof: None,
             },
             effect_class: EffectClass::Read,

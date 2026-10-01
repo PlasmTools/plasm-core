@@ -1,8 +1,8 @@
 //! Published programs must compile through the production frontend, not a shape-only parser.
 use plasm_eval::ProgramSession;
 
-#[test]
-fn published_language_definition_compiles_against_the_semantic_matrix() {
+#[tokio::test]
+async fn published_language_definition_compiles_against_the_semantic_matrix() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let cgs =
         plasm_core::load_schema_dir(&root.join("fixtures/schemas/plasm_language_matrix")).unwrap();
@@ -18,6 +18,7 @@ fn published_language_definition_compiles_against_the_semantic_matrix() {
         let source = section.split_once("```").expect("closed Python fence").0;
         session
             .compile(source)
+            .await
             .unwrap_or_else(|error| panic!("{}\n{source}", error.agent_markdown()));
         count += 1;
     }

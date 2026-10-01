@@ -1,0 +1,93 @@
+version: 1
+entry_id: read_neighborhood_matrix
+http_backend: http://127.0.0.1:9
+auth: {scheme: none}
+values:
+  cursor_id: {type: string, description: Cursor identity}
+  record_id: {type: string, description: Record identity}
+  owner_id: {type: string, description: Owner identity}
+  text: {type: string, description: Display text}
+entities:
+  Cursor:
+    id_field: cursor_id
+    fields:
+      cursor_id: {value_ref: cursor_id, required: true}
+      record_id: {value_ref: record_id}
+      hidden_owner: {value_ref: owner_id}
+  Record:
+    id_field: record_id
+    fields:
+      record_id: {value_ref: record_id, required: true}
+      owner_id: {value_ref: owner_id}
+    relations:
+      owner:
+        target: Owner
+        cardinality: one
+        description: Owner of this record
+        materialize:
+          kind: get_scoped_bindings
+          capability: owner_get
+          bindings: {owner_id: owner_id}
+      embedded:
+        target: Embedded
+        cardinality: many
+        description: Embedded labels, already supplied by the parent read
+        materialize: {kind: from_parent_get, path: [{key: labels}, {wildcard: true}]}
+      owners:
+        target: Owner
+        cardinality: many
+        description: Owners scoped to the owner identity on this record
+        materialize:
+          kind: query_scoped_bindings
+          capability: owner_query
+          bindings: {owner_id: owner_id}
+  RestrictedRecord:
+    id_field: record_id
+    description: Only records currently in the restricted shelf, not all records
+    fields:
+      record_id: {value_ref: record_id, required: true}
+  Owner:
+    id_field: owner_id
+    fields:
+      owner_id: {value_ref: owner_id, required: true}
+      name: {value_ref: text}
+      record_id: {value_ref: record_id}
+  Embedded:
+    id_field: label
+    fields:
+      label: {value_ref: text, required: true}
+capabilities:
+  cursor:
+    kind: query
+    entity: Cursor
+    provides: [cursor_id, record_id]
+  record_get:
+    kind: get
+    entity: Record
+    provides: [record_id, owner_id]
+  restricted_get:
+    kind: get
+    entity: RestrictedRecord
+    description: Read only a record belonging to the restricted shelf
+    provides: [record_id]
+  owner_get:
+    kind: get
+    entity: Owner
+    receiver: {kind: none}
+    scope:
+      - {name: owner_id, value_ref: owner_id, required: true}
+    provides: [owner_id, name, record_id]
+  embedded_get:
+    kind: get
+    entity: Embedded
+    provides: [label]
+  owner_query:
+    kind: query
+    entity: Owner
+    scope:
+      - {name: owner_id, value_ref: owner_id, required: true}
+    provides: [owner_id, name]
+  delete:
+    kind: action
+    entity: Record
+    output: {type: side_effect, description: Deletes the record}

@@ -15,7 +15,16 @@ fn type_entity_with_relation(relation: &str, target: Ref) -> crate::CachedEntity
         TypedFieldValue::from(Value::String("electric".into())),
     );
     let mut relations = IndexMap::new();
-    relations.insert(relation.to_string(), vec![target]);
+    relations.insert(
+        relation.to_string(),
+        plasm_core::row_contract::RelationMembership::observe(
+            None,
+            &"relation_fixture",
+            vec![target],
+            None,
+        )
+        .unwrap(),
+    );
     CachedEntity {
         reference,
         fields,
@@ -89,25 +98,26 @@ fn response_store_idempotent_concurrent_write_no_conflict() {
 }
 
 #[test]
-fn query_index_write_conflict_on_concurrent_key() {
+fn query_index_concurrent_disagreement_invalidates_reuse() {
     let mut session = QueryIndex::default();
     let key = QueryCacheKey::test("scoped\0label=1");
     let r1 = Ref::new("Label", "1");
-    session.insert(key.clone(), vec![r1.clone()]);
+    session.insert_test_observation(key.clone(), vec![r1.clone()]);
 
     let base = session.entries_snapshot();
     let mut branch = session.clone();
-    branch.insert(key.clone(), vec![Ref::new("Label", "2")]);
+    branch.insert_test_observation(key.clone(), vec![Ref::new("Label", "2")]);
     let write_set = branch.branch_write_keys(&base);
     assert!(QueryIndex::detect_write_conflicts(&session, &branch, &base, &write_set).is_empty());
 
-    session.insert(key.clone(), vec![Ref::new("Label", "9")]);
+    session.insert_test_observation(key.clone(), vec![Ref::new("Label", "9")]);
     let conflicts = QueryIndex::detect_write_conflicts(&session, &branch, &base, &write_set);
-    // CEP-15: full list replacement without inconsistent base retention is union-mergeable.
     assert!(
         conflicts.is_empty(),
-        "expected no conflict under CEP-15: {conflicts:?}"
+        "both disputed cache entries are unusable"
     );
+    assert!(session.get(&key).is_none());
+    assert!(branch.get(&key).is_none());
 }
 
 #[test]
@@ -115,13 +125,13 @@ fn query_index_idempotent_concurrent_write_no_conflict() {
     let mut session = QueryIndex::default();
     let key = QueryCacheKey::test("scoped\0label=2");
     let r1 = Ref::new("Label", "1");
-    session.insert(key.clone(), vec![r1]);
+    session.insert_test_observation(key.clone(), vec![r1]);
 
     let base = session.entries_snapshot();
     let mut branch = session.clone();
-    branch.insert(key.clone(), vec![Ref::new("Label", "2")]);
+    branch.insert_test_observation(key.clone(), vec![Ref::new("Label", "2")]);
     let write_set = branch.branch_write_keys(&base);
-    session.insert(key.clone(), vec![Ref::new("Label", "2")]);
+    session.insert_test_observation(key.clone(), vec![Ref::new("Label", "2")]);
     let conflicts = QueryIndex::detect_write_conflicts(&session, &branch, &base, &write_set);
     assert!(conflicts.is_empty());
 }
@@ -143,7 +153,7 @@ fn idempotent_shared_ref_no_conflict() {
 }
 
 #[test]
-fn concurrent_same_relation_key_ref_pages_no_conflict() {
+fn concurrent_same_relation_key_observations_conflict() {
     let mut session = SessionMaterialization::new();
     let electric = type_entity_with_relation("pokemon", Ref::new("Pokemon", "pikachu"));
     session.insert(electric.clone()).expect("seed");
@@ -154,29 +164,40 @@ fn concurrent_same_relation_key_ref_pages_no_conflict() {
     let mut page_a = electric.clone();
     page_a.relations.insert(
         "pokemon".into(),
-        vec![Ref::new("Pokemon", "1"), Ref::new("Pokemon", "2")],
+        plasm_core::row_contract::RelationMembership::observe(
+            None,
+            &"relation_fixture",
+            vec![Ref::new("Pokemon", "1"), Ref::new("Pokemon", "2")],
+            None,
+        )
+        .unwrap(),
     );
     branch_a.insert(page_a).expect("branch a page");
 
     let mut page_b = electric.clone();
     page_b.relations.insert(
         "pokemon".into(),
-        vec![Ref::new("Pokemon", "1"), Ref::new("Pokemon", "3")],
+        plasm_core::row_contract::RelationMembership::observe(
+            None,
+            &"relation_fixture",
+            vec![Ref::new("Pokemon", "1"), Ref::new("Pokemon", "3")],
+            None,
+        )
+        .unwrap(),
     );
     branch_b.insert(page_b).expect("branch b page");
 
     assert!(!detect_materialization_conflicts(&session, &base_a, &branch_a).has_any());
     session.absorb_branch(branch_a).expect("absorb branch a");
-    assert!(!detect_materialization_conflicts(&session, &base_b, &branch_b).has_any());
-    session.absorb_branch(branch_b).expect("absorb branch b");
-
-    let live = session
-        .get(&Ref::new("PokemonType", "electric"))
-        .expect("electric");
-    let pokemon = live.relations.get("pokemon").expect("pokemon refs");
-    assert!(pokemon.iter().any(|r| r.primary_slot_str() == "1"));
-    assert!(pokemon.iter().any(|r| r.primary_slot_str() == "2"));
-    assert!(pokemon.iter().any(|r| r.primary_slot_str() == "3"));
+    assert!(detect_materialization_conflicts(&session, &base_b, &branch_b).has_any());
+    let live = session.get(&Ref::new("PokemonType", "electric")).unwrap();
+    assert_eq!(
+        live.relations["pokemon"]
+            .iter()
+            .map(|r| r.primary_slot_str())
+            .collect::<Vec<_>>(),
+        vec!["1", "2"]
+    );
 }
 
 #[test]
@@ -189,16 +210,30 @@ fn additive_disjoint_relation_keys_no_conflict() {
     let (mut branch_b, base_b) = BranchMaterializationBase::fork_from(&session);
 
     let mut with_pokemon = electric.clone();
-    with_pokemon
-        .relations
-        .insert("pokemon".into(), vec![Ref::new("Pokemon", "pikachu")]);
+    with_pokemon.relations.insert(
+        "pokemon".into(),
+        plasm_core::row_contract::RelationMembership::observe(
+            None,
+            &"relation_fixture",
+            vec![Ref::new("Pokemon", "pikachu")],
+            None,
+        )
+        .unwrap(),
+    );
     with_pokemon.version = 2;
     branch_a.insert(with_pokemon).expect("branch a");
 
     let mut with_moves = electric.clone();
-    with_moves
-        .relations
-        .insert("moves".into(), vec![Ref::new("Move", "thunderbolt")]);
+    with_moves.relations.insert(
+        "moves".into(),
+        plasm_core::row_contract::RelationMembership::observe(
+            None,
+            &"relation_fixture",
+            vec![Ref::new("Move", "thunderbolt")],
+            None,
+        )
+        .unwrap(),
+    );
     with_moves.version = 2;
     branch_b.insert(with_moves).expect("branch b");
 
@@ -215,21 +250,21 @@ fn additive_disjoint_relation_keys_no_conflict() {
     assert!(live.relations.contains_key("moves"));
 }
 
-/// CEP-15: concurrent materialization of the same scoped query key with overlapping pages.
+/// Complete observations retain exact occurrence membership; disagreement invalidates reuse.
 #[test]
-fn query_index_concurrent_ref_pages_no_conflict() {
+fn query_index_concurrent_complete_observations_are_not_unioned() {
     let mut session = QueryIndex::default();
     let key = QueryCacheKey::test("Type\0pokemon_list\0name=electric");
-    session.insert(key.clone(), vec![Ref::new("Pokemon", "pikachu")]);
+    session.insert_test_observation(key.clone(), vec![Ref::new("Pokemon", "pikachu")]);
 
     let base = session.entries_snapshot();
     let mut branch_a = session.clone();
-    branch_a.insert(
+    branch_a.insert_test_observation(
         key.clone(),
         vec![Ref::new("Pokemon", "1"), Ref::new("Pokemon", "2")],
     );
     let mut branch_b = session.clone();
-    branch_b.insert(
+    branch_b.insert_test_observation(
         key.clone(),
         vec![Ref::new("Pokemon", "1"), Ref::new("Pokemon", "3")],
     );
@@ -241,10 +276,10 @@ fn query_index_concurrent_ref_pages_no_conflict() {
     assert!(QueryIndex::detect_write_conflicts(&session, &branch_b, &base, &write_b).is_empty());
     session.merge_from(branch_b);
 
-    let refs = session.get(&key).expect("indexed refs");
-    assert!(refs.iter().any(|r| r.primary_slot_str() == "1"));
-    assert!(refs.iter().any(|r| r.primary_slot_str() == "2"));
-    assert!(refs.iter().any(|r| r.primary_slot_str() == "3"));
+    assert!(
+        session.get(&key).is_none(),
+        "disputed membership must be reacquired"
+    );
 }
 
 #[test]
@@ -325,13 +360,29 @@ fn additive_disjoint_branches_confluent_absorb_order() {
     let (mut branch_b, _) = BranchMaterializationBase::fork_from(&session);
 
     let mut a = electric.clone();
-    a.relations
-        .insert("pokemon".into(), vec![Ref::new("Pokemon", "pikachu")]);
+    a.relations.insert(
+        "pokemon".into(),
+        plasm_core::row_contract::RelationMembership::observe(
+            None,
+            &"relation_fixture",
+            vec![Ref::new("Pokemon", "pikachu")],
+            None,
+        )
+        .unwrap(),
+    );
     branch_a.insert(a).expect("branch a");
 
     let mut b = electric.clone();
-    b.relations
-        .insert("moves".into(), vec![Ref::new("Move", "thunderbolt")]);
+    b.relations.insert(
+        "moves".into(),
+        plasm_core::row_contract::RelationMembership::observe(
+            None,
+            &"relation_fixture",
+            vec![Ref::new("Move", "thunderbolt")],
+            None,
+        )
+        .unwrap(),
+    );
     branch_b.insert(b).expect("branch b");
 
     let mut forward = session.clone();
@@ -401,7 +452,7 @@ fn mutation_branch_commit_replaces_poisoned_read_caches() {
     let key = QueryCacheKey::test("CreditCardAccount\0get\0user_id=u1");
     session
         .query_index
-        .insert(key.clone(), vec![card_ref.clone()]);
+        .insert_test_observation(key.clone(), vec![card_ref.clone()]);
     let fp = RequestFingerprint::from_hex(&format!("{:064x}", 42u64)).expect("fp");
     session.responses.store(
         fp.clone(),
@@ -440,14 +491,14 @@ proptest::proptest! {
         let mut a = electric.clone();
         a.relations.insert(
             "pokemon".into(),
-            vec![Ref::new("Pokemon", pokemon_id.as_str())],
+            plasm_core::row_contract::RelationMembership::observe(None, &"relation_fixture", vec![Ref::new("Pokemon", pokemon_id.as_str())], None).unwrap(),
         );
         branch_a.insert(a).expect("branch a");
 
         let mut b = electric;
         b.relations.insert(
             "moves".into(),
-            vec![Ref::new("Move", move_id.as_str())],
+            plasm_core::row_contract::RelationMembership::observe(None, &"relation_fixture", vec![Ref::new("Move", move_id.as_str())], None).unwrap(),
         );
         branch_b.insert(b).expect("branch b");
 

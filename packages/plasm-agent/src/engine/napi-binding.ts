@@ -17,6 +17,8 @@ export interface TeachingExposureResult {
 }
 
 export interface DryRunResult {
+  writeCount: number;
+  failureJson?: string;
   planCommitRef: string;
   summary: string;
   compJson?: unknown;
@@ -59,12 +61,12 @@ export interface PlasmEngine {
   dryRun(program: string, executeSessionRef?: string): Promise<DryRunResult>;
   activateDiscovery(deploymentId: string, bindingsJson: string): Promise<string>;
   routeIntent(provenance: IntentProvenance, logicalSessionId?: string): Promise<RoutingPacket>;
-  runPlan(planCommitRef: string, logicalSessionId?: string): Promise<{ ok: boolean; message: string; rowsJson?: string; metaJson?: string; artifactsJson?: string }>;
+  runPlan(planCommitRef: string, logicalSessionId?: string): Promise<{ ok: boolean; message: string; rowsJson?: string; metaJson?: string; artifactsJson?: string; failureJson?: string }>;
   runPlanLive?(
     planCommitRef: string,
     transport: HostTransportFn,
     logicalSessionId?: string,
-  ): Promise<{ ok: boolean; message: string; rowsJson?: string; metaJson?: string; artifactsJson?: string }>;
+  ): Promise<{ ok: boolean; message: string; rowsJson?: string; metaJson?: string; artifactsJson?: string; failureJson?: string }>;
   run(resolved: ResolvedPlanPayload, transport: HostTransportFn): Promise<unknown>;
   introspectCatalog(entryId: string): Promise<string>;
 }
@@ -82,6 +84,8 @@ type NativePlasmEngine = {
     deltaRefs: string[];
   }>;
   dryRun(program: string, logicalSessionId?: string): Promise<{
+    writeCount: number;
+    failureJson?: string;
     planCommitRef: string;
     summary: string;
     compJson: string;
@@ -93,7 +97,7 @@ type NativePlasmEngine = {
     ok: boolean;
     message: string;
     rowsJson?: string;
-    metaJson?: string; artifactsJson?: string;
+    metaJson?: string; artifactsJson?: string; failureJson?: string;
   }>;
   runPlanLive(
     planCommitRef: string,
@@ -103,7 +107,7 @@ type NativePlasmEngine = {
     ok: boolean;
     message: string;
     rowsJson?: string;
-    metaJson?: string; artifactsJson?: string;
+    metaJson?: string; artifactsJson?: string; failureJson?: string;
   }>;
   introspectCatalog(entryId: string): Promise<string>;
 };
@@ -166,6 +170,8 @@ export class NapiPlasmEngine implements PlasmEngine {
       compJson = result.compJson;
     }
     return {
+      writeCount: result.writeCount,
+      failureJson: result.failureJson,
       planCommitRef: result.planCommitRef,
       summary: result.summary,
       compJson,
@@ -190,7 +196,7 @@ export class NapiPlasmEngine implements PlasmEngine {
     planCommitRef: string,
     transport: HostTransportFn,
     logicalSessionId?: string,
-  ): Promise<{ ok: boolean; message: string; rowsJson?: string; metaJson?: string; artifactsJson?: string }> {
+  ): Promise<{ ok: boolean; message: string; rowsJson?: string; metaJson?: string; artifactsJson?: string; failureJson?: string }> {
     return this.native.runPlanLive(planCommitRef, toNapiHostTransport(transport), logicalSessionId);
   }
 

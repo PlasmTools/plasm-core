@@ -70,7 +70,7 @@ pub(crate) fn plasm_line_trace_meta(
     }
     let repl_post = format!(
         "{} results · {:?} · {}ms · net {} · cache {}/{} · rows {}",
-        result.count,
+        result.count(),
         result.source,
         result.stats.duration_ms,
         result.stats.network_requests,
@@ -212,8 +212,8 @@ async fn trace_emit_plasm_line(
     .await;
 }
 
-fn run_line_error_string(e: RunLineError) -> String {
-    crate::execute_pipeline::display_run_line_error(e)
+fn run_line_failure(e: RunLineError, session: &ExecuteSession) -> plasm_runtime::ExecutionFailure {
+    plasm_runtime::ExecutionFailure::from(e).with_catalog(&session.catalog_cgs_hash)
 }
 
 pub async fn execute_plasm_plasm_line(
@@ -223,13 +223,15 @@ pub async fn execute_plasm_plasm_line(
     line: &str,
     trace: Option<&PlasmTraceContext>,
     line_index: i64,
-) -> Result<(ParsedExpr, ExecutionResult, Option<RunArtifactHandle>), String> {
-    let parsed = parse_plasm_line_for_session(line, sess, st).map_err(run_line_error_string)?;
+) -> Result<(ParsedExpr, ExecutionResult, Option<RunArtifactHandle>), plasm_runtime::ExecutionFailure>
+{
+    let parsed =
+        parse_plasm_line_for_session(line, sess, st).map_err(|e| run_line_failure(e, sess))?;
     crate::execute_pipeline::ExecutePipeline::run_expression(
         line, sess, st, session_id, parsed, trace, line_index,
     )
     .await
-    .map_err(run_line_error_string)
+    .map_err(|e| run_line_failure(e, sess))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -245,9 +247,10 @@ pub async fn execute_plasm_parsed_expr(
     surface_read_budget: Option<crate::plan_read_bounds::PushedReadBudget>,
     rows_progress: Option<plasm_runtime::RowsProgressFn>,
     plan_shared: Option<&crate::plan_execute_shared::PlanLineExecuteShared>,
-) -> Result<(ParsedExpr, ExecutionResult, Option<RunArtifactHandle>), String> {
+) -> Result<(ParsedExpr, ExecutionResult, Option<RunArtifactHandle>), plasm_runtime::ExecutionFailure>
+{
     crate::execute_pipeline::PlasmPreflight::preflight_parsed_line(sess, source_label, &parsed)
-        .map_err(|e| run_line_error_string(RunLineError::Parse(e.into())))?;
+        .map_err(|e| run_line_failure(RunLineError::Parse(e.into()), sess))?;
     run_parsed_plasm_line(
         source_label,
         sess,
@@ -263,7 +266,7 @@ pub async fn execute_plasm_parsed_expr(
         plan_shared,
     )
     .await
-    .map_err(run_line_error_string)
+    .map_err(|e| run_line_failure(e, sess))
 }
 
 pub async fn trace_record_plasm_line(

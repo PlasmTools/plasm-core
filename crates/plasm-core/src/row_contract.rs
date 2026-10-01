@@ -7,12 +7,104 @@ use indexmap::IndexMap;
 use serde_json::{Map, Value as Json};
 use std::collections::BTreeSet;
 
+/// A computation row contains values, not transport encodings. Missing keys are unobserved.
+pub use crate::ValueRow;
+
+/// An observed relation and the evidence for its complete membership.
+/// Reference order and duplicate occurrences are significant. Membership cannot
+/// be mutated independently of its evidence.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RelationMembership {
+    record: crate::collection_codec::RecordedCollection<Ref>,
+}
+impl RelationMembership {
+    pub fn from_record(record: crate::collection_codec::RecordedCollection<Ref>) -> Self {
+        Self { record }
+    }
+    pub fn record(&self) -> &crate::collection_codec::RecordedCollection<Ref> {
+        &self.record
+    }
+    pub fn is_exhaustive(&self) -> bool {
+        use crate::collection_codec::{CollectionCodec, Demand, RecordingCodec};
+        RecordingCodec::new()
+            .materialize(&self.record, Demand::Whole)
+            .is_ok()
+    }
+    pub fn references(&self) -> &crate::collection_codec::SharedRows<Ref> {
+        self.record.observed()
+    }
+    pub fn into_references(self) -> crate::collection_codec::SharedRows<Ref> {
+        self.record.into_rows()
+    }
+
+    pub fn observe(
+        cgs: Option<&CGS>,
+        context: &impl serde::Serialize,
+        references: Vec<Ref>,
+        exhaustive_count: Option<usize>,
+    ) -> Result<Self, crate::collection_codec::CollectionFault> {
+        use crate::collection_codec::{
+            CollectionCodec, CollectionFault, CollectionIdentity, Observation, RecordingCodec,
+        };
+        let identity = match cgs {
+            Some(cgs) => CollectionIdentity::for_expression(cgs, context, 0)?,
+            None if exhaustive_count.is_none() => {
+                CollectionIdentity::for_untyped_observation(context)?
+            }
+            None => return Err(CollectionFault::Conservation),
+        };
+        if exhaustive_count.is_some_and(|count| count != references.len()) {
+            return Err(CollectionFault::Conservation);
+        }
+        let observed = references.len();
+        Ok(Self::from_record(RecordingCodec::new().record(
+            identity,
+            references,
+            Observation::Embedded {
+                declared_exhaustive: exhaustive_count.is_some(),
+                observed,
+            },
+        )?))
+    }
+}
+impl serde::Serialize for RelationMembership {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use crate::collection_codec::{CollectionCheckpoint, RecordingCodec};
+        CollectionCheckpoint::capture(&RecordingCodec::new(), &self.record)
+            .map_err(serde::ser::Error::custom)?
+            .serialize(serializer)
+    }
+}
+impl<'de> serde::Deserialize<'de> for RelationMembership {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use crate::collection_codec::{CollectionCheckpoint, RecordingCodec};
+        let checkpoint = <CollectionCheckpoint as serde::Deserialize>::deserialize(deserializer)?;
+        checkpoint
+            .restore(&RecordingCodec::new())
+            .map(Self::from_record)
+            .map_err(serde::de::Error::custom)
+    }
+}
+impl std::ops::Deref for RelationMembership {
+    type Target = crate::collection_codec::SharedRows<Ref>;
+    fn deref(&self) -> &Self::Target {
+        self.record.observed()
+    }
+}
+impl<'a> IntoIterator for &'a RelationMembership {
+    type Item = &'a Ref;
+    type IntoIter = crate::collection_codec::RowIter<'a, Ref>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.record.observed().iter()
+    }
+}
+
 /// Storage-independent access to an entity observation. Missing relation keys
 /// mean unobserved; a present empty slice means an observed empty relation.
 pub trait EntityRow {
     fn identity(&self) -> &Ref;
     fn fields(&self) -> impl Iterator<Item = (&str, TypedFieldValue)>;
-    fn relations(&self) -> impl Iterator<Item = (&str, &[Ref])>;
+    fn relations(&self) -> impl Iterator<Item = (&str, &RelationMembership)>;
     fn unavailable_fields(&self) -> impl Iterator<Item = &str>;
 }
 
@@ -21,7 +113,7 @@ pub trait EntityRow {
 pub struct RowRecord {
     identity: Ref,
     fields: IndexMap<String, TypedFieldValue>,
-    relations: IndexMap<String, Vec<Ref>>,
+    relations: IndexMap<String, RelationMembership>,
     unavailable_fields: BTreeSet<String>,
 }
 
@@ -34,10 +126,10 @@ impl EntityRow for RowRecord {
             .iter()
             .map(|(key, value)| (key.as_str(), value.clone()))
     }
-    fn relations(&self) -> impl Iterator<Item = (&str, &[Ref])> {
+    fn relations(&self) -> impl Iterator<Item = (&str, &RelationMembership)> {
         self.relations
             .iter()
-            .map(|(key, refs)| (key.as_str(), refs.as_slice()))
+            .map(|(key, refs)| (key.as_str(), refs))
     }
     fn unavailable_fields(&self) -> impl Iterator<Item = &str> {
         self.unavailable_fields.iter().map(String::as_str)
@@ -54,7 +146,7 @@ impl RowRecord {
                 .collect(),
             relations: row
                 .relations()
-                .map(|(key, refs)| (key.to_string(), refs.to_vec()))
+                .map(|(key, refs)| (key.to_string(), refs.clone()))
                 .collect(),
             unavailable_fields: row.unavailable_fields().map(str::to_string).collect(),
         }
@@ -67,7 +159,7 @@ impl RowRecord {
     ) -> (
         Ref,
         IndexMap<String, TypedFieldValue>,
-        IndexMap<String, Vec<Ref>>,
+        IndexMap<String, RelationMembership>,
         BTreeSet<String>,
     ) {
         (
@@ -90,60 +182,100 @@ impl<'a> RowCodec<'a> {
         Self { cgs }
     }
 
-    pub fn identity_row(&self, reference: &Ref) -> Json {
-        let mut row = Map::new();
-        crate::apply_identity_slots_to_row(&mut row, reference, self.cgs);
-        row.insert(
-            "_ref".into(),
-            serde_json::to_value(RefWire::from_ref(reference)).expect("RefWire serializes"),
-        );
-        Json::Object(row)
+    pub fn identity_values(&self, reference: &Ref) -> ValueRow {
+        let mut row = ValueRow::new();
+        self.apply_identity(&mut row, reference);
+        row.insert("_ref".into(), RefWire::from_ref(reference).to_value());
+        row
     }
-
-    /// Machine-readable row. Relation values always contain structural identity,
-    /// including when the target payload is unavailable or has been evicted.
-    pub fn encode(&self, row: &impl EntityRow) -> Json {
-        let mut object: Map<String, Json> = row
+    pub fn identity_row(&self, reference: &Ref) -> Json {
+        crate::plasm_value_to_json(&self.identity_values(reference).into_value())
+    }
+    fn apply_identity(&self, row: &mut ValueRow, reference: &Ref) {
+        use crate::{EntityKey, Value};
+        let needed = |value: Option<&Value>| match value {
+            None | Some(Value::Null) => true,
+            Some(Value::String(s)) => s.is_empty(),
+            _ => false,
+        };
+        let entity = self
+            .cgs
+            .and_then(|c| c.get_entity(reference.entity_type.as_str()));
+        match &reference.key {
+            EntityKey::Simple(slot) => {
+                let key = entity.map(|e| e.id_field.as_str()).unwrap_or("id");
+                if let Some(id) = slot.as_lit_str().filter(|id| !id.is_empty()) {
+                    if needed(row.get(key)) {
+                        row.insert(key.into(), Value::String(id.into()));
+                    }
+                }
+            }
+            EntityKey::Compound(parts) => {
+                for (key, slot) in parts {
+                    let Some(text) = slot.as_lit_str().filter(|s| !s.is_empty()) else {
+                        continue;
+                    };
+                    if !needed(row.get(key)) {
+                        continue;
+                    }
+                    let raw = Value::String(text.into());
+                    let value = entity
+                        .and_then(|e| e.fields.get(key.as_str()))
+                        .and_then(|field| self.cgs.and_then(|cgs| field.named_value(cgs).ok()))
+                        .and_then(|nv| {
+                            crate::coerce_value_for_field_type(
+                                &nv.field_type,
+                                nv.value_format,
+                                nv.array_items.as_ref(),
+                                raw.clone(),
+                            )
+                            .ok()
+                        })
+                        .unwrap_or(raw);
+                    row.insert(key.clone(), value);
+                }
+            }
+        }
+    }
+    /// Materialize native values for execution. JSON belongs to `encode` only.
+    pub fn values(&self, row: &impl EntityRow) -> ValueRow {
+        use crate::Value;
+        let mut object: ValueRow = row
             .fields()
-            .map(|(key, value)| {
-                (
-                    key.to_string(),
-                    serde_json::to_value(value).expect("field serializes"),
-                )
-            })
+            .map(|(key, value)| (key.to_owned(), value.into_value()))
             .collect();
-        crate::apply_identity_slots_to_row(&mut object, row.identity(), self.cgs);
+        self.apply_identity(&mut object, row.identity());
         for (name, references) in row.relations() {
             let values: Vec<_> = references
                 .iter()
-                .map(|reference| self.identity_row(reference))
+                .map(|r| self.identity_values(r).into_value())
                 .collect();
             let single = self
                 .cgs
-                .and_then(|cgs| cgs.get_entity(row.identity().entity_type.as_str()))
-                .and_then(|entity| entity.relations.get(name))
-                .is_some_and(|relation| relation.cardinality == Cardinality::One);
+                .and_then(|c| c.get_entity(row.identity().entity_type.as_str()))
+                .and_then(|e| e.relations.get(name))
+                .is_some_and(|r| r.cardinality == Cardinality::One);
             object.insert(
                 name.into(),
                 if single {
-                    values.into_iter().next().unwrap_or(Json::Null)
+                    values.into_iter().next().unwrap_or(Value::Null)
                 } else {
-                    Json::Array(values)
+                    Value::Array(values)
                 },
             );
         }
-        object.insert(
-            "_ref".into(),
-            serde_json::to_value(RefWire::from_ref(row.identity())).expect("RefWire serializes"),
-        );
+        object.insert("_ref".into(), RefWire::from_ref(row.identity()).to_value());
         let unavailable: Vec<_> = row
             .unavailable_fields()
-            .map(|field| Json::String(field.into()))
+            .map(|name| Value::String(name.into()))
             .collect();
         if !unavailable.is_empty() {
-            object.insert("_unavailable_fields".into(), Json::Array(unavailable));
+            object.insert("_unavailable_fields".into(), Value::Array(unavailable));
         }
-        Json::Object(object)
+        object
+    }
+    pub fn encode(&self, row: &impl EntityRow) -> Json {
+        crate::plasm_value_to_json(&self.values(row).into_value())
     }
 
     /// Presentation payload without synthetic identity or storage metadata.
@@ -193,20 +325,28 @@ impl<'a> RowCodec<'a> {
     /// Decode an execution row. Storage metadata must be removed by its owning
     /// adapter before calling this method; it is never inferred from a prefix.
     pub fn decode(&self, entity: &str, wire: &Json) -> Result<RowRecord, String> {
-        let object = wire.as_object().ok_or("row must be an object")?;
+        let value = crate::json_value_to_plasm_value(wire);
+        self.decode_values(entity, &ValueRow::try_from(value)?)
+    }
+    pub fn decode_values(&self, entity: &str, object: &ValueRow) -> Result<RowRecord, String> {
+        use crate::Value as V;
         let definition = self.cgs.and_then(|cgs| cgs.get_entity(entity));
         let identity = match object.get("_ref") {
-            Some(reference) => serde_json::from_value::<RefWire>(reference.clone())
-                .map_err(|_| "row requires a structural _ref".to_string())?
+            Some(reference) => RefWire::from_value(reference)
+                .ok_or("row requires a structural _ref")?
                 .into_ref(),
             None => {
                 let definition = definition
                     .ok_or_else(|| format!("row without _ref requires schema for `{entity}`"))?;
                 let scalar = |name: &str| -> Result<String, String> {
                     match object.get(name) {
-                        Some(Json::String(value)) => Ok(value.clone()),
-                        Some(Json::Number(value)) => Ok(value.to_string()),
-                        Some(Json::Bool(value)) => Ok(value.to_string()),
+                        Some(V::String(value)) => Ok(value.clone()),
+                        Some(V::Integer(value)) => Ok(value.to_string()),
+                        Some(V::Unsigned(value)) => Ok(value.to_string()),
+                        Some(V::Float(value)) => {
+                            crate::operand_binding::encode_float_identity(*value)
+                        }
+                        Some(V::Bool(value)) => Ok(value.to_string()),
                         _ => Err(format!("row missing scalar identity field `{name}`")),
                     }
                 };
@@ -239,10 +379,10 @@ impl<'a> RowCodec<'a> {
             if let Some(relation) =
                 definition.and_then(|definition| definition.relations.get(key.as_str()))
             {
-                let values: Vec<&Json> = match (relation.cardinality, value) {
-                    (Cardinality::Many, Json::Array(values)) => values.iter().collect(),
-                    (Cardinality::One, Json::Object(_)) => vec![value],
-                    (Cardinality::One, Json::Null) => vec![],
+                let values: Vec<&crate::Value> = match (relation.cardinality, value) {
+                    (Cardinality::Many, V::Array(values)) => values.iter().collect(),
+                    (Cardinality::One, V::Object(_)) => vec![value],
+                    (Cardinality::One, V::Null) => vec![],
                     _ => {
                         return Err(format!(
                             "relation `{key}` has invalid cardinality or identity representation"
@@ -255,8 +395,8 @@ impl<'a> RowCodec<'a> {
                         let reference = value.get("_ref").ok_or_else(|| {
                             format!("relation `{key}` row requires a structural _ref")
                         })?;
-                        let reference = serde_json::from_value::<RefWire>(reference.clone())
-                            .map_err(|_| format!("relation `{key}` has invalid _ref"))?
+                        let reference = RefWire::from_value(reference)
+                            .ok_or_else(|| format!("relation `{key}` has invalid _ref"))?
                             .into_ref();
                         if reference.entity_type.as_str() != relation.target_resource.as_str() {
                             return Err(format!("relation `{key}` has wrong target identity"));
@@ -264,13 +404,18 @@ impl<'a> RowCodec<'a> {
                         Ok(reference)
                     })
                     .collect::<Result<_, String>>()?;
-                relations.insert(key.clone(), references);
-            } else {
-                fields.insert(
+                relations.insert(
                     key.clone(),
-                    serde_json::from_value(value.clone())
-                        .map_err(|error| format!("row field `{key}`: {error}"))?,
+                    RelationMembership::observe(
+                        self.cgs,
+                        &("value_ingress", &identity, key, value),
+                        references,
+                        None,
+                    )
+                    .map_err(|e| e.to_string())?,
                 );
+            } else {
+                fields.insert(key.clone(), TypedFieldValue::from(value.clone()));
             }
         }
         if let Some(cgs) = self.cgs {
@@ -279,8 +424,16 @@ impl<'a> RowCodec<'a> {
         let unavailable_fields = object
             .get("_unavailable_fields")
             .map(|value| {
-                serde_json::from_value(value.clone())
-                    .map_err(|error| format!("unavailable fields: {error}"))
+                value
+                    .as_array()
+                    .ok_or_else(|| "unavailable fields must be an array".to_owned())?
+                    .iter()
+                    .map(|v| {
+                        v.as_str()
+                            .map(str::to_owned)
+                            .ok_or_else(|| "unavailable field must be a string".to_owned())
+                    })
+                    .collect::<Result<BTreeSet<_>, String>>()
             })
             .transpose()?
             .unwrap_or_default();
@@ -303,30 +456,195 @@ impl<'a> PublicRowSchema<'a> {
     pub fn new(schema: &'a crate::plasm_monad::SyntheticResultSchema) -> Self {
         Self { schema }
     }
-    pub fn project(&self, row: &Json) -> Result<Json, String> {
-        let object = row.as_object().ok_or("rowset row must be an object")?;
-        Ok(Json::Object(
-            self.schema
-                .fields
-                .iter()
-                .map(|field| {
-                    (
-                        field.name.to_string(),
-                        object
-                            .get(field.name.as_str())
-                            .cloned()
-                            .unwrap_or(Json::Null),
-                    )
-                })
-                .collect(),
-        ))
+    pub fn project(&self, row: &ValueRow) -> Result<ValueRow, String> {
+        let mut projected = ValueRow::new();
+        for field in &self.schema.fields {
+            match row.get(field.name.as_str()) {
+                Some(value) => {
+                    projected.insert(field.name.to_string(), value.clone());
+                }
+                None if self.schema.optional_fields.contains(field.name.as_str()) => {}
+                None => return Err(format!("row missing declared column `{}`", field.name)),
+            }
+        }
+        Ok(projected)
     }
-    pub fn union(&self, left: &[Json], right: &[Json]) -> Result<Vec<Json>, String> {
-        let project = |rows: &[Json]| {
-            rows.iter()
-                .map(|row| self.project(row))
-                .collect::<Result<Vec<_>, _>>()
+    pub fn union(&self, left: &[ValueRow], right: &[ValueRow]) -> Result<Vec<ValueRow>, String> {
+        self.union_with_occurrences(left, right)
+            .map(|(rows, _)| rows)
+    }
+    /// Stable public-value union and the retained occurrence in left ++ right.
+    pub fn union_with_occurrences(
+        &self,
+        left: &[ValueRow],
+        right: &[ValueRow],
+    ) -> Result<(Vec<ValueRow>, Vec<usize>), String> {
+        use std::hash::Hasher;
+        let mut occurrences = Vec::new();
+        let mut seen = std::collections::HashMap::<u64, Vec<usize>>::new();
+        let mut result = Vec::new();
+        for (occurrence, row) in left.iter().chain(right).enumerate() {
+            let projected = self.project(row)?;
+            let mut hash = std::collections::hash_map::DefaultHasher::new();
+            crate::hash_resolved_value(&projected, &mut hash)?;
+            let candidates = seen.entry(hash.finish()).or_default();
+            if candidates.iter().any(|index| result[*index] == projected) {
+                continue;
+            }
+            candidates.push(result.len());
+            result.push(projected);
+            occurrences.push(occurrence);
+        }
+        Ok((result, occurrences))
+    }
+}
+
+#[cfg(test)]
+mod presence_tests {
+    use super::*;
+    use crate::fixture_row as json;
+    use crate::value_contract::ValueContract;
+    use crate::{OutputName, SyntheticFieldSchema, SyntheticResultSchema};
+
+    proptest::proptest! {
+        #[test]
+        fn union_survivors_are_stable_first_occurrences(
+            left in proptest::collection::vec(-4i64..5, 0..25),
+            right in proptest::collection::vec(-4i64..5, 0..25),
+        ) {
+            let kind = ValueContract::scalar(crate::FieldType::Integer);
+            let schema = SyntheticResultSchema {
+                entity: None, optional_fields: Default::default(),
+                fields: vec![SyntheticFieldSchema { name: OutputName::new("value").unwrap(), value_kind: kind.summary(), value_type: Some(kind), source: None }],
+            };
+            let to_rows = |values: &[i64]| values.iter().map(|value| json!({"value":value})).collect::<Vec<_>>();
+            let (rows, occurrences) = PublicRowSchema::new(&schema).union_with_occurrences(&to_rows(&left), &to_rows(&right)).unwrap();
+            let input: Vec<_> = left.iter().chain(&right).copied().collect();
+            let mut expected = Vec::new();
+            for (index, value) in input.iter().enumerate() {
+                if !input[..index].contains(value) { expected.push(index); }
+            }
+            proptest::prop_assert_eq!(&occurrences, &expected);
+            proptest::prop_assert_eq!(rows, expected.iter().map(|index| json!({"value":input[*index]})).collect::<Vec<_>>());
+        }
+    }
+
+    #[test]
+    fn observed_union_distinguishes_absent_from_null_and_keeps_first() {
+        let kind = ValueContract::scalar(crate::FieldType::String);
+        let mut schema = SyntheticResultSchema {
+            entity: None,
+            optional_fields: BTreeSet::from(["value".into()]),
+            fields: vec![SyntheticFieldSchema {
+                name: OutputName::new("value").unwrap(),
+                value_kind: kind.summary(),
+                value_type: Some(kind),
+                source: None,
+            }],
         };
-        crate::union_rowsets(&project(left)?, &project(right)?)
+        let left = [
+            json!({"_ref":"a"}),
+            json!({"value":null}),
+            json!({"value":"x"}),
+        ];
+        let right = [json!({"_ref":"b"}), json!({"value":null})];
+        assert_eq!(
+            PublicRowSchema::new(&schema).union(&left, &right).unwrap(),
+            vec![json!({}), json!({"value":null}), json!({"value":"x"})]
+        );
+        let (_, occurrences) = PublicRowSchema::new(&schema)
+            .union_with_occurrences(&left, &right)
+            .unwrap();
+        assert_eq!(occurrences, [0, 1, 2]);
+        let (_, occurrences) = PublicRowSchema::new(&schema)
+            .union_with_occurrences(&right, &left)
+            .unwrap();
+        assert_eq!(occurrences, [0, 1, 4]);
+        schema.optional_fields.clear();
+        assert!(PublicRowSchema::new(&schema).project(&json!({})).is_err());
+    }
+}
+
+#[cfg(test)]
+mod relation_ownership_tests {
+    use super::*;
+
+    #[test]
+    fn cloning_membership_shares_ordered_occurrences() {
+        let membership = {
+            use crate::collection_codec::{
+                CollectionCodec, CollectionIdentity, Observation, RecordingCodec,
+            };
+            let references = vec![Ref::new("Child", "x"), Ref::new("Child", "x")];
+            let observation = Observation::ExactOutput {
+                decoded: references.len(),
+            };
+            crate::row_contract::RelationMembership::from_record(
+                RecordingCodec::new()
+                    .record(
+                        CollectionIdentity::for_untyped_observation(&"relation_fixture").unwrap(),
+                        references,
+                        observation,
+                    )
+                    .unwrap(),
+            )
+        };
+        let copy = membership.clone();
+        assert!(std::ptr::eq(&membership[0], &copy[0]));
+        assert_eq!(copy.len(), 2);
+        drop(membership);
+        assert!(copy.is_exhaustive());
+        assert_eq!(copy[0], copy[1]);
+    }
+
+    #[test]
+    fn relation_roundtrip_preserves_evidence_and_duplicate_occurrences() {
+        for exhaustive in [true, false] {
+            let refs = vec![Ref::new("Child", "x"), Ref::new("Child", "x")];
+            let membership = if exhaustive {
+                {
+                    use crate::collection_codec::{
+                        CollectionCodec, CollectionIdentity, Observation, RecordingCodec,
+                    };
+                    let references = refs;
+                    let observation = Observation::ExactOutput {
+                        decoded: references.len(),
+                    };
+                    crate::row_contract::RelationMembership::from_record(
+                        RecordingCodec::new()
+                            .record(
+                                CollectionIdentity::for_untyped_observation(&"relation_fixture")
+                                    .unwrap(),
+                                references,
+                                observation,
+                            )
+                            .unwrap(),
+                    )
+                }
+            } else {
+                {
+                    use crate::collection_codec::{
+                        CollectionCodec, CollectionIdentity, Observation, RecordingCodec,
+                    };
+                    let references = refs;
+                    let observation = Observation::UnprovenPage;
+                    crate::row_contract::RelationMembership::from_record(
+                        RecordingCodec::new()
+                            .record(
+                                CollectionIdentity::for_untyped_observation(&"relation_fixture")
+                                    .unwrap(),
+                                references,
+                                observation,
+                            )
+                            .unwrap(),
+                    )
+                }
+            };
+            let bytes = serde_json::to_vec(&membership).unwrap();
+            let restored: RelationMembership = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(membership, restored);
+            assert_eq!(restored.len(), 2);
+            assert_eq!(restored.is_exhaustive(), exhaustive);
+        }
     }
 }

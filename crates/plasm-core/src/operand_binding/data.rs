@@ -4,8 +4,39 @@ use super::*;
 
 impl BindOperands for crate::PlasmDataValue {
     fn bind_operands<R: OperandResolver>(&self, resolver: &mut R) -> Result<Self, R::Error> {
+        self.bind_free(resolver, &mut Vec::new())
+    }
+}
+
+impl crate::PlasmDataValue {
+    fn bind_free<R: OperandResolver>(
+        &self,
+        resolver: &mut R,
+        locals: &mut Vec<String>,
+    ) -> Result<Self, R::Error> {
         use crate::PlasmDataValue as D;
         Ok(match self {
+            D::Quantified {
+                all,
+                collection,
+                binding,
+                predicate,
+            } => {
+                let collection = Box::new(collection.bind_free(resolver, locals)?);
+                locals.push(binding.clone());
+                let result = predicate.bind_free(resolver, locals);
+                locals.pop();
+                D::Quantified {
+                    all: *all,
+                    collection,
+                    binding: binding.clone(),
+                    predicate: Box::new(result?),
+                }
+            }
+            D::BindingSymbol { binding, .. } if locals.contains(binding) => self.clone(),
+            D::Expression { expression } => D::Expression {
+                expression: expression.try_map(|v| v.bind_free(resolver, locals).map(Box::new))?,
+            },
             D::Literal { .. } => self.clone(),
             D::NodeSymbol { node, alias, path } => D::Literal {
                 value: resolver.node(node, alias, path)?,
@@ -28,18 +59,18 @@ impl BindOperands for crate::PlasmDataValue {
             D::EntityRefKey { api, entity, key } => D::EntityRefKey {
                 api: api.clone(),
                 entity: entity.clone(),
-                key: Box::new(key.bind_operands(resolver)?),
+                key: Box::new(key.bind_free(resolver, locals)?),
             },
             D::Array { items } => D::Array {
                 items: items
                     .iter()
-                    .map(|v| v.bind_operands(resolver))
+                    .map(|v| v.bind_free(resolver, locals))
                     .collect::<Result<_, _>>()?,
             },
             D::Object { fields } => D::Object {
                 fields: fields
                     .iter()
-                    .map(|(k, v)| Ok((k.clone(), v.bind_operands(resolver)?)))
+                    .map(|(k, v)| Ok((k.clone(), v.bind_free(resolver, locals)?)))
                     .collect::<Result<_, R::Error>>()?,
             },
         })

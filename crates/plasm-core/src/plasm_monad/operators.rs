@@ -124,6 +124,7 @@ pub fn map_step_payload(source: &str, op: ComputeOp, shape: ResultShape) -> Plas
             source: source.to_string(),
             op,
             schema: SyntheticResultSchema {
+                optional_fields: Default::default(),
                 entity: None,
                 fields: vec![],
             },

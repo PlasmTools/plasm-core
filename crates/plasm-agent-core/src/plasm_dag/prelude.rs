@@ -2,8 +2,8 @@
 
 pub(in crate::plasm_dag) use crate::execute_session::ExecuteSession;
 pub(in crate::plasm_dag) use crate::plasm_dag_surface_guards::{
-    content_reference_error, looks_like_data_literal, reject_bare_literal_noop_root,
-    reject_derive_map_invalid_rhs, reject_relation_arrow_trap, ContentReferenceSite,
+    looks_like_data_literal, reject_bare_literal_noop_root, reject_derive_map_invalid_rhs,
+    reject_relation_arrow_trap,
 };
 pub(in crate::plasm_dag) use crate::plasm_plan::{
     AggregateFunction, ComputeOp, EffectClass, FieldPath, OutputName, PlanExprIr, PlanNodeKind,

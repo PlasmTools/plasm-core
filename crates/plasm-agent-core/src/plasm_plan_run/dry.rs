@@ -323,6 +323,11 @@ pub(crate) fn graph_summary(
                 _ => {}
             }
         }
+        for nested in n.nested_plans() {
+            let bounds = crate::plan_prepare::analyze_read_boundedness(nested.artifact());
+            let (_, review) = graph_summary(nested.artifact(), &bounds);
+            has_full_collection_compute |= review.has_full_collection_compute;
+        }
         if let ValidatedPlanNode::MapBody(map) = n {
             template_nodes.push(n.id().as_str().into());
             let bounds = crate::plan_prepare::analyze_read_boundedness(map.plan.artifact());
@@ -823,6 +828,28 @@ pub(crate) fn preflight_nodes(
         .map_err(ProgramStageError::plan)?;
     let es = dry_session.session();
     for (step_idx, n) in plan.nodes.iter().enumerate() {
+        if let ValidatedPlanNode::IterateUntil(it) = n {
+            if let Some(predicate) =
+                crate::map_body::iteration_predicate(it).map_err(ProgramStageError::plan)?
+            {
+                crate::map_body::validate(es, &predicate, &plan.nodes)
+                    .map_err(ProgramStageError::plan)?;
+                let (body_results, _) = preflight_nodes(es, predicate.plan.artifact())?;
+                out.push(serde_json::json!({"ok": true, "id": format!("{}/{}", it.id, predicate.id), "kind": "until_predicate", "body": body_results, "capture": predicate.body.parent}));
+            }
+        }
+        if let ValidatedPlanNode::IterateUntil(it) = n {
+            if let Some(step) =
+                crate::map_body::iteration_step(it).map_err(ProgramStageError::plan)?
+            {
+                crate::map_body::validate(es, &step, &plan.nodes)
+                    .map_err(ProgramStageError::plan)?;
+                let (body_results, _) = preflight_nodes(es, step.plan.artifact())?;
+                out.push(serde_json::json!({"ok":true,"id":it.id.as_str(),"kind":"iterate_until","step_body":body_results,"take":it.take}));
+                staged_nodes.push(format!("{} (iterate_until)", it.id));
+                continue;
+            }
+        }
         if let ValidatedPlanNode::MapBody(map) = n {
             crate::map_body::validate(es, map, &plan.nodes).map_err(ProgramStageError::plan)?;
             let (body_results, _) = preflight_nodes(es, map.plan.artifact())?;
@@ -952,6 +979,6 @@ pub(crate) fn preflight_nodes(
         staged_nodes.push(format!("{} ({:?})", n.id(), n.kind()));
         out.push(dry_stage_result(step_idx, n));
     }
-    dry_validate_staged_surfaces(es, plan).map_err(ProgramStageError::plan)?;
+    dry_validate_staged_surfaces(es, plan).map_err(|e| ProgramStageError::plan(e.diagnostic()))?;
     Ok((out, staged_nodes))
 }

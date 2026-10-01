@@ -44,12 +44,22 @@ pub(crate) fn populate_template_path_env(
     Ok(())
 }
 
-/// Narrow scope slots typed as [`FieldType::EntityRef`] (row JSON → id string, etc.).
-pub(crate) fn normalize_cml_env_scope_entity_refs(
+/// Encode temporal inputs and narrow entity-reference scope slots before CML.
+pub(crate) fn normalize_cml_env_inputs(
     env: &mut CmlEnv,
     cgs: &CGS,
     capability: &CapabilitySchema,
 ) -> Result<(), RuntimeError> {
+    let mut values = Value::Object(env.clone());
+    plasm_core::temporal_input::encode_capability_temporals(&mut values, capability, cgs)
+        .map_err(|message| RuntimeError::ConfigurationError { message })?;
+    if let Value::Object(values) = values {
+        *env = values;
+    }
+    if let Some(input) = env.get_mut("input") {
+        plasm_core::temporal_input::encode_capability_temporals(input, capability, cgs)
+            .map_err(|message| RuntimeError::ConfigurationError { message })?;
+    }
     for field in capability.scope_params() {
         let nv = field
             .named_value(cgs)

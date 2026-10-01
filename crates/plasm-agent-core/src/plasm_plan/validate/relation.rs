@@ -127,6 +127,14 @@ fn plan_node_reaches_view_producer(
             PlanNodeKind::ForEach | PlanNodeKind::IterateUntil => {
                 node.source.clone().unwrap_or_default()
             }
+            PlanNodeKind::MapBody => match node.map_body.as_deref() {
+                Some(body)
+                    if matches!(body.output, plasm_core::plasm_monad::ScopedOutput::Filter) =>
+                {
+                    body.parent.source.to_string()
+                }
+                _ => return Ok(false),
+            },
             PlanNodeKind::Data => return Ok(false),
             _ => return Ok(false),
         };

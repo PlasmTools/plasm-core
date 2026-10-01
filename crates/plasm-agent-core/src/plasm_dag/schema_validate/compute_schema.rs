@@ -42,7 +42,7 @@ pub(in crate::plasm_dag) fn infer_render_columns_for_node(
                 })?;
                 infer_render_columns_for_node(session, state, staged, parent)
             }
-            ComputeOp::With { .. } | ComputeOp::Union { .. } => {
+            ComputeOp::With { .. } | ComputeOp::Union { .. } | ComputeOp::MergeBranches { .. } => {
                 Ok(schema.fields.iter().map(|f| f.name.clone()).collect())
             }
             ComputeOp::Render { .. } | ComputeOp::Python { .. } => Ok(schema.fields.iter().map(|f| f.name.clone()).collect()),
@@ -53,6 +53,7 @@ pub(in crate::plasm_dag) fn infer_render_columns_for_node(
         | DagNodeSource::RelationTraversal {
             qualified_entity, ..
         } => infer_entity_row_columns(session, qualified_entity),
+        DagNodeSource::MapBody { schema, .. } => Ok(schema.fields.iter().map(|f| f.name.clone()).collect()),
         DagNodeSource::Data(_) => Err(
             "data literals cannot provide inferred template columns; use explicit `[field,...] <<TAG` columns or bind a query".into(),
         ),
@@ -108,6 +109,11 @@ pub(in crate::plasm_dag) fn synthetic_schema_passthrough_rows(
     let cgs =
         crate::catalog_ownership::resolve_cgs_for_entry_entity(session, &qe.entry_id, &qe.entity)?;
     let entity = cgs.get_entity(&qe.entity).ok_or("unknown schema entity")?;
+    schema.optional_fields = schema
+        .fields
+        .iter()
+        .map(|field| field.name.to_string())
+        .collect();
     for output in &mut schema.fields {
         if let Some(field) = entity.fields.get(output.name.as_str()) {
             let mut value_type = plasm_core::value_contract::ValueContract::from_domain(
@@ -116,6 +122,10 @@ pub(in crate::plasm_dag) fn synthetic_schema_passthrough_rows(
                 field.kind.registry_key(),
             )?;
             value_type.nullable = !field.required;
+            output.value_kind = value_type.summary();
+            output.value_type = Some(value_type);
+        } else if let Some(relation) = entity.relations.get(output.name.as_str()) {
+            let value_type = crate::python_compute::observed_relation_type(relation, &qe.entry_id);
             output.value_kind = value_type.summary();
             output.value_type = Some(value_type);
         }

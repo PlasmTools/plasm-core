@@ -70,8 +70,10 @@ futures = { workspace = true }
 redis = { workspace = true }
 dashmap = { workspace = true }
 
-monty-pool = { git = "https://github.com/pydantic/monty", rev = "037e91c7e846464812af904ca1bcde601bd98b23" }
-monty-types = { git = "https://github.com/pydantic/monty", rev = "037e91c7e846464812af904ca1bcde601bd98b23" }
+monty-analysis = { path = "../../vendor/monty/crates/monty-analysis" }
+monty = { path = "../../vendor/monty/crates/monty" }
+monty-pool = { path = "../../vendor/monty/crates/monty-pool" }
+monty-types = { path = "../../vendor/monty/crates/monty-types" }
 ruff_python_ast = "=0.0.14"
 ruff_python_parser = "=0.0.14"
 ruff_text_size = "=0.0.14"

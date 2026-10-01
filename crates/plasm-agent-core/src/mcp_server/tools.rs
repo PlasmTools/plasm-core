@@ -20,9 +20,8 @@ use super::schema::{json_schema_non_empty_string_type, json_schema_string_type};
 pub(crate) fn plasm_run_tool_description(mode: ArtifactAccessMode) -> String {
     let suffix = match mode {
         ArtifactAccessMode::ResourcesRead => PLASM_RUN_TOOL_ARTIFACT_RESOURCES,
-        ArtifactAccessMode::ToolFallback | ArtifactAccessMode::Programmatic => {
-            PLASM_RUN_TOOL_ARTIFACT_TOOL
-        }
+        ArtifactAccessMode::DagCompute => "",
+        ArtifactAccessMode::ToolFallback => PLASM_RUN_TOOL_ARTIFACT_TOOL,
     };
     format!("{}{}", PLASM_RUN_TOOL_DESCRIPTION_BASE, suffix)
 }

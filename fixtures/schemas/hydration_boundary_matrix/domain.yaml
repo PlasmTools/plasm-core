@@ -16,7 +16,21 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path: [{key: notes}, {wildcard: true}]
+      unproven_notes:
+        target: Note
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path: [{key: notes}, {wildcard: true}]
+      wire_notes:
+        target: Note
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          collection_coverage: complete
+          path: [{key: payload}, {key: items}, {wildcard: true}, {key: id}]
   SavedNote:
     id_field: note_id
     fields:
@@ -41,6 +55,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path: [{key: owners}, {wildcard: true}]
   Owner:
     id_field: owner_id

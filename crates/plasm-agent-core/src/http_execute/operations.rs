@@ -90,15 +90,15 @@ pub async fn try_dispatch_operation_program(
     trace: Option<&PlasmTraceContext>,
     program: &str,
     _symbol_map_cross_cache: Option<&plasm_core::SymbolMapCrossRequestCache>,
-) -> Option<Result<crate::plasm_plan_run::PlasmPlanRunResult, String>> {
+) -> Option<Result<crate::plasm_plan_run::PlasmPlanRunResult, plasm_runtime::ExecutionFailure>> {
     let expr = crate::operation::try_parse_operation_continuation(program)?;
     Some(match expr {
         Expr::Wait(w) => handle_wait_operation(sess, st, trace, &w.handle)
             .await
-            .map_err(operation_error_to_string),
+            .map_err(plasm_runtime::ExecutionFailure::from),
         Expr::Cancel(c) => handle_cancel_operation(sess, trace, &c.handle)
             .await
-            .map_err(operation_error_to_string),
+            .map_err(plasm_runtime::ExecutionFailure::from),
         _ => None?,
     })
 }

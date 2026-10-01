@@ -11,7 +11,7 @@ pub(super) async fn materialize(
     io: &IoStep,
     step_idx: usize,
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
-) -> Result<MaterializedNode, String> {
+) -> Result<MaterializedNode, ExecutionFailure> {
     let mut session = await_checked(ctx.execution_scope, ctx.st.python_pool.checkout()).await?;
     let event = await_checked(ctx.execution_scope, async {
         session
@@ -26,7 +26,7 @@ pub(super) async fn materialize(
                 &mut on_print_sync(|_, _| {}),
             )
             .await
-            .map_err(|e| e.to_string())
+            .map_err(crate::python_pool::pool_failure)
     })
     .await?;
     let call_id = match event {
@@ -64,46 +64,73 @@ pub(super) async fn materialize(
     report(crate::occurrence_progress::ExecutionStage::AwaitingHost);
     // The worker supplies neither operands nor credentials. All effect authority stays in this node.
     let result = Box::pin(live_materialize_io(ctx, io, step_idx, materialized)).await?;
+    // Publish the host receipt before cancellation or a worker failure can stop
+    // the Python continuation. Neither failure rolls back the completed IO.
     if let Some(scope) = ctx.execution_scope {
-        scope.check()?;
+        let mut event = crate::occurrence_progress::OccurrenceProgress::running(
+            ctx.scope_path.clone(),
+            io.id().to_string(),
+            ctx.occurrence_path.clone(),
+        );
+        event.rows = Some(result.result.count());
+        event.artifact_uri = result.artifact.as_ref().map(|a| a.plasm_uri.clone());
+        event.request_fingerprints = result.result.request_fingerprints.clone();
+        event.operations = result.result.operations.clone();
+        scope.report_occurrence(event);
     }
-    let handle = MontyObject::class_instance(
-        MontyObject::class_type("Rowset", crate::python_pool::fresh_uuid(), true, false, []),
-        crate::python_pool::fresh_uuid(),
-        [
-            (
-                MontyObject::string("entry_id"),
-                MontyObject::string(&result.qualified_entity.entry_id),
-            ),
-            (
-                MontyObject::string("entity"),
-                MontyObject::string(&result.qualified_entity.entity),
-            ),
-            (
-                MontyObject::string("count"),
-                MontyObject::int(
-                    i64::try_from(result.result.count)
-                        .map_err(|_| "row count exceeds Python handle range")?,
+    let continuation: Result<(), ExecutionFailure> = async {
+        if let Some(scope) = ctx.execution_scope {
+            scope.check()?;
+        }
+        let handle = MontyObject::class_instance(
+            MontyObject::class_type("Rowset", crate::python_pool::fresh_uuid(), true, false, []),
+            crate::python_pool::fresh_uuid(),
+            [
+                (
+                    MontyObject::string("entry_id"),
+                    MontyObject::string(&result.qualified_entity.entry_id),
                 ),
-            ),
-        ],
-    );
-    report(crate::occurrence_progress::ExecutionStage::Resuming);
-    let event=await_checked(ctx.execution_scope,async {
-        session.resume_futures(vec![(call_id, ResumeValue::Return(handle.clone()))],&mut on_print_sync(|_,_|{})).await.map_err(|e|format!("Python resume failed after host operation completed; operation is not retried: {e}"))
-    }).await?;
-    match event {
+                (
+                    MontyObject::string("entity"),
+                    MontyObject::string(&result.qualified_entity.entity),
+                ),
+                (
+                    MontyObject::string("count"),
+                    MontyObject::int(
+                        i64::try_from(result.result.count())
+                            .map_err(|_| "row count exceeds Python handle range")?,
+                    ),
+                ),
+            ],
+        );
+        report(crate::occurrence_progress::ExecutionStage::Resuming);
+        let event = await_checked(ctx.execution_scope, async {
+            session
+                .resume_futures(
+                    vec![(call_id, ResumeValue::Return(handle.clone()))],
+                    &mut on_print_sync(|_, _| {}),
+                )
+                .await
+                .map_err(crate::python_pool::pool_failure)
+        })
+        .await?;
+        match event {
         TurnEvent::Complete(returned) if returned == handle => {}
         _ => return Err(
             "Python host return contract mismatch after host operation; operation is not retried"
                 .into(),
         ),
     }
-    await_checked(ctx.execution_scope, async {
-        session.finish().await.map_err(|e| {
-            format!("Python checkout finish after host operation; operation is not retried: {e}")
+        await_checked(ctx.execution_scope, async {
+            session
+                .finish()
+                .await
+                .map_err(crate::python_pool::pool_failure)
         })
-    })
-    .await?;
+        .await?;
+        Ok(())
+    }
+    .await;
+    continuation.map_err(|failure| failure.with_effects(&result.result.operations))?;
     Ok(result)
 }

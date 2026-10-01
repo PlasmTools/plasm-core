@@ -268,3 +268,52 @@ pub use trace::{
 };
 
 pub(crate) use routes::session_lookup_unavailable;
+
+/// Public failure transport. Diagnostic prose never determines repair authority.
+pub(crate) fn execution_failure_response(failure: plasm_runtime::ExecutionFailure) -> Response {
+    let status = if failure.recovery == plasm_runtime::RecoveryDisposition::RepairProgram {
+        ProblemStatus::BAD_REQUEST
+    } else {
+        ProblemStatus::INTERNAL_SERVER_ERROR
+    };
+    problem_response(
+        Problem::custom(
+            status,
+            Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
+        )
+        .with_title("Execution failed")
+        .with_detail(failure.to_string())
+        .with_extension("recovery_instructions", failure.recovery_instructions())
+        .with_extension("failure", failure),
+    )
+}
+
+#[cfg(test)]
+mod execution_failure_transport_tests {
+    #[tokio::test]
+    async fn execution_failure_http_preserves_recovery_and_diagnostic() {
+        let failure = plasm_runtime::ExecutionFailure::new(
+            plasm_runtime::FailureCause::ResponseContract,
+            "response_contract_violation",
+            "service rejected the requested state",
+        )
+        .at("map/write", vec![2, 1]);
+        let response = super::execution_failure_response(failure.clone());
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        );
+        let bytes = axum::body::to_bytes(response.into_body(), 16384)
+            .await
+            .unwrap();
+        let wire = String::from_utf8(bytes.to_vec()).unwrap();
+        assert!(wire.contains("service rejected the requested state"));
+        let value: serde_json::Value = serde_json::from_str(&wire).unwrap();
+        let decoded: plasm_runtime::ExecutionFailure =
+            serde_json::from_value(value["failure"].clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(decoded).unwrap(),
+            serde_json::to_value(failure).unwrap()
+        );
+    }
+}

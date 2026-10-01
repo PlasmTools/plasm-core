@@ -207,13 +207,16 @@ pub use oauth_client::{
     OAuthDeviceAuthorizationResponse, OAuthDeviceTokenPoll,
 };
 pub use oauth_token_debug::TokenEndpointResponseSummary;
-pub use query_index::{QueryCacheKey, QueryIndex};
+pub use query_index::{QueryCacheKey, QueryIndex, QueryObservation};
 pub use replay::*;
-pub use row_compute::{eval_compute_ops, ComputeEvalOutcome, PolarsAdapter};
-pub use row_predicate::{json_matches_predicate, value_predicate_matches, BoundRowPredicate};
+pub use row_compute::{eval_compute_ops, ComputeEvalOutcome, ValueRowEngine};
+pub use row_predicate::{row_matches_predicate, value_predicate_matches, BoundRowPredicate};
 pub use runtime_error_render::step_error_from_runtime;
 pub use session_graph_cache::MutexGraphCacheSession;
 pub use top_k::TopKSpec;
 
 #[cfg(test)]
 mod view_rowset_tests;
+
+pub mod execution_failure;
+pub use execution_failure::{ExecutionFailure, FailureCause, RecoveryDisposition};

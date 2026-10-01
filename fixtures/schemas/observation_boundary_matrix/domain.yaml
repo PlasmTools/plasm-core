@@ -12,6 +12,14 @@ entities:
     fields:
       id: {value_ref: text, required: true}
       value: {value_ref: integer, required: true}
+    relations:
+      members:
+        target: Wire
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          collection_coverage: complete
+          path: [{key: members}, {wildcard: true}, {key: id}]
 capabilities:
   wire_query:
     kind: query
@@ -45,6 +53,27 @@ capabilities:
         fields:
         - {name: id, value_ref: text, required: true}
     output: {type: side_effect, description: Advances the counter by one.}
+  advance_wire:
+    kind: action
+    entity: Wire
+    invalidates_entities: [Counter, Wire]
+    payload:
+      input_type:
+        type: object
+        fields:
+        - {name: id, value_ref: text, required: true}
+    output: {type: side_effect, description: Advances the counter by one.}
+  apply_item:
+    kind: action
+    entity: Counter
+    receiver: {kind: entity, entity: Counter}
+    invalidates_entities: [Counter, Wire]
+    payload:
+      input_type:
+        type: object
+        fields:
+        - {name: item, value_ref: text, required: true}
+    output: {type: side_effect, description: Applies one source item to this counter.}
 views:
   counter:
     description: Current counter state composed from the wire read.

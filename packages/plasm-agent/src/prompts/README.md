@@ -17,6 +17,5 @@ Project `instructions.md` is an overlay only.
 After editing crates assets, refresh vendored copies:
 
 ```bash
-cp plasm-oss/crates/plasm-core/src/prompt_render/assets/{plasm_tool,plasm_context_tool,plasm_run_tool_base,plasm_run_tool_artifact_tool,plasm_read_run_artifact_tool,discover_tool,initialize_workflow}.txt \
   plasm-oss/packages/plasm-agent/src/prompts/assets/
 ```

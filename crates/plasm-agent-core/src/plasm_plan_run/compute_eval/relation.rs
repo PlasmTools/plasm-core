@@ -6,9 +6,10 @@ use super::super::*;
 use super::compute_ops::compute_fingerprint;
 use super::eval::{
     instantiate_parsed_expr_plan_inputs, instantiate_parsed_expr_plan_inputs_with_rows,
-    json_to_plasm_value, wire_coercion_by_alias_from_inputs,
+    wire_coercion_by_alias_from_inputs,
 };
 use super::materialized_result_use_inputs_with_source_row;
+use super::relation_coverage::embedded_collection;
 
 pub(crate) async fn materialize_relation_singleton_chain(
     st: &PlasmHostState,
@@ -20,7 +21,7 @@ pub(crate) async fn materialize_relation_singleton_chain(
     trace: Option<&PlasmTraceContext>,
     sink: Option<&McpPlasmTraceSink>,
     plan_shared: Option<Arc<crate::plan_execute_shared::PlanLineExecuteShared>>,
-) -> Result<MaterializedNode, String> {
+) -> Result<MaterializedNode, ExecutionFailure> {
     if relation_parent_row_missing(materialized, relation, es)? {
         return finalize_empty_relation_materialized_node(
             st,
@@ -30,6 +31,12 @@ pub(crate) async fn materialize_relation_singleton_chain(
             relation,
             trace,
             crate::plan_read_bounds::effective_relation_read_cap(relation),
+            materialized
+                .get(&relation.relation.source)
+                .ok_or("missing relation parent")?
+                .result
+                .collection
+                .flat_map(&"empty_relation", &[])?,
         )
         .await;
     }
@@ -74,6 +81,8 @@ pub(crate) async fn materialize_relation_singleton_chain(
         session_id,
         &relation.relation.target,
         MaterializedNode {
+            value_shapes: Vec::new(),
+            optional_fields: Default::default(),
             qualified_entity: relation.relation.target.clone(),
             display: crate::expr_display::expr_display(&parsed.expr),
             projection: parsed.projection,
@@ -81,7 +90,7 @@ pub(crate) async fn materialize_relation_singleton_chain(
             row_identities: row_identities_from_entities(
                 &scoped_es,
                 relation.relation.target.entity.as_str(),
-                &result.entities,
+                result.entities(),
             ),
             result: Arc::new(result),
             artifact,
@@ -102,7 +111,7 @@ fn relation_parent_row_missing(
     let Some(source_mat) = materialized.get(&relation.relation.source) else {
         return Ok(false);
     };
-    if source_mat.result.count == 0 {
+    if source_mat.result.count() == 0 {
         return Ok(true);
     }
     let Some(rows) = source_mat.row_source.inline_rows() else {
@@ -137,7 +146,8 @@ pub(crate) async fn finalize_empty_relation_materialized_node(
     relation: &ValidatedRelationTraversalNode,
     trace: Option<&PlasmTraceContext>,
     read_cap: Option<usize>,
-) -> Result<MaterializedNode, String> {
+    collection: plasm_runtime::execution::ExecutionCollection,
+) -> Result<MaterializedNode, ExecutionFailure> {
     let display = crate::plan_dry_display::render_executable_expr(
         &relation.relation.ir.expr,
         relation.relation.ir.projection.as_deref(),
@@ -149,21 +159,21 @@ pub(crate) async fn finalize_empty_relation_materialized_node(
         session_id,
         &relation.relation.target,
         MaterializedNode {
+            value_shapes: Vec::new(),
+            optional_fields: Default::default(),
             qualified_entity: relation.relation.target.clone(),
             display,
             projection: relation.relation.ir.projection.clone(),
             row_source: inline_row_source(&[]),
             row_identities: vec![],
             result: Arc::new(ExecutionResult {
-                count: 0,
-                entities: vec![],
+                collection: collection.with_materialization(vec![].into())?,
                 has_more: false,
-                coverage: plasm_runtime::ResultCoverage::Unknown,
                 pagination_resume: None,
                 paging_handle: None,
                 source: ExecutionSource::Cache,
                 stats: ExecutionStats::default(),
-                request_fingerprints: vec![compute_fingerprint(node, &[])],
+                request_fingerprints: vec![compute_fingerprint(node, &[], &[])?],
                 operations: plasm_runtime::OperationLedger::empty(),
             }),
             artifact: None,
@@ -177,15 +187,15 @@ pub(crate) async fn finalize_empty_relation_materialized_node(
 
 /// Wire JSON rows extracted along a `from_parent_get` path — preserves nested embeds for chained hops.
 pub(crate) fn parent_get_wire_rows(
-    source_rows: &[serde_json::Value],
+    source_rows: &[plasm_core::ValueRow],
     relation: &ValidatedRelationTraversalNode,
     source_entity: &str,
     cgs: &CGS,
     target_entity: &str,
-) -> Result<Vec<serde_json::Value>, String> {
+) -> Result<Vec<plasm_core::ValueRow>, String> {
     let rel_name = relation.relation.relation.as_str();
     let path = match &relation.relation.materialize {
-        RelationMaterialization::FromParentGet { path }
+        RelationMaterialization::FromParentGet { path, .. }
         | RelationMaterialization::PreferFromParentGet { path, .. } => path,
         other => {
             return Err(format!(
@@ -209,7 +219,7 @@ pub(crate) fn parent_get_wire_rows(
 
 pub(crate) struct EmbedRelationGraphSnapshot {
     pub(crate) entities: Vec<CachedEntity>,
-    pub(crate) wire_rows: Vec<serde_json::Value>,
+    pub(crate) wire_rows: Vec<plasm_core::ValueRow>,
     pub(crate) read_cap: Option<usize>,
 }
 
@@ -219,9 +229,9 @@ pub(crate) async fn snapshot_embed_relation_under_graph_lock(
     relation: &ValidatedRelationTraversalNode,
     rel_name: &str,
     target_entity: &str,
-    parents: &[CachedEntity],
-    wire_fallback_rows: Option<&[serde_json::Value]>,
-) -> Result<EmbedRelationGraphSnapshot, String> {
+    parents: &plasm_core::collection_codec::SharedRows<CachedEntity>,
+    wire_fallback_rows: Option<&[plasm_core::ValueRow]>,
+) -> Result<EmbedRelationGraphSnapshot, ExecutionFailure> {
     let guard = scoped_es.lock_graph_cache().await;
     let mat = guard.materialization();
     let mut entities = resolve_embed_target_entities(
@@ -256,7 +266,7 @@ pub(crate) async fn try_materialize_from_cached_relation_refs(
     relation: &ValidatedRelationTraversalNode,
     source_mat: &MaterializedNode,
     trace: Option<&PlasmTraceContext>,
-) -> Result<Option<MaterializedNode>, String> {
+) -> Result<Option<MaterializedNode>, ExecutionFailure> {
     let rel_name = relation.relation.relation.as_str();
     let target_entity = relation.relation.target.entity.as_str();
     let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
@@ -270,11 +280,11 @@ pub(crate) async fn try_materialize_from_cached_relation_refs(
         crate::graph_rehydrate::GraphSurfaceRehydrator::new(es, st, session_id, source_cgs);
     let parents = source_mat
         .resolve_materialized_source_parents(&rehydrator)
-        .await;
+        .await?;
     if parents.is_empty() {
         return Ok(None);
     }
-    let source_rows: Vec<serde_json::Value> = rehydrator
+    let source_rows: Vec<plasm_core::ValueRow> = rehydrator
         .resolve_row_source_rows(&source_mat.row_source, None)
         .await
         .unwrap_or_default();
@@ -300,6 +310,14 @@ pub(crate) async fn try_materialize_from_cached_relation_refs(
         wire_extracted.as_deref(),
     )
     .await?;
+    let coverage = embedded_collection(
+        &source_mat.result,
+        &parents,
+        rel_name,
+        target_entity,
+        snapshot.entities.iter().map(|row| &row.reference),
+        snapshot.read_cap,
+    )?;
     if snapshot.entities.is_empty() {
         if relations_on_parents {
             return finalize_empty_relation_materialized_node(
@@ -310,6 +328,7 @@ pub(crate) async fn try_materialize_from_cached_relation_refs(
                 relation,
                 trace,
                 crate::plan_read_bounds::effective_relation_read_cap(relation),
+                coverage,
             )
             .await
             .map(Some);
@@ -334,6 +353,7 @@ pub(crate) async fn try_materialize_from_cached_relation_refs(
         trace,
         snapshot.read_cap,
         count,
+        coverage,
     )
     .await
     .map(Some)
@@ -348,12 +368,12 @@ pub(crate) async fn materialize_relation_scoped_fanout(
     node: &ValidatedPlanNode,
     relation: &ValidatedRelationTraversalNode,
     source_mat: &MaterializedNode,
-    source_rows: &[serde_json::Value],
+    source_rows: &[plasm_core::ValueRow],
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
     trace: Option<&PlasmTraceContext>,
     sink: Option<&McpPlasmTraceSink>,
     plan_shared: Option<Arc<crate::plan_execute_shared::PlanLineExecuteShared>>,
-) -> Result<MaterializedNode, String> {
+) -> Result<MaterializedNode, ExecutionFailure> {
     let pe = ParsedExpr {
         expr: relation.relation.ir.expr.clone(),
         projection: relation.relation.ir.projection.clone(),
@@ -368,7 +388,7 @@ pub(crate) async fn materialize_relation_scoped_fanout(
     );
 
     let read_cap = crate::plan_read_bounds::effective_relation_read_cap(relation);
-    let parent_row_cap = read_cap.unwrap_or(source_rows.len());
+    let parent_row_cap = source_rows.len();
     let mut jobs = Vec::new();
     for (row_index, source_row) in source_rows.iter().enumerate().take(parent_row_cap) {
         let row_identity = source_mat
@@ -413,6 +433,7 @@ pub(crate) async fn materialize_relation_scoped_fanout(
         &scoped_es,
         relation,
         node,
+        &source_mat.result.collection,
         fold,
         format!(
             "plan.relation({}) fanout ({} source rows)",
@@ -428,35 +449,39 @@ pub(crate) async fn materialize_relation_scoped_fanout(
     )
     .await
 }
-pub(crate) fn json_rows_to_entities(
+pub(crate) fn rows_to_entities(
     entity: &str,
-    rows: &[serde_json::Value],
+    rows: &[plasm_core::ValueRow],
 ) -> Result<Vec<CachedEntity>, String> {
-    json_rows_to_entities_with_refs(entity, rows, None)
+    rows_to_entities_with_refs(entity, rows, None)
 }
 
 /// Hoist nested parent-get embed rows (e.g. `{ "pokemon": { "name": "x" } }`) to target entity shape.
 pub(crate) fn normalize_parent_get_target_rows(
-    rows: Vec<serde_json::Value>,
+    rows: Vec<plasm_core::Value>,
     path: &[plasm_core::JsonPathSegment],
     cgs: Option<&CGS>,
     entity: &str,
-) -> Vec<serde_json::Value> {
+) -> Vec<plasm_core::ValueRow> {
     let embed_key = path.iter().rev().find_map(|seg| match seg {
         plasm_core::JsonPathSegment::Key { key } => Some(key.as_str()),
         _ => None,
     });
     rows.into_iter()
-        .map(|row| normalize_parent_get_target_row(row, embed_key, cgs, entity))
+        .map(|row| {
+            plasm_core::ValueRow::from_output(normalize_parent_get_target_row(
+                row, embed_key, cgs, entity,
+            ))
+        })
         .collect()
 }
 
 fn normalize_parent_get_target_row(
-    row: serde_json::Value,
+    row: plasm_core::Value,
     embed_key: Option<&str>,
     cgs: Option<&CGS>,
     entity: &str,
-) -> serde_json::Value {
+) -> plasm_core::Value {
     let mut v = row;
     if let Some(key) = embed_key {
         v = hoist_embed_key_object(v, key);
@@ -465,10 +490,10 @@ fn normalize_parent_get_target_row(
         let id_field = ent.id_field.as_str();
         if wire_id_from_row(&v, id_field, ent.id_from.as_deref()).is_none() {
             if let Some(path) = ent.id_from.as_deref() {
-                if let Some(extracted) = super::super::row_json::value_at_segments(&v, path) {
+                if let Some(extracted) = super::super::row_values::value_at_segments(&v, path) {
                     if let Some(id) = json_value_to_wire_id(extracted) {
                         if let Some(obj) = v.as_object_mut() {
-                            obj.insert(id_field.to_string(), serde_json::Value::String(id));
+                            obj.insert(id_field.to_string(), plasm_core::Value::String(id));
                         }
                     }
                 }
@@ -478,7 +503,7 @@ fn normalize_parent_get_target_row(
     v
 }
 
-fn hoist_embed_key_object(row: serde_json::Value, embed_key: &str) -> serde_json::Value {
+fn hoist_embed_key_object(row: plasm_core::Value, embed_key: &str) -> plasm_core::Value {
     if let Some(obj) = row.as_object() {
         if let Some(inner) = obj.get(embed_key) {
             if inner.is_object() {
@@ -489,21 +514,21 @@ fn hoist_embed_key_object(row: serde_json::Value, embed_key: &str) -> serde_json
     row
 }
 
-fn json_value_to_wire_id(v: &serde_json::Value) -> Option<String> {
+fn json_value_to_wire_id(v: &plasm_core::Value) -> Option<String> {
     if let Some(s) = v.as_str().filter(|s| !s.is_empty()) {
         return Some(s.to_string());
     }
-    if let Some(n) = v.as_i64() {
+    if let Some(n) = v.as_integer() {
         return Some(n.to_string());
     }
-    if let Some(n) = v.as_u64() {
+    if let Some(n) = v.as_unsigned() {
         return Some(n.to_string());
     }
     None
 }
 
 fn wire_id_from_row(
-    row: &serde_json::Value,
+    row: &plasm_core::Value,
     id_field: &str,
     id_from: Option<&[String]>,
 ) -> Option<String> {
@@ -511,14 +536,15 @@ fn wire_id_from_row(
         return Some(id);
     }
     id_from
-        .and_then(|path| super::super::row_json::value_at_segments(row, path))
+        .and_then(|path| super::super::row_values::value_at_segments(row, path))
         .and_then(json_value_to_wire_id)
-        .or_else(|| plasm_compile::embed_decode::extract_id_from_source(row, Some(id_field)).ok())
+        .or_else(|| row.get("id").and_then(json_value_to_wire_id))
+        .or_else(|| json_value_to_wire_id(row))
 }
 
-pub(crate) fn json_rows_to_entities_with_refs(
+pub(crate) fn rows_to_entities_with_refs(
     entity: &str,
-    rows: &[serde_json::Value],
+    rows: &[plasm_core::ValueRow],
     cgs: Option<&CGS>,
 ) -> Result<Vec<CachedEntity>, String> {
     let id_field = cgs
@@ -533,13 +559,14 @@ pub(crate) fn json_rows_to_entities_with_refs(
         .map(|(idx, row)| {
             if row.get("_ref").is_some() {
                 let mut wire = row.clone();
-                if let Some(object) = wire.as_object_mut() {
+                {
+                    let object = wire.fields_mut();
                     for key in ["_version", "_last_updated", "_completeness"] {
-                        object.remove(key);
+                        object.shift_remove(key);
                     }
                 }
                 let semantic =
-                    plasm_core::row_contract::RowCodec::new(cgs).decode(entity, &wire)?;
+                    plasm_core::row_contract::RowCodec::new(cgs).decode_values(entity, &wire)?;
                 return Ok(CachedEntity::from_row(
                     &semantic,
                     0,
@@ -547,20 +574,10 @@ pub(crate) fn json_rows_to_entities_with_refs(
                 ));
             }
             // Unidentified computed rows and raw API embeds are a distinct input lane.
-            let mut fields = IndexMap::new();
-            match row {
-                serde_json::Value::Object(obj) => {
-                    for (k, v) in obj {
-                        fields.insert(k.clone(), TypedFieldValue::from(json_to_plasm_value(v)));
-                    }
-                }
-                other => {
-                    fields.insert(
-                        "value".to_string(),
-                        TypedFieldValue::from(json_to_plasm_value(other)),
-                    );
-                }
-            }
+            let fields = row
+                .iter()
+                .map(|(key, value)| (key.clone(), TypedFieldValue::from(value.clone())))
+                .collect();
             let reference = Ref::new(
                 EntityName::new(entity.to_string()),
                 wire_id_from_row(row, id_field, id_from)
@@ -583,9 +600,9 @@ pub(crate) fn json_rows_to_entities_with_refs(
 pub(crate) fn resolve_embed_target_entities(
     rel_name: &str,
     target_entity: &str,
-    parents: &[CachedEntity],
+    parents: &plasm_core::collection_codec::SharedRows<CachedEntity>,
     mat: &plasm_runtime::SessionMaterialization,
-    wire_fallback_rows: Option<&[serde_json::Value]>,
+    wire_fallback_rows: Option<&[plasm_core::ValueRow]>,
     cgs: &CGS,
 ) -> Result<Vec<CachedEntity>, String> {
     match crate::graph_rehydrate::collect_all_embedded_relation_targets(
@@ -598,7 +615,7 @@ pub(crate) fn resolve_embed_target_entities(
             // Prefer an already-observed full wire row for a missing cache child.
             // Match its identity; unrelated fallback rows cannot enter the relation.
             if let Some(rows) = wire_fallback_rows {
-                let fallback = json_rows_to_entities_with_refs(target_entity, rows, Some(cgs))?;
+                let fallback = rows_to_entities_with_refs(target_entity, rows, Some(cgs))?;
                 for entity in &mut entities {
                     if entity.completeness == plasm_runtime::EntityCompleteness::Summary
                         && entity.fields.is_empty()
@@ -615,7 +632,7 @@ pub(crate) fn resolve_embed_target_entities(
             Ok(entities)
         }
         None => wire_fallback_rows
-            .map(|rows| json_rows_to_entities_with_refs(target_entity, rows, Some(cgs)))
+            .map(|rows| rows_to_entities_with_refs(target_entity, rows, Some(cgs)))
             .transpose()
             .map(|rows| rows.unwrap_or_default()),
     }
@@ -631,20 +648,18 @@ pub(crate) async fn finalize_embed_relation_materialized_node(
     scoped_es: &ExecuteSession,
     target_entity: &str,
     entities: Vec<CachedEntity>,
-    wire_rows: Vec<serde_json::Value>,
-    fingerprint_rows: Option<&[serde_json::Value]>,
+    wire_rows: Vec<plasm_core::ValueRow>,
+    fingerprint_rows: Option<&[plasm_core::ValueRow]>,
     display: String,
     artifact_labels: Vec<String>,
     trace: Option<&PlasmTraceContext>,
     read_cap: Option<usize>,
     cache_hits: usize,
-) -> Result<MaterializedNode, String> {
-    let count = entities.len();
+    collection: plasm_runtime::execution::ExecutionCollection,
+) -> Result<MaterializedNode, ExecutionFailure> {
     let full_result = ExecutionResult {
-        count,
-        entities: entities.clone(),
+        collection: collection.with_materialization(entities.into())?,
         has_more: false,
-        coverage: plasm_runtime::ResultCoverage::Unknown,
         pagination_resume: None,
         paging_handle: None,
         source: ExecutionSource::Cache,
@@ -658,7 +673,8 @@ pub(crate) async fn finalize_embed_relation_materialized_node(
         request_fingerprints: vec![compute_fingerprint(
             node,
             fingerprint_rows.unwrap_or(&wire_rows),
-        )],
+            &[],
+        )?],
         operations: plasm_runtime::OperationLedger::empty(),
     };
     let parsed_preimage = crate::plasm_plan_run::evidence_plan::parsed_expr_for_plan_node(node);
@@ -668,6 +684,8 @@ pub(crate) async fn finalize_embed_relation_materialized_node(
         session_id,
         &relation.relation.target,
         MaterializedNode {
+            value_shapes: Vec::new(),
+            optional_fields: Default::default(),
             qualified_entity: relation.relation.target.clone(),
             display,
             projection: relation.relation.ir.projection.clone(),
@@ -675,7 +693,7 @@ pub(crate) async fn finalize_embed_relation_materialized_node(
             row_identities: row_identities_from_entities(
                 scoped_es,
                 target_entity,
-                &full_result.entities,
+                full_result.entities(),
             ),
             result: Arc::new(full_result),
             artifact: None,
@@ -708,8 +726,8 @@ mod parent_get_row_tests {
     #[test]
     fn embedded_wire_identity_matches_detail_decoder() {
         for row in [
-            serde_json::json!({"id": 8, "name": "Eight"}),
-            serde_json::json!(8),
+            crate::fixture_value!({"id": 8, "name": "Eight"}),
+            crate::fixture_value!(8),
         ] {
             assert_eq!(
                 wire_id_from_row(&row, "resource_id", None),
@@ -718,7 +736,7 @@ mod parent_get_row_tests {
         }
         assert_eq!(
             wire_id_from_row(
-                &serde_json::json!({"resource_id": 9, "id": 8}),
+                &crate::fixture_value!({"resource_id": 9, "id": 8}),
                 "resource_id",
                 None
             ),
@@ -739,20 +757,34 @@ mod parent_get_row_tests {
             relations: indexmap::IndexMap::from([(
                 "lines".into(),
                 vec![plasm_core::Ref::new("LangLine", "l1")],
-            )]),
+            )])
+            .into_iter()
+            .map(|(key, refs)| {
+                (
+                    key,
+                    plasm_core::row_contract::RelationMembership::observe(
+                        None,
+                        &"relation_fixture",
+                        refs,
+                        None,
+                    )
+                    .unwrap(),
+                )
+            })
+            .collect(),
             last_updated: 0,
             version: 0,
             completeness: plasm_runtime::EntityCompleteness::Complete,
             unavailable_fields: Default::default(),
         };
         let wire = [
-            serde_json::json!({"id":"l99","item_id":"i1","note":"unrelated"}),
-            serde_json::json!({"id":"l1","item_id":"i1","note":"observed"}),
+            crate::fixture_row!({"id":"l99","item_id":"i1","note":"unrelated"}),
+            crate::fixture_row!({"id":"l1","item_id":"i1","note":"observed"}),
         ];
         let rows = resolve_embed_target_entities(
             "lines",
             "LangLine",
-            &[parent],
+            &vec![parent].into(),
             &plasm_runtime::SessionMaterialization::new(),
             Some(&wire),
             &cgs,
@@ -769,14 +801,14 @@ mod parent_get_row_tests {
             key: "pokemon".into(),
         }];
         let rows = normalize_parent_get_target_rows(
-            vec![serde_json::json!({
+            vec![crate::fixture_value!({
                 "pokemon": { "name": "jolteon", "url": "https://pokeapi.co/api/v2/pokemon/135/" }
             })],
             &path,
             None,
             "Pokemon",
         );
-        assert_eq!(rows[0]["name"], "jolteon");
+        assert_eq!(rows[0]["name"].as_str(), Some("jolteon"));
     }
 
     #[test]
@@ -787,19 +819,19 @@ mod parent_get_row_tests {
         )
         .unwrap();
         for malformed in [
-            serde_json::json!("Owner:3"),
-            serde_json::to_value(plasm_core::RefWire::from_ref(&Ref::new("Note", "3"))).unwrap(),
+            crate::fixture_value!("Owner:3"),
+            plasm_core::RefWire::from_ref(&Ref::new("Note", "3")).to_value(),
         ] {
-            let row = serde_json::json!({"_ref":malformed,"owner_id":3});
-            assert!(json_rows_to_entities_with_refs("Owner", &[row], Some(&cgs)).is_err());
+            let row = crate::fixture_row!({"_ref":malformed,"owner_id":3});
+            assert!(rows_to_entities_with_refs("Owner", &[row], Some(&cgs)).is_err());
         }
         let mut entity = CachedEntity::new(Ref::new("Owner", "3"), 44);
         entity.fields.insert(
             "_tag".into(),
             TypedFieldValue::from(plasm_core::Value::String("public".into())),
         );
-        let row = plasm_runtime::entity_to_row_json(&entity, Some(&cgs));
-        let rows = json_rows_to_entities_with_refs("Owner", &[row], Some(&cgs)).unwrap();
+        let row = plasm_runtime::entity_to_row_values(&entity, Some(&cgs));
+        let rows = rows_to_entities_with_refs("Owner", &[row], Some(&cgs)).unwrap();
         assert_eq!(rows[0].reference, entity.reference);
         assert!(rows[0].fields.contains_key("_tag"));
         for key in ["_ref", "_version", "_last_updated", "_completeness"] {
@@ -809,8 +841,8 @@ mod parent_get_row_tests {
 
     #[test]
     fn json_rows_avoids_synthetic_when_id_present() {
-        let rows = vec![serde_json::json!({ "name": "pikachu", "id": 25 })];
-        let entities = json_rows_to_entities_with_refs("Pokemon", &rows, None).unwrap();
+        let rows = vec![crate::fixture_row!({ "name": "pikachu", "id": 25 })];
+        let entities = rows_to_entities_with_refs("Pokemon", &rows, None).unwrap();
         assert_eq!(entities[0].reference.primary_slot_str(), "25");
     }
 }

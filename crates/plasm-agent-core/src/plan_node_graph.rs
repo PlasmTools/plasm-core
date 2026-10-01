@@ -17,7 +17,9 @@ pub(crate) fn compute_binding_labels(op: &ComputeOp) -> Vec<String> {
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect(),
-        ComputeOp::Union { other } => vec![other.as_str().to_string()],
+        ComputeOp::Union { other } | ComputeOp::MergeBranches { other } => {
+            vec![other.as_str().to_string()]
+        }
         _ => Vec::new(),
     }
 }

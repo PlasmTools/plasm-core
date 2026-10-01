@@ -55,6 +55,8 @@ pub enum ProfileId {
     #[serde(rename = "base64url")]
     Base64Url,
     Rfc3339,
+    #[serde(rename = "iso8601_naive_datetime")]
+    Iso8601NaiveDatetime,
     #[serde(rename = "iso8601_date")]
     Iso8601Date,
     #[serde(rename = "unix_ms")]
@@ -86,6 +88,7 @@ impl ProfileId {
             "base64" => Self::Base64,
             "base64url" => Self::Base64Url,
             "rfc3339" => Self::Rfc3339,
+            "iso8601_naive_datetime" => Self::Iso8601NaiveDatetime,
             "iso8601_date" => Self::Iso8601Date,
             "unix_ms" => Self::UnixMs,
             "unix_sec" => Self::UnixSec,
@@ -114,6 +117,7 @@ impl ProfileId {
             Self::Base64 => "base64",
             Self::Base64Url => "base64url",
             Self::Rfc3339 => "rfc3339",
+            Self::Iso8601NaiveDatetime => "iso8601_naive_datetime",
             Self::Iso8601Date => "iso8601_date",
             Self::UnixMs => "unix_ms",
             Self::UnixSec => "unix_sec",
@@ -125,7 +129,11 @@ impl ProfileId {
     pub fn is_temporal(self) -> bool {
         matches!(
             self,
-            Self::Rfc3339 | Self::Iso8601Date | Self::UnixMs | Self::UnixSec
+            Self::Rfc3339
+                | Self::Iso8601NaiveDatetime
+                | Self::Iso8601Date
+                | Self::UnixMs
+                | Self::UnixSec
         )
     }
 
@@ -359,6 +367,7 @@ pub fn parse_type_name(
             ProfileId::MultiEnum => KernelKind::String, // shape via FieldType::MultiSelect
             ProfileId::Enum
             | ProfileId::Rfc3339
+            | ProfileId::Iso8601NaiveDatetime
             | ProfileId::Iso8601Date
             | ProfileId::Markdown
             | ProfileId::Document
@@ -451,6 +460,9 @@ impl ValueDomain {
                 let profile = match value_format {
                     Some(ValueWireFormat::Temporal(TemporalWireFormat::Rfc3339)) => {
                         Some(ProfileId::Rfc3339)
+                    }
+                    Some(ValueWireFormat::Temporal(TemporalWireFormat::Iso8601NaiveDatetime)) => {
+                        Some(ProfileId::Iso8601NaiveDatetime)
                     }
                     Some(ValueWireFormat::Temporal(TemporalWireFormat::Iso8601Date)) => {
                         Some(ProfileId::Iso8601Date)
@@ -555,6 +567,9 @@ impl ValueDomain {
             Some(ProfileId::Rfc3339) => {
                 Some(ValueWireFormat::Temporal(TemporalWireFormat::Rfc3339))
             }
+            Some(ProfileId::Iso8601NaiveDatetime) => Some(ValueWireFormat::Temporal(
+                TemporalWireFormat::Iso8601NaiveDatetime,
+            )),
             Some(ProfileId::Iso8601Date) => {
                 Some(ValueWireFormat::Temporal(TemporalWireFormat::Iso8601Date))
             }
@@ -911,6 +926,21 @@ mod tests {
         assert!(parse_type_name("multi_select", None)
             .unwrap_err()
             .contains("multi_enum"));
+    }
+
+    #[test]
+    fn naive_datetime_profile_round_trips_catalog_and_wire_identity() {
+        let (kernel, profile) = parse_type_name("iso8601_naive_datetime", None).unwrap();
+        assert_eq!(kernel, KernelKind::String);
+        assert_eq!(profile, Some(ProfileId::Iso8601NaiveDatetime));
+        let profile = profile.unwrap();
+        assert!(profile.is_temporal());
+        assert_eq!(profile.type_name(), "iso8601_naive_datetime");
+        let encoded = serde_json::to_string(&profile).unwrap();
+        assert_eq!(
+            serde_json::from_str::<ProfileId>(&encoded).unwrap(),
+            profile
+        );
     }
 
     #[test]

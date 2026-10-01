@@ -74,7 +74,7 @@ pub struct PersistedOperationDescriptor {
     pub progress: PersistedOperationProgress,
     pub started_at_unix: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
+    pub error: Option<plasm_runtime::ExecutionFailure>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_artifact_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

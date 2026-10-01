@@ -93,7 +93,7 @@ fn format_tsv_inner(
     report: &mut InBandSummaryReport,
     full_fidelity: bool,
 ) -> String {
-    if result.entities.is_empty() {
+    if result.entities().is_empty() {
         return super::format_empty_result_body(result);
     }
 
@@ -104,7 +104,7 @@ fn format_tsv_inner(
     lines.push(header_cells.join("\t"));
 
     let row_limit = max_entity_rows.unwrap_or(usize::MAX);
-    for entity in result.entities.iter().take(row_limit) {
+    for entity in result.entities().iter().take(row_limit) {
         let row: Vec<String> = columns
             .iter()
             .map(|col| {
@@ -241,14 +241,29 @@ mod tests {
                 ],
             ),
             ("empty_relation".into(), vec![]),
-        ]);
+        ])
+        .into_iter()
+        .map(|(key, refs)| {
+            (
+                key,
+                plasm_core::row_contract::RelationMembership::observe(
+                    None,
+                    &"relation_fixture",
+                    refs,
+                    None,
+                )
+                .unwrap(),
+            )
+        })
+        .collect();
         let entity: CachedEntity =
             serde_json::from_slice(&serde_json::to_vec(&entity).unwrap()).unwrap();
         let result = ExecutionResult {
-            entities: vec![entity],
-            count: 1,
+            collection: crate::test_support::execution_fixtures::collection(
+                vec![entity],
+                ResultCoverage::Complete,
+            ),
             has_more: false,
-            coverage: ResultCoverage::Complete,
             pagination_resume: None,
             paging_handle: None,
             source: ExecutionSource::Live,
@@ -256,7 +271,7 @@ mod tests {
             request_fingerprints: vec![],
             operations: OperationLedger::empty(),
         };
-        let snapshot = super::super::entity_to_json(&result.entities[0]);
+        let snapshot = super::super::entity_to_json(&result.entities()[0]);
         let (body, report) = format_result_tsv_with_full_fidelity_cgs(&result, None, None);
         assert!(!report.any_loss(), "{body}");
         let (summary, omitted, report) = format_result_tsv_with_cgs(&result, None, None);
@@ -279,9 +294,10 @@ mod tests {
             }
         }
         let mut sparse = result.clone();
-        sparse
-            .entities
-            .push(CachedEntity::new(Ref::new("Document", "empty"), 0));
+        let mut rows = sparse.entities().iter().cloned().collect::<Vec<_>>();
+        rows.push(CachedEntity::new(Ref::new("Document", "empty"), 0));
+        sparse.collection =
+            crate::test_support::execution_fixtures::collection(rows, sparse.coverage());
         let (body, _, _) = format_result_tsv_with_cgs(&sparse, None, None);
         assert!(body
             .lines()

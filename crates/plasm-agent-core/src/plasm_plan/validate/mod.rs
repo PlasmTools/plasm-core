@@ -59,6 +59,43 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
                 ));
             }
         }
+        if n.kind == PlanNodeKind::MapBody {
+            let body = n.map_body.as_ref().ok_or("map_body payload is required")?;
+            body.execution_layers()?;
+            if n.effect_class
+                != n.map_body
+                    .as_ref()
+                    .ok_or("map body missing")?
+                    .effect_class()
+                || n.result_shape != body.result_shape()
+                || n.ir.is_some()
+                || n.ir_template.is_some()
+                || n.expr.is_some()
+                || n.compute.is_some()
+                || n.data.is_some()
+                || n.derive_template.is_some()
+                || n.effect_template.is_some()
+                || n.relation.is_some()
+            {
+                return Err(
+                    "map_body requires its transitive effect/list contract and only its scoped payload".into(),
+                );
+            }
+            if !n
+                .depends_on
+                .iter()
+                .any(|id| id == body.parent.source.as_str())
+            {
+                return Err("map_body must depend on its parent source".into());
+            }
+        } else if n.map_body.is_some() {
+            return Err("map_body payload requires map_body kind".into());
+        }
+        if (n.until_scope.is_some() || n.step_scope.is_some())
+            && n.kind != PlanNodeKind::IterateUntil
+        {
+            return Err("until_scope requires iterate_until kind".into());
+        }
         if n.kind.has_surface_expr() {
             if n.ir.is_none() && n.ir_template.is_none() {
                 return Err(format!(
@@ -177,7 +214,7 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
         }
         if let Some(derive_template) = &n.derive_template {
             validate_plan_value_expr(&derive_template.value, i, "derive_template.value")?;
-            if derive_template.kind == DeriveKind::Map {
+            if matches!(derive_template.kind, DeriveKind::Map | DeriveKind::Cell) {
                 let source = derive_template.source.as_deref().unwrap_or_default();
                 if source.trim().is_empty() || !by_id.contains_key(source) {
                     return Err(format!(
@@ -230,6 +267,7 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
                 .map(|s| s.trim().is_empty())
                 .unwrap_or(true)
                 && n.predicates.is_empty()
+                && n.until_scope.is_none()
             {
                 return Err(format!(
                     "plan.nodes[{i}].until / predicates required for iterate_until"
@@ -299,7 +337,7 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
             if !adj[i].contains(&t) {
                 adj[i].push(t);
             }
-            if let ComputeOp::Union { other } = &compute.op {
+            if let ComputeOp::Union { other } | ComputeOp::MergeBranches { other } = &compute.op {
                 let t = *by_id.get(other.as_str()).ok_or_else(|| {
                     format!(
                         "plan.nodes[{i}].compute.union.other references unknown id {:?}",
@@ -392,6 +430,10 @@ pub fn resolve_plan_node_qualified_entity(
         if let Some(effect) = &n.effect_template {
             return Ok(Some(effect.qualified_entity.clone()));
         }
+        if let Some(body) = &n.map_body {
+            cur = body.parent.source.to_string();
+            continue;
+        }
         if let Some(compute) = &n.compute {
             cur = compute.source.clone();
             continue;
@@ -467,9 +509,20 @@ fn validated_node_from_raw(
     let depends_on = typed_node_ids(&node.depends_on)?;
     let uses_result = enrich_uses_result_provenance(&node.uses_result, plan, node.id.as_str())?;
     match node.kind {
-        PlanNodeKind::MapBody | PlanNodeKind::Capture => {
-            Err("scoped nodes require the canonical comp interface".into())
+        PlanNodeKind::MapBody => {
+            let body = node
+                .map_body
+                .as_ref()
+                .ok_or("map_body payload is required")?;
+            Ok(ValidatedPlanNode::MapBody(ValidatedMapBodyNode {
+                id,
+                body: body.clone(),
+                plan: Box::new(crate::plasm_step_convert::lift_body(body)?),
+                depends_on,
+                uses_result,
+            }))
         }
+        PlanNodeKind::Capture => Err("capture ports require a scoped body".into()),
         kind @ (PlanNodeKind::Query
         | PlanNodeKind::Search
         | PlanNodeKind::Get
@@ -540,6 +593,7 @@ fn validated_node_from_raw(
                 .map(|input| validated_data_input(plan, input, by_id))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(ValidatedPlanNode::Derive(ValidatedDeriveNode {
+                kind: template.kind,
                 id,
                 effect_class: node.effect_class,
                 result_shape: node.result_shape,
@@ -552,6 +606,13 @@ fn validated_node_from_raw(
             }))
         }
         PlanNodeKind::Compute => Ok(ValidatedPlanNode::Compute(ValidatedComputeNode {
+            source_node: PlanNodeId::new(
+                &node
+                    .compute
+                    .as_ref()
+                    .ok_or_else(|| format!("plan.nodes[{node_index}].compute is required"))?
+                    .source,
+            )?,
             id,
             effect_class: node.effect_class,
             result_shape: node.result_shape,
@@ -628,7 +689,7 @@ fn validated_node_from_raw(
                 .ok_or_else(|| format!("plan.nodes[{node_index}].source is required"))
                 .and_then(|s| PlanNodeId::new(s.clone()))?;
             let take = require_iterate_hard_bound(node, node_index)?;
-            if node.predicates.is_empty() {
+            if node.predicates.is_empty() && node.until_scope.is_none() {
                 return Err(format!(
                     "plan.nodes[{node_index}].predicates required for iterate_until"
                 ));
@@ -650,6 +711,20 @@ fn validated_node_from_raw(
                     node_index,
                 )?,
                 until_predicates: node.predicates.clone(),
+                until_scope: node.until_scope.clone(),
+                step_scope: node.step_scope.clone(),
+                until_plan: node
+                    .until_scope
+                    .as_deref()
+                    .map(crate::plasm_step_convert::lift_body)
+                    .transpose()?
+                    .map(Box::new),
+                step_plan: node
+                    .step_scope
+                    .as_deref()
+                    .map(crate::plasm_step_convert::lift_body)
+                    .transpose()?
+                    .map(Box::new),
                 take,
                 seed_ir: Some({
                     let seed_node = plan
@@ -701,6 +776,19 @@ fn validated_data_input(
     by_id: &HashMap<String, usize>,
 ) -> Result<ValidatedPlanDataInput, String> {
     let proof = match input.cardinality {
+        InputCardinality::Acknowledgement => {
+            if by_id
+                .get(&input.node)
+                .map(|index| plan.nodes[*index].result_shape)
+                != Some(ResultShape::SideEffectAck)
+            {
+                return Err(
+                    "acknowledgement input requires a side-effect acknowledgement source".into(),
+                );
+            }
+            InputCardinalityProof::Acknowledgement
+        }
+        InputCardinality::Collection => InputCardinalityProof::Collection,
         InputCardinality::Singleton => InputCardinalityProof::RuntimeCheckedSingleton,
         InputCardinality::Auto => {
             cardinality::analyze_static_cardinality(plan, by_id, input.node.as_str())
@@ -789,6 +877,17 @@ fn validate_row_effect_source_and_template<'a>(
         .as_ref()
         .ok_or_else(|| format!("plan.nodes[{i}].effect_template is required"))?;
     validate_effect_template(template, i)?;
+    if let Some(body) = &n.step_scope {
+        let effect = plasm_core::plasm_monad::correlated::iteration_step_effect(body)?;
+        if body.parent.source.as_str() != source
+            || effect.ir_template.expr != template.ir_template.expr
+            || effect.qualified_entity.entry_id != template.qualified_entity.entry_id
+            || effect.qualified_entity.entity != template.qualified_entity.entity
+        {
+            return Err("iteration step differs from its sealed owner or expression".into());
+        }
+        return Ok((binding, template));
+    }
     let mut input_aliases: Vec<(&str, &str)> = Vec::new();
     for u in &n.uses_result {
         if u.r#as.as_str() != binding {

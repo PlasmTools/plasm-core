@@ -5,6 +5,28 @@ use plasm_agent_core::{
 use plasm_core::{CgsContext, TeachingExposureSession, CGS};
 use std::sync::Arc;
 
+#[derive(Debug)]
+pub enum ProgramCompileFailure {
+    Program(ProgramDiagnostic),
+    Host(plasm_agent_core::compilation_error::ExecutionFailure),
+}
+impl ProgramCompileFailure {
+    pub fn agent_markdown(&self) -> String {
+        match self {
+            Self::Program(diagnostic) => diagnostic.agent_markdown(),
+            Self::Host(failure) => failure.to_string(),
+        }
+    }
+    pub fn into_program(
+        self,
+    ) -> Result<ProgramDiagnostic, plasm_agent_core::compilation_error::ExecutionFailure> {
+        match self {
+            Self::Program(diagnostic) => Ok(diagnostic),
+            Self::Host(failure) => Err(failure),
+        }
+    }
+}
+
 pub struct ProgramSession {
     pub execute: ExecuteSession,
 }
@@ -31,7 +53,7 @@ impl ProgramSession {
             &Default::default(),
         )?;
         let prompt = format!(
-            "{}\n\n```pyi\n{}\n```\n",
+            "{}\n\n```text\n{}\n```\n",
             wave.language.unwrap_or_default(),
             wave.declarations
         );
@@ -83,7 +105,7 @@ impl ProgramSession {
         let delta = if wave.declarations.is_empty() {
             String::new()
         } else {
-            format!("\n```pyi\n{}\n```\n", wave.declarations)
+            format!("\n```text\n{}\n```\n", wave.declarations)
         };
         self.execute.prompt_text.push_str(&delta);
         self.execute.entities = exposure.entities.clone();
@@ -98,11 +120,23 @@ impl ProgramSession {
 
     // Preserve the shared structured diagnostic at this cold public boundary.
     #[allow(clippy::result_large_err)]
-    pub fn compile(&self, source: &str) -> Result<PlasmCompBundle, ProgramDiagnostic> {
+    pub async fn compile(&self, source: &str) -> Result<PlasmCompBundle, ProgramCompileFailure> {
         let pipeline = Default::default();
         plasm_agent_core::compile_program(&pipeline, None, &self.execute, "program", source)
-            .map_err(|error| {
-                ProgramDiagnostic::from_stage(&pipeline, None, &self.execute, source, error)
+            .await
+            .map_err(|error| match error {
+                plasm_agent_core::compilation_error::CompilationError::Program(error) => {
+                    ProgramCompileFailure::Program(ProgramDiagnostic::from_stage(
+                        &pipeline,
+                        None,
+                        &self.execute,
+                        source,
+                        error,
+                    ))
+                }
+                plasm_agent_core::compilation_error::CompilationError::Host(failure) => {
+                    ProgramCompileFailure::Host(failure)
+                }
             })
     }
 }
@@ -118,23 +152,31 @@ mod tests {
         .unwrap();
         ProgramSession::new(&cgs, Some("Item")).unwrap()
     }
-    #[test]
-    fn same_session_teaches_compiles_and_repairs_python_only() {
+    #[tokio::test]
+    async fn same_session_teaches_compiles_and_repairs_python_only() {
         let session = session();
-        assert!(session.prompt().contains("class Program:"));
-        assert!(session.prompt().contains("class e1"));
-        assert!(session.compile("e1").is_err());
+        assert!(session
+            .prompt()
+            .contains("Program.build declares a typed DAG"));
+        assert!(session.prompt().contains("e1:"));
+        assert!(session.compile("e1").await.is_err());
         let source = "class Read(Program):\n    def build(self):\n        return e1.query()\n";
-        let bundle = session.compile(source).unwrap();
+        let bundle = session.compile(source).await.unwrap();
         assert!(!bundle.artifact().comp.steps.is_empty());
         let malformed = "class Read(Program):\n    def build(self):\n        return (\n";
         let first = session
             .compile(malformed)
+            .await
             .unwrap_err()
+            .into_program()
+            .expect("program rejection")
             .agent_meta("local", 0);
         let repeat = session
             .compile(malformed)
+            .await
             .unwrap_err()
+            .into_program()
+            .expect("program rejection")
             .agent_meta("local", 0);
         assert_ne!(
             first, repeat,

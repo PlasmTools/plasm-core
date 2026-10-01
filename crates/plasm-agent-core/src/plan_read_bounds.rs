@@ -9,7 +9,7 @@ use crate::plasm_plan::{
     ValidatedRelationTraversalNode, ValidatedSurfaceNode,
 };
 use plasm_runtime::row_predicate::BoundRowPredicate;
-use plasm_runtime::{CachedEntity, ExecutionResult, RowMatchBudget, TopKSpec};
+use plasm_runtime::{ExecutionResult, RowMatchBudget, TopKSpec};
 
 /// Canonical host page size for unbounded list/page read roots: the first page is materialized
 /// in-band, with continuation via `page(...)`. The MCP inline row cap
@@ -113,28 +113,26 @@ pub fn cap_execution_result_page(
     node_id: &str,
     qualified_entity: &crate::plasm_plan::QualifiedEntityKey,
     logical_session_ref: Option<&str>,
-) {
+) -> Result<(), plasm_core::collection_codec::CollectionFault> {
     // Keep the acquired backend page and its continuation intact. A presentation
     // cursor must never replace the handle that fetches the next backend page.
-    if cap == 0 || result.entities.len() <= cap || result.paging_handle.is_some() {
-        result.count = result.entities.len();
-        return;
+    if cap == 0 || result.entities().len() <= cap || result.paging_handle.is_some() {
+        return Ok(());
     }
-    let all: Vec<CachedEntity> = std::mem::take(&mut result.entities);
-    result.entities = all[..cap].to_vec();
-    result.count = result.entities.len();
+    let all = result.collection.clone();
+    result.collection = all.delivery(0..cap)?;
     result.has_more = true;
     let cursor = crate::execute_session::SyntheticPageCursor {
         node_id: node_id.to_string(),
         qualified_entity: qualified_entity.clone(),
-        rows: all,
+        collection: all,
         offset: cap,
         page_size: cap,
         request_fingerprints: result.request_fingerprints.clone(),
-        coverage: result.coverage,
     };
     result.paging_handle =
         Some(sess.register_synthetic_paging_continuation(cursor, logical_session_ref));
+    Ok(())
 }
 
 /// Walk return-reachable limit chains and push row budgets onto upstream surface reads.
@@ -172,7 +170,7 @@ pub fn apply_read_budgets(plan: &mut ValidatedPlanArtifact) {
             }
         }
     }
-    apply_complete_demands(plan, &by_id, &reachable, &shared);
+    apply_complete_demands(plan);
 }
 
 /// A pushed budget belongs to one consumer chain. A shared binding is a semantic
@@ -217,55 +215,142 @@ pub(crate) fn compute_op_is_full_collection(op: &ComputeOp) -> bool {
     )
 }
 
-/// Push [`PushedReadBudget::Complete`] onto query/search surfaces feeding full-collection algebra.
-fn apply_complete_demands(
-    plan: &mut ValidatedPlanArtifact,
-    by_id: &HashMap<String, usize>,
-    reachable: &HashSet<String>,
-    shared: &HashSet<String>,
-) {
-    let complete_sources: Vec<String> = plan
-        .nodes()
-        .iter()
-        .filter(|n| reachable.contains(n.id().as_str()))
-        .filter_map(|n| match n {
-            ValidatedPlanNode::Compute(c) if compute_op_is_full_collection(&c.compute.op) => {
-                Some(c.compute.source.clone())
+/// Complete demand is a graph property across lexical scopes. A path contains
+/// enclosing map node indices followed by the local node index. Walking this
+/// flattened graph avoids recursive re-analysis and keeps each node single-visit.
+fn apply_complete_demands(plan: &mut ValidatedPlanArtifact) {
+    let mut pending = VecDeque::new();
+    let mut scopes = vec![Vec::new()];
+    while let Some(scope) = scopes.pop() {
+        let local = scoped_plan_mut(plan, &scope);
+        let reachable = crate::plan_node_graph::nodes_reachable_from_return(local.artifact());
+        let mut sources = shared_collection_bindings(local);
+        for (idx, node) in local.nodes().iter().enumerate() {
+            if matches!(node, ValidatedPlanNode::MapBody(_)) {
+                let mut child = scope.clone();
+                child.push(idx);
+                scopes.push(child);
             }
-            ValidatedPlanNode::ForEach(f) => Some(f.source.as_str().to_string()),
-            _ => None,
-        })
-        .collect();
-    let mut pending: VecDeque<_> = complete_sources.into();
-    pending.extend(shared.iter().cloned());
+            if !reachable.contains(node.id().as_str()) {
+                continue;
+            }
+            match node {
+                ValidatedPlanNode::Compute(c) if compute_op_is_full_collection(&c.compute.op) => {
+                    sources.insert(c.compute.source.clone());
+                }
+                ValidatedPlanNode::ForEach(f) => {
+                    sources.insert(f.source.to_string());
+                }
+                ValidatedPlanNode::MapBody(m) => {
+                    sources.insert(m.body.parent.source.to_string());
+                }
+                ValidatedPlanNode::Derive(d) => {
+                    sources.insert(d.source.to_string());
+                    sources.extend(
+                        d.inputs
+                            .iter()
+                            .filter(|input| {
+                                input.proof == crate::plasm_plan::InputCardinalityProof::Collection
+                            })
+                            .map(|input| input.node.to_string()),
+                    );
+                }
+                _ => {}
+            }
+        }
+        enqueue_local_demands(local, &scope, sources, &mut pending);
+    }
     let mut seen = HashSet::new();
-    while let Some(current) = pending.pop_front() {
-        if !seen.insert(current.clone()) {
+    while let Some(mut path) = pending.pop_front() {
+        if !seen.insert(path.clone()) {
             continue;
         }
-        let Some(&idx) = by_id.get(current.as_str()) else {
-            continue;
-        };
-        let upstream = crate::plan_node_graph::node_dependencies(&plan.nodes()[idx]);
-        match &mut plan.nodes_mut()[idx] {
+        let idx = path.pop().expect("demand always names a node");
+        let local = scoped_plan_mut(plan, &path);
+        let upstream = crate::plan_node_graph::node_dependencies(&local.nodes()[idx]);
+        let mut propagate_upstream = false;
+        let mut captured = None;
+        match &mut local.nodes_mut()[idx] {
             ValidatedPlanNode::Surface(surface)
                 if matches!(surface.kind, PlanNodeKind::Query | PlanNodeKind::Search) =>
             {
                 merge_budget_into_surface(surface, PushedReadBudget::Complete);
             }
-            // An explicit take defines a bounded source expression. Downstream full
-            // demand must not expand that expression into the underlying collection.
+            // take defines a bounded expression; do not enlarge it.
             ValidatedPlanNode::Compute(c) if matches!(c.compute.op, ComputeOp::Limit { .. }) => {}
+            ValidatedPlanNode::MapBody(map) => {
+                let returns = map
+                    .plan
+                    .return_value()
+                    .refs()
+                    .into_iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>();
+                let mut child = path.clone();
+                child.push(idx);
+                enqueue_local_demands(&map.plan, &child, returns, &mut pending);
+                propagate_upstream = true;
+            }
+            ValidatedPlanNode::Capture(capture) => captured = Some(capture.id.to_string()),
             ValidatedPlanNode::Compute(_)
             | ValidatedPlanNode::Derive(_)
-            | ValidatedPlanNode::ForEach(_) => {
-                pending.extend(upstream);
-            }
+            | ValidatedPlanNode::ForEach(_) => propagate_upstream = true,
             ValidatedPlanNode::RelationTraversal(relation) => {
                 merge_budget_into_relation(relation, PushedReadBudget::Complete);
-                pending.extend(upstream);
+                propagate_upstream = true;
             }
             _ => {}
+        }
+        if propagate_upstream {
+            enqueue_local_demands(local, &path, upstream, &mut pending);
+        }
+        if let Some(captured) = captured {
+            if let Some(map_idx) = path.pop() {
+                let parent = scoped_plan_mut(plan, &path);
+                let ValidatedPlanNode::MapBody(map) = &parent.nodes()[map_idx] else {
+                    unreachable!("scope path must name a map body")
+                };
+                let source = if map.body.parent.local.as_str() == captured {
+                    Some(map.body.parent.source.to_string())
+                } else {
+                    map.body
+                        .captures
+                        .iter()
+                        .find(|port| port.local.as_str() == captured)
+                        .map(|port| port.source.to_string())
+                };
+                enqueue_local_demands(parent, &path, source, &mut pending);
+            }
+        }
+    }
+}
+
+fn scoped_plan_mut<'a>(
+    mut plan: &'a mut ValidatedPlanArtifact,
+    scope: &[usize],
+) -> &'a mut ValidatedPlanArtifact {
+    for &idx in scope {
+        let ValidatedPlanNode::MapBody(map) = &mut plan.nodes_mut()[idx] else {
+            unreachable!("scope path must name a map body")
+        };
+        plan = &mut map.plan;
+    }
+    plan
+}
+
+fn enqueue_local_demands(
+    plan: &ValidatedPlanArtifact,
+    scope: &[usize],
+    sources: impl IntoIterator<Item = String>,
+    pending: &mut VecDeque<Vec<usize>>,
+) {
+    for source in sources {
+        let source = crate::plasm_plan::PlanNodeId::new(source)
+            .expect("complete demand source is a validated node id");
+        if let Some(idx) = plan.node_index(&source) {
+            let mut path = scope.to_vec();
+            path.push(idx);
+            pending.push_back(path);
         }
     }
 }
@@ -383,26 +468,65 @@ fn budget_from_chain(chain: &[ComputeOp]) -> Option<PushedReadBudget> {
     let ComputeOp::Limit { count } = chain.first()? else {
         return None;
     };
-    let middle: Vec<&ComputeOp> = chain
-        .iter()
-        .skip(1)
-        .filter(|op| !matches!(op, ComputeOp::Project { .. }))
-        .collect();
+    let mut count = *count;
+    let mut rewritten: Vec<ComputeOp> = Vec::new();
+    for op in chain.iter().skip(1) {
+        if let ComputeOp::Limit { count: upstream } = op {
+            // Positional prefixes compose only before crossing a selection/order barrier.
+            if !rewritten.is_empty() {
+                return None;
+            }
+            count = count.min(*upstream);
+        } else if let ComputeOp::Project { fields } = op {
+            // Walk consumers back through each projection. Aliases are not source fields.
+            let rebase = |path: &FieldPath| -> Option<FieldPath> {
+                if let Some((_, source)) = fields
+                    .iter()
+                    .find(|(name, _)| name.as_str() == path.dotted())
+                {
+                    return Some(source.clone());
+                }
+                let (first, rest) = path.segments().split_first()?;
+                let (_, source) = fields.iter().find(|(name, _)| name.as_str() == first)?;
+                let mut segments = source.segments().to_vec();
+                segments.extend_from_slice(rest);
+                FieldPath::from_dotted(&segments.join(".")).ok()
+            };
+            for consumer in &mut rewritten {
+                match consumer {
+                    ComputeOp::Sort { key, .. } => *key = rebase(key)?,
+                    ComputeOp::Filter { predicates } => {
+                        *predicates = predicates
+                            .try_map(&mut |predicate| {
+                                let mut result = predicate.clone();
+                                result.field_path = rebase(&result.field_path).ok_or(())?;
+                                Ok::<_, ()>(result)
+                            })
+                            .ok()?;
+                    }
+                    _ => return None,
+                }
+            }
+        } else {
+            rewritten.push(op.clone());
+        }
+    }
+    let middle: Vec<_> = rewritten.iter().collect();
     match middle.as_slice() {
-        [] => Some(PushedReadBudget::Limit(*count)),
+        [] => Some(PushedReadBudget::Limit(count)),
         [ComputeOp::Filter { predicates }] => Some(PushedReadBudget::FilterLimit {
-            count: *count,
+            count,
             predicates: lower_plan_predicates(&predicates.conjunction()?).ok()?,
         }),
         [ComputeOp::Sort { key, descending }] => Some(PushedReadBudget::TopK {
-            count: *count,
+            count,
             key: key.clone(),
             descending: *descending,
             filter: None,
         }),
         [ComputeOp::Filter { predicates }, ComputeOp::Sort { key, descending }] => {
             Some(PushedReadBudget::TopK {
-                count: *count,
+                count,
                 key: key.clone(),
                 descending: *descending,
                 filter: Some(lower_plan_predicates(&predicates.conjunction()?).ok()?),
@@ -515,6 +639,36 @@ mod tests {
             apply_read_budgets(&mut plan);
             let ValidatedPlanNode::Surface(source)=&plan.nodes()[0] else {panic!("source")};
             proptest::prop_assert_eq!(&source.pushed_read_budget,&Some(PushedReadBudget::Complete));
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn serial_prefixes_compose(counts in proptest::collection::vec(0usize..100, 1..12)) {
+            let chain = counts.iter().map(|count| ComputeOp::Limit {count: *count}).collect::<Vec<_>>();
+            proptest::prop_assert_eq!(budget_from_chain(&chain), Some(PushedReadBudget::Limit(*counts.iter().min().unwrap())));
+        }
+    }
+
+    #[test]
+    fn serial_prefixes_do_not_cross_selection_or_ordering() {
+        for barrier in [
+            ComputeOp::Filter {
+                predicates: Vec::new().into(),
+            },
+            ComputeOp::Sort {
+                key: FieldPath::from_dotted("score").unwrap(),
+                descending: false,
+            },
+        ] {
+            assert_eq!(
+                budget_from_chain(&[
+                    ComputeOp::Limit { count: 1 },
+                    barrier,
+                    ComputeOp::Limit { count: 25 },
+                ]),
+                None
+            );
         }
     }
 
@@ -686,10 +840,11 @@ mod tests {
             ));
         }
         let mut result = ExecutionResult {
-            count: entities.len(),
-            entities,
+            collection: crate::test_support::execution_fixtures::collection(
+                entities,
+                ResultCoverage::Unknown,
+            ),
             has_more: false,
-            coverage: ResultCoverage::Unknown,
             pagination_resume: None,
             paging_handle: None,
             source: plasm_runtime::ExecutionSource::Cache,
@@ -707,8 +862,9 @@ mod tests {
                 entity: "LangItem".into(),
             },
             Some("l_test"),
-        );
-        assert_eq!(result.entities.len(), DEFAULT_HOST_PAGE_SIZE);
+        )
+        .expect("valid recorded page");
+        assert_eq!(result.entities().len(), DEFAULT_HOST_PAGE_SIZE);
         assert!(
             !result.has_more,
             "len==cap is an honest page, not a silent drop"
@@ -976,10 +1132,11 @@ mod tests {
             ));
         }
         let mut result = ExecutionResult {
-            count: entities.len(),
-            entities,
+            collection: crate::test_support::execution_fixtures::collection(
+                entities,
+                ResultCoverage::Unknown,
+            ),
             has_more: false,
-            coverage: ResultCoverage::Unknown,
             pagination_resume: None,
             paging_handle: None,
             source: plasm_runtime::ExecutionSource::Cache,
@@ -987,7 +1144,10 @@ mod tests {
             request_fingerprints: vec![],
             operations: plasm_runtime::OperationLedger::empty(),
         };
-        result.coverage = plasm_runtime::ResultCoverage::Complete;
+        result.collection = crate::test_support::execution_fixtures::collection(
+            result.entities().iter().cloned().collect(),
+            plasm_runtime::ResultCoverage::Complete,
+        );
         cap_execution_result_page(
             &sess,
             &mut result,
@@ -998,12 +1158,13 @@ mod tests {
                 entity: "LangItem".into(),
             },
             Some("l_test"),
-        );
-        assert_eq!(result.entities.len(), 2);
+        )
+        .expect("valid recorded page");
+        assert_eq!(result.entities().len(), 2);
         assert!(result.has_more);
         assert!(result.paging_handle.is_some());
         assert_eq!(
-            result.coverage,
+            result.coverage(),
             plasm_runtime::ResultCoverage::Complete,
             "presentation paging must not rewrite expression coverage"
         );
@@ -1021,5 +1182,40 @@ mod tests {
             },
         }];
         assert!(lower_plan_predicates(&preds).is_err());
+    }
+}
+
+#[cfg(test)]
+mod projection_pushdown_laws {
+    use super::*;
+    use plasm_core::OutputName;
+    #[test]
+    fn pushed_sort_keys_are_rebased_through_composed_projections() {
+        let path = |s| FieldPath::from_dotted(s).unwrap();
+        let projection = |a, b| ComputeOp::Project {
+            fields: [(OutputName::new(a).unwrap(), path(b))].into(),
+        };
+        let chain = [
+            ComputeOp::Limit { count: 2 },
+            ComputeOp::Sort {
+                key: path("shown"),
+                descending: true,
+            },
+            projection("shown", "renamed"),
+            projection("renamed", "timestamp"),
+        ];
+        let Some(PushedReadBudget::TopK { key, .. }) = budget_from_chain(&chain) else {
+            panic!("typed top-k budget")
+        };
+        assert_eq!(key, path("timestamp"));
+        let invalid = [
+            ComputeOp::Limit { count: 2 },
+            ComputeOp::Sort {
+                key: path("missing"),
+                descending: true,
+            },
+            projection("shown", "timestamp"),
+        ];
+        assert!(budget_from_chain(&invalid).is_none());
     }
 }

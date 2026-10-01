@@ -335,7 +335,7 @@ pub fn validate_case_entities_against_schema(
 
 /// Union of domain entities covered by eval cases: `expect.entities_any`, optionally merged with
 /// [`crate::entities_from_reference_expr`] per [`CoversSource`] (same rules as `covers`).
-pub fn union_case_entities(
+pub async fn union_case_entities(
     cases: &[crate::EvalCase],
     schema_key: &str,
     cgs: &CGS,
@@ -356,6 +356,7 @@ pub fn union_case_entities(
                     let re = re.trim();
                     if !re.is_empty() {
                         let derived = crate::entities_from_reference_expr(re, cgs)
+                            .await
                             .map_err(|e| anyhow::anyhow!("case {} reference_expr: {}", c.id, e))?;
                         if matches!(source, CoversSource::Reference) {
                             derived
@@ -397,12 +398,13 @@ pub enum CoversSource {
 /// Derive [`EvalFormId`] buckets from a static parse of `reference_expr` against `cgs`.
 ///
 /// Compile a Python reference and derive forms from its semantic DAG.
-pub fn derive_eval_form_ids_from_reference(
+pub async fn derive_eval_form_ids_from_reference(
     reference_expr: &str,
     cgs: &CGS,
 ) -> Result<HashSet<EvalFormId>, String> {
     let program = crate::ProgramSession::new(cgs, None)?
         .compile(reference_expr)
+        .await
         .map_err(|e| e.agent_markdown())?;
     let mut facts = crate::program_facts::ProgramFacts::default();
     facts.visit(&program.artifact().comp);
@@ -512,7 +514,7 @@ fn predicate_contains_source_placeholder(p: &Predicate) -> bool {
 
 /// Build an effective case list for coverage: optionally merge or replace `covers` from
 /// [`derive_eval_form_ids_from_reference`].
-pub fn cases_with_effective_covers(
+pub async fn cases_with_effective_covers(
     cases: &[crate::EvalCase],
     cgs: &CGS,
     source: CoversSource,
@@ -527,6 +529,7 @@ pub fn cases_with_effective_covers(
                     let re = re.trim();
                     if !re.is_empty() {
                         let derived = derive_eval_form_ids_from_reference(re, cgs)
+                            .await
                             .map_err(|e| anyhow::anyhow!("case {} reference_expr: {}", c.id, e))?;
                         if matches!(source, CoversSource::Reference) {
                             row.covers = sorted_form_id_strings(&derived);
@@ -556,7 +559,7 @@ fn sorted_form_id_strings(ids: &HashSet<EvalFormId>) -> Vec<String> {
 
 /// Compare YAML `covers` to [`derive_eval_form_ids_from_reference`] for every case that has
 /// `reference_expr`. Fails if any mismatch is found (see `allow_extra_claims`).
-pub fn compare_case_covers_to_derived(
+pub async fn compare_case_covers_to_derived(
     cases: &[crate::EvalCase],
     schema_key: &str,
     cgs: &CGS,
@@ -575,6 +578,7 @@ pub fn compare_case_covers_to_derived(
             continue;
         }
         let derived = derive_eval_form_ids_from_reference(re, cgs)
+            .await
             .map_err(|e| anyhow::anyhow!("case {} reference_expr: {}", c.id, e))?;
         let claimed: HashSet<EvalFormId> = c
             .covers
@@ -984,8 +988,8 @@ mod tests {
         assert!(m.contains_key(&EvalFormId::Get));
     }
 
-    #[test]
-    fn derive_reference_expr_petstore_get_query_and_projection() {
+    #[tokio::test]
+    async fn derive_reference_expr_petstore_get_query_and_projection() {
         let dir = Path::new("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
@@ -1002,21 +1006,29 @@ mod tests {
         let source = |call: &str| {
             format!("class Read(Program):\n    def build(self):\n        return {symbol}{call}\n")
         };
-        let g = derive_eval_form_ids_from_reference(&source(".get(3)"), &cgs).unwrap();
+        let g = derive_eval_form_ids_from_reference(&source(".get(3)"), &cgs)
+            .await
+            .unwrap();
         assert!(g.contains(&EvalFormId::Get));
-        let q = derive_eval_form_ids_from_reference(&source(".query()"), &cgs).unwrap();
+        let q = derive_eval_form_ids_from_reference(&source(".query()"), &cgs)
+            .await
+            .unwrap();
         assert!(q.contains(&EvalFormId::QueryAll));
         let qf = derive_eval_form_ids_from_reference(&source(".query(status=\"available\")"), &cgs)
+            .await
             .unwrap();
         assert!(qf.contains(&EvalFormId::QueryFiltered));
         let gp = derive_eval_form_ids_from_reference(
             &source(".get(1).select(\"name\", \"status\")"),
             &cgs,
         )
+        .await
         .unwrap();
         assert!(gp.contains(&EvalFormId::Get));
         assert!(gp.contains(&EvalFormId::Projection));
-        assert!(derive_eval_form_ids_from_reference("Pet(3)", &cgs).is_err());
+        assert!(derive_eval_form_ids_from_reference("Pet(3)", &cgs)
+            .await
+            .is_err());
     }
 
     #[test]

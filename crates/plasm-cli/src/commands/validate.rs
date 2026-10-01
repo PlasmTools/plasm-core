@@ -710,7 +710,14 @@ fn fake_value_for_type(
                 _ => plasm_core::TemporalWireFormat::Rfc3339,
             };
             plasm_core::temporal::normalize_temporal_value(
-                Value::String("2026-01-02T03:04:05Z".into()),
+                Value::String(
+                    if format == plasm_core::TemporalWireFormat::Iso8601Date {
+                        "2026-01-02"
+                    } else {
+                        "2026-01-02T03:04:05Z"
+                    }
+                    .into(),
+                ),
                 format,
             )
             .expect("fixed temporal probe must be encodable")

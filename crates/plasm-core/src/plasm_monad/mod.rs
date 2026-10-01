@@ -16,7 +16,7 @@ pub mod step;
 
 pub use bind_graph::{PlasmBindGraph, PlasmHoleUse};
 pub use comp::{PlasmComp, PlasmCompArtifact, PlasmReturn, StepId, PLASM_COMP_WIRE_VERSION};
-pub use correlated::{CorrelatedBody, ParentCapture};
+pub use correlated::{CorrelatedBody, ParentCapture, ScopedCapture, ScopedOutput};
 pub use equiv::{comp_equivalent, comp_semantic_eq, CompEquivDiff, CompEquivResult, RewritePolicy};
 pub use operators::{
     empty_comp, invoke_step_payload, map_step_payload, plasm_bind_step, plasm_map_step,

@@ -11,6 +11,7 @@ impl From<PersistExecuteRunError> for RunLineError {
     fn from(e: PersistExecuteRunError) -> Self {
         match e {
             PersistExecuteRunError::Mint(d) => RunLineError::Parse(d),
+            PersistExecuteRunError::Collection(e) => RunLineError::Runtime(e.into()),
             PersistExecuteRunError::Serialization(e) => RunLineError::ArtifactSerialization(e),
             PersistExecuteRunError::Persist(d) => RunLineError::ArtifactPersist(d),
         }
@@ -32,11 +33,12 @@ fn run_line_error_metric_labels(err: &RunLineError) -> (&'static str, &'static s
         RunLineError::Parse(_) => ("parse", "parse"),
         RunLineError::Normalize(_) => ("parse", "normalize"),
         RunLineError::Projection(_) => ("projection", "projection"),
-        RunLineError::Runtime(_, _) => ("execute", "runtime"),
+        RunLineError::Runtime(_) => ("execute", "runtime"),
         RunLineError::ArtifactSerialization(_) => ("artifact", "serialization"),
         RunLineError::ArtifactPersist(_) => ("artifact", "persist"),
         RunLineError::GraphWriteConflict { .. } => ("execute", "graph_write_conflict"),
         RunLineError::Operation(_) => ("operation", "continuation"),
+        RunLineError::OperationFailed(_) => ("operation", "failed"),
     }
 }
 
@@ -94,16 +96,22 @@ fn synthetic_page_result(
     handle: &PagingHandle,
     mut cursor: crate::execute_session::SyntheticPageCursor,
     trace: Option<&PlasmTraceContext>,
-) -> ExecutionResult {
-    let start = cursor.offset.min(cursor.rows.len());
+) -> Result<ExecutionResult, plasm_runtime::RuntimeError> {
+    let start = cursor.offset.min(cursor.collection.count());
     let end = start
         .saturating_add(cursor.page_size)
-        .min(cursor.rows.len());
-    let entities = cursor.rows[start..end].to_vec();
+        .min(cursor.collection.count());
+    // An explicit page expression selects occurrences from the stored result.
+    // Unlike an implicit presentation window, it is a new bounded rowset.
+    // Derivation retains the source proof; it never mints completeness from size.
+    let retained: Vec<_> = (start..end).collect();
+    let collection =
+        cursor
+            .collection
+            .filter(&("page", &cursor.node_id, start, end), &retained, &[])?;
     cursor.offset = end;
-    let has_more = cursor.offset < cursor.rows.len();
+    let has_more = cursor.offset < cursor.collection.count();
     let request_fingerprints = cursor.request_fingerprints.clone();
-    let coverage = cursor.coverage;
     let paging_handle = if has_more {
         sess.upsert_synthetic_paging_resume(handle, cursor);
         Some(handle.clone())
@@ -112,11 +120,9 @@ fn synthetic_page_result(
         None
     };
     let _ = trace;
-    ExecutionResult {
-        count: entities.len(),
-        entities,
+    Ok(ExecutionResult {
+        collection,
         has_more,
-        coverage,
         pagination_resume: None,
         paging_handle,
         source: ExecutionSource::Cache,
@@ -129,7 +135,7 @@ fn synthetic_page_result(
         },
         request_fingerprints,
         operations: plasm_runtime::OperationLedger::empty(),
-    }
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -159,17 +165,13 @@ pub(crate) async fn run_parsed_plasm_line(
         Expr::Wait(w) => {
             let out = handle_wait_operation(sess, Some(st), trace, &w.handle)
                 .await
-                .map_err(|e| {
-                    RunLineError::Parse(crate::http_execute::operation_error_to_string(e))
-                })?;
+                .map_err(RunLineError::OperationFailed)?;
             return Err(RunLineError::Operation(Box::new(out)));
         }
         Expr::Cancel(c) => {
             let out = handle_cancel_operation(sess, trace, &c.handle)
                 .await
-                .map_err(|e| {
-                    RunLineError::Parse(crate::http_execute::operation_error_to_string(e))
-                })?;
+                .map_err(RunLineError::OperationFailed)?;
             return Err(RunLineError::Operation(Box::new(out)));
         }
         _ => {}
@@ -205,7 +207,8 @@ pub(crate) async fn run_parsed_plasm_line(
     if let Some(ref key) = page_storage_key {
         if let Some(cursor) = sess.peek_synthetic_paging_resume(key) {
             let entry_id = cursor.qualified_entity.entry_id.clone();
-            let result = synthetic_page_result(sess, key, cursor, trace);
+            let result = synthetic_page_result(sess, key, cursor, trace)
+                .map_err(|e| RunLineError::Runtime(e))?;
             let artifact = persist_execute_run(PersistExecuteRunInput {
                 st,
                 sess,
@@ -367,6 +370,7 @@ pub(crate) async fn run_parsed_plasm_line(
             PersistExecuteRunError::Serialization(_) => "serialization",
             PersistExecuteRunError::Persist(_) => "artifact_persist",
             PersistExecuteRunError::Mint(_) => "parse",
+            PersistExecuteRunError::Collection(_) => "collection",
         };
         if phase != "parse" {
             crate::metrics::record_execute_expression_line(

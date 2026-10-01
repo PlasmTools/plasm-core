@@ -9,11 +9,15 @@ pub(crate) fn compile(
     source: &str,
 ) -> Result<PlasmCompBundle, ProgramStageError> {
     crate::plasm_dag::compile_python_program_checked(session, source).map_err(|stage| match stage {
-        ProgramStageError::Type { correction } => ProgramStageError::Type {
-            correction: format!("{correction}\nRepair the Python Program using the current class and method declarations. Preserve selection criteria, domain types and completed-write evidence. Reuse the same logical session; obtain missing symbols through context extension."),
-        },
+        ProgramStageError::Type { correction } => admission_error(correction),
         other => other,
     })
+}
+
+pub(crate) fn admission_error(correction: String) -> ProgramStageError {
+    ProgramStageError::Type {
+        correction: format!("{correction}\nRepair the Python Program using the current class and method declarations. Preserve selection criteria, domain types and completed-write evidence. Reuse the same logical session; obtain missing symbols through context extension."),
+    }
 }
 
 /// Parser recovery is evidence of syntax only, never evidence that a prefix ran.
@@ -101,8 +105,46 @@ mod tests {
         session.teaching_exposure = Some(exposure);
         session
     }
-    #[test]
-    fn python_cutover_rejects_native_source_and_admits_corrected_program() {
+    #[tokio::test]
+    async fn upstream_correction_preserves_original_body_line_and_session_repair() {
+        let session = session();
+        let source = "class Read(Program):\n    @compute\n    def render(self, rows: list[Row]) -> str:\n        return rows[0].missing\n    def build(self):\n        rows = e1.query()\n        return self.render(rows)\n";
+        let error = crate::compile_program(&Default::default(), None, &session, "test", source)
+            .await
+            .unwrap_err()
+            .into_program()
+            .expect("program-owned failure");
+        assert_eq!(error.category(), ProgramErrorCategory::Type);
+        let correction = error.correction();
+        assert!(correction.contains("plasm_compute.py:4:"), "{correction}");
+        assert!(correction.contains("missing"), "{correction}");
+        assert!(
+            correction.contains("Reuse the same logical session"),
+            "{correction}"
+        );
+        for prefix in [
+            "import datetime as dt\n",
+            "from datetime import date\nfrom datetime import timedelta\n",
+        ] {
+            let source = format!("{prefix}{source}");
+            let error =
+                crate::compile_program(&Default::default(), None, &session, "test", &source)
+                    .await
+                    .unwrap_err()
+                    .into_program()
+                    .expect("program-owned failure");
+            let line = 4 + prefix.lines().count();
+            assert!(
+                error
+                    .correction()
+                    .contains(&format!("plasm_compute.py:{line}:")),
+                "{}",
+                error.correction()
+            );
+        }
+    }
+    #[tokio::test]
+    async fn python_cutover_rejects_native_source_and_admits_corrected_program() {
         let session = session();
         let rejected = crate::compile_program(
             &Default::default(),
@@ -111,7 +153,10 @@ mod tests {
             "test",
             "items = e1\nitems",
         )
-        .unwrap_err();
+        .await
+        .unwrap_err()
+        .into_program()
+        .expect("program-owned failure");
         assert_eq!(rejected.category(), ProgramErrorCategory::Type);
         assert!(rejected.correction().contains("Program subclass"));
         assert!(!rejected.correction().contains("| where"));
@@ -132,7 +177,9 @@ mod tests {
         );
         assert!(repeat.replay.is_some());
         let correct = "class Read(Program):\n    def build(self):\n        rows = e1.query()\n        return rows\n";
-        crate::compile_program(&Default::default(), None, &session, "test", correct).unwrap();
+        crate::compile_program(&Default::default(), None, &session, "test", correct)
+            .await
+            .unwrap();
     }
     #[test]
     fn python_cutover_syntax_error_has_position_and_recovered_bindings() {
@@ -161,5 +208,13 @@ mod tests {
         );
         assert!(message.contains("item_id=value"));
         assert!(!message.contains("e2{"));
+    }
+    #[tokio::test]
+    async fn static_admission_does_not_require_a_worker() {
+        let session = session();
+        let source = "class Read(Program):\n    @compute\n    def count(self, rows: list[Row]) -> int:\n        return len(rows)\n    def build(self):\n        return self.count(e1.query())\n";
+        crate::compile_program(&Default::default(), None, &session, "test", source)
+            .await
+            .unwrap();
     }
 }

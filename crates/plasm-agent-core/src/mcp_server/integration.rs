@@ -1120,11 +1120,13 @@ async fn execute_mcp_live_run_page_handle_synthetic_continuation() {
             entry_id: fx.es.entry_id.clone(),
             entity: "LangItem".into(),
         },
-        rows,
+        collection: crate::test_support::execution_fixtures::collection(
+            rows,
+            plasm_runtime::ResultCoverage::Complete,
+        ),
         offset: 25,
         page_size: 25,
         request_fingerprints: vec![],
-        coverage: plasm_runtime::ResultCoverage::Complete,
     };
     let handle = fx
         .es
@@ -1323,11 +1325,13 @@ async fn plasm_run_page_handle_through_handler() {
             entry_id: es.entry_id.clone(),
             entity: "LangItem".into(),
         },
-        rows,
+        collection: crate::test_support::execution_fixtures::collection(
+            rows,
+            plasm_runtime::ResultCoverage::Complete,
+        ),
         offset: 25,
         page_size: 25,
         request_fingerprints: vec![],
-        coverage: plasm_runtime::ResultCoverage::Complete,
     };
     let page_handle = es.register_synthetic_paging_continuation(cursor, Some(&logical_session_ref));
 

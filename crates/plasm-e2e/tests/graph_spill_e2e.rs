@@ -201,10 +201,10 @@ async fn graph_spill_bounded_hot_and_plan_filter_rehydrate_async() {
         .await
         .expect("graph-backed fetch-all");
 
-    let total = runtime_result.count;
+    let total = runtime_result.count();
     assert!(total >= 1, "expected at least one berry from Hermit");
     assert!(
-        runtime_result.entities.is_empty(),
+        runtime_result.entities().is_empty(),
         "graph-backed pages should not retain full entity vectors in the execution result"
     );
     assert!(
@@ -260,9 +260,13 @@ async fn graph_spill_bounded_hot_and_plan_filter_rehydrate_async() {
         .iter()
         .find(|s| s.node_id.as_deref() == Some("one"))
         .expect("one return step");
-    assert_eq!(one_step.result.count, 1, "limit(1) on graph-backed surface");
     assert_eq!(
-        one_step.result.entities.len(),
+        one_step.result.count(),
+        1,
+        "limit(1) on graph-backed surface"
+    );
+    assert_eq!(
+        one_step.result.entities().len(),
         1,
         "limit step should materialize one entity row"
     );
@@ -302,7 +306,7 @@ async fn graph_spill_bounded_hot_and_plan_filter_rehydrate_async() {
         .iter()
         .find(|s| s.node_id.as_deref() == Some("many"))
         .expect("many return step");
-    let row_count = many_step.result.count;
+    let row_count = many_step.result.count();
     assert!(row_count > 0, "expected at least one berry row");
     assert!(
         row_count <= 40,
@@ -312,7 +316,7 @@ async fn graph_spill_bounded_hot_and_plan_filter_rehydrate_async() {
     use plasm_core::Value;
 
     let mut names = BTreeSet::new();
-    for entity in &many_step.result.entities {
+    for entity in many_step.result.entities() {
         if let Some(Value::String(name)) = entity
             .get_field("name")
             .map(plasm_core::TypedFieldValue::to_value)
@@ -322,9 +326,9 @@ async fn graph_spill_bounded_hot_and_plan_filter_rehydrate_async() {
     }
     assert_eq!(
         names.len(),
-        many_step.result.entities.len(),
+        many_step.result.entities().len(),
         "limit-many rows must be unique by berry name (got {} rows, {} unique names)",
-        many_step.result.entities.len(),
+        many_step.result.entities().len(),
         names.len()
     );
 
@@ -336,7 +340,7 @@ async fn graph_spill_bounded_hot_and_plan_filter_rehydrate_async() {
 
     // CEP-5: graph-backed list surface → limit chain must rehydrate parent rows for downstream steps.
     assert!(
-        !one_step.result.entities.is_empty() && one_step.result.count >= 1,
+        !one_step.result.entities().is_empty() && one_step.result.count() >= 1,
         "graph-backed limit step must materialize at least one entity row"
     );
 }

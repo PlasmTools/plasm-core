@@ -173,7 +173,7 @@ async fn run_direction_program(
     .unwrap_or_else(|e| panic!("live {program}: {e}"));
     live.return_steps
         .iter()
-        .flat_map(|s| s.result.entities.iter())
+        .flat_map(|s| s.result.entities().iter())
         .map(|e| e.reference.primary_slot_str().to_string())
         .collect()
 }

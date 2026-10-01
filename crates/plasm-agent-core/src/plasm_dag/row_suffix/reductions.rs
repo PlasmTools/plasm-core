@@ -3,7 +3,7 @@ use super::super::plan_serialize::{schema_from_aggregates, schema_from_group_by}
 use super::super::prelude::*;
 use super::super::schema_validate::{
     compute_passthrough_or_fallback_schema, resolve_immediate_compute_schema,
-    resolve_qualified_entity_for_dag_source, resolve_sort_field_path,
+    resolve_qualified_entity_for_dag_source, resolve_schema_field_path,
     validate_compute_paths_for_dag_source,
 };
 use super::super::types::{CompileState, DagNode, DagNodeSource};
@@ -19,7 +19,7 @@ fn resolve_paths(
     let qe = resolve_qualified_entity_for_dag_source(state, staged, source.to_owned());
     let schema = resolve_immediate_compute_schema(state, staged, source);
     for path in paths.iter_mut() {
-        *path = resolve_sort_field_path(
+        *path = resolve_schema_field_path(
             session,
             state.cross_cache,
             qe.as_ref(),
@@ -100,7 +100,7 @@ pub(in crate::plasm_dag) fn lower_reduction_compute(
             .and_then(source_field)
             .and_then(|f| f.value_type.as_ref());
         let value_type =
-            plasm_core::value_contract::ValueContract::aggregate(aggregate.function, input_type);
+            plasm_core::row_plan::contracts::reduction_contract(aggregate.function, input_type)?;
         output.value_kind = value_type.summary();
         output.value_type = Some(value_type);
     }

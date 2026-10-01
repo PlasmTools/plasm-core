@@ -203,7 +203,7 @@ pub(crate) fn preview_entities_for_step(
 ) -> Vec<serde_json::Value> {
     let cgs = step.cgs.as_deref().or(cgs);
     step.result
-        .entities
+        .entities()
         .iter()
         .take(max_rows)
         .map(|e| {
@@ -266,7 +266,7 @@ pub(crate) fn build_ui_steps(
                 artifact: resolved.artifact.clone(),
                 lossy_summary_fields: lossy,
                 column_schema,
-                coverage: step.result.coverage,
+                coverage: step.result.coverage(),
             }
         })
         .collect()

@@ -26,30 +26,17 @@ fn entity_type_for_doc(doc: &RunArtifactDocument) -> Option<String> {
 
 fn execution_result_from_artifact_doc(
     doc: &RunArtifactDocument,
-    cgs: &CGS,
+    _cgs: &CGS,
 ) -> Result<ExecutionResult, OperationError> {
-    let entity_type =
-        entity_type_for_doc(doc).ok_or_else(|| OperationError::ResultArtifactMissing {
-            handle: String::new(),
-            run_artifact_id: doc.run_id.clone(),
-        })?;
-    let mut entities = Vec::with_capacity(doc.entities.len());
-    for row in &doc.entities {
-        match CachedEntity::from_row_json(entity_type.as_str(), row, cgs) {
-            Ok(entity) => entities.push(entity),
-            Err(_) => {
-                return Err(OperationError::ResultArtifactMissing {
-                    handle: String::new(),
-                    run_artifact_id: doc.run_id.clone(),
-                });
-            }
-        }
-    }
+    let collection =
+        doc.recorded_collection()
+            .map_err(|_| OperationError::ResultArtifactMissing {
+                handle: String::new(),
+                run_artifact_id: doc.run_id.clone(),
+            })?;
     Ok(ExecutionResult {
-        count: entities.len(),
-        entities,
+        collection,
         has_more: false,
-        coverage: plasm_runtime::ResultCoverage::Unknown,
         pagination_resume: None,
         paging_handle: None,
         source: doc.source,
@@ -126,7 +113,11 @@ pub fn hydrate_plan_run_from_artifact_formatted(
         request_fingerprints: doc.request_fingerprints.clone(),
     };
     let step = published_step_from_artifact_doc(doc, es, Some(artifact))?;
-    let node_results = doc.entities.clone();
+    let node_results = doc
+        .entities
+        .iter()
+        .map(CachedEntity::payload_to_json)
+        .collect();
     let out = publish_plasm_result_steps(Some(es.cgs.as_ref()), None, std::slice::from_ref(&step));
     Ok((out, node_results))
 }
@@ -183,8 +174,11 @@ mod tests {
             })),
             display_lines: vec!["pets".into()],
             request_fingerprints: vec!["fp1".into()],
-            entities: vec![],
-            coverage: plasm_runtime::ResultCoverage::Unknown,
+            entities: vec![].into(),
+            collection: crate::test_support::execution_fixtures::checkpoint(
+                vec![],
+                plasm_runtime::ResultCoverage::Unknown,
+            ),
             source: ExecutionSource::Live,
             stats: ExecutionStats::default(),
             operations: plasm_runtime::OperationLedger::empty(),

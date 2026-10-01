@@ -252,15 +252,19 @@ fn prepare_live_dry(
     }
 }
 
-pub async fn execute_mcp_live_run(run: ExecuteMcpLiveRun) -> Result<PlasmPlanRunResult, String> {
+pub async fn execute_mcp_live_run(
+    run: ExecuteMcpLiveRun,
+) -> Result<PlasmPlanRunResult, plasm_runtime::ExecutionFailure> {
     execute_mcp_live_run_inner(run)
         .instrument(crate::spans::plan_live_run())
         .await
 }
 
-async fn execute_mcp_live_run_inner(run: ExecuteMcpLiveRun) -> Result<PlasmPlanRunResult, String> {
+async fn execute_mcp_live_run_inner(
+    run: ExecuteMcpLiveRun,
+) -> Result<PlasmPlanRunResult, plasm_runtime::ExecutionFailure> {
     if !run.wait_live {
-        return Err("plasm_run requires live execute".to_string());
+        return Err("plasm_run requires live execute".to_string().into());
     }
 
     let ExecuteMcpLiveRun {
@@ -315,7 +319,9 @@ async fn execute_mcp_live_run_inner(run: ExecuteMcpLiveRun) -> Result<PlasmPlanR
             )
             .await
             .map_err(|e| match e {
-                LiveRunError::Timeout(d) => format!("live run timed out after {d:?}"),
+                LiveRunError::Timeout(d) => {
+                    plasm_runtime::ExecutionFailure::from(format!("live run timed out after {d:?}"))
+                }
                 LiveRunError::Failed(msg) => msg,
             })
         })

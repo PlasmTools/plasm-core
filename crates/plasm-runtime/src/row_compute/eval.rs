@@ -1,25 +1,23 @@
-//! Apply a fused [`RowPlan`] on an ingested frame.
-
-use super::json_frame::{
-    col_expr, collect_json, ingest_json_rows, ColKind, FrameState, IDX_COL, MONEY_AMOUNT, MONEY_CCY,
-};
+//! Execute typed row plans directly over Plasm values.
+#[cfg(test)]
+use super::evaluate_fixture;
+use super::rows::{Cell, FrameState, Row};
 use chrono::{DateTime, Utc};
-use plasm_core::plasm_monad::{
-    ComputeOp, FieldPath, PlanPredicate, PlanPredicateOp, PlasmDataValue, WithExpr, WithLiteral,
-};
 use plasm_core::{
-    fold_compute_ops, normalize_temporal_value, ArithOp, CollectCardinality, CollectReason,
-    FrameId, PlanNode, RowPlan, StepId, TemporalWireFormat, TypedAggregate,
+    fold_compute_ops, CollectCardinality, CollectReason, ComputeOp, PlanNode, PlanPredicate,
+    PlanPredicateOp, RowPlan, StepId, WithExpr,
 };
-use polars::prelude::*;
+#[cfg(test)]
+use plasm_core::{FieldPath, PlasmDataValue};
+#[cfg(test)]
 use rust_decimal::Decimal;
-
-/// Engine collect before host Minijinja (Render is not a PlanNode).
+/// Owned result at the host boundary (Render is not a PlanNode).
 #[derive(Debug, Clone)]
 pub enum ComputeEvalOutcome {
-    Rows(Vec<serde_json::Value>),
+    Rows(plasm_core::CollectedFrame),
     Render {
-        rows: Vec<serde_json::Value>,
+        schema: plasm_core::PlasmFrameSchema,
+        rows: Vec<plasm_core::ValueRow>,
         columns: Vec<plasm_core::OutputName>,
         column_aliases: std::collections::BTreeMap<String, plasm_core::OutputName>,
         template: String,
@@ -30,17 +28,35 @@ pub enum ComputeEvalOutcome {
 
 pub fn eval_compute_ops(
     ops: &[ComputeOp],
-    rows: &[serde_json::Value],
+    rows: &[plasm_core::ValueRow],
+    contract: &plasm_core::value_contract::ValueContract,
 ) -> Result<ComputeEvalOutcome, String> {
     let step = StepId::new("row").map_err(|e| e.to_string())?;
-    let plan = fold_compute_ops(ops, FrameId::new(1), step, CollectCardinality::List)
+    use plasm_core::{CollectRows, CompileRowPlan, IngestRows};
+    let schema = plasm_core::PlasmFrameSchema::new(
+        plasm_core::row_plan::FrameShape::Remapped {
+            reason: plasm_core::row_plan::RemapReason::Derive,
+        },
+        contract.clone(),
+    )?;
+    let mut engine = super::ValueRowEngine::new();
+    let frame = engine
+        .ingest(
+            &plasm_core::ScanSource::Inline { schema },
+            plasm_core::IngestBatch { rows },
+        )
         .map_err(|e| e.to_string())?;
-    let mut state = ingest_json_rows(rows).map_err(|e| e.to_string())?;
-    apply_stored_plan(&plan, &mut state).map_err(|e| e.to_string())?;
-    let collected = collect_json(&state).map_err(|e| e.to_string())?;
+    let plan =
+        fold_compute_ops(ops, frame, step, CollectCardinality::List).map_err(|e| e.to_string())?;
+    let compiled = engine.compile(&plan).map_err(|e| e.to_string())?;
+    let collected = engine
+        .collect(compiled, plan.collect().clone())
+        .map_err(|e| e.to_string())?;
+    collected.validate_correspondence(rows.len())?;
     match plan.collect() {
         CollectReason::Render { spec, .. } => Ok(ComputeEvalOutcome::Render {
-            rows: collected,
+            schema: collected.schema,
+            rows: collected.rows,
             columns: spec.columns.clone(),
             column_aliases: spec.column_aliases.clone(),
             template: spec.template.clone(),
@@ -51,833 +67,298 @@ pub fn eval_compute_ops(
     }
 }
 
-pub(super) fn apply_stored_plan(plan: &RowPlan, state: &mut FrameState) -> PolarsResult<()> {
+pub(super) fn apply_stored_plan(plan: &RowPlan, state: &mut FrameState<'_>) -> Result<(), String> {
     let now = Utc::now();
-    ensure_plan_columns(plan, state)?;
-    let mut lf = state.df.clone().lazy();
     for (_, node) in plan.nodes().iter() {
-        lf = apply_node(lf, node, state, now)?;
-    }
-    state.df = lf.collect()?;
-    finalize_money_sums(state)?;
-    Ok(())
-}
-
-fn ensure_plan_columns(plan: &RowPlan, state: &mut FrameState) -> PolarsResult<()> {
-    let mut names = Vec::new();
-    for (_, node) in plan.nodes().iter() {
-        collect_node_columns(node, &mut names);
-    }
-    let height = state.df.height();
-    for name in names {
-        if state.df.column(&name).is_ok() {
-            continue;
+        let output = plasm_core::row_plan::contracts::output_contract(&state.contract, node)?;
+        apply_node(node, state, now)?;
+        state.contract = output;
+        use plasm_core::row_plan::{FrameShape, RemapReason};
+        let reason = match node {
+            PlanNode::Project(_) => Some(RemapReason::Project),
+            PlanNode::GroupBy { .. } => Some(RemapReason::GroupBy),
+            PlanNode::Aggregate { .. } => Some(RemapReason::Aggregate),
+            _ => None,
+        };
+        if let Some(reason) = reason {
+            state.shape = FrameShape::Remapped { reason };
         }
-        let series = Series::full_null(PlSmallStr::from_str(&name), height, &DataType::Null);
-        state.df.with_column(series)?;
-        if !state.visible.iter().any(|v| v == &name) {
-            state.visible.push(name.clone());
-        }
-        state.kinds.entry(name).or_insert(ColKind::Json);
     }
     Ok(())
 }
-
-fn collect_node_columns(node: &PlanNode, names: &mut Vec<String>) {
+fn apply_node(
+    node: &PlanNode,
+    state: &mut FrameState<'_>,
+    now: DateTime<Utc>,
+) -> Result<(), String> {
     match node {
         PlanNode::Filter(filter) => {
-            for p in filter.predicates() {
-                names.push(p.field_path.dotted());
+            let predicate = Predicate::compile(filter.predicates(), &state.contract)?;
+            let keep = state
+                .rows
+                .iter()
+                .map(|r| predicate.evaluate(r).map(|v| v == Some(true)))
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut i = 0;
+            state.rows.retain(|_| {
+                let yes = keep[i];
+                i += 1;
+                yes
+            });
+        }
+        PlanNode::Sort { key, descending } => {
+            let contract = plasm_core::row_plan::contracts::field_contract(&state.contract, key)?;
+            let ordering = plasm_core::value_order::Orderable::ordering(&contract)
+                .map_err(|e| e.to_string())?;
+            let name = key.dotted();
+            for row in &state.rows {
+                ordering
+                    .validate(row.require(&name)?)
+                    .map_err(|e| e.to_string())?;
+            }
+            let mut error = None;
+            state.rows.sort_by(|a, b| {
+                let (a, b) = (
+                    a.get(&name).expect("validated field"),
+                    b.get(&name).expect("validated field"),
+                );
+                if a.is_null() || b.is_null() {
+                    return a.is_null().cmp(&b.is_null());
+                }
+                match ordering.compare(a, b) {
+                    Ok(order) => {
+                        if *descending {
+                            order.reverse()
+                        } else {
+                            order
+                        }
+                    }
+                    Err(e) => {
+                        error = Some(e);
+                        std::cmp::Ordering::Equal
+                    }
+                }
+            });
+            if let Some(error) = error {
+                return Err(error.to_string());
             }
         }
-        PlanNode::Sort { key, .. } => names.push(key.dotted()),
-        PlanNode::GroupBy { keys, aggs } => {
-            names.extend(keys.iter().map(|k| k.dotted()));
-            for agg in aggs {
-                collect_agg_columns(agg, names);
-            }
-        }
-        PlanNode::Aggregate { aggs } => {
-            for agg in aggs {
-                collect_agg_columns(agg, names);
-            }
+        PlanNode::Limit { count } => state.rows.truncate(*count),
+        PlanNode::Distinct { keys } | PlanNode::Dedupe { keys } => {
+            super::aggregate::distinct(state, keys)?
         }
         PlanNode::Project(spec) => {
-            names.extend(spec.fields.values().map(|p| p.dotted()));
+            state.rows = state
+                .rows
+                .iter()
+                .map(|row| {
+                    let mut out = Row::default();
+                    out.1 = row.1;
+                    for (name, path) in &spec.fields {
+                        let source = path.dotted();
+                        let cell = row
+                            .cell(&source)
+                            .ok_or_else(|| format!("field `{source}` is unobserved (not null)"))?;
+                        out.0.insert(name.as_str().into(), cell);
+                    }
+                    Ok(out)
+                })
+                .collect::<Result<_, String>>()?;
         }
         PlanNode::With { columns } => {
-            for col in columns {
-                collect_with_columns(&col.expr, names);
+            for row in &mut state.rows {
+                let outputs = columns
+                    .iter()
+                    .map(|column| {
+                        let cell = match &column.expr {
+                            WithExpr::Field(path) => row.cell(&path.dotted()).ok_or_else(|| {
+                                format!("field `{}` is unobserved (not null)", path.dotted())
+                            })?,
+                            expr => Cell::computed(super::expression::evaluate(
+                                expr,
+                                now,
+                                &mut |path| Ok(row.require(&path.dotted())?.clone()),
+                            )?),
+                        };
+                        Ok((column.name.as_str().to_owned(), cell))
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                row.0.extend(outputs);
             }
         }
-        PlanNode::Limit { .. } => {}
-        PlanNode::Dedupe { keys } | PlanNode::Distinct { keys } => {
-            names.extend(keys.iter().map(|k| k.dotted()));
-        }
-    }
-}
-
-fn collect_agg_columns(agg: &TypedAggregate, names: &mut Vec<String>) {
-    match agg {
-        TypedAggregate::Count { .. } => {}
-        TypedAggregate::Numeric { field, .. } | TypedAggregate::MoneySum { field, .. } => {
-            names.push(field.dotted());
-        }
-    }
-}
-
-fn collect_with_columns(expr: &WithExpr, names: &mut Vec<String>) {
-    let _: Result<_, std::convert::Infallible> = expr.try_map_fields(&mut |path| {
-        names.push(path.dotted());
-        Ok(path.clone())
-    });
-}
-
-fn finalize_money_sums(state: &mut FrameState) -> PolarsResult<()> {
-    let names = std::mem::take(&mut state.money_sum_names);
-    for name in names {
-        let n_col = format!("__ccy_n_{name}");
-        let c_col = format!("__ccy_{name}");
-        let n_unique = state.df.column(&n_col)?;
-        let ccys = state.df.column(&c_col)?;
-        for i in 0..state.df.height() {
-            let n = match n_unique.get(i)? {
-                AnyValue::UInt32(n) => n as u64,
-                AnyValue::UInt64(n) => n,
-                AnyValue::Int64(n) if n >= 0 => n as u64,
-                AnyValue::Int32(n) if n >= 0 => n as u64,
-                AnyValue::Null => 0,
-                other => {
-                    return Err(PolarsError::ComputeError(
-                        format!("unexpected currency-count dtype {other:?}").into(),
-                    ))
-                }
-            };
-            if n > 1 {
-                let left = match ccys.get(i)? {
-                    AnyValue::String(s) => s.to_string(),
-                    AnyValue::StringOwned(s) => s.as_str().to_string(),
-                    _ => "left".into(),
-                };
-                return Err(PolarsError::ComputeError(
-                    format!("cannot compare money in {left} to money in another currency").into(),
-                ));
-            }
-        }
-        let amounts = state.df.column(&name)?;
-        let mut encoded: Vec<Option<String>> = Vec::with_capacity(state.df.height());
-        for i in 0..state.df.height() {
-            let amount = any_amount_string(amounts.get(i)?)?;
-            let ccy = match ccys.get(i)? {
-                AnyValue::String(s) => s.to_string(),
-                AnyValue::StringOwned(s) => s.as_str().to_string(),
-                AnyValue::Null => String::new(),
-                other => other.to_string(),
-            };
-            let mut map = serde_json::Map::new();
-            map.insert("__plasm_money".into(), serde_json::Value::String(amount));
-            if !ccy.is_empty() {
-                map.insert("currency".into(), serde_json::Value::String(ccy));
-            }
-            encoded.push(Some(serde_json::Value::Object(map).to_string()));
-        }
-        let series = Series::new(PlSmallStr::from_str(&name), encoded);
-        state.df.with_column(series)?;
-        let _ = state.df.drop_in_place(&n_col);
-        let _ = state.df.drop_in_place(&c_col);
-        state.kinds.insert(name, ColKind::Json);
+        PlanNode::GroupBy { keys, aggs } => super::aggregate::aggregate(state, keys, aggs, true)?,
+        PlanNode::Aggregate { aggs } => super::aggregate::aggregate(state, &[], aggs, false)?,
     }
     Ok(())
 }
 
-fn any_amount_string(v: AnyValue<'_>) -> PolarsResult<String> {
-    Ok(match v {
-        AnyValue::Decimal(unscaled, scale) => format_decimal_i128(unscaled, scale),
-        AnyValue::Float64(f) => trim_float(f),
-        AnyValue::Float32(f) => trim_float(f as f64),
-        AnyValue::Int64(i) => i.to_string(),
-        AnyValue::Int32(i) => i.to_string(),
-        AnyValue::String(s) => s.to_string(),
-        AnyValue::StringOwned(s) => s.as_str().to_string(),
-        AnyValue::Null => "0".into(),
-        other => {
-            return Err(PolarsError::ComputeError(
-                format!("cannot encode money amount from {other:?}").into(),
-            ))
-        }
-    })
+/// Resolved once per operation, including empty inputs. Three-valued boolean
+/// combination preserves null rather than turning NOT(null) into true.
+enum Predicate {
+    Atom {
+        name: String,
+        op: PlanPredicateOp,
+        rhs: plasm_core::Value,
+        contract: plasm_core::value_contract::ValueContract,
+    },
+    And(Vec<Self>),
+    Or(Vec<Self>),
+    Not(Box<Self>),
 }
-
-fn format_decimal_i128(unscaled: i128, scale: usize) -> String {
-    Decimal::from_i128_with_scale(unscaled, scale as u32)
-        .normalize()
-        .to_string()
-}
-
-fn trim_float(f: f64) -> String {
-    let d = Decimal::from_f64_retain(f)
-        .unwrap_or(Decimal::ZERO)
-        .normalize();
-    d.to_string()
-}
-
-fn boolean_filter_expr(
-    predicate: &plasm_core::BooleanExpr<plasm_core::plasm_monad::PlanPredicate>,
-    state: &FrameState,
-) -> PolarsResult<Expr> {
-    use plasm_core::BooleanExpr;
-    match predicate {
-        BooleanExpr::Atom(p) => pred_expr(p, state),
-        BooleanExpr::And(args) => args.iter().try_fold(lit(true), |acc, p| {
-            Ok(acc.and(boolean_filter_expr(p, state)?))
-        }),
-        BooleanExpr::Or(args) => args.iter().try_fold(lit(false), |acc, p| {
-            Ok(acc.or(boolean_filter_expr(p, state)?))
-        }),
-        BooleanExpr::Not(arg) => Ok(boolean_filter_expr(arg, state)?.not()),
-    }
-}
-
-fn apply_node(
-    lf: LazyFrame,
-    node: &PlanNode,
-    state: &mut FrameState,
-    now: DateTime<Utc>,
-) -> PolarsResult<LazyFrame> {
-    match node {
-        PlanNode::Filter(filter) => Ok(lf.filter(boolean_filter_expr(filter.predicates(), state)?)),
-        PlanNode::Sort { key, descending } => Ok(lf.sort(
-            [key.dotted()],
-            SortMultipleOptions::default()
-                .with_order_descending(*descending)
-                .with_nulls_last(true)
-                .with_maintain_order(true),
-        )),
-        PlanNode::Limit { count } => Ok(lf.slice(0, count.get() as u32)),
-        PlanNode::Dedupe { keys } | PlanNode::Distinct { keys } => {
-            // The transport row index and flattened helper columns are not
-            // language-visible row values and must never participate in distinct.
-            let subset: Vec<PlSmallStr> = if keys.is_empty() {
-                state
-                    .visible
-                    .iter()
-                    .filter(|name| name.as_str() != IDX_COL)
-                    .map(|name| PlSmallStr::from_str(name))
-                    .collect()
-            } else {
-                keys.iter()
-                    .map(|key| PlSmallStr::from_string(key.dotted()))
-                    .collect()
-            };
-            if subset.is_empty() {
-                return Ok(lf.slice(0, 1));
-            }
-            Ok(lf.unique_stable(Some(subset), UniqueKeepStrategy::First))
-        }
-        PlanNode::Project(spec) => {
-            let mut exprs = vec![col(IDX_COL)];
-            let mut visible = Vec::new();
-            for (name, path) in &spec.fields {
-                exprs.push(col_expr(path).alias(name.as_str()));
-                visible.push(name.as_str().to_string());
-                if let Some(k) = state.kinds.get(&path.dotted()).copied() {
-                    state.kinds.insert(name.as_str().to_string(), k);
-                }
-            }
-            state.visible = visible;
-            Ok(lf.select(exprs))
-        }
-        PlanNode::With { columns } => {
-            let mut exprs = Vec::new();
-            for col_def in columns {
-                let e = with_expr(&col_def.expr, state, now)?;
-                let name = col_def.name.as_str();
-                state.visible.push(name.to_string());
-                state
-                    .kinds
-                    .insert(name.to_string(), infer_with_kind(&col_def.expr, state));
-                exprs.push(e.alias(name));
-            }
-            Ok(lf.with_columns(exprs))
-        }
-        PlanNode::GroupBy { keys, aggs } => group_by_lf(lf, keys, aggs, state, true),
-        PlanNode::Aggregate { aggs } => group_by_lf(lf, &[], aggs, state, false),
-    }
-}
-
-fn group_by_lf(
-    lf: LazyFrame,
-    keys: &[FieldPath],
-    aggs: &[TypedAggregate],
-    state: &mut FrameState,
-    grouped: bool,
-) -> PolarsResult<LazyFrame> {
-    let mut agg_exprs = Vec::new();
-    let mut visible = Vec::new();
-    for k in keys {
-        visible.push(k.dotted());
-    }
-    for agg in aggs {
-        match agg {
-            TypedAggregate::Count { name } => {
-                agg_exprs.push(len().alias(name.as_str()));
-                visible.push(name.as_str().to_string());
-                state.kinds.insert(name.as_str().to_string(), ColKind::Int);
-            }
-            TypedAggregate::Numeric { name, fn_, field } => {
+impl Predicate {
+    fn compile(
+        expr: &plasm_core::BooleanExpr<PlanPredicate>,
+        input: &plasm_core::value_contract::ValueContract,
+    ) -> Result<Self, String> {
+        use plasm_core::BooleanExpr;
+        Ok(match expr {
+            BooleanExpr::Atom(p) => {
+                let contract =
+                    plasm_core::row_plan::contracts::field_contract(input, &p.field_path)?;
+                let mut rhs = p.value.clone().into_resolved()?.into_value();
                 if matches!(
-                    fn_,
-                    plasm_core::row_plan::NumericAgg::First
-                        | plasm_core::row_plan::NumericAgg::Last
+                    p.op,
+                    PlanPredicateOp::Eq
+                        | PlanPredicateOp::Ne
+                        | PlanPredicateOp::Lt
+                        | PlanPredicateOp::Lte
+                        | PlanPredicateOp::Gt
+                        | PlanPredicateOp::Gte
                 ) {
-                    let column = col_expr(field);
-                    let value = if *fn_ == plasm_core::row_plan::NumericAgg::First {
-                        column.first()
-                    } else {
-                        column.last()
-                    };
-                    agg_exprs.push(value.alias(name.as_str()));
-                    visible.push(name.as_str().to_string());
-                    if let Some(kind) = state.kinds.get(&field.dotted()).copied() {
-                        state.kinds.insert(name.as_str().to_string(), kind);
+                    if let plasm_core::value_contract::ValueShape::Scalar { field_type } =
+                        &contract.shape
+                    {
+                        // CompareUnify is driven by the declared domain, never storage.
+                        if matches!(rhs, plasm_core::Value::String(_))
+                            && matches!(
+                                field_type,
+                                plasm_core::FieldType::Integer
+                                    | plasm_core::FieldType::Number
+                                    | plasm_core::FieldType::Boolean
+                            )
+                        {
+                            rhs = plasm_core::coerce_value_for_field_type(
+                                field_type, None, None, rhs,
+                            )?;
+                        }
                     }
-                } else if *fn_ == plasm_core::row_plan::NumericAgg::Sum
-                    && state.kinds.get(&field.dotted()) == Some(&ColKind::Money)
-                {
-                    push_money_sum(&mut agg_exprs, &mut visible, state, name.as_str(), field);
-                } else {
-                    let c = col_expr(field).cast(DataType::Float64);
-                    let e = match fn_ {
-                        plasm_core::row_plan::NumericAgg::Sum => c.sum(),
-                        plasm_core::row_plan::NumericAgg::Avg => c.mean(),
-                        plasm_core::row_plan::NumericAgg::Min => c.min(),
-                        plasm_core::row_plan::NumericAgg::Max => c.max(),
-                        plasm_core::row_plan::NumericAgg::First => c.first(),
-                        plasm_core::row_plan::NumericAgg::Last => c.last(),
-                    };
-                    agg_exprs.push(e.alias(name.as_str()));
-                    visible.push(name.as_str().to_string());
-                    state
-                        .kinds
-                        .insert(name.as_str().to_string(), ColKind::Float);
+                }
+                Self::Atom {
+                    name: p.field_path.dotted(),
+                    op: p.op,
+                    rhs,
+                    contract,
                 }
             }
-            TypedAggregate::MoneySum { name, field, .. } => {
-                push_money_sum(&mut agg_exprs, &mut visible, state, name.as_str(), field);
-            }
-        }
+            BooleanExpr::And(xs) => Self::And(
+                xs.iter()
+                    .map(|x| Self::compile(x, input))
+                    .collect::<Result<_, _>>()?,
+            ),
+            BooleanExpr::Or(xs) => Self::Or(
+                xs.iter()
+                    .map(|x| Self::compile(x, input))
+                    .collect::<Result<_, _>>()?,
+            ),
+            BooleanExpr::Not(x) => Self::Not(Box::new(Self::compile(x, input)?)),
+        })
     }
-    state.visible = visible;
-    if grouped {
-        Ok(lf
-            .group_by_stable(keys.iter().map(|k| col(k.dotted())).collect::<Vec<_>>())
-            .agg(agg_exprs))
-    } else {
-        Ok(lf.select(agg_exprs))
-    }
-}
-
-fn push_money_sum(
-    agg_exprs: &mut Vec<Expr>,
-    visible: &mut Vec<String>,
-    state: &mut FrameState,
-    name: &str,
-    field: &FieldPath,
-) {
-    let amount = col_expr(field)
-        .struct_()
-        .field_by_name(MONEY_AMOUNT)
-        .cast(DataType::Decimal(Some(38), Some(8)));
-    let ccy = col_expr(field).struct_().field_by_name(MONEY_CCY);
-    agg_exprs.push(ccy.clone().n_unique().alias(format!("__ccy_n_{name}")));
-    agg_exprs.push(ccy.first().alias(format!("__ccy_{name}")));
-    agg_exprs.push(amount.sum().alias(name));
-    visible.push(name.to_string());
-    state.kinds.insert(name.to_string(), ColKind::Money);
-    state.money_sum_names.push(name.to_string());
-}
-
-fn pred_expr(p: &PlanPredicate, state: &FrameState) -> PolarsResult<Expr> {
-    let lhs = col_expr(&p.field_path);
-    if p.op == PlanPredicateOp::Exists {
-        return Ok(lhs.is_not_null());
-    }
-    if state.kinds.get(&p.field_path.dotted()) == Some(&ColKind::Money) {
-        return money_predicate_expr(lhs, &p.value, p.op);
-    }
-    if matches!(p.op, PlanPredicateOp::In | PlanPredicateOp::NotIn) {
-        let rhs = membership_set_expr(&p.value)?;
-        let inn = lhs.is_in(rhs);
-        return Ok(if p.op == PlanPredicateOp::NotIn {
-            inn.not()
-        } else {
-            inn
-        });
-    }
-    let rhs = data_lit(&p.value)?;
-    let field_kind = state.kinds.get(&p.field_path.dotted()).copied();
-    let rhs_kind = data_value_kind(&p.value);
-    let (lhs, rhs) = unify_compare_sides(lhs, rhs, field_kind, rhs_kind, p.op)?;
-    Ok(match p.op {
-        PlanPredicateOp::Eq => lhs.eq(rhs),
-        PlanPredicateOp::Ne => lhs.neq(rhs),
-        PlanPredicateOp::Lt => lhs.lt(rhs),
-        PlanPredicateOp::Lte => lhs.lt_eq(rhs),
-        PlanPredicateOp::Gt => lhs.gt(rhs),
-        PlanPredicateOp::Gte => lhs.gt_eq(rhs),
-        PlanPredicateOp::Contains => lhs.cast(DataType::String).str().contains(rhs, false),
-        PlanPredicateOp::In | PlanPredicateOp::NotIn => unreachable!("membership uses set expr"),
-        PlanPredicateOp::Exists => lhs.is_not_null(),
-    })
-}
-
-fn money_predicate_expr(
-    lhs: Expr,
-    rhs: &PlasmDataValue,
-    op: PlanPredicateOp,
-) -> PolarsResult<Expr> {
-    let rhs = rhs
-        .clone()
-        .into_resolved()
-        .map_err(|e| PolarsError::ComputeError(e.into()))?
-        .into_value();
-    Ok(lhs.map(
-        move |column| {
-            let money = column.struct_()?;
-            let amounts = money.field_by_name(MONEY_AMOUNT)?;
-            let currencies = money.field_by_name(MONEY_CCY)?;
-            let mut selected = Vec::with_capacity(column.len());
-            for i in 0..column.len() {
-                let Some(amount) = amounts.str()?.get(i) else {
-                    selected.push(None);
-                    continue;
-                };
-                let amount = amount.parse::<Decimal>().map_err(|e| {
-                    PolarsError::ComputeError(format!("invalid money amount: {e}").into())
-                })?;
-                let currency = currencies
-                    .str()?
-                    .get(i)
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_owned);
-                let lhs = plasm_core::Value::Money(plasm_core::MoneyValue::new(amount, currency));
-                let matches = crate::row_predicate::value_predicate_matches(&lhs, op, &rhs)
-                    .map_err(|e| PolarsError::ComputeError(e.to_string().into()))?;
-                selected.push(Some(matches));
-            }
-            Ok(Some(Column::new(column.name().clone(), selected)))
-        },
-        GetOutput::from_type(DataType::Boolean),
-    ))
-}
-
-fn membership_set_expr(v: &PlasmDataValue) -> PolarsResult<Expr> {
-    let items = membership_items(v)?;
-    Ok(lit(values_to_membership_series(&items)?))
-}
-
-fn membership_items(v: &PlasmDataValue) -> PolarsResult<Vec<plasm_core::Value>> {
-    match v {
-        PlasmDataValue::Literal { value } => Ok(match value.value() {
-            plasm_core::Value::Array(items) => items.clone(),
-            value => vec![value.clone()],
-        }),
-        PlasmDataValue::Array { items } => {
-            let mut out = Vec::new();
-            for item in items {
-                out.extend(membership_items(item)?);
-            }
-            Ok(out)
-        }
-        other => Err(PolarsError::ComputeError(
-            format!("unbound membership operand {other:?}").into(),
-        )),
-    }
-}
-
-fn values_to_membership_series(items: &[plasm_core::Value]) -> PolarsResult<Series> {
-    use plasm_core::Value as V;
-    let name = PlSmallStr::from_static("memb");
-    if items.iter().all(|v| matches!(v, V::Null | V::String(_))) {
-        return Ok(Series::new(
-            name,
-            items.iter().map(V::as_str).collect::<Vec<_>>(),
-        ));
-    }
-    if items.iter().all(|v| matches!(v, V::Null | V::Bool(_))) {
-        return Ok(Series::new(
-            name,
-            items.iter().map(V::as_bool).collect::<Vec<_>>(),
-        ));
-    }
-    if items.iter().all(|v| matches!(v, V::Null | V::Integer(_))) {
-        return Ok(Series::new(
-            name,
-            items.iter().map(V::as_integer).collect::<Vec<_>>(),
-        ));
-    }
-    if items
-        .iter()
-        .all(|v| matches!(v, V::Null | V::Integer(_) | V::Float(_)))
-    {
-        return Ok(Series::new(
-            name,
-            items.iter().map(V::as_number).collect::<Vec<_>>(),
-        ));
-    }
-    Err(PolarsError::ComputeError(
-        "membership requires compatible scalar values".into(),
-    ))
-}
-
-/// RA-8 CompareUnify for Polars filters: cast toward the field column kind (or numeric LUB).
-fn unify_compare_sides(
-    lhs: Expr,
-    rhs: Expr,
-    field_kind: Option<ColKind>,
-    rhs_kind: ColKind,
-    op: PlanPredicateOp,
-) -> PolarsResult<(Expr, Expr)> {
-    let ordered = matches!(
-        op,
-        PlanPredicateOp::Lt | PlanPredicateOp::Lte | PlanPredicateOp::Gt | PlanPredicateOp::Gte
-    );
-    let eq_like = matches!(op, PlanPredicateOp::Eq | PlanPredicateOp::Ne);
-    if !ordered && !eq_like {
-        return Ok((lhs, rhs));
-    }
-    let target = match field_kind {
-        Some(ColKind::Int | ColKind::Float) => field_kind,
-        Some(ColKind::Str) if ordered && matches!(rhs_kind, ColKind::Int | ColKind::Float) => {
-            // Residual wire/stub string vs numeric literal — unify toward number.
-            Some(if rhs_kind == ColKind::Float {
-                ColKind::Float
-            } else {
-                ColKind::Int
-            })
-        }
-        Some(ColKind::Bool) if eq_like => Some(ColKind::Bool),
-        None if ordered && matches!(rhs_kind, ColKind::Int | ColKind::Float) => Some(rhs_kind),
-        Some(k) if eq_like && k == rhs_kind => Some(k),
-        _ => None,
-    };
-    Ok(match target {
-        Some(ColKind::Int) => (lhs.cast(DataType::Int64), rhs.cast(DataType::Int64)),
-        Some(ColKind::Float) => (lhs.cast(DataType::Float64), rhs.cast(DataType::Float64)),
-        Some(ColKind::Bool) => (lhs.cast(DataType::Boolean), rhs.cast(DataType::Boolean)),
-        _ => (lhs, rhs),
-    })
-}
-
-fn data_value_kind(v: &PlasmDataValue) -> ColKind {
-    match v {
-        PlasmDataValue::Literal { value } => match value.value() {
-            plasm_core::Value::Bool(_) => ColKind::Bool,
-            plasm_core::Value::Integer(_) => ColKind::Int,
-            plasm_core::Value::Float(_) => ColKind::Float,
-            plasm_core::Value::String(_) => ColKind::Str,
-            _ => ColKind::Json,
-        },
-        _ => ColKind::Json,
-    }
-}
-
-fn data_lit(v: &PlasmDataValue) -> PolarsResult<Expr> {
-    match v {
-        PlasmDataValue::Literal { value } => scalar_lit(value.value()),
-        PlasmDataValue::Array { items } => {
-            let lits: Result<Vec<_>, _> = items.iter().map(data_lit).collect();
-            Ok(concat_list(lits?)?)
-        }
-        other => Err(PolarsError::ComputeError(
-            format!("unsupported row-filter value {other:?}").into(),
-        )),
-    }
-}
-
-fn scalar_lit(v: &plasm_core::Value) -> PolarsResult<Expr> {
-    use plasm_core::Value as V;
-    Ok(match v {
-        V::Null => lit(NULL),
-        V::Bool(b) => lit(*b),
-        V::Integer(i) => lit(*i),
-        V::Float(f) => lit(*f),
-        V::String(s) => lit(s.as_str()),
-        V::Array(items) => concat_list(
-            items
-                .iter()
-                .map(scalar_lit)
-                .collect::<Result<Vec<_>, _>>()?,
-        )?,
-        other => {
-            return Err(PolarsError::ComputeError(
-                format!("unsupported scalar predicate operand {other:?}").into(),
-            ))
-        }
-    })
-}
-
-fn with_expr(expr: &WithExpr, state: &FrameState, now: DateTime<Utc>) -> PolarsResult<Expr> {
-    match expr {
-        WithExpr::Field(path) => Ok(col_expr(path)),
-        WithExpr::Now => Ok(lit(now.to_rfc3339())),
-        WithExpr::Literal(litv) => Ok(match litv {
-            WithLiteral::Null => lit(NULL),
-            WithLiteral::Bool(b) => lit(*b),
-            WithLiteral::Integer(i) => lit(*i),
-            WithLiteral::Number(s) => {
-                if let Ok(i) = s.parse::<i64>() {
-                    lit(i)
-                } else if let Ok(f) = s.parse::<f64>() {
-                    lit(f)
-                } else {
-                    lit(s.as_str())
-                }
-            }
-            WithLiteral::String(s) => lit(s.as_str()),
-        }),
-        WithExpr::Arith { op, lhs, rhs }
-            if *op == ArithOp::Sub && is_temporal_sub(lhs, rhs, state) =>
-        {
-            temporal_sub_days(now, lhs, rhs)
-        }
-        WithExpr::Arith { op, lhs, rhs } => {
-            let l_kind = infer_with_kind(lhs, state);
-            let r_kind = infer_with_kind(rhs, state);
-            let l = with_expr(lhs, state, now)?;
-            let r = with_expr(rhs, state, now)?;
-            arith_expr(*op, l, r, l_kind, r_kind)
-        }
-        WithExpr::Len { field } => Ok(col_expr(field)
-            .cast(DataType::String)
-            .str()
-            .len_chars()
-            .cast(DataType::Int64)),
-        WithExpr::When {
-            lhs,
-            op,
-            rhs,
-            then,
-            else_,
-        } => {
-            let l = with_expr(lhs, state, now)?;
-            let r = with_expr(rhs, state, now)?;
-            Ok(when(cmp_exprs(*op, l, r))
-                .then(with_expr(then, state, now)?)
-                .otherwise(with_expr(else_, state, now)?))
-        }
-    }
-}
-
-fn is_now(expr: &WithExpr) -> bool {
-    matches!(expr, WithExpr::Now)
-}
-
-fn is_temporal_operand(expr: &WithExpr, state: &FrameState) -> bool {
-    match expr {
-        WithExpr::Now => true,
-        WithExpr::Literal(WithLiteral::String(_)) => true,
-        WithExpr::Field(p) => matches!(
-            state.kinds.get(&p.dotted()),
-            Some(ColKind::Str | ColKind::Temporal)
-        ),
-        _ => false,
-    }
-}
-
-fn is_temporal_sub(lhs: &WithExpr, rhs: &WithExpr, state: &FrameState) -> bool {
-    is_now(lhs)
-        || is_now(rhs)
-        || (is_temporal_operand(lhs, state) && is_temporal_operand(rhs, state))
-}
-
-fn utc_from_raw(raw: &str) -> Option<DateTime<Utc>> {
-    normalize_temporal_value(
-        plasm_core::Value::String(raw.to_string()),
-        TemporalWireFormat::Rfc3339,
-    )
-    .ok()
-    .and_then(|v| match v {
-        plasm_core::Value::String(iso) => DateTime::parse_from_rfc3339(&iso)
-            .ok()
-            .map(|dt| dt.with_timezone(&Utc)),
-        _ => None,
-    })
-}
-
-const MS_PER_DAY: i64 = 86_400_000;
-
-fn col_to_epoch_millis(field: &FieldPath) -> Expr {
-    col_expr(field).map(
-        move |s| {
-            let out: Vec<Option<i64>> = match s.dtype() {
-                DataType::String => s
-                    .str()
-                    .map(|ca| {
-                        ca.into_iter()
-                            .map(|opt| {
-                                opt.and_then(|raw| {
-                                    utc_from_raw(raw).map(|dt| dt.timestamp_millis())
-                                })
-                            })
-                            .collect()
+    fn evaluate(&self, row: &Row<'_>) -> Result<Option<bool>, String> {
+        use PlanPredicateOp::*;
+        Ok(match self {
+            Self::Atom {
+                name,
+                op,
+                rhs,
+                contract,
+            } => {
+                let lhs = row.require(name)?;
+                if *op == Exists {
+                    Some(!lhs.is_null())
+                } else if lhs.is_null() || rhs.is_null() {
+                    None
+                } else if matches!(op, Lt | Lte | Gt | Gte) {
+                    let order = plasm_core::value_order::Orderable::ordering(contract)
+                        .map_err(|e| e.to_string())?
+                        .compare_literal(lhs, rhs)
+                        .map_err(|e| e.to_string())?;
+                    Some(match op {
+                        Lt => order.is_lt(),
+                        Lte => order.is_le(),
+                        Gt => order.is_gt(),
+                        Gte => order.is_ge(),
+                        _ => unreachable!(),
                     })
-                    .unwrap_or_default(),
-                _ => vec![None; s.len()],
-            };
-            Ok(Some(Column::new(s.name().clone(), out)))
-        },
-        GetOutput::from_type(DataType::Int64),
-    )
-}
-
-fn temporal_millis_expr(expr: &WithExpr, now: DateTime<Utc>) -> PolarsResult<Expr> {
-    match expr {
-        WithExpr::Now => Ok(lit(now.timestamp_millis())),
-        WithExpr::Field(field) => Ok(col_to_epoch_millis(field)),
-        WithExpr::Literal(WithLiteral::String(s)) => Ok(match utc_from_raw(s) {
-            Some(dt) => lit(dt.timestamp_millis()),
-            None => lit(NULL).cast(DataType::Int64),
-        }),
-        _ => Err(PolarsError::ComputeError(
-            "temporal subtraction requires temporal fields or `now`".into(),
-        )),
-    }
-}
-
-fn temporal_sub_days(now: DateTime<Utc>, lhs: &WithExpr, rhs: &WithExpr) -> PolarsResult<Expr> {
-    let l = temporal_millis_expr(lhs, now)?;
-    let r = temporal_millis_expr(rhs, now)?;
-    Ok((l - r) / lit(MS_PER_DAY))
-}
-
-fn cmp_exprs(op: PlanPredicateOp, l: Expr, r: Expr) -> Expr {
-    match op {
-        PlanPredicateOp::Eq => l.eq(r),
-        PlanPredicateOp::Ne => l.neq(r),
-        PlanPredicateOp::Lt => l.lt(r),
-        PlanPredicateOp::Lte => l.lt_eq(r),
-        PlanPredicateOp::Gt => l.gt(r),
-        PlanPredicateOp::Gte => l.gt_eq(r),
-        PlanPredicateOp::Contains => l.cast(DataType::String).str().contains(r, false),
-        PlanPredicateOp::In => l.is_in(r),
-        PlanPredicateOp::NotIn => l.is_in(r).not(),
-        PlanPredicateOp::Exists => l.is_not_null(),
-    }
-}
-
-fn arith_expr(
-    op: ArithOp,
-    l: Expr,
-    r: Expr,
-    l_kind: ColKind,
-    r_kind: ColKind,
-) -> PolarsResult<Expr> {
-    let money_l = l_kind == ColKind::Money;
-    let money_r = r_kind == ColKind::Money;
-    if !money_l && !money_r {
-        let string_add = op == ArithOp::Add
-            && (l_kind == ColKind::Str || r_kind == ColKind::Str)
-            && l_kind != ColKind::Temporal
-            && r_kind != ColKind::Temporal;
-        if string_add {
-            return Ok(l.cast(DataType::String) + r.cast(DataType::String));
-        }
-        let coerce = op == ArithOp::Div
-            || matches!(l_kind, ColKind::Str | ColKind::Json | ColKind::Float)
-            || matches!(r_kind, ColKind::Str | ColKind::Json | ColKind::Float);
-        let l = if coerce { l.cast(DataType::Float64) } else { l };
-        let r = if coerce { r.cast(DataType::Float64) } else { r };
-        return Ok(match op {
-            ArithOp::Add => l + r,
-            ArithOp::Sub => l - r,
-            ArithOp::Mul => l * r,
-            ArithOp::Div => l / r,
-        });
-    }
-    let l_amt = if money_l {
-        l.clone()
-            .struct_()
-            .field_by_name(MONEY_AMOUNT)
-            .cast(DataType::Decimal(Some(38), Some(8)))
-    } else {
-        l.clone().cast(DataType::Decimal(Some(38), Some(8)))
-    };
-    let r_amt = if money_r {
-        r.clone()
-            .struct_()
-            .field_by_name(MONEY_AMOUNT)
-            .cast(DataType::Decimal(Some(38), Some(8)))
-    } else {
-        r.clone().cast(DataType::Decimal(Some(38), Some(8)))
-    };
-    let amount = match op {
-        ArithOp::Add => l_amt + r_amt,
-        ArithOp::Sub => l_amt - r_amt,
-        ArithOp::Mul => l_amt * r_amt,
-        ArithOp::Div => l_amt / r_amt,
-    };
-    let ccy = if money_l {
-        l.struct_().field_by_name(MONEY_CCY)
-    } else {
-        r.struct_().field_by_name(MONEY_CCY)
-    };
-    Ok(as_struct(vec![
-        amount.cast(DataType::String).alias(MONEY_AMOUNT),
-        ccy.alias(MONEY_CCY),
-    ]))
-}
-
-fn infer_with_kind(expr: &WithExpr, state: &FrameState) -> ColKind {
-    match expr {
-        WithExpr::Field(p) => state
-            .kinds
-            .get(&p.dotted())
-            .copied()
-            .unwrap_or(ColKind::Json),
-        WithExpr::Now => ColKind::Temporal,
-        WithExpr::Literal(WithLiteral::Bool(_)) => ColKind::Bool,
-        WithExpr::Literal(WithLiteral::Integer(_)) => ColKind::Int,
-        WithExpr::Literal(WithLiteral::Number(_)) => ColKind::Float,
-        WithExpr::Literal(WithLiteral::String(_)) => ColKind::Str,
-        WithExpr::Literal(WithLiteral::Null) => ColKind::Json,
-        WithExpr::Len { .. } => ColKind::Int,
-        WithExpr::Arith { op, lhs, rhs } => {
-            if *op == ArithOp::Sub && is_temporal_sub(lhs, rhs, state) {
-                return ColKind::Int;
+                } else if matches!(op, Eq | Ne) {
+                    use plasm_core::{value_equality::Equatable, value_order::Orderable};
+                    let equal = match contract.ordering() {
+                        Ok(order) => order.equal_literal(lhs, rhs).map_err(|e| e.to_string())?,
+                        Err(_) => contract.equality()?.equivalent(lhs, rhs)?,
+                    };
+                    Some(if *op == Eq { equal } else { !equal })
+                } else {
+                    Some(super::expression::predicate(*op, lhs, rhs)?)
+                }
             }
-            let l = infer_with_kind(lhs, state);
-            let r = infer_with_kind(rhs, state);
-            if *op == ArithOp::Add
-                && (l == ColKind::Str || r == ColKind::Str)
-                && l != ColKind::Temporal
-                && r != ColKind::Temporal
-                && l != ColKind::Money
-                && r != ColKind::Money
-            {
-                return ColKind::Str;
+            Self::Not(x) => x.evaluate(row)?.map(|x| !x),
+            Self::And(xs) => {
+                let mut result = Some(true);
+                for x in xs {
+                    let v = x.evaluate(row)?;
+                    result = match (result, v) {
+                        (Some(false), _) | (_, Some(false)) => Some(false),
+                        (None, _) | (_, None) => None,
+                        _ => Some(true),
+                    };
+                }
+                result
             }
-            if l == ColKind::Money || r == ColKind::Money {
-                ColKind::Money
-            } else if *op == ArithOp::Div || l == ColKind::Float || r == ColKind::Float {
-                ColKind::Float
-            } else {
-                l
+            Self::Or(xs) => {
+                let mut result = Some(false);
+                for x in xs {
+                    let v = x.evaluate(row)?;
+                    result = match (result, v) {
+                        (Some(true), _) | (_, Some(true)) => Some(true),
+                        (None, _) | (_, None) => None,
+                        _ => Some(false),
+                    };
+                }
+                result
             }
-        }
-        WithExpr::When { then, .. } => infer_with_kind(then, state),
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::{row, value};
     use super::*;
     use plasm_core::parse_with_body;
     use std::str::FromStr;
 
+    fn evaluate_temporal_fixture(
+        ops: &[ComputeOp],
+        rows: &[plasm_core::ValueRow],
+    ) -> Result<ComputeEvalOutcome, String> {
+        let mut contract = super::super::fixture_contract(rows);
+        let plasm_core::value_contract::ValueShape::Record { fields } = &mut contract.shape else {
+            unreachable!()
+        };
+        // These fixture fields are explicitly declared datetimes, not date-looking strings.
+        for name in ["created_at", "updated_at"] {
+            if fields.contains_key(name) {
+                fields.insert(
+                    name.into(),
+                    plasm_core::temporal_value::TemporalKind::Datetime.contract(),
+                );
+            }
+        }
+        eval_compute_ops(ops, rows, &contract)
+    }
+
     proptest::proptest! {
         #![proptest_config(proptest::test_runner::Config::with_cases(48))]
-        #[test]
+    #[test]
         fn computed_wire_preserves_literals_arithmetic_and_row_identity(
             values in proptest::collection::vec(-100i64..100, 1..25),
             literal in "[a-zA-Z0-9,()+*/|=<>\\\"\\\\ -]{0,40}",
@@ -887,9 +368,9 @@ mod tests {
             let op = ComputeOp::With { columns };
             let restored: ComputeOp = serde_json::from_slice(&serde_json::to_vec(&op).unwrap()).unwrap();
             proptest::prop_assert_eq!(&op, &restored);
-            let rows: Vec<_> = values.iter().map(|n| serde_json::json!({"id":n,"score":n})).collect();
-            let expected: Vec<_> = values.iter().map(|n| serde_json::json!({"id":n,"score":n,"result":n+10,"label":literal})).collect();
-            let ComputeEvalOutcome::Rows(out) = eval_compute_ops(&[restored], &rows).unwrap() else { panic!("rows") };
+            let rows: Vec<_> = values.iter().map(|n| row!({"id":n,"score":n})).collect();
+            let expected: Vec<_> = values.iter().map(|n| row!({"id":n,"score":n,"result":n+10,"label":literal})).collect();
+            let ComputeEvalOutcome::Rows(plasm_core::CollectedFrame { rows: out, .. }) = evaluate_fixture(&[restored], &rows).unwrap() else { panic!("rows") };
             proptest::prop_assert_eq!(out, expected);
         }
 
@@ -901,7 +382,7 @@ mod tests {
             use plasm_core::BooleanExpr::{Atom, And, Or, Not};
             let pred = |op| PlanPredicate {
                 field_path: FieldPath::from_dotted("score").unwrap(), op,
-                value: PlasmDataValue::Literal { value: plasm_core::operand_binding::ResolvedValue::from_wire(serde_json::json!(threshold)).expect("literal data") },
+                value: PlasmDataValue::Literal { value: plasm_core::operand_binding::ResolvedValue::new(value!(threshold)).expect("literal data") },
             };
             // Overlapping branches must not duplicate rows; null must remain unknown under NOT.
             let tree = Or(vec![Atom(pred(PlanPredicateOp::Gt)), And(vec![
@@ -910,11 +391,11 @@ mod tests {
             let wire = serde_json::to_vec(&op).unwrap();
             let restored: ComputeOp = serde_json::from_slice(&wire).unwrap();
             proptest::prop_assert_eq!(&op, &restored);
-            let rows: Vec<_> = values.iter().map(|n| serde_json::json!({"id":n,"score":n})).collect();
-            // Keep one non-null value so Polars can infer the scalar type even for all-null inputs.
-            let mut rows = rows; rows.push(serde_json::json!({"id":threshold,"score":threshold}));
-            let expected: Vec<_> = rows.iter().filter(|r| r["score"].as_i64().is_some_and(|n| n >= threshold)).cloned().collect();
-            let ComputeEvalOutcome::Rows(out) = eval_compute_ops(&[restored], &rows).unwrap() else { panic!("rows") };
+            let rows: Vec<_> = values.iter().map(|n| row!({"id":n,"score":n})).collect();
+            // The fixture declares an integer domain even when generated observations are null.
+            let mut rows = rows; rows.push(row!({"id":threshold,"score":threshold}));
+            let expected: Vec<_> = rows.iter().filter(|r| r["score"].as_integer().is_some_and(|n| n >= threshold)).cloned().collect();
+            let ComputeEvalOutcome::Rows(plasm_core::CollectedFrame { rows: out, .. }) = evaluate_fixture(&[restored], &rows).unwrap() else { panic!("rows") };
             proptest::prop_assert_eq!(out, expected);
         }
     }
@@ -931,49 +412,101 @@ mod tests {
         let restored: PlanPredicate =
             serde_json::from_slice(&serde_json::to_vec(&pred).unwrap()).unwrap();
         let rows = vec![
-            serde_json::json!({"id":1,"price":{"__plasm_money":"9007199254740992","currency":"USD"}}),
-            serde_json::json!({"id":2,"price":{"__plasm_money":"9007199254740993","currency":"USD"}}),
+            row!({"id":1,"price":{"__plasm_money":"9007199254740992","currency":"USD"}}),
+            row!({"id":2,"price":{"__plasm_money":"9007199254740993","currency":"USD"}}),
         ];
         let op = ComputeOp::Filter {
             predicates: vec![restored.clone()].into(),
         };
-        let ComputeEvalOutcome::Rows(actual) =
-            eval_compute_ops(std::slice::from_ref(&op), &rows).unwrap()
+        let ComputeEvalOutcome::Rows(plasm_core::CollectedFrame { rows: actual, .. }) =
+            evaluate_fixture(std::slice::from_ref(&op), &rows).unwrap()
         else {
             panic!("filter")
         };
         assert_eq!(
             actual.iter().map(|v| v["id"].clone()).collect::<Vec<_>>(),
-            vec![serde_json::json!(2)]
+            vec![value!(2)]
         );
-        let wrong_currency = vec![
-            serde_json::json!({"price":{"__plasm_money":"9007199254740993","currency":"EUR"}}),
-        ];
-        assert!(eval_compute_ops(&[op], &wrong_currency).is_err());
+        // Program literals are major units; native comparison must not round them.
+        for literal in [value!(9007199254740992_i64), value!("9007199254740992")] {
+            let mut literal_predicate = restored.clone();
+            literal_predicate.value = PlasmDataValue::try_from(literal).unwrap();
+            let ComputeEvalOutcome::Rows(plasm_core::CollectedFrame { rows: selected, .. }) =
+                evaluate_fixture(
+                    &[ComputeOp::Filter {
+                        predicates: vec![literal_predicate].into(),
+                    }],
+                    &rows,
+                )
+                .unwrap()
+            else {
+                panic!("rows")
+            };
+            assert_eq!(selected, actual);
+        }
+        let wrong_currency =
+            vec![row!({"price":{"__plasm_money":"9007199254740993","currency":"EUR"}})];
+        assert!(evaluate_fixture(&[op], &wrong_currency).is_err());
         let bound = crate::row_predicate::BoundRowPredicate {
             field_path: FieldPath::from_dotted("price").unwrap(),
             op: pred.op,
             value: restored.value.into_resolved().unwrap(),
         };
-        assert!(crate::row_predicate::json_matches_predicate(&wrong_currency[0], &bound).is_err());
-        assert!(crate::row_predicate::json_matches_predicate(&rows[1], &bound).unwrap());
+        assert!(crate::row_predicate::row_matches_predicate(&wrong_currency[0], &bound).is_err());
+        assert!(crate::row_predicate::row_matches_predicate(&rows[1], &bound).unwrap());
+    }
+
+    #[test]
+    fn native_numeric_filters_reuse_strict_literal_coercion_without_float_rounding() {
+        let rows = vec![
+            row!({"n":9007199254740992_i64}),
+            row!({"n":9007199254740993_i64}),
+        ];
+        let filter = |literal| ComputeOp::Filter {
+            predicates: vec![PlanPredicate {
+                field_path: FieldPath::from_dotted("n").unwrap(),
+                op: PlanPredicateOp::Gt,
+                value: PlasmDataValue::try_from(value!(literal)).unwrap(),
+            }]
+            .into(),
+        };
+        let ComputeEvalOutcome::Rows(plasm_core::CollectedFrame { rows: selected, .. }) =
+            evaluate_fixture(&[filter("9007199254740992")], &rows).unwrap()
+        else {
+            panic!("rows")
+        };
+        assert_eq!(selected, vec![rows[1].clone()]);
+        assert!(evaluate_fixture(&[filter("not a number")], &rows).is_err());
+    }
+
+    #[test]
+    fn zero_limit_preserves_schema_and_returns_no_rows() {
+        let rows = vec![row!({"score":10})];
+        let ComputeEvalOutcome::Rows(frame) =
+            evaluate_fixture(&[ComputeOp::Limit { count: 0 }], &rows).unwrap()
+        else {
+            panic!("rows");
+        };
+        assert!(frame.rows.is_empty());
+        let ComputeEvalOutcome::Rows(original) = evaluate_fixture(&[], &rows).unwrap() else {
+            panic!("rows")
+        };
+        assert_eq!(frame.schema, original.schema);
     }
 
     #[test]
     fn filter_sort_limit_roundtrip() {
         let rows = vec![
-            serde_json::json!({"owner":"alice","score":10}),
-            serde_json::json!({"owner":"bob","score":30}),
-            serde_json::json!({"owner":"alice","score":20}),
+            row!({"owner":"alice","score":10}),
+            row!({"owner":"bob","score":30}),
+            row!({"owner":"alice","score":20}),
         ];
         let pred = plasm_core::PlanPredicate {
             field_path: FieldPath::from_dotted("owner").unwrap(),
             op: PlanPredicateOp::Eq,
             value: PlasmDataValue::Literal {
-                value: plasm_core::operand_binding::ResolvedValue::from_wire(serde_json::json!(
-                    "alice"
-                ))
-                .expect("literal data"),
+                value: plasm_core::operand_binding::ResolvedValue::new(value!("alice"))
+                    .expect("literal data"),
             },
         };
         let ops = vec![
@@ -986,31 +519,38 @@ mod tests {
             },
             ComputeOp::Limit { count: 1 },
         ];
-        let ComputeEvalOutcome::Rows(out) = eval_compute_ops(&ops, &rows).unwrap() else {
+        let ComputeEvalOutcome::Rows(plasm_core::CollectedFrame { rows: out, .. }) =
+            evaluate_fixture(&ops, &rows).unwrap()
+        else {
             panic!("rows");
         };
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0]["score"], serde_json::json!(20));
+        assert_eq!(out[0]["score"], value!(20));
     }
 
-    fn filter_eq_pan(rhs: serde_json::Value) -> PlanPredicate {
+    fn filter_eq_pan(rhs: plasm_core::Value) -> PlanPredicate {
         PlanPredicate {
             field_path: FieldPath::from_dotted("pan").unwrap(),
             op: PlanPredicateOp::Eq,
             value: PlasmDataValue::Literal {
-                value: plasm_core::operand_binding::ResolvedValue::from_wire(rhs).unwrap(),
+                value: plasm_core::operand_binding::ResolvedValue::new(rhs).unwrap(),
             },
         }
     }
 
-    fn eval_pan_eq(rows: &[serde_json::Value], rhs: serde_json::Value) -> Vec<serde_json::Value> {
-        let ComputeEvalOutcome::Rows(out) = eval_compute_ops(
-            &[ComputeOp::Filter {
-                predicates: vec![filter_eq_pan(rhs)].into(),
-            }],
-            rows,
-        )
-        .unwrap() else {
+    fn eval_pan_eq(
+        rows: &[plasm_core::ValueRow],
+        rhs: plasm_core::Value,
+    ) -> Vec<plasm_core::ValueRow> {
+        let ComputeEvalOutcome::Rows(plasm_core::CollectedFrame { rows: out, .. }) =
+            evaluate_fixture(
+                &[ComputeOp::Filter {
+                    predicates: vec![filter_eq_pan(rhs)].into(),
+                }],
+                rows,
+            )
+            .unwrap()
+        else {
             panic!("rows");
         };
         out
@@ -1021,12 +561,12 @@ mod tests {
     fn filter_eq_keeps_digit_id_string_identity() {
         let pan = "6419671322388907";
         let rows = vec![
-            serde_json::json!({"label": "other", "pan": "6043624134251612"}),
-            serde_json::json!({"label": "Chase", "pan": pan}),
+            row!({"label": "other", "pan": "6043624134251612"}),
+            row!({"label": "Chase", "pan": pan}),
         ];
-        let kept = eval_pan_eq(&rows, serde_json::json!(pan));
+        let kept = eval_pan_eq(&rows, value!(pan));
         assert_eq!(kept.len(), 1, "digit_id residual eq dropped the listed PAN");
-        assert_eq!(kept[0]["label"], serde_json::json!("Chase"));
+        assert_eq!(kept[0]["label"], value!("Chase"));
     }
 
     /// IEEE-rounded neighbor must not match the exact digit_id cell.
@@ -1035,8 +575,8 @@ mod tests {
         let exact = "9007199254740993";
         let rounded = (9_007_199_254_740_993i64 as f64 as i64).to_string();
         assert_ne!(rounded, exact);
-        let rows = vec![serde_json::json!({"label": "wide", "pan": exact})];
-        let kept = eval_pan_eq(&rows, serde_json::json!(rounded));
+        let rows = vec![row!({"label": "wide", "pan": exact})];
+        let kept = eval_pan_eq(&rows, value!(rounded));
         assert!(
             kept.is_empty(),
             "f64 neighbor must not identify a digit_id row"
@@ -1046,80 +586,90 @@ mod tests {
     #[test]
     fn filter_in_and_not_in_literal_set() {
         let rows = vec![
-            serde_json::json!({"owner":"alice","score":10}),
-            serde_json::json!({"owner":"bob","score":30}),
+            row!({"owner":"alice","score":10}),
+            row!({"owner":"bob","score":30}),
         ];
         let inn = plasm_core::PlanPredicate {
             field_path: FieldPath::from_dotted("owner").unwrap(),
             op: PlanPredicateOp::In,
             value: PlasmDataValue::Literal {
-                value: plasm_core::operand_binding::ResolvedValue::from_wire(serde_json::json!([
-                    "alice"
-                ]))
-                .expect("literal data"),
+                value: plasm_core::operand_binding::ResolvedValue::new(value!(["alice"]))
+                    .expect("literal data"),
             },
         };
         let outn = plasm_core::PlanPredicate {
             field_path: FieldPath::from_dotted("owner").unwrap(),
             op: PlanPredicateOp::NotIn,
             value: PlasmDataValue::Literal {
-                value: plasm_core::operand_binding::ResolvedValue::from_wire(serde_json::json!([
-                    "alice"
-                ]))
-                .expect("literal data"),
+                value: plasm_core::operand_binding::ResolvedValue::new(value!(["alice"]))
+                    .expect("literal data"),
             },
         };
-        let ComputeEvalOutcome::Rows(kept) = eval_compute_ops(
-            &[ComputeOp::Filter {
-                predicates: vec![inn].into(),
-            }],
-            &rows,
-        )
-        .unwrap() else {
+        let ComputeEvalOutcome::Rows(plasm_core::CollectedFrame { rows: kept, .. }) =
+            evaluate_fixture(
+                &[ComputeOp::Filter {
+                    predicates: vec![inn].into(),
+                }],
+                &rows,
+            )
+            .unwrap()
+        else {
             panic!("rows");
         };
-        let ComputeEvalOutcome::Rows(drop) = eval_compute_ops(
-            &[ComputeOp::Filter {
-                predicates: vec![outn].into(),
-            }],
-            &rows,
-        )
-        .unwrap() else {
+        let ComputeEvalOutcome::Rows(plasm_core::CollectedFrame { rows: drop, .. }) =
+            evaluate_fixture(
+                &[ComputeOp::Filter {
+                    predicates: vec![outn].into(),
+                }],
+                &rows,
+            )
+            .unwrap()
+        else {
             panic!("rows");
         };
         assert_eq!(kept.len(), 1);
-        assert_eq!(kept[0]["owner"], serde_json::json!("alice"));
+        assert_eq!(kept[0]["owner"], value!("alice"));
         assert_eq!(drop.len(), 1);
-        assert_eq!(drop[0]["owner"], serde_json::json!("bob"));
+        assert_eq!(drop[0]["owner"], value!("bob"));
     }
 
     #[test]
     fn with_mul_adds_column() {
-        let rows = vec![serde_json::json!({"quantity": 2, "price": 5})];
+        let rows = vec![row!({"quantity": 2, "price": 5})];
         let columns = parse_with_body("notional: quantity * price").unwrap();
         let ops = vec![ComputeOp::With { columns }];
-        let ComputeEvalOutcome::Rows(out) = eval_compute_ops(&ops, &rows).unwrap() else {
+        let ComputeEvalOutcome::Rows(plasm_core::CollectedFrame { rows: out, .. }) =
+            evaluate_fixture(&ops, &rows).unwrap()
+        else {
             panic!("rows");
         };
-        assert_eq!(out[0]["notional"], serde_json::json!(10));
-        assert_eq!(out[0]["quantity"], serde_json::json!(2));
+        assert_eq!(out[0]["notional"], value!(10));
+        assert_eq!(out[0]["quantity"], value!(2));
     }
 
     #[test]
     fn with_now_minus_field_is_nonnegative_int_days() {
         let rows = vec![
-            serde_json::json!({"id": "old", "updated_at": "2020-01-01T00:00:00Z"}),
-            serde_json::json!({"id": "new", "updated_at": "2024-06-01T00:00:00Z"}),
+            row!({"id": "old", "updated_at": "2020-01-01T00:00:00Z"}),
+            row!({"id": "new", "updated_at": "2024-06-01T00:00:00Z"}),
         ];
         let columns = parse_with_body("age_days: (now - updated_at)").unwrap();
         let ops = vec![ComputeOp::With { columns }];
-        let ComputeEvalOutcome::Rows(out) = eval_compute_ops(&ops, &rows).unwrap() else {
+        let ComputeEvalOutcome::Rows(plasm_core::CollectedFrame { rows: out, .. }) =
+            evaluate_temporal_fixture(&ops, &rows).unwrap()
+        else {
             panic!("rows");
         };
-        let older = out.iter().find(|r| r["id"] == "old").unwrap();
-        let newer = out.iter().find(|r| r["id"] == "new").unwrap();
-        let age_old = older["age_days"].as_i64().expect("age int");
-        let age_new = newer["age_days"].as_i64().expect("age int");
+        let older = out
+            .iter()
+            .find(|r| r["id"].as_str() == Some("old"))
+            .unwrap();
+        let newer = out
+            .iter()
+            .find(|r| r["id"].as_str() == Some("new"))
+            .unwrap();
+        let age_old = older["age_days"].as_integer().expect("age int");
+        let age_new = newer["age_days"].as_integer().expect("age int");
         assert!(age_old >= 0 && age_new >= 0, "ages {age_old} {age_new}");
         assert!(
             age_old > age_new,
@@ -1129,52 +679,52 @@ mod tests {
 
     #[test]
     fn with_field_minus_field_is_int_days() {
-        let rows = vec![serde_json::json!({
+        let rows = vec![row!({
             "created_at": "2020-01-01T00:00:00Z",
             "updated_at": "2020-01-11T00:00:00Z",
         })];
         let columns = parse_with_body("cycle: (updated_at - created_at)").unwrap();
-        let ComputeEvalOutcome::Rows(out) =
-            eval_compute_ops(&[ComputeOp::With { columns }], &rows).unwrap()
+        let ComputeEvalOutcome::Rows(plasm_core::CollectedFrame { rows: out, .. }) =
+            evaluate_temporal_fixture(&[ComputeOp::With { columns }], &rows).unwrap()
         else {
             panic!("rows");
         };
-        assert_eq!(out[0]["cycle"], serde_json::json!(10));
+        assert_eq!(out[0]["cycle"], value!(10));
     }
 
     #[test]
     fn with_div_is_float() {
-        let rows = vec![serde_json::json!({"quantity": 10, "price": 4})];
+        let rows = vec![row!({"quantity": 10, "price": 4})];
         let columns = parse_with_body("rate: quantity / price").unwrap();
-        let ComputeEvalOutcome::Rows(out) =
-            eval_compute_ops(&[ComputeOp::With { columns }], &rows).unwrap()
+        let ComputeEvalOutcome::Rows(plasm_core::CollectedFrame { rows: out, .. }) =
+            evaluate_fixture(&[ComputeOp::With { columns }], &rows).unwrap()
         else {
             panic!("rows");
         };
-        assert_eq!(out[0]["rate"].as_f64().unwrap(), 2.5);
+        assert_eq!(out[0]["rate"].as_number().unwrap(), 2.5);
     }
 
     #[test]
     fn with_string_plus_concat() {
-        let rows = vec![serde_json::json!({"first": "al", "last": "ice"})];
+        let rows = vec![row!({"first": "al", "last": "ice"})];
         let columns = parse_with_body("name: first + last").unwrap();
-        let ComputeEvalOutcome::Rows(out) =
-            eval_compute_ops(&[ComputeOp::With { columns }], &rows).unwrap()
+        let ComputeEvalOutcome::Rows(plasm_core::CollectedFrame { rows: out, .. }) =
+            evaluate_fixture(&[ComputeOp::With { columns }], &rows).unwrap()
         else {
             panic!("rows");
         };
-        assert_eq!(out[0]["name"], serde_json::json!("alice"));
+        assert_eq!(out[0]["name"], value!("alice"));
     }
 
     #[test]
     fn with_when_len_and_temporal_cmp() {
         let rows = vec![
-            serde_json::json!({
+            row!({
                 "title": "",
                 "created_at": "2020-01-01T00:00:00Z",
                 "updated_at": "2020-01-02T00:00:00Z",
             }),
-            serde_json::json!({
+            row!({
                 "title": "ok",
                 "created_at": "2020-01-01T00:00:00Z",
                 "updated_at": "2020-01-20T00:00:00Z",
@@ -1184,41 +734,47 @@ mod tests {
             "blank: when(len(title)=0, 1, 0), long: when(updated_at - created_at > 5, 1, 0)",
         )
         .unwrap();
-        let ComputeEvalOutcome::Rows(out) =
-            eval_compute_ops(&[ComputeOp::With { columns }], &rows).unwrap()
+        let ComputeEvalOutcome::Rows(plasm_core::CollectedFrame { rows: out, .. }) =
+            evaluate_temporal_fixture(&[ComputeOp::With { columns }], &rows).unwrap()
         else {
             panic!("rows");
         };
-        assert_eq!(out[0]["blank"], serde_json::json!(1));
-        assert_eq!(out[0]["long"], serde_json::json!(0));
-        assert_eq!(out[1]["blank"], serde_json::json!(0));
-        assert_eq!(out[1]["long"], serde_json::json!(1));
+        assert_eq!(out[0]["blank"], value!(1));
+        assert_eq!(out[0]["long"], value!(0));
+        assert_eq!(out[1]["blank"], value!(0));
+        assert_eq!(out[1]["long"], value!(1));
     }
 
     #[test]
     fn with_when_now_minus_gt() {
         let rows = vec![
-            serde_json::json!({"id": "old", "updated_at": "2020-01-01T00:00:00Z"}),
-            serde_json::json!({"id": "future", "updated_at": "2099-01-01T00:00:00Z"}),
+            row!({"id": "old", "updated_at": "2020-01-01T00:00:00Z"}),
+            row!({"id": "future", "updated_at": "2099-01-01T00:00:00Z"}),
         ];
         let columns = parse_with_body("stale: when(now - updated_at > 14, 1, 0)").unwrap();
-        let ComputeEvalOutcome::Rows(out) =
-            eval_compute_ops(&[ComputeOp::With { columns }], &rows).unwrap()
+        let ComputeEvalOutcome::Rows(plasm_core::CollectedFrame { rows: out, .. }) =
+            evaluate_temporal_fixture(&[ComputeOp::With { columns }], &rows).unwrap()
         else {
             panic!("rows");
         };
-        let old = out.iter().find(|r| r["id"] == "old").unwrap();
-        let future = out.iter().find(|r| r["id"] == "future").unwrap();
-        assert_eq!(old["stale"], serde_json::json!(1));
-        assert_eq!(future["stale"], serde_json::json!(0));
+        let old = out
+            .iter()
+            .find(|r| r["id"].as_str() == Some("old"))
+            .unwrap();
+        let future = out
+            .iter()
+            .find(|r| r["id"].as_str() == Some("future"))
+            .unwrap();
+        assert_eq!(old["stale"], value!(1));
+        assert_eq!(future["stale"], value!(0));
     }
 
     #[test]
     fn group_by_count() {
         let rows = vec![
-            serde_json::json!({"owner":"b","score":1}),
-            serde_json::json!({"owner":"a","score":2}),
-            serde_json::json!({"owner":"a","score":3}),
+            row!({"owner":"b","score":1}),
+            row!({"owner":"a","score":2}),
+            row!({"owner":"a","score":3}),
         ];
         let ops = vec![ComputeOp::GroupBy {
             keys: vec![FieldPath::from_dotted("owner").unwrap()],
@@ -1231,15 +787,14 @@ mod tests {
         // Stable first-seen group order keeps synthetic identities and tie ordering
         // deterministic across repeated executions and source frontends.
         for _ in 0..32 {
-            let ComputeEvalOutcome::Rows(out) = eval_compute_ops(&ops, &rows).unwrap() else {
+            let ComputeEvalOutcome::Rows(plasm_core::CollectedFrame { rows: out, .. }) =
+                evaluate_fixture(&ops, &rows).unwrap()
+            else {
                 panic!("rows");
             };
             assert_eq!(
                 out,
-                vec![
-                    serde_json::json!({"owner":"b","n":1}),
-                    serde_json::json!({"owner":"a","n":2})
-                ]
+                vec![row!({"owner":"b","n":1}), row!({"owner":"a","n":2})]
             );
         }
     }
@@ -1248,8 +803,8 @@ mod tests {
     fn first_last_preserve_values_and_types() {
         use plasm_core::{AggregateFunction, AggregateSpec, OutputName};
         let rows = vec![
-            serde_json::json!({"text":"alpha", "integer":9007199254740993_i64, "flag":true, "nested":{"x":[1,2]}, "array":["a"], "money":{"__plasm_money":"1.50","currency":"USD"}}),
-            serde_json::json!({"text":"omega", "integer":7, "flag":false, "nested":{"x":[]}, "array":["z"], "money":{"__plasm_money":"2.50","currency":"USD"}}),
+            row!({"text":"alpha", "integer":9007199254740993_i64, "flag":true, "nested":{"x":[1,2]}, "array":["a"], "money":{"__plasm_money":"1.50","currency":"USD"}}),
+            row!({"text":"omega", "integer":7, "flag":false, "nested":{"x":[]}, "array":["z"], "money":{"__plasm_money":"2.50","currency":"USD"}}),
         ];
         for (function, index) in [(AggregateFunction::First, 0), (AggregateFunction::Last, 1)] {
             for field in ["text", "integer", "flag", "nested", "array", "money"] {
@@ -1260,20 +815,12 @@ mod tests {
                         field: Some(FieldPath::from_dotted(field).unwrap()),
                     }],
                 }];
-                let ComputeEvalOutcome::Rows(out) = eval_compute_ops(&ops, &rows).unwrap() else {
+                let ComputeEvalOutcome::Rows(plasm_core::CollectedFrame { rows: out, .. }) =
+                    evaluate_fixture(&ops, &rows).unwrap()
+                else {
                     panic!("rows")
                 };
-                if field == "money" {
-                    let actual = &out[0]["value"];
-                    let expected = &rows[index][field];
-                    assert_eq!(actual["currency"], expected["currency"]);
-                    assert_eq!(
-                        Decimal::from_str(actual["__plasm_money"].as_str().unwrap()).unwrap(),
-                        Decimal::from_str(expected["__plasm_money"].as_str().unwrap()).unwrap()
-                    );
-                } else {
-                    assert_eq!(out[0]["value"], rows[index][field], "{function:?} {field}");
-                }
+                assert_eq!(out[0]["value"], rows[index][field], "{function:?} {field}");
             }
         }
     }
@@ -1281,9 +828,9 @@ mod tests {
     #[test]
     fn money_sum_same_currency() {
         let rows = vec![
-            serde_json::json!({"symbol":"A","fee":{"__plasm_money":"1.50","currency":"USD"}}),
-            serde_json::json!({"symbol":"A","fee":{"__plasm_money":"2.50","currency":"USD"}}),
-            serde_json::json!({"symbol":"B","fee":{"__plasm_money":"4.00","currency":"USD"}}),
+            row!({"symbol":"A","fee":{"__plasm_money":"1.50","currency":"USD"}}),
+            row!({"symbol":"A","fee":{"__plasm_money":"2.50","currency":"USD"}}),
+            row!({"symbol":"B","fee":{"__plasm_money":"4.00","currency":"USD"}}),
         ];
         let ops = vec![ComputeOp::GroupBy {
             keys: vec![FieldPath::from_dotted("symbol").unwrap()],
@@ -1293,18 +840,21 @@ mod tests {
                 field: Some(FieldPath::from_dotted("fee").unwrap()),
             }],
         }];
-        let ComputeEvalOutcome::Rows(out) = eval_compute_ops(&ops, &rows).unwrap() else {
+        let ComputeEvalOutcome::Rows(plasm_core::CollectedFrame { rows: out, .. }) =
+            evaluate_fixture(&ops, &rows).unwrap()
+        else {
             panic!("rows");
         };
         assert_eq!(out.len(), 2, "out={out:?}");
-        let a = out.iter().find(|r| r["symbol"] == "A").unwrap();
-        let got = a["fees"]["__plasm_money"].as_str().expect("money amount");
-        assert_eq!(
-            Decimal::from_str(got).unwrap(),
-            Decimal::from_str("4.00").unwrap(),
-            "row={a:?}"
-        );
-        assert_eq!(a["fees"]["currency"], "USD");
+        let a = out
+            .iter()
+            .find(|r| r["symbol"].as_str() == Some("A"))
+            .unwrap();
+        let plasm_core::Value::Money(got) = &a["fees"] else {
+            panic!("native money required")
+        };
+        assert_eq!(got.amount(), Decimal::from_str("4.00").unwrap());
+        assert_eq!(got.currency(), Some("USD"));
         assert!(a.get("__ccy_n").is_none());
         assert!(a.get("__ccy_n_fees").is_none());
     }
@@ -1312,8 +862,8 @@ mod tests {
     #[test]
     fn money_sum_rejects_cross_currency() {
         let rows = vec![
-            serde_json::json!({"symbol":"A","fee":{"__plasm_money":"1.00","currency":"USD"}}),
-            serde_json::json!({"symbol":"A","fee":{"__plasm_money":"1.00","currency":"EUR"}}),
+            row!({"symbol":"A","fee":{"__plasm_money":"1.00","currency":"USD"}}),
+            row!({"symbol":"A","fee":{"__plasm_money":"1.00","currency":"EUR"}}),
         ];
         let ops = vec![ComputeOp::GroupBy {
             keys: vec![FieldPath::from_dotted("symbol").unwrap()],
@@ -1323,7 +873,7 @@ mod tests {
                 field: Some(FieldPath::from_dotted("fee").unwrap()),
             }],
         }];
-        let err = eval_compute_ops(&ops, &rows).unwrap_err();
+        let err = evaluate_fixture(&ops, &rows).unwrap_err();
         assert!(
             err.contains("currency") || err.contains("money"),
             "expected cross-currency error, got {err}"
@@ -1332,12 +882,12 @@ mod tests {
     #[test]
     fn distinct_ignores_internal_index_and_keeps_first_visible_rows() {
         let rows = vec![
-            serde_json::json!({"owner":"alice"}),
-            serde_json::json!({"owner":"bob"}),
-            serde_json::json!({"owner":"alice"}),
+            row!({"owner":"alice"}),
+            row!({"owner":"bob"}),
+            row!({"owner":"alice"}),
         ];
-        let ComputeEvalOutcome::Rows(actual) =
-            eval_compute_ops(&[ComputeOp::DedupeBy { keys: vec![] }], &rows).unwrap()
+        let ComputeEvalOutcome::Rows(plasm_core::CollectedFrame { rows: actual, .. }) =
+            evaluate_fixture(&[ComputeOp::DedupeBy { keys: vec![] }], &rows).unwrap()
         else {
             panic!("rows")
         };
@@ -1359,26 +909,82 @@ mod tests {
             ComputeOp::DedupeBy { keys: vec![] },
         ];
         let rows = vec![
-            serde_json::json!({"id":"1", "owner":"alice"}),
-            serde_json::json!({"id":"2", "owner":"alice"}),
+            row!({"id":"1", "owner":"alice"}),
+            row!({"id":"2", "owner":"alice"}),
         ];
-        let ComputeEvalOutcome::Rows(actual) = eval_compute_ops(&ops, &rows).unwrap() else {
+        let ComputeEvalOutcome::Rows(plasm_core::CollectedFrame { rows: actual, .. }) =
+            evaluate_fixture(&ops, &rows).unwrap()
+        else {
             panic!("rows")
         };
-        assert_eq!(actual, vec![serde_json::json!({"owner":"alice"})]);
-        for (rows, expected) in [
-            (vec![], vec![]),
-            (
-                vec![serde_json::json!({}), serde_json::json!({})],
-                vec![serde_json::json!({})],
-            ),
-        ] {
-            let ComputeEvalOutcome::Rows(actual) =
-                eval_compute_ops(&[ComputeOp::DedupeBy { keys: vec![] }], &rows).unwrap()
+        assert_eq!(actual, vec![row!({"owner":"alice"})]);
+        for (rows, expected) in [(vec![], vec![]), (vec![row!({}), row!({})], vec![row!({})])] {
+            let ComputeEvalOutcome::Rows(plasm_core::CollectedFrame { rows: actual, .. }) =
+                evaluate_fixture(&[ComputeOp::DedupeBy { keys: vec![] }], &rows).unwrap()
             else {
                 panic!("rows")
             };
             assert_eq!(actual, expected);
         }
+    }
+}
+
+#[cfg(test)]
+mod presence_tests {
+    use super::super::row;
+    use super::*;
+
+    #[test]
+    fn observed_presence_survives_transport_and_set_equality() {
+        let rows = vec![row!({"id":1}), row!({"id":1,"score":null}), row!({"id":1})];
+        for ops in [
+            vec![],
+            vec![ComputeOp::Limit { count: 3 }],
+            vec![ComputeOp::Sort {
+                key: FieldPath::from_dotted("id").unwrap(),
+                descending: false,
+            }],
+        ] {
+            let ComputeEvalOutcome::Rows(plasm_core::CollectedFrame { rows: actual, .. }) =
+                evaluate_fixture(&ops, &rows).unwrap()
+            else {
+                panic!("rows")
+            };
+            assert_eq!(actual, rows);
+        }
+        let ComputeEvalOutcome::Rows(plasm_core::CollectedFrame { rows: actual, .. }) =
+            evaluate_fixture(&[ComputeOp::DedupeBy { keys: vec![] }], &rows).unwrap()
+        else {
+            panic!("rows")
+        };
+        assert_eq!(actual, rows[..2]);
+    }
+
+    #[test]
+    fn reading_unobserved_field_fails_but_null_is_present() {
+        let op = ComputeOp::Sort {
+            key: FieldPath::from_dotted("score").unwrap(),
+            descending: false,
+        };
+        assert!(evaluate_fixture(
+            std::slice::from_ref(&op),
+            &[row!({"id":1}), row!({"id":2,"score":null})]
+        )
+        .unwrap_err()
+        .contains("unobserved"));
+        assert!(
+            evaluate_fixture(std::slice::from_ref(&op), &[row!({"id":2,"score":null})]).is_ok()
+        );
+        assert!(eval_compute_ops(
+            std::slice::from_ref(&op),
+            &[],
+            &super::super::fixture_contract(&[row!({"score":null})])
+        )
+        .is_ok());
+        assert!(evaluate_fixture(
+            &[ComputeOp::Limit { count: 1 }, op],
+            &[row!({"id":1,"score":3}), row!({"id":2})]
+        )
+        .is_ok());
     }
 }

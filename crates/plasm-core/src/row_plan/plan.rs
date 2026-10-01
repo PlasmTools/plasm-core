@@ -3,7 +3,6 @@
 use crate::plasm_monad::payload::{AggregateSpec, FieldPath};
 use crate::plasm_monad::OutputName;
 use serde::{Deserialize, Serialize};
-use std::num::NonZeroUsize;
 
 use super::collect::{CollectCardinality, CollectReason};
 use super::error::{FrameSchemaError, FusionError};
@@ -105,7 +104,7 @@ pub enum PlanNode {
         descending: bool,
     },
     Limit {
-        count: NonZeroUsize,
+        count: usize,
     },
     Dedupe {
         keys: Vec<FieldPath>,
@@ -132,9 +131,9 @@ pub enum TypedAggregate {
     Count {
         name: OutputName,
     },
-    Numeric {
+    Reduction {
         name: OutputName,
-        fn_: NumericAgg,
+        fn_: ReductionFunction,
         field: FieldPath,
     },
     MoneySum {
@@ -146,7 +145,7 @@ pub enum TypedAggregate {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum NumericAgg {
+pub enum ReductionFunction {
     Sum,
     Avg,
     Min,
@@ -174,17 +173,17 @@ impl TypedAggregate {
                     .field
                     .clone()
                     .ok_or(FrameSchemaError::UnknownColumn("sum field".into()))?;
-                Ok(Self::Numeric {
+                Ok(Self::Reduction {
                     name: spec.name.clone(),
-                    fn_: NumericAgg::Sum,
+                    fn_: ReductionFunction::Sum,
                     field,
                 })
             }
-            AggregateFunction::Avg => map_numeric(spec, NumericAgg::Avg),
-            AggregateFunction::Min => map_numeric(spec, NumericAgg::Min),
-            AggregateFunction::Max => map_numeric(spec, NumericAgg::Max),
-            AggregateFunction::First => map_numeric(spec, NumericAgg::First),
-            AggregateFunction::Last => map_numeric(spec, NumericAgg::Last),
+            AggregateFunction::Avg => map_reduction(spec, ReductionFunction::Avg),
+            AggregateFunction::Min => map_reduction(spec, ReductionFunction::Min),
+            AggregateFunction::Max => map_reduction(spec, ReductionFunction::Max),
+            AggregateFunction::First => map_reduction(spec, ReductionFunction::First),
+            AggregateFunction::Last => map_reduction(spec, ReductionFunction::Last),
         }
     }
 
@@ -202,12 +201,15 @@ impl TypedAggregate {
     }
 }
 
-fn map_numeric(spec: &AggregateSpec, fn_: NumericAgg) -> Result<TypedAggregate, FrameSchemaError> {
+fn map_reduction(
+    spec: &AggregateSpec,
+    fn_: ReductionFunction,
+) -> Result<TypedAggregate, FrameSchemaError> {
     let field = spec
         .field
         .clone()
         .ok_or(FrameSchemaError::UnknownColumn(format!("{fn_:?} field")))?;
-    Ok(TypedAggregate::Numeric {
+    Ok(TypedAggregate::Reduction {
         name: spec.name.clone(),
         fn_,
         field,

@@ -18,6 +18,8 @@ use super::{
 pub enum PersistExecuteRunError {
     #[error("run artifact id digest failed: {0}")]
     Mint(String),
+    #[error(transparent)]
+    Collection(#[from] plasm_core::collection_codec::CollectionFault),
     #[error("run artifact JSON: {0}")]
     Serialization(#[from] serde_json::Error),
     #[error("run artifact persist failed: {0}")]
@@ -101,6 +103,24 @@ pub async fn persist_execute_run(
         parsed,
         &result.request_fingerprints,
     )?;
+    let mut archived_result = result.clone();
+    if result.collection.is_graph_backed() && result.count() != 0 {
+        let entity_type = result.collection.membership().observed()[0]
+            .entity_type
+            .as_str();
+        let rehydrator = crate::graph_rehydrate::GraphSurfaceRehydrator::new(
+            sess,
+            st,
+            session_id,
+            sess.cgs.as_ref(),
+        );
+        let rows = rehydrator
+            .resolve_source_parents(entity_type, result)
+            .await
+            .map_err(PersistExecuteRunError::Persist)?;
+        archived_result.collection = result.collection.with_materialization(rows)?;
+    }
+    let result = &archived_result;
     let resource_index = sess.mint_run_resource_index();
     let doc = document_from_run(DocumentFromRun {
         run_id,
@@ -112,7 +132,7 @@ pub async fn persist_execute_run(
         parsed_preimage: parsed,
         result,
         resource_index: Some(resource_index),
-    });
+    })?;
     let payload_bytes = serde_json::to_vec(&doc)?;
     let payload_len = payload_bytes.len();
     let payload = ArtifactPayload {

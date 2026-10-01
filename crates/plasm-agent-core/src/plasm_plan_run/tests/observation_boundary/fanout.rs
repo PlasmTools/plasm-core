@@ -1,4 +1,4 @@
-//! Stateful differential evidence: every source occurrence, then a read barrier.
+//! Python stateful conformance: every source occurrence, then a read barrier.
 use super::*;
 use plasm_core::symbol_tuning::SymbolRender;
 use std::collections::BTreeMap;
@@ -17,6 +17,7 @@ struct State {
 }
 struct FanoutTransport {
     rows: usize,
+    bad_response: bool,
     state: Arc<Mutex<State>>,
     reject: Option<String>,
     cancel: Option<(usize, crate::operation::ExecutionScope)>,
@@ -37,13 +38,25 @@ impl HttpTransport for FanoutTransport {
                     .map(|i| json!({"id":format!("r{i}"),"value":0}))
                     .collect::<Vec<_>>())
             }
-            "/advance" => {
+            "/advance" | "/apply" => {
                 let id = req.body.as_ref().unwrap().as_object().unwrap()["id"]
                     .as_str()
                     .unwrap()
                     .to_owned();
-                if self.reject.as_ref() == Some(&id) {
-                    state.calls.push(Call::Rejected(id));
+                let item = if req.path == "/apply" {
+                    assert_eq!(
+                        id, "target",
+                        "captured identity must not become the source row"
+                    );
+                    req.body.as_ref().unwrap().as_object().unwrap()["item"]
+                        .as_str()
+                        .unwrap()
+                        .to_owned()
+                } else {
+                    id.clone()
+                };
+                if self.reject.as_ref() == Some(&item) {
+                    state.calls.push(Call::Rejected(item));
                     return Err(RuntimeError::RequestError {
                         message: "rejected fanout row".into(),
                         attempts: 1,
@@ -52,7 +65,7 @@ impl HttpTransport for FanoutTransport {
                     });
                 }
                 *state.values.entry(id.clone()).or_default() += 1;
-                state.calls.push(Call::Write(id.clone()));
+                state.calls.push(Call::Write(item));
                 if let Some((count, scope)) = &self.cancel {
                     if state
                         .calls
@@ -73,7 +86,11 @@ impl HttpTransport for FanoutTransport {
                     .to_owned();
                 let value = state.values.get(&id).copied().unwrap_or(0);
                 state.calls.push(Call::Read(id.clone(), value));
-                json!({"id":id,"value":value})
+                if self.bad_response && id == "r1" && value > 0 {
+                    json!({"id":id,"value":"private-password-sentinel"})
+                } else {
+                    json!({"id":id,"value":value})
+                }
             }
             other => panic!("unexpected path {other}"),
         };
@@ -89,6 +106,16 @@ impl HttpTransport for FanoutTransport {
 }
 
 fn check(rows: usize, reject: Option<&str>, cancel_after: Option<usize>, python_host: bool) {
+    check_receiver(rows, reject, cancel_after, python_host, false)
+}
+
+fn check_receiver(
+    rows: usize,
+    reject: Option<&str>,
+    cancel_after: Option<usize>,
+    python_host: bool,
+    captured: bool,
+) {
     let reject = reject.map(str::to_owned);
     std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)
@@ -97,13 +124,18 @@ fn check(rows: usize, reject: Option<&str>, cancel_after: Option<usize>, python_
                 .enable_all()
                 .build()
                 .unwrap();
-            for python_source in [false, true] {
+            {
                 runtime.block_on(check_one(
                     rows,
                     reject.clone(),
                     cancel_after,
                     python_host,
-                    python_source,
+                    if captured {
+                        FanoutShape::Captured
+                    } else {
+                        FanoutShape::Direct
+                    },
+                    false,
                 ));
             }
         })
@@ -112,13 +144,21 @@ fn check(rows: usize, reject: Option<&str>, cancel_after: Option<usize>, python_
         .unwrap();
 }
 
+enum FanoutShape {
+    Direct,
+    Captured,
+    Nested,
+}
+
 async fn check_one(
     rows: usize,
     reject: Option<String>,
     cancel_after: Option<usize>,
     python_host: bool,
-    python_source: bool,
+    shape: FanoutShape,
+    bad_response: bool,
 ) {
+    let captured = matches!(shape, FanoutShape::Captured);
     let es = session();
     let state = Arc::new(Mutex::new(State::default()));
     let scope = crate::operation::ExecutionScope::new();
@@ -129,6 +169,7 @@ async fn check_one(
         },
         Arc::new(FanoutTransport {
             rows,
+            bad_response,
             state: state.clone(),
             reject: reject.clone(),
             cancel: cancel_after.map(|n| (n, scope.clone())),
@@ -154,10 +195,13 @@ async fn check_one(
     let wire = symbols.entity_sym_for("matrix", "Wire");
     let counter = symbols.entity_sym_for("matrix", "Counter");
     let advance = symbols.method_sym_for("matrix", "Counter", "advance");
-    let bundle = if python_source {
-        crate::plasm_compile::compile_python_program(&es,&format!("class Fanout(Program):\n    def build(self):\n        rows = {wire}.query()\n        before = rows.flat_map(lambda row: {wire}.get(row.id))\n        effects = rows.flat_map(lambda row: {counter}.{advance}(id=row.id))\n        after = rows.flat_map(lambda row: {wire}.get(row.id))\n        return before, effects, after\n")).unwrap()
+    let apply = symbols.method_sym_for("matrix", "Counter", "apply_item");
+    let bundle = if matches!(shape, FanoutShape::Nested) {
+        crate::plasm_compile::compile_python_program(&es, &format!("class Nested(Program):\n    def build(self):\n        rows = {wire}.query()\n        effects = rows.flat_map(lambda parent: rows.flat_map(lambda child: {counter}.{advance}(id=child.id)))\n        after = {wire}.get(\"r3\")\n        return effects, after\n")).await.unwrap()
+    } else if captured {
+        crate::plasm_compile::compile_python_program(&es, &format!("class Captured(Program):\n    def build(self):\n        target = {counter}.get(\"target\")\n        rows = {wire}.query()\n        before = rows.flat_map(lambda row: {wire}.get(row.id))\n        effects = rows.flat_map(lambda row: target.{apply}(item=row.id))\n        after = {wire}.get(\"target\")\n        return before, effects, after\n")).await.unwrap()
     } else {
-        crate::compile_plasm_program(&Default::default(),None,&es,"fanout","rows = Wire\nbefore = rows => Wire(_.id)\neffects = rows => Counter.advance(id=_.id)\nafter = rows => Wire(_.id)\nbefore, effects, after").unwrap()
+        crate::plasm_compile::compile_python_program(&es,&format!("class Fanout(Program):\n    def build(self):\n        rows = {wire}.query()\n        before = rows.flat_map(lambda row: {wire}.get(row.id))\n        effects = rows.flat_map(lambda row: {counter}.{advance}(id=row.id))\n        after = rows.flat_map(lambda row: {wire}.get(row.id))\n        return before, effects, after\n")).await.unwrap()
     };
     assert!(state.lock().unwrap().calls.is_empty(), "compile is pure");
     let comp =
@@ -185,9 +229,70 @@ async fn check_one(
     .await;
     let state = state.lock().unwrap();
     if let Some(committed) = cancel_after {
-        assert!(result.unwrap_err().contains("cancel"));
+        assert!(result.unwrap_err().diagnostic().contains("cancel"));
         assert_eq!(state.values.values().sum::<usize>(), committed);
         assert!(matches!(state.calls.last(), Some(Call::Write(_))));
+        return;
+    }
+    if bad_response || reject.is_some() {
+        let failure = result.expect_err("system failures cannot become partial success");
+        assert_eq!(
+            failure.cause,
+            if bad_response {
+                plasm_runtime::FailureCause::ResponseContract
+            } else {
+                plasm_runtime::FailureCause::Upstream
+            }
+        );
+        assert_ne!(
+            failure.recovery,
+            plasm_runtime::RecoveryDisposition::RepairProgram
+        );
+        assert!(!serde_json::to_string(&failure)
+            .unwrap()
+            .contains("private-password-sentinel"));
+        if bad_response {
+            assert!(
+                failure.effects.iter().any(|ack| ack.completed > 0),
+                "earlier successful effect survives later decoder failure: {failure:?}"
+            );
+            assert_eq!(
+                failure.recovery,
+                plasm_runtime::RecoveryDisposition::ReconcileEffects
+            );
+            assert!(failure.catalog_digest.is_some());
+            assert!(
+                matches!(state.calls.last(), Some(Call::Read(id, _)) if id == "r1"),
+                "no later read is admitted after the contract failure"
+            );
+        } else {
+            assert!(
+                matches!(state.calls.last(), Some(Call::Rejected(_))),
+                "no later parent is admitted after upstream failure"
+            );
+            let failed_index = reject
+                .as_ref()
+                .unwrap()
+                .strip_prefix('r')
+                .unwrap()
+                .parse::<usize>()
+                .unwrap();
+            let writes: Vec<_> = state
+                .calls
+                .iter()
+                .filter_map(|call| match call {
+                    Call::Write(id) => Some(id.clone()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                writes,
+                (0..failed_index)
+                    .map(|i| format!("r{i}"))
+                    .collect::<Vec<_>>(),
+                "only the ordered prefix may commit; the suffix must remain undispatched"
+            );
+        }
         return;
     }
     let result = result.unwrap();
@@ -206,27 +311,36 @@ async fn check_one(
         .iter()
         .find(|s| s.name.as_deref() == Some("after"))
         .unwrap();
-    assert_eq!(before.result.entities.len(), rows);
+    assert_eq!(before.result.entities().len(), rows);
     assert!(before
         .result
-        .entities
+        .entities()
         .iter()
         .all(|e| e.fields["value"].to_value() == Value::Integer(0)));
-    assert_eq!(after.result.entities.len(), rows);
-    for (i, row) in after.result.entities.iter().enumerate() {
-        let id = format!("r{i}");
-        assert_eq!(row.fields["id"].to_value(), Value::String(id.clone()));
+    if captured {
+        assert_eq!(after.result.entities().len(), 1);
         assert_eq!(
-            row.fields["value"].to_value(),
-            Value::Integer(i64::from(reject.as_ref() != Some(&id)))
+            after.result.entities()[0].fields["id"].to_value(),
+            Value::String("target".into())
         );
+        assert_eq!(
+            after.result.entities()[0].fields["value"].to_value(),
+            Value::Integer(rows as i64)
+        );
+    } else {
+        assert_eq!(after.result.entities().len(), rows);
+        for (i, row) in after.result.entities().iter().enumerate() {
+            let id = format!("r{i}");
+            assert_eq!(row.fields["id"].to_value(), Value::String(id.clone()));
+            assert_eq!(row.fields["value"].to_value(), Value::Integer(1));
+        }
     }
     let acks = effects.result.operations.entries();
     if rows > 0 {
         assert_eq!(acks.len(), 1);
         let ack = &acks[0];
         assert_eq!(ack.logical_invocations, rows);
-        assert_eq!(ack.failed, usize::from(reject.is_some()));
+        assert_eq!(ack.failed, 0);
         assert_eq!(ack.completed, rows - ack.failed);
         assert_eq!(ack.outcomes.len(), rows);
         for (i, outcome) in ack.outcomes.iter().enumerate() {
@@ -237,21 +351,11 @@ async fn check_one(
                 .is_some_and(|s| s.contains(&format!("r{i}"))));
             assert_eq!(
                 outcome.status,
-                if reject.as_deref() == Some(format!("r{i}").as_str()) {
-                    plasm_runtime::OperationInvocationStatus::Failed
-                } else {
-                    plasm_runtime::OperationInvocationStatus::Completed
-                }
+                plasm_runtime::OperationInvocationStatus::Completed
             );
         }
     } else {
         assert!(acks.is_empty() || acks.iter().all(|a| a.logical_invocations == 0));
-    }
-    if reject.is_some() {
-        assert_eq!(
-            effects.result.coverage,
-            plasm_runtime::ResultCoverage::Partial
-        );
     }
     let writes = state
         .calls
@@ -264,11 +368,7 @@ async fn check_one(
         (0..rows)
             .map(|i| {
                 let id = format!("r{i}");
-                if reject.as_ref() == Some(&id) {
-                    Call::Rejected(id)
-                } else {
-                    Call::Write(id)
-                }
+                Call::Write(id)
             })
             .collect::<Vec<_>>()
     );
@@ -292,7 +392,7 @@ async fn check_one(
                 .iter()
                 .filter(|c| matches!(c, Call::Read(..)))
                 .count(),
-            rows,
+            if captured { 1 } else { rows },
             "post-write Gets must re-observe"
         );
         assert!(
@@ -314,12 +414,66 @@ fn python_fanout_reads_observe_completed_write_phase() {
 #[test]
 fn python_fanout_partial_failure_keeps_row_outcomes_and_actual_state() {
     for host in [false, true] {
-        check(4, Some("r1"), None, host);
+        for failed in 0..4 {
+            check(4, Some(&format!("r{failed}")), None, host);
+        }
     }
 }
 #[test]
 fn python_fanout_cancellation_stops_new_writes_without_replay() {
     for host in [false, true] {
         check(4, None, Some(2), host);
+    }
+}
+
+#[test]
+fn python_captured_receiver_fanout_preserves_identity_and_occurrences() {
+    for host in [false, true] {
+        for rows in [0, 1, 4] {
+            check_receiver(rows, None, None, host, true);
+        }
+        check_receiver(4, Some("r1"), None, host, true);
+        check_receiver(4, None, Some(2), host, true);
+    }
+}
+
+#[test]
+fn execution_failure_response_contract_preserves_prior_effects() {
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(check_one(3, None, None, false, FanoutShape::Direct, true));
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn python_nested_fanout_failure_stops_inner_and_outer_suffixes() {
+    for host in [false, true] {
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(move || {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(check_one(
+                        4,
+                        Some("r1".into()),
+                        None,
+                        host,
+                        FanoutShape::Nested,
+                        false,
+                    ));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

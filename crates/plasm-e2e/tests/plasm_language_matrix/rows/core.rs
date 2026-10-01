@@ -5,32 +5,31 @@ use super::super::row::MatrixRow;
 pub(crate) const ROWS: &[MatrixRow] = &[
     MatrixRow {
         id: "lang_group_then_global_aggregate",
-        program: "LangLane {shelf=\"alpha\"} | summarize by shelf n=count() | summarize total=sum(n)",
-        surface_line: true,
         federated: false,
-        features: &["pipe_summarize", "pipe_summarize_by", "group_then_global_aggregate"],
+        features: &[
+            "pipe_summarize",
+            "pipe_summarize_by",
+            "group_then_global_aggregate",
+        ],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "total"],
         expect_live_error: None,
     },
     MatrixRow {
         id: "lang_distinct_projected_values",
-        program: "rows = LangLane {shelf=\"alpha\"} | select shelf\nunique = rows | distinct\nunique",
-        surface_line: false,
         federated: false,
-        features: &["pipe_distinct", "distinct_projected_values", "pipe_select", "dry_live_parity"],
+        features: &[
+            "pipe_distinct",
+            "distinct_projected_values",
+            "pipe_select",
+            "dry_live_parity",
+        ],
         min_node_results: 1,
         expect_markdown_substrings: &["alpha"],
         expect_live_error: None,
     },
     MatrixRow {
         id: "lang_take_one_field_bound_argument",
-        program: r#"items = LangItem
-one = items | order by id | take 1 | select id
-value = one.id
-out = LangItem("i1").update(title=value, score=42, owner="alice")
-one, out"#,
-        surface_line: false,
         federated: false,
         features: &["bounded_singleton_field_extract", "binding_continuation"],
         min_node_results: 4,
@@ -39,11 +38,6 @@ one, out"#,
     },
     MatrixRow {
         id: "lang_take_one_field_bind",
-        program: r#"items = LangItem
-one = items | order by id | take 1
-value = one.id
-one, value"#,
-        surface_line: false,
         federated: false,
         features: &["bounded_singleton_field_extract", "binding_continuation"],
         min_node_results: 3,
@@ -52,11 +46,6 @@ one, value"#,
     },
     MatrixRow {
         id: "lang_take_one_field_argument",
-        program: r#"items = LangItem
-one = items | order by id | take 1
-out = LangItem("i1").update(title=one.id, score=42, owner="alice")
-one, out"#,
-        surface_line: false,
         federated: false,
         features: &["bounded_singleton_field_extract", "binding_continuation"],
         min_node_results: 3,
@@ -65,11 +54,6 @@ one, out"#,
     },
     MatrixRow {
         id: "lang_take_one_field_empty_bind",
-        program: r#"items = LangItem
-one = items | where id = "missing" | take 1
-value = one.id
-value"#,
-        surface_line: false,
         federated: false,
         features: &["bounded_singleton_field_extract", "binding_continuation"],
         min_node_results: 3,
@@ -78,11 +62,6 @@ value"#,
     },
     MatrixRow {
         id: "lang_take_one_field_empty_argument",
-        program: r#"items = LangItem
-one = items | where id = "missing" | take 1
-out = LangItem("i1").update(title=one.id, score=42, owner="alice")
-out"#,
-        surface_line: false,
         federated: false,
         features: &["bounded_singleton_field_extract", "binding_continuation"],
         min_node_results: 3,
@@ -91,8 +70,6 @@ out"#,
     },
     MatrixRow {
         id: "lang_query_all",
-        program: "LangItem",
-        surface_line: false,
         federated: false,
         features: &["entity_query", "pagination_fetch_all_default"],
         min_node_results: 1,
@@ -101,8 +78,6 @@ out"#,
     },
     MatrixRow {
         id: "lang_surface_line_limit",
-        program: "LangItem | take 2",
-        surface_line: true,
         federated: false,
         features: &["surface_line_compile", "pipe_take"],
         min_node_results: 1,
@@ -111,8 +86,6 @@ out"#,
     },
     MatrixRow {
         id: "lang_bind_first_limit",
-        program: "items = LangItem\nitems | take 3",
-        surface_line: false,
         federated: false,
         features: &["bind_first_pipe_take", "pipe_take"],
         min_node_results: 2,
@@ -121,8 +94,6 @@ out"#,
     },
     MatrixRow {
         id: "lang_search",
-        program: r#"LangItem~"Alpha""#,
-        surface_line: false,
         federated: false,
         features: &["entity_search"],
         min_node_results: 1,
@@ -131,8 +102,6 @@ out"#,
     },
     MatrixRow {
         id: "lang_search_miss",
-        program: r#"LangItem~"no-such-item""#,
-        surface_line: false,
         federated: false,
         features: &["entity_search", "search_text_not_exact_match"],
         min_node_results: 1,
@@ -141,8 +110,6 @@ out"#,
     },
     MatrixRow {
         id: "lang_search_brace_q",
-        program: r#"LangItem{q="Alpha"}"#,
-        surface_line: false,
         federated: false,
         features: &["entity_search", "search_brace_owns_text"],
         min_node_results: 1,
@@ -151,8 +118,6 @@ out"#,
     },
     MatrixRow {
         id: "lang_get_by_id",
-        program: r#"LangItem("i1")"#,
-        surface_line: false,
         federated: false,
         features: &["entity_get"],
         min_node_results: 1,
@@ -161,8 +126,6 @@ out"#,
     },
     MatrixRow {
         id: "lang_predicate_brace_owner",
-        program: r#"LangItem{owner="alice"}"#,
-        surface_line: false,
         federated: false,
         features: &["predicate_brace_equality"],
         min_node_results: 1,
@@ -171,8 +134,6 @@ out"#,
     },
     MatrixRow {
         id: "lang_predicate_brace_score_cmp",
-        program: r#"LangItem | where owner~"alice""#,
-        surface_line: false,
         federated: false,
         features: &["pipe_where"],
         min_node_results: 1,
@@ -181,8 +142,6 @@ out"#,
     },
     MatrixRow {
         id: "lang_limit_projection",
-        program: "projected = LangItem | take 1 | select id, title\nprojected",
-        surface_line: false,
         federated: false,
         features: &["pipe_take", "pipe_select"],
         min_node_results: 1,
@@ -191,8 +150,6 @@ out"#,
     },
     MatrixRow {
         id: "lang_sort_limit",
-        program: "LangItem | order by score desc | take 2 | select id, score",
-        surface_line: false,
         federated: false,
         features: &["pipe_order_by", "pipe_take", "pipe_select"],
         min_node_results: 1,
@@ -201,18 +158,19 @@ out"#,
     },
     MatrixRow {
         id: "lang_sort_asc",
-        program: "LangItem | order by score asc | take 3 | select id, score",
-        surface_line: false,
         federated: false,
-        features: &["pipe_order_by", "pipe_order_by_ascending", "pipe_take", "pipe_select"],
+        features: &[
+            "pipe_order_by",
+            "pipe_order_by_ascending",
+            "pipe_take",
+            "pipe_select",
+        ],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "score"],
         expect_live_error: None,
     },
     MatrixRow {
         id: "lang_aggregate",
-        program: "LangItem | summarize n=count()",
-        surface_line: true,
         federated: false,
         features: &["pipe_summarize"],
         min_node_results: 1,
@@ -221,8 +179,6 @@ out"#,
     },
     MatrixRow {
         id: "lang_aggregate_sugar_count",
-        program: "LangItem | summarize count=count()",
-        surface_line: true,
         federated: false,
         features: &["aggregate_sugar_count", "pipe_summarize"],
         min_node_results: 1,
@@ -231,8 +187,6 @@ out"#,
     },
     MatrixRow {
         id: "lang_aggregate_sum",
-        program: "LangItem | summarize t=sum(score)",
-        surface_line: true,
         federated: false,
         features: &["aggregate_sum", "pipe_summarize"],
         min_node_results: 1,
@@ -242,8 +196,6 @@ out"#,
     },
     MatrixRow {
         id: "lang_group_by",
-        program: "LangItem | summarize by owner n=count()",
-        surface_line: true,
         federated: false,
         features: &["pipe_summarize_by", "pipe_summarize_chain"],
         min_node_results: 1,
@@ -252,18 +204,18 @@ out"#,
     },
     MatrixRow {
         id: "lang_group_by_aggregate_chain",
-        program: "LangItem | summarize by owner, score n=count(), title=first(title)",
-        surface_line: true,
         federated: false,
-        features: &["pipe_summarize_chain", "pipe_summarize_by_multi", "agg_first_last"],
+        features: &[
+            "pipe_summarize_chain",
+            "pipe_summarize_by_multi",
+            "agg_first_last",
+        ],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "owner"],
         expect_live_error: None,
     },
     MatrixRow {
         id: "lang_group_by_sugar",
-        program: "LangItem | summarize by owner count=count()",
-        surface_line: true,
         federated: false,
         features: &["pipe_summarize_by_count", "pipe_summarize_by"],
         min_node_results: 1,
@@ -272,8 +224,6 @@ out"#,
     },
     MatrixRow {
         id: "lang_group_by_multi",
-        program: "LangItem | summarize by owner, score n=count()",
-        surface_line: true,
         federated: false,
         features: &["pipe_summarize_by_multi", "pipe_summarize_by"],
         min_node_results: 1,
@@ -282,8 +232,6 @@ out"#,
     },
     MatrixRow {
         id: "lang_search_then_group_by",
-        program: "rows = LangItem~\"matrix\"\nby_owner = rows | summarize by owner count=count()\nby_owner",
-        surface_line: false,
         federated: false,
         features: &["entity_search", "pipe_summarize_by", "search_then_group_by"],
         min_node_results: 1,
@@ -292,8 +240,6 @@ out"#,
     },
     MatrixRow {
         id: "lang_search_then_group_by_team_key",
-        program: "rows = LangItem~\"matrix\"{team_key=\"eng\"}\nby_team = rows | summarize by team_key count=count()\nby_team",
-        surface_line: false,
         federated: false,
         features: &["entity_search", "pipe_summarize_by", "search_then_group_by"],
         min_node_results: 1,
@@ -302,8 +248,6 @@ out"#,
     },
     MatrixRow {
         id: "lang_row_filter_brace",
-        program: "items = LangItem\nfiltered = items | where owner=\"alice\"\nfiltered",
-        surface_line: false,
         federated: false,
         features: &["pipe_where", "bindings_assignment"],
         min_node_results: 1,
@@ -312,8 +256,6 @@ out"#,
     },
     MatrixRow {
         id: "lang_program_return_binding_only_last",
-        program: "items = LangItem\nlimited = items | take 3 | select id, title",
-        surface_line: false,
         federated: false,
         features: &[
             "program_return_binding_only_last",
@@ -328,10 +270,6 @@ out"#,
     },
     MatrixRow {
         id: "lang_program_return_pipeline_filter_sort",
-        program: r#"items = LangItem
-filtered = items | where owner="alice"
-sorted = filtered | order by title | take 10 | select title, owner"#,
-        surface_line: false,
         federated: false,
         features: &[
             "program_return_pipeline_filter_sort",
@@ -348,10 +286,6 @@ sorted = filtered | order by title | take 10 | select title, owner"#,
     },
     MatrixRow {
         id: "lang_program_return_consecutive_writes",
-        program: r#"newbranch = LangItem.create(title="branch-a", score=1, owner="witness")
-newfile = LangItem.create(title="file-b", score=2, owner="witness")
-newbranch, newfile"#,
-        surface_line: false,
         federated: false,
         features: &[
             "program_return_consecutive_writes",
@@ -365,8 +299,6 @@ newbranch, newfile"#,
     },
     MatrixRow {
         id: "lang_row_filter_paren",
-        program: "items = LangItem\nfiltered = items | where owner=\"alice\"\nfiltered",
-        surface_line: false,
         federated: false,
         features: &["pipe_where", "bindings_assignment"],
         min_node_results: 1,
@@ -375,8 +307,6 @@ newbranch, newfile"#,
     },
     MatrixRow {
         id: "lang_with_mul",
-        program: "items = LangItem\nboosted = items | select id, boost = score * 2 | take 3\nboosted",
-        surface_line: false,
         federated: false,
         features: &["pipe_select_compute", "bindings_assignment", "pipe_take"],
         min_node_results: 1,
@@ -385,8 +315,6 @@ newbranch, newfile"#,
     },
     MatrixRow {
         id: "lang_with_div",
-        program: "items = LangItem\nhalved = items | select id, half = score / 2 | take 3\nhalved",
-        surface_line: false,
         federated: false,
         features: &["pipe_select_compute", "bindings_assignment", "pipe_take"],
         min_node_results: 1,
@@ -395,55 +323,58 @@ newbranch, newfile"#,
     },
     MatrixRow {
         id: "lang_with_concat",
-        program: r#"items = LangItem | where owner="alice"
-tagged = items | select tag = owner + owner | take 1
-tagged"#,
-        surface_line: false,
         federated: false,
-        features: &["pipe_select_compute", "bindings_assignment", "pipe_take", "pipe_where"],
+        features: &[
+            "pipe_select_compute",
+            "bindings_assignment",
+            "pipe_take",
+            "pipe_where",
+        ],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv"],
         expect_live_error: None,
     },
     MatrixRow {
         id: "lang_with_when_len",
-        program: r#"items = LangItem | where owner="alice"
-labeled = items | select label = when(len(owner)>0, owner, title) | take 1
-labeled"#,
-        surface_line: false,
         federated: false,
-        features: &["pipe_select_compute", "bindings_assignment", "pipe_take", "pipe_where"],
+        features: &[
+            "pipe_select_compute",
+            "bindings_assignment",
+            "pipe_take",
+            "pipe_where",
+        ],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv"],
         expect_live_error: None,
     },
     MatrixRow {
         id: "lang_where_literal_boolean_sugar",
-        program: r#"LangItem | where owner in ("alice", "bob") AND NOT (owner = "bob")"#,
-        surface_line: false,
         federated: false,
-        features: &["repair_literal_membership", "repair_boolean_filter", "pipe_where", "dry_live_parity"],
+        features: &[
+            "repair_literal_membership",
+            "repair_boolean_filter",
+            "pipe_where",
+            "dry_live_parity",
+        ],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "alice"],
         expect_live_error: None,
     },
     MatrixRow {
         id: "lang_where_boolean_rowset_sugar",
-        program: r#"alice = LangItem | where owner = "alice" | select owner
-LangItem | where owner in alice OR (owner = "alice" AND score >= 0)"#,
-        surface_line: false,
         federated: false,
-        features: &["repair_boolean_filter", "pipe_where_in_rowset", "pipe_where", "dry_live_parity"],
+        features: &[
+            "repair_boolean_filter",
+            "pipe_where_in_rowset",
+            "pipe_where",
+            "dry_live_parity",
+        ],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "alice"],
         expect_live_error: None,
     },
     MatrixRow {
         id: "lang_where_in_rowset",
-        program: r#"alice = LangItem | where owner = "alice" | select owner
-kept = LangItem | where owner in alice
-kept"#,
-        surface_line: false,
         federated: false,
         features: &[
             "pipe_where_in_rowset",
@@ -458,10 +389,6 @@ kept"#,
     },
     MatrixRow {
         id: "lang_where_not_in_rowset",
-        program: r#"alice = LangItem | where owner = "alice" | select owner
-drop = LangItem | where owner not in alice
-drop"#,
-        surface_line: false,
         federated: false,
         features: &[
             "pipe_where_not_in_rowset",
@@ -475,11 +402,6 @@ drop"#,
     },
     MatrixRow {
         id: "lang_where_not_in_universe_left",
-        program: r#"left = LangLane {shelf="alpha"}
-right = LangLaneStock
-kept = left | where title not in (right | select title)
-kept"#,
-        surface_line: false,
         federated: false,
         features: &[
             "pipe_where_not_in_universe",
@@ -495,11 +417,6 @@ kept"#,
     },
     MatrixRow {
         id: "lang_where_not_in_universe_right",
-        program: r#"left = LangLaneStock
-right = LangLane {shelf="alpha"}
-kept = left | where title not in (right | select title)
-kept"#,
-        surface_line: false,
         federated: false,
         features: &[
             "pipe_where_not_in_universe",
@@ -515,9 +432,6 @@ kept"#,
     },
     MatrixRow {
         id: "lang_where_in_rowset_paren",
-        program: r#"kept = LangItem | where owner in (LangItem | where owner = "alice" | select owner)
-kept"#,
-        surface_line: false,
         federated: false,
         features: &[
             "pipe_where_in_rowset",
@@ -531,12 +445,6 @@ kept"#,
     },
     MatrixRow {
         id: "lang_union_rowset",
-        program: r#"alice = LangItem | where owner = "alice" | select owner
-bob = LangItem | where owner = "bob" | select owner
-peers = alice | union bob
-kept = LangItem | where owner in peers
-kept"#,
-        surface_line: false,
         federated: false,
         features: &[
             "pipe_union_rowset",
@@ -551,12 +459,6 @@ kept"#,
     },
     MatrixRow {
         id: "lang_union_rowset_alias",
-        program: r#"sent = LangItem | where owner = "alice" | select email = owner
-recv = LangItem | where owner = "bob" | select email = owner
-peers = sent | union recv
-kept = LangItem | where owner in peers
-kept"#,
-        surface_line: false,
         federated: false,
         features: &[
             "pipe_union_rowset",
@@ -570,12 +472,6 @@ kept"#,
     },
     MatrixRow {
         id: "lang_union_rowset_alias_distinct",
-        program: r#"sent = LangItem | where owner = "alice" | select email = owner
-recv = LangItem | where owner = "bob" | select email = owner
-peers = sent | union recv | distinct
-kept = LangItem | where owner in (peers | select email)
-kept"#,
-        surface_line: false,
         federated: false,
         features: &[
             "pipe_union_rowset",
@@ -590,12 +486,6 @@ kept"#,
     },
     MatrixRow {
         id: "lang_union_rowset_alias_existing",
-        program: r#"recv = LangItem | where owner = "alice" | select owner
-sent = LangItem | where owner = "bob" | select title
-peers = recv | union (sent | select owner = title)
-kept = LangItem | where owner in peers
-kept"#,
-        surface_line: false,
         federated: false,
         features: &[
             "pipe_union_rowset",
@@ -610,11 +500,6 @@ kept"#,
     },
     MatrixRow {
         id: "lang_union_empty_right",
-        program: r#"kept = LangLane {shelf="alpha"} | select title
-none = LangLane {shelf="empty"} | select title
-peers = kept | union none
-peers"#,
-        surface_line: false,
         federated: false,
         features: &[
             "pipe_union_rowset",
@@ -628,8 +513,6 @@ peers"#,
     },
     MatrixRow {
         id: "lang_required_selection_default",
-        program: r#"LangLaneStock"#,
-        surface_line: false,
         federated: false,
         features: &["required_selection_default", "entity_query"],
         min_node_results: 1,
@@ -638,8 +521,6 @@ peers"#,
     },
     MatrixRow {
         id: "lang_required_selection_multi",
-        program: r#"LangLane {shelf="alpha"}"#,
-        surface_line: false,
         federated: false,
         features: &["required_selection_default", "entity_query"],
         min_node_results: 1,
@@ -648,8 +529,6 @@ peers"#,
     },
     MatrixRow {
         id: "lang_required_selection_empty",
-        program: r#"LangLane {shelf="empty"}"#,
-        surface_line: false,
         federated: false,
         features: &["required_selection_default", "entity_query"],
         min_node_results: 1,
@@ -658,12 +537,6 @@ peers"#,
     },
     MatrixRow {
         id: "lang_union_rowset_paren",
-        program: r#"alice = LangItem | where owner = "alice" | select owner
-grouped = ((alice))
-peers = (grouped | select owner) | union (LangItem | where owner = "bob" | select owner)
-kept = LangItem | where owner in peers
-kept"#,
-        surface_line: false,
         federated: false,
         features: &[
             "pipe_union_rowset",
@@ -678,10 +551,6 @@ kept"#,
     },
     MatrixRow {
         id: "lang_select_alias_where",
-        program: r#"items = LangItem
-renamed = items | select handle = owner, owner | where handle = "alice"
-renamed"#,
-        surface_line: false,
         federated: false,
         features: &[
             "pipe_select_alias_where",
@@ -695,9 +564,6 @@ renamed"#,
     },
     MatrixRow {
         id: "lang_relation_lines",
-        program: r#"lines = LangItem("i1").lines
-lines | select id, note"#,
-        surface_line: false,
         federated: false,
         features: &["relation_from_parent_get"],
         min_node_results: 1,
@@ -706,9 +572,6 @@ lines | select id, note"#,
     },
     MatrixRow {
         id: "lang_quoted_binding_literal",
-        program: r#"item = LangItem("i1")
-LangItem | where title = "item""#,
-        surface_line: false,
         federated: false,
         features: &[
             "quoted_string_literal",
@@ -722,9 +585,6 @@ LangItem | where title = "item""#,
     },
     MatrixRow {
         id: "lang_quoted_binding_field_literal",
-        program: r#"item = LangItem("i1")
-LangItem("i1").update(title="item.title", score=1, owner="alice")"#,
-        surface_line: false,
         federated: false,
         features: &[
             "quoted_string_literal",
@@ -738,8 +598,6 @@ LangItem("i1").update(title="item.title", score=1, owner="alice")"#,
     },
     MatrixRow {
         id: "lang_query_singleton",
-        program: "LangItem | take 5.singleton()",
-        surface_line: false,
         federated: false,
         features: &["collect_singleton"],
         min_node_results: 1,
@@ -748,8 +606,6 @@ LangItem("i1").update(title="item.title", score=1, owner="alice")"#,
     },
     MatrixRow {
         id: "lang_relation_tags_scoped",
-        program: r#"LangItem("i1").tags"#,
-        surface_line: false,
         federated: false,
         features: &[
             "relation_from_parent_get",

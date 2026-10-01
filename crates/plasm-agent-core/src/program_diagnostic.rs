@@ -855,3 +855,13 @@ item"#;
         );
     }
 }
+
+impl From<ProgramStageError> for plasm_runtime::ExecutionFailure {
+    fn from(error: ProgramStageError) -> Self {
+        Self::new(
+            plasm_runtime::FailureCause::Program,
+            "program_admission",
+            error.into_correction(),
+        )
+    }
+}

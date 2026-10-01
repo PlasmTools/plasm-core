@@ -82,12 +82,15 @@ pub(crate) fn build_prepared_validated_plan(
     executable: &ExecutablePlasmComp,
 ) -> Result<ValidatedPlan, String> {
     let mut validated = build_validated_plan_from_executable(comp, executable)?;
-    apply_read_budgets(&mut validated);
-    for node in validated.nodes_mut() {
-        if let ValidatedPlanNode::MapBody(map) = node {
-            apply_read_budgets(&mut map.plan);
+    fn prepare_scopes(plan: &mut ValidatedPlan) {
+        apply_read_budgets(plan);
+        for node in plan.nodes_mut() {
+            for nested in node.nested_plans_mut() {
+                prepare_scopes(nested);
+            }
         }
     }
+    prepare_scopes(&mut validated);
     Ok(validated)
 }
 
@@ -100,12 +103,23 @@ pub fn analyze_read_boundedness(plan: &Plan<ValidatedPlanState>) -> ReadBoundedn
         if !reachable.contains(n.id().as_str()) {
             continue;
         }
-        if let ValidatedPlanNode::MapBody(map) = n {
-            let nested = analyze_read_boundedness(map.plan.artifact());
+        for plan in n.nested_plans() {
+            let nested = analyze_read_boundedness(plan.artifact());
+            out.has_foreach_fanout_risk |= nested.has_foreach_fanout_risk;
             out.has_unbounded_read_root |= nested.has_unbounded_read_root;
             out.has_paginated_list_fetch_all_default |= nested.has_paginated_list_fetch_all_default;
-            out.has_relation_many_source_fanout |=
-                nested.has_relation_many_source_fanout || map.body.max_parents.get() > 1;
+            out.has_relation_many_source_fanout |= nested.has_relation_many_source_fanout;
+        }
+        if let ValidatedPlanNode::MapBody(map) = n {
+            out.has_foreach_fanout_risk |= matches!(
+                map.body.effect_class(),
+                crate::plasm_plan::EffectClass::Write | crate::plasm_plan::EffectClass::SideEffect
+            ) && map.body.max_parents.get() > 1
+                && !crate::plasm_plan::validated_source_is_static_singleton(
+                    plan,
+                    map.body.parent.source.as_str(),
+                );
+            out.has_relation_many_source_fanout |= map.body.max_parents.get() > 1;
         }
         if let ValidatedPlanNode::RelationTraversal(rel) = n {
             if rel.relation.source_cardinality == crate::plasm_plan::RelationSourceCardinality::Many
@@ -335,8 +349,8 @@ pub(crate) fn return_path_has_unbounded_relation_embed_hydrate(
 pub fn collect_plan_entity_names(plan: &Plan<ValidatedPlanState>) -> HashSet<String> {
     let mut out = HashSet::new();
     for n in &plan.nodes {
-        if let ValidatedPlanNode::MapBody(map) = n {
-            out.extend(collect_plan_entity_names(map.plan.artifact()));
+        for nested in n.nested_plans() {
+            out.extend(collect_plan_entity_names(nested.artifact()));
         }
         if let ValidatedPlanNode::Capture(capture) = n {
             out.insert(capture.entity.entity.clone());
@@ -362,6 +376,20 @@ pub fn collect_plan_entity_names(plan: &Plan<ValidatedPlanState>) -> HashSet<Str
 
 fn collect_entities_from_plan_value(value: &PlanValue, out: &mut HashSet<String>) {
     match value {
+        PlanValue::Quantified {
+            collection,
+            predicate,
+            ..
+        } => {
+            collect_entities_from_plan_value(collection, out);
+            collect_entities_from_plan_value(predicate, out);
+        }
+        PlanValue::Expression { expression } => {
+            let _: Result<_, std::convert::Infallible> = expression.try_map(|value| {
+                collect_entities_from_plan_value(value, out);
+                Ok(())
+            });
+        }
         PlanValue::EntityRefKey { entity, key, .. } => {
             out.insert(entity.clone());
             collect_entities_from_plan_value(key, out);

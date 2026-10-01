@@ -19,12 +19,13 @@ fn empty_cols(wires: &[&str]) -> RenderColumns {
 }
 
 fn render(
-    rows: &[serde_json::Value],
+    rows: &[plasm_core::ValueRow],
     cols: &RenderColumns,
     template: &str,
     collection_alias: Option<&OutputName>,
-) -> Result<Vec<serde_json::Value>, String> {
+) -> Result<Vec<plasm_core::ValueRow>, String> {
     render_compute(&RenderComputeInput {
+        output_name: "content",
         primary_rows: rows,
         columns: cols,
         template,
@@ -37,8 +38,8 @@ fn render(
 #[test]
 fn render_compute_emits_one_content_record_per_row() {
     let rows = vec![
-        serde_json::json!({ "name": "a" }),
-        serde_json::json!({ "name": "b" }),
+        crate::fixture_row!({ "name": "a" }),
+        crate::fixture_row!({ "name": "b" }),
     ];
     let cols = empty_cols(&["name"]);
     let out = render(&rows, &cols, "{{ name }}", None).expect("render");
@@ -46,8 +47,8 @@ fn render_compute_emits_one_content_record_per_row() {
     assert_eq!(
         out,
         vec![
-            serde_json::json!({ "content": "a" }),
-            serde_json::json!({ "content": "b" }),
+            crate::fixture_row!({ "content": "a" }),
+            crate::fixture_row!({ "content": "b" }),
         ]
     );
 }
@@ -62,12 +63,13 @@ fn render_compute_zero_rows_emits_empty_rowset() {
 #[test]
 fn render_compute_named_binding_available_without_implicit_rows() {
     let rows = vec![
-        serde_json::json!({ "name": "a" }),
-        serde_json::json!({ "name": "b" }),
+        crate::fixture_row!({ "name": "a" }),
+        crate::fixture_row!({ "name": "b" }),
     ];
     let cols = empty_cols(&["name"]);
     let items = OutputName::new("items").expect("alias");
     let out = render_compute(&RenderComputeInput {
+        output_name: "content",
         primary_rows: &rows,
         columns: &cols,
         template: "{{ name }} ({{ items | length }})",
@@ -80,8 +82,8 @@ fn render_compute_named_binding_available_without_implicit_rows() {
     assert_eq!(
         out,
         vec![
-            serde_json::json!({ "content": "a (2)" }),
-            serde_json::json!({ "content": "b (2)" }),
+            crate::fixture_row!({ "content": "a (2)" }),
+            crate::fixture_row!({ "content": "b (2)" }),
         ]
     );
 }
@@ -89,8 +91,8 @@ fn render_compute_named_binding_available_without_implicit_rows() {
 #[test]
 fn render_compute_p_symbol_alias_resolves_alongside_wire_name() {
     let rows = vec![
-        serde_json::json!({ "name": "a", "id": 1 }),
-        serde_json::json!({ "name": "b", "id": 2 }),
+        crate::fixture_row!({ "name": "a", "id": 1 }),
+        crate::fixture_row!({ "name": "b", "id": 2 }),
     ];
     let mut aliases = BTreeMap::new();
     aliases.insert("p23".into(), OutputName::new("name").expect("name"));
@@ -101,8 +103,8 @@ fn render_compute_p_symbol_alias_resolves_alongside_wire_name() {
     assert_eq!(
         out,
         vec![
-            serde_json::json!({ "content": "a (#1)" }),
-            serde_json::json!({ "content": "b (#2)" }),
+            crate::fixture_row!({ "content": "a (#1)" }),
+            crate::fixture_row!({ "content": "b (#2)" }),
         ]
     );
 }
@@ -110,8 +112,8 @@ fn render_compute_p_symbol_alias_resolves_alongside_wire_name() {
 #[test]
 fn render_compute_null_field_coalesces_with_or() {
     let rows = vec![
-        serde_json::json!({ "name": "a", "score": null }),
-        serde_json::json!({ "name": "b", "score": 42 }),
+        crate::fixture_row!({ "name": "a", "score": null }),
+        crate::fixture_row!({ "name": "b", "score": 42 }),
     ];
     let cols = empty_cols(&["name", "score"]);
     let out =
@@ -119,24 +121,24 @@ fn render_compute_null_field_coalesces_with_or() {
     assert_eq!(
         out,
         vec![
-            serde_json::json!({ "content": "a: —" }),
-            serde_json::json!({ "content": "b: 42" }),
+            crate::fixture_row!({ "content": "a: —" }),
+            crate::fixture_row!({ "content": "b: 42" }),
         ]
     );
 }
 
 #[test]
 fn render_compute_split_part_filter_matches_taught_minijinja() {
-    let rows = vec![serde_json::json!({ "blob": "alpha:beta:gamma" })];
+    let rows = vec![crate::fixture_row!({ "blob": "alpha:beta:gamma" })];
     let cols = empty_cols(&["blob"]);
     let out = render(&rows, &cols, "{{ blob | split_part(':', 1) }}", None)
         .expect("split_part is a shared Minijinja filter");
-    assert_eq!(out, vec![serde_json::json!({ "content": "beta" })]);
+    assert_eq!(out, vec![crate::fixture_row!({ "content": "beta" })]);
 }
 
 #[test]
 fn render_compute_propagates_minijinja_errors_with_row_position() {
-    let rows = vec![serde_json::json!({ "name": "a" })];
+    let rows = vec![crate::fixture_row!({ "name": "a" })];
     let cols = empty_cols(&["name"]);
     let err = render(&rows, &cols, "{{ missing }}", None).expect_err("strict undefined");
 
@@ -148,8 +150,8 @@ fn render_compute_propagates_minijinja_errors_with_row_position() {
 #[test]
 fn render_compute_fails_closed_on_first_row_error() {
     let rows = vec![
-        serde_json::json!({ "name": "a" }),
-        serde_json::json!({ "other": "b" }),
+        crate::fixture_row!({ "name": "a" }),
+        crate::fixture_row!({ "other": "b" }),
     ];
     let cols = empty_cols(&[]);
     let err = render(&rows, &cols, "{{ name }}", None).expect_err("row 1 missing name");
@@ -158,7 +160,7 @@ fn render_compute_fails_closed_on_first_row_error() {
 
 #[test]
 fn render_compute_preserves_unicode_and_whitespace() {
-    let rows = vec![serde_json::json!({
+    let rows = vec![crate::fixture_row!({
         "title": "Pokémon",
         "arrow": "→",
     })];
@@ -173,7 +175,7 @@ fn render_compute_preserves_unicode_and_whitespace() {
 
 #[test]
 fn render_compute_no_implicit_rows_variable() {
-    let rows = vec![serde_json::json!({ "name": "a" })];
+    let rows = vec![crate::fixture_row!({ "name": "a" })];
     let cols = empty_cols(&["name"]);
     let err = render(&rows, &cols, "{{ rows | length }}", None).expect_err("implicit rows is gone");
     assert!(err.contains("at row 0"), "{err}");
@@ -183,7 +185,7 @@ fn render_compute_no_implicit_rows_variable() {
 fn render_compute_matrix_sized_rows_within_wall_time_guard() {
     let started = std::time::Instant::now();
     let rows: Vec<_> = (0..100)
-        .map(|i| serde_json::json!({ "id": format!("i{i}"), "title": format!("t{i}") }))
+        .map(|i| crate::fixture_row!({ "id": format!("i{i}"), "title": format!("t{i}") }))
         .collect();
     let cols = empty_cols(&["id", "title"]);
     let out = render(&rows, &cols, "{{ id }}", None).expect("render");

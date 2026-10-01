@@ -1,0 +1,426 @@
+//! Python semantics are upstream-owned. This module describes boundary types
+//! and capability policy, never expression inference.
+use super::*;
+use plasm_core::value_contract::{ValueContract as Type, ValueShape};
+use ruff_python_ast::visitor::{self, Visitor};
+
+#[cfg(test)]
+pub(super) fn stubs(fields: &BTreeMap<String, Type>, cgs: &CGS) -> Result<String, String> {
+    stubs_in(fields, cgs, &BTreeMap::new())
+}
+pub(super) fn stubs_in(
+    fields: &BTreeMap<String, Type>,
+    cgs: &CGS,
+    catalogs: &BTreeMap<String, std::sync::Arc<CGS>>,
+) -> Result<String, String> {
+    let mut declarations = String::from("from typing import Never, Literal, TypeAlias, overload\nPlasmJson: TypeAlias = None | bool | int | float | str | list[PlasmJson] | dict[str, PlasmJson]\nPlasmRef: TypeAlias = bool | int | float | str | dict[str, PlasmRef]\n");
+    declarations.push_str(crate::python_money::STUBS);
+    let input = Type::record(fields.clone(), Default::default());
+    declarations.push_str(crate::python_datetime::PRELUDE);
+    declarations.push_str("import datetime as PlasmDatetime\n");
+    let ty = render(&input, cgs, catalogs, &mut declarations, 0)?;
+    declarations.push_str(&format!("PlasmInput: TypeAlias = {ty}\n"));
+    Ok(declarations)
+}
+pub(super) fn validate_member(name: &str) -> Result<(), String> {
+    let source = format!("{name} = None");
+    let parsed = ruff_python_parser::parse_module(&source)
+        .map_err(|_| format!("Python boundary field {name:?} is not an attribute identifier"))?;
+    if !matches!(parsed.suite().as_slice(), [Stmt::Assign(a)] if matches!(a.targets.as_slice(), [Expr::Name(n)] if n.id.as_str() == name))
+        || name.starts_with("__")
+    {
+        return Err(format!(
+            "Python boundary field {name:?} is not an attribute identifier"
+        ));
+    }
+    Ok(())
+}
+
+/// The same indexed-record contract is used by inference and compute admission.
+/// Literal keys retain their field contract; a dynamic string returns the field union.
+pub(super) fn record_index_members(fields: &[(String, String)]) -> String {
+    if fields.is_empty() {
+        return "    def __getitem__(self, key: str) -> Never: ...\n".into();
+    }
+    let mut out = String::new();
+    for (key, ty) in fields {
+        out.push_str(&format!(
+            "    @overload\n    def __getitem__(self, key: Literal[{}]) -> {ty}: ...\n",
+            serde_json::to_string(key).expect("string")
+        ));
+    }
+    let types = fields
+        .iter()
+        .map(|(_, ty)| format!("({ty})"))
+        .collect::<Vec<_>>()
+        .join(" | ");
+    out.push_str(&format!(
+        "    @overload\n    def __getitem__(self, key: str) -> {types}: ...\n"
+    ));
+    out
+}
+
+fn render(
+    t: &Type,
+    cgs: &CGS,
+    catalogs: &BTreeMap<String, std::sync::Arc<CGS>>,
+    out: &mut String,
+    depth: usize,
+) -> Result<String, String> {
+    if depth >= 64 {
+        return Err("Python contract depth exceeded".into());
+    }
+    let mut ty = match &t.shape {
+        ValueShape::Temporal { kind, .. } => format!("PlasmDatetime.{}", kind.python_name()),
+        ValueShape::Never => "Never".into(),
+        ValueShape::Null => "None".into(),
+        ValueShape::Union { variants } => variants
+            .iter()
+            .map(|v| render(v, cgs, catalogs, out, depth + 1))
+            .collect::<Result<Vec<_>, _>>()?
+            .join(" | "),
+        ValueShape::Array { element } => {
+            format!("list[{}]", render(element, cgs, catalogs, out, depth + 1)?)
+        }
+        ValueShape::Record { fields } | ValueShape::ObservedRecord { fields, .. } => {
+            use sha2::{Digest, Sha256};
+            let name = format!(
+                "PlasmRecord{:x}",
+                Sha256::digest(serde_json::to_vec(fields).map_err(|e| e.to_string())?)
+            );
+            if out.contains(&format!("class {name}:")) {
+                return Ok(if t.nullable {
+                    format!("{name} | None")
+                } else {
+                    name
+                });
+            }
+            let mut members = String::new();
+            let mut indexed = Vec::new();
+            for (field, value) in fields {
+                validate_member(field)?;
+                let ty = render(value, cgs, catalogs, out, depth + 1)?;
+                members.push_str(&format!("    {field}: {ty}\n"));
+                indexed.push((field.clone(), ty));
+            }
+            members.push_str(&record_index_members(&indexed));
+            out.push_str(&format!(
+                "class {name}:\n{}",
+                if members.is_empty() {
+                    "    pass\n"
+                } else {
+                    &members
+                }
+            ));
+            name
+        }
+        ValueShape::Scalar { field_type } => match field_type {
+            FieldType::Boolean => "bool",
+            FieldType::Integer => "int",
+            FieldType::Number => "float",
+            FieldType::MultiSelect => "list[str]",
+            FieldType::Date => {
+                return Err("temporal contract requires an explicit temporal shape".into())
+            }
+            FieldType::Money => "dict[str, PlasmJson]",
+            FieldType::EntityRef { .. } => "PlasmRef",
+            FieldType::Json | FieldType::Blob => "PlasmJson",
+            FieldType::Array => return Err("array contract requires an element type".into()),
+            _ => "str",
+        }
+        .into(),
+    };
+    if let Some(domain) = &t.domain {
+        let cgs = catalogs
+            .get(&domain.entry_id)
+            .map(AsRef::as_ref)
+            .unwrap_or(cgs);
+        if cgs.catalog_cgs_hash_hex() != domain.catalog_hash {
+            return Err("Python declaration catalog pin mismatch".into());
+        }
+        let value = cgs
+            .values
+            .get(domain.value_ref.as_str())
+            .ok_or("unknown Python value domain")?;
+        if let Some(tokens) = value.domain.enum_tokens() {
+            let literal = format!(
+                "Literal[{}]",
+                tokens
+                    .iter()
+                    .map(serde_json::to_string)
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| e.to_string())?
+                    .join(", ")
+            );
+            ty = if matches!(
+                t.shape,
+                ValueShape::Scalar {
+                    field_type: FieldType::MultiSelect
+                }
+            ) {
+                format!("list[{literal}]")
+            } else {
+                literal
+            };
+        }
+    }
+    Ok(if t.nullable {
+        format!("{ty} | None")
+    } else {
+        ty
+    })
+}
+
+pub(super) fn validate_policy(source: &str) -> Result<(), String> {
+    struct Policy<'a>(Option<String>, &'a str);
+    impl<'a> Visitor<'a> for Policy<'_> {
+        fn visit_stmt(&mut self, stmt: &'a Stmt) {
+            if matches!(stmt, Stmt::Import(_) | Stmt::ImportFrom(_)) {
+                if let Err(error) = crate::python_datetime::Imports::default().add(stmt, self.1) {
+                    self.0 = Some(error);
+                }
+            } else if matches!(stmt, Stmt::Global(_) | Stmt::Nonlocal(_)) {
+                self.0 = Some("compute policy forbids ambient state".into());
+            }
+            visitor::walk_stmt(self, stmt);
+        }
+        fn visit_expr(&mut self, expr: &'a Expr) {
+            if matches!(expr, Expr::Name(n) if matches!(n.id.as_str(), "open" | "input" | "print" | "eval" | "exec" | "compile" | "globals" | "locals" | "vars" | "getattr" | "setattr" | "delattr" | "__import__"))
+                || matches!(expr, Expr::Attribute(a) if a.attr.as_str().starts_with("__"))
+            {
+                self.0 =
+                    Some("pure compute policy forbids host IO and reflective authority".into());
+            }
+            visitor::walk_expr(self, expr);
+        }
+    }
+    let ast = ruff_python_parser::parse_module(source).map_err(|e| e.to_string())?;
+    let mut policy = Policy(None, source);
+    for stmt in ast.suite() {
+        policy.visit_stmt(stmt);
+    }
+    policy.0.map_or(Ok(()), Err)
+}
+
+pub(crate) async fn admit_bundle(
+    es: &crate::execute_session::ExecuteSession,
+    bundle: &crate::plasm_comp_bundle::PlasmCompBundle,
+) -> Result<(), crate::compilation_error::CompilationError> {
+    let prepared = crate::plan_prepare::prepare_executable_plan_for_session(
+        es,
+        &bundle.artifact().comp,
+        bundle.executable(),
+    )
+    .map_err(crate::program_diagnostic::ProgramStageError::plan)?;
+    let mut definitions = Vec::new();
+    let mut plans = vec![prepared.validated.nodes()];
+    while let Some(nodes) = plans.pop() {
+        for node in nodes {
+            for nested in node.nested_plans() {
+                plans.push(nested.nodes());
+            }
+            match node {
+                crate::plasm_plan::ValidatedPlanNode::Compute(c)
+                    if matches!(
+                        c.compute.op,
+                        plasm_core::plasm_monad::ComputeOp::Python { .. }
+                    ) =>
+                {
+                    validate_plan_compute(es, c, nodes)
+                        .map_err(crate::python_program_diagnostic::admission_error)?;
+                    let checked = check_op(es, &c.compute.op)
+                        .map_err(crate::python_program_diagnostic::admission_error)?;
+                    definitions.push((checked.definition, checked.stubs));
+                }
+                crate::plasm_plan::ValidatedPlanNode::Compute(c)
+                    if !matches!(
+                        c.compute.op,
+                        plasm_core::ComputeOp::Union { .. }
+                            | plasm_core::ComputeOp::MergeBranches { .. }
+                            | plasm_core::ComputeOp::Render { .. }
+                    ) =>
+                {
+                    let contract = crate::map_body_schema::row_operation_contract(
+                        es,
+                        nodes,
+                        &c.compute.source,
+                    )
+                    .map_err(crate::python_program_diagnostic::admission_error)?;
+                    let contract = plasm_core::SyntheticResultSchema::for_value(contract)
+                        .and_then(|s| s.row_contract())
+                        .map_err(crate::python_program_diagnostic::admission_error)?;
+                    let operation = plasm_core::row_plan::plan_node_from_compute(&c.compute.op)
+                        .map_err(|e| {
+                            crate::python_program_diagnostic::admission_error(e.to_string())
+                        })?;
+                    plasm_core::row_plan::contracts::output_contract(&contract, &operation)
+                        .map_err(crate::python_program_diagnostic::admission_error)?;
+                }
+                _ => {}
+            }
+        }
+    }
+    super::admission::check_definitions(definitions).await
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn upstream_nullable_and_branch_contracts() {
+        let declarations = "class Input:\n    optional: str | None\n    score: int\n";
+        for body in [
+            "return (row.optional or '').strip()",
+            "return str(row.score or '—')",
+            "return row.optional.upper() if row.optional is not None else ''",
+            "return str(-7)",
+            "return str(1.25)",
+        ] {
+            super::super::admission::check_definition(
+                &format!("def render(row: Input) -> str:\n    {body}\n"),
+                declarations,
+            )
+            .unwrap();
+        }
+        for body in [
+            "return row.optional.upper()",
+            "return hidden",
+            "return row.score",
+            "return row.absent",
+        ] {
+            assert!(
+                super::super::admission::check_definition(
+                    &format!("def render(row: Input) -> str:\n    {body}\n"),
+                    declarations
+                )
+                .is_err(),
+                "accepted {body}"
+            );
+        }
+    }
+    #[test]
+    fn profile_tracks_vendored_worker_dependency() {
+        let cargo = include_str!("../../Cargo.toml");
+        let revision = super::LANGUAGE_PROFILE
+            .strip_prefix("monty-")
+            .unwrap()
+            .strip_suffix("-typed-v9-money-v2-branches-v2")
+            .unwrap();
+        assert!(include_str!("../../../../vendor/README.md")
+            .contains(&format!("Initial vendored revision: `{revision}`")));
+        for dependency in ["monty-analysis", "monty", "monty-pool", "monty-types"] {
+            let declaration = cargo
+                .lines()
+                .find(|line| line.starts_with(&format!("{dependency} =")))
+                .unwrap();
+            assert!(
+                declaration.contains(&format!(
+                    "path = \"../../vendor/monty/crates/{dependency}\""
+                )),
+                "{dependency} must share the vendored Monty source"
+            );
+        }
+        let worker_build = include_str!("../../../../scripts/ci/build-monty-runtime.sh");
+        assert!(worker_build.contains("monty_root=\"${oss_root}/vendor/monty\""));
+        assert!(worker_build.contains("--path \"${monty_root}/crates/monty-runtime\""));
+    }
+}
+
+#[cfg(test)]
+#[path = "profile_tests.rs"]
+mod profile_tests;
+
+/// Keep annotation helpers (Literal, recursive aliases) inside the generated
+/// stub module, with an input alias distinct from the output contract.
+pub(super) fn input_type(
+    t: &Type,
+    cgs: &CGS,
+    catalogs: &BTreeMap<String, std::sync::Arc<CGS>>,
+    declarations: &mut String,
+) -> Result<String, String> {
+    let ty = render(t, cgs, catalogs, declarations, 0)?;
+    declarations.push_str(&format!("PlasmArgument: TypeAlias = {ty}\n"));
+    Ok("PlasmArgument".into())
+}
+
+pub(super) fn output_type(
+    t: &Type,
+    cgs: &CGS,
+    catalogs: &BTreeMap<String, std::sync::Arc<CGS>>,
+    declarations: &mut String,
+) -> Result<String, String> {
+    fn output(
+        t: &Type,
+        cgs: &CGS,
+        catalogs: &BTreeMap<String, std::sync::Arc<CGS>>,
+        out: &mut String,
+        depth: usize,
+    ) -> Result<String, String> {
+        if depth >= 64 {
+            return Err("Python output contract depth exceeded".into());
+        }
+        let ty = match &t.shape {
+            ValueShape::Record { fields } | ValueShape::ObservedRecord { fields, .. } => {
+                use sha2::{Digest, Sha256};
+                let name = format!(
+                    "PlasmOutput{:x}",
+                    Sha256::digest(serde_json::to_vec(&t.shape).map_err(|e| e.to_string())?)
+                );
+                let class = render(t, cgs, catalogs, out, depth)?;
+                if !out.contains(&format!("{name} = TypedDict")) {
+                    let mut members = Vec::new();
+                    for (key, value) in fields {
+                        let mut ty = output(value, cgs, catalogs, out, depth + 1)?;
+                        if matches!(&t.shape, ValueShape::ObservedRecord { optional_fields, .. } if optional_fields.contains(key))
+                        {
+                            ty = format!("NotRequired[{ty}]");
+                        }
+                        members.push(format!(
+                            "{}: {ty}",
+                            serde_json::to_string(key).map_err(|e| e.to_string())?
+                        ));
+                    }
+                    out.push_str(&format!(
+                        "{name} = TypedDict(\"{name}\", {{{}}})\n",
+                        members.join(", ")
+                    ));
+                }
+                format!("{class} | {name}")
+            }
+            ValueShape::Array { element } => {
+                format!(
+                    "{} | list[{}]",
+                    render(t, cgs, catalogs, out, depth)?,
+                    output(element, cgs, catalogs, out, depth + 1)?
+                )
+            }
+            ValueShape::Union { variants } => variants
+                .iter()
+                .map(|v| output(v, cgs, catalogs, out, depth + 1))
+                .collect::<Result<Vec<_>, _>>()?
+                .join(" | "),
+            _ => return render(t, cgs, catalogs, out, depth),
+        };
+        Ok(if t.nullable {
+            format!("{ty} | None")
+        } else {
+            ty
+        })
+    }
+    declarations.push_str("from typing import TypedDict, NotRequired\n");
+    let ty = output(t, cgs, catalogs, declarations, 0)?;
+    declarations.push_str(&format!("PlasmOutput: TypeAlias = {ty}\n"));
+    Ok("PlasmOutput".into())
+}
+
+pub(super) fn domain_aliases(
+    domains: &BTreeMap<String, Type>,
+    cgs: &CGS,
+    catalogs: &BTreeMap<String, std::sync::Arc<CGS>>,
+    declarations: &mut String,
+) -> Result<(), String> {
+    for (symbol, contract) in domains {
+        let ty = render(contract, cgs, catalogs, declarations, 0)?;
+        declarations.push_str(&format!("{symbol}: TypeAlias = {ty}\n"));
+    }
+    Ok(())
+}

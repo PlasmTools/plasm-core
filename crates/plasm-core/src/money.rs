@@ -121,6 +121,23 @@ impl<'de> Deserialize<'de> for MoneyWireFormat {
     }
 }
 
+/// Exact scaling entry point for language hosts. Decimal text avoids a binary
+/// floating-point round trip; currency and the existing Decimal precision are retained.
+pub fn scale_exact(value: &MoneyValue, factor: &str, divide: bool) -> Result<MoneyValue, String> {
+    let factor =
+        Decimal::from_str(factor).map_err(|e| format!("invalid exact money factor: {e}"))?;
+    let amount = if divide {
+        value.amount().checked_div(factor)
+    } else {
+        value.amount().checked_mul(factor)
+    }
+    .ok_or("money arithmetic overflow or division by zero")?;
+    Ok(MoneyValue::new(
+        amount.normalize(),
+        value.currency().map(str::to_owned),
+    ))
+}
+
 /// Decode-time coerce spec for one money field (amount format + optional sibling currency).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MoneyDecodeSpec {
@@ -244,6 +261,11 @@ impl MoneyValue {
     #[must_use]
     pub fn currency(&self) -> Option<&str> {
         self.currency.as_ref().map(CurrencyCode::as_str)
+    }
+
+    /// Transport encoding metadata retained by typed materialization.
+    pub fn stored_format(&self) -> Option<MoneyWireFormat> {
+        self.format
     }
 
     #[must_use]

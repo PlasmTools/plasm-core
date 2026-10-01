@@ -3,20 +3,22 @@
 //! **CEP-6:** each row job runs an independent graph branch cycle; merged results preserve
 //! source row order by `job.index` after parallel completion.
 
+use plasm_runtime::ExecutionFailure;
 use std::sync::Arc;
 
 use plasm_core::expr_parser::ParsedExpr;
 use plasm_core::PreflightToken;
 use plasm_runtime::{
-    CachedEntity, ExecutionResult, ExecutionSource, ExecutionStats, OperationAck,
-    OperationInvocationOutcome, OperationInvocationStatus, OperationLedger, ResultCoverage,
+    ExecutionResult, ExecutionSource, ExecutionStats, OperationAck, OperationInvocationOutcome,
+    OperationInvocationStatus, OperationLedger,
 };
 
-use super::plan_bounded_parallel::{bounded_parallel_map_partition, BoundedParallelConfig};
+use super::plan_bounded_parallel::{
+    bounded_parallel_map_partition, BatchAdmission, BoundedParallelConfig,
+};
 use crate::execute_session::ExecuteSession;
 use crate::http_execute::{run_parsed_plasm_line, trace_record_plasm_line};
 use crate::plan_execute_shared::PlanLineExecuteShared;
-use crate::plan_read_bounds::truncate_to_read_cap;
 use crate::server_state::PlasmHostState;
 use crate::trace_hub::McpPlasmTraceSink;
 use crate::trace_sink_emit::PlasmTraceContext;
@@ -91,7 +93,7 @@ pub(crate) struct PlanLineJobResult {
 pub(crate) struct PlanLineJobFailure {
     pub index: usize,
     pub parsed: ParsedExpr,
-    pub message: String,
+    pub message: ExecutionFailure,
     pub source_identity: Option<String>,
 }
 
@@ -102,13 +104,60 @@ pub(crate) struct FanoutJobBatch {
 
 #[derive(Clone)]
 pub(crate) struct PlanLineExecutionFold {
-    pub entities: Vec<CachedEntity>,
+    pub collections: Vec<plasm_runtime::execution::ExecutionCollection>,
+    pub read_cap: Option<usize>,
     pub request_fingerprints: Vec<String>,
     pub stats: ExecutionStats,
     pub source: ExecutionSource,
     pub displays: Vec<String>,
     pub operations: OperationLedger,
-    pub coverage: ResultCoverage,
+}
+
+impl PlanLineExecutionFold {
+    pub(crate) fn collection(
+        &self,
+        identity: plasm_core::collection_codec::CollectionIdentity,
+        parent: Option<&plasm_runtime::execution::ExecutionCollection>,
+    ) -> Result<
+        plasm_runtime::execution::ExecutionCollection,
+        plasm_core::collection_codec::CollectionFault,
+    > {
+        use plasm_core::collection_codec::{SharedRows, Transform};
+        use plasm_runtime::execution::{ExecutionCollection, PayloadResidency};
+        for child in &self.collections {
+            child.materialize(plasm_core::collection_codec::Demand::Observed)?;
+        }
+        let result = match parent {
+            Some(parent) => parent.flat_map(&identity, &self.collections)?,
+            None if self.collections.is_empty() => {
+                ExecutionCollection::evaluate(identity, &[], SharedRows::default())?
+            }
+            None => ExecutionCollection::derive(
+                identity,
+                &self.collections.iter().collect::<Vec<_>>(),
+                Transform::Concat,
+                PayloadResidency::Materialized(SharedRows::concat(
+                    self.collections
+                        .iter()
+                        .map(ExecutionCollection::resident_entities),
+                )),
+            )?,
+        };
+        if let Some(count) = self.read_cap {
+            let id = result.membership().identity().derived(&("take", count))?;
+            let rows = result
+                .resident_entities()
+                .select(0..count.min(result.count()))?;
+            ExecutionCollection::derive(
+                id,
+                &[&result],
+                Transform::Take(count),
+                PayloadResidency::Materialized(rows),
+            )
+        } else {
+            Ok(result)
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -145,35 +194,30 @@ pub(crate) fn fold_plan_line_results(
     stats: ExecutionStatsFold,
     collect_displays: bool,
 ) -> PlanLineExecutionFold {
-    let mut entities = Vec::new();
+    let mut collections = Vec::new();
     let mut displays = Vec::new();
     let mut request_fingerprints = Vec::new();
     let mut out_stats = ExecutionStats::default();
     let mut operations = OperationLedger::empty();
     let mut source = ExecutionSource::Cache;
-    let mut coverage = ResultCoverage::combine_all(results.iter().map(|r| r.result.coverage));
     for r in results {
         source = combine_execution_source(source, r.result.source);
         merge_execution_stats(&mut out_stats, &r.result.stats, stats);
         operations.merge(&r.result.operations);
         request_fingerprints.extend(r.result.request_fingerprints.clone());
-        entities.extend(r.result.entities.clone());
+        collections.push(r.result.collection.clone());
         if collect_displays {
             displays.push(crate::expr_display::expr_display(&r.parsed.expr));
         }
     }
-    truncate_to_read_cap(&mut entities, read_cap);
-    if let Some(cap) = read_cap {
-        coverage = plasm_runtime::coverage_after_explicit_take(coverage, cap, entities.len());
-    }
     PlanLineExecutionFold {
-        entities,
+        collections,
+        read_cap,
         request_fingerprints,
         stats: out_stats,
         source,
         displays,
         operations,
-        coverage,
     }
 }
 
@@ -191,6 +235,7 @@ pub(crate) struct RowFanoutPolicy {
     pub collect_displays: bool,
     pub read_cap: Option<usize>,
     pub concurrency: Option<usize>,
+    pub admission: BatchAdmission,
     /// Row application retains successful siblings when individual rows fail.
     pub best_effort: bool,
 }
@@ -204,12 +249,14 @@ impl RowFanoutPolicy {
             collect_displays: false,
             read_cap,
             concurrency: None,
+            admission: BatchAdmission::ReadAll,
             best_effort: false,
         }
     }
 
     #[must_use]
-    pub(crate) fn for_each(parallel_reads: bool, row_count: usize) -> Self {
+    pub(crate) fn for_each(admission: BatchAdmission, row_count: usize) -> Self {
+        let parallel_reads = matches!(admission, BatchAdmission::ReadAll);
         Self {
             preflight: PlanLinePreflight::PerJob,
             stats: ExecutionStatsFold::Telemetry,
@@ -220,7 +267,8 @@ impl RowFanoutPolicy {
             } else {
                 Some(1)
             },
-            best_effort: true,
+            admission,
+            best_effort: parallel_reads,
         }
     }
 
@@ -232,6 +280,7 @@ impl RowFanoutPolicy {
             collect_displays: true,
             read_cap: None,
             concurrency: Some(1),
+            admission: BatchAdmission::OrderedEffects,
             best_effort: false,
         }
     }
@@ -240,13 +289,13 @@ impl RowFanoutPolicy {
 #[must_use]
 pub(crate) fn empty_execution_fold() -> PlanLineExecutionFold {
     PlanLineExecutionFold {
-        entities: Vec::new(),
+        collections: Vec::new(),
+        read_cap: None,
         request_fingerprints: Vec::new(),
         stats: ExecutionStats::default(),
         source: ExecutionSource::Cache,
         displays: Vec::new(),
         operations: OperationLedger::empty(),
-        coverage: ResultCoverage::Unknown,
     }
 }
 
@@ -257,13 +306,13 @@ pub(crate) fn push_verified_row_job(
     row_index: usize,
     expr_label: String,
     parsed: ParsedExpr,
-) -> Result<(), String> {
+) -> Result<(), ExecutionFailure> {
     crate::execute_pipeline::PlasmPreflight::preflight_parsed_line(
         scoped_es,
         expr_label.as_str(),
         &parsed,
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(ExecutionFailure::from)?;
     jobs.push(PlanLineJob {
         index: row_index,
         expr_label,
@@ -319,7 +368,7 @@ pub(crate) async fn execute_row_fanout(
     sink: Option<&McpPlasmTraceSink>,
     plan_shared: Option<Arc<PlanLineExecuteShared>>,
     policy: RowFanoutPolicy,
-) -> Result<PlanLineExecutionFold, String> {
+) -> Result<PlanLineExecutionFold, ExecutionFailure> {
     if jobs.is_empty() {
         return Ok(empty_execution_fold());
     }
@@ -333,6 +382,7 @@ pub(crate) async fn execute_row_fanout(
         plan_shared,
         policy.preflight,
         policy.concurrency,
+        policy.admission,
     )
     .await?;
     let mut fold = fold_plan_line_results(
@@ -346,20 +396,52 @@ pub(crate) async fn execute_row_fanout(
     if batch.failures.is_empty() {
         return Ok(fold);
     }
-    if policy.best_effort {
+    if policy.best_effort
+        && batch
+            .failures
+            .iter()
+            .all(|f| f.message.recovery == plasm_runtime::RecoveryDisposition::RepairProgram)
+    {
         // At least one read/application row could not contribute its result.
         // A caller must not infer completeness from the surviving siblings.
-        fold.coverage = ResultCoverage::Partial;
+        let mut ordered: Vec<_> = batch
+            .completed
+            .iter()
+            .map(|result| (result.index, result.result.collection.clone()))
+            .collect();
+        for failure in &batch.failures {
+            ordered.push((
+                failure.index,
+                plasm_runtime::execution::ExecutionCollection::observe_for(
+                    scoped_es.cgs.as_ref(),
+                    &("failed_fanout", failure.index, &failure.parsed.expr),
+                    0,
+                    vec![],
+                    plasm_core::collection_codec::Observation::UnprovenPage,
+                )?,
+            ));
+        }
+        ordered.sort_by_key(|(index, _)| *index);
+        if ordered
+            .iter()
+            .enumerate()
+            .any(|(position, (index, _))| position != *index)
+        {
+            return Err(plasm_core::collection_codec::CollectionFault::Conservation.into());
+        }
+        fold.collections = ordered
+            .into_iter()
+            .map(|(_, collection)| collection)
+            .collect();
         return Ok(fold);
     }
-    let message = batch
+    let failure = batch
         .failures
-        .iter()
-        .map(|f| f.message.as_str())
-        .collect::<Vec<_>>()
-        .join("; ");
-    let wire = crate::output::http_execute_results_value(&fold_to_execution_result(&fold));
-    Err(format!("{message}\n{wire}"))
+        .into_iter()
+        .map(|f| f.message)
+        .reduce(ExecutionFailure::merge)
+        .expect("nonempty failures checked above");
+    Err(failure.with_effects(&fold.operations))
 }
 
 fn stamp_fanout_outcomes(
@@ -397,7 +479,7 @@ fn stamp_fanout_outcomes(
                 source_index: failure.index,
                 source_identity: failure.source_identity.clone(),
                 status: OperationInvocationStatus::Failed,
-                error: Some(failure.message.clone()),
+                error: Some(failure.message.to_string()),
             });
         }
     }
@@ -413,12 +495,19 @@ fn stamp_fanout_outcomes(
     }
 }
 
+#[cfg(test)]
 fn fold_to_execution_result(fold: &PlanLineExecutionFold) -> ExecutionResult {
     ExecutionResult {
-        count: fold.entities.len(),
-        entities: fold.entities.clone(),
+        collection: fold
+            .collection(
+                plasm_core::collection_codec::CollectionIdentity::for_untyped_observation(
+                    &"fold_fixture",
+                )
+                .unwrap(),
+                None,
+            )
+            .unwrap(),
         has_more: false,
-        coverage: fold.coverage,
         pagination_resume: None,
         paging_handle: None,
         source: fold.source,
@@ -446,33 +535,8 @@ fn merge_failed_job_operations(
     }
 }
 
-pub(crate) fn merge_fanout_job_results(
-    source: &mut ExecutionSource,
-    stats: &mut ExecutionStats,
-    request_fingerprints: &mut Vec<String>,
-    operations: &mut OperationLedger,
-    per_row: &mut [Vec<CachedEntity>],
-    results: &[PlanLineJobResult],
-    stats_fold: ExecutionStatsFold,
-) {
-    for r in results {
-        *source = combine_execution_source(*source, r.result.source);
-        merge_execution_stats(stats, &r.result.stats, stats_fold);
-        operations.merge(&r.result.operations);
-        request_fingerprints.extend(r.result.request_fingerprints.clone());
-        if r.index < per_row.len() {
-            per_row[r.index].extend(r.result.entities.clone());
-        }
-    }
-}
-
 pub(crate) fn sort_plan_line_job_results_by_index(results: &mut [PlanLineJobResult]) {
     results.sort_by_key(|r| r.index);
-}
-
-#[must_use]
-pub(crate) fn flatten_per_row_entities(per_row: Vec<Vec<CachedEntity>>) -> Vec<CachedEntity> {
-    per_row.into_iter().flatten().collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -486,7 +550,8 @@ pub(crate) async fn run_plan_line_jobs_parallel(
     plan_shared: Option<Arc<PlanLineExecuteShared>>,
     preflight: PlanLinePreflight,
     concurrency_override: Option<usize>,
-) -> Result<FanoutJobBatch, String> {
+    admission: BatchAdmission,
+) -> Result<FanoutJobBatch, ExecutionFailure> {
     if jobs.is_empty() {
         return Ok(FanoutJobBatch {
             completed: Vec::new(),
@@ -502,38 +567,39 @@ pub(crate) async fn run_plan_line_jobs_parallel(
     let plan_shared = plan_shared.clone();
     let cfg = BoundedParallelConfig::for_plan_http(concurrency_override);
     let preflight_mode = preflight;
-    let (mut completed, failures) = bounded_parallel_map_partition(jobs, cfg, move |job| {
-        let st = st.clone();
-        let scoped_es = scoped_es.clone();
-        let session_id = session_id.clone();
-        let trace_ctx = trace_ctx.clone();
-        let plan_shared = plan_shared.clone();
-        async move {
-            let parsed = job.parsed.clone();
-            let index = job.index;
-            let source_identity = job.source_identity.clone();
-            match run_plan_line_job(
-                &st,
-                &scoped_es,
-                &session_id,
-                plan_shared,
-                preflight_mode,
-                job,
-                trace_ctx.as_ref(),
-            )
-            .await
-            {
-                Ok(result) => Ok(result),
-                Err(message) => Err(PlanLineJobFailure {
-                    index,
-                    source_identity,
-                    parsed,
-                    message,
-                }),
+    let (mut completed, failures) =
+        bounded_parallel_map_partition(jobs, cfg, admission, move |job| {
+            let st = st.clone();
+            let scoped_es = scoped_es.clone();
+            let session_id = session_id.clone();
+            let trace_ctx = trace_ctx.clone();
+            let plan_shared = plan_shared.clone();
+            async move {
+                let parsed = job.parsed.clone();
+                let index = job.index;
+                let source_identity = job.source_identity.clone();
+                match run_plan_line_job(
+                    &st,
+                    &scoped_es,
+                    &session_id,
+                    plan_shared,
+                    preflight_mode,
+                    job,
+                    trace_ctx.as_ref(),
+                )
+                .await
+                {
+                    Ok(result) => Ok(result),
+                    Err(message) => Err(PlanLineJobFailure {
+                        index,
+                        source_identity,
+                        parsed,
+                        message,
+                    }),
+                }
             }
-        }
-    })
-    .await?;
+        })
+        .await?;
     sort_plan_line_job_results_by_index(&mut completed);
     if let Some(sink) = sink {
         for r in &completed {
@@ -562,7 +628,7 @@ async fn run_plan_line_job(
     preflight: PlanLinePreflight,
     job: PlanLineJob,
     trace: Option<&PlasmTraceContext>,
-) -> Result<PlanLineJobResult, String> {
+) -> Result<PlanLineJobResult, ExecutionFailure> {
     let PlanLineJob {
         index,
         expr_label,
@@ -586,7 +652,7 @@ async fn run_plan_line_job(
             plan_shared.as_deref(),
         )
         .await
-        .map_err(crate::execute_pipeline::display_run_line_error)?,
+        .map_err(ExecutionFailure::from)?,
         PlanLinePreflight::PerJob => {
             crate::http_execute::execute_plasm_parsed_expr(
                 st,
@@ -617,6 +683,7 @@ async fn run_plan_line_job(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use plasm_runtime::{CachedEntity, ResultCoverage};
     use proptest::prelude::*;
 
     fn test_entity(id: &str) -> CachedEntity {
@@ -642,10 +709,11 @@ mod tests {
             ))),
             source_identity: None,
             result: ExecutionResult {
-                count: 1,
-                entities: vec![test_entity(id)],
+                collection: crate::test_support::execution_fixtures::collection(
+                    vec![test_entity(id)],
+                    ResultCoverage::Unknown,
+                ),
                 has_more: false,
-                coverage: ResultCoverage::Unknown,
                 pagination_resume: None,
                 paging_handle: None,
                 source: ExecutionSource::Live,
@@ -667,8 +735,9 @@ mod tests {
         sort_plan_line_job_results_by_index(&mut results);
         let folded = fold_plan_line_results(&results, None, ExecutionStatsFold::Telemetry, false);
 
-        let refs: Vec<_> = folded
-            .entities
+        let result = fold_to_execution_result(&folded);
+        let refs: Vec<_> = result
+            .entities()
             .iter()
             .map(|e| e.reference.clone())
             .collect();
@@ -696,18 +765,19 @@ mod tests {
                 ))),
                 source_identity: None,
                 result: ExecutionResult {
-                    count: 1,
-                    entities: vec![CachedEntity {
-                        reference: plasm_core::Ref::new("E", "1"),
-                        fields: Default::default(),
-                        relations: Default::default(),
-                        last_updated: 0,
-                        version: 0,
-                        completeness: plasm_runtime::EntityCompleteness::Summary,
-                        unavailable_fields: Default::default(),
-                    }],
+                    collection: crate::test_support::execution_fixtures::collection(
+                        vec![CachedEntity {
+                            reference: plasm_core::Ref::new("E", "1"),
+                            fields: Default::default(),
+                            relations: Default::default(),
+                            last_updated: 0,
+                            version: 0,
+                            completeness: plasm_runtime::EntityCompleteness::Summary,
+                            unavailable_fields: Default::default(),
+                        }],
+                        ResultCoverage::Unknown,
+                    ),
                     has_more: false,
-                    coverage: ResultCoverage::Unknown,
                     pagination_resume: None,
                     paging_handle: None,
                     source: ExecutionSource::Live,
@@ -726,18 +796,19 @@ mod tests {
                 ))),
                 source_identity: None,
                 result: ExecutionResult {
-                    count: 1,
-                    entities: vec![CachedEntity {
-                        reference: plasm_core::Ref::new("E", "2"),
-                        fields: Default::default(),
-                        relations: Default::default(),
-                        last_updated: 0,
-                        version: 0,
-                        completeness: plasm_runtime::EntityCompleteness::Summary,
-                        unavailable_fields: Default::default(),
-                    }],
+                    collection: crate::test_support::execution_fixtures::collection(
+                        vec![CachedEntity {
+                            reference: plasm_core::Ref::new("E", "2"),
+                            fields: Default::default(),
+                            relations: Default::default(),
+                            last_updated: 0,
+                            version: 0,
+                            completeness: plasm_runtime::EntityCompleteness::Summary,
+                            unavailable_fields: Default::default(),
+                        }],
+                        ResultCoverage::Unknown,
+                    ),
                     has_more: false,
-                    coverage: ResultCoverage::Unknown,
                     pagination_resume: None,
                     paging_handle: None,
                     source: ExecutionSource::Live,
@@ -747,31 +818,43 @@ mod tests {
                 },
             },
         ];
-        results[0].result.coverage = ResultCoverage::Complete;
-        results[1].result.coverage = ResultCoverage::Complete;
+        results[0].result.collection = crate::test_support::execution_fixtures::collection(
+            results[0].result.entities().iter().cloned().collect(),
+            ResultCoverage::Complete,
+        );
+        results[1].result.collection = crate::test_support::execution_fixtures::collection(
+            results[1].result.entities().iter().cloned().collect(),
+            ResultCoverage::Complete,
+        );
         let folded =
             fold_plan_line_results(&results, Some(1), ExecutionStatsFold::Telemetry, false);
-        assert_eq!(folded.entities.len(), 1);
+        assert_eq!(fold_to_execution_result(&folded).count(), 1);
         assert_eq!(
-            folded.coverage,
+            fold_to_execution_result(&folded).coverage(),
             ResultCoverage::Complete,
             "satisfied relation take is Complete"
         );
         let mixed = vec![
             {
                 let mut r = test_job_result(0, "a");
-                r.result.coverage = ResultCoverage::Complete;
+                r.result.collection = crate::test_support::execution_fixtures::collection(
+                    r.result.entities().iter().cloned().collect(),
+                    ResultCoverage::Complete,
+                );
                 r
             },
             {
                 let mut r = test_job_result(1, "b");
-                r.result.coverage = ResultCoverage::Partial;
+                r.result.collection = crate::test_support::execution_fixtures::collection(
+                    r.result.entities().iter().cloned().collect(),
+                    ResultCoverage::Partial,
+                );
                 r
             },
         ];
         let mixed_fold = fold_plan_line_results(&mixed, None, ExecutionStatsFold::Telemetry, false);
         assert_eq!(
-            mixed_fold.coverage,
+            fold_to_execution_result(&mixed_fold).coverage(),
             ResultCoverage::Partial,
             "independently bounded reads must not flatten to Complete"
         );
@@ -789,7 +872,7 @@ mod tests {
     #[test]
     fn empty_execution_fold_is_cache_sourced() {
         let fold = empty_execution_fold();
-        assert!(fold.entities.is_empty());
+        assert!(fold_to_execution_result(&fold).entities().is_empty());
         assert!(fold.operations.is_empty());
         assert_eq!(fold.source, ExecutionSource::Cache);
     }
@@ -801,10 +884,11 @@ mod tests {
         source: ExecutionSource,
     ) -> ExecutionResult {
         ExecutionResult {
-            count: 0,
-            entities: vec![],
+            collection: crate::test_support::execution_fixtures::collection(
+                vec![],
+                ResultCoverage::Unknown,
+            ),
             has_more: false,
-            coverage: ResultCoverage::Unknown,
             pagination_resume: None,
             paging_handle: None,
             source,
@@ -960,7 +1044,7 @@ mod tests {
                     PlanLineJobFailure {
                         index: *index,
                         parsed: job.parsed,
-                        message: format!("rejected-{index}"),
+                        message: ExecutionFailure::new(plasm_runtime::FailureCause::Upstream, "upstream_rejection", format!("rejected-{index}")),
                         source_identity: Some(format!("item_id={index}")),
                     }
                 })

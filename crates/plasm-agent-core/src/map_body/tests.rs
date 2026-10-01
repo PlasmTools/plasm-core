@@ -62,7 +62,7 @@ fn map_body_parent_composition_runs_as_one_comp() {
             PlasmStepPayload::MapBody(_)
         ));
         assert_eq!(
-            run.return_steps[0].result.coverage,
+            run.return_steps[0].result.coverage(),
             plasm_runtime::ResultCoverage::Complete
         );
     });
@@ -84,7 +84,7 @@ fn map_body_empty_parents_and_hard_budget() {
                     "not_invoked"
                 );
             } else {
-                assert!(run.unwrap_err().contains("budget exceeded"));
+                assert!(run.unwrap_err().diagnostic().contains("budget exceeded"));
             }
             assert_eq!(*calls.lock().unwrap(), vec!["/items"]);
         }
@@ -109,7 +109,7 @@ fn map_body_preflight_rejects_corruption_before_any_read() {
                 unreachable!()
             };
             match corruption {
-                0 => *entity = "Item".into(),
+                0 => *entity = Some("Item".into()),
                 1 => *source = source.replace("tag.label", "tag.absent"),
                 2 => *catalog_hash = "wrong".into(),
                 3 => body.parent.entity = owner("Tag"),
@@ -122,11 +122,15 @@ fn map_body_preflight_rejects_corruption_before_any_read() {
                         .remove(&id("parent"));
                 }
             }
-            let result = compose(root, body).and_then(|bundle| {
-                evaluate_plasm_comp_dry(&es, &bundle)
-                    .map(|_| ())
-                    .map_err(|e| e.to_string())
-            });
+            let result = match compose(root, body) {
+                Ok(bundle) => match evaluate_plasm_comp_dry(&es, &bundle) {
+                    Ok(_) => crate::python_compute::admit_bundle(&es, &bundle)
+                        .await
+                        .map_err(|error| error.to_string()),
+                    Err(error) => Err(error.to_string()),
+                },
+                Err(error) => Err(error),
+            };
             assert!(result.is_err(), "corruption {corruption}");
         }
         assert!(calls.lock().unwrap().is_empty());
@@ -187,18 +191,14 @@ fn map_body_nested_identity_and_schedule_are_sealed() {
     });
 }
 #[test]
-fn map_body_partial_child_fails_and_preserves_empty_child() {
+fn map_body_unproven_child_fails_and_preserves_empty_child() {
     on_runtime(async {
-        let (es, host, calls) = fixture(3);
-        let (root, mut body) = program(&es);
-        let PlasmStepPayload::Invoke(child) = body.body.steps.get_mut("children").unwrap() else {
-            unreachable!()
-        };
-        child.page_size = Some(1);
+        let (es, host, calls) = fixture_with_unproven_child(3);
+        let (root, body) = program(&es);
         let bundle = compose(root, body).unwrap();
         let error = execute(&es, &host, &bundle).await.unwrap_err();
-        assert!(error.contains("complete collection coverage"), "{error}");
-        assert!(error.contains("occurrence 2"), "{error}");
+        assert!(error.code == "collection_incomplete", "{error}");
+        assert_eq!(error.occurrence_path, vec![2]);
         assert!(calls.lock().unwrap().iter().any(|p| p == "/items/i2/tags"));
     });
 }
@@ -274,7 +274,7 @@ fn map_body_cancellation_stops_remaining_occurrences() {
         )
         .await
         .unwrap_err();
-        assert!(error.contains("cancelled"), "{error}");
+        assert!(error.diagnostic().contains("cancelled"), "{error}");
         assert_eq!(*calls.lock().unwrap(), vec!["/items", "/items/i0/tags"]);
     });
 }
@@ -427,3 +427,5 @@ fn map_body_captured_relation_uses_real_parent_identity() {
 
 mod live_demo;
 mod streaming;
+
+mod nested;

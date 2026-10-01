@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { createPlasmTools } from "../src/tools/plasm-tools.js";
+import { buildDefaultSystemLiturgy } from "../src/prompts/index.js";
 import { AgentRuntime } from "../src/runtime/agent-runtime.js";
 import { LocalArchiveStore } from "../src/archive/index.js";
 import type { PlasmEngine } from "../src/engine/napi-binding.js";
-import { pinLocalArtifactImageSync, runArtefactTransform } from "../src/tools/artifact-process.js";
 import { sessionCases } from "./test-session-contract.js";
 
 const root = await mkdtemp(path.join(tmpdir(), "plasm-artifact-context-"));
@@ -27,7 +28,6 @@ try {
   // Install a typed session fixture without exercising unrelated discovery.
   Reflect.set(runtime, "workflowSession", session);
   let previousRun: string | undefined;
-  let previousRead: string | undefined;
   for (const size of [0, 1, 32, 3240]) {
     snapshot = { entities: Array.from({ length: size }, (_, i) => ({
       id: i % 7, content: `ARTIFACT_ONLY_${i}: 漢字🦾\n${"x".repeat(256)}`,
@@ -35,26 +35,16 @@ try {
     const run = await runtime.plasmRun({ logicalSessionRef: session.logicalSessionRef, runRef: "pc0" });
     assert.ok(run.startsWith(message), "native response must be preserved");
     assert.ok(!run.includes("ARTIFACT_ONLY_"));
-    const read = await runtime.readRunArtifact({ logicalSessionRef: session.logicalSessionRef, runId });
-    assert.ok(!read.includes("ARTIFACT_ONLY_"));
-    assert.ok(!read.includes("```json"));
-    if (previousRun !== undefined) assert.equal(run, previousRun, "artifact size/content cannot affect run response");
-    if (previousRead !== undefined) assert.equal(read, previousRead, "artifact size/content cannot affect read response");
+    if (previousRun !== undefined) assert.equal(run, previousRun, "snapshot size cannot affect tool response");
     previousRun = run;
-    previousRead = read;
-    const file = read.match(/^File: (.+)$/m)?.[1];
-    assert.ok(file);
+    const file = `artefacts/${session.logicalSessionRef}/${runId}.json`;
     assert.deepEqual(JSON.parse(await readFile(path.join(root, "work", file), "utf8")), snapshot);
     assert.deepEqual((await archive.getRun(runId, session.logicalSessionRef))?.native_snapshot, snapshot);
-    assert.equal(runtime.hasMaterializedArtefact(), true);
   }
-  if (process.env.PLASM_TEST_ARTIFACT_EXECUTION === "1") {
-    assert.ok(pinLocalArtifactImageSync());
-    const locator = previousRead!.match(/^File: (.+)$/m)![1]!;
-    const derived = await runArtefactTransform(path.join(root, "work"),
-      "export default ([snapshot]: {entities: {id: number}[]}[]) => ({count: snapshot.entities.length, first: snapshot.entities[0].id, last: snapshot.entities.at(-1)?.id})", [locator]);
-    assert.deepEqual(JSON.parse(derived), {count: 3240, first: 0, last: 5});
-    assert.ok(!derived.includes("ARTIFACT_ONLY_"));
+  assert.deepEqual(Object.keys(createPlasmTools(runtime)).sort(), ["plasm", "plasm_context", "plasm_run"]);
+  for (const prompt of [buildDefaultSystemLiturgy(), buildDefaultSystemLiturgy({includeEvalTerminals: true})]) {
+    assert.match(prompt, /@compute/);
+    assert.doesNotMatch(prompt, /plasm_read_run_artifact|plasm_artefact_transform|resources\/read/);
   }
-  console.log("PASS: artifact payloads never enter tool context; full ordered Unicode data survives in files and archive");
+  console.log("PASS: snapshots stay outside agent context; ordered Unicode evidence survives in host archives");
 } finally { await rm(root, { recursive: true, force: true }); }

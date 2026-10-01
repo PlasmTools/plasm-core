@@ -7,8 +7,8 @@ use plasm_core::{Ref, WriteOutcome, CGS};
 
 use crate::cache::{CachedEntity, EntityCompleteness};
 use crate::execution::{
-    current_timestamp, ExecutionResult, ExecutionSource, ExecutionStats, OperationLedger,
-    ResultCoverage,
+    current_timestamp, ExecutionCollection, ExecutionResult, ExecutionSource, ExecutionStats,
+    OperationLedger,
 };
 use crate::view_plan::{
     build_view_row_reference, load_view_dag, node_fields_for_row, prepare_view_node,
@@ -73,8 +73,9 @@ fn execution_result_from_view_row(
     stats: ExecutionStats,
     fingerprints: Vec<String>,
     any_live: bool,
-    coverage: ResultCoverage,
-) -> ExecutionResult {
+    identity: plasm_core::collection_codec::CollectionIdentity,
+    inputs: &[&ExecutionCollection],
+) -> Result<ExecutionResult, RuntimeError> {
     let cached = CachedEntity::from_decoded(
         row_ref,
         output_fields,
@@ -82,11 +83,9 @@ fn execution_result_from_view_row(
         current_timestamp(),
         EntityCompleteness::Complete,
     );
-    ExecutionResult {
-        entities: vec![cached],
-        count: 1,
+    Ok(ExecutionResult {
+        collection: ExecutionCollection::evaluate(identity, inputs, vec![cached].into())?,
         has_more: false,
-        coverage,
         pagination_resume: None,
         paging_handle: None,
         source: if any_live {
@@ -97,7 +96,7 @@ fn execution_result_from_view_row(
         stats,
         request_fingerprints: fingerprints,
         operations: OperationLedger::empty(),
-    }
+    })
 }
 
 fn finalize_view_dag_execution(
@@ -122,15 +121,19 @@ fn finalize_view_dag_execution(
         &write_outcomes,
         cgs,
     )?;
-    Ok(execution_result_from_view_row(
+    execution_result_from_view_row(
         output_fields,
         row_ref,
         relation_refs,
         stats,
         fingerprints,
         any_live,
-        ResultCoverage::combine_all(node_results.values().map(|r| r.coverage)),
-    ))
+        plasm_core::collection_codec::CollectionIdentity::for_expression(cgs, &(view, &scope), 0)?,
+        &node_results
+            .values()
+            .map(|r| &r.collection)
+            .collect::<Vec<_>>(),
+    )
 }
 
 /// Proof + execution finalize for test/fixture walks.
@@ -168,9 +171,13 @@ fn finalize_view_dag_with_proof(
         stats,
         fingerprints,
         any_live,
-        ResultCoverage::combine_all(node_results.values().map(|r| r.coverage)),
-    );
-    let cached = &execution.entities[0];
+        plasm_core::collection_codec::CollectionIdentity::for_expression(cgs, &(view, &scope), 0)?,
+        &node_results
+            .values()
+            .map(|r| &r.collection)
+            .collect::<Vec<_>>(),
+    )?;
+    let cached = &execution.entities()[0];
     let proof = ViewRunProof {
         scope,
         node_results,
@@ -268,23 +275,33 @@ impl ViewDagWalkState {
             &res,
         );
         self.node_fields
-            .insert(node_id.clone(), node_fields_for_row(res.entities.first()));
+            .insert(node_id.clone(), node_fields_for_row(res.entities().first()));
         self.node_results.insert(node_id.clone(), res);
         if let Some(o) = outcome {
             self.write_outcomes.insert(node_id, o);
         }
     }
 
-    fn record_skipped(&mut self, node_id: String) {
+    fn record_skipped(&mut self, node_id: String, cgs: &CGS) -> Result<(), RuntimeError> {
         self.write_outcomes
             .insert(node_id.clone(), WriteOutcome::Skipped);
         self.node_results.insert(
-            node_id,
+            node_id.clone(),
             ExecutionResult {
-                entities: vec![],
-                count: 0,
+                collection: ExecutionCollection::evaluate(
+                    plasm_core::collection_codec::CollectionIdentity::for_expression(
+                        cgs,
+                        &("skipped_view_node", &node_id),
+                        0,
+                    )?,
+                    &self
+                        .node_results
+                        .values()
+                        .map(|r| &r.collection)
+                        .collect::<Vec<_>>(),
+                    vec![].into(),
+                )?,
                 has_more: false,
-                coverage: ResultCoverage::Complete,
                 pagination_resume: None,
                 paging_handle: None,
                 source: ExecutionSource::Cache,
@@ -293,6 +310,7 @@ impl ViewDagWalkState {
                 operations: OperationLedger::empty(),
             },
         );
+        Ok(())
     }
 
     fn into_outcome(self, scope: IndexMap<String, plasm_core::Value>) -> ViewDagWalkOutcome {
@@ -350,7 +368,7 @@ async fn dispatch_prepared_async<R: ViewNodeRunnerAsync + ?Sized>(
 }
 
 fn write_outcome_from_result(res: &ExecutionResult) -> WriteOutcome {
-    res.entities
+    res.entities()
         .first()
         .and_then(|e| e.fields.get("outcome"))
         .and_then(|v| v.to_value().as_str().map(str::to_string))
@@ -370,7 +388,7 @@ fn walk_view_nodes_sync<R: ViewNodeRunner>(
     let run_ctx = loaded.run_ctx();
     for node in &loaded.view.nodes {
         if !view_node_should_run(node.when.as_ref(), &walk.node_results) {
-            walk.record_skipped(node.id.clone());
+            walk.record_skipped(node.id.clone(), loaded.cgs)?;
             continue;
         }
         if let Some(traverse) = &node.traverse {
@@ -400,7 +418,7 @@ async fn walk_view_nodes_async<R: ViewNodeRunnerAsync + ?Sized>(
     let run_ctx = loaded.run_ctx();
     for node in &loaded.view.nodes {
         if !view_node_should_run(node.when.as_ref(), &walk.node_results) {
-            walk.record_skipped(node.id.clone());
+            walk.record_skipped(node.id.clone(), loaded.cgs)?;
             continue;
         }
         if let Some(traverse) = &node.traverse {

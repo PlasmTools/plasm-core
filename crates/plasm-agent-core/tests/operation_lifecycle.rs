@@ -16,17 +16,17 @@ use plasm_core::OperationHandle;
 use uuid::Uuid;
 
 #[tokio::test]
-async fn cep_7_failed_operation_surfaces_verbatim_error() {
+async fn cep_7_failed_operation_preserves_typed_error() {
     let es = empty_session();
     let handle = begin_plain_operation(es.as_ref());
-    es.finalize_operation_failed(&handle, GRAPH_WRITE_CONFLICT_USER_MESSAGE.to_string(), None);
+    es.finalize_operation_failed(&handle, GRAPH_WRITE_CONFLICT_USER_MESSAGE.into(), None);
     let err = resolve_terminal_plan_run(es.as_ref(), None, None, &handle)
         .await
         .expect_err("terminal failed");
     assert!(matches!(err, OperationError::OperationFailed { .. }));
     assert_eq!(
         err.detail(),
-        format!("operation `{handle}` failed: {GRAPH_WRITE_CONFLICT_USER_MESSAGE}")
+        format!("operation `{handle}` failed: unclassified_execution_failure: Stop")
     );
     assert_eq!(err.code(), OperationError::CODE_OPERATION_FAILED);
 }
@@ -52,7 +52,7 @@ async fn cep_8_await_propagates_terminal_failure() {
     let fail_msg_bg = fail_msg.to_string();
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(30)).await;
-        es_bg.finalize_operation_failed(&handle_bg, fail_msg_bg, None);
+        es_bg.finalize_operation_failed(&handle_bg, fail_msg_bg.into(), None);
     });
     let err = await_operation_terminal(TerminalAwaitContext {
         es,
@@ -72,7 +72,7 @@ async fn cep_8_await_propagates_terminal_failure() {
     })
     .await
     .expect_err("failed op");
-    assert!(matches!(err, AwaitError::Operation(ref m) if m.contains(fail_msg)));
+    assert!(matches!(err, AwaitError::Operation(ref m) if m.diagnostic().contains(fail_msg)));
 }
 
 #[tokio::test]
@@ -120,4 +120,55 @@ async fn cep_8_await_returns_success_when_finalized() {
     .await
     .expect("success");
     assert_eq!(out.run_markdown.as_deref(), Some("## done"));
+}
+
+#[tokio::test]
+async fn execution_failure_async_continuation_preserves_cause_and_dispatch() {
+    let es = empty_session();
+    let handle = begin_plain_operation(es.as_ref());
+    let failure = plasm_runtime::ExecutionFailure::new(
+        plasm_runtime::FailureCause::ResponseContract,
+        "response_contract_violation",
+        "service rejected the requested state",
+    )
+    .at("map/write", vec![1, 2])
+    .with_catalog(&"a".repeat(64))
+    .with_dispatches(vec![plasm_runtime::MutationDispatch {
+        operation: plasm_runtime::OperationIdentity {
+            entry_id: "fixture".into(),
+            capability: "write".into(),
+        },
+        request_fingerprint: "b".repeat(64),
+        status: plasm_runtime::MutationDispatchStatus::ResponseReceived,
+    }]);
+    es.finalize_operation_failed(&handle, failure.clone(), None);
+    let error = await_operation_terminal(TerminalAwaitContext {
+        es,
+        st: minimal_host(),
+        handle,
+        trace: plasm_agent_core::trace_sink_emit::PlasmTraceContext {
+            trace_id: Uuid::nil(),
+            call_index: None,
+            mcp_session_id: None,
+            logical_session_id: None,
+            logical_session_ref: None,
+        },
+        cfg: AwaitConfig {
+            poll_interval: Duration::from_millis(1),
+            max_wait: Duration::from_secs(2),
+        },
+    })
+    .await
+    .expect_err("failed operation must remain failed");
+    let AwaitError::Operation(observed) = error else {
+        panic!("must not time out")
+    };
+    assert_eq!(observed, failure);
+    assert_eq!(
+        observed.recovery,
+        plasm_runtime::RecoveryDisposition::ReconcileEffects
+    );
+    assert!(serde_json::to_string(&observed)
+        .unwrap()
+        .contains("service rejected the requested state"));
 }

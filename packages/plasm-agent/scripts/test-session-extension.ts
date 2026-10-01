@@ -9,10 +9,11 @@ import type { PlasmEngine } from "../src/engine/napi-binding.js";
 import { type IntentProvenance } from "../src/runtime/session-contract.js";
 import { routingPacketSchema } from "../src/engine/routing.js";
 
-export async function checkSessionExtension(observe: (intent: string) => Promise<void> = async () => { }): Promise<void> {
+export async function checkSessionExtension(observe: (intent: string) => Promise<void> = async () => { }, exercise?: (runtime: AgentRuntime, ref: string, engine: PlasmEngine) => Promise<void>): Promise<void> {
   const root = await mkdtemp(path.join(tmpdir(), "plasm-extension-"));
   const routed: IntentProvenance[] = [];
   let insufficient = false;
+  let malformedTeaching = false;
   const provenanceBySession = new Map<string, IntentProvenance>();
   const unused = async (): Promise<never> => { throw new Error("unexpected engine operation"); };
   const engine: PlasmEngine = {
@@ -39,10 +40,14 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
           },
           matching: {matches},
           recovery: insufficient ? {candidates:[{reference:{catalog:"matrix",capability:"read"},choice:"unrelated",relevance_probability:0}],available_catalogs:[],guidance:"No relevant capability in this bounded packet."}:null,
-          closure: insufficient ? null : { business: [{ catalog: "matrix", capability: "read" }], input_sources: [], prerequisites: [], acquisitions: [], edges: [] },
+          closure: insufficient ? (sessionId ? { business: [], input_sources: [], prerequisites: [], acquisitions: [], edges: [] } : null) : { business: [{ catalog: "matrix", capability: "read" }], input_sources: [], prerequisites: [], acquisitions: [], edges: [] },
         },
-        teaching: insufficient ? null : { prompt: "e1\tRecord", delta_refs: ["matrix:Record"] },
+        teaching: insufficient ? (sessionId ? { prompt: "", delta_refs: [] } : null) : { prompt: "e1\tRecord", delta_refs: ["matrix:Record"] },
       });
+      if (malformedTeaching) {
+        packet.teaching = { prompt: "", delta_refs: ["matrix:Record"] };
+        return packet;
+      }
       const previous = provenanceBySession.get(pin);
       if (previous) {
         assert.deepEqual(provenance.nodes.slice(0, previous.nodes.length), previous.nodes,
@@ -64,7 +69,11 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
     insufficient = true;
     const unresolved = await partialRuntime.plasmContext({ intent: "Find a related record",  sessionMode: "extend", logicalSessionRef: partialRef });
     assert.ok(unresolved.includes("No relevant capability"));
-    assert.equal((await partialRuntime.sessionManager.getByLogicalRef(partialRef))?.teachingPrompt, beforePartial.teachingPrompt);
+    const afterEmpty = await partialRuntime.sessionManager.getByLogicalRef(partialRef);
+    assert.equal(afterEmpty?.teachingPrompt, beforePartial.teachingPrompt);
+    assert.deepEqual(afterEmpty?.waves, beforePartial.waves, "empty deltas do not invent teaching waves");
+    assert.deepEqual(afterEmpty?.seeds, beforePartial.seeds);
+    assert.equal(afterEmpty?.intentProvenance.nodes.at(-1)?.intent, "Find a related record");
     insufficient = false;
     routed.length = 0;
     const initial = "Only selected records may be changed.";
@@ -136,6 +145,12 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
       intent: "Same new workflow",
     })));
     assert.notEqual(newWorkflows[0]!.match(/l_[A-Za-z0-9_-]{22}/)?.[0], newWorkflows[1]!.match(/l_[A-Za-z0-9_-]{22}/)?.[0]);
+    malformedTeaching = true;
+    await assert.rejects(() => runtime.plasmContext({ intent: "Malformed initial teaching" }), /canonical teaching/);
+    const beforeMalformed = await runtime.sessionManager.getByLogicalRef(ref);
+    await assert.rejects(() => runtime.plasmContext({ intent: "Malformed incremental teaching", sessionMode: "extend", logicalSessionRef: ref }), /canonical teaching/);
+    assert.deepEqual(await runtime.sessionManager.getByLogicalRef(ref), beforeMalformed);
+    if (exercise) await exercise(runtime, ref, engine);
     console.log("session-extension: new -> persist -> concurrent extend passed");
   } finally {
     await rm(root, { recursive: true, force: true });

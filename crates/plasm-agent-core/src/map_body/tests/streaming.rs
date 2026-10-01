@@ -114,7 +114,7 @@ fn map_body_stream_retains_cancelled_occurrence_and_completed_parent() {
         })
         .await
         .expect("live host interaction must complete or cancel");
-        assert!(run.unwrap_err().contains("cancelled"));
+        assert!(run.unwrap_err().diagnostic().contains("cancelled"));
         let snapshot = crate::op_ui_telemetry::OpUiTelemetry::from_live(&es, &handle).unwrap();
         assert!(snapshot.terminal);
         assert!(snapshot
@@ -137,7 +137,7 @@ fn map_body_stream_retains_cancelled_occurrence_and_completed_parent() {
 fn map_body_failed_python_input_preserves_live_evidence() {
     on_runtime(async {
         use crate::occurrence_progress::OccurrencePhase;
-        let (es, host, _) = fixture(3);
+        let (es, host, _) = fixture_with_unproven_child(3);
         let es = Arc::new(es);
         let handle = es.mint_operation_handle("l_AAAAAAAAQACAAAAAAAAAAQ");
         let cancel = plasm_runtime::CancelSignal::new();
@@ -148,11 +148,7 @@ fn map_body_failed_python_input_preserves_live_evidence() {
             handle.clone(),
             cancel,
         );
-        let (root, mut body) = program(&es);
-        let PlasmStepPayload::Invoke(child) = body.body.steps.get_mut("children").unwrap() else {
-            unreachable!()
-        };
-        child.page_size = Some(1);
+        let (root, body) = program(&es);
         let bundle = compose(root, body).unwrap();
         let error = crate::plasm_plan_run::run_plasm_comp_python(
             &es,
@@ -250,5 +246,99 @@ fn occurrence_concurrent_deltas_preserve_sequence_and_queued_python_cancels() {
         .await
         .unwrap();
         assert!(result.unwrap_err().contains("cancelled"));
+    });
+}
+
+#[test]
+fn late_compute_failure_retains_acknowledged_write_receipts() {
+    on_runtime(async {
+        use crate::occurrence_progress::OccurrencePhase;
+        let (es, host, calls) = fixture(3);
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let item = symbols.entity_sym_for("fixture", "Item");
+        let touch = symbols.method_sym_for("fixture", "Item", "touch");
+        let code = format!("class Task(Program):\n    @compute\n    def broken(self, rows: list[Row]) -> str:\n        return rows[100].title\n    def build(self):\n        parents = {item}.query()\n        mapped = parents.map(lambda parent: {{\"receipt\": {item}.{touch}(), \"text\": self.broken({item}.query())}}, max_parents=3)\n        {item}.{touch}()\n        return mapped\n");
+        let bundle = crate::plasm_compile::compile_python_program(&es, &code)
+            .await
+            .unwrap();
+        let es = Arc::new(es);
+        let handle = es.mint_operation_handle("l_AAAAAAAAQACAAAAAAAAAAQ");
+        let cancel = plasm_runtime::CancelSignal::new();
+        es.try_begin_async_operation(handle.clone(), cancel.clone(), Default::default())
+            .unwrap();
+        let scope = crate::operation::ExecutionScope::for_async_operation(
+            es.clone(),
+            handle.clone(),
+            cancel,
+        );
+        let error = crate::plasm_plan_run::run_plasm_comp_python(
+            &es,
+            &host,
+            &es.prompt_hash,
+            "late-failure",
+            &bundle,
+            true,
+            None,
+            Some(&scope),
+            None,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            error.diagnostic().contains("IndexError")
+                || error.diagnostic().contains("out of range"),
+            "{error}"
+        );
+        es.finalize_operation_failed(&handle, error, None);
+        let snapshot = crate::op_ui_telemetry::OpUiTelemetry::from_live(&es, &handle).unwrap();
+        let receipts: Vec<_> = snapshot
+            .occurrences
+            .iter()
+            .filter(|event| !event.operations.is_empty())
+            .collect();
+        assert_eq!(
+            receipts.len(),
+            1,
+            "container events must not duplicate leaf receipts: {receipts:?}"
+        );
+        let event = receipts[0];
+        assert_eq!(event.phase, OccurrencePhase::Done);
+        assert_eq!(event.occurrence_path, [0]);
+        let ack = &event.operations.entries()[0];
+        assert_eq!(ack.capability, "item_touch");
+        assert_eq!((ack.completed, ack.failed), (1, 0));
+        assert!(event.artifact_uri.is_some());
+        assert!(!event.request_fingerprints.is_empty());
+        assert!(snapshot
+            .occurrences
+            .iter()
+            .any(|event| event.phase == OccurrencePhase::Failed));
+        assert!(!snapshot
+            .occurrences
+            .iter()
+            .any(|event| event.occurrence_path == [1]));
+        assert_eq!(
+            calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|path| path.as_str() == "/touch")
+                .count(),
+            1
+        );
+        let operation = es.get_operation(&handle).unwrap();
+        let persisted =
+            crate::mcp_transport_store::persisted_operations::descriptor_from_operation_state(
+                &handle, &operation, 0,
+            );
+        let restored = serde_json::from_value::<
+            crate::mcp_transport_store::persisted_operations::PersistedOperationDescriptor,
+        >(serde_json::to_value(persisted).unwrap())
+        .unwrap();
+        assert_eq!(
+            crate::op_ui_telemetry::OpUiTelemetry::from_persisted(&restored, &handle).occurrences,
+            snapshot.occurrences
+        );
     });
 }

@@ -2056,6 +2056,52 @@ mod tests {
         assert!(!guidance.contains("context="));
     }
 
+    #[test]
+    fn get_prerequisite_is_taught_as_session_input_not_call_argument() {
+        let mut cgs = fixture();
+        cgs.capabilities.get_mut("read").unwrap().kind = crate::CapabilityKind::Get;
+        let catalogs = BTreeMap::from([("matrix".into(), &cgs)]);
+        let business = CapabilityRef {
+            catalog: "matrix".into(),
+            capability: "read".into(),
+        };
+        let bindings = DeploymentBindings {
+            bindings: vec![DeploymentBinding {
+                consumer: business.clone(),
+                requirement: "scoped_access".into(),
+                provider_catalog: "matrix".into(),
+                provider: "value_source".into(),
+            }],
+        };
+        let closure = prerequisite_closure(
+            &catalogs,
+            &bindings,
+            &[business],
+            &BTreeSet::from(["matrix".into()]),
+        )
+        .unwrap();
+        assert_eq!(closure.prerequisites.len(), 1);
+        assert_eq!(closure.prerequisites[0].capability, "acquire");
+        assert_eq!(closure.edges[0].requirement.id, "scoped_access");
+        let exposure = crate::TeachingExposureSession::new(
+            &cgs,
+            "matrix",
+            &["BusinessRecord", "ProviderResult"],
+        );
+        let symbols = exposure.to_symbol_map();
+        let guidance = crate::prompt_render::render_prerequisite_bindings(
+            &closure,
+            &catalogs,
+            symbols.as_ref(),
+        )
+        .unwrap();
+        assert!(
+            guidance.contains(".get(...) session(credential) (not a call argument)"),
+            "{guidance}"
+        );
+        assert!(!guidance.contains("Selection.credential"), "{guidance}");
+    }
+
     proptest::proptest! {
         #![proptest_config(proptest::test_runner::Config::with_cases(64))]
         #[test]
@@ -2552,34 +2598,34 @@ mod tests {
             symbols.as_ref(),
         )
         .unwrap();
+        let label = |id: &str| {
+            format!(
+                "a{}",
+                closure
+                    .acquisitions
+                    .iter()
+                    .position(|a| a.id == id)
+                    .unwrap()
+                    + 1
+            )
+        };
+        let local = guidance
+            .lines()
+            .find(|line| line.starts_with(&format!("{}.", label(&consumer_acq.id))))
+            .unwrap();
+        let foreign = guidance
+            .lines()
+            .find(|line| line.starts_with(&format!("{}.", label(&source_acq.id))))
+            .unwrap();
+        assert!(local.contains("Payload.access_token"), "{guidance}");
+        assert!(!local.contains("Payload.source_access_token"), "{guidance}");
         assert!(
-            guidance.contains(&format!(
-                "Payload.access_token <- acquisition {} output",
-                consumer_acq.id
-            )),
-            "local token must bind consumer login:\n{guidance}"
+            foreign.contains("Payload.source_access_token"),
+            "{guidance}"
         );
-        assert!(
-            guidance.contains(&format!(
-                "Payload.source_access_token <- acquisition {} output",
-                source_acq.id
-            )),
-            "foreign token must bind source login:\n{guidance}"
-        );
-        assert!(
-            !guidance.contains(&format!(
-                "Payload.source_access_token <- acquisition {} output",
-                consumer_acq.id
-            )),
-            "foreign token must not alias consumer login:\n{guidance}"
-        );
-        assert!(
-            !guidance.contains(&format!(
-                "Payload.access_token <- acquisition {} output",
-                source_acq.id
-            )),
-            "local token must not alias source login:\n{guidance}"
-        );
+        assert!(!foreign.contains("Payload.access_token"), "{guidance}");
+        assert!(!guidance.contains(&consumer_acq.id));
+        assert!(!guidance.contains(&source_acq.id));
     }
 
     fn dual_session_deployments(business: &CapabilityRef) -> DeploymentBindings {

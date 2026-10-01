@@ -130,7 +130,7 @@ line"#;
         .iter()
         .find(|s| s.node_id.as_deref() == Some("line"))
         .expect("line return step");
-    let entity = line_step.result.entities.first().expect("render row");
+    let entity = line_step.result.entities().first().expect("render row");
     let row = plasm_runtime::entity_to_agent_row_json(entity, line_step.cgs.as_deref());
     let content = row
         .get("content")
@@ -213,7 +213,7 @@ doc"#;
         .iter()
         .find(|s| s.node_id.as_deref() == Some("doc"))
         .expect("doc return step");
-    let entity = doc_step.result.entities.first().expect("render row");
+    let entity = doc_step.result.entities().first().expect("render row");
     let row = plasm_runtime::entity_to_agent_row_json(entity, doc_step.cgs.as_deref());
     let content = row
         .get("content")

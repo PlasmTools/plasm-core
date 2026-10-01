@@ -154,7 +154,7 @@ impl PreflightToken {
 pub fn row_identity_from_parts(
     qualified_entity: QualifiedEntityKey,
     reference: Ref,
-    relations: &IndexMap<String, Vec<Ref>>,
+    relations: &IndexMap<String, crate::row_contract::RelationMembership>,
     id_field: &str,
     compound_key_vars: &[String],
 ) -> RowIdentity {
@@ -227,10 +227,16 @@ mod tests {
         let mut relations = IndexMap::new();
         relations.insert(
             "evolution_chain".into(),
-            vec![Ref::new(
-                "EvolutionChain",
-                "https://pokeapi.co/api/v2/evolution-chain/10/",
-            )],
+            crate::row_contract::RelationMembership::observe(
+                None,
+                &"fixture",
+                vec![Ref::new(
+                    "EvolutionChain",
+                    "https://pokeapi.co/api/v2/evolution-chain/10/",
+                )],
+                None,
+            )
+            .unwrap(),
         );
         let identity = row_identity_from_parts(
             QualifiedEntityKey::new("pokeapi".to_string(), "PokemonSpecies".to_string()),

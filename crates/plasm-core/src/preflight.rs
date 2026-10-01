@@ -106,6 +106,52 @@ fn preflight_err(cap: &CapabilitySchema, message: String) -> SchemaError {
 
 /// Validate preflight plan for a capability at CGS load time.
 pub fn validate_capability_preflight(cgs: &CGS, cap: &CapabilitySchema) -> Result<(), SchemaError> {
+    if let Some(output) = cap
+        .output_schema
+        .as_ref()
+        .filter(|output| output.idempotent)
+    {
+        let reconcile = output.reconcile.as_ref().ok_or_else(|| {
+            preflight_err(
+                cap,
+                "idempotent output requires a read-backed reconciliation contract".into(),
+            )
+        })?;
+        let lookup = cgs.get_capability(&reconcile.via).ok_or_else(|| {
+            preflight_err(cap, "reconciliation read capability does not exist".into())
+        })?;
+        if !matches!(
+            lookup.kind,
+            CapabilityKind::Get | CapabilityKind::Query | CapabilityKind::Search
+        ) {
+            return Err(preflight_err(
+                cap,
+                "reconciliation must use an effect-free read".into(),
+            ));
+        }
+        let keys = cap
+            .identity_key
+            .as_ref()
+            .filter(|keys| !keys.is_empty())
+            .ok_or_else(|| {
+                preflight_err(
+                    cap,
+                    "reconciliation requires a non-empty identity_key".into(),
+                )
+            })?;
+        let entity = cgs.get_entity(lookup.domain.as_str()).ok_or_else(|| {
+            preflight_err(cap, "reconciliation read entity does not exist".into())
+        })?;
+        for key in keys {
+            validate_param_exists(cap, key, "reconciliation identity")?;
+            if !entity.fields.contains_key(key.as_str()) {
+                return Err(preflight_err(
+                    cap,
+                    format!("reconciliation read must expose identity field {key}"),
+                ));
+            }
+        }
+    }
     let Some(PreflightPlan(steps)) = cap.preflight.as_ref() else {
         return Ok(());
     };

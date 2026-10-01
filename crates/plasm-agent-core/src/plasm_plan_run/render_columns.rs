@@ -44,10 +44,10 @@ impl RenderColumns {
 
     pub fn project_row(
         &self,
-        row: &serde_json::Value,
+        row: &plasm_core::Value,
         row_index: usize,
-    ) -> Result<serde_json::Map<String, serde_json::Value>, String> {
-        let mut obj = serde_json::Map::new();
+    ) -> Result<indexmap::IndexMap<String, plasm_core::Value>, String> {
+        let mut obj = indexmap::IndexMap::new();
         for column in &self.wires {
             obj.insert(
                 column.as_str().to_string(),
@@ -112,7 +112,7 @@ mod tests {
         aliases.insert("p23".into(), OutputName::new("name").expect("name"));
         let cols =
             RenderColumns::from_op_parts(vec![OutputName::new("name").expect("name")], aliases);
-        let row = serde_json::json!({ "name": "a" });
+        let row = crate::fixture_value!({ "name": "a" });
         let projected = cols.project_row(&row, 0).expect("project");
         assert_eq!(projected.get("name").and_then(|v| v.as_str()), Some("a"));
         assert_eq!(projected.get("p23").and_then(|v| v.as_str()), Some("a"));
@@ -127,7 +127,7 @@ mod diagnostic_tests {
         let cols =
             RenderColumns::from_field_pairs(&[("missing".into(), "missing".into())]).unwrap();
         let error = cols
-            .project_row(&serde_json::json!({"present":"private-value"}), 0)
+            .project_row(&crate::fixture_value!({"present":"private-value"}), 0)
             .unwrap_err();
         assert!(error.contains("Available row fields: present"));
         assert!(!error.contains("Valid row fields: missing"));

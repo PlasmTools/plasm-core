@@ -64,6 +64,7 @@ impl ExecutionEngine {
                 Vec::new();
             let mut total_network = 0usize;
             let mut any_live = false;
+            let mut dependencies = Vec::new();
 
             for cross in crosses {
                 match choose_strategy(cross, &query.entity, cgs) {
@@ -96,18 +97,22 @@ impl ExecutionEngine {
                             any_live = true;
                         }
 
+                        foreign_result
+                            .collection
+                            .materialize(plasm_core::collection_codec::Demand::Whole)?;
+                        dependencies.push(foreign_result.collection.clone());
                         let foreign_ids: Vec<Value> = foreign_result
-                            .entities
+                            .entities()
                             .iter()
                             .map(|e| Value::String(e.reference.primary_slot_str()))
                             .collect();
 
                         if foreign_ids.is_empty() {
                             return Ok(ExecutionResult {
-                                entities: vec![],
-                                count: 0,
+                                collection: ExecutionCollection::evaluate(
+                                    plasm_core::collection_codec::CollectionIdentity::for_expression(cgs, query, mat.graph.stats().version)?,
+                                    &dependencies.iter().collect::<Vec<_>>(), vec![].into())?,
                                 has_more: false,
-                                coverage: foreign_result.coverage,
                                 pagination_resume: None,
                                 paging_handle: None,
                                 source: ExecutionSource::Live,
@@ -171,7 +176,8 @@ impl ExecutionEngine {
             // Pull-right client-side filter for any crosses that couldn't push left.
             if !pull_right_crosses.is_empty() {
                 let mut filtered = Vec::new();
-                for entity in &result.entities {
+                let input = result.entities().clone();
+                for (position, entity) in input.iter().enumerate() {
                     let mut passes = true;
                     for cross in &pull_right_crosses {
                         let ref_id = extract_ref_id(entity, &cross.ref_field, cgs);
@@ -184,7 +190,8 @@ impl ExecutionEngine {
                         let get_result = self.execute_get(&get, cgs, mat, mode, &ambient).await?;
                         result.stats.network_requests += get_result.stats.network_requests;
 
-                        let Some(foreign) = get_result.entities.first() else {
+                        dependencies.push(get_result.collection.clone());
+                        let Some(foreign) = get_result.entities().first() else {
                             passes = false;
                             break;
                         };
@@ -195,11 +202,21 @@ impl ExecutionEngine {
                         }
                     }
                     if passes {
-                        filtered.push(entity.clone());
+                        filtered.push(position);
                     }
                 }
-                result.entities = filtered;
-                result.count = result.entities.len();
+                result.collection = result.collection.filter(
+                    query,
+                    &filtered,
+                    &dependencies.iter().collect::<Vec<_>>(),
+                )?;
+            } else if !dependencies.is_empty() {
+                let positions: Vec<_> = (0..result.count()).collect();
+                result.collection = result.collection.filter(
+                    query,
+                    &positions,
+                    &dependencies.iter().collect::<Vec<_>>(),
+                )?;
             }
 
             Ok(result)

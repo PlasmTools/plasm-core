@@ -8,7 +8,7 @@ use super::super::prelude::*;
 use super::super::schema_validate::{
     cgs_for_qualified_entity, compute_passthrough_or_fallback_schema,
     is_opaque_passthrough_compute_schema, resolve_immediate_compute_schema,
-    resolve_qualified_entity_for_dag_source, resolve_sort_field_path,
+    resolve_qualified_entity_for_dag_source, resolve_schema_field_path,
     validate_compute_paths_for_dag_source,
 };
 use super::super::types::{CompileState, DagNode, DagNodeSource};
@@ -28,7 +28,7 @@ pub(in crate::plasm_dag) fn lower_sort_compute(
     }
     let qe = resolve_qualified_entity_for_dag_source(state, staged, source.to_string());
     let source_schema = resolve_immediate_compute_schema(state, staged, source);
-    let key_fp = resolve_sort_field_path(
+    let key_fp = resolve_schema_field_path(
         session,
         state.cross_cache,
         qe.as_ref(),
@@ -75,7 +75,7 @@ pub(in crate::plasm_dag) fn lower_with_compute(
     let source_schema = resolve_immediate_compute_schema(state, staged, source);
     for column in &mut columns {
         column.expr = column.expr.try_map_fields(&mut |path| {
-            let resolved = resolve_sort_field_path(
+            let resolved = resolve_schema_field_path(
                 session,
                 state.cross_cache,
                 qe.as_ref(),
@@ -98,8 +98,10 @@ pub(in crate::plasm_dag) fn lower_with_compute(
     // must not emit duplicate schema fields (plan validate rejects that as dishonest).
     let mut schema =
         compute_passthrough_or_fallback_schema(session, state, staged, source, "PlanWith");
+    let input_schema = schema.clone();
     for col in &columns {
-        let remat = rematerialize_with_column(&schema, col);
+        schema.optional_fields.remove(col.name.as_str());
+        let remat = rematerialize_with_column(&input_schema, col)?;
         if let Some(existing) = schema
             .fields
             .iter_mut()
@@ -387,7 +389,7 @@ pub(in crate::plasm_dag) fn row_suffix_to_compute(
                     .iter()
                     .map(|raw| {
                         let path = FieldPath::from_dotted(raw)?;
-                        let resolved = resolve_sort_field_path(
+                        let resolved = resolve_schema_field_path(
                             session,
                             state.cross_cache,
                             qe.as_ref(),
@@ -463,7 +465,30 @@ pub(in crate::plasm_dag) fn row_suffix_to_compute(
                     right_names.into_iter().collect::<Vec<_>>().join(", ")
                 ));
             }
-            let schema = left;
+            let mut schema = left;
+            for field in &mut schema.fields {
+                let other = right
+                    .fields
+                    .iter()
+                    .find(|other| other.name == field.name)
+                    .expect("union columns checked above");
+                field.value_type = match (field.value_type.take(), other.value_type.clone()) {
+                    (Some(left), Some(right)) => {
+                        if left.shape != right.shape {
+                            return Err("Python union field type mismatch".into());
+                        }
+                        Some(plasm_core::value_contract::ValueContract::join(left, right))
+                    }
+                    _ => None,
+                };
+                if let Some(contract) = &field.value_type {
+                    field.value_kind = contract.summary();
+                }
+                if field.source != other.source {
+                    field.source = None;
+                }
+            }
+            schema.optional_fields.extend(right.optional_fields);
             Ok(mk(
                 ComputeOp::Union {
                     other: OutputName::new(rhs.clone())?,
@@ -512,7 +537,7 @@ pub(in crate::plasm_dag) fn membership_rhs_column_path(
 fn rematerialize_with_column(
     schema: &SyntheticResultSchema,
     col: &plasm_core::WithColumn,
-) -> plasm_core::SyntheticFieldSchema {
+) -> Result<plasm_core::SyntheticFieldSchema, String> {
     let plasm_core::WithExpr::Field(fp) = &col.expr else {
         let value_type =
             plasm_core::value_contract::ValueContract::with_expr(&col.expr, &mut |path| {
@@ -522,32 +547,24 @@ fn rematerialize_with_column(
                     .find(|f| f.name.as_str() == path.dotted())
                     .and_then(|f| f.value_type.clone())
                     .ok_or_else(|| "unknown computed field type".into())
-            })
-            .ok();
-        return plasm_core::SyntheticFieldSchema {
-            value_kind: value_type
-                .as_ref()
-                .map_or(SyntheticValueKind::Unknown, |t| t.summary()),
-            value_type,
+            })?;
+        return Ok(plasm_core::SyntheticFieldSchema {
+            value_kind: value_type.summary(),
+            value_type: Some(value_type),
             name: col.name.clone(),
             source: None,
-        };
+        });
     };
     if let Some(src) = schema.fields.iter().find(|f| {
         f.name.as_str() == fp.dotted()
             || f.source.as_ref().is_some_and(|s| s.dotted() == fp.dotted())
     }) {
-        return plasm_core::SyntheticFieldSchema {
+        return Ok(plasm_core::SyntheticFieldSchema {
             value_type: src.value_type.clone(),
             name: col.name.clone(),
             value_kind: src.value_kind,
             source: src.source.clone().or_else(|| Some(fp.clone())),
-        };
+        });
     }
-    plasm_core::SyntheticFieldSchema {
-        value_type: None,
-        name: col.name.clone(),
-        value_kind: SyntheticValueKind::Unknown,
-        source: Some(fp.clone()),
-    }
+    Err(format!("unknown computed field type: {}", fp.dotted()))
 }

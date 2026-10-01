@@ -39,17 +39,16 @@ use crate::trace_sink_emit::PlasmTraceContext;
 use indexmap::IndexMap;
 use plasm_core::{
     flatten_from_parent_get_source_rows, EntityName, Expr, Ref, RelationMaterialization,
-    RelationRowResolution, TypedFieldValue, Value,
+    TypedFieldValue, Value,
 };
 use plasm_runtime::{
-    entity_to_row_json, CachedEntity, EntityCompleteness, ExecutionResult, ExecutionSource,
-    ExecutionStats, MaterializedRowSource,
+    CachedEntity, EntityCompleteness, ExecutionResult, ExecutionSource, ExecutionStats,
+    MaterializedRowSource,
 };
 use plasm_trace::TraceCompWire;
 use std::collections::{BTreeMap, BTreeSet};
 
 mod compute_eval;
-mod coverage_fold;
 mod dry;
 pub mod evidence_plan;
 mod executable_plan;
@@ -64,7 +63,7 @@ mod plan_schedule;
 mod prefer_embed_hydrate;
 mod relation_hydrate;
 mod render_columns;
-mod row_json;
+mod row_values;
 mod step_materialize;
 
 #[cfg(all(test, feature = "alloc-bench"))]
@@ -72,9 +71,6 @@ mod alloc_bench_test;
 
 pub(crate) use compute_eval::NodeInputHoleIndex;
 pub(crate) use compute_eval::*;
-pub(crate) use coverage_fold::{
-    coverage_for_iterate_until, coverage_from_compute_collections, coverage_of_declared_source,
-};
 pub(crate) use executable_plan::*;
 pub(crate) use materialize::*;
 pub(crate) use relation_hydrate::finalize_typed_relation_materialized_node;
@@ -101,12 +97,13 @@ pub(crate) use dry::{
 };
 pub(crate) use orchestrator::{
     inline_row_source, inline_row_source_owned, MaterializedInputRow, MaterializedNode,
+    MaterializedValueShape,
 };
 pub(crate) use parse::{
     entry_scoped_execute_session, propagate_row_identities, row_identities_from_entities,
 };
-pub(crate) use row_json::{
-    cached_entity_row_json, predicate_matches, value_at_dotted, value_at_segments,
+pub(crate) use row_values::{
+    cached_entity_row_values, predicate_matches, value_at_dotted, value_at_segments,
 };
 
 #[cfg(test)]
@@ -452,3 +449,5 @@ use crate::plan_node_graph::compute_binding_labels;
 mod map_body;
 
 mod python_host;
+
+use plasm_runtime::ExecutionFailure;

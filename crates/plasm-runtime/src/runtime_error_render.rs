@@ -9,6 +9,12 @@ use crate::RuntimeError;
 /// Convert a runtime failure into a structured [`StepError`].
 pub fn step_error_from_runtime(err: &RuntimeError, cgs: &CGS) -> StepError {
     match err {
+        RuntimeError::FieldUnavailable { .. } => {
+            StepError::new(StepErrorCategory::Runtime, err.to_string(), None)
+        }
+        RuntimeError::Collection(fault) => {
+            StepError::new(StepErrorCategory::Runtime, fault.to_string(), None)
+        }
         RuntimeError::TypeError { source } => render_type_error(source, cgs),
         RuntimeError::CompilationError { source } => {
             let msg = source.to_string();
@@ -162,5 +168,20 @@ pub fn step_error_from_runtime(err: &RuntimeError, cgs: &CGS) -> StepError {
             ),
             None,
         ),
+    }
+}
+
+#[cfg(test)]
+mod collection_fault_tests {
+    use super::*;
+
+    #[test]
+    fn collection_contract_fault_does_not_instruct_python_repair_or_write_retry() {
+        let fault = plasm_core::collection_codec::CollectionFault::Conservation;
+        let expected = fault.to_string();
+        let error = step_error_from_runtime(&RuntimeError::from(fault), &CGS::new());
+        assert_eq!(error.category, StepErrorCategory::Runtime);
+        assert_eq!(error.correction, expected);
+        assert_eq!(error.span_offset, None);
     }
 }

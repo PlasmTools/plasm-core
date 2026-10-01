@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use plasm_core::loader::load_schema_dir;
 use plasm_core::PromptPipelineConfig;
 use plasm_core::PLASM_TOOL_DESCRIPTION;
-use plasm_eval::baml_client::sync_client::B;
+use plasm_eval::baml_client::async_client::B;
 use plasm_eval::baml_client::types::{PlanChatTurn, Union2KassistantOrKuser};
 use plasm_eval::baml_client::ClientRegistry;
 use plasm_eval::{
@@ -169,7 +169,7 @@ struct ScaffoldArgs {
     force: bool,
 }
 
-fn run_one_case(
+async fn run_one_case(
     session: &ProgramSession,
     prompt: &str,
     case: &EvalCase,
@@ -209,6 +209,7 @@ fn run_one_case(
             .TranslatePlan
             .with_client_registry(registry)
             .call(translate_messages.as_slice())
+            .await
             .map_err(|e| anyhow::anyhow!("BAML TranslatePlan: {e}"))
             .with_context(|| format!("LLM call for case {} attempt {}", case.id, attempt))?;
 
@@ -221,7 +222,7 @@ fn run_one_case(
         let texts = vec![text.clone()];
         let step_pairs: Vec<(&str, &str)> = vec![(text.as_str(), reasoning.as_str())];
 
-        let validation = validate_programs(session, &texts);
+        let validation = validate_programs(session, &texts).await;
         // First user: Python reference and declarations + `--- GOAL ---`; later users: goal only. Assistant: backtick `text` only
         // (keeps later LLM calls from re-processing long reasoning; full steps stay in `attempt_trace`).
         // On validation failure we must still append (user, assistant) or correction rounds resend the Python reference and declarations.
@@ -253,7 +254,10 @@ fn run_one_case(
                 last_failure_json = None;
                 break;
             }
-            Err(diags) => {
+            Err(plasm_eval::ValidationFailure::Host(failure)) => {
+                return Err(anyhow::anyhow!("admission host failure: {failure}"))
+            }
+            Err(plasm_eval::ValidationFailure::Program(diags)) => {
                 chat_session.push(PlanChatTurn {
                     role: Union2KassistantOrKuser::Kuser,
                     content: user_hist,
@@ -324,7 +328,7 @@ fn run_one_case(
     Ok(serde_json::to_value(&sc)?)
 }
 
-fn cmd_coverage(args: CoverageArgs) -> anyhow::Result<()> {
+async fn cmd_coverage(args: CoverageArgs) -> anyhow::Result<()> {
     let cgs = load_schema_dir(&args.schema).map_err(|e| anyhow::anyhow!("load schema: {e}"))?;
     plasm_compile::validate_cgs_capability_templates(&cgs)
         .map_err(|e| anyhow::anyhow!("invalid CML capability templates: {e}"))?;
@@ -383,10 +387,12 @@ fn cmd_coverage(args: CoverageArgs) -> anyhow::Result<()> {
             &schema_key,
             &cgs,
             args.compare_derived_allow_extra_claims,
-        )?;
+        )
+        .await?;
     }
 
-    let effective_cases = cases_with_effective_covers(&case_list, &cgs, args.covers_source.into())?;
+    let effective_cases =
+        cases_with_effective_covers(&case_list, &cgs, args.covers_source.into()).await?;
     validate_case_covers_against_allowed(&effective_cases, &schema_key, &allowed)?;
 
     let (union, by_case) = union_case_covers(&effective_cases, &schema_key);
@@ -395,7 +401,8 @@ fn cmd_coverage(args: CoverageArgs) -> anyhow::Result<()> {
         &schema_key,
         &cgs,
         args.covers_source.into(),
-    )?;
+    )
+    .await?;
     let report = build_coverage_report(
         &schema_key,
         &required,
@@ -464,7 +471,8 @@ fn cmd_scaffold(args: ScaffoldArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     dotenv_safe::load_from_cwd_parents();
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
@@ -479,7 +487,7 @@ fn main() -> anyhow::Result<()> {
     let top = Top::parse();
 
     match top.sub {
-        Some(EvalSubcommand::Coverage(c)) => cmd_coverage(c),
+        Some(EvalSubcommand::Coverage(c)) => cmd_coverage(c).await,
         Some(EvalSubcommand::Scaffold(s)) => cmd_scaffold(s),
         None => {
             let run = top.run;
@@ -514,12 +522,12 @@ fn main() -> anyhow::Result<()> {
                 .clone()
                 .context("eval run: --schema and --cases are required (or use `plasm-eval coverage` / `scaffold`)")?;
             let cases = run.cases.clone().context("eval run: --cases is required")?;
-            run_eval_harness(schema, cases, run)
+            run_eval_harness(schema, cases, run).await
         }
     }
 }
 
-fn run_eval_harness(schema: PathBuf, cases: PathBuf, cli: RunArgs) -> anyhow::Result<()> {
+async fn run_eval_harness(schema: PathBuf, cases: PathBuf, cli: RunArgs) -> anyhow::Result<()> {
     let cgs = load_schema_dir(&schema).map_err(|e| anyhow::anyhow!("load schema: {e}"))?;
     plasm_compile::validate_cgs_capability_templates(&cgs)
         .map_err(|e| anyhow::anyhow!("invalid CML capability templates: {e}"))?;
@@ -610,6 +618,7 @@ fn run_eval_harness(schema: PathBuf, cases: PathBuf, cli: RunArgs) -> anyhow::Re
             &registry,
             &mut chat,
         )
+        .await
         .map_err(|e| anyhow::anyhow!("case index {idx}: {e:#}"))?;
         report.push(v);
     }

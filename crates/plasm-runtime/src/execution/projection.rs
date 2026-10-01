@@ -19,14 +19,14 @@ impl ExecutionEngine {
     #[allow(clippy::too_many_arguments)]
     pub async fn auto_resolve_projection(
         &self,
-        entities: Vec<CachedEntity>,
+        entities: plasm_core::collection_codec::SharedRows<CachedEntity>,
         entity_type: &str,
         projection: &[String],
         cgs: &CGS,
         mat: &mut SessionMaterialization,
         mode: ExecutionMode,
         opts: ExecuteOptions,
-    ) -> Result<Vec<CachedEntity>, RuntimeError> {
+    ) -> Result<plasm_core::collection_codec::SharedRows<CachedEntity>, RuntimeError> {
         let base = self.resolve_http_base_from_opts(&opts);
         let auth_override = opts.auth_resolver_override.clone();
         let fp_sink = opts.request_fingerprint_sink.clone();
@@ -169,7 +169,7 @@ impl ExecutionEngine {
                     .map(|e| mat.get(&e.reference).cloned().unwrap_or_else(|| e.clone()))
                     .collect();
 
-                Ok(refreshed)
+                Ok(refreshed.into())
             },
         )
         .await
@@ -254,14 +254,16 @@ mod tests {
                 )
                 .await
                 .unwrap()
-                .entities
-                .remove(0);
+                .entities()
+                .first()
+                .unwrap()
+                .clone();
             initial.push(row);
         }
         initial.push(initial[0].clone());
         let rows = engine
             .auto_resolve_projection(
-                initial,
+                initial.into(),
                 "Record",
                 &["secret".into(), "unavailable".into()],
                 &cgs,

@@ -5,10 +5,14 @@ use crate::money::{CrossCurrencyError, MoneyError};
 use crate::plasm_monad::ArithOp;
 use thiserror::Error;
 
-use super::schema::LogicalColumnType;
+use crate::value_contract::ValueContract;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RowComputeError {
+    #[error("row contract: {0}")]
+    Contract(String),
+    #[error("row engine execution: {0}")]
+    Execution(String),
     #[error(transparent)]
     Type(#[from] RowTypeError),
     #[error(transparent)]
@@ -34,18 +38,16 @@ pub enum RowTypeError {
     #[error("arithmetic `{op:?}` is not defined for {lhs:?} and {rhs:?}")]
     ArithDomain {
         op: ArithOp,
-        lhs: LogicalColumnType,
-        rhs: LogicalColumnType,
+        lhs: ValueContract,
+        rhs: ValueContract,
     },
     #[error("when() branches have mismatched types {then:?} vs {else_:?}")]
     WhenBranchMismatch {
-        then: LogicalColumnType,
-        else_: LogicalColumnType,
+        then: ValueContract,
+        else_: ValueContract,
     },
     #[error("temporal arithmetic requires a temporal value, got {got:?}")]
-    TemporalArithNotTemporal { got: LogicalColumnType },
-    #[error("money must not be stored as Utf8")]
-    MoneyStoredAsUtf8,
+    TemporalArithNotTemporal { got: ValueContract },
     #[error("project spec cannot be used as a .with column")]
     ProjectIntoWith,
     #[error(".with must preserve entity identity")]
@@ -58,8 +60,6 @@ pub enum FrameSchemaError {
     UnknownColumn(String),
     #[error("empty pipeline is illegal")]
     EmptyPipeline,
-    #[error("limit count must be non-zero")]
-    ZeroLimit,
     #[error("group_by requires at least one key")]
     EmptyGroupKeys,
     #[error("with requires at least one column")]
@@ -123,7 +123,7 @@ impl From<CrossCurrencyError> for RowComputeError {
 
 impl RowComputeError {
     #[must_use]
-    pub fn temporal_arith_not_temporal(got: LogicalColumnType) -> Self {
+    pub fn temporal_arith_not_temporal(got: ValueContract) -> Self {
         Self::Type(RowTypeError::TemporalArithNotTemporal { got })
     }
 }

@@ -16,7 +16,7 @@ use uuid::Uuid;
 pub const RUN_ARTIFACT_WIRE_PREFIX: &str = "pr";
 
 /// Metadata + JSON body schema for framed execute run snapshots (`PLAR1` envelope).
-pub const RUN_ARTIFACT_PAYLOAD_SCHEMA_VERSION: u32 = 2;
+pub const RUN_ARTIFACT_PAYLOAD_SCHEMA_VERSION: u32 = 3;
 
 /// Canonical 32-byte identity for a stored execute run snapshot (content-addressed).
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -184,6 +184,7 @@ pub fn validate_artifact_payload_metadata(m: &ArtifactPayloadMetadata) -> Result
 
 /// Reject partial or legacy run snapshot JSON bodies (in-process / post-decode).
 pub fn validate_run_artifact_document(doc: &RunArtifactDocument) -> Result<(), String> {
+    doc.recorded_collection().map_err(|e| e.to_string())?;
     if doc.run_id.trim().is_empty() {
         return Err("run artifact run_id missing".into());
     }
@@ -255,13 +256,9 @@ pub struct RunArtifactDocument {
     #[serde(alias = "expressions")]
     pub display_lines: Vec<String>,
     pub request_fingerprints: Vec<String>,
-    pub entities: Vec<serde_json::Value>,
-    /// Coverage of `entities` relative to the requested expression.
-    ///
-    /// Existing snapshots that omit this field deserialize as
-    /// [`plasm_runtime::ResultCoverage::Unknown`] — the honest default, not an optional path.
-    #[serde(default)]
-    pub coverage: plasm_runtime::ResultCoverage,
+    pub entities: plasm_core::collection_codec::SharedRows<plasm_runtime::CachedEntity>,
+    /// Required recording-codec checkpoint; raw coverage is only a public summary.
+    pub collection: plasm_core::collection_codec::CollectionCheckpoint,
     pub source: ExecutionSource,
     pub stats: ExecutionStats,
     /// HTTP-2 operation ledger. Absent on pre-HTTP-2 snapshots.
@@ -278,21 +275,42 @@ pub struct RunArtifactAgentView {
     pub resource_index: Option<u64>,
     pub request_fingerprints: Vec<String>,
     pub entities: Vec<serde_json::Value>,
-    /// Same law as [`RunArtifactDocument::coverage`].
+    /// Public summary of the validated recorded membership.
     #[serde(default)]
     pub coverage: plasm_runtime::ResultCoverage,
 }
 
 impl RunArtifactDocument {
-    pub fn agent_view(&self) -> RunArtifactAgentView {
-        RunArtifactAgentView {
+    pub fn recorded_collection(
+        &self,
+    ) -> Result<
+        plasm_runtime::execution::ExecutionCollection,
+        plasm_core::collection_codec::CollectionFault,
+    > {
+        let membership = self
+            .collection
+            .restore(&plasm_core::collection_codec::RecordingCodec::new())?;
+        plasm_runtime::execution::ExecutionCollection::materialized(
+            membership,
+            self.entities.clone(),
+        )
+    }
+
+    pub fn agent_view(
+        &self,
+    ) -> Result<RunArtifactAgentView, plasm_core::collection_codec::CollectionFault> {
+        Ok(RunArtifactAgentView {
             run_id: self.run_id.clone(),
             entry_id: self.entry_id.clone(),
             resource_index: self.resource_index,
             request_fingerprints: self.request_fingerprints.clone(),
-            entities: self.entities.clone(),
-            coverage: self.coverage,
-        }
+            entities: self
+                .entities
+                .iter()
+                .map(plasm_runtime::CachedEntity::payload_to_json)
+                .collect(),
+            coverage: self.recorded_collection()?.coverage(),
+        })
     }
 }
 
@@ -378,11 +396,9 @@ mod metadata_tests {
             "source": "live",
             "stats": { "duration_ms": 0, "network_requests": 0, "cache_hits": 0, "cache_misses": 0 }
         });
-        let doc: RunArtifactDocument = serde_json::from_value(body).expect("doc");
-        assert_eq!(doc.coverage, plasm_runtime::ResultCoverage::Unknown);
-        assert_eq!(
-            doc.agent_view().coverage,
-            plasm_runtime::ResultCoverage::Unknown
+        assert!(
+            serde_json::from_value::<RunArtifactDocument>(body).is_err(),
+            "proofless snapshots are rejected"
         );
     }
 
@@ -412,6 +428,11 @@ mod metadata_tests {
             producer: "plasm".into(),
         };
         let err = validate_artifact_payload_metadata(&meta).unwrap_err();
-        assert!(err.contains("schema_version must be 2"), "{err}");
+        assert!(
+            err.contains(&format!(
+                "schema_version must be {RUN_ARTIFACT_PAYLOAD_SCHEMA_VERSION}"
+            )),
+            "{err}"
+        );
     }
 }

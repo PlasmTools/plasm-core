@@ -256,11 +256,13 @@ mod tests {
                     entry_id: "origin".into(),
                     entity: "LangItem".into(),
                 },
-                rows: vec![],
+                collection: crate::test_support::execution_fixtures::collection(
+                    vec![],
+                    plasm_runtime::ResultCoverage::Complete,
+                ),
                 offset: 0,
                 page_size: 1,
                 request_fingerprints: vec![],
-                coverage: plasm_runtime::ResultCoverage::Complete,
             },
             None,
         );

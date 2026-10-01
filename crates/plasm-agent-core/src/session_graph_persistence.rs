@@ -21,7 +21,6 @@
 //! Callers must not append out-of-order pages for the same session; the spill host only appends
 //! during sequential pagination.
 
-use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::ops::ControlFlow;
 
@@ -38,7 +37,7 @@ use crate::run_artifacts::{
     validate_artifact_payload_metadata, ArtifactPayload, ArtifactPayloadMetadata,
 };
 
-pub const GRAPH_PAGE_DELTA_SCHEMA_VERSION: u32 = 2;
+pub const GRAPH_PAGE_DELTA_SCHEMA_VERSION: u32 = 4;
 
 const DEFAULT_DELTA_READ_CONCURRENCY: usize = 16;
 
@@ -99,12 +98,13 @@ pub struct SessionGraphPersistence {
 
 #[derive(Debug, Serialize)]
 pub struct SnapshotManifest {
+    pub schema_version: u32,
     pub through_seq: u64,
     pub snapshot_content_type: String,
     pub snapshot_key: String,
 }
 
-/// Exact-match graph page delta wire validation (schema v2 cutover).
+/// Exact-match graph page delta wire validation (schema v3 cutover).
 pub fn validate_graph_page_delta(body: &serde_json::Value) -> Result<GraphPageDelta, String> {
     parse_graph_page_body(body)
 }
@@ -132,11 +132,18 @@ fn parse_graph_page_body(body: &serde_json::Value) -> Result<GraphPageDelta, Str
         .filter(|s| !s.is_empty())
         .ok_or_else(|| "graph page delta entity_type missing".to_string())?
         .to_string();
-    let entities = body
-        .get("entities")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| "graph page delta entities must be array".to_string())?
-        .to_vec();
+    let entities: Vec<plasm_runtime::CachedEntity> = serde_json::from_value(
+        body.get("entities")
+            .cloned()
+            .ok_or("graph page delta entities missing")?,
+    )
+    .map_err(|e| format!("graph page delta invalid typed entities: {e}"))?;
+    if entities
+        .iter()
+        .any(|entity| entity.reference.entity_type.as_str() != entity_type)
+    {
+        return Err("graph page delta entity type mismatch".into());
+    }
     Ok(GraphPageDelta {
         page_index,
         entity_type,
@@ -344,17 +351,16 @@ impl SessionGraphPersistence {
             .join("snapshots")
             .join(format!("{through_seq:020}.bin"));
 
-        let mut merged: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+        let mut merged: indexmap::IndexMap<&plasm_core::Ref, &plasm_runtime::CachedEntity> =
+            indexmap::IndexMap::new();
         for page in pages {
             for row in &page.entities {
-                if let Some(r) = row.get("_ref").and_then(|v| v.as_str()) {
-                    merged.insert(r.to_string(), row.clone());
-                }
+                merged.insert(&row.reference, row);
             }
         }
         for r in cache.all_references() {
-            if let Ok(v) = cache.entity_to_json(r) {
-                merged.insert(r.to_string(), v);
+            if let Some(entity) = cache.get(r) {
+                merged.insert(r, entity);
             }
         }
 
@@ -380,6 +386,7 @@ impl SessionGraphPersistence {
         writer.finish().await.map_err(|e| e.to_string())?;
 
         let manifest = SnapshotManifest {
+            schema_version: GRAPH_PAGE_DELTA_SCHEMA_VERSION,
             through_seq,
             snapshot_content_type: content_type.to_string(),
             snapshot_key: snapshot_key.to_string(),
@@ -417,14 +424,117 @@ pub fn init_from_env() -> Result<Option<Arc<SessionGraphPersistence>>, String> {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn membership_evidence_survives_snapshot_compaction() {
+        use plasm_core::Ref;
+        use plasm_runtime::CachedEntity;
+        let store: Arc<dyn ObjectStore> = Arc::new(object_store::memory::InMemory::new());
+        let persistence = SessionGraphPersistence::new(store.clone(), StorePath::from("proof"));
+        let identity = |id: &str, owner: &str| {
+            Ref::compound(
+                "Parent",
+                [("id".into(), id.into()), ("owner".into(), owner.into())].into(),
+            )
+        };
+        let mut old = CachedEntity::new(identity("same,owner=first", "second"), 0);
+        old.relations.insert("children".into(), {
+            use plasm_core::collection_codec::{
+                CollectionCodec, CollectionIdentity, Observation, RecordingCodec,
+            };
+            let references = vec![Ref::new("Child", "a"), Ref::new("Child", "a")];
+            let observation = Observation::ExactOutput {
+                decoded: references.len(),
+            };
+            plasm_core::row_contract::RelationMembership::from_record(
+                RecordingCodec::new()
+                    .record(
+                        CollectionIdentity::for_untyped_observation(&"relation_fixture").unwrap(),
+                        references,
+                        observation,
+                    )
+                    .unwrap(),
+            )
+        });
+        let mut retained = old.clone();
+        retained.reference = identity("same", "first,owner=second");
+        assert_eq!(old.reference.to_string(), retained.reference.to_string());
+        assert_ne!(old.reference, retained.reference);
+        let pages = vec![GraphPageDelta {
+            page_index: 0,
+            entity_type: "Parent".into(),
+            schema_version: GRAPH_PAGE_DELTA_SCHEMA_VERSION,
+            entities: vec![old.clone(), retained.clone()],
+        }];
+        let mut current = old;
+        current.relations.insert("children".into(), {
+            use plasm_core::collection_codec::{
+                CollectionCodec, CollectionIdentity, Observation, RecordingCodec,
+            };
+            let references = vec![];
+            let observation = Observation::ExactOutput {
+                decoded: references.len(),
+            };
+            plasm_core::row_contract::RelationMembership::from_record(
+                RecordingCodec::new()
+                    .record(
+                        CollectionIdentity::for_untyped_observation(&"relation_fixture").unwrap(),
+                        references,
+                        observation,
+                    )
+                    .unwrap(),
+            )
+        });
+        let mut cache = GraphCache::new();
+        cache.insert(current.clone()).unwrap();
+        persistence
+            .write_snapshot_merged("hash", "session", 1, "application/json", &cache, &pages)
+            .await
+            .unwrap();
+        let manifest_key = persistence
+            .sessions_root
+            .clone()
+            .join("hash")
+            .join("session")
+            .join("manifest.json");
+        let manifest: serde_json::Value = serde_json::from_slice(
+            &store
+                .get(&manifest_key)
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(manifest["schema_version"], GRAPH_PAGE_DELTA_SCHEMA_VERSION);
+        let key = StorePath::from(manifest["snapshot_key"].as_str().unwrap());
+        let rows: Vec<CachedEntity> =
+            serde_json::from_slice(&store.get(&key).await.unwrap().bytes().await.unwrap()).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            rows.iter()
+                .find(|row| row.reference == current.reference)
+                .unwrap()
+                .relations,
+            current.relations
+        );
+        assert_eq!(
+            rows.iter()
+                .find(|row| row.reference == retained.reference)
+                .unwrap()
+                .relations,
+            retained.relations
+        );
+    }
+
     #[test]
-    fn parse_graph_page_v2_body() {
+    fn parse_graph_page_current_schema_body() {
         let body = serde_json::json!({
             "kind": "graph_page",
-            "schema_version": 2,
+            "schema_version": GRAPH_PAGE_DELTA_SCHEMA_VERSION,
             "entity_type": "Berry",
             "page_index": 3,
-            "entities": [{"_ref": "Berry:1", "name": "cheri"}]
+            "entities": [plasm_runtime::CachedEntity::new(plasm_core::Ref::new("Berry", "1"), 0)]
         });
         let page = validate_graph_page_delta(&body).expect("page");
         assert_eq!(page.page_index, 3);
@@ -458,7 +568,12 @@ mod tests {
             "entities": []
         });
         let err = validate_graph_page_delta(&body).unwrap_err();
-        assert!(err.contains("schema_version must be 2"), "{err}");
+        assert!(
+            err.contains(&format!(
+                "schema_version must be {GRAPH_PAGE_DELTA_SCHEMA_VERSION}"
+            )),
+            "{err}"
+        );
     }
 
     #[test]
@@ -592,7 +707,7 @@ mod tests {
         let session_id = "sid_shuffled";
         for (seq, page_index) in [(1u64, 0usize), (2, 1), (3, 2)] {
             let body = format!(
-                r#"{{"kind":"graph_page","schema_version":2,"entity_type":"Berry","page_index":{page_index},"entities":[]}}"#
+                r#"{{"kind":"graph_page","schema_version":{GRAPH_PAGE_DELTA_SCHEMA_VERSION},"entity_type":"Berry","page_index":{page_index},"entities":[]}}"#
             );
             let payload = ArtifactPayload {
                 metadata: ArtifactPayloadMetadata::json_default(),

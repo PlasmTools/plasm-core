@@ -378,7 +378,7 @@ async fn tokio_spill_apply_while_commit() {
     let host_apply = host.clone();
     let cgs_apply = Arc::clone(&cgs);
     let apply = tokio::spawn(async move {
-        let mut result = empty_graph_result(3);
+        let mut result = empty_graph_result(&["cheri", "pecha", "oran"]);
         let plan = {
             let guard = sess_apply.lock_graph_cache().await;
             GraphSurfaceRehydrator::plan_spill_sync(
@@ -396,9 +396,10 @@ async fn tokio_spill_apply_while_commit() {
                 cgs_apply.as_ref(),
             )
             .apply_spill_sync(plan, &mut result)
-            .await;
+            .await
+            .expect("recorded spill result");
         }
-        result.entities.len()
+        result.entities().len()
     });
 
     let sess_commit = Arc::clone(&sess);
@@ -518,9 +519,9 @@ async fn tokio_shared_ancestor_disjoint_relations_both_commit() {
     assert!(electric.relations.contains_key("moves"));
 }
 
-/// CEP-15: same relation key, different fetched ref pages — both commits succeed and union.
+/// Divergent observations of the same relation conflict; cache merging cannot invent a union.
 #[tokio::test]
-async fn tokio_same_relation_key_concurrent_ref_pages_both_commit() {
+async fn tokio_same_relation_key_concurrent_observations_conflict() {
     use plasm_core::Ref;
 
     let cgs = load_pokeapi_mini_cgs();
@@ -536,6 +537,9 @@ async fn tokio_same_relation_key_concurrent_ref_pages_both_commit() {
             .expect("seed electric");
     }
 
+    let barrier = Arc::new(tokio::sync::Barrier::new(2));
+    let barrier_a = Arc::clone(&barrier);
+    let barrier_b = Arc::clone(&barrier);
     let sess_a = Arc::clone(&sess);
     let sess_b = Arc::clone(&sess);
     let commit_a = tokio::spawn(async move {
@@ -547,6 +551,7 @@ async fn tokio_same_relation_key_concurrent_ref_pages_both_commit() {
                 Ref::new("Pokemon", "1"),
             ))
             .expect("page a");
+        barrier_a.wait().await;
         branch.commit(&sess_a).await
     });
     let commit_b = tokio::spawn(async move {
@@ -558,27 +563,42 @@ async fn tokio_same_relation_key_concurrent_ref_pages_both_commit() {
                 Ref::new("Pokemon", "2"),
             ))
             .expect("page b");
+        barrier_b.wait().await;
         branch.commit(&sess_b).await
     });
 
-    commit_a.await.expect("task a").expect("commit a");
-    commit_b.await.expect("task b").expect("commit b");
+    let a = commit_a.await.expect("task a");
+    let b = commit_b.await.expect("task b");
+    assert!(
+        matches!(
+            (&a, &b),
+            (Ok(()), Err(super::GraphCommitError::WriteConflict(_)))
+                | (Err(super::GraphCommitError::WriteConflict(_)), Ok(()))
+        ),
+        "{a:?} / {b:?}"
+    );
 
     let guard = sess.lock_graph_cache().await;
     let electric = guard
         .get(&Ref::new("PokemonType", "electric"))
         .expect("electric");
     let pokemon = electric.relations.get("pokemon").expect("pokemon edge");
-    assert!(pokemon.iter().any(|r| r.primary_slot_str() == "1"));
-    assert!(pokemon.iter().any(|r| r.primary_slot_str() == "2"));
+    assert_eq!(pokemon.len(), 1);
+    assert!(matches!(pokemon[0].primary_slot_str().as_str(), "1" | "2"));
+    assert!(!pokemon.is_exhaustive());
 }
 
-fn empty_graph_result(count: usize) -> plasm_runtime::ExecutionResult {
+fn empty_graph_result(names: &[&str]) -> plasm_runtime::ExecutionResult {
     plasm_runtime::ExecutionResult {
-        entities: Vec::new(),
-        count,
+        collection: plasm_runtime::execution::ExecutionCollection::graph(
+            crate::test_support::execution_fixtures::collection(
+                names.iter().map(|name| berry_entity(name)).collect(),
+                ResultCoverage::Complete,
+            )
+            .membership()
+            .clone(),
+        ),
         has_more: false,
-        coverage: ResultCoverage::Unknown,
         pagination_resume: None,
         paging_handle: None,
         source: plasm_runtime::ExecutionSource::Live,
@@ -657,14 +677,17 @@ async fn cep_5_graph_backed_parent_row_count() {
             guard.insert(berry_entity(name)).expect("insert");
         }
     }
-    let result = empty_graph_result(3);
+    let result = empty_graph_result(&["cheri", "pecha", "oran"]);
     let host = SpillHostFixture::new();
     let rehydrator = GraphSurfaceRehydrator::new(&sess, host.st.as_ref(), "cep5_sid", cgs.as_ref());
-    let parents = rehydrator.resolve_source_parents("Berry", &result).await;
+    let parents = rehydrator
+        .resolve_source_parents("Berry", &result)
+        .await
+        .unwrap();
     assert_eq!(parents.len(), 3, "CEP-5: parents must match logical count");
     let row_source = MaterializedRowSource::GraphBacked {
         entity_type: "Berry".into(),
-        logical_count: 3,
+        membership: result.collection.membership().clone(),
         hot_snapshot: rehydrator.snapshot_hot_locked("Berry").await,
     };
     let rows = rehydrator

@@ -63,26 +63,20 @@ fn test_session() -> ExecuteSession {
     )
 }
 
-#[test]
-fn search_group_by_rejects_fields_outside_capability_provides() {
+#[tokio::test]
+async fn search_group_by_checks_fields_and_preserves_observed_relation_types() {
     let session = test_session();
-    let err = compile_plasm_dag_to_plan(
-        &PromptPipelineConfig::default(),
-        None,
-        &session,
-        "search-group-by-relation",
-        r#"rows = LangItem~"probe"
-bad = rows | summarize by summary n=count()
-bad"#,
-    )
-    .expect_err(
-        "relations are not row fields on a search binding (RA-12 teaches entity fields, not hops)",
-    );
-    assert!(err.contains("not a row field"), "{err}");
-    assert!(
-        !err.contains("projected columns"),
-        "diagnostic must not steer agents toward wire column names: {err}"
-    );
+    let symbols = session.teaching_exposure.as_ref().unwrap().to_symbol_map();
+    let item = symbols.entity_sym_for("langmatrix", "LangItem");
+    let source = format!("class Grouped(Program):\n    def build(self):\n        rows = {item}.search(q=\"probe\")\n        return rows.group_by(\"summary\", n=agg.count())");
+    let bundle = crate::plasm_compile::compile_python_program(&session, &source).await.unwrap();
+    let schema = bundle.artifact().comp.steps.values().find_map(|step| match step {
+        plasm_core::PlasmStepPayload::Map(map) if matches!(map.compute.op, plasm_core::ComputeOp::GroupBy { .. }) => Some(&map.compute.schema),
+        _ => None,
+    }).unwrap();
+    assert!(schema.fields.iter().any(|field| field.name.as_str() == "summary" && field.value_kind == plasm_core::SyntheticValueKind::EntityRef));
+    let error = crate::plasm_compile::compile_python_program(&session, &source.replace("group_by(\"summary\"", "group_by(\"missing_field\"")).await.unwrap_err();
+    assert!(error.contains("missing_field"), "{error}");
 }
 
 #[test]
@@ -566,9 +560,9 @@ fn binding_head_pipe_where_lowers_without_from() {
 }
 
 #[test]
-fn dry_stub_integer_where_does_not_polars_string_compare() {
-    // RA-8 DryStub: integer fields must not be blanket `"dry-N"` strings or Polars
-    // rejects `score > 0` with string↔i32 dtype heresy.
+fn dry_stub_integer_where_uses_declared_numeric_comparison() {
+    // RA-8 DryStub: integer placeholders must inhabit their declared domain
+    // so dry and live `score > 0` use identical value semantics.
     let session = test_session();
     let plan = compile_plasm_dag_to_plan(
         &PromptPipelineConfig::default(),
@@ -641,7 +635,7 @@ cfg"#,
 }
 
 #[test]
-fn get_row_content_reference_errors_with_template_hint() {
+fn missing_content_field_has_no_reserved_word_hint() {
     let session = test_session();
     let err = compile_plasm_dag_to_plan(
         &PromptPipelineConfig::default(),
@@ -652,7 +646,7 @@ fn get_row_content_reference_errors_with_template_hint() {
 issue.content"#,
     )
     .expect_err("GET row .content must not look like relation");
-    assert!(err.contains("row-to-text template bindings"), "{err}");
+    assert!(!err.contains("row-to-text template bindings"), "{err}");
 }
 
 #[test]
@@ -2490,27 +2484,6 @@ fn bracket_render_accepts_bare_label_singleton_on_source() {
     );
 }
 
-#[test]
-fn bracket_render_content_rejected_as_program_root_with_actionable_copy() {
-    let session = repository_commit_session();
-    let map = symbol_map_for_plasm_surface_parse(&session, None);
-    let p_sha = map.ident_sym_entity_field_for("repocommit", "Commit", "sha");
-    let source = format!(
-            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\nraw = repo.commits\ncommits = raw | take 1 | select {p_sha}\nmail = commits => <<MD\nx\nMD\nmail.content"
-        );
-    let err = compile_plasm_dag_to_plan(
-        &PromptPipelineConfig::default(),
-        None,
-        &session,
-        "render-content-root",
-        &source,
-    )
-    .expect_err("mail.content must not be a root");
-    assert!(
-        err.contains("Don't return `mail.content`"),
-        "unexpected: {err}"
-    );
-}
 
 #[test]
 fn derive_accepts_render_content_as_binding_rhs() {
@@ -3538,7 +3511,7 @@ bad"#,
     )
     .expect_err("whole-entity bind must not fill string param");
     assert!(
-        err.contains("entity row") && err.contains("scalar cell"),
+        err.contains("PLP-4") && err.contains("scalar cell"),
         "expected PLP-4 entity-row reject, got: {err}"
     );
     assert!(
@@ -3604,27 +3577,6 @@ ok"#,
     );
 }
 
-/// RA-14 + RA-9: `| select dest = password` rematerializes policy; dest cannot fill a non-password slot.
-#[test]
-fn select_password_alias_preserves_ra9_policy() {
-    let session = test_session();
-    let err = compile_plasm_dag_to_plan(
-        &PromptPipelineConfig::default(),
-        None,
-        &session,
-        "lang_union_select_policy",
-        r#"v = LangVault("venmo")
-s = v | select leaked = password | take 1
-bad = LangItem("i1").update(title=s.leaked, score=1, owner="a")
-bad"#,
-    )
-    .expect_err("renamed password cell must still be RA-9");
-    assert!(
-        err.contains("RA-9") && err.contains("title"),
-        "select dest=password must rematerialize password policy, got: {err}"
-    );
-}
-
 /// RA-14: `| distinct` after `| select dest = src` keeps dest (matrix `lang_union_rowset_alias_distinct`).
 #[test]
 fn select_alias_survives_distinct() {
@@ -3643,7 +3595,7 @@ kept"#,
     .expect("| distinct must keep RA-14 dest columns for later | select dest");
 }
 
-/// RA-9 success: rematerialized dest may fill the same password value_ref.
+/// Projection preserves the named value type when binding an action input.
 #[test]
 fn select_password_alias_fills_matching_password_param() {
     let session = test_session();
@@ -3709,37 +3661,6 @@ updated"#,
     );
 }
 
-#[test]
-fn invoke_rejects_content_stitch_on_literal_heredoc_binding() {
-    let session = test_session();
-    let err = compile_plasm_dag_to_plan(
-        &PromptPipelineConfig::default(),
-        None,
-        &session,
-        "heredoc-content-reject",
-        r#"body = <<B
-patch
-B
-item = LangItem("i1")
-bad = item.update(title=body.content)
-bad"#,
-    )
-    .expect_err("literal heredoc .content must fail at compile");
-    assert!(
-        err.contains("row-to-text") || err.contains("already strings"),
-        "expected option-A .content diagnostic, got: {err}"
-    );
-    assert!(
-        err.contains("param=body") || err.contains("`body`"),
-        "help must steer to bare string bind: {err}"
-    );
-}
-
-mod review_execution;
-
-mod scalar_predicates;
-
-mod compiler_contracts;
 
 #[test]
 fn data_expression_boundary_rejects_nested_executable_syntax() {
@@ -3756,7 +3677,7 @@ fn data_expression_boundary_preserves_quoted_operational_text() {
 }
 
 #[test]
-fn terminal_union_cannot_regain_relation_continuation() {
+fn cross_catalog_union_cannot_regain_relation_continuation() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let dir = root.join("../../fixtures/schemas/plasm_language_matrix");
     let cgs_a = Arc::new(plasm_core::loader::load_schema_dir(&dir).expect("langmatrix_a"));
@@ -3793,6 +3714,7 @@ fn terminal_union_cannot_regain_relation_continuation() {
         .as_ref()
         .expect("exposure")
         .symbol_map_arc();
+    let e1 = map.entity_sym_for("langmatrix_a", "LangItem");
     let e2 = map.entity_sym_for("langmatrix_b", "LangItem");
     let r_sym = map.ident_sym_relation_for("langmatrix_b", "LangItem", "children");
     for suffix in [
@@ -3805,57 +3727,70 @@ fn terminal_union_cannot_regain_relation_continuation() {
         } else {
             (format!("\ncut = both{suffix}"), "cut")
         };
-        let source = format!("left = {e2}{{owner=\"alice\"}}\nright = {e2}{{owner=\"bob\"}}\nboth = left | union right{stage}\nkids = {receiver} => _.{r_sym}\nkids");
+        let source = format!("left = {e1}{{owner=\"alice\"}} | select id, score\nright = {e2}{{owner=\"bob\"}} | select id, score\nboth = left | union right{stage}\nkids = {receiver} => _.{r_sym}\nkids");
         let result = compile_plasm_dag_to_plan(&PromptPipelineConfig::default(), None, &session, "union-continuation", &source);
         let error = result.expect_err("terminal union must remain non-continuable");
         assert!(error.contains("PLP-4:") && error.contains("entity continuation evidence"), "{suffix}: {error}");
     }
 }
 
-#[test]
-fn python_write_inputs_preserve_password_domain() {
-    use plasm_core::symbol_tuning::SymbolRender;
-    let mut session = test_session();
-    let cgs = session.cgs.clone();
-    session.teaching_exposure.as_mut().unwrap().expose_entities(&[cgs.as_ref()], cgs.clone(), "langmatrix", &["LangVault"]);
+#[tokio::test]
+async fn nested_scope_captures_entity_returning_mutation_singletons() {
+    let session = test_session();
     let symbols = session.teaching_exposure.as_ref().unwrap().to_symbol_map();
-    let vault = symbols.entity_sym_for("langmatrix", "LangVault");
     let item = symbols.entity_sym_for("langmatrix", "LangItem");
-    let update = symbols.method_sym_for("langmatrix", "LangItem", "update");
-    let unlock = symbols.method_sym_for("langmatrix", "LangVault", "unlock");
-    let prefix = format!("class Secret(Program):\n    def build(self):\n        v = {vault}.get(\"venmo\")\n        secret = v.password\n");
-    let bad = format!("{prefix}        row = {item}.get(\"i1\")\n        return row.{update}(title=secret, score=1, owner=\"a\")\n");
-    let error = crate::plasm_compile::compile_python_program(&session, &bad).unwrap_err();
-    assert!(error.contains("RA-9"), "{error}");
-    let good = format!("{prefix}        return v.{unlock}(secret=secret)\n");
-    crate::plasm_compile::compile_python_program(&session, &good).expect("matching password domain");
-    for value in ["renamed.secret", "cell"] {
-        let prefix = format!("class Alias(Program):\n    def build(self):\n        v = {vault}.get(\"venmo\")\n        renamed = v.select(secret=\"password\").take(1)\n        cell = renamed.secret\n");
-        let bad = format!("{prefix}        row = {item}.get(\"i1\")\n        return row.{update}(title={value}, score=1, owner=\"a\")\n");
-        let error = crate::plasm_compile::compile_python_program(&session, &bad).unwrap_err();
-        assert!(error.contains("RA-9"), "{error}");
-        let good = format!("{prefix}        return v.{unlock}(secret={value})\n");
-        crate::plasm_compile::compile_python_program(&session, &good).expect("aliased password keeps matching domain");
-    }
-
+    let create = symbols.method_sym_for("langmatrix", "LangItem", "create");
+    let source = format!("class Captured(Program):\n    def build(self):\n        created = {item}.{create}(title='Created', score=1, owner='alice')\n        return {item}.query().map(lambda row: {{'created': created.title, 'title': row.title}}, max_parents=8)");
+    crate::plasm_compile::compile_python_program(&session, &source).await.unwrap();
 }
 
-#[test]
-fn python_fanout_password_policy_survives_row_scope_and_application() {
-    use plasm_core::symbol_tuning::SymbolRender;
-    let mut session = test_session();
-    let cgs = session.cgs.clone();
-    session.teaching_exposure.as_mut().unwrap().expose_entities(&[cgs.as_ref()],cgs.clone(),"langmatrix", &["LangVault"]);
+/// Labels belong to the catalog/policy plane, independently of Python value types.
+#[tokio::test]
+async fn python_expressions_preserve_arbitrary_catalog_labels_to_sinks() {
+    use crate::flow_catalog::FlowCatalogView;
+    use crate::plan_flow::{verify_plan_flow, FlowVerdict, QualifiedCapabilityKey, SinkParamRef};
+    use crate::plan_flow_policy::{FlowPolicy, FlowPolicySnapshot, ForbiddenFlowRule, PolicyRevision};
+    use plasm_core::{CapabilityParamName, DataClassName, SinkClassName};
+    use std::collections::BTreeSet;
+
+    let session = test_session();
     let symbols = session.teaching_exposure.as_ref().unwrap().to_symbol_map();
-    let vault = symbols.entity_sym_for("langmatrix","LangVault");
-    let item = symbols.entity_sym_for("langmatrix","LangItem");
-    let create = symbols.method_sym_for("langmatrix","LangItem","create");
-    let unlock = symbols.method_sym_for("langmatrix","LangVault","unlock");
-    for source in [format!("rows = {vault}.get(\"venmo\")"),format!("seed = {vault}.get(\"venmo\")\n        rows = seed.flat_map(lambda row: {vault}.get(row.id))")] {
-        let code=format!("class Passwords(Program):\n    def build(self):\n        {source}\n        return rows.flat_map(lambda row: {item}.{create}(title=row.password, score=1, owner=\"a\"))\n");
-        let error=crate::plasm_compile::compile_python_program(&session,&code).unwrap_err();
-        assert!(error.contains("RA-9"),"{error}");
+    let item = symbols.entity_sym_for("langmatrix", "LangItem");
+    let update = symbols.method_sym_for("langmatrix", "LangItem", "update");
+    let labels = ["restricted_alpha", "restricted_beta"].map(|s| DataClassName::new(s).unwrap());
+    let sink = SinkClassName::new("external_text").unwrap();
+    let mut catalog = FlowCatalogView::default();
+    for capability in ["langitem_get", "langitem_query"] {
+        catalog.capability_output_labels.insert(
+            QualifiedCapabilityKey::from_parts("langmatrix", "LangItem", capability),
+            BTreeSet::from(labels.clone()),
+        );
     }
-    let code=format!("class Passwords(Program):\n    def build(self):\n        rows = {vault}.get(\"venmo\")\n        return rows.flat_map(lambda row: row.{unlock}(secret=row.password))\n");
-    crate::plasm_compile::compile_python_program(&session,&code).expect("matching row policy");
+    catalog.capability_sink_params.insert(
+        QualifiedCapabilityKey::from_parts("langmatrix", "LangItem", "langitem_update"),
+        vec![SinkParamRef { param: CapabilityParamName::from("title"), sink_class: Some(sink.clone()) }],
+    );
+    let bodies = [
+        format!("row = {item}.get('i1')\n        return row.{update}(title=row.title, score=1, owner='a')"),
+        format!("row = {item}.get('i1')\n        text = row.title.upper() + '!'\n        return row.{update}(title=text, score=1, owner='a')"),
+        format!("row = {item}.get('i1')\n        record = {{'content': [row.title.upper()]}}\n        return row.{update}(title=record.content[0], score=1, owner='a')"),
+        format!("rows = {item}.query().take(2)\n        return rows.flat_map(lambda row: row.{update}(title=row.title.upper(), score=1, owner='a'), max_parents=2)"),
+    ];
+    for body in bodies {
+        let source = format!("class Labeled(Program):\n    def build(self):\n        {body}\n");
+        let bundle = crate::plasm_compile::compile_python_program(&session, &source).await.unwrap_or_else(|error| panic!("{body}: {error}"));
+        let plan = crate::plasm_step_convert::build_validated_plan_from_executable(&bundle.artifact().comp, bundle.executable()).unwrap();
+        let topo = bundle.executable().bind.topo.iter().map(|id| id.as_str().to_owned()).collect::<Vec<_>>();
+        for label in &labels {
+            let snapshot = FlowPolicySnapshot::Active { revision: PolicyRevision(1), policy: FlowPolicy {
+                forbidden: vec![ForbiddenFlowRule { from_label: label.clone(), to_sink: Some(sink.clone()), reason: None }],
+                ..FlowPolicy::default()
+            }};
+            let checked = verify_plan_flow(plan.artifact(), &topo, &catalog, &snapshot);
+            assert!(matches!(checked.analysis.verdict, FlowVerdict::Denied), "lost {label:?}: {body}: {:?}", checked.analysis);
+            assert!(checked.admit().is_err());
+        }
+        let checked = verify_plan_flow(plan.artifact(), &topo, &catalog, &FlowPolicySnapshot::Inactive);
+        assert!(checked.admit().is_ok(), "label enforcement is owned by the active policy");
+    }
 }

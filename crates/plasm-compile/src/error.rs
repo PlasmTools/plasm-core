@@ -34,6 +34,9 @@ pub enum CompileError {
 
 #[derive(Error, Debug, Clone)]
 pub enum DecodeError {
+    #[error("response field `{field}` violates its declared type: {reason}")]
+    FieldContract { field: String, reason: String },
+
     #[error("Path '{path}' not found in response")]
     PathNotFound { path: String },
 

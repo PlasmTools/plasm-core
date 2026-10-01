@@ -5,12 +5,6 @@ use super::super::row::MatrixRow;
 pub(crate) const ROWS: &[MatrixRow] = &[
     MatrixRow {
         id: "lang_ra4_apply_render_bind_cut",
-        program: r#"items = LangItem("i1") | select id, title
-hdr = items => <<RA4MDBIND
-# {{ title }}
-RA4MDBIND
-hdr"#,
-        surface_line: false,
         federated: false,
         features: &[
             "ra4_apply_factor",
@@ -20,26 +14,25 @@ hdr"#,
             "dry_live_parity",
         ],
         min_node_results: 2,
-        expect_markdown_substrings: &["```tsv", "content", "#"],
+        expect_markdown_substrings: &["```tsv", "value", "#"],
         expect_live_error: None,
     },
     // RA-4 apply — for_each monolith vs bind-cut.
     MatrixRow {
         id: "lang_ra4_apply_foreach_monolith",
-        program: r#"LangItem("i1") | select id, title, owner => LangItem("i1").update(score=3, title=_.title, owner=_.owner)"#,
-        surface_line: false,
         federated: false,
-        features: &["ra4_apply_factor", "pipe_select", "for_each_effect", "dry_live_parity"],
+        features: &[
+            "ra4_apply_factor",
+            "pipe_select",
+            "for_each_effect",
+            "dry_live_parity",
+        ],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv"],
         expect_live_error: None,
     },
     MatrixRow {
         id: "lang_ra4_apply_foreach_bind_cut",
-        program: r#"items = LangItem("i1") | select id, title, owner
-sync = items => LangItem("i1").update(score=3, title=_.title, owner=_.owner)
-sync"#,
-        surface_line: false,
         federated: false,
         features: &[
             "ra4_apply_factor",
@@ -55,18 +48,20 @@ sync"#,
     // Trap: derive body containing `.message` must stay derive (not for_each via `.m` substring).
     MatrixRow {
         id: "lang_ra4_apply_derive_message_field",
-        program: r#"LangItem | where owner="alice" | take 2 => { t: _.title, note: "_.message" }"#,
-        surface_line: true,
         federated: false,
-        features: &["ra4_apply_factor", "derive_map", "pipe_where", "pipe_take", "dry_live_parity"],
+        features: &[
+            "ra4_apply_factor",
+            "derive_map",
+            "pipe_where",
+            "pipe_take",
+            "dry_live_parity",
+        ],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv"],
         expect_live_error: None,
     },
     MatrixRow {
         id: "lang_group_by_first",
-        program: "LangItem | summarize by owner title=first(title)",
-        surface_line: true,
         federated: false,
         features: &["pipe_summarize_by", "agg_first_last"],
         min_node_results: 1,
@@ -75,11 +70,6 @@ sync"#,
     },
     MatrixRow {
         id: "lang_bind_projection_then_relation",
-        program: r#"root = LangItem("i1")
-trimmed = root | select id, title
-tags = trimmed.tags
-tags"#,
-        surface_line: false,
         federated: false,
         features: &["bind_projection_then_relation", "pipe_select"],
         min_node_results: 3,
@@ -88,9 +78,6 @@ tags"#,
     },
     MatrixRow {
         id: "lang_bind_relation_hop_one_one",
-        program: r#"summary = LangItem("i1").summary
-summary | select headline"#,
-        surface_line: false,
         federated: false,
         features: &[
             "relation_one_opaque_r",
@@ -103,8 +90,6 @@ summary | select headline"#,
     },
     MatrixRow {
         id: "lang_effect_create_literal",
-        program: r#"LangItem.create(title="MatrixCreated", score=7, owner="bot")"#,
-        surface_line: false,
         federated: false,
         features: &["effect_create"],
         min_node_results: 1,
@@ -113,8 +98,6 @@ summary | select headline"#,
     },
     MatrixRow {
         id: "lang_money_predicate_gt",
-        program: r#"LangOffer | where price>10"#,
-        surface_line: false,
         federated: false,
         features: &["money_predicate", "pipe_where"],
         min_node_results: 1,
@@ -123,8 +106,6 @@ summary | select headline"#,
     },
     MatrixRow {
         id: "lang_integer_where_gt_dry_coerce",
-        program: r#"LangItem | where score > 0"#,
-        surface_line: false,
         federated: false,
         features: &["catalog_directed_coerce", "pipe_where", "dry_live_parity"],
         min_node_results: 1,
@@ -133,8 +114,6 @@ summary | select headline"#,
     },
     MatrixRow {
         id: "lang_money_create_body",
-        program: r#"LangOffer.create(price="9.25", quote_currency="USD")"#,
-        surface_line: false,
         federated: false,
         features: &["money_create_body", "effect_create"],
         min_node_results: 1,
@@ -143,8 +122,6 @@ summary | select headline"#,
     },
     MatrixRow {
         id: "lang_effect_update",
-        program: r#"LangItem("i1").update(title="MatrixPatch", score=42, owner="alice")"#,
-        surface_line: false,
         federated: false,
         features: &["effect_update"],
         min_node_results: 1,
@@ -153,8 +130,6 @@ summary | select headline"#,
     },
     MatrixRow {
         id: "lang_effect_action_ping",
-        program: r#"LangItem("i1").ping()"#,
-        surface_line: false,
         federated: false,
         features: &["effect_action"],
         min_node_results: 1,
@@ -163,8 +138,6 @@ summary | select headline"#,
     },
     MatrixRow {
         id: "lang_effect_delete",
-        program: r#"LangItem("i2").delete()"#,
-        surface_line: false,
         federated: false,
         features: &["effect_delete"],
         min_node_results: 1,
@@ -178,10 +151,6 @@ summary | select headline"#,
     },
     MatrixRow {
         id: "lang_for_each_empty_ping",
-        program: r#"items = LangItem | where owner="no-such-matrix-owner"
-done = items => LangItem(_.id).ping()
-done"#,
-        surface_line: false,
         federated: false,
         features: &["for_each_effect", "effect_action", "pipe_where"],
         min_node_results: 2,
@@ -195,32 +164,32 @@ done"#,
     },
     MatrixRow {
         id: "lang_apply_get_multirow",
-        program: r#"items = LangItem | where owner="alice" | take 3
-details = items => LangItem(_.id)
-details"#,
-        surface_line: false,
         federated: false,
-        features: &["row_apply_get", "pipe_where", "pipe_take", "dry_live_parity"],
+        features: &[
+            "row_apply_get",
+            "pipe_where",
+            "pipe_take",
+            "dry_live_parity",
+        ],
         min_node_results: 2,
         expect_markdown_substrings: &["```tsv", "details"],
         expect_live_error: None,
     },
     MatrixRow {
         id: "lang_apply_query_multirow",
-        program: r#"items = LangItem | where owner="alice" | take 2
-peers = items => LangItem{owner=_.owner}
-peers"#,
-        surface_line: false,
         federated: false,
-        features: &["row_apply_query", "pipe_where", "pipe_take", "dry_live_parity"],
+        features: &[
+            "row_apply_query",
+            "pipe_where",
+            "pipe_take",
+            "dry_live_parity",
+        ],
         min_node_results: 2,
         expect_markdown_substrings: &["peers"],
         expect_live_error: None,
     },
     MatrixRow {
         id: "lang_for_each_update",
-        program: "items = LangItem(\"i1\") | select id, title, owner\nsync = items => LangItem(\"i1\").update(score=3, title=_.title, owner=_.owner)\nsync",
-        surface_line: false,
         federated: false,
         features: &["for_each_effect"],
         min_node_results: 2,
@@ -230,10 +199,6 @@ peers"#,
     // Multi-row live mutator fanout (list source → N distinct PATCH identities).
     MatrixRow {
         id: "lang_for_each_multirow_update",
-        program: r#"items = LangItem | where owner="alice" | take 3
-done = items => LangItem(_.id).update(score=9, title=_.title, owner=_.owner)
-done"#,
-        surface_line: false,
         federated: false,
         features: &[
             "for_each_effect",
@@ -249,11 +214,6 @@ done"#,
     // Outer auth binding × multi-row secured mutator (Bearer from LangAuthSession.login).
     MatrixRow {
         id: "lang_for_each_auth_secured_touch",
-        program: r#"auth = LangAuthSession.login(username="matrix", password="secret")
-items = LangItem | where owner="alice" | take 3
-done = items => LangItem(_.id).secured-touch(access_token=auth.access_token)
-done"#,
-        surface_line: false,
         federated: false,
         features: &[
             "for_each_effect",
@@ -270,10 +230,6 @@ done"#,
     // PLP-8: seed phase=open; each tick advances open→mid→done; until holds within take.
     MatrixRow {
         id: "lang_iterate_until_bound",
-        program: r#"cur = LangCursor("c1")
-done = iterate cur step LangCursor(_.id).tick() until phase = "done" take 4
-done"#,
-        surface_line: false,
         federated: false,
         features: &[
             "iterate_until_bound",
@@ -294,10 +250,6 @@ done"#,
     // PLP-8: until already true on seed — zero steps.
     MatrixRow {
         id: "lang_iterate_until_zero_step",
-        program: r#"cur = LangCursor("c_done")
-done = iterate cur step LangCursor(_.id).tick() until phase = "done" take 3
-done"#,
-        surface_line: false,
         federated: false,
         features: &["iterate_until_zero_step", "entity_get", "dry_live_parity"],
         min_node_results: 2,
@@ -307,10 +259,6 @@ done"#,
     // PLP-8: stuck cursor never reaches done — bound exhaustion is defined failure.
     MatrixRow {
         id: "lang_iterate_bound_exhausted",
-        program: r#"cur = LangCursor("c_stuck")
-done = iterate cur step LangCursor(_.id).tick() until phase = "done" take 2
-done"#,
-        surface_line: false,
         federated: false,
         features: &["iterate_bound_exhausted", "effect_action", "entity_get"],
         min_node_results: 1,
@@ -319,18 +267,17 @@ done"#,
     },
     MatrixRow {
         id: "lang_federated_relation_target_entry",
-        program: "",
-        surface_line: false,
         federated: true,
-        features: &["federated_relation_target_entry", "relation_from_parent_get"],
+        features: &[
+            "federated_relation_target_entry",
+            "relation_from_parent_get",
+        ],
         min_node_results: 2,
         expect_markdown_substrings: &["summary"],
         expect_live_error: None,
     },
     MatrixRow {
         id: "lang_federated_duplicate_entity_e1_query",
-        program: r#"e1{owner="alice"}"#,
-        surface_line: false,
         federated: true,
         features: &[
             "federated_duplicate_entity_symbol",
@@ -344,21 +291,14 @@ done"#,
     },
     MatrixRow {
         id: "lang_federated_duplicate_entity_e2_search",
-        program: "e2~$",
-        surface_line: false,
         federated: true,
-        features: &[
-            "federated_duplicate_entity_symbol",
-            "entity_search",
-        ],
+        features: &["federated_duplicate_entity_symbol", "entity_search"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv"],
         expect_live_error: None,
     },
     MatrixRow {
         id: "lang_federated_duplicate_entity_relation_r",
-        program: "",
-        surface_line: false,
         federated: true,
         features: &[
             "federated_duplicate_entity_symbol",
@@ -371,8 +311,6 @@ done"#,
     },
     MatrixRow {
         id: "lang_federated_duplicate_entity_mutator_m",
-        program: "",
-        surface_line: false,
         federated: true,
         features: &[
             "federated_duplicate_entity_symbol",
@@ -385,8 +323,6 @@ done"#,
     },
     MatrixRow {
         id: "lang_federated_duplicate_entity_pathless_action",
-        program: "",
-        surface_line: false,
         federated: true,
         features: &[
             "federated_duplicate_entity_symbol",
@@ -399,8 +335,6 @@ done"#,
     },
     MatrixRow {
         id: "lang_federated_auth_session_provides_mutation",
-        program: "",
-        surface_line: false,
         federated: true,
         features: &[
             "federated_auth_session_provides_mutation",
@@ -417,8 +351,6 @@ done"#,
     },
     MatrixRow {
         id: "lang_federated_parallel_roots",
-        program: "e1{owner=\"alice\"}, e2~$",
-        surface_line: false,
         federated: true,
         features: &[
             "federated_duplicate_entity_symbol",
@@ -433,8 +365,6 @@ done"#,
     },
     MatrixRow {
         id: "lang_federated_group_by_on_e1",
-        program: "by = e1{owner=\"alice\"} | summarize by owner n=count()\nby",
-        surface_line: false,
         federated: true,
         features: &[
             "federated_duplicate_entity_symbol",
@@ -448,8 +378,6 @@ done"#,
     },
     MatrixRow {
         id: "lang_bind_template_inline_on_e1",
-        program: "",
-        surface_line: false,
         federated: true,
         features: &[
             "federated_duplicate_entity_symbol",
@@ -463,8 +391,6 @@ done"#,
     },
     MatrixRow {
         id: "lang_domain_symbol_page_size",
-        program: "e1.page_size(10)",
-        surface_line: false,
         federated: false,
         features: &["domain_symbol_e1", "pagination_page_size"],
         min_node_results: 1,
@@ -473,16 +399,6 @@ done"#,
     },
     MatrixRow {
         id: "lang_utf8_minijinja_content_stitch",
-        program: r#"one = LangItem | take 1 | select title
-type_md = one => <<UTF8_ROW_EOF
-# Pokémon — {{ title }}
-UTF8_ROW_EOF
-LangItem.create(title=<<UTF8_DOC_EOF
-Featured Pokémon
-{{ type_md.content }}
-UTF8_DOC_EOF
-, score=0, owner="utf8-matrix-owner")"#,
-        surface_line: false,
         federated: false,
         features: &[
             "utf8_minijinja_interpolate",

@@ -10,7 +10,7 @@ pub(in crate::plasm_dag) use stream::{
     lower_suffix_stream, try_lower_row_suffix_expression,
 };
 pub(in crate::plasm_dag) use to_compute::{
-    lower_sort_compute, lower_with_compute, membership_rhs_column_path, row_suffix_to_compute,
+    lower_sort_compute, membership_rhs_column_path, row_suffix_to_compute,
 };
 
 pub(in crate::plasm_dag) use reductions::{lower_distinct_compute, lower_reduction_compute};

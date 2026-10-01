@@ -419,6 +419,9 @@ impl ExecutionEngine {
                     Ok((requested, entity, source, _)) => serde_json::json!({
                         "disposition":if entity.reference == *requested { "merge_pending" } else { "identity_mismatch_summary_retained" },
                         "source":source, "fields":entity.fields.keys().map(|k| k.as_str()).collect::<Vec<_>>() }),
+                    Err(e @ RuntimeError::DecodeError { .. }) => {
+                        serde_json::json!({"disposition":"response_contract_failure", "error":hydration_trace::failure(e)})
+                    }
                     Err(e) => {
                         serde_json::json!({"disposition":"failure_summary_retained", "error":hydration_trace::failure(e)})
                     }
@@ -465,6 +468,7 @@ impl ExecutionEngine {
                         mat.insert(entity)?;
                     }
                 }
+                Err(e @ RuntimeError::DecodeError { .. }) => return Err(e),
                 Err(e) => {
                     // List rows remain usable as summaries when a detail GET fails
                     // (AppWorld and other mocks can 409/404 individual ids that still
@@ -666,8 +670,8 @@ mod tests {
                 );
                 Ok((
                     serde_json::json!([
-                        {"id": "alpha", "title": "Alpha Item"},
-                        {"id": "beta", "title": "Beta Item"}
+                        {"id": "alpha", "title": "Alpha Item", "score": 1, "owner": "reader"},
+                        {"id": "beta", "title": "Beta Item", "score": 2, "owner": "reader"}
                     ]),
                     None,
                 ))
@@ -717,8 +721,8 @@ mod tests {
             )
             .await
             .expect("derived Get live execute must return Result, not unwind");
-        assert_eq!(result.entities.len(), 1);
-        let row = &result.entities[0];
+        assert_eq!(result.entities().len(), 1);
+        let row = &result.entities()[0];
         assert_eq!(row.reference.primary_slot_str(), "alpha");
         assert_eq!(
             row.fields.get("title").map(|f| f.to_value()),
@@ -978,7 +982,7 @@ mod tests {
             .await
             .expect("fixture login");
         assert!(
-            login_res.count >= 1,
+            login_res.count() >= 1,
             "login must materialize AuthSession, got {login_res:?}"
         );
         assert!(
@@ -1339,7 +1343,7 @@ mod tests {
             auths.lock().unwrap()
         );
         let body = result
-            .entities
+            .entities()
             .iter()
             .find_map(|e| e.fields.get("body").map(|f| f.to_value()));
         assert_eq!(body, Some(Value::String("trip body".into())));
@@ -1446,7 +1450,7 @@ mod tests {
             )
             .await
             .expect("search without hydrate");
-        let reference = listed.entities[0].reference.clone();
+        let reference = listed.entities()[0].reference.clone();
 
         paths.lock().unwrap().clear();
         auths.lock().unwrap().clear();
@@ -1482,7 +1486,7 @@ mod tests {
             auths.lock().unwrap()
         );
         let body = got
-            .entities
+            .entities()
             .iter()
             .find_map(|e| e.fields.get("body").map(|f| f.to_value()));
         assert_eq!(body, Some(Value::String("trip body".into())));
@@ -1697,7 +1701,7 @@ mod tests {
             )
             .await
             .expect("folder query then files relation");
-        assert_eq!(result.count, 1);
+        assert_eq!(result.count(), 1);
         let recorded_paths = paths.lock().unwrap().clone();
         assert!(
             recorded_paths.iter().any(|p| p.ends_with("/folders")),
@@ -1885,7 +1889,7 @@ mod tests {
             )
             .await
             .expect("unary Get then comments relation");
-        assert_eq!(result.count, 1);
+        assert_eq!(result.count(), 1);
         let recorded_paths = paths.lock().unwrap().clone();
         assert!(
             recorded_paths
@@ -2186,7 +2190,10 @@ mod tests {
             "fork after mutator poison must re-observe, not serve the pre-write snapshot"
         );
         assert_eq!(gets.load(Ordering::SeqCst), 2);
-        let title = again.entities[0].fields.get("title").map(|f| f.to_value());
+        let title = again.entities()[0]
+            .fields
+            .get("title")
+            .map(|f| f.to_value());
         assert_eq!(title, Some(Value::String("live-reobserve".into())));
     }
 
@@ -2263,10 +2270,10 @@ mod tests {
             )
             .await
             .expect("list ledger");
-        assert_eq!(listed.count, 2, "fixture must decode both directed rows");
+        assert_eq!(listed.count(), 2, "fixture must decode both directed rows");
 
         let paid = super::super::predicates::filter_entities_by_predicate(
-            listed.entities.clone(),
+            listed.entities().iter().cloned().collect(),
             &Predicate::eq("payer", "alice"),
         )
         .expect("payer filter");
@@ -2281,7 +2288,7 @@ mod tests {
         );
 
         let owed = super::super::predicates::filter_entities_by_predicate(
-            listed.entities,
+            listed.entities().iter().cloned().collect(),
             &Predicate::eq("debtor", "alice"),
         )
         .expect("debtor filter");
@@ -2382,6 +2389,15 @@ mod tests {
     /// RA-16: detail GET soft-fail must leave the list summary, not CacheError.
     #[tokio::test]
     async fn ra16_hydrate_keeps_summary_when_detail_get_soft_fails() {
+        hydrate_failure_contract(false).await;
+    }
+
+    #[tokio::test]
+    async fn hydrate_propagates_response_contract_errors() {
+        hydrate_failure_contract(true).await;
+    }
+
+    async fn hydrate_failure_contract(malformed: bool) {
         use crate::auth::ResolvedAuth;
         use crate::http_transport::HttpTransport;
         use async_trait::async_trait;
@@ -2391,7 +2407,10 @@ mod tests {
         use std::sync::Arc;
 
         #[derive(Clone)]
-        struct NotFoundGet;
+        struct NotFoundGet {
+            malformed: bool,
+            calls: Arc<std::sync::atomic::AtomicUsize>,
+        }
 
         #[async_trait]
         impl HttpTransport for NotFoundGet {
@@ -2401,11 +2420,18 @@ mod tests {
                 request: &CompiledRequest,
                 _auth: Option<ResolvedAuth>,
             ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+                self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 assert!(
                     request.path.contains("/secured_notes/"),
                     "expected hydrate GET, got {}",
                     request.path
                 );
+                if self.malformed {
+                    return Ok((
+                        serde_json::json!({"note_id":"1", "title":"Fixture", "body":{"invalid":"object"}}),
+                        None,
+                    ));
+                }
                 Err(RuntimeError::CacheError {
                     message: "404 detail".into(),
                 })
@@ -2425,12 +2451,17 @@ mod tests {
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .expect("language matrix CGS");
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let compiled = Arc::new(plasm_compile::compile_cgs_capability_templates(&cgs).unwrap());
         let engine = ExecutionEngine::new_with_transport(
             ExecutionConfig {
                 base_url: Some("http://127.0.0.1:9".into()),
                 ..ExecutionConfig::default()
             },
-            Arc::new(NotFoundGet),
+            Arc::new(NotFoundGet {
+                malformed,
+                calls: calls.clone(),
+            }),
             None,
         );
         let entity = CachedEntity::from_decoded(
@@ -2444,8 +2475,16 @@ mod tests {
         );
         let mut mat = SessionMaterialization::new();
         let env = env_with(&[("access_token", "tok")]);
-        let (out, _) = engine
-            .hydrate_query_summaries(
+        let result = ExecutionEngine::run_in_execute_task_scopes(
+            "http://127.0.0.1:9".into(),
+            None,
+            None,
+            None,
+            None,
+            compiled,
+            None,
+            None,
+            engine.hydrate_query_summaries(
                 "LangSecuredNote",
                 std::slice::from_ref(&entity),
                 &cgs,
@@ -2453,9 +2492,21 @@ mod tests {
                 ExecutionMode::Live,
                 true,
                 &env,
-            )
-            .await
-            .expect("RA-16 must keep the summary after GET soft-fail");
+            ),
+        )
+        .await;
+        assert!(
+            calls.load(std::sync::atomic::Ordering::SeqCst) > 0,
+            "hydration must reach the test transport"
+        );
+        if malformed {
+            assert!(
+                matches!(result, Err(RuntimeError::DecodeError { .. })),
+                "{result:?}"
+            );
+            return;
+        }
+        let (out, _) = result.expect("RA-16 must keep the summary after GET soft-fail");
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].reference, entity.reference);
         assert_eq!(
@@ -2583,11 +2634,11 @@ mod tests {
             .await
             .expect("RA-16 TopK paginated query must keep list Refs");
         assert!(
-            result.count >= 1,
+            result.count() >= 1,
             "TopK must return listed rows, got {result:?}"
         );
         let ids: Vec<String> = result
-            .entities
+            .entities()
             .iter()
             .map(|e| e.reference.primary_slot_str().to_string())
             .collect();
@@ -3218,7 +3269,7 @@ mod tests {
             .await
             .expect("RA-16 TopK paginated query must keep list Refs");
         assert!(
-            result.count >= 1,
+            result.count() >= 1,
             "TopK must return listed rows, got {result:?}"
         );
         assert!(
@@ -3226,7 +3277,7 @@ mod tests {
             "TopK loser remains in graph"
         );
         let ids: Vec<String> = result
-            .entities
+            .entities()
             .iter()
             .map(|e| e.reference.primary_slot_str().to_string())
             .collect();

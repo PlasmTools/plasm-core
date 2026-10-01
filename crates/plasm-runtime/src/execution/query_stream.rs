@@ -3,6 +3,49 @@
 use super::*;
 use crate::view_plan::ViewAmbientContext;
 
+/// A complete response needs both declared coverage and observed field presence.
+/// Pagination changes collection coverage, never the field coverage of each row.
+struct QueryResponseCoverage {
+    fields: Vec<String>,
+    declared_complete: bool,
+}
+
+impl QueryResponseCoverage {
+    fn new(cgs: &CGS, capability: &CapabilitySchema) -> Self {
+        let fields: Vec<String> = cgs
+            .get_entity(capability.domain.as_str())
+            .map(|entity| {
+                entity
+                    .fields
+                    .keys()
+                    .map(|field| field.as_str().to_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let provided: std::collections::HashSet<String> =
+            cgs.effective_provides(capability).into_iter().collect();
+        let declared_complete = cgs.get_entity(capability.domain.as_str()).is_some()
+            && fields.iter().all(|field| provided.contains(field));
+        Self {
+            fields,
+            declared_complete,
+        }
+    }
+
+    fn classify(&self, row: &plasm_compile::DecodedEntity) -> EntityCompleteness {
+        if self.declared_complete
+            && self
+                .fields
+                .iter()
+                .all(|field| row.fields.contains_key(field))
+        {
+            EntityCompleteness::Complete
+        } else {
+            EntityCompleteness::Summary
+        }
+    }
+}
+
 impl ExecutionEngine {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn query_to_stream<'a>(
@@ -36,7 +79,7 @@ impl ExecutionEngine {
         if let Some(pred) = &query.predicate {
             extract_predicate_vars(pred, &mut env);
         }
-        normalize_cml_env_scope_entity_refs(&mut env, cgs, capability)?;
+        normalize_cml_env_inputs(&mut env, cgs, capability)?;
         plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
             RuntimeError::ConfigurationError {
                 message: e.to_string(),
@@ -64,7 +107,7 @@ impl ExecutionEngine {
                     &ambient,
                 )
                 .await?;
-                yield PageResult::from_execution_result(res);
+                yield ExecutionEvent::Complete(res);
             });
             return Ok(stream);
         }
@@ -104,7 +147,7 @@ impl ExecutionEngine {
             let res = self
                 .execute_query_cross_entity(&query, &crosses, cgs, mat, mode, consume, &ambient)
                 .await?;
-            yield PageResult::from_execution_result(res);
+            yield ExecutionEvent::Complete(res);
         });
         Ok(stream)
     }
@@ -127,34 +170,24 @@ impl ExecutionEngine {
             let cap_name = capability.name.as_str();
             let snapshot = mat.snapshot();
             let mut consult = CacheTelemetry::default();
-            if let Some(cached_entities) = ExecutionCacheConsult::decide_query(
+            if let Some((membership, cached_entities)) = ExecutionCacheConsult::decide_query(
                 &query,
                 cap_name,
                 &snapshot,
                 &mat.query_index,
                 cgs,
+                &env,
                 &mut consult,
             ) {
                 let count = cached_entities.len();
                 let mut stats = ExecutionStats::from_telemetry(consult, 0);
                 stats.record_rows_materialized(count);
-                // QueryIndex is populated only from exhausted non-paginated responses below.
-                // Reusing that exact scoped membership preserves collection coverage; unavailable
-                // hydrated fields still make the observation partial. Row count is not the proof.
-                let coverage = if cached_entities.iter().any(CachedEntity::has_unavailable_detail_fields) {
-                    ResultCoverage::Partial
-                } else {
-                    ResultCoverage::Complete
-                };
-                yield PageResult {
-                    entities: cached_entities,
-                    page_index: 0,
-                    has_more: false,
-                    coverage,
-                    pagination_resume: None,
-                    stats,
+                yield ExecutionEvent::Complete(ExecutionResult {
+                    collection: ExecutionCollection::materialized(membership, cached_entities.into())?,
+                    has_more: false, pagination_resume: None, paging_handle: None,
+                    source: ExecutionSource::Cache, stats, request_fingerprints: vec![],
                     operations: OperationLedger::empty(),
-                };
+                });
                 return;
             }
             ExecutionCacheConsult::record_query_network(&mut consult);
@@ -187,35 +220,17 @@ impl ExecutionEngine {
             }?;
             let decoded_entities = decode_entities_with_cgs(&decoder, &normalized, Some(cgs))?;
 
-            let response_completeness = {
-                let all_entity_fields: std::collections::HashSet<String> = cgs
-                    .get_entity(&query.entity)
-                    .map(|e| {
-                        e.fields
-                            .keys()
-                            .map(|k| k.as_str().to_string())
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let provided: std::collections::HashSet<String> =
-                    cgs.effective_provides(&capability).into_iter().collect();
-                if provided.is_superset(&all_entity_fields) {
-                    EntityCompleteness::Complete
-                } else {
-                    EntityCompleteness::Summary
-                }
-            };
+            let response_coverage = QueryResponseCoverage::new(cgs, &capability);
             let hydrate_run = query.hydrate.unwrap_or(self.config.hydrate);
             let mut res = query_result_merge_cache(
                 decoded_entities,
-                response_completeness,
+                |row| response_coverage.classify(row),
                 source,
                 mat,
                 1,
             )?;
             res.stats.merge_telemetry(&consult);
-            res.stats.record_rows_materialized(res.count);
-            ExecutionCacheConsult::index_query_result(mat, &query, cap_name, &res.entities);
+            res.stats.record_rows_materialized(res.entities.len());
             let inherit = CapabilityParamEnv::from_cml_env(&env, &capability);
             stamp_entities_and_mat(&res.entities, mat, &inherit);
             let (entities, extra_net) = self
@@ -231,10 +246,6 @@ impl ExecutionEngine {
                 .await?;
             res.entities = entities;
             res.stats.network_requests += extra_net;
-            let hydrate_partial = res
-                .entities
-                .iter()
-                .any(CachedEntity::has_unavailable_detail_fields);
 
             if let Some(pred) = &query.predicate {
                 if let Some(entity_def) = cgs.get_entity(&query.entity) {
@@ -244,24 +255,16 @@ impl ExecutionEngine {
                     {
                         res.entities =
                             filter_entities_by_predicate(res.entities, &entity_pred)?;
-                        res.count = res.entities.len();
                     }
                 }
             }
 
-            yield PageResult {
-                entities: res.entities,
-                page_index: 0,
-                has_more: false,
-                coverage: if hydrate_partial {
-                    ResultCoverage::Partial
-                } else {
-                    ResultCoverage::Complete
-                },
-                pagination_resume: None,
-                stats: res.stats,
-                operations: OperationLedger::empty(),
-            };
+            let membership = ExecutionCacheConsult::index_query_result(mat, &query, cap_name, &res.entities, cgs, &env)?;
+            yield ExecutionEvent::Complete(ExecutionResult {
+                collection: ExecutionCollection::materialized(membership, res.entities.into())?,
+                has_more: false, pagination_resume: None, paging_handle: None,
+                source, stats: res.stats, request_fingerprints: vec![], operations: OperationLedger::empty(),
+            });
         });
         Ok(stream)
     }
@@ -344,25 +347,42 @@ impl ExecutionEngine {
         let base_compiled = compile_operation_dispatch(&capability_template, &env)?;
         let capability = capability.clone();
         let graph_backed = consume.graph_backed_result;
+        let response_coverage = QueryResponseCoverage::new(cgs, &capability);
 
+        let identity = plasm_core::collection_codec::CollectionIdentity::for_expression(
+            cgs,
+            &(
+                &query,
+                &env,
+                driver.snapshot(),
+                consume
+                    .row_match_budget
+                    .as_ref()
+                    .map(|b| (&b.predicates, b.count)),
+            ),
+            mat.graph.stats().version,
+        )?;
+        let collector =
+            crate::paginated_collect::PageCollector::new(&consume, cgs, query.entity.as_str())?;
         let stream = Box::pin(async_stream::try_stream! {
+            use plasm_core::collection_codec::{CollectionCodec, Demand, PageTermination, RecordingCodec, SharedRows, Transform};
+            let codec = RecordingCodec::new();
+            let mut acquisition = codec.acquire(identity.clone());
             let mut pages = 0usize;
-            let mut accumulated_total = 0usize;
-            let mut collector = crate::paginated_collect::PageCollector::new(&consume);
-            #[allow(unused_assignments)]
-            let mut last_coverage = ResultCoverage::Unknown;
-
-            loop {
+            let mut retained_total = 0usize;
+            let mut total_network = 0usize;
+            let mut any_live = false;
+            let mut collector = collector;
+            let top_k = consume.top_k.is_some();
+            let prefix = if consume.bound_kind == ConsumeBoundKind::ExpressionTake && !top_k {
+                consume.row_match_budget.as_ref().map(|budget| budget.count).or(consume.max_items)
+            } else { None };
+            let (has_more, pagination_resume) = loop {
                 cooperative_cancel_check()?;
+                if prefix == Some(0) { break (false, None); }
                 if pages >= MAX_PAGES {
-                    Err(RuntimeError::ConfigurationError {
-                        message: format!(
-                            "Pagination stopped after {} pages (safety cap). Refine filters or increase cap in engine.",
-                            MAX_PAGES
-                        ),
-                    })?;
+                    Err(RuntimeError::ConfigurationError { message: format!("Pagination stopped after {MAX_PAGES} pages (safety cap)") })?;
                 }
-
                 let (response, link_next, http_live) =
                     if let Some(url) = driver.take_next_absolute_url() {
                         if matches!(&base_compiled, CompiledOperation::Http(request) if request.credential.is_some()) {
@@ -390,301 +410,114 @@ impl ExecutionEngine {
                         (j, link, src == ExecutionSource::Live)
                     };
 
+
                 let normalized = normalize_collection_response(response, wrap_key.as_str());
-                let mut decoded_entities = decode_entities_with_cgs(&decoder, &normalized, Some(cgs))?;
-                let full_page_len = decoded_entities.len();
-                let last_id = decoded_entities
-                    .last()
-                    .map(|d| d.reference.primary_slot_str());
-
-                let mut truncated = false;
-                if let Some(cap) = consume.max_items {
-                    let remain = cap.saturating_sub(accumulated_total);
-                    // Host paging stops between backend pages. Discarding the tail would
-                    // make an opaque backend cursor skip rows on continuation.
-                    if decoded_entities.len() > remain
-                        && consume.bound_kind != ConsumeBoundKind::HostPage
-                    {
-                        decoded_entities.truncate(remain);
-                        truncated = true;
-                    }
-                }
-
+                let decoded = decode_entities_with_cgs(&decoder, &normalized, Some(cgs))?;
+                let full_page_len = decoded.len();
+                let last_id = decoded.last().map(|row| row.reference.primary_slot_str());
                 let timestamp = current_timestamp();
-                let page_cached: Vec<CachedEntity> = decoded_entities
-                    .into_iter()
-                    .map(|decoded| {
-                        CachedEntity::from_decoded(
-                            decoded.reference,
-                            decoded.fields,
-                            decoded.relations,
-                            timestamp,
-                            EntityCompleteness::Summary,
-                        )
-                    })
-                    .collect();
-                let page_ids: Vec<String> = page_cached
-                    .iter()
-                    .map(|e| e.reference.primary_slot_str())
-                    .collect();
-                let audit = driver.record_page(
-                    pages as u32,
-                    &page_ids,
-                    full_page_len as u32,
-                    page_cached.len() as u32,
-                    None,
-                    None,
-                )?;
-                crate::record_live_page_audit(audit);
-                accumulated_total += page_cached.len();
-
-                if !collector.skips_pre_page_merge() {
-                    mat.merge(page_cached.clone())?;
-                }
-
-                let hydrate_run = query.hydrate.unwrap_or(self.config.hydrate);
+                let page_cached: Vec<CachedEntity> = decoded.into_iter().map(|row| {
+                    let completeness = response_coverage.classify(&row);
+                    CachedEntity::from_decoded(row.reference, row.fields, row.relations, timestamp, completeness)
+                }).collect();
+                let page_ids: Vec<_> = page_cached.iter().map(|row| row.reference.primary_slot_str()).collect();
+                crate::record_live_page_audit(driver.record_page(pages as u32, &page_ids, full_page_len as u32, page_cached.len() as u32, None, None)?);
+                if !collector.skips_pre_page_merge() { mat.merge(page_cached.clone())?; }
                 let inherit = CapabilityParamEnv::from_cml_env(&env, &capability);
                 stamp_entities_and_mat(&page_cached, mat, &inherit);
-                let (hydrated, extra_net) = self
-                    .hydrate_query_summaries(
-                        &query.entity,
-                        &page_cached,
-                        cgs,
-                        mat,
-                        mode,
-                        hydrate_run,
-                        &env,
-                    )
-                    .await?;
-
                 let cap_params = capability_param_names(&capability);
-                let entities = match query.predicate.as_ref().and_then(|pred| {
-                    cgs.get_entity(&query.entity)
-                        .and_then(|e| entity_field_predicate(pred, e, Some(&cap_params)))
-                }) {
-                    Some(entity_pred) => {
-                        filter_entities_by_predicate(hydrated, &entity_pred)?
+                let predicate = query.predicate.as_ref().and_then(|pred| cgs.get_entity(&query.entity)
+                    .and_then(|entity| entity_field_predicate(pred, entity, Some(&cap_params))));
+                // A plain expression prefix selects source occurrences before detail IO.
+                // Filters and top-k need their candidates; host paging must retain the
+                // backend page because its continuation starts at the next page.
+                let hydration_input = if predicate.is_none()
+                    && consume.row_match_budget.as_ref().is_none_or(|budget| budget.predicates.is_empty())
+                {
+                    match prefix {
+                        Some(bound) => &page_cached[..page_cached.len().min(bound.saturating_sub(retained_total))],
+                        None => &page_cached[..],
                     }
+                } else { &page_cached[..] };
+                let omitted_prefix_rows = page_cached.len() - hydration_input.len();
+                let (hydrated, extra_net) = self.hydrate_query_summaries(
+                    &query.entity, hydration_input, cgs, mat, mode, query.hydrate.unwrap_or(self.config.hydrate), &env,
+                ).await?;
+                let entities = match &predicate {
+                    Some(pred) => filter_entities_by_predicate(hydrated, pred)?,
                     None => hydrated,
                 };
-                let hydrate_field_partial = entities
-                    .iter()
-                    .any(CachedEntity::has_unavailable_detail_fields);
-
-                let ingest = collector.ingest_page(entities)?;
-                if !ingest.merge_into_mat.is_empty() {
-                    mat.merge(ingest.merge_into_mat.clone())?;
-                }
-                report_rows_materialized(ingest.progress_rows);
-
-                let page_http = if http_live { 1 } else { 0 };
-                let page_net = page_http + extra_net;
-                let page_cache_misses = ingest.progress_rows;
-                if graph_backed {
-                    if let Some(ref spill) = graph_page_spill {
-                        let spill_rows = if ingest.yield_entities.is_empty() && !collector.skips_pre_page_merge() {
-                            page_cached.clone()
-                        } else {
-                            ingest.yield_entities.clone()
-                        };
-                        graph_spill_page_and_trim_hot(spill, mat, pages, &spill_rows).await?;
+                let top_k_input = if top_k { entities.iter().map(|row| row.reference.clone()).collect::<Vec<_>>() } else { vec![] };
+                let mut ingest = collector.ingest_page(entities)?;
+                let decoded_members = if top_k { top_k_input.len() } else { ingest.yield_entities.len() + omitted_prefix_rows };
+                if !top_k && consume.bound_kind != ConsumeBoundKind::HostPage {
+                    if let Some(cap) = prefix.or(consume.max_items) {
+                        ingest.yield_entities.truncate(cap.saturating_sub(retained_total));
                     }
                 }
-                let yield_entities = if graph_backed {
-                    Vec::new()
-                } else {
-                    ingest.yield_entities
-                };
-
-                let page_stats = ExecutionStats {
-                    duration_ms: 0,
-                    network_requests: page_net,
-                    cache_hits: 0,
-                    cache_misses: page_cache_misses,
-                    ..Default::default()
-                };
-
-                if single_http_roundtrip {
-                    let continue_pages = driver.advance_after_page(
-                        &normalized,
-                        full_page_len,
-                        link_next.as_deref(),
-                        last_id.as_deref(),
-                    )?;
-                    let pagination_resume = if continue_pages {
-                        Some(QueryPaginationResumeData {
-                            query: query.clone(),
-                            capability_name: capability.name.to_string(),
-                            env: env.clone(),
-                            template: capability_template.clone(),
-                            config: pconf.clone(),
-                            state: driver.snapshot(),
-                        })
-                    } else {
-                        None
-                    };
-                    let hit_max = consume.max_items.is_some_and(|m| accumulated_total >= m);
-                    let stop = if truncated || hit_max {
-                        ConsumeStop::ItemCapHit {
-                            truncated_page: truncated,
-                            driver_has_more: Some(continue_pages),
-                        }
-                    } else if continue_pages {
-                        ConsumeStop::BackendHasMore
-                    } else {
-                        ConsumeStop::BackendExhausted
-                    };
-                    let mut page = page_result(
-                        yield_entities,
-                        pages,
-                        &consume,
-                        stop,
-                        pagination_resume,
-                        page_stats,
-                    );
-                    if hydrate_field_partial { page.coverage = page.coverage.combine(ResultCoverage::Partial); }
-                    last_coverage = page.coverage;
-                    yield page;
-                    break;
+                if !ingest.merge_into_mat.is_empty() { mat.merge(ingest.merge_into_mat)?; }
+                report_rows_materialized(ingest.progress_rows);
+                let references = if top_k { top_k_input } else { ingest.yield_entities.iter().map(|row| row.reference.clone()).collect() };
+                retained_total += references.len();
+                let more = driver.advance_after_page(&normalized, full_page_len, link_next.as_deref(), last_id.as_deref())?;
+                let hit_bound = prefix.or(consume.max_items).is_some_and(|cap| retained_total >= cap);
+                let empty_unproven = more && full_page_len == 0 && !matches!(pconf.location, plasm_compile::PaginationLocation::BlockRange);
+                let done = !more || single_http_roundtrip || hit_bound || ingest.row_match_budget_satisfied || empty_unproven;
+                // A continuation after a local filter does not prove another match exists.
+                let termination = if !more { PageTermination::Exhausted }
+                    else if done && (predicate.is_some() || consume.row_match_budget.is_some() || empty_unproven) { PageTermination::Unproven }
+                    else { PageTermination::More };
+                acquisition.push(&identity, pages, references.into(), decoded_members, termination)?;
+                let page_net = usize::from(http_live) + extra_net;
+                total_network += page_net;
+                any_live |= http_live || extra_net > 0;
+                let rows: SharedRows<CachedEntity> = ingest.yield_entities.into();
+                if graph_backed {
+                    if let Some(ref spill) = graph_page_spill {
+                        // Spill precisely the retained output occurrences, never a raw pre-filter page.
+                        graph_spill_page_and_trim_hot(spill, mat, pages, &rows).await?;
+                    }
                 }
-                if truncated {
-                    let mut page = page_result(
-                        yield_entities,
-                        pages,
-                        &consume,
-                        ConsumeStop::ItemCapHit {
-                            truncated_page: true,
-                            driver_has_more: None,
-                        },
-                        None,
-                        page_stats,
-                    );
-                    if hydrate_field_partial { page.coverage = page.coverage.combine(ResultCoverage::Partial); }
-                    last_coverage = page.coverage;
-                    yield page;
-                    break;
-                }
-                if consume
-                    .max_items
-                    .is_some_and(|m| accumulated_total >= m)
-                {
-                    let driver_has_more = if consume.bound_kind == ConsumeBoundKind::HostPage {
-                        Some(driver.advance_after_page(
-                            &normalized,
-                            full_page_len,
-                            link_next.as_deref(),
-                            last_id.as_deref(),
-                        )?)
-                    } else {
-                        None
-                    };
-                    let pagination_resume = if driver_has_more == Some(true) {
-                        Some(QueryPaginationResumeData {
-                            query: query.clone(),
-                            capability_name: capability.name.to_string(),
-                            env: env.clone(),
-                            template: capability_template.clone(),
-                            config: pconf.clone(),
-                            state: driver.snapshot(),
-                        })
-                    } else {
-                        None
-                    };
-                    let mut page = page_result(
-                        yield_entities,
-                        pages,
-                        &consume,
-                        ConsumeStop::ItemCapHit {
-                            truncated_page: false,
-                            driver_has_more,
-                        },
-                        pagination_resume,
-                        page_stats,
-                    );
-                    if hydrate_field_partial { page.coverage = page.coverage.combine(ResultCoverage::Partial); }
-                    last_coverage = page.coverage;
-                    yield page;
-                    break;
-                }
-                if ingest.row_match_budget_satisfied {
-                    let mut page = page_result(
-                        yield_entities,
-                        pages,
-                        &consume,
-                        ConsumeStop::RowMatchBudgetSatisfied,
-                        None,
-                        page_stats,
-                    );
-                    if hydrate_field_partial { page.coverage = page.coverage.combine(ResultCoverage::Partial); }
-                    last_coverage = page.coverage;
-                    yield page;
-                    break;
-                }
-                if full_page_len == 0 && !matches!(pconf.location, plasm_compile::PaginationLocation::BlockRange) {
-                    let mut page = page_result(
-                        yield_entities,
-                        pages,
-                        &consume,
-                        ConsumeStop::EmptyPageUnproven,
-                        None,
-                        page_stats,
-                    );
-                    if hydrate_field_partial { page.coverage = page.coverage.combine(ResultCoverage::Partial); }
-                    last_coverage = page.coverage;
-                    yield page;
-                    break;
-                }
-
-                let continue_pages = driver.advance_after_page(
-                    &normalized,
-                    full_page_len,
-                    link_next.as_deref(),
-                    last_id.as_deref(),
-                )?;
-
-                let stop = if continue_pages {
-                    ConsumeStop::BackendHasMore
-                } else {
-                    ConsumeStop::BackendExhausted
-                };
-                let mut page = page_result(
-                    yield_entities,
-                    pages,
-                    &consume,
-                    stop,
-                    None,
-                    page_stats,
-                );
-                if hydrate_field_partial { page.coverage = page.coverage.combine(ResultCoverage::Partial); }
-                    last_coverage = page.coverage;
-                yield page;
-
+                let mut stats = ExecutionStats::from_telemetry(CacheTelemetry::default(), page_net);
+                stats.record_rows_materialized(rows.len());
+                yield ExecutionEvent::Page { entities: if graph_backed { Vec::new().into() } else { rows }, stats };
                 pages += 1;
-
-                if !continue_pages {
-                    break;
+                if done {
+                    let expression_done = prefix.is_some_and(|bound| retained_total >= bound);
+                    let resume = if more && !expression_done {
+                        Some(QueryPaginationResumeData { query: query.clone(), capability_name: capability.name.to_string(), env: env.clone(),
+                            template: capability_template.clone(), config: pconf.clone(), state: driver.snapshot() })
+                    } else { None };
+                    break (more && !expression_done, resume);
                 }
+            };
+            let mut membership = match prefix { Some(bound) => acquisition.finish_prefix(bound)?, None => acquisition.finish() };
+            if top_k {
+                codec.materialize(&membership, Demand::Whole)?;
+                let entities = collector.finish().unwrap_or_default();
+                mat.merge(entities.clone())?;
+                let references = entities.iter().map(|row| row.reference.clone()).collect();
+                let spec = consume.top_k.as_ref().expect("top-k collector");
+                membership = codec.derive(identity.derived(&("top_k", &spec.sort_key, spec.descending, spec.count, &spec.row_filter))?, &[&membership], Transform::Evaluate { rows: references })?;
+                let entities: SharedRows<CachedEntity> = entities.into();
+                if graph_backed {
+                    if let Some(ref spill) = graph_page_spill { graph_spill_page_and_trim_hot(spill, mat, pages, &entities).await?; }
+                }
+                yield ExecutionEvent::Page { entities: if graph_backed { Vec::new().into() } else { entities.into() }, stats: ExecutionStats::default() };
             }
-
-            if let Some(final_entities) = collector.finish() {
-                mat.merge(final_entities.clone())?;
-                let yield_entities = if graph_backed {
-                    Vec::new()
-                } else {
-                    final_entities
-                };
-                yield PageResult {
-                    entities: yield_entities,
-                    page_index: pages,
-                    has_more: false,
-                    coverage: last_coverage,
-                    pagination_resume: None,
-                    stats: ExecutionStats::default(),
-                    operations: OperationLedger::empty(),
-                };
-            }
+            let collection = ExecutionCollection::graph(membership);
+            let mut stats = ExecutionStats::from_telemetry(CacheTelemetry::default(), total_network);
+            stats.record_rows_materialized(collection.count());
+            yield ExecutionEvent::Complete(ExecutionResult {
+                collection, has_more, pagination_resume, paging_handle: None,
+                source: if any_live { ExecutionSource::Live } else { ExecutionSource::Replay },
+                stats, request_fingerprints: vec![], operations: OperationLedger::empty(),
+            });
         });
-
         Ok(stream)
     }
 }
+
+#[cfg(test)]
+#[path = "query_stream_tests.rs"]
+mod tests;

@@ -165,6 +165,7 @@ fn hole_value_has_label(
         }
         plasm_core::Value::Null
         | plasm_core::Value::Bool(_)
+        | plasm_core::Value::Unsigned(_)
         | plasm_core::Value::Integer(_)
         | plasm_core::Value::Float(_)
         | plasm_core::Value::String(_)

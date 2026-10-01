@@ -23,7 +23,7 @@ pub fn resolve_output_binding(
                 .ok_or_else(|| RuntimeError::ConfigurationError {
                     message: format!("view output references unknown node `{node}`"),
                 })?;
-            Ok(Value::Integer(r.count as i64))
+            Ok(Value::Integer(r.count() as i64))
         }
         ViewOutputBinding::NodeField { node, field } => {
             let r = node_results
@@ -31,7 +31,7 @@ pub fn resolve_output_binding(
                 .ok_or_else(|| RuntimeError::ConfigurationError {
                     message: format!("view output references unknown node `{node}`"),
                 })?;
-            let Some(row) = r.entities.first() else {
+            let Some(row) = r.entities().first() else {
                 return Ok(Value::Null);
             };
             Ok(row
@@ -46,7 +46,7 @@ pub fn resolve_output_binding(
                 .ok_or_else(|| RuntimeError::ConfigurationError {
                     message: format!("view output references unknown node `{node}`"),
                 })?;
-            Ok(field_histogram_json(&r.entities, field.as_str()))
+            Ok(field_histogram_json(r.entities(), field.as_str()))
         }
         ViewOutputBinding::NodeAnyRowFieldEquals {
             node,
@@ -58,7 +58,7 @@ pub fn resolve_output_binding(
                 .ok_or_else(|| RuntimeError::ConfigurationError {
                     message: format!("view output references unknown node `{node}`"),
                 })?;
-            let hit = r.entities.iter().any(|row| {
+            let hit = r.entities().iter().any(|row| {
                 let v = row
                     .fields
                     .get(field)
@@ -74,7 +74,7 @@ pub fn resolve_output_binding(
                 .ok_or_else(|| RuntimeError::ConfigurationError {
                     message: format!("view output references unknown node `{node}`"),
                 })?;
-            Ok(Value::Bool(r.count > 0))
+            Ok(Value::Bool(r.count() > 0))
         }
         ViewOutputBinding::WriteCreated { node } => Ok(Value::Bool(matches!(
             write_outcomes.get(node),
@@ -94,7 +94,10 @@ pub fn resolve_output_binding(
     }
 }
 
-fn field_histogram_json(rows: &[CachedEntity], field: &str) -> Value {
+fn field_histogram_json<'a>(
+    rows: impl IntoIterator<Item = &'a CachedEntity>,
+    field: &str,
+) -> Value {
     let mut counts: IndexMap<String, i64> = IndexMap::new();
     for row in rows {
         let k = row

@@ -2,6 +2,13 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum RuntimeError {
+    #[error("field `{field}` is unavailable on {reference}")]
+    FieldUnavailable {
+        reference: plasm_core::Ref,
+        field: String,
+    },
+    #[error(transparent)]
+    Collection(#[from] plasm_core::collection_codec::CollectionFault),
     #[error("Compilation error: {source}")]
     CompilationError {
         #[from]
@@ -144,7 +151,7 @@ impl From<reqwest::Error> for RuntimeError {
         RuntimeError::RequestError {
             message,
             attempts: 1,
-            status: None,
+            status: err.status().map(|status| status.as_u16()),
             body: None,
         }
     }

@@ -233,26 +233,6 @@ fn markdown_like_payload_near(work: &str, offset: usize) -> bool {
         || slice.contains("\n1. ")
 }
 
-fn looks_like_temporal_now_call(work: &str, offset: usize) -> bool {
-    let start = offset.saturating_sub(64);
-    let end = (offset + 48).min(work.len());
-    if start >= end {
-        return false;
-    }
-    let slice = work[start..end].to_ascii_lowercase();
-    slice.contains("now(")
-        || slice.contains("now ()")
-        || slice.contains("datetime(now")
-        || slice.contains("now -")
-        || slice.contains("now-")
-        || slice.contains("date_trunc(")
-        || slice.contains("date_add(")
-        || slice.contains("dateadd(")
-        || slice.contains("start_of_day(")
-        || slice.contains("end_of_day(")
-        || slice.contains("duration(")
-}
-
 fn looks_like_p_sym_token(name: &str) -> bool {
     name.len() > 1 && name.starts_with('p') && name[1..].chars().all(|c| c.is_ascii_digit())
 }
@@ -445,7 +425,7 @@ pub fn render_parse_error_with_feedback(
             };
             format!(
                 "{head}{}",
-                crate::temporal::temporal_predicate_alias_hint()
+                "Use Python date/datetime values and timedelta arithmetic; Plasm encodes the declared API format."
             )
         }
         ParseErrorKind::UnterminatedString | ParseErrorKind::UnterminatedEscape => {
@@ -574,15 +554,6 @@ pub fn render_parse_error_with_feedback(
             } else if markdown_like && !structured_slot {
                 format!(
                     "{base} If the value contains characters that break parsing (e.g. commas or unescaped quotes), wrap it in a quoted string and escape internal double quotes with `\\\"`."
-                )
-            } else if matches!(err.kind, ParseErrorKind::ExpectedValue)
-                && looks_like_temporal_now_call(work, err.offset)
-            {
-                format!(
-                    "{base} Date/time RHS must be a literal value — not `now()`, \
-                     `date_trunc` / `date_add` / `start_of_day`, or other call \
-                     expressions. {}",
-                    crate::temporal::temporal_predicate_alias_hint()
                 )
             } else {
                 base
@@ -2183,14 +2154,9 @@ For example: `{te}(<id>)` when you already know the id, instead of relying on `{
             field_type,
         } => {
             let fd = ident_label_for_feedback(field, &style);
-            let mut correction = format!(
+            let correction = format!(
                 "Change the value for `{fd}` to match `{field_type}` (you used something like {value_type}).\n\nFor example: a quoted string for text, or a number for numeric fields."
             );
-            if value_type == "object" && matches!(field_type.as_str(), "String" | "Blob") {
-                correction.push_str(
-                    "\n\nIf you passed a **program binding** created by per-row render (`label = items => <<TAG … TAG`), each record has a **`content`** field. Use singleton **`binding.content`** for plain string / body parameters—not the bare binding name. A plain template (`body = <<TAG`) is already a string (`param=body`).",
-                );
-            }
             StepError::type_correction(correction, error)
         }
         TypeError::DomainPlaceholderLiteral {
@@ -2757,7 +2723,7 @@ mod tests {
     }
 
     #[test]
-    fn type_error_incompatible_value_object_for_string_hints_bracket_render_content() {
+    fn type_error_incompatible_record_for_string_has_no_reserved_content_hint() {
         let cgs = crate::CGS::new();
         let err = crate::TypeError::IncompatibleValue {
             field: "plainBody".into(),
@@ -2766,8 +2732,10 @@ mod tests {
         };
         let se = render_type_error(&err, &cgs);
         assert!(
-            se.correction.contains("per-row render") && se.correction.contains(".content"),
-            "expected per-row render / .content hint, correction={}",
+            se.correction.contains("plainBody")
+                && se.correction.contains("String")
+                && !se.correction.contains(".content"),
+            "expected typed field correction without reserved content, correction={}",
             se.correction
         );
     }

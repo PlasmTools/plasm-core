@@ -202,6 +202,16 @@ entities:
           path:
           - key: lines
           - wildcard: true
+      complete_lines:
+        description: Complete lines embedded on LangItem GET responses
+        target: LangLine
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          collection_coverage: complete
+          path:
+          - key: lines
+          - wildcard: true
       tags:
         description: Tags embedded on LangItem GET when present; scoped query per item when embed is absent
           or incomplete

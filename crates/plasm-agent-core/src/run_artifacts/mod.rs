@@ -373,14 +373,15 @@ pub struct DocumentFromRun<'a> {
     pub resource_index: Option<u64>,
 }
 
-pub fn document_from_run(d: DocumentFromRun<'_>) -> RunArtifactDocument {
-    let entities: Vec<serde_json::Value> = d
+pub fn document_from_run(
+    d: DocumentFromRun<'_>,
+) -> Result<RunArtifactDocument, plasm_core::collection_codec::CollectionFault> {
+    let entities = d
         .result
-        .entities
-        .iter()
-        .map(|e| e.payload_to_json())
-        .collect();
-    RunArtifactDocument {
+        .collection
+        .materialize(plasm_core::collection_codec::Demand::Observed)?
+        .clone();
+    Ok(RunArtifactDocument {
         run_id: d.run_id.to_wire(),
         prompt_hash: d.prompt_hash.to_string(),
         session_id: d.session_id.to_string(),
@@ -391,11 +392,14 @@ pub fn document_from_run(d: DocumentFromRun<'_>) -> RunArtifactDocument {
         display_lines: d.display_lines,
         request_fingerprints: d.result.request_fingerprints.clone(),
         entities,
-        coverage: d.result.coverage,
+        collection: plasm_core::collection_codec::CollectionCheckpoint::capture(
+            &plasm_core::collection_codec::RecordingCodec::new(),
+            d.result.collection.membership(),
+        )?,
         source: d.result.source,
         stats: d.result.stats.clone(),
         operations: d.result.operations.clone(),
-    }
+    })
 }
 
 /// Project stored artifact bytes to the slim agent view unless `full` is requested.
@@ -408,7 +412,9 @@ pub fn project_artifact_payload_for_agent(
     }
     let doc: RunArtifactDocument = serde_json::from_slice(&payload.bytes)?;
     validate_run_artifact_document(&doc).map_err(RunArtifactError::Decode)?;
-    let slim = doc.agent_view();
+    let slim = doc
+        .agent_view()
+        .map_err(|e| RunArtifactError::Decode(e.to_string()))?;
     Ok(ArtifactPayload {
         metadata: payload.metadata.clone(),
         bytes: serde_json::to_vec(&slim)?.into(),

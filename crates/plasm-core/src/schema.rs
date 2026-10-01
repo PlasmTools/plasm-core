@@ -679,6 +679,21 @@ pub enum RelationScopedFallback {
     },
 }
 
+/// Catalog evidence for the membership of an embedded collection.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmbeddedCollectionCoverage {
+    #[default]
+    Unknown,
+    Complete,
+}
+
+impl EmbeddedCollectionCoverage {
+    pub fn is_unknown(&self) -> bool {
+        matches!(self, Self::Unknown)
+    }
+}
+
 /// How a relation’s targets are resolved at runtime (scoped query vs embedded GET payload).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -686,7 +701,16 @@ pub enum RelationMaterialization {
     /// Declared many-edge without chain support yet (`materialize` omitted in YAML = this at validate).
     Unavailable,
     /// Extract related entity refs from nested JSON on the parent entity’s GET body.
-    FromParentGet { path: Vec<JsonPathSegment> },
+    FromParentGet {
+        path: Vec<JsonPathSegment>,
+        /// Catalog assertion about every observed collection at this path, not target row fields.
+        /// Complete is valid only for exhaustive embeds, never previews or paginated subsets.
+        #[serde(
+            default,
+            skip_serializing_if = "EmbeddedCollectionCoverage::is_unknown"
+        )]
+        collection_coverage: EmbeddedCollectionCoverage,
+    },
     /// Prefer wire/path embed on the parent row; per-row scoped fallback when embed is absent or incomplete.
     PreferFromParentGet {
         path: Vec<JsonPathSegment>,
@@ -1463,7 +1487,7 @@ pub struct OutputSchema {
     /// Whether the output is expected to be idempotent
     #[serde(default)]
     pub idempotent: bool,
-    /// When idempotent, fetch existing row on mapped conflict instead of failing.
+    /// When idempotent, verify the declared read postcondition after an opaque failure.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reconcile: Option<crate::workflow_identity::ReconcileSpec>,
 }
@@ -3239,7 +3263,7 @@ impl CGS {
                                     target: relation.target_resource.to_string(),
                                 });
                             }
-                            RelationMaterialization::FromParentGet { path } => {
+                            RelationMaterialization::FromParentGet { path, .. } => {
                                 Self::validate_from_parent_get_path(
                                     entity_name.as_str(),
                                     relation_name.as_str(),

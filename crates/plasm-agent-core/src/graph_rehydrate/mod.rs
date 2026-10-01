@@ -1,8 +1,8 @@
 //! Rehydrate graph-backed rows from hot cache + spilled pages for plan compute.
 //!
-//! Row order: hot-cache entities first (type-index iteration order), then spill pages
-//! sorted by `page_index`. Duplicates are suppressed by stable identity (`_ref`, or
-//! `{entity_type}:{id_field}` when `_ref` is absent on a spill row).
+//! Logical order and multiplicity come from the recording codec. Hot-cache and
+//! spill lookup resolve each identity once; shared row views replay every recorded
+//! occurrence. Missing identities are errors, including on partial delivery windows.
 //!
 //! ## Concurrency (enforced)
 //!
@@ -20,6 +20,5 @@ mod tests;
 
 pub(crate) use rehydrator::GraphSurfaceRehydrator;
 pub(crate) use relation_embed::{
-    collect_all_embedded_relation_targets, plan_prefer_from_parent_get,
-    wire_rows_for_embed_entities,
+    collect_all_embedded_relation_targets, wire_rows_for_embed_entities,
 };

@@ -22,7 +22,7 @@ members = [
     "crates/plasm-workflow-codegen",
     "crates/plasm-node",
 ]
-exclude = ["crates/plasm-server-pty-tests"]
+exclude = ["crates/plasm-server-pty-tests", "vendor/monty"]
 resolver = "2"
 
 # Single SemVer for the OSS workspace (see monorepo RELEASING.md on PlasmTools/plasm).
@@ -164,16 +164,6 @@ tempfile = "3.0"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde"] }
 chrono-english = "0.1.8"
 rust_decimal = { version = "1.40", default-features = false, features = ["std", "serde", "serde-with-str"] }
-polars = { version = "0.46", default-features = false, features = [
-    "lazy",
-    "dtype-struct",
-    "dtype-decimal",
-    "strings",
-    "temporal",
-    "is_in",
-    "abs",
-    "regex",
-] }
 # LLM / REPL
 baml = "0.220"
 rust-mcp-sdk = { version = "0.9.0", default-features = false, features = [
@@ -218,5 +208,6 @@ testcontainers-modules = "0.15.0"
 
 # Vendored fork: `HyperServer::into_router`, `Router<()>` merge with Plasm Axum apps. Parent monorepo also patches this path.
 [patch.crates-io]
+ty_python_semantic = { path = "vendor/monty/vendor/ty_python_semantic" }
 rust-mcp-schema = { path = "third_party/rust-mcp-schema" }
 rust-mcp-sdk = { path = "third_party/rust-mcp-sdk" }

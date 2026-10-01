@@ -151,16 +151,28 @@ impl Predicate {
 
     /// Get the logical depth of this predicate (for complexity limits).
     pub fn depth(&self) -> usize {
-        match self {
-            Predicate::True | Predicate::False | Predicate::Comparison { .. } => 1,
-            Predicate::Not { predicate } => 1 + predicate.depth(),
-            Predicate::And { args } | Predicate::Or { args } => {
-                1 + args.iter().map(|p| p.depth()).max().unwrap_or(0)
-            }
-            Predicate::ExistsRelation { predicate, .. } => {
-                1 + predicate.as_ref().map(|p| p.depth()).unwrap_or(0)
+        let mut max_depth = 0;
+        let mut work = vec![(self, 1usize)];
+        while let Some((predicate, depth)) = work.pop() {
+            max_depth = max_depth.max(depth);
+            match predicate {
+                Predicate::And { args } | Predicate::Or { args } => {
+                    work.extend(args.iter().map(|arg| (arg, depth + 1)));
+                }
+                Predicate::Not { predicate }
+                | Predicate::ExistsRelation {
+                    predicate: Some(predicate),
+                    ..
+                } => work.push((predicate, depth + 1)),
+                Predicate::True
+                | Predicate::False
+                | Predicate::Comparison { .. }
+                | Predicate::ExistsRelation {
+                    predicate: None, ..
+                } => {}
             }
         }
+        max_depth
     }
 
     /// Collect all field names referenced in this predicate.
@@ -173,24 +185,22 @@ impl Predicate {
     }
 
     fn collect_fields(&self, fields: &mut Vec<String>) {
-        match self {
-            Predicate::Comparison { field, .. } => {
-                fields.push(field.clone());
+        let mut work = vec![self];
+        while let Some(predicate) = work.pop() {
+            match predicate {
+                Predicate::Comparison { field, .. } => fields.push(field.clone()),
+                Predicate::And { args } | Predicate::Or { args } => work.extend(args),
+                Predicate::Not { predicate }
+                | Predicate::ExistsRelation {
+                    predicate: Some(predicate),
+                    ..
+                } => work.push(predicate),
+                Predicate::True
+                | Predicate::False
+                | Predicate::ExistsRelation {
+                    predicate: None, ..
+                } => {}
             }
-            Predicate::And { args } | Predicate::Or { args } => {
-                for arg in args {
-                    arg.collect_fields(fields);
-                }
-            }
-            Predicate::Not { predicate } => {
-                predicate.collect_fields(fields);
-            }
-            Predicate::ExistsRelation { predicate, .. } => {
-                if let Some(pred) = predicate {
-                    pred.collect_fields(fields);
-                }
-            }
-            Predicate::True | Predicate::False => {}
         }
     }
 
@@ -204,25 +214,22 @@ impl Predicate {
     }
 
     fn collect_relations(&self, relations: &mut Vec<String>) {
-        match self {
-            Predicate::ExistsRelation {
-                relation,
-                predicate,
-            } => {
-                relations.push(relation.clone());
-                if let Some(pred) = predicate {
-                    pred.collect_relations(relations);
+        let mut work = vec![self];
+        while let Some(predicate) = work.pop() {
+            match predicate {
+                Predicate::ExistsRelation {
+                    relation,
+                    predicate,
+                } => {
+                    relations.push(relation.clone());
+                    if let Some(predicate) = predicate {
+                        work.push(predicate);
+                    }
                 }
+                Predicate::And { args } | Predicate::Or { args } => work.extend(args),
+                Predicate::Not { predicate } => work.push(predicate),
+                Predicate::True | Predicate::False | Predicate::Comparison { .. } => {}
             }
-            Predicate::And { args } | Predicate::Or { args } => {
-                for arg in args {
-                    arg.collect_relations(relations);
-                }
-            }
-            Predicate::Not { predicate } => {
-                predicate.collect_relations(relations);
-            }
-            _ => {}
         }
     }
 }

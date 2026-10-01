@@ -52,16 +52,6 @@ impl<'a> Visitor<'a> for ClosedRhs<'_> {
                 self.shadowed = old;
                 return;
             }
-            PyExpr::Call(call) => {
-                let allowed = matches!(&*call.func, PyExpr::Attribute(attr) if matches!(attr.attr.as_str(), "get" | "query" | "select" | "where" | "take" | "order_by" | "union" | "distinct" | "flat_map"));
-                if !allowed {
-                    self.error = Some(at(
-                        expr,
-                        "membership RHS admits only closed read and rowset operations",
-                    ));
-                    return;
-                }
-            }
             _ => {}
         }
         visitor::walk_expr(self, expr);

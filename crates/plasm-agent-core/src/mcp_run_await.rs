@@ -67,7 +67,7 @@ pub enum AwaitError {
     #[error("await timed out after {0:?}")]
     Timeout(Duration),
     #[error("{0}")]
-    Operation(String),
+    Operation(plasm_runtime::ExecutionFailure),
 }
 
 fn operation_is_terminal(phase: OperationPhase) -> bool {
@@ -87,7 +87,7 @@ async fn fetch_terminal_result(
         &ctx.handle,
     )
     .await
-    .map_err(|e| AwaitError::Operation(e.detail()))
+    .map_err(|e| AwaitError::Operation(e.into()))
 }
 
 async fn try_fetch_terminal_result(

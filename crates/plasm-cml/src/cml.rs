@@ -11,10 +11,11 @@ pub enum CmlExpr {
     #[serde(rename = "var")]
     Var { name: String },
 
-    /// Encode a resolved RFC3339 instant in an explicit UTC transport layout.
+    /// Format an explicitly declared temporal encoding at the transport boundary.
     #[serde(rename = "datetime_format")]
     DateTimeFormat {
         value: Box<CmlExpr>,
+        wire: plasm_core::TemporalWireFormat,
         format: plasm_core::temporal::TemporalPattern,
     },
 
@@ -1019,6 +1020,7 @@ pub fn eval_cml(expr: &CmlExpr, env: &CmlEnv) -> Result<Value, CmlError> {
                         .map(|v| match v {
                             Value::String(s) => Ok(s.clone()),
                             Value::Integer(i) => Ok(i.to_string()),
+                            Value::Unsigned(i) => Ok(i.to_string()),
                             Value::Float(f) => Ok(f.to_string()),
                             Value::Bool(b) => Ok(b.to_string()),
                             Value::Money(m) => m
@@ -1034,8 +1036,12 @@ pub fn eval_cml(expr: &CmlExpr, env: &CmlEnv) -> Result<Value, CmlError> {
                 other => Ok(other),
             }
         }
-        CmlExpr::DateTimeFormat { value, format } => format
-            .encode(eval_cml(value, env)?)
+        CmlExpr::DateTimeFormat {
+            value,
+            wire,
+            format,
+        } => format
+            .encode(eval_cml(value, env)?, *wire)
             .map_err(|message| CmlError::SerializationError { message }),
         CmlExpr::Format { template, vars } => {
             template.validate_vars(vars)?;
@@ -1078,6 +1084,7 @@ fn value_to_string(value: &Value) -> Result<String, CmlError> {
         }
         Value::String(s) | Value::PhraseIdent(s) => Ok(s.clone()),
         Value::Integer(i) => Ok(i.to_string()),
+        Value::Unsigned(i) => Ok(i.to_string()),
         Value::Float(f) => Ok(f.to_string()),
         Value::Bool(b) => Ok(b.to_string()),
         Value::Null => Ok("null".to_string()),
@@ -1116,6 +1123,7 @@ fn path_value_to_string(value: &Value, context: &str) -> Result<String, CmlError
     match value {
         Value::String(s) => Ok(s.clone()),
         Value::Integer(i) => Ok(i.to_string()),
+        Value::Unsigned(i) => Ok(i.to_string()),
         Value::Float(f) => Ok(f.to_string()),
         _ => Err(CmlError::TypeError {
             message: format!("{context} must evaluate to string or number"),

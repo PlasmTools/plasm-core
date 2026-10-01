@@ -386,7 +386,7 @@ async fn query_pick_step(
     let needle_str = value_to_match_string(needle);
 
     let mut matches: Vec<&CachedEntity> = Vec::new();
-    for entity in &res.entities {
+    for entity in res.entities() {
         let Some(tf) = entity.fields.get(pick.field.as_str()) else {
             continue;
         };
@@ -579,7 +579,7 @@ async fn resolve_label_id_by_name(
         )
         .await?;
     let mut matches = Vec::new();
-    for row in &res.entities {
+    for row in res.entities() {
         if let Some(tf) = row.fields.get("name") {
             if value_to_match_string(&tf.to_value()) == name {
                 if let Some(id_tf) = row.fields.get("id") {
@@ -615,35 +615,42 @@ async fn existence_check_step(
         .ok_or_else(|| RuntimeError::ConfigurationError {
             message: format!("existence_check: unknown capability '{query_cap}'"),
         })?;
-    let mut pred = Predicate::True;
-    if let Some(keys) = &capability.identity_key {
-        for key in keys {
-            if let Some(v) = env.get(key) {
-                pred = Predicate::And {
-                    args: vec![
-                        pred,
-                        Predicate::Comparison {
-                            field: key.clone(),
-                            op: plasm_core::CompOp::Eq,
-                            value: v.clone().into(),
-                        },
-                    ],
-                };
-            }
-        }
+    let keys = capability
+        .identity_key
+        .as_ref()
+        .filter(|keys| !keys.is_empty())
+        .ok_or_else(|| RuntimeError::ConfigurationError {
+            message: "existence check requires a declared identity".into(),
+        })?;
+    let mut identity = IndexMap::new();
+    for key in keys {
+        let value = env
+            .get(key)
+            .filter(|value| !matches!(value, Value::Null))
+            .ok_or_else(|| RuntimeError::ConfigurationError {
+                message: format!("existence check is missing identity field {key}"),
+            })?;
+        identity.insert(key.clone(), value.clone());
     }
-    let q = QueryExpr::filtered(qcap.domain.as_str(), pred);
+    // Membership must be observed live, including after a preceding sibling write.
+    cache.poison_read_caches_after_mutation();
     let res = engine
-        .execute_query(
-            &q,
-            cgs,
-            cache,
-            mode,
-            StreamConsumeOpts::default(),
-            &ViewAmbientContext::default(),
-        )
+        .fetch_reconcile_row(qcap, cgs, cache, mode, &identity, env, qcap.domain.as_str())
         .await?;
-    if res.count > 0 {
+    res.collection
+        .materialize(plasm_core::collection_codec::Demand::Whole)?;
+    if res.entities().iter().any(|row| {
+        identity.iter().any(|(key, value)| {
+            row.fields
+                .get(key)
+                .is_none_or(|field| field.to_value() != *value)
+        })
+    }) {
+        return Err(RuntimeError::ConfigurationError {
+            message: "existence check response does not prove the requested identity".into(),
+        });
+    }
+    if res.count() > 0 {
         match on_exists {
             ExistenceOnExists::Fail => {
                 return Err(RuntimeError::WorkflowConflict {

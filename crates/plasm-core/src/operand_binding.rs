@@ -12,6 +12,14 @@ pub struct IdentityTarget<'a> {
     pub field: Option<&'a str>,
 }
 
+/// Serialize a floating identity scalar using the transport's canonical numeric spelling.
+/// This is the identity-key encoding boundary, not a materialized row conversion.
+pub fn encode_float_identity(value: f64) -> Result<String, String> {
+    serde_json::Number::from_f64(value)
+        .map(|number| number.to_string())
+        .ok_or_else(|| "identity number must be finite".into())
+}
+
 /// Target-directed identity encoder. Construction resolves the catalog identity slot;
 /// encoding never converts an unsigned integer through floating point.
 #[derive(Debug, Clone)]
@@ -65,37 +73,53 @@ impl IdentityCodec {
         Ok(Self { field_type })
     }
 
-    pub fn encode(&self, value: &serde_json::Value) -> Result<EntityId, String> {
+    pub fn encode(&self, value: &Value) -> Result<EntityId, String> {
         use crate::FieldType;
-        use serde_json::Value as Json;
         if matches!(self.field_type, FieldType::DigitId) {
             return crate::wire_coercion::encode_digit_id_identity(value).map(EntityId::from);
         }
+        let numeric = || match value {
+            Value::Integer(value) => Some(value.to_string()),
+            Value::Unsigned(value) => Some(value.to_string()),
+            Value::Float(value) if value.is_finite() => encode_float_identity(*value).ok(),
+            _ => None,
+        };
         let text = match (&self.field_type, value) {
-            (FieldType::String | FieldType::Uuid | FieldType::Select, Json::String(value)) => {
-                value.clone()
-            }
-            (FieldType::String | FieldType::Select, Json::Number(value)) => value.to_string(),
-            (FieldType::Integer, Json::Number(value)) => value
-                .as_i64()
-                .ok_or_else(|| "identity integer is outside the declared i64 domain".to_string())?
-                .to_string(),
-            (FieldType::Integer, Json::String(value)) => value
+            (
+                FieldType::String | FieldType::Uuid | FieldType::Select | FieldType::Date,
+                Value::String(value),
+            ) => value.clone(),
+            (FieldType::Integer, Value::String(value)) => value
                 .parse::<i64>()
                 .map_err(|_| "identity is not a declared i64 integer".to_string())?
                 .to_string(),
-            (FieldType::Number, Json::Number(value)) => value.to_string(),
-            (FieldType::Number, Json::String(value)) => value
-                .parse::<serde_json::Number>()
-                .map_err(|_| "identity is not a declared number".to_string())?
+            (FieldType::Integer, value) => value
+                .as_integer()
+                .ok_or_else(|| "identity integer is outside the declared i64 domain".to_string())?
                 .to_string(),
-            (FieldType::Boolean, Json::Bool(value)) => value.to_string(),
-            (FieldType::Boolean, Json::String(value)) => value
+            (FieldType::Number, Value::String(value)) => {
+                if let Ok(number) = value.parse::<i64>() {
+                    number.to_string()
+                } else if let Ok(number) = value.parse::<u64>() {
+                    number.to_string()
+                } else {
+                    let number = value
+                        .parse::<f64>()
+                        .map_err(|_| "identity is not a declared number")?;
+                    if !number.is_finite() {
+                        return Err("identity number must be finite".into());
+                    }
+                    encode_float_identity(number)?
+                }
+            }
+            (FieldType::Boolean, Value::Bool(value)) => value.to_string(),
+            (FieldType::Boolean, Value::String(value)) => value
                 .parse::<bool>()
                 .map_err(|_| "identity is not a declared boolean".to_string())?
                 .to_string(),
-            (FieldType::Date, Json::String(value)) => value.clone(),
-            (FieldType::Date, Json::Number(value)) => value.to_string(),
+            (FieldType::String | FieldType::Select | FieldType::Number | FieldType::Date, _) => {
+                numeric().ok_or_else(|| "identity operand must be a declared scalar".to_string())?
+            }
             _ => {
                 return Err(format!(
                     "identity operand does not match declared {:?} scalar domain",
@@ -156,6 +180,7 @@ impl ResolvedValue {
                 Value::Float(value) => value.is_finite(),
                 Value::Null
                 | Value::Bool(_)
+                | Value::Unsigned(_)
                 | Value::Integer(_)
                 | Value::String(_)
                 | Value::Money(_) => true,
@@ -196,6 +221,8 @@ impl ResolvedValue {
                 J::Number(v) => {
                     if let Some(i) = v.as_i64() {
                         Value::Integer(i)
+                    } else if let Some(i) = v.as_u64() {
+                        Value::Unsigned(i)
                     } else if v.is_f64() {
                         Value::Float(v.as_f64().ok_or("invalid float")?)
                     } else {
@@ -392,6 +419,7 @@ impl BindOperands for Value {
             Self::String(_)
             | Self::Null
             | Self::Bool(_)
+            | Self::Unsigned(_)
             | Self::Integer(_)
             | Self::Float(_)
             | Self::PhraseIdent(_)
@@ -569,6 +597,18 @@ mod tests {
     use super::*;
     use crate::expr_parser::parse;
 
+    #[test]
+    fn float_identity_preserves_wire_scalar_spelling() {
+        for value in [1.0, -0.0, 1e30, 1e-30, 1.25] {
+            assert_eq!(
+                encode_float_identity(value).unwrap(),
+                serde_json::to_string(&value).unwrap()
+            );
+        }
+        assert!(encode_float_identity(f64::INFINITY).is_err());
+        assert!(encode_float_identity(f64::NAN).is_err());
+    }
+
     fn matrix() -> crate::CGS {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/schemas/plasm_language_matrix");
@@ -630,39 +670,47 @@ mod tests {
         };
         assert_eq!(
             string
-                .encode(&serde_json::json!(u64::MAX))
+                .encode(&crate::fixture_value!(u64::MAX))
                 .unwrap()
                 .as_str(),
             "18446744073709551615"
         );
-        assert!(string.encode(&serde_json::json!(true)).is_err());
-        assert!(string.encode(&serde_json::json!([42])).is_err());
+        assert!(string.encode(&crate::fixture_value!(true)).is_err());
+        assert!(string.encode(&crate::fixture_value!([42])).is_err());
         let integer = IdentityCodec {
             field_type: crate::FieldType::Integer,
         };
         assert_eq!(
             integer
-                .encode(&serde_json::json!(i64::MAX))
+                .encode(&crate::fixture_value!(i64::MAX))
                 .unwrap()
                 .as_str(),
             "9223372036854775807"
         );
-        assert!(integer.encode(&serde_json::json!(u64::MAX)).is_err());
-        assert!(integer.encode(&serde_json::json!(42.5)).is_err());
-        assert!(integer.encode(&serde_json::Value::Null).is_err());
+        assert!(integer.encode(&crate::fixture_value!(u64::MAX)).is_err());
+        assert!(integer.encode(&crate::fixture_value!(42.5)).is_err());
+        assert!(integer.encode(&Value::Null).is_err());
     }
 
     #[test]
     fn canonical_identity_strings_match_explicit_scalar_fields() {
         for (field_type, scalar, canonical) in [
-            (crate::FieldType::Integer, serde_json::json!(42), "42"),
-            (crate::FieldType::Number, serde_json::json!(42.5), "42.5"),
-            (crate::FieldType::Boolean, serde_json::json!(true), "true"),
+            (crate::FieldType::Integer, crate::fixture_value!(42), "42"),
+            (
+                crate::FieldType::Number,
+                crate::fixture_value!(42.5),
+                "42.5",
+            ),
+            (
+                crate::FieldType::Boolean,
+                crate::fixture_value!(true),
+                "true",
+            ),
         ] {
             let codec = IdentityCodec { field_type };
             assert_eq!(
                 codec.encode(&scalar).unwrap(),
-                codec.encode(&serde_json::json!(canonical)).unwrap()
+                codec.encode(&crate::fixture_value!(canonical)).unwrap()
             );
         }
     }
@@ -734,19 +782,19 @@ mod tests {
         };
         assert_eq!(
             codec
-                .encode(&serde_json::json!("2020-01-01T00:00:00Z"))
+                .encode(&crate::fixture_value!("2020-01-01T00:00:00Z"))
                 .unwrap()
                 .as_str(),
             "2020-01-01T00:00:00Z"
         );
         assert_eq!(
             codec
-                .encode(&serde_json::json!(1_577_836_800_000i64))
+                .encode(&crate::fixture_value!(1_577_836_800_000i64))
                 .unwrap()
                 .as_str(),
             "1577836800000"
         );
-        assert!(codec.encode(&serde_json::json!(true)).is_err());
+        assert!(codec.encode(&crate::fixture_value!(true)).is_err());
     }
 
     #[test]
@@ -756,20 +804,20 @@ mod tests {
         };
         assert_eq!(
             codec
-                .encode(&serde_json::json!("6419671322388907"))
+                .encode(&crate::fixture_value!("6419671322388907"))
                 .unwrap()
                 .as_str(),
             "6419671322388907"
         );
         assert_eq!(
             codec
-                .encode(&serde_json::json!(6_419_671_322_388_907i64))
+                .encode(&crate::fixture_value!(6_419_671_322_388_907i64))
                 .unwrap()
                 .as_str(),
             "6419671322388907"
         );
         assert!(codec
-            .encode(&serde_json::json!(9_007_199_254_740_993i64 as f64))
+            .encode(&crate::fixture_value!(9_007_199_254_740_993i64 as f64))
             .unwrap_err()
             .contains("IEEE"));
     }
@@ -787,7 +835,7 @@ mod tests {
         )
         .expect("digit_id id_field is a lawful identity scalar");
         let ent = cgs.get_entity("DigitAccount").expect("DigitAccount");
-        let rows = crate::dry_stub_entity_row_json(&cgs, ent, 1).expect("RA-8 digit_id stubs");
+        let rows = crate::dry_stub_entity_rows(&cgs, ent, 1).expect("RA-8 digit_id stubs");
         codec
             .encode(rows[0].get("pan").expect("dry stub retains digit_id"))
             .expect("dry digit_id identity encodes");
@@ -828,7 +876,7 @@ mod tests {
         )
         .expect("Date id_field is a lawful identity scalar");
         let ent = cgs.get_entity("DateLedger").expect("DateLedger");
-        let rows = crate::dry_stub_entity_row_json(&cgs, ent, 2).expect("RA-8 Date stubs");
+        let rows = crate::dry_stub_entity_rows(&cgs, ent, 2).expect("RA-8 Date stubs");
         for row in &rows {
             let value = row
                 .get("occurred_at")

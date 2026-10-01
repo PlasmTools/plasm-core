@@ -3,22 +3,25 @@ use super::super::*;
 #[test]
 fn materialized_result_use_preserves_scalar_data_binding_value() {
     let node = PlanNodeId::new("workspace_id".to_string()).expect("node id");
-    let row = serde_json::json!("workspace_123");
+    let row = plasm_core::ValueRow::from_output(plasm_core::Value::String("workspace_123".into()));
     let entities =
-        json_rows_to_entities("PlanComputed_workspace_id", std::slice::from_ref(&row)).unwrap();
+        rows_to_entities("PlanComputed_workspace_id", std::slice::from_ref(&row)).unwrap();
     let mut materialized = BTreeMap::new();
     materialized.insert(
         node.clone(),
         MaterializedNode {
+            value_shapes: vec![MaterializedValueShape::ScalarColumn],
+            optional_fields: Default::default(),
             qualified_entity: crate::plasm_plan::QualifiedEntityKey {
                 entry_id: "acme".to_string(),
                 entity: "PlanComputed_workspace_id".to_string(),
             },
             result: Arc::new(ExecutionResult {
-                count: entities.len(),
-                entities: entities.clone(),
+                collection: crate::test_support::execution_fixtures::collection(
+                    entities.clone(),
+                    plasm_runtime::ResultCoverage::Unknown,
+                ),
                 has_more: false,
-                coverage: plasm_runtime::ResultCoverage::Unknown,
                 pagination_resume: None,
                 paging_handle: None,
                 source: ExecutionSource::Cache,
@@ -50,7 +53,10 @@ fn materialized_result_use_preserves_scalar_data_binding_value() {
     )
     .expect("inputs");
     let alias = InputAlias::new("workspace_id".to_string()).expect("alias");
-    assert_eq!(inputs.get(&alias).expect("workspace_id").row, row);
+    assert_eq!(
+        inputs.get(&alias).expect("workspace_id").row,
+        plasm_core::Value::String("workspace_123".into())
+    );
 }
 
 #[test]
@@ -77,10 +83,12 @@ fn scoped_node_symbols_evaluate_against_singleton_inputs() {
             ),
         ]),
     };
-    let row = serde_json::json!({ "name": "pikachu" });
+    let row = crate::fixture_value!({ "name": "pikachu" });
     let inputs = BTreeMap::from([(
         InputAlias::new("moveFacts".to_string()).expect("alias"),
         MaterializedInputRow {
+            optional_fields: Default::default(),
+            value_projection: None,
             node: PlanNodeId::new("moveFacts".to_string()).expect("node id"),
             qualified_entity: crate::plasm_plan::QualifiedEntityKey {
                 entry_id: "acme".into(),
@@ -88,8 +96,8 @@ fn scoped_node_symbols_evaluate_against_singleton_inputs() {
             },
             id_field: "id".into(),
             proof: crate::plasm_plan::InputCardinalityProof::StaticSingleton,
-            row: serde_json::json!({ "move": "thunderbolt", "power": 90 }),
-            rows: vec![serde_json::json!({ "move": "thunderbolt", "power": 90 })],
+            row: crate::fixture_value!({ "move": "thunderbolt", "power": 90 }),
+            rows: vec![crate::fixture_row!({ "move": "thunderbolt", "power": 90 })],
             row_identity: None,
             row_identities: vec![None],
         },
@@ -107,8 +115,8 @@ fn scoped_node_symbols_evaluate_against_singleton_inputs() {
         wire_coercion_by_alias: &empty_coercion,
     };
     let out = eval_plan_value(&value, &env).expect("eval");
-    assert_eq!(out["title"], "pikachu uses thunderbolt");
-    assert_eq!(out["power"], 90);
+    assert_eq!(out["title"].as_str(), Some("pikachu uses thunderbolt"));
+    assert_eq!(out["power"].as_integer(), Some(90));
 }
 
 #[test]
@@ -178,15 +186,19 @@ fn for_each_cross_uses_materialization_wires_upstream_singleton() {
     materialized.insert(
         PlanNodeId::new("report").expect("report"),
         MaterializedNode {
+            value_shapes: Vec::new(),
+            optional_fields: Default::default(),
             qualified_entity: crate::plasm_plan::QualifiedEntityKey {
                 entry_id: "acme".into(),
                 entity: "Report".into(),
             },
             result: Arc::new(ExecutionResult {
-                entities: vec![],
-                count: 1,
+                collection: crate::test_support::execution_fixtures::collection(
+                    rows_to_entities("Report", &[crate::fixture_row!({"content": "STATS"})])
+                        .unwrap(),
+                    plasm_runtime::ResultCoverage::Unknown,
+                ),
                 has_more: false,
-                coverage: plasm_runtime::ResultCoverage::Unknown,
                 pagination_resume: None,
                 paging_handle: None,
                 source: ExecutionSource::Cache,
@@ -201,7 +213,7 @@ fn for_each_cross_uses_materialization_wires_upstream_singleton() {
                 operations: plasm_runtime::OperationLedger::empty(),
             }),
             row_source: MaterializedRowSource::Inline(vec![
-                serde_json::json!({"content": "STATS"}),
+                crate::fixture_row!({"content": "STATS"}),
             ]),
             row_identities: vec![None],
             artifact: None,
@@ -213,7 +225,7 @@ fn for_each_cross_uses_materialization_wires_upstream_singleton() {
         materialized_result_use_inputs(&materialized, &for_each_cross_uses(for_each), None)
             .expect("input rows");
     assert_eq!(input_rows.len(), 1);
-    let row = serde_json::json!({"id": "p1", "title": "Bolt"});
+    let row = crate::fixture_value!({"id": "p1", "title": "Bolt"});
     let empty_coercion = BTreeMap::new();
     let env = for_each_plan_eval_env(for_each, &row, &input_rows, &empty_coercion);
     let out = plasm_core::render_program_string(
@@ -228,22 +240,25 @@ fn for_each_cross_uses_materialization_wires_upstream_singleton() {
 fn materialized_result_use_allows_plural_rows_for_column_node_input_holes() {
     let node = PlanNodeId::new("labels".to_string()).expect("node id");
     let rows = vec![
-        serde_json::json!({"name": "bug"}),
-        serde_json::json!({"name": "docs"}),
+        crate::fixture_row!({"name": "bug"}),
+        crate::fixture_row!({"name": "docs"}),
     ];
     let mut materialized = BTreeMap::new();
     materialized.insert(
         node.clone(),
         MaterializedNode {
+            value_shapes: Vec::new(),
+            optional_fields: Default::default(),
             qualified_entity: crate::plasm_plan::QualifiedEntityKey {
                 entry_id: "langmatrix".to_string(),
                 entity: "LangTag".to_string(),
             },
             result: Arc::new(ExecutionResult {
-                count: rows.len(),
-                entities: Vec::new(),
+                collection: crate::test_support::execution_fixtures::collection(
+                    rows_to_entities("LangTag", &rows).unwrap(),
+                    plasm_runtime::ResultCoverage::Unknown,
+                ),
                 has_more: false,
-                coverage: plasm_runtime::ResultCoverage::Unknown,
                 pagination_resume: None,
                 paging_handle: None,
                 source: ExecutionSource::Cache,
@@ -283,7 +298,7 @@ fn materialized_result_use_allows_plural_rows_for_column_node_input_holes() {
     let empty_coercion = BTreeMap::new();
     let env = PlanEvalEnv {
         scope: EvalScope::Root {
-            row: &serde_json::Value::Null,
+            row: &plasm_core::Value::Null,
         },
         inputs: InputEnv { rows: &input_rows },
         wire_coercion_by_alias: &empty_coercion,
@@ -406,7 +421,7 @@ async fn view_embed_materialize_errors_without_view_produced_relation_refs() {
 #[test]
 fn typed_fanout_delete_binds_numeric_identity_and_input() {
     let binding = BindingName::new("_").unwrap();
-    let row = serde_json::json!({"id": 42, "proof": "fixture-proof"});
+    let row = crate::fixture_value!({"id": 42, "proof": "fixture-proof"});
     let inputs = BTreeMap::new();
     let coercion = BTreeMap::new();
     let env = PlanEvalEnv {

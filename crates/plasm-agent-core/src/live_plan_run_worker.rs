@@ -65,11 +65,12 @@ impl LivePlanRunPool {
     }
 
     /// Run `f` on a dedicated worker thread (`block_on` on the current runtime handle).
-    pub async fn run<F, Fut, T>(&self, f: F) -> Result<T, String>
+    pub async fn run<F, Fut, T, E>(&self, f: F) -> Result<T, E>
     where
         F: FnOnce() -> Fut + Send + 'static,
-        Fut: Future<Output = Result<T, String>> + Send,
+        Fut: Future<Output = Result<T, E>> + Send,
         T: Send + 'static,
+        E: From<String> + Send + 'static,
     {
         self.run_impl(f).await
     }
@@ -77,20 +78,22 @@ impl LivePlanRunPool {
     /// Like [`Self::run`], but the future may be `!Send` (created and polled only on the worker).
     ///
     /// Use for MCP tool handlers whose error type is `Box<dyn Error>` (`CallToolError`).
-    pub async fn run_local<F, Fut, T>(&self, f: F) -> Result<T, String>
+    pub async fn run_local<F, Fut, T, E>(&self, f: F) -> Result<T, E>
     where
         F: FnOnce() -> Fut + Send + 'static,
-        Fut: Future<Output = Result<T, String>>,
+        Fut: Future<Output = Result<T, E>>,
         T: Send + 'static,
+        E: From<String> + Send + 'static,
     {
         self.run_impl(f).await
     }
 
-    async fn run_impl<F, Fut, T>(&self, f: F) -> Result<T, String>
+    async fn run_impl<F, Fut, T, E>(&self, f: F) -> Result<T, E>
     where
         F: FnOnce() -> Fut + Send + 'static,
-        Fut: Future<Output = Result<T, String>>,
+        Fut: Future<Output = Result<T, E>>,
         T: Send + 'static,
+        E: From<String> + Send + 'static,
     {
         let permit = self
             .permits
@@ -109,7 +112,7 @@ impl LivePlanRunPool {
                 let msg = match out {
                     Ok(Ok(v)) => Ok(v),
                     Ok(Err(e)) => Err(e),
-                    Err(payload) => Err(format_live_plan_run_panic(payload)),
+                    Err(payload) => Err(E::from(format_live_plan_run_panic(payload))),
                 };
                 let _ = done_tx.send(msg);
             })

@@ -14,6 +14,8 @@ pub use crate::discovery_recovery::{CatalogAppDescription, DiscoveryRecovery, RE
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoutingReceipt {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment_support: Option<crate::discovery_support::EnvironmentSupport>,
     pub intent_provenance: crate::intent_provenance::IntentProvenance,
     pub authorization: DiscoveryAuthorization,
     #[serde(default)]
@@ -163,7 +165,9 @@ impl DiscoveryService {
                 {
                     return Ok(raw);
                 }
-                let raw = self.jev_response(issued.body()).await?;
+                let raw = self
+                    .jev_response(issued.body(), "jev-capability-relevance-v2")
+                    .await?;
                 matcher::decode_batch(&issued, &raw)?;
                 self.store
                     .store_selector_envelope(issued.cache_key(), &raw)
@@ -183,6 +187,36 @@ impl DiscoveryService {
             None
         };
         validate_closure_authorization(closure.as_ref(), allowed)?;
+        let mut available: std::collections::BTreeSet<_> = exposed.iter().cloned().collect();
+        if let Some(closure) = &closure {
+            available.extend(
+                closure
+                    .business
+                    .iter()
+                    .chain(&closure.prerequisites)
+                    .chain(&closure.input_sources)
+                    .cloned(),
+            );
+        }
+        let issued =
+            crate::discovery_support::issue(&self.match_model, provenance, &available, &catalogs)?;
+        let raw = if let Some(raw) = self
+            .store
+            .cached_selector_envelope(&issued.cache_key)
+            .await?
+        {
+            raw
+        } else {
+            let raw = self
+                .jev_response(&issued.body, "jev-environment-support-v1")
+                .await?;
+            crate::discovery_support::decode(&issued, &raw)?;
+            self.store
+                .store_selector_envelope(&issued.cache_key, &raw)
+                .await?;
+            raw
+        };
+        let environment_support = crate::discovery_support::decode(&issued, &raw)?;
         let recovery = if business.is_empty() {
             Some(DiscoveryRecovery::from_unmatched(
                 &matching,
@@ -194,6 +228,7 @@ impl DiscoveryService {
             None
         };
         Ok(RoutingReceipt {
+            environment_support: Some(environment_support),
             intent_provenance: provenance.clone(),
             authorization: allowed.clone(),
             intent_analysis:
@@ -208,7 +243,7 @@ impl DiscoveryService {
         })
     }
 
-    async fn jev_response(&self, body: &str) -> Result<String> {
+    async fn jev_response(&self, body: &str, contract: &str) -> Result<String> {
         crate::decision_transport::request_decision(
             &self.client,
             "https://openrouter.ai/api/alpha/decisions",
@@ -218,7 +253,7 @@ impl DiscoveryService {
             |attempt| {
                 if let Some(directory) = &self.rejection_dir {
                     let mut record = serde_json::to_value(attempt)?;
-                    record["contract"] = "jev-capability-relevance-v2".into();
+                    record["contract"] = contract.into();
                     record["request_body"] = body.into();
                     save_rejection(directory, &record)?;
                 }

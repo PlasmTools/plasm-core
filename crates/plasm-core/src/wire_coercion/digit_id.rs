@@ -30,6 +30,7 @@ pub(crate) fn digit_id_json_to_plasm(value: &serde_json::Value) -> Value {
 pub(crate) fn coerce_digit_id(val: Value) -> Result<Value, String> {
     let s = match val {
         Value::Integer(n) if n >= 0 => n.to_string(),
+        Value::Unsigned(n) => n.to_string(),
         Value::String(s) | Value::PhraseIdent(s) => s,
         Value::Float(_) => {
             return Err(
@@ -49,8 +50,8 @@ pub(crate) fn coerce_digit_id(val: Value) -> Result<Value, String> {
 }
 
 /// IdentityCodec / JSON identity cells: one coerce, then the digit string.
-pub(crate) fn encode_digit_id_identity(value: &serde_json::Value) -> Result<String, String> {
-    match coerce_digit_id(digit_id_json_to_plasm(value))? {
+pub(crate) fn encode_digit_id_identity(value: &Value) -> Result<String, String> {
+    match coerce_digit_id(value.clone())? {
         Value::String(s) => Ok(s),
         other => Err(format!(
             "digit_id identity did not coerce to a digit string, got {}",
@@ -173,17 +174,18 @@ mod tests {
     #[test]
     fn encode_digit_id_identity_is_the_same_coerce() {
         assert_eq!(
-            encode_digit_id_identity(&serde_json::json!("6419671322388907")).expect("quoted"),
+            encode_digit_id_identity(&crate::fixture_value!("6419671322388907")).expect("quoted"),
             "6419671322388907"
         );
         assert_eq!(
-            encode_digit_id_identity(&serde_json::json!(6_419_671_322_388_907i64)).expect("i64"),
+            encode_digit_id_identity(&crate::fixture_value!(6_419_671_322_388_907i64))
+                .expect("i64"),
             "6419671322388907"
         );
-        let err = encode_digit_id_identity(&serde_json::json!(9_007_199_254_740_993i64 as f64))
+        let err = encode_digit_id_identity(&crate::fixture_value!(9_007_199_254_740_993i64 as f64))
             .expect_err("IEEE");
         assert!(err.contains("IEEE"), "{err}");
-        assert!(encode_digit_id_identity(&serde_json::json!("64-19")).is_err());
-        assert!(encode_digit_id_identity(&serde_json::json!(-1)).is_err());
+        assert!(encode_digit_id_identity(&crate::fixture_value!("64-19")).is_err());
+        assert!(encode_digit_id_identity(&crate::fixture_value!(-1)).is_err());
     }
 }

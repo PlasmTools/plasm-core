@@ -145,7 +145,7 @@ pub(crate) async fn execute_session_create_response_inner(
         &Default::default(),
     )?;
     let mut prompt = format!(
-        "{}\n\n```pyi\n{}\n```",
+        "{}\n{}",
         wave.language.unwrap_or_default(),
         wave.declarations
     );

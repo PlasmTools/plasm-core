@@ -76,7 +76,6 @@ mod bundle_render;
 mod capability_delta;
 mod contract;
 mod entity_block;
-mod evaluation_now;
 mod fetch_head_teaching;
 mod gloss_collect;
 mod gloss_dedup;
@@ -111,10 +110,6 @@ pub use bundle_render::{
     render_prompt_tsv_with_config, render_prompt_with_config, render_teaching_bundle,
     render_teaching_prompt_bundle, render_teaching_prompt_bundle_for_exposure,
     render_teaching_prompt_bundle_for_exposure_federated, render_teaching_tsv,
-};
-pub use evaluation_now::{
-    format_evaluation_now_instant, format_evaluation_now_teaching_meaning, EVALUATION_NOW_EXPR,
-    EVALUATION_NOW_MEANING_SUFFIX,
 };
 pub use input_legend::{
     CapabilityInputLegend, ReturnArrow, RowContractLegend, RowProjectionContract, TeachingExprLine,

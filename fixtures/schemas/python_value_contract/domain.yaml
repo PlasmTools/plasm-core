@@ -1,4 +1,4 @@
-version: 4
+version: 5
 auth: {scheme: none}
 http_backend: http://127.0.0.1:9
 entities:
@@ -17,6 +17,7 @@ entities:
       state: {required: true, value_ref: state}
       states: {required: true, value_ref: states}
       timestamp: {required: true, value_ref: timestamp}
+      local_timestamp: {required: false, value_ref: local_timestamp}
       epoch: {required: true, value_ref: epoch}
       price: {required: true, value_ref: price}
       reference: {required: true, value_ref: reference}
@@ -28,11 +29,43 @@ entities:
       optional_count: {required: false, value_ref: count}
     relations: {}
 capabilities:
+  sample_query:
+    kind: query
+    entity: Sample
+    description: Select typed temporal bounds at the HTTP query boundary.
+    selection:
+    - {name: date, value_ref: date, required: false}
+    - {name: timestamp, value_ref: timestamp, required: false}
+    - {name: local_timestamp, value_ref: local_timestamp, required: false}
+    - {name: epoch, value_ref: epoch, required: false}
+    provides: [id]
   sample_get:
     kind: get
     entity: Sample
     description: Read the complete typed fixture record.
-    provides: [id, text, uuid, date, flag, count, ratio, address, state, states, timestamp, epoch, price, reference, document, attachment, numbers, matrix, records, optional_count]
+    provides: [id, text, uuid, date, flag, count, ratio, address, state, states, timestamp, local_timestamp, epoch, price, reference, document, attachment, numbers, matrix, records, optional_count]
+  sample_update:
+    kind: update
+    entity: Sample
+    description: Store a typed integer for compute boundary conformance.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - {name: count, value_ref: count, required: true}
+    provides: [id, count]
+  sample_update_times:
+    kind: update
+    entity: Sample
+    description: Store calendar and instant values using their declared wire encodings.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - {name: date, value_ref: date, required: true}
+        - {name: timestamp, value_ref: timestamp, required: true}
+        - {name: epoch, value_ref: epoch, required: true}
+    provides: [id, date, timestamp, epoch]
 values:
   identifier: {type: digit_id}
   text: {type: string}
@@ -45,6 +78,7 @@ values:
   state: {type: enum, enum: [open, closed]}
   states: {type: multi_enum, enum: [open, closed]}
   timestamp: {type: rfc3339}
+  local_timestamp: {type: iso8601_naive_datetime}
   epoch: {type: unix_ms}
   price: {type: money, currency: USD}
   reference: {type: entity_ref, target: Sample}

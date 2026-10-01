@@ -96,7 +96,7 @@ pub(crate) fn build_scoped_query_from_fallback(
 /// Partition for [`RelationMaterialization::PreferFromParentGet`] using [`resolve_relation_row_resolution`].
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn partition_prefer_from_parent_get(
-    parents: &[CachedEntity],
+    parents: &plasm_core::collection_codec::SharedRows<CachedEntity>,
     materialize: &RelationMaterialization,
     relation_key: &str,
     expected_target: &str,
@@ -105,20 +105,23 @@ pub(crate) fn partition_prefer_from_parent_get(
     cgs: &CGS,
     target_entity: &EntityName,
     fallback: &RelationScopedFallback,
-) -> Result<(Vec<Vec<CachedEntity>>, Vec<(usize, QueryExpr)>), RuntimeError> {
+) -> Result<(Vec<Option<ExecutionCollection>>, Vec<(usize, QueryExpr)>), RuntimeError> {
     let n = parents.len();
-    let parent_rows: Vec<(serde_json::Value, Option<Vec<Ref>>)> = parents
+    let parent_rows: Vec<(plasm_core::ValueRow, Option<Vec<Ref>>)> = parents
         .iter()
         .map(|parent| {
             (
-                parent.payload_to_json(),
-                parent.relations.get(relation_key).map(|refs| refs.to_vec()),
+                parent.to_row_values(Some(cgs)),
+                parent
+                    .relations
+                    .get(relation_key)
+                    .map(|refs| refs.iter().cloned().collect()),
             )
         })
         .collect();
-    let parent_row_refs: Vec<(&serde_json::Value, Option<&[Ref]>)> = parent_rows
+    let parent_row_refs: Vec<(&plasm_core::Value, Option<&[Ref]>)> = parent_rows
         .iter()
-        .map(|(json, refs)| (json, refs.as_deref()))
+        .map(|(row, refs)| (&**row, refs.as_deref()))
         .collect();
     let resolutions = partition_prefer_resolutions(
         materialize,
@@ -127,14 +130,24 @@ pub(crate) fn partition_prefer_from_parent_get(
         parent_row_refs,
         |r| mat.get(r).is_some(),
     );
-    let mut per_parent: Vec<Vec<CachedEntity>> = (0..n).map(|_| Vec::new()).collect();
+    let mut per_parent = vec![None; n];
     let mut network_jobs: Vec<(usize, QueryExpr)> = Vec::new();
     for (i, resolution) in resolutions.into_iter().enumerate() {
         let parent = &parents[i];
         match resolution {
             RelationRowResolution::EmbeddedRefs(refs) => {
-                per_parent[i] =
-                    resolve_cached_targets_from_relation_refs(mat, &refs, expected_target)?;
+                let rows = resolve_cached_targets_from_relation_refs(mat, &refs, expected_target)?;
+                let membership =
+                    parent
+                        .relations
+                        .get(relation_key)
+                        .ok_or_else(|| RuntimeError::CacheError {
+                            message: "missing relation membership".into(),
+                        })?;
+                per_parent[i] = Some(ExecutionCollection::materialized(
+                    membership.record().clone(),
+                    rows.into(),
+                )?);
             }
             RelationRowResolution::ScopedQuery => {
                 let mut q = build_scoped_query_from_fallback(
@@ -155,12 +168,12 @@ pub(crate) fn partition_prefer_from_parent_get(
     Ok((per_parent, network_jobs))
 }
 
-pub(crate) fn resolve_cached_targets_from_relation_refs(
+pub(crate) fn resolve_cached_targets_from_relation_refs<'a>(
     mat: &SessionMaterialization,
-    refs: &[Ref],
+    refs: impl IntoIterator<Item = &'a Ref>,
     expected_target: &str,
 ) -> Result<Vec<CachedEntity>, RuntimeError> {
-    let mut out = Vec::with_capacity(refs.len());
+    let mut out = Vec::new();
     for r in refs {
         if r.entity_type.as_str() != expected_target {
             return Err(RuntimeError::ConfigurationError {

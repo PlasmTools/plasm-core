@@ -41,18 +41,21 @@ pub(crate) enum ExecStep {
 /// mode-specific (live rehydration vs dry inline stub) — that is the permitted I/O difference — but
 /// the transformation over them is not.
 pub(crate) struct PureInputs<'a> {
+    pub es: &'a ExecuteSession,
+    pub schema_nodes: &'a [ValidatedPlanNode],
     /// Rows of the step's `source` dependency (empty for [`PureStep::Data`]).
-    pub source_rows: &'a [serde_json::Value],
+    pub source_rows: &'a [plasm_core::ValueRow],
     /// Singleton cross-node inputs (Derive `inputs`; empty otherwise).
     pub input_rows: &'a BTreeMap<InputAlias, MaterializedInputRow>,
     /// Cross-binding row lists for `Plasm.render` compute bindings (empty otherwise).
-    pub binding_rows: &'a BTreeMap<String, Vec<serde_json::Value>>,
+    pub binding_rows: &'a BTreeMap<String, Vec<plasm_core::ValueRow>>,
 }
 
 /// Output of the single pure kernel: rows plus the identity/entity metadata the caller needs to
 /// wrap them into a [`MaterializedNode`].
 pub(crate) struct PureMaterialization {
-    pub rows: Vec<serde_json::Value>,
+    pub value_shapes: Vec<MaterializedValueShape>,
+    pub rows: Vec<plasm_core::ValueRow>,
     pub row_identities: Vec<Option<plasm_core::RowIdentity>>,
     pub entity_override: Option<String>,
 }
@@ -133,7 +136,7 @@ impl PureStep {
     pub(crate) fn binding_rows(
         &self,
         materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
-    ) -> Result<BTreeMap<String, Vec<serde_json::Value>>, String> {
+    ) -> Result<BTreeMap<String, Vec<plasm_core::ValueRow>>, String> {
         match self {
             PureStep::Compute(c) => binding_rows_for_compute(&c.compute, materialized),
             PureStep::Data(d) => binding_rows_for_data_uses(&d.uses_result, materialized),
@@ -151,9 +154,10 @@ impl PureStep {
     ) -> Result<PureMaterialization, String> {
         match self {
             PureStep::Data(d) => {
-                let rows = eval_data_plan_value(&d.data, inputs.binding_rows)?;
+                let (rows, value_shapes) = eval_data_plan_value(&d.data, inputs.binding_rows)?;
                 let row_identities = vec![None; rows.len()];
                 Ok(PureMaterialization {
+                    value_shapes,
                     rows,
                     row_identities,
                     entity_override: None,
@@ -170,7 +174,8 @@ impl PureStep {
                         "scalar field extraction",
                     ));
                 }
-                let rows = derive_node_rows(
+                let (rows, value_shapes) = derive_node_rows(
+                    d.kind,
                     &d.item_binding,
                     &d.value,
                     inputs.source_rows,
@@ -178,19 +183,48 @@ impl PureStep {
                 )?;
                 let row_identities = vec![None; rows.len()];
                 Ok(PureMaterialization {
+                    value_shapes,
                     rows,
                     row_identities,
                     entity_override: None,
                 })
             }
             PureStep::Compute(c) => {
-                let rows =
-                    eval_compute_from_rows(&c.compute, inputs.source_rows, inputs.binding_rows)?;
+                if let ComputeOp::MergeBranches { other } = &c.compute.op {
+                    for branch in [c.compute.source.as_str(), other.as_str()] {
+                        let value = materialized
+                            .get(&PlanNodeId::new(branch)?)
+                            .ok_or("conditional branch not materialized")?;
+                        crate::python_compute::require_complete_collection(&value.result)
+                            .map_err(|e| e.to_string())?;
+                    }
+                }
+                let contract = crate::map_body_schema::row_operation_contract(
+                    inputs.es,
+                    inputs.schema_nodes,
+                    &c.compute.source,
+                )?;
+                let contract =
+                    plasm_core::SyntheticResultSchema::for_value(contract)?.row_contract()?;
+                let computed = eval_compute_from_rows(
+                    &c.compute,
+                    inputs.source_rows,
+                    inputs.binding_rows,
+                    &contract,
+                )?;
                 let source = PlanNodeId::new(c.compute.source.clone())?;
-                let row_identities =
-                    propagate_row_identities(&source, &c.compute.op, materialized, rows.len())?;
+                let row_identities = propagate_row_identities(
+                    &source,
+                    &c.compute.op,
+                    materialized,
+                    &computed.occurrences,
+                    computed.rows.len(),
+                )?;
                 Ok(PureMaterialization {
-                    rows,
+                    // Row computation is record-in/record-out. Pure scalar binding
+                    // witnesses do not implicitly unwrap the resulting records.
+                    value_shapes: Vec::new(),
+                    rows: computed.rows,
                     row_identities,
                     entity_override: c.compute.schema.entity.as_deref().map(str::to_string),
                 })

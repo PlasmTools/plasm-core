@@ -261,7 +261,7 @@ fn finalize_retryable_failure(
         RuntimeError::RequestError {
             message,
             attempts,
-            status: None,
+            status: Some(status),
             body: None,
         }
     }
@@ -380,6 +380,40 @@ fn http_trace_outcome<T, E: std::fmt::Display>(result: &Result<T, E>) -> HttpTra
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn finalized_http_failures_preserve_status_and_upstream_ownership() {
+        for status in [500, 503] {
+            let failures = [
+                super::finalize_retryable_failure(
+                    status,
+                    "fixture",
+                    None,
+                    3,
+                    "service rejected request".into(),
+                ),
+                crate::http_transport::attempt_result_into_result(
+                    crate::http_transport::HttpAttemptResult::Retryable {
+                        status,
+                        retry_after: None,
+                        message: "service rejected request".into(),
+                    },
+                    1,
+                )
+                .unwrap_err(),
+            ];
+            for error in failures {
+                assert!(
+                    matches!(&error, crate::RuntimeError::RequestError { status: Some(observed), .. } if *observed == status)
+                );
+                let failure = crate::ExecutionFailure::from(error);
+                assert_eq!(failure.cause, crate::FailureCause::Upstream);
+                assert_eq!(failure.recovery, crate::RecoveryDisposition::Stop);
+                assert!(serde_json::to_string(&failure)
+                    .unwrap()
+                    .contains("service rejected request"));
+            }
+        }
+    }
     use super::*;
     use crate::http_transport::{HttpTransport, ReqwestHttpTransport};
     use futures_util::future::join_all;

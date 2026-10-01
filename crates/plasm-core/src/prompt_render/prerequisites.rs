@@ -25,7 +25,7 @@ pub fn render_prerequisite_bindings(
     };
     let mut lines = vec![
         "Declared prerequisites".into(),
-        "Write acquisition calls using the Python method signatures in the domain declarations. Bind their returned fields into the indicated existing inputs. Acquisition calls participate in normal plan review and execution.".into(),
+        "Local labels below name acquisitions, not supplied variables. Call the declared methods and bind their outputs; these calls undergo normal review/run.".into(),
     ];
     if !closure.input_sources.is_empty() {
         lines.push("Possible input sources".into());
@@ -42,7 +42,7 @@ pub fn render_prerequisite_bindings(
         let filled_get = renderer.filled_get_identity_acquisition(acquisition, provider)?;
         lines.push(format!(
             "Acquisition {}: {}",
-            acquisition.id,
+            renderer.label(&acquisition.id)?,
             filled_get
                 .clone()
                 .map_or_else(|| renderer.capability(&acquisition.capability), Ok)?
@@ -70,25 +70,34 @@ pub fn render_prerequisite_bindings(
             ));
         }
     }
+    let mut bindings: BTreeMap<String, std::collections::BTreeSet<String>> = BTreeMap::new();
     for edge in &closure.edges {
-        let consumer_instance = edge.consumer_instance.as_deref().unwrap_or("business");
-        lines.push(format!(
-            "Required by {} ({consumer_instance}), requirement {}:",
-            renderer.capability(&edge.consumer)?,
-            edge.requirement.id
-        ));
         for binding in &edge.requirement.bindings {
             let field = edge
                 .provider_outputs
                 .get(&binding.output)
                 .ok_or("missing output mapping")?;
-            lines.push(format!(
-                "  {} <- acquisition {} output {}",
-                renderer.input(&edge.consumer, &binding.input)?,
-                edge.provider_instance,
+            let source = format!(
+                "{}.{}",
+                renderer.label(&edge.provider_instance)?,
                 renderer.output(&edge.provider, field)?
-            ));
+            );
+            let mut target = format!(
+                "{} [{}]",
+                renderer.input(&edge.consumer, &binding.input)?,
+                edge.requirement.id
+            );
+            if let Some(instance) = &edge.consumer_instance {
+                target = format!("{}: {target}", renderer.label(instance)?);
+            }
+            bindings.entry(source).or_default().insert(target);
         }
+    }
+    for (source, targets) in bindings {
+        lines.push(format!(
+            "{source} -> {}",
+            targets.into_iter().collect::<Vec<_>>().join(", ")
+        ));
     }
     Ok(lines.join("\n"))
 }
@@ -100,6 +109,15 @@ struct BindingRenderer<'a> {
 }
 
 impl BindingRenderer<'_> {
+    fn label(&self, id: &str) -> Result<String, String> {
+        self.closure
+            .acquisitions
+            .iter()
+            .position(|a| a.id == id)
+            .map(|index| format!("a{}", index + 1))
+            .ok_or_else(|| "missing acquisition instance".into())
+    }
+
     fn schema(&self, reference: &CapabilityRef) -> Result<&CapabilitySchema, String> {
         self.catalogs
             .get(&reference.catalog)
@@ -236,6 +254,27 @@ impl BindingRenderer<'_> {
 
     fn input(&self, reference: &CapabilityRef, input: &InputPath) -> Result<String, String> {
         let (head, tail) = input.path.split_first().ok_or("empty input binding")?;
+        let cap = self.schema(reference)?;
+        let cgs = self
+            .catalogs
+            .get(&reference.catalog)
+            .ok_or("missing catalog")?;
+        // Match the Python Get declaration: non-scope inputs are acquired into
+        // the session, not exposed as Python call arguments.
+        if cap.kind == CapabilityKind::Get
+            && cap.get_requires_identity_anchor(cgs)
+            && cap.input_fields().any(|field| field.name.as_str() == head)
+            && !cap
+                .scope_params()
+                .iter()
+                .any(|scope| scope.name.as_str() == head)
+        {
+            return Ok(format!(
+                "{} session({}) (not a call argument)",
+                self.capability(reference)?,
+                input.path.join(".")
+            ));
+        }
         let param = head.clone();
         let mut path = vec![param];
         path.extend(tail.iter().cloned());
@@ -279,7 +318,8 @@ impl BindingRenderer<'_> {
                     .find(|a| &a.id == instance)
                     .ok_or("missing acquisition instance")?;
                 Ok(format!(
-                    "acquisition {instance} output {}",
+                    "{}.{}",
+                    self.label(instance)?,
                     self.output(&acquisition.capability, field)?
                 ))
             }

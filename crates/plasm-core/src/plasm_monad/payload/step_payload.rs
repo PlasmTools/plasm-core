@@ -81,6 +81,10 @@ pub struct UnfoldUntilPayload {
     pub effect_template: EffectTemplate,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub until_predicates: Vec<PlanPredicate>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until_scope: Option<Box<super::super::CorrelatedBody>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_scope: Option<Box<super::super::CorrelatedBody>>,
     pub take: u32,
     /// Seed observe IR for post-step re-Get (required for side-effect-only mutators).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -128,7 +132,7 @@ impl PlasmStepPayload {
             Self::FlatMapRelation(p) => p.effect_class,
             Self::FlatMapApply(p) => p.effect_class,
             Self::UnfoldUntil(p) => p.effect_class,
-            Self::MapBody(_) => EffectClass::Read,
+            Self::MapBody(body) => body.effect_class(),
         }
     }
 
@@ -141,7 +145,7 @@ impl PlasmStepPayload {
             Self::FlatMapRelation(p) => p.result_shape,
             Self::FlatMapApply(p) => p.result_shape,
             Self::UnfoldUntil(p) => p.result_shape,
-            Self::MapBody(_) => ResultShape::List,
+            Self::MapBody(body) => body.result_shape(),
         }
     }
 
@@ -185,6 +189,7 @@ fn surface_label(k: SurfaceKind) -> String {
 
 fn derive_kind_label(k: super::templates::DeriveKind) -> &'static str {
     match k {
+        super::templates::DeriveKind::Cell => "cell",
         super::templates::DeriveKind::Map => "map",
         super::templates::DeriveKind::Data => "data",
     }
@@ -201,7 +206,7 @@ fn compute_op_label(op: &super::compute::ComputeOp) -> String {
         ComputeOp::Limit { count } => format!("limit {count}"),
         ComputeOp::DedupeBy { .. } => "dedupe_by".into(),
         ComputeOp::With { .. } => "with".into(),
-        ComputeOp::Union { .. } => "union".into(),
+        ComputeOp::Union { .. } | ComputeOp::MergeBranches { .. } => "union".into(),
         ComputeOp::Render { .. } => "render".into(),
         ComputeOp::Python { per_row, .. } => if *per_row {
             "python_map"

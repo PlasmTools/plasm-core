@@ -11,6 +11,7 @@ pub(crate) fn client_side_predicate_matches(
         plasm_core::Predicate::True => Ok(true),
         plasm_core::Predicate::False => Ok(false),
         plasm_core::Predicate::Comparison { field, op, value } => {
+            crate::row_predicate::require_entity_field_available(entity, field)?;
             let rhs = value.to_value();
             let Some(actual_tf) = entity.get_field(field) else {
                 return Ok(*op == CompOp::Exists && matches!(rhs, Value::Null));
@@ -260,5 +261,66 @@ pub(crate) fn collect_predicate_vars(
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod field_demand_tests {
+    use super::*;
+
+    #[test]
+    fn unavailable_fields_fail_when_consumed_without_erasing_membership() {
+        let mut entity = CachedEntity::from_decoded(
+            Ref::new("Item", "one"),
+            Default::default(),
+            Default::default(),
+            1,
+            EntityCompleteness::Summary,
+        );
+        entity.unavailable_fields.insert("n".into());
+        let predicate = plasm_core::Predicate::eq("n", 42);
+        let error = client_side_predicate_matches(&entity, &predicate).unwrap_err();
+        assert!(matches!(error, RuntimeError::FieldUnavailable { .. }));
+        let failure = crate::ExecutionFailure::from(error);
+        assert_eq!(failure.code, "field_unavailable");
+        assert_eq!(failure.cause, crate::FailureCause::ResponseContract);
+        assert_eq!(failure.recovery, crate::RecoveryDisposition::Stop);
+        assert!(client_side_predicate_matches(
+            &entity,
+            &plasm_core::Predicate::Or {
+                args: vec![plasm_core::Predicate::True, predicate.clone()],
+            }
+        )
+        .unwrap());
+        assert!(!client_side_predicate_matches(
+            &entity,
+            &plasm_core::Predicate::And {
+                args: vec![plasm_core::Predicate::False, predicate],
+            }
+        )
+        .unwrap());
+        let bound = crate::row_predicate::BoundRowPredicate {
+            field_path: plasm_core::FieldPath::from_dotted("n").unwrap(),
+            op: plasm_core::PlanPredicateOp::Eq,
+            value: plasm_core::operand_binding::ResolvedValue::new(Value::Integer(42)).unwrap(),
+        };
+        assert!(matches!(
+            crate::row_predicate::entity_matches_predicate(&entity, &bound),
+            Err(RuntimeError::FieldUnavailable { .. })
+        ));
+        let mut heap = crate::top_k::TopKHeap::new(
+            crate::top_k::TopKSpec {
+                count: 1,
+                sort_key: vec!["n".into()],
+                descending: false,
+                row_filter: vec![],
+            },
+            plasm_core::value_contract::ValueContract::scalar(plasm_core::FieldType::Integer),
+        )
+        .unwrap();
+        assert!(matches!(
+            heap.insert(entity),
+            Err(RuntimeError::FieldUnavailable { .. })
+        ));
     }
 }

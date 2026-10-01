@@ -14,7 +14,7 @@ pub enum OperationError {
     },
     OperationFailed {
         handle: String,
-        error: String,
+        error: plasm_runtime::ExecutionFailure,
     },
     NotOnReplica {
         handle: String,
@@ -91,7 +91,7 @@ mod operation_error_tests {
     use super::*;
 
     #[test]
-    fn operation_failed_detail_is_verbatim() {
+    fn operation_failed_detail_omits_private_diagnostic() {
         let err = OperationError::OperationFailed {
             handle: "o1".into(),
             error: "session graph changed during concurrent execute; retry the request".into(),
@@ -99,7 +99,7 @@ mod operation_error_tests {
         assert_eq!(err.code(), OperationError::CODE_OPERATION_FAILED);
         assert_eq!(
             err.detail(),
-            "operation `o1` failed: session graph changed during concurrent execute; retry the request"
+            "operation `o1` failed: unclassified_execution_failure: Stop"
         );
     }
 
@@ -113,5 +113,18 @@ mod operation_error_tests {
         let detail = err.detail();
         assert!(detail.contains("l_test_o9"));
         assert!(detail.contains("open in this session: l_test_o1, l_test_o2"));
+    }
+}
+
+impl From<OperationError> for plasm_runtime::ExecutionFailure {
+    fn from(error: OperationError) -> Self {
+        match error {
+            OperationError::OperationFailed { error, .. } => error,
+            other => Self::new(
+                plasm_runtime::FailureCause::Runtime,
+                other.code(),
+                other.detail(),
+            ),
+        }
     }
 }

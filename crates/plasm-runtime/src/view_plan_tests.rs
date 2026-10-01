@@ -94,10 +94,11 @@ fn merge_ambient_scope_uses_explicit_transport_origin() {
 
 fn stub_item_node_result(id: &str, title: &str) -> ExecutionResult {
     ExecutionResult {
-        entities: vec![stub_item_row(id, title)],
-        count: 1,
+        collection: crate::execution::test_collection(
+            vec![stub_item_row(id, title)],
+            ResultCoverage::Unknown,
+        ),
         has_more: false,
-        coverage: ResultCoverage::Unknown,
         pagination_resume: None,
         paging_handle: None,
         source: ExecutionSource::Cache,
@@ -177,10 +178,11 @@ fn fixture_runner_node_single_row_cardinality_error() {
     results.insert(
         "item_node".into(),
         ExecutionResult {
-            entities: vec![stub_item_row("a", "A"), stub_item_row("b", "B")],
-            count: 2,
+            collection: crate::execution::test_collection(
+                vec![stub_item_row("a", "A"), stub_item_row("b", "B")],
+                ResultCoverage::Unknown,
+            ),
             has_more: false,
-            coverage: ResultCoverage::Unknown,
             pagination_resume: None,
             paging_handle: None,
             source: ExecutionSource::Cache,
@@ -205,25 +207,26 @@ fn resolve_view_relation_maps_stamps_empty_many_relation_key() {
         (
             "viewer_row".into(),
             ExecutionResult {
-                entities: vec![CachedEntity::from_decoded(
-                    plasm_core::Ref::new("LangViewer", "viewer-nobody"),
-                    indexmap::IndexMap::from([
-                        (
-                            "id".into(),
-                            plasm_core::Value::String("viewer-nobody".into()),
-                        ),
-                        (
-                            "display_name".into(),
-                            plasm_core::Value::String("nobody".into()),
-                        ),
-                    ]),
-                    indexmap::IndexMap::new(),
-                    current_timestamp(),
-                    EntityCompleteness::Complete,
-                )],
-                count: 1,
+                collection: crate::execution::test_collection(
+                    vec![CachedEntity::from_decoded(
+                        plasm_core::Ref::new("LangViewer", "viewer-nobody"),
+                        indexmap::IndexMap::from([
+                            (
+                                "id".into(),
+                                plasm_core::Value::String("viewer-nobody".into()),
+                            ),
+                            (
+                                "display_name".into(),
+                                plasm_core::Value::String("nobody".into()),
+                            ),
+                        ]),
+                        indexmap::IndexMap::new(),
+                        current_timestamp(),
+                        EntityCompleteness::Complete,
+                    )],
+                    ResultCoverage::Unknown,
+                ),
                 has_more: false,
-                coverage: ResultCoverage::Unknown,
                 pagination_resume: None,
                 paging_handle: None,
                 source: ExecutionSource::Cache,
@@ -235,10 +238,8 @@ fn resolve_view_relation_maps_stamps_empty_many_relation_key() {
         (
             "assigned_items".into(),
             ExecutionResult {
-                entities: vec![],
-                count: 0,
+                collection: crate::execution::test_collection(vec![], ResultCoverage::Unknown),
                 has_more: false,
-                coverage: ResultCoverage::Unknown,
                 pagination_resume: None,
                 paging_handle: None,
                 source: ExecutionSource::Cache,
@@ -275,8 +276,15 @@ impl ViewNodeRunner for FixtureViewNodeRunner {
                 message: format!("fixture missing traversal `{}`", node.id),
             }
         })?;
-        result.coverage =
-            crate::execution::ResultCoverage::combine_all([source.coverage, result.coverage]);
+        result.collection = crate::execution::ExecutionCollection::evaluate(
+            result
+                .collection
+                .membership()
+                .identity()
+                .derived(&node.id)?,
+            &[&source.collection, &result.collection],
+            result.entities().clone(),
+        )?;
         Ok(result)
     }
 
@@ -356,7 +364,7 @@ proptest::proptest! {
             let mut ids = ids.to_vec();
             if reverse { ids.reverse(); }
             let mut result = stub_item_node_result("unused", "unused");
-            result.entities = ids.into_iter().map(|id| {
+            let rows = ids.into_iter().map(|id| {
                 CachedEntity::from_decoded(
                     plasm_core::Ref::new("Item", id.to_string()),
                     indexmap::IndexMap::from([
@@ -366,12 +374,11 @@ proptest::proptest! {
                     indexmap::IndexMap::new(), current_timestamp(), EntityCompleteness::Complete,
                 )
             }).collect();
-            result.count = result.entities.len();
-            result.coverage = ResultCoverage::Complete;
+            result.collection = crate::execution::test_collection(rows, ResultCoverage::Complete);
             result
         };
         let mut collections = make_rows(&[]);
-        collections.coverage = source_coverage;
+        collections.collection = crate::execution::test_collection(vec![], source_coverage);
         let runner = FixtureViewNodeRunner {
             results: indexmap::IndexMap::from([
                 ("direct".into(), make_rows(&direct)),
@@ -384,7 +391,7 @@ proptest::proptest! {
             indexmap::IndexMap::from([("access_token".into(), Value::String("tok".into()))]),
             &cgs, &ViewAmbientContext::default(),
         ).unwrap();
-        proptest::prop_assert_eq!(result.coverage, source_coverage);
+        proptest::prop_assert_eq!(result.coverage(), if source_coverage == ResultCoverage::Complete { ResultCoverage::Complete } else { ResultCoverage::Unknown });
         let DecodedRelation::Specified(refs) = &proof.relation_refs["items"] else { panic!("union relation must be specified") };
         let actual: std::collections::BTreeSet<_> = refs.iter().map(|r| r.primary_slot_str().to_string()).collect();
         let expected: std::collections::BTreeSet<_> = direct.iter().chain(&nested).map(u8::to_string).collect();
@@ -422,8 +429,8 @@ proptest::proptest! {
             ).unwrap();
             proptest::prop_assert!(!proof.output_fields.contains_key("private_title"));
             proptest::prop_assert_eq!(proof.output_fields.get("echo_title"), Some(&Value::String(title.clone())));
-            proptest::prop_assert_eq!(result.entities.len(), 1);
-            proptest::prop_assert!(!result.entities[0].fields.contains_key("private_title"));
+            proptest::prop_assert_eq!(result.entities().len(), 1);
+            proptest::prop_assert!(!result.entities()[0].fields.contains_key("private_title"));
             proptest::prop_assert_eq!(proof.output_fields.get("echo_slug"), Some(&Value::String(format!("item-1-{title}"))));
         }
     }

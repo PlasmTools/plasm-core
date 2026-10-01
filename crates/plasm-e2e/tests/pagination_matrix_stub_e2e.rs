@@ -19,6 +19,8 @@ use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Default)]
 struct StubState {
+    summaries: bool,
+    details: Arc<Mutex<Vec<String>>>,
     requests: Arc<Mutex<Vec<RecordedRequest>>>,
 }
 
@@ -79,7 +81,9 @@ async fn indexed(
     // Historical corruption: start = page_index * page_limit (not remaining budget).
     let start = index.saturating_mul(limit);
     let page = all.into_iter().skip(start).take(limit).collect::<Vec<_>>();
-    Json(serde_json::json!({ "results": page }))
+    Json(
+        serde_json::json!({ "results": if st.summaries { page.into_iter().map(|r| serde_json::json!({"id":r["id"]})).collect::<Vec<_>>() } else { page } }),
+    )
 }
 
 #[derive(Debug, Deserialize)]
@@ -154,9 +158,13 @@ async fn cursor(
 }
 
 async fn spawn_stub() -> (String, StubState) {
-    let st = StubState::default();
+    spawn_stub_with(StubState::default()).await
+}
+
+async fn spawn_stub_with(st: StubState) -> (String, StubState) {
     let app = Router::new()
         .route("/items/indexed", get(indexed))
+        .route("/items/indexed/{id}", get(indexed_detail))
         .route("/items/offset", get(offset))
         .route("/items/cursor", get(cursor))
         .with_state(st.clone());
@@ -178,7 +186,7 @@ fn make_engine(base_url: &str) -> ExecutionEngine {
 
 fn ids(result: &plasm_runtime::ExecutionResult) -> Vec<String> {
     result
-        .entities
+        .entities()
         .iter()
         .map(|e| e.reference.primary_slot_str())
         .collect()
@@ -428,9 +436,9 @@ fn row_algebra_reads_matches_beyond_the_first_backend_pages() {
                     .await
                     .expect("execute algebra");
                     let output = &result.return_steps[0].result;
-                    assert_eq!(output.entities.len(), expected, "{program}");
+                    assert_eq!(output.entities().len(), expected, "{program}");
                     assert_eq!(
-                        output.coverage,
+                        output.coverage(),
                         plasm_runtime::ResultCoverage::Complete,
                         "{program}"
                     );
@@ -446,4 +454,185 @@ fn row_algebra_reads_matches_beyond_the_first_backend_pages() {
         .unwrap()
         .join()
         .unwrap();
+}
+
+async fn indexed_detail(
+    State(st): State<StubState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Json<serde_json::Value> {
+    st.details.lock().unwrap().push(id.clone());
+    let n: usize = id.trim_start_matches("id-").parse().unwrap();
+    Json(serde_json::json!({"id":id,"n":n}))
+}
+
+#[tokio::test]
+async fn expression_take_hydrates_only_retained_prefix() {
+    let (url, stub) = spawn_stub_with(StubState {
+        summaries: true,
+        ..Default::default()
+    })
+    .await;
+    let cgs = load_matrix_cgs();
+    let engine = make_engine(&url);
+    let mut cache = SessionMaterialization::new();
+    let mut query = QueryExpr::all("Item");
+    query.capability_name = Some("item_query".into());
+    query.pagination = Some(QueryPagination::default());
+    let result = engine
+        .execute(
+            &Expr::Query(query),
+            &cgs,
+            &mut cache,
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts {
+                max_items: Some(1),
+                bound_kind: plasm_runtime::ConsumeBoundKind::ExpressionTake,
+                ..Default::default()
+            },
+            ExecuteOptions::for_catalog(&cgs).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ids(&result), vec!["id-0"]);
+    assert_eq!(
+        *stub.details.lock().unwrap(),
+        vec!["id-0"],
+        "take must precede unnecessary detail IO"
+    );
+    assert_eq!(stub.requests.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn hydration_prefix_preserves_selection_and_page_boundaries() {
+    use plasm_runtime::{ConsumeBoundKind, RowMatchBudget, TopKSpec};
+    for (name, consume, expected_ids, details, pages) in [
+        (
+            "zero",
+            StreamConsumeOpts {
+                max_items: Some(0),
+                bound_kind: ConsumeBoundKind::ExpressionTake,
+                ..Default::default()
+            },
+            vec![],
+            0,
+            0,
+        ),
+        (
+            "cross_page",
+            StreamConsumeOpts {
+                max_items: Some(25),
+                bound_kind: ConsumeBoundKind::ExpressionTake,
+                ..Default::default()
+            },
+            (0..25).collect(),
+            25,
+            2,
+        ),
+        (
+            "empty_predicate_budget",
+            StreamConsumeOpts {
+                fetch_all: true,
+                row_match_budget: Some(RowMatchBudget {
+                    count: 1,
+                    predicates: vec![],
+                }),
+                bound_kind: ConsumeBoundKind::ExpressionTake,
+                ..Default::default()
+            },
+            vec![0],
+            1,
+            1,
+        ),
+        (
+            "host_page",
+            StreamConsumeOpts {
+                max_items: Some(1),
+                bound_kind: ConsumeBoundKind::HostPage,
+                ..Default::default()
+            },
+            (0..20).collect(),
+            20,
+            1,
+        ),
+        (
+            "filtered_prefix",
+            StreamConsumeOpts {
+                fetch_all: true,
+                row_match_budget: Some(RowMatchBudget {
+                    count: 1,
+                    predicates: vec![plasm_runtime::BoundRowPredicate {
+                        field_path: plasm_core::FieldPath::from_dotted("n").unwrap(),
+                        op: plasm_core::PlanPredicateOp::Eq,
+                        value: plasm_core::operand_binding::ResolvedValue::new(
+                            plasm_core::Value::Integer(21),
+                        )
+                        .unwrap(),
+                    }],
+                }),
+                bound_kind: ConsumeBoundKind::ExpressionTake,
+                ..Default::default()
+            },
+            vec![21],
+            40,
+            2,
+        ),
+        (
+            "top_k",
+            StreamConsumeOpts {
+                fetch_all: true,
+                top_k: Some(TopKSpec {
+                    count: 1,
+                    sort_key: vec!["n".into()],
+                    descending: true,
+                    row_filter: vec![],
+                }),
+                bound_kind: ConsumeBoundKind::ExpressionTake,
+                ..Default::default()
+            },
+            vec![44],
+            45,
+            3,
+        ),
+    ] {
+        let (url, stub) = spawn_stub_with(StubState {
+            summaries: true,
+            ..Default::default()
+        })
+        .await;
+        let cgs = load_matrix_cgs();
+        let engine = make_engine(&url);
+        let mut cache = SessionMaterialization::new();
+        let mut query = QueryExpr::all("Item");
+        query.capability_name = Some("item_query".into());
+        query.pagination = Some(QueryPagination::default());
+        let result = engine
+            .execute(
+                &Expr::Query(query),
+                &cgs,
+                &mut cache,
+                Some(ExecutionMode::Live),
+                consume,
+                ExecuteOptions::for_catalog(&cgs).unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            ids(&result),
+            expected_ids
+                .into_iter()
+                .map(|i| format!("id-{i}"))
+                .collect::<Vec<_>>(),
+            "{name}"
+        );
+        assert_eq!(
+            stub.details.lock().unwrap().len(),
+            details,
+            "{name} detail count"
+        );
+        assert_eq!(
+            stub.requests.lock().unwrap().len(),
+            pages,
+            "{name} page count"
+        );
+    }
 }

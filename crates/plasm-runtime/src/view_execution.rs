@@ -62,7 +62,8 @@ impl ViewNodeRunnerAsync for LiveViewNodeRunner<'_> {
         ) {
             // Inner list queries deliberately skip automatic hydration. A GET-embedded
             // relation therefore requires observing each parent before extracting refs.
-            for row in &mut input.entities {
+            for index in 0..input.count() {
+                let row = &input.collection.resident_entities()[index];
                 if !row.relations.contains_key(traverse.relation.as_str()) {
                     let observed = self
                         .engine
@@ -78,12 +79,8 @@ impl ViewNodeRunnerAsync for LiveViewNodeRunner<'_> {
                     input.stats.cache_hits += observed.stats.cache_hits;
                     input
                         .request_fingerprints
-                        .extend(observed.request_fingerprints);
-                    input.coverage = crate::execution::ResultCoverage::combine_all([
-                        input.coverage,
-                        observed.coverage,
-                    ]);
-                    *row = observed.entities.into_iter().next().ok_or_else(|| {
+                        .extend(observed.request_fingerprints.iter().cloned());
+                    let row = observed.entities().first().ok_or_else(|| {
                         RuntimeError::ConfigurationError {
                             message: format!("parent GET returned no row for {}", row.reference),
                         }
@@ -101,6 +98,7 @@ impl ViewNodeRunnerAsync for LiveViewNodeRunner<'_> {
                             ),
                         });
                     }
+                    input.collection = input.collection.replace(index, row.clone())?;
                 }
             }
         }
@@ -108,7 +106,7 @@ impl ViewNodeRunnerAsync for LiveViewNodeRunner<'_> {
             http_base_url_override: self.ambient.transport_origin.clone(),
             ..Default::default()
         };
-        let mut result = self
+        let result = self
             .engine
             .execute_chain_materialized(
                 &chain,
@@ -123,8 +121,6 @@ impl ViewNodeRunnerAsync for LiveViewNodeRunner<'_> {
                 opts,
             )
             .await?;
-        result.coverage =
-            crate::execution::ResultCoverage::combine_all([source.coverage, result.coverage]);
         Ok(result)
     }
 
@@ -207,7 +203,7 @@ async fn execute_view_scoped(
     let result = run_view_dag_async(&mut runner, view_name, scope, cgs, ambient).await?;
     // View rows participate in the same identity-bound graph as transport rows.
     // Publish only after the entire composition has established its output.
-    for row in &result.entities {
+    for row in result.entities() {
         cache.publish_fresh_row(row.clone())?;
     }
     Ok(result)

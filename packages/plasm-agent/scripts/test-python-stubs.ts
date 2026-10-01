@@ -62,7 +62,7 @@ let envelope: unknown = {rows: [{id: 3}]};
 const engine: import("../src/engine/napi-binding.js").PlasmEngine = {
   async loadCatalog() {},
   async synthesizeTeaching() { return {prompt: "", deltaRefs: []}; },
-  async dryRun(source, ref) { assert.equal(source, get); assert.equal(ref, "session"); return {planCommitRef: "pc1", summary: "read"}; },
+  async dryRun(source, ref) { assert.equal(source, get); assert.equal(ref, "session"); return {writeCount: 0, planCommitRef: "pc1", summary: "read"}; },
   async runPlanLive(_ref, _transport, session) { assert.equal(session, "session"); return {ok: true, message: "", rowsJson: JSON.stringify(envelope)}; },
   async runPlan() { throw new Error("validation is not execution"); },
   async activateDiscovery() { throw new Error("unused"); },

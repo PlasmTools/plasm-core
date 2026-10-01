@@ -22,7 +22,7 @@ fn main() {
     let mut account_relations = IndexMap::new();
     account_relations.insert(
         "contacts".to_string(),
-        DecodedRelation::Specified(vec![contact1_ref.clone(), contact2_ref.clone()]),
+        DecodedRelation::Specified(vec![contact1_ref.clone(), contact2_ref.clone()].into()),
     );
 
     let account = CachedEntity::from_decoded(

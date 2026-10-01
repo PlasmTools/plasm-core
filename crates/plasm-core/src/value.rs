@@ -204,6 +204,8 @@ pub enum Value {
     Bool(bool),
     /// Whole-number integer (maps to `FieldType::Integer` and JSON integer literals).
     Integer(i64),
+    /// Exact unsigned JSON integer beyond the signed domain; not a wider FieldType::Integer.
+    Unsigned(u64),
     /// Floating-point number (maps to `FieldType::Number` and JSON fractional literals).
     Float(f64),
     String(String),
@@ -259,6 +261,47 @@ pub fn parse_json_subtree_str(s: &str) -> Option<Value> {
 }
 
 impl Value {
+    /// Borrow a record field without any transport conversion.
+    pub fn get(&self, key: &str) -> Option<&Value> {
+        self.as_object()?.get(key)
+    }
+    pub fn get_mut(&mut self, key: &str) -> Option<&mut Value> {
+        self.as_object_mut()?.get_mut(key)
+    }
+    pub fn as_object_mut(&mut self) -> Option<&mut indexmap::IndexMap<String, Value>> {
+        match self {
+            Self::Object(fields) => Some(fields),
+            _ => None,
+        }
+    }
+    pub fn as_array_mut(&mut self) -> Option<&mut Vec<Value>> {
+        match self {
+            Self::Array(values) => Some(values),
+            _ => None,
+        }
+    }
+    pub fn is_null(&self) -> bool {
+        matches!(self, Self::Null)
+    }
+    pub fn is_number(&self) -> bool {
+        matches!(self, Self::Integer(_) | Self::Unsigned(_) | Self::Float(_))
+    }
+    pub fn is_object(&self) -> bool {
+        matches!(self, Self::Object(_))
+    }
+    pub fn is_array(&self) -> bool {
+        matches!(self, Self::Array(_))
+    }
+    pub fn is_string(&self) -> bool {
+        matches!(self, Self::String(_))
+    }
+    pub fn as_unsigned(&self) -> Option<u64> {
+        match self {
+            Self::Unsigned(v) => Some(*v),
+            Self::Integer(v) => u64::try_from(*v).ok(),
+            _ => None,
+        }
+    }
     /// Parse explicit source string syntax once, retaining literals as data.
     pub fn program_string(
         source: String,
@@ -314,6 +357,7 @@ impl Value {
             | Value::Null
             | Value::Bool(_)
             | Value::Integer(_)
+            | Value::Unsigned(_)
             | Value::Float(_)
             | Value::StringTemplate(_)
             | Value::String(_)
@@ -352,6 +396,7 @@ impl Value {
             | Value::Null
             | Value::Bool(_)
             | Value::Integer(_)
+            | Value::Unsigned(_)
             | Value::Float(_)
             | Value::Money(_) => false,
         }
@@ -365,6 +410,7 @@ impl Value {
             Value::Null => "null",
             Value::Bool(_) => "boolean",
             Value::Integer(_) => "integer",
+            Value::Unsigned(_) => "unsigned integer",
             Value::Float(_) => "float",
             Value::StringTemplate(_) | Value::String(_) | Value::PhraseIdent(_) => "string",
             Value::Array(_) => "array",
@@ -395,12 +441,12 @@ impl Value {
                 .is_some_and(|b| matches!(b, Value::String(s) if !s.is_empty()))
     }
 
-    /// Convert to f64 (covers both Integer and Float variants).
+    /// Numeric scalar view (signed/unsigned integers and floats; never money).
     pub fn as_number(&self) -> Option<f64> {
         match self {
             Value::Integer(i) => Some(*i as f64),
+            Value::Unsigned(i) => Some(*i as f64),
             Value::Float(f) => Some(*f),
-            Value::Money(m) => m.amount().to_string().parse().ok(),
             _ => None,
         }
     }
@@ -409,7 +455,7 @@ impl Value {
     pub fn as_integer(&self) -> Option<i64> {
         match self {
             Value::Integer(i) => Some(*i),
-            Value::Float(f) if f.fract() == 0.0 => Some(*f as i64),
+            Value::Unsigned(i) => i64::try_from(*i).ok(),
             _ => None,
         }
     }
@@ -491,6 +537,7 @@ impl Value {
             Value::Null => "null".to_string(),
             Value::Bool(b) => b.to_string(),
             Value::Integer(i) => i.to_string(),
+            Value::Unsigned(i) => i.to_string(),
             Value::Float(f) => {
                 if f.is_nan() {
                     "nan".to_string()
@@ -601,7 +648,9 @@ impl From<i32> for Value {
 
 impl From<usize> for Value {
     fn from(n: usize) -> Self {
-        Value::Integer(n as i64)
+        i64::try_from(n)
+            .map(Value::Integer)
+            .unwrap_or(Value::Unsigned(n as u64))
     }
 }
 
@@ -635,17 +684,16 @@ impl<T: Into<Value>> From<Vec<T>> for Value {
     }
 }
 
-/// Target wire shape for [`FieldType::Date`] on **input** (path expressions / predicates).
-///
-/// Normalization applies only there — not when rendering decoded API data for display.
-/// Forgiving parse uses [`chrono_english::parse_date_string`](https://docs.rs/chrono-english), then
-/// deterministic encoding. Prefer [`ValueWireFormat`] on [`FieldSchema`](crate::schema::FieldSchema)
-/// for the full extension point.
+/// Transport encoding for a typed Python date or datetime.
+/// Integer timestamp units are declared, never inferred from magnitude.
+/// Computation belongs to Python; this boundary validates and encodes values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TemporalWireFormat {
     /// RFC 3339 / ISO-8601 datetime string (UTC `Z` or offset), e.g. `2024-01-15T12:00:00Z`.
     Rfc3339,
+    /// ISO local datetime with no timezone, preserving Python naive datetime semantics.
+    Iso8601NaiveDatetime,
     /// Unix time in **milliseconds** as JSON integer (`i64`).
     UnixMs,
     /// Unix time in **seconds** as JSON integer (`i64`).
@@ -1080,5 +1128,89 @@ mod value_wire_format_tests {
         ))
         .unwrap();
         assert_eq!(j, serde_json::json!({ "money": "minor_units", "scale": 2 }));
+    }
+}
+
+/// Charge native payload size without materializing a serialization buffer.
+/// Includes a fixed node charge, collection keys and string payloads; bounded depth
+/// prevents hostile nested values from exhausting the host stack.
+pub fn charge_value_budget(value: &Value, remaining: &mut usize) -> Result<(), String> {
+    fn walk(value: &Value, remaining: &mut usize, depth: usize) -> Result<(), String> {
+        if depth >= 64 {
+            return Err("value depth budget exceeded".into());
+        }
+        let bytes = match value {
+            Value::String(s) => s.len(),
+            Value::Money(m) => 16 + m.currency().map_or(0, str::len),
+            _ => 0,
+        };
+        *remaining = remaining
+            .checked_sub(16usize.saturating_add(bytes))
+            .ok_or("value byte budget exceeded")?;
+        match value {
+            Value::Array(values) => {
+                for v in values {
+                    walk(v, remaining, depth + 1)?;
+                }
+            }
+            Value::Object(values) => {
+                for (key, v) in values {
+                    *remaining = remaining
+                        .checked_sub(key.len())
+                        .ok_or("value byte budget exceeded")?;
+                    walk(v, remaining, depth + 1)?;
+                }
+            }
+            Value::Null
+            | Value::Bool(_)
+            | Value::Integer(_)
+            | Value::Unsigned(_)
+            | Value::String(_)
+            | Value::Money(_) => {}
+            Value::Float(v) if v.is_finite() => {}
+            _ => return Err("expected resolved finite value".into()),
+        }
+        Ok(())
+    }
+    walk(value, remaining, 0)
+}
+
+impl std::ops::Index<&str> for Value {
+    type Output = Value;
+    fn index(&self, key: &str) -> &Value {
+        self.get(key).expect("value field is absent")
+    }
+}
+impl std::ops::Index<usize> for Value {
+    type Output = Value;
+    fn index(&self, index: usize) -> &Value {
+        &self.as_array().expect("value is not an array")[index]
+    }
+}
+
+#[cfg(test)]
+mod native_budget_tests {
+    use super::*;
+    #[test]
+    fn budgets_charge_nested_native_payloads_without_serialization() {
+        let value = Value::Object(indexmap::IndexMap::from([
+            ("text".into(), Value::String("é".into())),
+            (
+                "money".into(),
+                Value::Money(crate::MoneyValue::new(1.into(), Some("USD".into()))),
+            ),
+        ]));
+        let cost = 16 + 4 + 16 + 2 + 5 + 16 + 16 + 3;
+        let mut exact = cost;
+        charge_value_budget(&value, &mut exact).unwrap();
+        assert_eq!(exact, 0);
+        assert!(charge_value_budget(&value, &mut (cost - 1)).is_err());
+        let mut unlimited = usize::MAX;
+        assert!(charge_value_budget(&Value::Float(f64::NAN), &mut unlimited).is_err());
+        let mut nested = Value::Null;
+        for _ in 0..64 {
+            nested = Value::Array(vec![nested]);
+        }
+        assert!(charge_value_budget(&nested, &mut unlimited).is_err());
     }
 }

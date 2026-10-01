@@ -1,7 +1,6 @@
-//! Compile-time surface guards for Plasm programs: derive RHS traps, literal no-ops, `.content` policy.
+//! Compile-time surface guards for Plasm programs: derive RHS traps, literal no-ops.
 
 use crate::plasm_plan::PlanValue;
-use crate::program_binding::ContinuationCapability;
 
 pub(crate) const DERIVE_MAP_RELATION_HOP_MSG: &str = "Plural relation reads use `child = source => _.r#` (the taught relation symbol from the active TSV), not a bare `r#` applicator. `=>` accepts only derive maps `{ … }`, renders `<<TAG`, per-row effects `Entity.m#(…, _)`, or row relations `_.r#`.";
 
@@ -105,48 +104,6 @@ fn path_segment_looks_like_relation_hop(seg: &str, source_relation_wires: &[Stri
 
 fn teaching_relation_symbol(seg: &str) -> bool {
     seg.len() > 1 && seg.starts_with('r') && seg[1..].chars().all(|c| c.is_ascii_digit())
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ContentReferenceSite {
-    ProgramRoot,
-    Continuation,
-}
-
-pub(crate) fn content_reference_error(
-    label: &str,
-    site: ContentReferenceSite,
-    continuation: ContinuationCapability,
-) -> String {
-    match (site, continuation) {
-        (ContentReferenceSite::ProgramRoot, ContinuationCapability::RenderContentScalar) => {
-            agent_program_error(
-                format!("Don't return `{label}.content` as the program root."),
-                Some(format!(
-                    "Return `{label}` for the generated-text row, or use `{label}.content` only inside params/heredocs."
-                )),
-            )
-        }
-        (_, ContinuationCapability::RenderContentScalar) => agent_program_error(
-            format!("Don't bind `{label}.content` as a surface expression."),
-            Some(format!(
-                "Pass `param={label}.content` into a capability string slot, or return `{label}` for the generated-text row."
-            )),
-        ),
-        _ => agent_program_error(
-            format!(
-                "`.content` exists only on row-to-text template bindings (`label = source => <<TAG`) — `{label}` is not one."
-            ),
-            Some(format!(
-                "Plain heredoc / string bindings are already strings — pass `param={label}` (not `{label}.content`). Entity field dots use the taught wire name when the binding is a row."
-            )),
-        ),
-    }
-}
-
-/// True when `path` is a `.content` stitch that is lawful only on render bindings.
-pub(crate) fn path_is_render_content_stitch(path: &[impl AsRef<str>]) -> bool {
-    path.first().is_some_and(|s| s.as_ref() == "content")
 }
 
 fn agent_program_error(head: impl AsRef<str>, help: Option<impl AsRef<str>>) -> String {

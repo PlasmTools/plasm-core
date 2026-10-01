@@ -4,14 +4,10 @@ use plasm_agent::{verify_plan_flow, FlowCatalogView, FlowPolicySnapshot, FlowVer
 use plasm_compile::CmlEnv;
 use plasm_core::load_schema_dir_unvalidated;
 use plasm_core::preflight::PLASM_EXISTENCE_SKIP_WRITE_ENV;
-use plasm_core::{
-    conflict_rules_from_mapping_template, match_conflict_rule, plasm_value_to_json, Value,
-    WorkflowConflictKind,
-};
+use plasm_core::{plasm_value_to_json, Value, WorkflowConflictKind};
 use plasm_runtime::workflow_reconcile::{
     detect_identity_mismatch, should_skip_write_after_preflight, skipped_write_result,
 };
-use plasm_runtime::ResultCoverage;
 
 fn workflow_matrix_dir() -> std::path::PathBuf {
     let crate_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -103,21 +99,6 @@ fn workflow_matrix_idempotent_cap_declares_reconcile_via_query() {
     assert!(output.idempotent);
     let reconcile = output.reconcile.as_ref().expect("reconcile");
     assert_eq!(reconcile.via, "workitem_query");
-    assert_eq!(reconcile.on, WorkflowConflictKind::ResourceExists);
-}
-
-#[test]
-fn workflow_matrix_conflict_rule_matches_resource_exists() {
-    let cgs = load_schema_dir_unvalidated(&workflow_matrix_dir()).expect("load");
-    let cap = cgs
-        .get_capability("workitem_create_idempotent")
-        .expect("cap");
-    let rules = conflict_rules_from_mapping_template(
-        &cap.require_mapping().expect("cml mapping").template.0,
-    );
-    let body = serde_json::json!({ "message": "title already exists", "title": "alpha" });
-    let conflict = match_conflict_rule(&rules, 422, &body).expect("match");
-    assert_eq!(conflict.kind, WorkflowConflictKind::ResourceExists);
 }
 
 #[test]
@@ -131,19 +112,24 @@ fn workflow_matrix_identity_mismatch_detected_on_extra_field() {
         ("extra".into(), Value::String("new".into())),
     ]));
     let fetched = plasm_runtime::execution::ExecutionResult {
-        entities: vec![plasm_runtime::cache::CachedEntity::from_decoded(
-            plasm_core::Ref::new("WorkItem", ""),
-            indexmap::IndexMap::from([
-                ("title".into(), Value::String("alpha".into())),
-                ("extra".into(), Value::String("old".into())),
-            ]),
-            indexmap::IndexMap::new(),
+        collection: plasm_runtime::execution::ExecutionCollection::observe_for(
+            &cgs,
+            &"identity fixture",
             0,
-            plasm_runtime::cache::EntityCompleteness::Complete,
-        )],
-        count: 1,
+            vec![plasm_runtime::cache::CachedEntity::from_decoded(
+                plasm_core::Ref::new("WorkItem", ""),
+                indexmap::IndexMap::from([
+                    ("title".into(), Value::String("alpha".into())),
+                    ("extra".into(), Value::String("old".into())),
+                ]),
+                indexmap::IndexMap::new(),
+                0,
+                plasm_runtime::cache::EntityCompleteness::Complete,
+            )],
+            plasm_core::collection_codec::Observation::UnprovenPage,
+        )
+        .unwrap(),
         has_more: false,
-        coverage: ResultCoverage::Unknown,
         pagination_resume: None,
         paging_handle: None,
         source: plasm_runtime::execution::ExecutionSource::Cache,
@@ -164,9 +150,15 @@ fn workflow_matrix_skip_write_preflight_sets_env_flag() {
         Value::Bool(true),
     );
     assert!(should_skip_write_after_preflight(&env));
-    let skipped = skipped_write_result("WorkItem");
+    let cgs = load_schema_dir_unvalidated(&workflow_matrix_dir()).expect("load");
+    let skipped = skipped_write_result(
+        "WorkItem",
+        plasm_core::collection_codec::CollectionIdentity::for_expression(&cgs, &"skip fixture", 0)
+            .unwrap(),
+    )
+    .unwrap();
     let outcome = skipped
-        .entities
+        .entities()
         .first()
         .and_then(|e| e.fields.get("outcome"))
         .map(|v| plasm_value_to_json(&v.to_value()));

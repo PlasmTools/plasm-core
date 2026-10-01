@@ -9,7 +9,7 @@ pub(crate) fn for_each_cross_uses(for_each: &ValidatedForEachNode) -> Vec<PlanRe
 /// Bound-row plan env shared by `for_each` and `iterate … until` template instantiation.
 pub(crate) fn bound_row_plan_eval_env<'a>(
     item_binding: &'a crate::plasm_plan::BindingName,
-    row: &'a serde_json::Value,
+    row: &'a plasm_core::Value,
     input_rows: &'a BTreeMap<InputAlias, MaterializedInputRow>,
     wire_coercion_by_alias: &'a BTreeMap<InputAlias, WireCoercionCtx<'a>>,
 ) -> PlanEvalEnv<'a> {
@@ -25,7 +25,7 @@ pub(crate) fn bound_row_plan_eval_env<'a>(
 
 pub(crate) fn for_each_plan_eval_env<'a>(
     for_each: &'a ValidatedForEachNode,
-    row: &'a serde_json::Value,
+    row: &'a plasm_core::Value,
     input_rows: &'a BTreeMap<InputAlias, MaterializedInputRow>,
     wire_coercion_by_alias: &'a BTreeMap<InputAlias, WireCoercionCtx<'a>>,
 ) -> PlanEvalEnv<'a> {
@@ -63,7 +63,9 @@ pub(crate) fn render_for_each_expressions(
         .iter()
         .map(|row| {
             let empty = BTreeMap::new();
-            let env = for_each_plan_eval_env(for_each, row, &input_rows, &empty);
+            let row: plasm_core::Value =
+                serde_json::from_value(row.clone()).expect("typed fixture");
+            let env = for_each_plan_eval_env(for_each, &row, &input_rows, &empty);
             let parsed =
                 instantiate_expr_template(&for_each.effect_template.ir_template, &env, cgs)?;
             Ok(crate::plan_dry_display::render_executable_expr(
@@ -86,7 +88,7 @@ pub(crate) async fn materialize_for_each_node(
     trace: Option<&PlasmTraceContext>,
     sink: Option<&McpPlasmTraceSink>,
     plan_shared: Option<Arc<crate::plan_execute_shared::PlanLineExecuteShared>>,
-) -> Result<MaterializedNode, String> {
+) -> Result<MaterializedNode, ExecutionFailure> {
     let scoped_es =
         entry_scoped_execute_session(es, Some(&for_each.effect_template.qualified_entity))?;
     let source_rows = materialized_rows(es, st, session_id, materialized, &for_each.source).await?;
@@ -113,7 +115,7 @@ pub(crate) async fn materialize_for_each_node(
         parsed_steps.push(parsed);
     }
 
-    let parallel_reads = !crate::plasm_plan_run::for_each_body_mutates_remote(
+    let mutates = crate::plasm_plan_run::for_each_body_mutates_remote(
         for_each.effect_template.kind,
         for_each.effect_template.effect_class,
     );
@@ -141,16 +143,21 @@ pub(crate) async fn materialize_for_each_node(
         sink,
         plan_shared,
         super::super::plan_fanout_parallel::RowFanoutPolicy::for_each(
-            parallel_reads,
+            if mutates {
+                super::super::plan_bounded_parallel::BatchAdmission::OrderedEffects
+            } else {
+                super::super::plan_bounded_parallel::BatchAdmission::ReadAll
+            },
             source_rows.len(),
         ),
     )
     .await?;
     // Successful child calls cannot establish completeness of their input collection.
-    let source_coverage = materialized
+    let parent = &materialized
         .get(&for_each.source)
-        .map(|source| source.result.coverage)
-        .unwrap_or(plasm_runtime::ResultCoverage::Unknown);
+        .ok_or("missing fanout source")?
+        .result
+        .collection;
     super::super::materialize::archive_materialize_for_each_fanout(
         st,
         es,
@@ -159,7 +166,7 @@ pub(crate) async fn materialize_for_each_node(
         for_each,
         fold,
         source_rows.len(),
-        source_coverage,
+        parent,
         expressions,
         trace,
     )

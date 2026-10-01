@@ -1,6 +1,7 @@
 //! Chain (Kleisli) navigation and relation fanout.
 
 use super::*;
+use plasm_core::collection_codec::{CollectionIdentity, Demand, Observation, SharedRows};
 
 /// An observed row is reusable when complete, or when the catalogue declares
 /// no richer Get projection. The latter preserves Summary; it does not promote it.
@@ -59,12 +60,11 @@ impl ExecutionEngine {
         consume: StreamConsumeOpts,
         opts: ExecuteOptions,
     ) -> Result<ExecutionResult, RuntimeError> {
-        if source_result.entities.is_empty() {
+        source_result.collection.materialize(Demand::Observed)?;
+        if source_result.count() == 0 {
             return Ok(ExecutionResult {
-                entities: vec![],
-                count: 0,
+                collection: source_result.collection.flat_map(&"empty_chain", &[])?,
                 has_more: false,
-                coverage: source_result.coverage,
                 pagination_resume: None,
                 paging_handle: None,
                 source: source_result.source,
@@ -76,7 +76,7 @@ impl ExecutionEngine {
 
         let source_entity_name_owned: String = if matches!(chain.source.as_ref(), Expr::Chain(_)) {
             source_result
-                .entities
+                .entities()
                 .first()
                 .map(|e| e.reference.entity_type.to_string())
                 .unwrap_or_else(|| chain.source.primary_entity().to_string())
@@ -273,21 +273,33 @@ impl ExecutionEngine {
 
         // ── Extract ref IDs from source entities ─────────────────────────
         let ref_ids: Vec<Option<String>> = source_result
-            .entities
+            .entities()
             .iter()
             .map(|e| extract_ref_id(e, &chain.selector, cgs))
             .collect();
 
         // ── Explicit continuation: no batching, dispatch per-entity ──────
         if matches!(chain.step, ChainStep::Explicit { .. }) {
-            let mut resolved = Vec::new();
+            let mut children = Vec::new();
+            let mut operations = source_result.operations.clone();
             let mut total_network = source_result.stats.network_requests;
             let mut total_cache_hits = source_result.stats.cache_hits;
             let mut any_live = source_result.source == ExecutionSource::Live;
 
             if let ChainStep::Explicit { expr } = &chain.step {
-                for id_opt in &ref_ids {
-                    let Some(_id) = id_opt else { continue };
+                for (position, id_opt) in ref_ids.iter().enumerate() {
+                    if id_opt.is_none() {
+                        children.push(ExecutionCollection::observe(
+                            source_result.collection.membership().identity().derived(&(
+                                "absent_reference",
+                                &chain.selector,
+                                position,
+                            ))?,
+                            vec![],
+                            Observation::ExactOutput { decoded: 0 },
+                        )?);
+                        continue;
+                    }
                     let r = self
                         .execute(
                             expr,
@@ -303,16 +315,16 @@ impl ExecutionEngine {
                     }
                     total_network += r.stats.network_requests;
                     total_cache_hits += r.stats.cache_hits;
-                    resolved.extend(r.entities);
+                    operations.merge(&r.operations);
+                    children.push(r.collection);
                 }
             }
 
-            let count = resolved.len();
+            let collection = source_result.collection.flat_map(chain, &children)?;
+            let count = collection.count();
             return Ok(ExecutionResult {
-                entities: resolved,
-                count,
+                collection,
                 has_more: false,
-                coverage: source_result.coverage,
                 pagination_resume: None,
                 paging_handle: None,
                 source: if any_live {
@@ -328,7 +340,7 @@ impl ExecutionEngine {
                     ..Default::default()
                 },
                 request_fingerprints: Vec::new(),
-                operations: OperationLedger::empty(),
+                operations,
             });
         }
 
@@ -369,7 +381,7 @@ impl ExecutionEngine {
 
             let mut inherit_by_id: std::collections::HashMap<String, CapabilityParamEnv> =
                 std::collections::HashMap::new();
-            for (entity, id_opt) in source_result.entities.iter().zip(ref_ids.iter()) {
+            for (entity, id_opt) in source_result.entities().iter().zip(ref_ids.iter()) {
                 let Some(id) = id_opt else { continue };
                 inherit_by_id.entry(id.clone()).or_insert_with(|| {
                     CapabilityParamEnv::from_source_row(
@@ -430,17 +442,24 @@ impl ExecutionEngine {
         for id_opt in &ref_ids {
             let Some(id) = id_opt else { continue };
             let r = Ref::new(&target_entity_name, id.as_str());
-            if let Some(e) = mat.get(&r) {
-                resolved.push(e.clone());
-            }
+            let e = mat.get(&r).ok_or_else(|| RuntimeError::CacheError {
+                message: format!("missing resolved reference {r}"),
+            })?;
+            resolved.push(e.clone());
         }
 
         let count = resolved.len();
         Ok(ExecutionResult {
-            entities: resolved,
-            count,
+            collection: ExecutionCollection::evaluate(
+                source_result
+                    .collection
+                    .membership()
+                    .identity()
+                    .derived(chain)?,
+                &[&source_result.collection],
+                resolved.into(),
+            )?,
             has_more: false,
-            coverage: source_result.coverage,
             pagination_resume: None,
             paging_handle: None,
             source: if any_live {
@@ -464,7 +483,7 @@ impl ExecutionEngine {
     async fn fanout_scoped_query_parallel(
         &self,
         source_result: &ExecutionResult,
-        mut per_parent: Vec<Vec<CachedEntity>>,
+        mut per_parent: Vec<Option<ExecutionCollection>>,
         network_jobs: Vec<(usize, QueryExpr)>,
         cgs: &CGS,
         mat: &mut SessionMaterialization,
@@ -476,7 +495,11 @@ impl ExecutionEngine {
         let mut merged_stats = ExecutionStats::default();
         merged_stats.merge_telemetry(&source_result.stats.cache);
         let mut any_live = source_result.source == ExecutionSource::Live;
-        let graph_hits = per_parent.iter().map(|v| v.len()).sum::<usize>();
+        let graph_hits = per_parent
+            .iter()
+            .flatten()
+            .map(ExecutionCollection::count)
+            .sum::<usize>();
 
         if !network_jobs.is_empty() {
             let concurrency = self
@@ -515,12 +538,20 @@ impl ExecutionEngine {
                 total_network += result.stats.network_requests;
                 merged_stats.merge_telemetry(&result.stats.cache);
                 // At most one scoped query per parent today; order within parent = query row order.
-                per_parent[parent_idx].extend(result.entities);
+                if per_parent[parent_idx].replace(result.collection).is_some() {
+                    return Err(plasm_core::collection_codec::CollectionFault::Conservation.into());
+                }
             }
         }
 
-        let all_entities: Vec<CachedEntity> = per_parent.into_iter().flatten().collect();
-        let count = all_entities.len();
+        let children = per_parent
+            .into_iter()
+            .collect::<Option<Vec<_>>>()
+            .ok_or(plasm_core::collection_codec::CollectionFault::Conservation)?;
+        let collection = source_result
+            .collection
+            .flat_map(&"scoped_query_fanout", &children)?;
+        let count = collection.count();
         merged_stats.cache_hits = merged_stats
             .cache
             .legacy_cache_hits()
@@ -529,10 +560,8 @@ impl ExecutionEngine {
         merged_stats.network_requests = total_network;
         merged_stats.record_rows_materialized(count);
         Ok(ExecutionResult {
-            entities: all_entities,
-            count,
+            collection,
             has_more: false,
-            coverage: source_result.coverage,
             pagination_resume: None,
             paging_handle: None,
             source: if any_live {
@@ -585,12 +614,11 @@ impl ExecutionEngine {
         }
         let capability_name = cap.name.clone();
 
-        if source_result.entities.is_empty() {
+        source_result.collection.materialize(Demand::Observed)?;
+        if source_result.count() == 0 {
             return Ok(ExecutionResult {
-                entities: vec![],
-                count: 0,
+                collection: source_result.collection.flat_map(&"empty_chain", &[])?,
                 has_more: false,
-                coverage: source_result.coverage,
                 pagination_resume: None,
                 paging_handle: None,
                 source: source_result.source,
@@ -602,7 +630,7 @@ impl ExecutionEngine {
 
         let via = via_param.clone();
         let mut network_jobs = Vec::new();
-        for (i, entity) in source_result.entities.iter().enumerate() {
+        for (i, entity) in source_result.entities().iter().enumerate() {
             let id_field = cgs
                 .get_entity(entity.reference.entity_type.as_str())
                 .map(|def| def.id_field.as_str().to_string())
@@ -623,7 +651,7 @@ impl ExecutionEngine {
                 .apply_to_scoped_query(&mut q);
             network_jobs.push((i, q));
         }
-        let per_parent = vec![Vec::new(); source_result.entities.len()];
+        let per_parent = vec![None; source_result.count()];
         self.fanout_scoped_query_parallel(source_result, per_parent, network_jobs, cgs, mat, mode)
             .await
     }
@@ -664,12 +692,11 @@ impl ExecutionEngine {
             });
         }
 
-        if source_result.entities.is_empty() {
+        source_result.collection.materialize(Demand::Observed)?;
+        if source_result.count() == 0 {
             return Ok(ExecutionResult {
-                entities: vec![],
-                count: 0,
+                collection: source_result.collection.flat_map(&"empty_chain", &[])?,
                 has_more: false,
-                coverage: source_result.coverage,
                 pagination_resume: None,
                 paging_handle: None,
                 source: source_result.source,
@@ -685,7 +712,7 @@ impl ExecutionEngine {
         let binds = bindings;
 
         let mut network_jobs = Vec::new();
-        for (i, entity) in source_result.entities.iter().enumerate() {
+        for (i, entity) in source_result.entities().iter().enumerate() {
             let preds: Vec<Predicate> = binds
                 .iter()
                 .map(|(cap_param, parent_field)| {
@@ -706,7 +733,7 @@ impl ExecutionEngine {
                 .apply_to_scoped_query(&mut q);
             network_jobs.push((i, q));
         }
-        let per_parent = vec![Vec::new(); source_result.entities.len()];
+        let per_parent = vec![None; source_result.count()];
         self.fanout_scoped_query_parallel(source_result, per_parent, network_jobs, cgs, mat, mode)
             .await
     }
@@ -736,12 +763,11 @@ impl ExecutionEngine {
             });
         };
 
-        if source_result.entities.is_empty() {
+        source_result.collection.materialize(Demand::Observed)?;
+        if source_result.count() == 0 {
             return Ok(ExecutionResult {
-                entities: vec![],
-                count: 0,
+                collection: source_result.collection.flat_map(&"empty_chain", &[])?,
                 has_more: false,
-                coverage: source_result.coverage,
                 pagination_resume: None,
                 paging_handle: None,
                 source: source_result.source,
@@ -754,15 +780,19 @@ impl ExecutionEngine {
         let relation_key = rel.name.as_str();
         let expected_target = rel.target_resource.as_str();
         let target_entity = rel.target_resource.clone();
-        let all_embed = source_result.entities.iter().all(|parent| {
-            let parent_json = parent.payload_to_json();
+        let all_embed = source_result.entities().iter().all(|parent| {
+            let parent_json = parent.to_row_values(None);
             matches!(
                 resolve_relation_row_resolution(
                     rel.materialize.as_ref().expect("prefer"),
                     relation_key,
                     expected_target,
                     &parent_json,
-                    parent.relations.get(relation_key).map(|v| v.as_slice()),
+                    parent
+                        .relations
+                        .get(relation_key)
+                        .map(|v| v.iter().cloned().collect::<Vec<_>>())
+                        .as_deref(),
                     |r| mat.get(r).is_some(),
                 ),
                 RelationRowResolution::EmbeddedRefs(_)
@@ -784,7 +814,7 @@ impl ExecutionEngine {
         }
 
         let (per_parent, network_jobs) = partition_prefer_from_parent_get(
-            &source_result.entities,
+            source_result.entities(),
             rel.materialize.as_ref().expect("prefer"),
             relation_key,
             expected_target,
@@ -838,7 +868,7 @@ impl ExecutionEngine {
                 })?;
 
         let mut gets: Vec<(GetExpr, ViewAmbientContext)> = Vec::new();
-        for entity in &source_result.entities {
+        for entity in source_result.entities() {
             let mut bound: IndexMap<String, String> = IndexMap::new();
             for (cap_param, parent_field) in bindings.iter() {
                 bound.insert(
@@ -861,10 +891,8 @@ impl ExecutionEngine {
 
         if gets.is_empty() {
             return Ok(ExecutionResult {
-                entities: vec![],
-                count: 0,
+                collection: source_result.collection.flat_map(&"empty_chain", &[])?,
                 has_more: false,
-                coverage: source_result.coverage,
                 pagination_resume: None,
                 paging_handle: None,
                 source: source_result.source,
@@ -924,10 +952,16 @@ impl ExecutionEngine {
         mat.merge(all_entities.clone())?;
         let count = all_entities.len();
         Ok(ExecutionResult {
-            entities: all_entities,
-            count,
+            collection: ExecutionCollection::evaluate(
+                source_result
+                    .collection
+                    .membership()
+                    .identity()
+                    .derived(&(capability, bindings))?,
+                &[&source_result.collection],
+                all_entities.into(),
+            )?,
             has_more: false,
-            coverage: source_result.coverage,
             pagination_resume: None,
             paging_handle: None,
             source: if any_live {
@@ -965,8 +999,26 @@ impl ExecutionEngine {
         let relation_key = relation.name.as_str();
         let expected_target = &relation.target_resource;
 
+        let mut embedded_children = Vec::new();
+        for parent in source_result.entities().iter() {
+            let refs =
+                parent
+                    .relations
+                    .get(relation_key)
+                    .ok_or_else(|| RuntimeError::CacheError {
+                        message: format!(
+                            "unobserved relation {}.{}",
+                            parent.reference, relation_key
+                        ),
+                    })?;
+            let record = refs.record().clone();
+            embedded_children.push(ExecutionCollection::graph(record));
+        }
+        let embedded = source_result
+            .collection
+            .flat_map(relation, &embedded_children)?;
         let mut ordered_refs: Vec<Ref> = Vec::new();
-        for e in &source_result.entities {
+        for e in source_result.entities() {
             if let Some(refs) = e.relations.get(relation_key) {
                 for r in refs {
                     if r.entity_type != *expected_target {
@@ -984,10 +1036,8 @@ impl ExecutionEngine {
 
         if ordered_refs.is_empty() {
             return Ok(ExecutionResult {
-                entities: vec![],
-                count: 0,
+                collection: embedded.with_materialization(vec![].into())?,
                 has_more: false,
-                coverage: source_result.coverage,
                 pagination_resume: None,
                 paging_handle: None,
                 source: source_result.source,
@@ -998,7 +1048,8 @@ impl ExecutionEngine {
         }
 
         if matches!(chain_step, ChainStep::Explicit { .. }) {
-            let mut resolved = Vec::new();
+            let mut children = Vec::new();
+            let mut operations = source_result.operations.clone();
             let mut total_network = source_result.stats.network_requests;
             let mut total_cache_hits = source_result.stats.cache_hits;
             let mut any_live = source_result.source == ExecutionSource::Live;
@@ -1017,16 +1068,16 @@ impl ExecutionEngine {
                     }
                     total_network += res.stats.network_requests;
                     total_cache_hits += res.stats.cache_hits;
-                    resolved.extend(res.entities);
+                    operations.merge(&res.operations);
+                    children.push(res.collection);
                 }
             }
 
-            let count = resolved.len();
+            let collection = embedded.flat_map(chain_step, &children)?;
+            let count = collection.count();
             return Ok(ExecutionResult {
-                entities: resolved,
-                count,
+                collection,
                 has_more: false,
-                coverage: source_result.coverage,
                 pagination_resume: None,
                 paging_handle: None,
                 source: if any_live {
@@ -1042,7 +1093,7 @@ impl ExecutionEngine {
                     ..Default::default()
                 },
                 request_fingerprints: Vec::new(),
-                operations: OperationLedger::empty(),
+                operations,
             });
         }
 
@@ -1074,7 +1125,7 @@ impl ExecutionEngine {
             let target_entity = to_fetch[0].entity_type.as_str();
             let mut inherit_by_ref: std::collections::HashMap<Ref, CapabilityParamEnv> =
                 std::collections::HashMap::new();
-            for source in &source_result.entities {
+            for source in source_result.entities() {
                 if let Some(refs) = source.relations.get(relation_key) {
                     for r in refs {
                         inherit_by_ref.entry(r.clone()).or_insert_with(|| {
@@ -1141,10 +1192,8 @@ impl ExecutionEngine {
 
         let count = resolved.len();
         Ok(ExecutionResult {
-            entities: resolved,
-            count,
+            collection: embedded.with_materialization(resolved.into())?,
             has_more: false,
-            coverage: source_result.coverage,
             pagination_resume: None,
             paging_handle: None,
             source: if any_live {

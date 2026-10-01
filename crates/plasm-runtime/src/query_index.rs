@@ -1,136 +1,134 @@
-//! Exact scoped query materialization index (equality predicates on scope params).
-
-use plasm_core::{CompOp, Predicate, QueryExpr, Ref};
+//! Exact observed query membership. Complete observations are never set-unioned.
+use plasm_core::collection_codec::{
+    CollectionCodec, CollectionFault, CollectionIdentity, Demand, RecordedCollection,
+    RecordingCodec,
+};
+use plasm_core::{QueryExpr, Ref, CGS};
 use std::collections::HashMap;
 
-/// Stable key for a fully-scoped list/query (equality on all bound scope parameters).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct QueryCacheKey(String);
-
+pub struct QueryCacheKey {
+    entity: String,
+    identity: CollectionIdentity,
+}
 impl QueryCacheKey {
-    pub fn from_query(query: &QueryExpr, capability_name: &str) -> Option<Self> {
-        let pred = query.predicate.as_ref()?;
-        let mut pairs = equality_pairs(pred)?;
-        if pairs.is_empty() {
-            return None;
-        }
-        let mut parts = vec![
-            query.entity.as_str().to_string(),
-            capability_name.to_string(),
-        ];
-        pairs.sort_by(|a, b| a.0.cmp(&b.0));
-        for (k, v) in pairs {
-            parts.push(format!("{k}={v}"));
-        }
-        Some(Self(parts.join("\0")))
+    pub fn from_query(
+        query: &QueryExpr,
+        capability: &str,
+        cgs: &CGS,
+        environment: &plasm_compile::CmlEnv,
+        epoch: u64,
+    ) -> Result<Self, CollectionFault> {
+        let environment: std::collections::BTreeMap<_, _> = environment.iter().collect();
+        Ok(Self {
+            entity: query.entity.to_string(),
+            identity: CollectionIdentity::for_expression(
+                cgs,
+                &(query, capability, environment),
+                epoch,
+            )?,
+        })
+    }
+    pub fn identity(&self) -> &CollectionIdentity {
+        &self.identity
     }
 }
 
-fn equality_pairs(pred: &Predicate) -> Option<Vec<(String, String)>> {
-    match pred {
-        Predicate::Comparison {
-            field,
-            op: CompOp::Eq,
-            value,
-        } => Some(vec![(field.clone(), comparison_value_key(value))]),
-        Predicate::And { args } => {
-            let mut out = Vec::new();
-            for child in args {
-                out.extend(equality_pairs(child)?);
-            }
-            Some(out)
-        }
-        _ => None,
-    }
+/// Disagreement invalidates this observation epoch. Retaining the tombstone makes
+/// branch merges associative: a third branch cannot resurrect disputed evidence.
+#[derive(Debug, Clone, PartialEq)]
+pub enum QueryObservation {
+    Observed(RecordedCollection<Ref>),
+    Disputed,
 }
-
-fn comparison_value_key(value: &plasm_core::TypedComparisonValue) -> String {
-    let v = value.to_value();
-    match &v {
-        plasm_core::Value::String(s) => s.clone(),
-        plasm_core::Value::Integer(i) => i.to_string(),
-        plasm_core::Value::Bool(b) => b.to_string(),
-        plasm_core::Value::Float(f) => f.to_string(),
-        other => serde_json::to_string(other).unwrap_or_else(|_| format!("{other:?}")),
-    }
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct QueryIndex {
-    entries: HashMap<QueryCacheKey, Vec<Ref>>,
+    entries: HashMap<QueryCacheKey, QueryObservation>,
 }
-
 impl QueryIndex {
-    pub fn get(&self, key: &QueryCacheKey) -> Option<&[Ref]> {
-        self.entries.get(key).map(|v| v.as_slice())
-    }
-
-    pub fn insert(&mut self, key: QueryCacheKey, refs: Vec<Ref>) {
-        if refs.is_empty() {
-            self.entries.remove(&key);
-        } else if let Some(existing) = self.entries.get(&key) {
-            let merged = crate::materialization_conflict::union_sorted_refs(existing, &refs);
-            self.entries.insert(key, merged);
-        } else {
-            self.entries.insert(key, refs);
+    pub fn get(&self, key: &QueryCacheKey) -> Option<&RecordedCollection<Ref>> {
+        match self.entries.get(key)? {
+            QueryObservation::Observed(record) => Some(record),
+            QueryObservation::Disputed => None,
         }
     }
-
-    pub fn invalidate_entity_type(&mut self, entity_type: &str) {
-        self.entries.retain(|_, refs| {
-            refs.first()
-                .is_none_or(|r| r.entity_type.as_str() != entity_type)
-        });
+    pub fn insert(
+        &mut self,
+        key: QueryCacheKey,
+        record: RecordedCollection<Ref>,
+    ) -> Result<(), CollectionFault> {
+        if record.identity() != key.identity() {
+            return Err(CollectionFault::IdentityMismatch);
+        }
+        RecordingCodec::new().materialize(&record, Demand::Whole)?;
+        self.merge_observation(key, QueryObservation::Observed(record));
+        Ok(())
     }
-
-    pub fn merge_from(&mut self, other: QueryIndex) {
-        for (key, refs) in other.entries {
-            if let Some(existing) = self.entries.get(&key) {
-                let merged = crate::materialization_conflict::union_sorted_refs(existing, &refs);
-                self.entries.insert(key, merged);
-            } else {
-                self.entries.insert(key, refs);
+    fn merge_observation(&mut self, key: QueryCacheKey, observation: QueryObservation) {
+        use std::collections::hash_map::Entry;
+        let same_expression = |other: &QueryCacheKey| {
+            other.entity == key.entity
+                && other.identity.catalog == key.identity.catalog
+                && other.identity.expression == key.identity.expression
+        };
+        // Index residency is bounded to one observation epoch per expression.
+        // Dropping an older cache entry never transfers its evidence to a newer one.
+        if self
+            .entries
+            .keys()
+            .any(|other| same_expression(other) && other.identity.epoch > key.identity.epoch)
+        {
+            return;
+        }
+        self.entries.retain(|other, _| {
+            !same_expression(other) || other.identity.epoch >= key.identity.epoch
+        });
+        match self.entries.entry(key) {
+            Entry::Vacant(slot) => {
+                slot.insert(observation);
+            }
+            Entry::Occupied(mut slot) => {
+                if slot.get() != &observation {
+                    slot.insert(QueryObservation::Disputed);
+                }
             }
         }
     }
-
-    pub(crate) fn entries_snapshot(&self) -> HashMap<QueryCacheKey, Vec<Ref>> {
+    pub fn invalidate_entity_type(&mut self, entity: &str) {
+        self.entries.retain(|key, _| key.entity != entity);
+    }
+    pub fn merge_from(&mut self, other: Self) {
+        for (key, observation) in other.entries {
+            self.merge_observation(key, observation);
+        }
+    }
+    pub(crate) fn entries_snapshot(&self) -> HashMap<QueryCacheKey, QueryObservation> {
         self.entries.clone()
     }
-
     pub(crate) fn branch_write_keys(
         &self,
-        base: &HashMap<QueryCacheKey, Vec<Ref>>,
+        base: &HashMap<QueryCacheKey, QueryObservation>,
     ) -> Vec<QueryCacheKey> {
         self.entries
             .iter()
-            .filter_map(|(k, v)| match base.get(k) {
-                None => Some(k.clone()),
-                Some(base_v) if base_v != v => Some(k.clone()),
-                _ => None,
-            })
+            .filter(|(key, value)| base.get(*key) != Some(*value))
+            .map(|(key, _)| key.clone())
             .collect()
     }
-
     pub(crate) fn detect_write_conflicts(
         session: &Self,
         branch: &Self,
-        base: &HashMap<QueryCacheKey, Vec<Ref>>,
+        base: &HashMap<QueryCacheKey, QueryObservation>,
         write_set: &[QueryCacheKey],
     ) -> Vec<QueryCacheKey> {
         write_set
             .iter()
-            .filter(|k| match base.get(*k) {
-                None => crate::materialization_conflict::ref_list_materialization_diverged(
-                    None,
-                    branch.entries.get(*k).map(|v| v.as_slice()),
-                    session.entries.get(*k).map(|v| v.as_slice()),
-                ),
-                Some(base_v) => crate::materialization_conflict::ref_list_materialization_diverged(
-                    Some(base_v.as_slice()),
-                    branch.entries.get(*k).map(|v| v.as_slice()),
-                    session.entries.get(*k).map(|v| v.as_slice()),
-                ),
+            .filter(|key| {
+                crate::materialization_conflict::content_diverged(
+                    base.get(*key),
+                    branch.entries.get(*key),
+                    session.entries.get(*key),
+                )
             })
             .cloned()
             .collect()
@@ -140,51 +138,196 @@ impl QueryIndex {
 #[cfg(test)]
 impl QueryCacheKey {
     pub fn test(s: impl Into<String>) -> Self {
-        Self(s.into())
+        let name = s.into();
+        Self {
+            entity: name.split('\0').next().unwrap().into(),
+            identity: CollectionIdentity::for_expression(&CGS::new(), &name, 1).unwrap(),
+        }
     }
 }
-
+#[cfg(test)]
+impl QueryIndex {
+    pub(crate) fn insert_test_observation(&mut self, key: QueryCacheKey, refs: Vec<Ref>) {
+        let n = refs.len();
+        let codec = RecordingCodec::new();
+        let mut acquisition = codec.acquire(key.identity.clone());
+        acquisition
+            .push(
+                &key.identity,
+                0,
+                refs.into(),
+                n,
+                plasm_core::collection_codec::PageTermination::Exhausted,
+            )
+            .unwrap();
+        self.insert(key, acquisition.finish()).unwrap();
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use plasm_core::EntityName;
+    use plasm_core::collection_codec::{Observation, ResultCoverage};
 
-    #[test]
-    fn query_cache_key_from_scoped_predicate() {
-        let mut q = QueryExpr::filtered(EntityName::new("Label"), Predicate::eq("n", 1));
-        q.capability_name = Some(plasm_core::CapabilityName::new("issue_label_query"));
-        let key = QueryCacheKey::from_query(&q, "issue_label_query").expect("key");
-        assert!(key.0.contains("issue_label_query"));
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(512))]
+        #[test]
+        fn observation_merge_is_associative_commutative_and_idempotent(
+            a in proptest::collection::vec(0u8..5, 0..12),
+            b in proptest::collection::vec(0u8..5, 0..12),
+            c in proptest::collection::vec(0u8..5, 0..12),
+            epochs in (0u64..3, 0u64..3, 0u64..3),
+        ) {
+            let key = QueryCacheKey::test("Item");
+            let make = |values: &[u8], epoch: u64| {
+                let mut key = key.clone();
+                key.identity.epoch = epoch;
+                let mut index = QueryIndex::default();
+                index.insert_test_observation(key.clone(), values.iter().map(|v| Ref::new("Item", v.to_string())).collect());
+                index
+            };
+            let aa = make(&a, epochs.0); let bb = make(&b, epochs.1); let cc = make(&c, epochs.2);
+            let mut left = aa.clone(); left.merge_from(bb.clone()); left.merge_from(cc.clone());
+            let mut bc = bb.clone(); bc.merge_from(cc);
+            let mut right = aa.clone(); right.merge_from(bc);
+            proptest::prop_assert_eq!(&left.entries, &right.entries);
+            let mut ab = aa.clone(); ab.merge_from(bb.clone());
+            let mut ba = bb; ba.merge_from(aa.clone());
+            proptest::prop_assert_eq!(&ab.entries, &ba.entries);
+            let mut same = aa.clone(); same.merge_from(aa.clone());
+            proptest::prop_assert_eq!(&same.entries, &aa.entries);
+            // Independent oracle: at the newest epoch only identical full
+            // sequences can be reused, irrespective of branch merge order.
+            let newest = epochs.0.max(epochs.1).max(epochs.2);
+            let candidates: Vec<_> = [(epochs.0, &a), (epochs.1, &b), (epochs.2, &c)]
+                .into_iter().filter(|(epoch, _)| *epoch == newest).map(|(_, rows)| rows).collect();
+            let mut key = key;
+            key.identity.epoch = newest;
+            proptest::prop_assert_eq!(left.get(&key).is_some(), candidates.iter().all(|rows| *rows == candidates[0]));
+            proptest::prop_assert_eq!(left.entries.len(), 1);
+        }
     }
 
     #[test]
-    fn query_index_roundtrip() {
-        let mut idx = QueryIndex::default();
-        let key = QueryCacheKey("test".to_string());
-        let r = Ref::new("Label", "1");
-        idx.insert(key.clone(), vec![r.clone()]);
-        assert_eq!(idx.get(&key), Some([r].as_slice()));
+    fn query_scope_includes_catalog_expression_and_epoch() {
+        let cgs = CGS::new();
+        let q = QueryExpr::all("Item");
+        let key = QueryCacheKey::from_query(&q, "query", &cgs, &Default::default(), 1).unwrap();
+        assert_ne!(
+            key,
+            QueryCacheKey::from_query(&q, "query", &cgs, &Default::default(), 2).unwrap()
+        );
+        assert_ne!(
+            key,
+            QueryCacheKey::from_query(&q, "other", &cgs, &Default::default(), 1).unwrap()
+        );
+    }
+    #[test]
+    fn query_scope_binds_resolved_environment_without_insertion_order() {
+        let cgs = CGS::new();
+        let query = QueryExpr::all("Item");
+        let environment: plasm_compile::CmlEnv = [
+            ("scope".into(), plasm_core::Value::String("a".into())),
+            ("receiver".into(), plasm_core::Value::Integer(7)),
+        ]
+        .into_iter()
+        .collect();
+        let reversed = environment
+            .iter()
+            .rev()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        let original = QueryCacheKey::from_query(&query, "query", &cgs, &environment, 1).unwrap();
+        assert_eq!(
+            original,
+            QueryCacheKey::from_query(&query, "query", &cgs, &reversed, 1).unwrap()
+        );
+        let mut other = environment;
+        other.insert("scope".into(), plasm_core::Value::String("b".into()));
+        assert_ne!(
+            original,
+            QueryCacheKey::from_query(&query, "query", &cgs, &other, 1).unwrap()
+        );
     }
 
     #[test]
-    fn query_index_brand_new_overlapping_pages_no_conflict() {
-        let mut session = QueryIndex::default();
-        let key = QueryCacheKey::test("Type\0pokemon\0name=electric");
-        let base = session.entries_snapshot();
-        let mut branch = session.clone();
-        branch.insert(
-            key.clone(),
-            vec![Ref::new("Pokemon", "1"), Ref::new("Pokemon", "2")],
+    fn index_preserves_empty_ordered_and_duplicate_membership() {
+        for refs in [
+            vec![],
+            vec![
+                Ref::new("Item", "b"),
+                Ref::new("Item", "a"),
+                Ref::new("Item", "b"),
+            ],
+        ] {
+            let key = QueryCacheKey::test("Item");
+            let mut index = QueryIndex::default();
+            index.insert_test_observation(key.clone(), refs.clone());
+            let record = index.get(&key).unwrap();
+            assert_eq!(record.observed(), &refs);
+            assert_eq!(record.coverage(), ResultCoverage::Complete);
+            let snapshot = index.clone();
+            if !refs.is_empty() {
+                assert!(std::ptr::eq(
+                    &record.observed()[0],
+                    &snapshot.get(&key).unwrap().observed()[0]
+                ));
+            }
+            index.invalidate_entity_type("Item");
+            assert!(index.get(&key).is_none());
+        }
+    }
+    #[test]
+    fn index_releases_superseded_observation_epochs() {
+        let mut index = QueryIndex::default();
+        let mut key = QueryCacheKey::test("Item");
+        for epoch in 1..32 {
+            key.identity.epoch = epoch;
+            index.insert_test_observation(key.clone(), vec![Ref::new("Item", epoch.to_string())]);
+            assert_eq!(index.entries.len(), 1);
+        }
+        let latest = key.clone();
+        key.identity.epoch = 1;
+        index.insert_test_observation(key.clone(), vec![Ref::new("Item", "old")]);
+        assert!(index.get(&key).is_none());
+        assert!(index.get(&latest).is_some());
+        assert_eq!(index.entries.len(), 1);
+    }
+
+    #[test]
+    fn uncertain_or_wrong_scope_records_cannot_enter_index() {
+        let key = QueryCacheKey::test("Item");
+        let codec = RecordingCodec::<Ref>::new();
+        let mut index = QueryIndex::default();
+        let unknown = codec
+            .record(key.identity.clone(), vec![], Observation::UnprovenPage)
+            .unwrap();
+        assert!(matches!(
+            index.insert(key.clone(), unknown),
+            Err(CollectionFault::Incomplete { .. })
+        ));
+        let wrong = codec
+            .record(
+                QueryCacheKey::test("Other").identity,
+                vec![],
+                Observation::Literal,
+            )
+            .unwrap();
+        assert_eq!(
+            index.insert(key.clone(), wrong),
+            Err(CollectionFault::IdentityMismatch)
         );
-        session.insert(
-            key.clone(),
-            vec![Ref::new("Pokemon", "1"), Ref::new("Pokemon", "3")],
-        );
-        let write_set = branch.branch_write_keys(&base);
-        let conflicts = QueryIndex::detect_write_conflicts(&session, &branch, &base, &write_set);
-        assert!(
-            conflicts.is_empty(),
-            "overlapping cold query pages converge"
-        );
+        assert!(index.get(&key).is_none());
+    }
+    #[test]
+    fn disputed_observations_never_reappear_on_later_merge() {
+        let key = QueryCacheKey::test("Item");
+        let mut a = QueryIndex::default();
+        a.insert_test_observation(key.clone(), vec![Ref::new("Item", "a")]);
+        let original = a.clone();
+        let mut b = QueryIndex::default();
+        b.insert_test_observation(key.clone(), vec![Ref::new("Item", "b")]);
+        a.merge_from(b);
+        a.merge_from(original);
+        assert!(a.get(&key).is_none());
     }
 }

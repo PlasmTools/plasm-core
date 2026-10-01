@@ -46,8 +46,12 @@ use tracing::Instrument;
 
 mod cache_merge;
 mod chain;
+mod collection;
 mod compile_preflight;
 mod coverage;
+#[cfg(test)]
+pub(crate) use collection::test_collection;
+pub use collection::{ExecutionCollection, PayloadResidency};
 mod embed_cache;
 mod engine;
 mod engine_get;
@@ -59,6 +63,7 @@ mod expr_executor;
 mod http_exec;
 mod hydrate;
 mod identity;
+mod mutation_evidence;
 mod mutators;
 mod operation_outcome;
 mod pagination_driver;
@@ -71,6 +76,7 @@ mod resume;
 mod scoped_fanout;
 mod session;
 mod task_scopes;
+pub use mutation_evidence::{MutationDispatch, MutationDispatchStatus, MutationJournal};
 mod template_env;
 mod types;
 
@@ -85,7 +91,7 @@ pub(crate) use hydrate::{
     identity_keys_for_entity, relation_inherit_for_scoped_query, stamp_entities_and_mat,
     stamp_get_capability_params, wrap_synthesized_get_error, CapabilityParamEnv,
 };
-pub(crate) use session::{compiled_capability_template, compiled_conflict_rules};
+pub(crate) use session::compiled_capability_template;
 
 pub use pagination_driver::{PageAudit, PaginationDriver, PaginationTerminalReason};
 
@@ -101,17 +107,14 @@ pub(crate) use pagination_state::PaginationLoopState;
 pub(crate) use pagination_state::{merge_pagination_into_body, pagination_context_map};
 pub(crate) use plasm_core::json_value_to_plasm_value as json_to_plasm_value;
 
-pub use coverage::{
-    coverage_after_explicit_take, coverage_for_consume_stop, page_result, ConsumeStop,
-    ResultCoverage,
-};
+pub use coverage::ResultCoverage;
 pub use operation_outcome::{
     OperationAck, OperationIdentity, OperationInvocationOutcome, OperationInvocationStatus,
     OperationLedger,
 };
 pub use types::{
-    ConsumeBoundKind, ExecutionConfig, ExecutionMode, ExecutionResult, ExecutionSource,
-    ExecutionStats, PageResult, QueryPaginationResumeData, QueryPaginationState, QueryStream,
+    ConsumeBoundKind, ExecutionConfig, ExecutionEvent, ExecutionMode, ExecutionResult,
+    ExecutionSource, ExecutionStats, QueryPaginationResumeData, QueryPaginationState, QueryStream,
     RowMatchBudget, RowsProgressFn, StreamConsumeOpts,
 };
 
@@ -163,8 +166,8 @@ pub(crate) use scoped_fanout::{
     ref_from_materialize_bindings_for_get_chain, resolve_cached_targets_from_relation_refs,
 };
 pub(crate) use template_env::{
-    ensure_mutating_operation, normalize_cml_env_scope_entity_refs,
-    normalize_cml_scope_entity_ref_value, populate_template_path_env,
+    ensure_mutating_operation, normalize_cml_env_inputs, normalize_cml_scope_entity_ref_value,
+    populate_template_path_env,
 };
 
 pub(crate) mod hydration_trace;

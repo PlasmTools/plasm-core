@@ -1,73 +1,47 @@
 //! Derive and validate materialized scalar fields at the Python boundary.
 use super::*;
 
-pub(super) fn kind_from_schema(kind: SyntheticValueKind) -> Option<Kind> {
-    use plasm_core::value_contract::{ValueContract, ValueShape};
-    let shape = match kind {
-        SyntheticValueKind::String => ValueShape::Scalar {
-            field_type: FieldType::String,
-        },
-        SyntheticValueKind::Integer => ValueShape::Scalar {
-            field_type: FieldType::Integer,
-        },
-        SyntheticValueKind::Number => ValueShape::Scalar {
-            field_type: FieldType::Number,
-        },
-        SyntheticValueKind::Boolean => ValueShape::Scalar {
-            field_type: FieldType::Boolean,
-        },
-        SyntheticValueKind::Null => ValueShape::Null,
-        _ => return None,
-    };
-    Some(Kind::Typed(ValueContract {
-        shape,
-        domain: None,
-        nullable: false,
-    }))
-}
-
+#[cfg(test)]
 pub(super) fn materialize_rows(
-    fields: &BTreeMap<String, Kind>,
-    rows: &[Value],
+    fields: &BTreeMap<String, plasm_core::value_contract::ValueContract>,
+    optional_fields: &std::collections::BTreeSet<String>,
+    rows: &[ValueRow],
     cgs: &CGS,
     entry: &str,
 ) -> Result<crate::python_pool::TypedRecords, String> {
-    if rows.len() > MAX_INPUT_ROWS
-        || serde_json::to_vec(rows).map_err(|e| e.to_string())?.len() > 1_048_576
-    {
-        return Err("compute input budget exceeded".into());
-    }
+    materialize_rows_in(fields, optional_fields, rows, cgs, entry, &BTreeMap::new())
+}
+
+pub(super) fn materialize_rows_in(
+    fields: &BTreeMap<String, plasm_core::value_contract::ValueContract>,
+    optional_fields: &std::collections::BTreeSet<String>,
+    rows: &[ValueRow],
+    cgs: &CGS,
+    entry: &str,
+    catalogs: &BTreeMap<String, std::sync::Arc<CGS>>,
+) -> Result<crate::python_pool::TypedRecords, String> {
+    validate_input_budget(rows)?;
+
     rows.iter()
         .map(|row| {
             fields
                 .iter()
+                .filter(|(name, _)| row.get(*name).is_some() || !optional_fields.contains(*name))
                 .map(|(name, kind)| {
                     let value = row
                         .get(name)
                         .ok_or_else(|| format!("compute input missing {name}"))?;
-                    if let Kind::Typed(t) = kind {
-                        t.validate(value, cgs, entry, name)?;
-                        return Ok((name.clone(), value.clone()));
-                    }
-                    let valid = match kind {
-                        Kind::String => value.is_string(),
-                        Kind::Integer => value.as_i64().is_some(),
-                        Kind::Number => value.is_number(),
-                        Kind::Boolean => value.is_boolean(),
-                        Kind::Null => value.is_null(),
-                        _ => false,
-                    };
-                    if !valid {
-                        return Err(format!("compute input {name}: value violates row schema"));
-                    }
-                    Ok((name.clone(), value.clone()))
+                    let lookup = |entry: &str| catalogs.get(entry).map(AsRef::as_ref);
+                    let value = kind.observed_value_in(value, cgs, entry, &lookup)?;
+                    kind.validate_in(&value, cgs, entry, name, &lookup)?;
+                    Ok((name.clone(), value))
                 })
                 .collect()
         })
         .collect()
 }
 
-pub(super) fn source_field_kind(
+pub(crate) fn source_field_kind(
     es: &crate::execute_session::ExecuteSession,
     nodes: &[crate::plasm_plan::ValidatedPlanNode],
     id: &str,
@@ -79,11 +53,32 @@ pub(super) fn source_field_kind(
     if depth > 256 {
         return Err("Python source schema depth exceeded".into());
     }
+    if let Some((head, tail)) = field.split_once('.') {
+        let mut value = source_field_kind(es, nodes, id, head, depth + 1)?;
+        for name in tail.split('.') {
+            value = value.field(name)?;
+        }
+        return Ok(value);
+    }
     let node = nodes
         .iter()
         .find(|n| n.id().as_str() == id)
         .ok_or("missing Python schema source")?;
     let owner = match node {
+        Node::Capture(c) => {
+            if let Some(value) = &c.value_contract {
+                return value.field(field);
+            }
+            if let Some(schema) = &c.schema {
+                return schema
+                    .fields
+                    .iter()
+                    .find(|f| f.name.as_str() == field)
+                    .and_then(|f| f.value_type.clone())
+                    .ok_or_else(|| format!("captured field {field} missing from port schema"));
+            }
+            &c.entity
+        }
         Node::Surface(s) => {
             if !s.projection.is_empty() && !s.projection.iter().any(|f| f == field) {
                 return Err("Python field omitted by source projection".into());
@@ -109,25 +104,26 @@ pub(super) fn source_field_kind(
             }
             &source.effect_template.qualified_entity
         }
-        Node::Derive(d) => {
-            let t = plasm_core::value_contract::ValueContract::data_value(
-                &d.value,
-                &mut |binding, path| {
-                    let source = if binding == d.item_binding.as_str() {
-                        d.source.as_str()
-                    } else {
-                        binding
-                    };
-                    source_field_kind(es, nodes, source, &path.join("."), depth + 1)
-                },
-            )?;
-            let plasm_core::value_contract::ValueShape::Record { fields } = t.shape else {
-                return Err("derived Python input must be a record".into());
-            };
-            return fields
-                .get(field)
-                .cloned()
-                .ok_or("missing derived field".into());
+        Node::IterateUntil(iteration) => {
+            return source_field_kind(es, nodes, iteration.source.as_str(), field, depth + 1)
+        }
+        Node::MapBody(map) => {
+            return crate::map_body_schema::output_schema(es, &map.body)?
+                .fields
+                .into_iter()
+                .find(|f| f.name.as_str() == field)
+                .and_then(|f| f.value_type)
+                .ok_or("unknown correlated output field".into());
+        }
+        Node::Data(_) | Node::Derive(_) => {
+            let t =
+                crate::map_body_schema::row_contract_at(es, nodes, node.id().as_str(), depth + 1)?;
+            return plasm_core::plasm_monad::SyntheticResultSchema::for_value(t)?
+                .fields
+                .into_iter()
+                .find(|f| f.name.as_str() == field)
+                .and_then(|f| f.value_type)
+                .ok_or_else(|| format!("missing materialized value field {field}"));
         }
         Node::Compute(c) => {
             let next =
@@ -156,10 +152,10 @@ pub(super) fn source_field_kind(
                 ComputeOp::Aggregate { aggregates } | ComputeOp::GroupBy { aggregates, .. } => {
                     if let Some(a) = aggregates.iter().find(|a| a.name.as_str() == field) {
                         let input = a.field.as_ref().map(|f| next(&f.dotted())).transpose()?;
-                        Ok(plasm_core::value_contract::ValueContract::aggregate(
+                        plasm_core::value_contract::ValueContract::aggregate(
                             a.function,
                             input.as_ref(),
-                        ))
+                        )
                     } else if matches!(&c.compute.op, ComputeOp::GroupBy { keys, .. } if keys.iter().any(|k| k.dotted() == field))
                     {
                         next(field)
@@ -171,21 +167,42 @@ pub(super) fn source_field_kind(
                 | ComputeOp::Sort { .. }
                 | ComputeOp::Limit { .. }
                 | ComputeOp::DedupeBy { .. } => next(field),
+                ComputeOp::MergeBranches { other } => {
+                    Ok(plasm_core::value_contract::ValueContract::join(
+                        next(field)?,
+                        source_field_kind(es, nodes, other.as_str(), field, depth + 1)?,
+                    ))
+                }
                 ComputeOp::Union { other } => {
                     let left = next(field)?;
                     let right = source_field_kind(es, nodes, other.as_str(), field, depth + 1)?;
-                    if left != right {
+                    if left.shape != right.shape {
                         return Err("Python union field type mismatch".into());
                     }
-                    Ok(left)
+                    Ok(plasm_core::value_contract::ValueContract::join(left, right))
                 }
-                ComputeOp::Python { .. } | ComputeOp::Render { .. } if field == "content" => Ok(
-                    plasm_core::value_contract::ValueContract::scalar(FieldType::String),
-                ),
+                ComputeOp::Python { .. } => c
+                    .compute
+                    .schema
+                    .fields
+                    .iter()
+                    .find(|f| f.name.as_str() == field)
+                    .and_then(|f| f.value_type.clone())
+                    .ok_or_else(|| format!("unknown Python output field {field}")),
+                ComputeOp::Render { .. }
+                    if c.compute
+                        .schema
+                        .fields
+                        .iter()
+                        .any(|f| f.name.as_str() == field) =>
+                {
+                    Ok(plasm_core::value_contract::ValueContract::scalar(
+                        FieldType::String,
+                    ))
+                }
                 _ => Err("unsupported Python row schema source".into()),
             };
         }
-        _ => return Err("unsupported Python row schema source".into()),
     };
     let cgs =
         crate::catalog_ownership::resolve_cgs_for_entry_entity(es, &owner.entry_id, &owner.entity)?;
@@ -211,22 +228,59 @@ pub(super) fn source_field_kind(
 
 pub(super) fn validate_source_owner<'a>(
     nodes: &'a [crate::plasm_plan::ValidatedPlanNode],
-    mut id: &'a str,
+    id: &'a str,
     expected: &EntityBinding,
 ) -> Result<(), String> {
+    validate_source_owner_at(nodes, id, expected, 0)
+}
+
+fn validate_source_owner_at<'a>(
+    nodes: &'a [crate::plasm_plan::ValidatedPlanNode],
+    mut id: &'a str,
+    expected: &EntityBinding,
+    depth: usize,
+) -> Result<(), String> {
     use crate::plasm_plan::ValidatedPlanNode as Node;
-    for _ in 0..256 {
+    for depth in depth..256 {
         let node = nodes
             .iter()
             .find(|n| n.id().as_str() == id)
             .ok_or("missing Python schema source")?;
         let owner = match node {
+            Node::MapBody(map) => {
+                if let plasm_core::plasm_monad::ScopedOutput::Rows { entity, .. } = &map.body.output
+                {
+                    return if entity.entry_id == expected.entry_id.as_str()
+                        && entity.entity == expected.entity.as_str()
+                    {
+                        Ok(())
+                    } else {
+                        Err("Python input catalog ownership mismatch".into())
+                    };
+                }
+                id = map.body.parent.source.as_str();
+                continue;
+            }
             Node::Derive(d) => {
+                // Value records carry dependencies, not receiver ownership. A
+                // catalog dependency supplies the checking context; field
+                // contracts are independently re-derived below.
+                if d.inputs.iter().any(|input| {
+                    validate_source_owner_at(nodes, input.node.as_str(), expected, depth + 1)
+                        .is_ok()
+                }) {
+                    return Ok(());
+                }
                 id = d.source.as_str();
                 continue;
             }
             Node::Compute(c) => {
                 id = &c.compute.source;
+                continue;
+            }
+            Node::Capture(c) => &c.entity,
+            Node::IterateUntil(iteration) => {
+                id = iteration.source.as_str();
                 continue;
             }
             Node::Surface(s) => s
@@ -249,7 +303,7 @@ pub(super) fn validate_source_owner<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use crate::fixture_row as json;
 
     #[tokio::test]
     async fn observed_relation_values_preserve_types_without_traversal_or_coverage_promotion() {
@@ -264,17 +318,43 @@ mod tests {
             plasm_core::TeachingExposureSession::new(&cgs, "matrix", &["LangItem"]).to_symbol_map();
         let token = symbols.entity_sym_for("matrix", "LangItem");
         let source = format!("@compute\ndef render(row: Value[{token}]) -> str:\n    return f'relation_count={{len(row.lines)}}'\n");
-        let checked =
-            CheckedCompute::compile_input(&source, &cgs, "matrix", symbols.as_ref(), None, true)
-                .unwrap();
-        let relation = &checked.contract.fields["lines"].value_type;
+        let nominal = ValueContract::from_cgs(&cgs, "matrix", symbols.as_ref(), &token).unwrap();
+        let value_type = nominal.fields["lines"].value_type.clone();
+        let schema = SyntheticResultSchema {
+            optional_fields: Default::default(),
+            entity: None,
+            fields: vec![plasm_core::plasm_monad::SyntheticFieldSchema {
+                name: plasm_core::plasm_monad::OutputName::new("lines").unwrap(),
+                value_kind: value_type.summary(),
+                value_type: Some(value_type),
+                source: None,
+            }],
+        };
+        let checked = PreparedCompute::prepare_input(
+            &source,
+            &cgs,
+            "matrix",
+            symbols.as_ref(),
+            Some((&schema, &token)),
+        )
+        .unwrap();
+        let relation = &checked.contract.as_ref().unwrap().fields["lines"].value_type;
         assert!(
             matches!(&relation.shape, ValueShape::Array { element } if matches!(&element.shape, ValueShape::Scalar { field_type: FieldType::EntityRef {entry_id, target} } if entry_id.as_str() == "matrix" && target.as_str() == "LangLine"))
         );
-        let declaration = checked.contract.declaration(symbols.as_ref()).unwrap();
+        let declaration = checked
+            .contract
+            .as_ref()
+            .unwrap()
+            .declaration(symbols.as_ref())
+            .unwrap();
         assert!(declaration.contains("lines: list[EntityRef]"));
         let pool = crate::python_pool::PythonPool::default();
         for (rows, expected) in [
+            (
+                json!({"lines":[{"_ref":{"kind":"simple","entity":"LangLine","id":"l1"},"optional":null,"children":[]}]}),
+                "relation_count=1",
+            ),
             (
                 json!({"lines": ["LangLine:l1", "LangLine:l2"]}),
                 "relation_count=2",
@@ -285,21 +365,21 @@ mod tests {
                 checked
                     .run(
                         &pool,
-                        &checked.contract.owner,
-                        ResultCoverage::Complete,
+                        &checked.contract.as_ref().unwrap().owner,
+                        &test_membership(true),
                         &[rows]
                     )
                     .await
                     .unwrap(),
-                expected
+                Value::String(expected.into())
             );
         }
         for rows in [json!({}), json!({"lines": null}), json!({"lines": [null]})] {
             assert!(checked
                 .run(
                     &pool,
-                    &checked.contract.owner,
-                    ResultCoverage::Complete,
+                    &checked.contract.as_ref().unwrap().owner,
+                    &test_membership(true),
                     &[rows]
                 )
                 .await
@@ -308,8 +388,8 @@ mod tests {
         assert!(checked
             .run(
                 &pool,
-                &checked.contract.owner,
-                ResultCoverage::Unknown,
+                &checked.contract.as_ref().unwrap().owner,
+                &test_membership(false),
                 &[json!({"lines": []})]
             )
             .await
@@ -322,14 +402,15 @@ mod tests {
             let source = format!(
                 "@compute\ndef render(row: Value[{token}]) -> str:\n    return str({expression})\n"
             );
-            assert!(CheckedCompute::compile_input(
+            assert!(PreparedCompute::prepare_input(
                 &source,
                 &cgs,
                 "matrix",
                 symbols.as_ref(),
-                None,
-                true
+                Some((&schema, &token)),
             )
+            .unwrap()
+            .admit()
             .is_err());
         }
     }
@@ -367,6 +448,7 @@ mod tests {
             nullable: false,
         };
         let schema = SyntheticResultSchema {
+            optional_fields: Default::default(),
             entity: None,
             fields: vec![plasm_core::SyntheticFieldSchema {
                 name: plasm_core::OutputName::new("records").unwrap(),
@@ -375,36 +457,57 @@ mod tests {
                 source: None,
             }],
         };
-        let checked = CheckedCompute::compile_input("@compute\ndef render(row: Row) -> str:\n    return '|'.join(str(item.n) for item in row.records)\n", &cgs, "types", symbols.as_ref(), Some((&schema, &token)), true).unwrap();
-        let indexed = CheckedCompute::compile_input(
+        let checked = PreparedCompute::prepare_input("@compute\ndef render(row: Row) -> str:\n    return '|'.join(str(item.n) for item in row.records)\n", &cgs, "types", symbols.as_ref(), Some((&schema, &token)),).unwrap();
+        let indexed = PreparedCompute::prepare_input(
             "@compute\ndef render(row: Row) -> str:\n    return str(row.records[0]['n'])\n",
             &cgs,
             "types",
             symbols.as_ref(),
             Some((&schema, &token)),
-            true,
         );
-        assert!(matches!(indexed, Err(error) if error.contains("record.field")));
         let pool = crate::python_pool::PythonPool::default();
-        let json_access = CheckedCompute::compile_input(
-            &format!("@compute\ndef render(row: Value[{token}]) -> str:\n    return str(row.document['n'])\n"),
+        let indexed = indexed.unwrap();
+        indexed.admit().unwrap();
+        assert_eq!(
+            indexed
+                .run(
+                    &pool,
+                    &indexed.contract.as_ref().unwrap().owner,
+                    &test_membership(true),
+                    &[json!({"records": [{"n": 9007199254740993_i64}]})]
+                )
+                .await
+                .unwrap(),
+            Value::String("9007199254740993".into())
+        );
+        let json_schema = SyntheticResultSchema {
+            optional_fields: Default::default(),
+            entity: None,
+            fields: vec![plasm_core::SyntheticFieldSchema {
+                name: plasm_core::OutputName::new("document").unwrap(),
+                value_kind: T::scalar(FieldType::Json).summary(),
+                value_type: Some(T::scalar(FieldType::Json)),
+                source: None,
+            }],
+        };
+        let json_access = PreparedCompute::prepare_input(
+            &format!("@compute\ndef render(row: Value[{token}]) -> str:\n    return str(row.document['n']) if isinstance(row.document, dict) else ''\n"),
             &cgs,
             "types",
             symbols.as_ref(),
-            None,
-            true,
+            Some((&json_schema, &token)),
         ).unwrap();
         assert_eq!(
             json_access
                 .run(
                     &pool,
-                    &json_access.contract.owner,
-                    ResultCoverage::Complete,
+                    &json_access.contract.as_ref().unwrap().owner,
+                    &test_membership(true),
                     &[json!({"document": {"n": 7}})]
                 )
                 .await
                 .unwrap(),
-            "7"
+            Value::String("7".into())
         );
         for (rows, expected) in [
             (
@@ -417,51 +520,166 @@ mod tests {
                 checked
                     .run(
                         &pool,
-                        &checked.contract.owner,
-                        ResultCoverage::Complete,
+                        &checked.contract.as_ref().unwrap().owner,
+                        &test_membership(true),
                         &[rows]
                     )
                     .await
                     .unwrap(),
-                expected
+                Value::String(expected.into())
             );
         }
         let bad = checked
             .run(
                 &pool,
-                &checked.contract.owner,
-                ResultCoverage::Complete,
+                &checked.contract.as_ref().unwrap().owner,
+                &test_membership(true),
                 &[json!({"records": [{"n": true}]})],
             )
             .await
             .unwrap_err();
-        assert!(bad.contains("records[0].n"), "{bad}");
+        assert!(bad.diagnostic().contains("records[0].n"), "{bad}");
+    }
+
+    #[tokio::test]
+    async fn observed_record_presence_survives_monty_codec_without_null_filling() {
+        use plasm_core::symbol_tuning::SymbolRender;
+        use plasm_core::value_contract::ValueContract as T;
+        let cgs = plasm_core::loader::load_schema_dir(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/python_value_contract"),
+        )
+        .unwrap();
+        let symbols =
+            plasm_core::TeachingExposureSession::new(&cgs, "types", &["Sample"]).to_symbol_map();
+        let token = symbols.entity_sym_for("types", "Sample");
+        let mut optional = T::scalar(FieldType::String);
+        optional.nullable = true;
+        let value_type = T::record(
+            BTreeMap::from([
+                ("n".into(), T::scalar(FieldType::Integer)),
+                ("maybe".into(), optional),
+            ]),
+            std::collections::BTreeSet::from(["maybe".into()]),
+        );
+        let schema = SyntheticResultSchema {
+            optional_fields: Default::default(),
+            entity: None,
+            fields: vec![plasm_core::SyntheticFieldSchema {
+                name: plasm_core::OutputName::new("record").unwrap(),
+                value_kind: value_type.summary(),
+                value_type: Some(value_type),
+                source: None,
+            }],
+        };
+        let source = "@compute\ndef render(row: Row) -> str:\n    try:\n        return str(row.record.maybe)\n    except AttributeError:\n        return 'absent'\n";
+        let checked = PreparedCompute::prepare_input(
+            source,
+            &cgs,
+            "types",
+            symbols.as_ref(),
+            Some((&schema, &token)),
+        )
+        .unwrap();
+        let pool = crate::python_pool::PythonPool::default();
+        for (record, expected) in [
+            (json!({"n":1}), "absent"),
+            (json!({"n":1,"maybe":null}), "None"),
+            (json!({"n":1,"maybe":"value"}), "value"),
+        ] {
+            assert_eq!(
+                checked
+                    .run(
+                        &pool,
+                        &checked.contract.as_ref().unwrap().owner,
+                        &test_membership(true),
+                        &[json!({"record":record})]
+                    )
+                    .await
+                    .unwrap(),
+                Value::String(expected.into())
+            );
+        }
+        for record in [json!({}), json!({"n":true}), json!({"n":1,"maybe":42})] {
+            assert!(checked
+                .run(
+                    &pool,
+                    &checked.contract.as_ref().unwrap().owner,
+                    &test_membership(true),
+                    &[json!({"record":record})]
+                )
+                .await
+                .is_err());
+        }
+        let unguarded = PreparedCompute::prepare_input(
+            "@compute\ndef render(row: Row) -> str:\n    return str(row.record.maybe)\n",
+            &cgs,
+            "types",
+            symbols.as_ref(),
+            Some((&schema, &token)),
+        )
+        .unwrap();
+        let error = unguarded
+            .run(
+                &pool,
+                &unguarded.contract.as_ref().unwrap().owner,
+                &test_membership(true),
+                &[json!({"record":{"n":1}})],
+            )
+            .await
+            .unwrap_err();
+        assert!(error.diagnostic().contains("AttributeError"), "{error}");
+        pool.close().await;
     }
 
     #[test]
     fn scalar_rows_preserve_types_order_duplicates_and_empty() {
         let fields = BTreeMap::from([
-            ("n".into(), Kind::Integer),
-            ("s".into(), Kind::String),
-            ("b".into(), Kind::Boolean),
-            ("f".into(), Kind::Number),
+            (
+                "n".into(),
+                plasm_core::value_contract::ValueContract::scalar(FieldType::Integer),
+            ),
+            (
+                "s".into(),
+                plasm_core::value_contract::ValueContract::scalar(FieldType::String),
+            ),
+            (
+                "b".into(),
+                plasm_core::value_contract::ValueContract::scalar(FieldType::Boolean),
+            ),
+            (
+                "f".into(),
+                plasm_core::value_contract::ValueContract::scalar(FieldType::Number),
+            ),
         ]);
         let row = json!({"n": 3, "s": "three", "b": true, "f": 1.5, "unconsumed": {"secret": 1}});
-        let rows = materialize_rows(&fields, &[row.clone(), row], &CGS::default(), "test").unwrap();
+        let rows = materialize_rows(
+            &fields,
+            &Default::default(),
+            &[row.clone(), row],
+            &CGS::default(),
+            "test",
+        )
+        .unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0], rows[1]);
-        assert_eq!(rows[0]["n"], json!(3));
-        assert_eq!(rows[0]["f"], json!(1.5));
-        assert_eq!(rows[0]["b"], json!(true));
+        assert_eq!(rows[0]["n"], crate::fixture_value!(3));
+        assert_eq!(rows[0]["f"], crate::fixture_value!(1.5));
+        assert_eq!(rows[0]["b"], crate::fixture_value!(true));
         assert!(!rows[0].contains_key("unconsumed"));
-        assert!(materialize_rows(&fields, &[], &CGS::default(), "test")
-            .unwrap()
-            .is_empty());
+        assert!(
+            materialize_rows(&fields, &Default::default(), &[], &CGS::default(), "test")
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
     fn row_boundary_rejects_wrong_types_missing_fields_and_excess() {
-        let fields = BTreeMap::from([("n".into(), Kind::Integer)]);
+        let fields = BTreeMap::from([(
+            "n".into(),
+            plasm_core::value_contract::ValueContract::scalar(FieldType::Integer),
+        )]);
         for bad in [
             json!({}),
             json!({"n": "3"}),
@@ -470,10 +688,18 @@ mod tests {
             json!({"n": null}),
             json!({"n": u64::MAX}),
         ] {
-            assert!(materialize_rows(&fields, &[bad], &CGS::default(), "test").is_err());
+            assert!(materialize_rows(
+                &fields,
+                &Default::default(),
+                &[bad],
+                &CGS::default(),
+                "test"
+            )
+            .is_err());
         }
         assert!(materialize_rows(
             &fields,
+            &Default::default(),
             &vec![json!({"n": 1}); MAX_INPUT_ROWS + 1],
             &CGS::default(),
             "test"
@@ -481,4 +707,24 @@ mod tests {
         .is_err());
         assert!(validate_input_budget(&[json!({"s": "x".repeat(1_048_576)})]).is_err());
     }
+}
+
+#[cfg(test)]
+fn test_membership(
+    complete: bool,
+) -> plasm_core::collection_codec::RecordedCollection<plasm_core::Ref> {
+    use plasm_core::collection_codec::{
+        CollectionCodec, CollectionIdentity, Observation, RecordingCodec,
+    };
+    RecordingCodec::new()
+        .record(
+            CollectionIdentity::for_untyped_observation(&"compute_fixture").unwrap(),
+            vec![plasm_core::Ref::new("Row", "1")],
+            if complete {
+                Observation::ExactOutput { decoded: 1 }
+            } else {
+                Observation::UnprovenPage
+            },
+        )
+        .unwrap()
 }

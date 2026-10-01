@@ -1,15 +1,33 @@
+//! Recursive scoped lowering. Body expressions use the ordinary DAG compiler.
+use super::literal_operands::LiteralOperand;
 use super::*;
+use crate::plasm_plan::{InputCardinality, PlanDataInput};
 use std::num::NonZeroU32;
 
-pub(super) fn is_map(e: &PyExpr) -> bool {
-    matches!(e,PyExpr::Call(c) if matches!(&*c.func,PyExpr::Attribute(a) if a.attr.as_str()=="map"))
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum ScopeMode {
+    Record,
+    Rows,
+    Filter,
+    PredicateValue,
+    Value,
+    Quantify(bool),
 }
+
 impl Lower<'_> {
-    pub(super) fn map(
+    pub(super) fn map(&mut self, e: &PyExpr) -> Result<CorrelatedBody, String> {
+        self.scope(e, false, None)
+    }
+
+    pub(super) fn scope(
         &mut self,
         e: &PyExpr,
-        methods: &BTreeMap<String, String>,
+        flatten: bool,
+        source_override: Option<&str>,
     ) -> Result<CorrelatedBody, String> {
+        if self.scope_depth >= 16 {
+            return Err(at(e, "scoped composition exceeds 16 map levels"));
+        }
         let PyExpr::Call(call) = e else {
             return Err(at(e, "expected map"));
         };
@@ -17,336 +35,544 @@ impl Lower<'_> {
             return Err(at(e, "expected map receiver"));
         };
         if call.arguments.args.len() != 1
-            || call.arguments.keywords.len() != 1
-            || call.arguments.keywords[0].arg.as_ref().map(|s| s.as_str()) != Some("max_parents")
+            || call.arguments.keywords.len() > 1
+            || (!flatten && call.arguments.keywords.is_empty())
+            || call
+                .arguments
+                .keywords
+                .first()
+                .is_some_and(|k| k.arg.as_ref().map(|s| s.as_str()) != Some("max_parents"))
         {
-            return Err(at(e, "map requires one lambda and explicit max_parents"));
+            return Err(at(e, "scope requires one callback and optional max_parents; map requires an explicit bound"));
         }
-        let bound = u32::try_from(integer(&call.arguments.keywords[0].value)?)
+        let limit = call
+            .arguments
+            .keywords
+            .first()
+            .map(|k| integer(&k.value))
+            .transpose()?
+            .unwrap_or(if flatten { 65_536 } else { 256 });
+        let bound = u32::try_from(limit)
             .ok()
             .and_then(NonZeroU32::new)
-            .filter(|n| n.get() <= 256)
-            .ok_or("max_parents must be between 1 and 256")?;
-        let source = self.expr(&attr.value, None)?;
-        let node = self.state.get(&source).ok_or("map source missing")?;
-        let super::super::types::DagNodeSource::Surface {
-            qualified_entity: owner,
-            effect_class: EffectClass::Read,
-            ..
-        } = &node.source
-        else {
-            return Err(at(e, "this map slice requires a direct catalog read"));
+            .filter(|n| n.get() <= if flatten { 65_536 } else { 256 })
+            .ok_or("scope parent bound exceeds execution budget")?;
+        let source = match source_override {
+            Some(source) => source.to_owned(),
+            None => self.expr(&attr.value, None)?,
         };
-        let owner = owner.clone();
-        let PyExpr::Lambda(lambda) = &call.arguments.args[0] else {
-            return Err(at(e, "map requires a lambda"));
+        let callback = self.callback(&call.arguments.args[0])?;
+        self.scoped_callback_body(
+            e,
+            &source,
+            &callback,
+            bound,
+            if flatten {
+                ScopeMode::Rows
+            } else {
+                ScopeMode::Record
+            },
+        )
+    }
+
+    pub(super) fn scoped_body(
+        &mut self,
+        e: &PyExpr,
+        source: &str,
+        lambda: &ruff_python_ast::ExprLambda,
+        bound: NonZeroU32,
+        mode: ScopeMode,
+    ) -> Result<CorrelatedBody, String> {
+        let callback = super::callbacks::Callback {
+            lambda: lambda.clone(),
+            prelude: vec![],
+            closure: None,
+            identity: None,
         };
-        let p = lambda
-            .parameters
+        self.scoped_callback_body(e, source, &callback, bound, mode)
+    }
+
+    pub(super) fn scoped_callback_body(
+        &mut self,
+        e: &PyExpr,
+        source: &str,
+        callback: &super::callbacks::Callback,
+        bound: NonZeroU32,
+        mode: ScopeMode,
+    ) -> Result<CorrelatedBody, String> {
+        if self.scope_depth >= 16 {
+            return Err(at(e, "scoped composition exceeds 16 levels"));
+        }
+        let lambda = &callback.lambda;
+        if callback
+            .identity
             .as_ref()
-            .ok_or("map requires one row parameter")?;
-        if p.args.len() != 1
-            || !p.posonlyargs.is_empty()
-            || !p.kwonlyargs.is_empty()
-            || p.vararg.is_some()
-            || p.kwarg.is_some()
-            || p.args[0].default.is_some()
+            .is_some_and(|id| self.active_callbacks.contains(id))
         {
-            return Err(at(e, "map requires one row parameter"));
+            return Err(at(e, "recursive callbacks are not a bounded DAG"));
         }
-        let row = p.args[0].parameter.name.as_str();
-        if row == "self" || row.starts_with("__") {
-            return Err(at(e, "reserved map parameter"));
+        let source = source.to_owned();
+        let flatten = mode == ScopeMode::Rows;
+        let contract = super::super::binding_contract(&self.state, &source)
+            .ok_or("map source contract missing")?;
+        let owner = super::super::schema_validate::resolve_qualified_entity_for_dag_source(
+            &self.state,
+            &[],
+            source.clone(),
+        )
+        .or_else(|| {
+            (!contract.supports_method_invoke()).then(|| QualifiedEntityKey {
+                entry_id: self.es.entry_id.clone(),
+                entity: "__value".into(),
+            })
+        })
+        .ok_or("map rows require typed catalog provenance")?;
+        let row = super::projection::projection_parameter(lambda)?;
+        if row == "self"
+            || row.starts_with("__")
+            || self
+                .state
+                .sym_map_for(self.es)
+                .resolve_session_entity(row)
+                .is_ok()
+        {
+            return Err(at(e, "map parameter must not shadow a reserved binding"));
         }
-        let PyExpr::Dict(dict) = &*lambda.body else {
-            return Err(at(e, "map must return a record"));
-        };
-        if dict.items.is_empty() {
-            return Err(at(e, "map output record must be nonempty"));
-        }
-        let mut body = empty_comp(None);
-        let mut spans = BTreeMap::new();
-        let mut fields = BTreeMap::new();
-        let mut inputs = Vec::new();
-        let mut deps = BTreeSet::from([StepId::new("parent")?]);
-        let symbols = self.state.sym_map_for(self.es);
-        let cgs = crate::catalog_ownership::resolve_cgs_for_entry_entity(
+        let mut scope_names = callback
+            .closure
+            .clone()
+            .unwrap_or_else(|| self.scope_names.clone());
+        let local = format!("__scope{}", self.scope_depth);
+        scope_names.insert(row.to_owned(), local.clone());
+        let row = local.as_str();
+        let row_node = super::super::row_suffix_to_compute(
             self.es,
-            &owner.entry_id,
-            &owner.entity,
+            &self.state,
+            &[],
+            &RowSuffix::Limit { count: 1 },
+            &source,
+            row,
+            "",
         )?;
-        for item in &dict.items {
-            let key = string(
-                item.key
-                    .as_ref()
-                    .ok_or("dictionary unpacking is not admitted")?,
-            )?;
-            let value = match &item.value {
-                PyExpr::Attribute(field) if name(&field.value) == Some(row) => {
-                    let wire = crate::plasm_plan_run::resolve_wire_field_token(
-                        self.es,
-                        None,
-                        Some(&owner),
-                        field.attr.as_str(),
-                    )?;
-                    PlasmDataValue::BindingSymbol {
-                        binding: row.into(),
-                        path: vec![wire],
-                    }
-                }
-                PyExpr::Call(compute) => {
-                    let PyExpr::Attribute(method) = &*compute.func else {
-                        return Err(at(e, "expected self.compute_method"));
-                    };
-                    if name(&method.value) != Some("self")
-                        || compute.arguments.args.len() != 1
-                        || !compute.arguments.keywords.is_empty()
-                    {
-                        return Err(at(e, "compute requires self.method(relation)"));
-                    }
-                    let code = methods
-                        .get(method.attr.as_str())
-                        .ok_or("unknown compute method")?;
-                    let PyExpr::Attribute(hop) = &compute.arguments.args[0] else {
-                        return Err(at(e, "compute requires a captured relation"));
-                    };
-                    if name(&hop.value) != Some(row) {
-                        return Err(at(e, "relation receiver must be the captured row"));
-                    }
-                    let relation = symbols
-                        .resolve_session_relation(hop.attr.as_str())
-                        .map_err(|e| e.to_string())?;
-                    if relation.entry_id.as_str() != owner.entry_id
-                        || relation.source_entity.as_str() != owner.entity
-                    {
-                        return Err(at(e, "relation ownership does not match captured row"));
-                    }
-                    let declared = cgs
-                        .get_entity(&owner.entity)
-                        .ok_or("missing parent entity")?
-                        .relations
-                        .get(relation.relation_wire.as_str())
-                        .ok_or("relation missing from catalog")?;
-                    if declared.cardinality != plasm_core::schema::Cardinality::Many {
-                        return Err(at(e, "compute collection input requires a many relation"));
-                    }
-                    let target = PlanQualifiedEntityKey {
-                        entry_id: owner.entry_id.clone(),
-                        entity: relation.target_entity.to_string(),
-                    };
-                    let target_cgs = crate::catalog_ownership::resolve_cgs_for_entry_entity(
-                        self.es,
-                        &target.entry_id,
-                        &target.entity,
-                    )?;
-                    let checked = crate::python_compute::CheckedCompute::compile(
-                        code,
-                        target_cgs,
-                        &target.entry_id,
-                        symbols.as_ref(),
-                    )?;
-                    if checked.contract.owner.entity.as_str() != target.entity {
-                        return Err(at(e, "compute annotation does not match relation result"));
-                    }
-                    let children = format!("children{}", inputs.len());
-                    let reduced = format!("compute{}", inputs.len());
-                    spans.insert(children.clone(), span(hop));
-                    spans.insert(reduced.clone(), span(compute));
-                    let mut expr =
-                        super::super::relation::relation_continuation_expr_from_source_row_hole(
-                            self.es,
-                            &owner,
-                            relation.relation_wire.as_str(),
-                        )?;
-                    // The shared relation helper uses a source port; this scope calls it parent.
-                    if let plasm_core::Expr::Chain(chain) = &mut expr {
-                        if let plasm_core::Expr::Get(get) = &mut *chain.source {
-                            let entity = cgs.get_entity(&owner.entity).ok_or("missing parent")?;
-                            if !entity.key_vars.is_empty() {
-                                return Err(at(
-                                    e,
-                                    "compound capture identities are not admitted yet",
-                                ));
+        let state = super::super::row_suffix::compile_state_with_nodes(&self.state, &[row_node]);
+        let initial = state.nodes.len();
+        let mut scoped = Lower {
+            imports: self.imports,
+            es: self.es,
+            methods: self.methods,
+            callbacks: self.callbacks.clone(),
+            active_callbacks: self.active_callbacks.clone(),
+            program_source: self.program_source,
+            state,
+            serial: self.serial,
+            row_scope: None,
+            quantifier_names: BTreeMap::new(),
+            branch_types: self.branch_types.clone(),
+            value_depth: 0,
+            spans: BTreeMap::new(),
+            scope_depth: self.scope_depth + 1,
+            scope_row: Some(row.into()),
+            scope_names,
+        };
+        if let Some(identity) = &callback.identity {
+            scoped.active_callbacks.push(identity.clone());
+        }
+        // Allocate the lexical local namespace before elaborating any RHS, so a
+        // read-before-binding cannot accidentally resolve an enclosing variable.
+        fn collect_locals(statements: &[Stmt], locals: &mut BTreeSet<String>) {
+            for statement in statements {
+                match statement {
+                    Stmt::Assign(assign) => {
+                        for target in &assign.targets {
+                            if let Some(label) = name(target) {
+                                locals.insert(label.to_owned());
                             }
-                            get.reference = plasm_core::Ref::simple_binding(
-                                owner.entity.as_str(),
-                                plasm_core::PlasmInputRef::node_output(
-                                    "parent",
-                                    vec![entity.id_field.to_string()],
-                                ),
-                            );
                         }
                     }
-                    body.steps.insert(
-                        children.clone(),
-                        PlasmStepPayload::FlatMapRelation(FlatMapRelationPayload {
-                            relation: plasm_core::plasm_monad::PlanRelationTraversal {
-                                source: "parent".into(),
-                                relation: relation.relation_wire.to_string(),
-                                target: target.clone(),
-                                cardinality: RelationCardinality::Many,
-                                source_cardinality: RelationSourceCardinality::Single,
-                                expr: String::new(),
-                                ir: plasm_core::plasm_monad::PlanExprIr {
-                                    expr,
-                                    projection: None,
-                                    display_expr: None,
-                                },
-                                binding_proofs: vec![],
-                                materialize: declared.materialize.clone(),
-                                view_embed_proof: None,
-                            },
-                            effect_class: EffectClass::Read,
-                            result_shape: ResultShape::List,
-                        }),
-                    );
-                    body.bind.topo.push(StepId::new(&children)?);
-                    body.bind.holes.insert(
-                        StepId::new(&children)?,
-                        vec![PlasmHoleUse {
-                            step: StepId::new("parent")?,
-                            alias: "parent".into(),
-                        }],
-                    );
-                    body.bind.deps.insert(
-                        StepId::new(&children)?,
-                        BTreeSet::from([StepId::new("parent")?]),
-                    );
-                    body.steps.insert(
-                        reduced.clone(),
-                        PlasmStepPayload::Map(MapPayload {
-                            compute: ComputeTemplate {
-                                source: children.clone(),
-                                op: ComputeOp::Python {
-                                    source: code.clone(),
-                                    entry_id: target.entry_id,
-                                    entity: target.entity,
-                                    catalog_hash: target_cgs.catalog_cgs_hash_hex(),
-                                    contract_version: 3,
-                                    input_schema: None,
-                                    per_row: false,
-                                },
-                                schema: SyntheticResultSchema {
-                                    entity: None,
-                                    fields: vec![SyntheticFieldSchema {
-                                        value_type: None,
-                                        name: OutputName::new("content")?,
-                                        value_kind: SyntheticValueKind::String,
-                                        source: None,
-                                    }],
-                                },
-                                page_size: None,
-                                collection_alias: None,
-                            },
-                            effect_class: EffectClass::ArtifactRead,
-                            result_shape: ResultShape::Single,
-                        }),
-                    );
-                    body.bind.topo.push(StepId::new(&reduced)?);
-                    body.bind.deps.insert(
-                        StepId::new(&reduced)?,
-                        BTreeSet::from([StepId::new(&children)?]),
-                    );
-                    inputs.push(PlanDataInput {
-                        node: reduced.clone(),
-                        alias: reduced.clone(),
-                        cardinality: InputCardinality::Singleton,
-                    });
-                    deps.insert(StepId::new(&reduced)?);
-                    PlasmDataValue::NodeSymbol {
-                        node: reduced.clone(),
-                        alias: reduced,
-                        path: vec!["content".into()],
+                    Stmt::If(branch) => {
+                        collect_locals(&branch.body, locals);
+                        for clause in &branch.elif_else_clauses {
+                            collect_locals(&clause.body, locals);
+                        }
                     }
+                    _ => {}
                 }
-                _ => record_value(&item.value, row, &mut |field| {
-                    crate::plasm_plan_run::resolve_wire_field_token(
-                        self.es,
-                        None,
-                        Some(&owner),
-                        field,
-                    )
-                })?,
-            };
-            if fields.insert(key, value).is_some() {
-                return Err(at(e, "duplicate output field"));
             }
         }
-        body.steps.insert(
-            "output".into(),
-            PlasmStepPayload::Derive(DerivePayload {
-                derive: DeriveTemplate {
-                    kind: DeriveKind::Map,
-                    source: Some("parent".into()),
-                    item_binding: Some(BindingName::new(row)?),
-                    inputs,
-                    value: PlasmDataValue::Object { fields },
+        let mut locals = BTreeSet::new();
+        collect_locals(&callback.prelude, &mut locals);
+        for label in locals {
+            if label == super::projection::projection_parameter(lambda)? {
+                return Err(at(e, "rebinding is not admitted"));
+            }
+            // Structural branches continue the same lexical function scope.
+            // Named functions allocate fresh locals even when shadowing captures.
+            if callback.identity.is_none()
+                && callback.closure.is_some()
+                && scoped.scope_names.contains_key(&label)
+            {
+                continue;
+            }
+            let local = scoped.fresh();
+            scoped.scope_names.insert(label, local);
+        }
+        let output = scoped.callback_sequence(&callback.statements(), row, mode)?;
+        let (output, output_contract) = if flatten {
+            let contract = super::super::binding_contract(&scoped.state, &output)
+                .ok_or("missing scoped output contract")?;
+            if contract.value_kind == BindingValueKind::ScalarCell {
+                return Err(at(
+                    lambda.body.as_ref(),
+                    "flat_map requires rows or effects, not a scalar value",
+                ));
+            }
+            let owner = super::super::schema_validate::resolve_qualified_entity_for_dag_source(
+                &scoped.state,
+                &[],
+                output.clone(),
+            )
+            .or_else(|| {
+                (!contract.supports_method_invoke()).then(|| QualifiedEntityKey {
+                    entry_id: self.es.entry_id.clone(),
+                    entity: "__value".into(),
+                })
+            })
+            .ok_or("scoped result has no catalog provenance")?;
+            let node = scoped.state.get(&output).ok_or("missing scope result")?;
+            let acknowledgement = super::super::plan_serialize::lower_plan_node(node)?.result_shape
+                == ResultShape::SideEffectAck;
+            let schema = if acknowledgement {
+                SyntheticResultSchema {
+                    optional_fields: Default::default(),
+                    entity: None,
+                    fields: vec![],
+                }
+            } else {
+                super::text::inferred_schema(self.es, &scoped.state, &output, 0)?
+            };
+            (
+                output,
+                ScopedOutput::Rows {
+                    entity: PlanQualifiedEntityKey {
+                        entry_id: owner.entry_id,
+                        entity: owner.entity,
+                    },
+                    schema,
+                    entity_authority: contract.supports_method_invoke(),
+                    acknowledgement,
                 },
-                effect_class: EffectClass::ArtifactRead,
-                result_shape: ResultShape::Single,
-            }),
-        );
-        body.bind.topo.push(StepId::new("output")?);
-        body.bind.deps.insert(StepId::new("output")?, deps);
-        spans.insert("output".into(), span(&*lambda.body));
-        body.metadata
-            .insert("python_source_spans".into(), serde_json::json!(spans));
-        body.return_ = PlasmReturn::Step {
-            step: StepId::new("output")?,
+            )
+        } else {
+            (
+                output,
+                match mode {
+                    ScopeMode::Filter => ScopedOutput::Filter,
+                    ScopeMode::Quantify(all) => ScopedOutput::Quantify { all },
+                    _ => ScopedOutput::Record,
+                },
+            )
         };
-        Ok(CorrelatedBody {
+        let nodes = scoped
+            .state
+            .nodes
+            .iter()
+            .map(|n| super::super::plan_serialize::lower_plan_node(n))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut plan = crate::plasm_plan::Plan::from_nodes(
+            None,
+            nodes,
+            crate::plasm_plan::PlanReturn::Node { node: output },
+            BTreeMap::new(),
+        );
+        super::super::plan_serialize::stamp_plan_uses_result_qualified_entities(&mut plan)?;
+        let validated = crate::plasm_plan::validate_plan_artifact(&plan)?;
+        let mut body = crate::plasm_comp_wire::plasm_comp_from_validated(&validated).comp;
+        let locals: BTreeSet<_> = scoped.state.nodes[initial..]
+            .iter()
+            .map(|n| StepId::new(&n.id))
+            .collect::<Result<_, _>>()?;
+        // Port dependencies come from operands, not incidental order edges in the outer plan.
+        let mut external = BTreeSet::new();
+        for node in validated
+            .nodes()
+            .iter()
+            .filter(|n| locals.contains(&StepId(n.id().to_string())))
+        {
+            external.extend(
+                node.uses_result()
+                    .iter()
+                    .map(|u| StepId(u.node.clone()))
+                    .filter(|id| !locals.contains(id)),
+            );
+        }
+        // Returning an enclosing binding is itself a use, even when the scope
+        // has no local operations. Seal it through the same typed capture port.
+        if let PlasmReturn::Step { step } = &body.return_ {
+            if !locals.contains(step) {
+                external.insert(step.clone());
+            }
+        }
+        external.insert(StepId::new(row)?);
+        body.steps
+            .retain(|id, _| locals.contains(&StepId(id.clone())));
+        body.bind.topo.retain(|id| locals.contains(id));
+        body.bind.deps.retain(|id, _| locals.contains(id));
+        for deps in body.bind.deps.values_mut() {
+            deps.retain(|id| locals.contains(id) || external.contains(id));
+        }
+        body.bind.holes.retain(|id, _| locals.contains(id));
+        body.bind.primary.retain(|id, from| {
+            locals.contains(id) && (locals.contains(from) || external.contains(from))
+        });
+        body.metadata.clear();
+        body.metadata.insert(
+            "python_source_spans".into(),
+            serde_json::json!(scoped.spans),
+        );
+        let mut captures = Vec::new();
+        for id in external.iter().filter(|id| id.as_str() != row) {
+            let contract = super::super::binding_contract(&scoped.state, id.as_str())
+                .ok_or("capture contract missing")?;
+            let owner = super::super::schema_validate::resolve_qualified_entity_for_dag_source(
+                &scoped.state,
+                &[],
+                id.to_string(),
+            )
+            .or_else(|| {
+                (!contract.supports_method_invoke()).then(|| QualifiedEntityKey {
+                    entry_id: self.es.entry_id.clone(),
+                    entity: "__value".into(),
+                })
+            })
+            .ok_or("captured value requires catalog provenance")?;
+            let schema = super::text::inferred_schema(self.es, &scoped.state, id.as_str(), 0)?;
+            let value_contract = if contract.value_kind == BindingValueKind::ScalarCell {
+                Some(
+                    schema
+                        .fields
+                        .first()
+                        .and_then(|field| field.value_type.clone())
+                        .ok_or("scalar capture contract missing")?,
+                )
+            } else {
+                None
+            };
+            captures.push(ScopedCapture {
+                source: id.clone(),
+                local: id.clone(),
+                entity: PlanQualifiedEntityKey {
+                    entry_id: owner.entry_id,
+                    entity: owner.entity,
+                },
+                schema,
+                value_contract,
+                singleton: contract.row_cardinality.permits_scalar_field_extract(),
+                entity_authority: contract.supports_method_invoke(),
+            });
+        }
+        self.serial = scoped.serial;
+        let result = CorrelatedBody {
+            output: output_contract,
             parent: ParentCapture {
-                source: StepId::new(source)?,
-                local: StepId::new("parent")?,
+                source: StepId::new(&source)?,
+                local: StepId::new(row)?,
                 entity: PlanQualifiedEntityKey {
                     entry_id: owner.entry_id,
                     entity: owner.entity,
                 },
             },
+            parent_entity_authority: contract.supports_method_invoke(),
+            parent_schema: Some(super::text::inferred_schema(
+                self.es,
+                &self.state,
+                &source,
+                0,
+            )?),
+            captures,
             max_parents: bound,
             body,
-        })
+        };
+        result.execution_layers()?;
+        Ok(result)
     }
-}
 
-fn record_value(
-    expr: &PyExpr,
-    row: &str,
-    resolve: &mut impl FnMut(&str) -> Result<String, String>,
-) -> Result<PlasmDataValue, String> {
-    Ok(match expr {
-        PyExpr::Attribute(field) if name(&field.value) == Some(row) => {
-            PlasmDataValue::BindingSymbol {
-                binding: row.into(),
-                path: vec![resolve(field.attr.as_str())?],
-            }
+    /// Assemble values using ordinary nodes, never evaluating outer Python.
+    pub(super) fn scoped_value(
+        &mut self,
+        e: &PyExpr,
+        inputs: &mut BTreeMap<String, PlanDataInput>,
+    ) -> Result<PlasmDataValue, String> {
+        if self.value_depth >= 64 {
+            return Err(at(e, "value expression depth exceeds 64"));
         }
-        PyExpr::Dict(dict) => {
-            let mut fields = BTreeMap::new();
-            for item in &dict.items {
-                let key = string(
-                    item.key
-                        .as_ref()
-                        .ok_or("dictionary unpacking is not admitted")?,
-                )?;
-                if fields
-                    .insert(key, record_value(&item.value, row, resolve)?)
-                    .is_some()
-                {
-                    return Err("duplicate record field".into());
+        self.value_depth += 1;
+        let result = self.scoped_value_inner(e, inputs);
+        self.value_depth -= 1;
+        let value = result?;
+        if self.quantifier_names.is_empty() {
+            if let Some(evidence) = self
+                .reference(e)
+                .and_then(|reference| self.branch_types.get(&reference))
+                .cloned()
+            {
+                let original = self.value_type(&value, inputs)?;
+                let contract = original.refined_by(&evidence)?;
+                if contract != original {
+                    return Ok(PlasmDataValue::Expression {
+                        expression: plasm_core::value_expression::ValueOperation::Refine {
+                            value: Box::new(value),
+                            contract,
+                        },
+                    });
                 }
             }
-            PlasmDataValue::Object { fields }
         }
-        PyExpr::List(list) => PlasmDataValue::Array {
-            items: list
-                .elts
-                .iter()
-                .map(|e| record_value(e, row, resolve))
-                .collect::<Result<_, _>>()?,
-        },
-        _ => PlasmDataValue::Literal {
-            value: plasm_core::operand_binding::ResolvedValue::new(literal(expr)?)?,
-        },
-    })
+        Ok(value)
+    }
+    fn scoped_value_inner(
+        &mut self,
+        e: &PyExpr,
+        inputs: &mut BTreeMap<String, PlanDataInput>,
+    ) -> Result<PlasmDataValue, String> {
+        if super::quantifiers::expression_root(e)
+            .is_some_and(|name| self.quantifier_names.contains_key(name))
+        {
+            return match e {
+                PyExpr::Name(name) => Ok(PlasmDataValue::BindingSymbol {
+                    binding: self.quantifier_names[name.id.as_str()].clone(),
+                    path: vec![],
+                }),
+                PyExpr::Attribute(attr) => Ok(PlasmDataValue::Expression {
+                    expression: plasm_core::value_expression::ValueOperation::Field {
+                        value: Box::new(self.scoped_value(&attr.value, inputs)?),
+                        name: attr.attr.to_string(),
+                    },
+                }),
+                _ => unreachable!(),
+            };
+        }
+        if let Some(value) = self.value_operation(e, inputs)? {
+            return Ok(value);
+        }
+        if let Some(value) = LiteralOperand::classify(e) {
+            return self.scoped_literal(e, value, inputs);
+        }
+        Ok(match e {
+            PyExpr::Attribute(_) => {
+                let (node, path) = match self.field_input(e)? {
+                    plasm_core::PlasmInputRef::NodeInput { node, path } => (node, path),
+                    plasm_core::PlasmInputRef::RowBinding { binding, path } => {
+                        return Ok(PlasmDataValue::BindingSymbol { binding, path });
+                    }
+                };
+                inputs.insert(
+                    node.clone(),
+                    PlanDataInput {
+                        node: node.clone(),
+                        alias: node.clone(),
+                        cardinality: InputCardinality::Singleton,
+                    },
+                );
+                PlasmDataValue::NodeSymbol {
+                    node: node.clone(),
+                    alias: node,
+                    path,
+                }
+            }
+            // A bound rowset is a value dependency just like a rowset-producing
+            // expression. Resolve it through the scope ports, never as a literal.
+            PyExpr::Name(_) | PyExpr::Call(_) | PyExpr::FString(_) => {
+                let node = self.expr(e, None)?;
+                let is_compute = matches!(
+                    &self.state.get(&node).ok_or("missing scoped result")?.source,
+                    super::super::types::DagNodeSource::Compute {
+                        op: ComputeOp::Python { .. },
+                        ..
+                    }
+                );
+                let scalar = super::super::binding_contract(&self.state, &node)
+                    .is_some_and(|contract| contract.value_kind == BindingValueKind::ScalarCell);
+                let record = matches!(
+                    &self.state.get(&node).ok_or("missing value result")?.source,
+                    super::super::types::DagNodeSource::Derive {
+                        value_type: Some(_),
+                        ..
+                    }
+                ) && self.state.get(&node).is_some_and(|node| node.singleton);
+                let acknowledgement = matches!(
+                    &self.state.get(&node).ok_or("missing effect result")?.source,
+                    super::super::types::DagNodeSource::Surface {
+                        result_shape: ResultShape::SideEffectAck,
+                        ..
+                    }
+                );
+                inputs.insert(
+                    node.clone(),
+                    PlanDataInput {
+                        node: node.clone(),
+                        alias: node.clone(),
+                        cardinality: if acknowledgement {
+                            InputCardinality::Acknowledgement
+                        } else if self.scope_row.as_deref() == Some(node.as_str())
+                            || record
+                            || ((is_compute || scalar)
+                                && super::super::binding_contract(&self.state, &node).is_some_and(
+                                    |c| c.row_cardinality.permits_scalar_field_extract(),
+                                ))
+                        {
+                            InputCardinality::Singleton
+                        } else {
+                            InputCardinality::Collection
+                        },
+                    },
+                );
+                PlasmDataValue::NodeSymbol {
+                    node: node.clone(),
+                    alias: node,
+                    path: vec![],
+                }
+            }
+            _ => PlasmDataValue::Literal {
+                value: plasm_core::operand_binding::ResolvedValue::new(literal(e)?)?,
+            },
+        })
+    }
+    fn scoped_literal(
+        &mut self,
+        e: &PyExpr,
+        value: LiteralOperand<'_>,
+        inputs: &mut BTreeMap<String, PlanDataInput>,
+    ) -> Result<PlasmDataValue, String> {
+        Ok(match value {
+            LiteralOperand::Record(dict) => {
+                let mut fields = BTreeMap::new();
+                for item in &dict.items {
+                    let key = string(
+                        item.key
+                            .as_ref()
+                            .ok_or("dictionary unpacking is not admitted")?,
+                    )?;
+                    let value = self.scoped_value(&item.value, inputs)?;
+                    if fields.insert(key, value).is_some() {
+                        return Err(at(e, "duplicate output field"));
+                    }
+                }
+                PlasmDataValue::Object { fields }
+            }
+            LiteralOperand::Array(list) => PlasmDataValue::Array {
+                items: list
+                    .elts
+                    .iter()
+                    .map(|e| self.scoped_value(e, inputs))
+                    .collect::<Result<_, _>>()?,
+            },
+            scalar @ (LiteralOperand::Text(_)
+            | LiteralOperand::Number(_)
+            | LiteralOperand::Signed(_)
+            | LiteralOperand::Boolean(_)
+            | LiteralOperand::Null(())) => PlasmDataValue::Literal {
+                value: plasm_core::operand_binding::ResolvedValue::new(scalar.scalar(e)?)?,
+            },
+        })
+    }
 }

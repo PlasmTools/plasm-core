@@ -11,7 +11,8 @@ use std::fmt;
 use thiserror::Error;
 
 /// Scalar accepted inside a compound `entity_ref` map (and as a unary ref value).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(untagged)]
 pub enum EntityRefAtom {
     String(String),
     Integer(i64),
@@ -21,7 +22,8 @@ pub enum EntityRefAtom {
 
 /// Recursive compound `entity_ref` constructor: leaves are [`EntityRefAtom`]; nesting is
 /// `Compound` maps (e.g. nested compound-key targets in parser compensation).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(untagged)]
 pub enum EntityRefPayload {
     Atom(EntityRefAtom),
     Compound(IndexMap<String, EntityRefPayload>),
@@ -56,7 +58,7 @@ impl EntityRefPayload {
                 Ok(Self::Atom(EntityRefAtom::String(s.clone())))
             }
             Value::Array(_) => Err(EntityRefValueError::Array),
-            Value::Money(_) => Err(EntityRefValueError::Unsupported),
+            Value::Money(_) | Value::Unsigned(_) => Err(EntityRefValueError::Unsupported),
             Value::Object(m) => {
                 if m.is_empty() {
                     return Err(EntityRefValueError::EmptyCompound);
@@ -87,6 +89,45 @@ impl EntityRefPayload {
     #[inline]
     pub fn value_is_legal_shape(v: &Value) -> bool {
         Self::try_from_value(v).is_ok()
+    }
+}
+
+/// Narrow an observed row using its structural identity, never its arbitrary fields.
+/// The caller resolves `target` in the catalog pinned by the value contract.
+pub(crate) fn observed_reference_payload(
+    value: &Value,
+    target: &EntityDef,
+    target_name: &str,
+) -> Result<Value, String> {
+    let reference = value
+        .get("_ref")
+        .and_then(crate::RefWire::from_value)
+        .ok_or("observed entity reference requires a structural _ref")?;
+    match reference {
+        crate::RefWire::Simple { entity, id } => {
+            if entity != target_name || target.key_vars.len() > 1 {
+                return Err("observed entity reference target/key shape mismatch".into());
+            }
+            Ok(Value::String(id))
+        }
+        crate::RefWire::Compound { entity, parts } => {
+            if entity != target_name
+                || target.key_vars.len() < 2
+                || parts.len() != target.key_vars.len()
+                || target
+                    .key_vars
+                    .iter()
+                    .any(|key| !parts.contains_key(key.as_str()))
+            {
+                return Err("observed entity reference target/key shape mismatch".into());
+            }
+            Ok(Value::Object(
+                parts
+                    .into_iter()
+                    .map(|(k, v)| (k, Value::String(v)))
+                    .collect(),
+            ))
+        }
     }
 }
 

@@ -467,7 +467,7 @@ mod tests {
                         _ => RelationScopedFallback::HydrateFromEmbedPath { get_capability: capability, path: vec![] },
                     },
                 }),
-                6 => Some(RelationMaterialization::FromParentGet { path: vec![] }),
+                6 => Some(RelationMaterialization::FromParentGet { path: vec![], collection_coverage: Default::default() }),
                 7 => Some(RelationMaterialization::ViewEmbed { view: "private_view".into() }),
                 8 => Some(RelationMaterialization::Unavailable),
                 _ => None,

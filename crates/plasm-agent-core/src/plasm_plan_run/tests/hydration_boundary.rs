@@ -3,6 +3,7 @@ use crate::execute_session::ExecuteSession;
 use async_trait::async_trait;
 use plasm_compile::CompiledRequest;
 use plasm_core::{discovery::CgsRegistry, CgsContext, TeachingExposureSession, Value};
+use plasm_runtime::ExecutionFailure;
 use plasm_runtime::{
     auth::ResolvedAuth, ExecutionConfig, ExecutionEngine, ExecutionMode, HttpTransport,
     RuntimeError,
@@ -37,7 +38,7 @@ impl HttpTransport for Transport {
                 .map(|id| json!({"note_id":id}))
                 .collect::<Vec<_>>()),
             ["folders", _] => {
-                json!({"id":"root", "notes":self.ids.iter().map(|id| json!({"note_id":id})).collect::<Vec<_>>()})
+                json!({"id":"root", "notes":self.ids.iter().map(|id| json!({"note_id":id})).collect::<Vec<_>>(), "payload":{"items":self.ids.iter().map(|id| json!({"id":id})).collect::<Vec<_>>()}})
             }
             ["notes", id] => {
                 let id: i64 = id.parse().expect("note identity must be a wire integer");
@@ -50,7 +51,7 @@ impl HttpTransport for Transport {
                     } else {
                         json!({"owner_id":id})
                     };
-                    json!({"note_id":id,"title":format!("note-{id}"),"owners":[owner]})
+                    json!({"note_id":id,"title":format!("note-{id}"),"body":null,"owners":[owner]})
                 }
             }
             ["owners", id] => {
@@ -115,7 +116,10 @@ fn session() -> ExecuteSession {
         None,
     )
 }
-async fn run(program: &str, token: String) -> Result<super::super::PlasmPlanRunResult, String> {
+async fn run(
+    program: &str,
+    token: String,
+) -> Result<super::super::PlasmPlanRunResult, ExecutionFailure> {
     run_case(program, token, vec![1, 2], false, false).await
 }
 async fn run_case(
@@ -124,7 +128,22 @@ async fn run_case(
     ids: Vec<i64>,
     full_embed: bool,
     delayed: bool,
-) -> Result<super::super::PlasmPlanRunResult, String> {
+) -> Result<super::super::PlasmPlanRunResult, ExecutionFailure> {
+    run_source_case(TestSource::Oracle(program), token, ids, full_embed, delayed).await
+}
+
+enum TestSource<'a> {
+    Oracle(&'a str),
+    Python(&'a str),
+}
+
+async fn run_source_case(
+    source: TestSource<'_>,
+    token: String,
+    ids: Vec<i64>,
+    full_embed: bool,
+    delayed: bool,
+) -> Result<super::super::PlasmPlanRunResult, ExecutionFailure> {
     let es = session();
     let calls = Arc::new(Mutex::new(vec![]));
     let engine = ExecutionEngine::new_with_transport(
@@ -156,8 +175,15 @@ async fn run_case(
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
     });
-    let bundle = crate::compile_plasm_program(&Default::default(), None, &es, "boundary", program)
-        .expect("compile");
+    let bundle = match source {
+        TestSource::Oracle(program) => {
+            crate::compile_plasm_program(&Default::default(), None, &es, "boundary", program)
+                .expect("oracle compile")
+        }
+        TestSource::Python(program) => crate::plasm_compile::compile_python_program(&es, program)
+            .await
+            .expect("Python compile"),
+    };
     let comp =
         serde_json::from_slice(&serde_json::to_vec(&bundle.artifact().comp).unwrap()).unwrap();
     let bundle = crate::PlasmCompBundle::new(
@@ -178,7 +204,14 @@ async fn run_case(
         None,
     ))
     .await
-    .map_err(|e| format!("cold: {e}; calls={:?}", calls.lock().unwrap()))?;
+    .map_err(|failure| {
+        eprintln!(
+            "cold: {}; calls={:?}",
+            failure.diagnostic(),
+            calls.lock().unwrap()
+        );
+        failure
+    })?;
     let result = Box::pin(super::super::run_plasm_comp(
         &es,
         &host,
@@ -192,7 +225,7 @@ async fn run_case(
         None,
     ))
     .await;
-    result.map_err(|e| format!("{e}; calls={:?}", calls.lock().unwrap()))
+    result
 }
 #[test]
 fn boundary_relation_hydration_preserves_provision_and_wire_identity() {
@@ -264,7 +297,7 @@ proptest! {
             let get = if scoped {"_.note"} else {"Note(_.note_id)"};
             let program = format!("auth = Session.login()\nsaved = SavedNote{{access_token=auth.access_token}}\nnotes = saved => {get}\nowners = notes => _.owners\nowners");
             let result = run_case(&program, token, ids.clone(), full_embed, delayed).await.expect("serialized live hydration");
-            let rows = &result.return_steps.iter().find(|step|step.name.as_deref()==Some("owners")).expect("owners return").result.entities;
+            let rows = &result.return_steps.iter().find(|step|step.name.as_deref()==Some("owners")).expect("owners return").result.entities();
             let cgs = session().cgs;
             let actual: Vec<_> = rows.iter().map(|row| {
                 let value = plasm_runtime::entity_to_agent_row_json(row, Some(&cgs));
@@ -287,23 +320,30 @@ fn boundary_cached_relation_row_roundtrip_retains_typed_identity() {
     on_runtime(async {
         let result = run("auth = Session.login()\nsaved = SavedNote{access_token=auth.access_token}\nnotes = saved => Note(_.note_id)\nnotes", "token".into()).await.unwrap();
         let cgs = session().cgs;
-        let notes = &result
+        let notes = result
             .return_steps
             .iter()
             .find(|step| step.name.as_deref() == Some("notes"))
             .unwrap()
             .result
-            .entities;
+            .entities();
         for note in notes {
             let wire = plasm_runtime::entity_to_row_json(note, Some(&cgs));
             let wire: serde_json::Value =
                 serde_json::from_slice(&serde_json::to_vec(&wire).unwrap()).unwrap();
             let restored = plasm_runtime::CachedEntity::from_row_json("Note", &wire, &cgs).unwrap();
-            assert_eq!(restored.relations, note.relations);
-            let children = wire["owners"].as_array().unwrap();
+            assert_eq!(
+                restored.relations["owners"].iter().collect::<Vec<_>>(),
+                note.relations["owners"].iter().collect::<Vec<_>>()
+            );
+            assert!(
+                !restored.relations["owners"].is_exhaustive(),
+                "public rows cannot mint membership evidence"
+            );
+            let children: Vec<plasm_core::ValueRow> =
+                serde_json::from_value(wire["owners"].clone()).unwrap();
             let decoded =
-                super::super::json_rows_to_entities_with_refs("Owner", children, Some(&cgs))
-                    .unwrap();
+                super::super::rows_to_entities_with_refs("Owner", &children, Some(&cgs)).unwrap();
             for child in &decoded {
                 let program = format!(
                     "owner = Owner({})\nowner",
@@ -313,7 +353,7 @@ fn boundary_cached_relation_row_roundtrip_retains_typed_identity() {
                     .await
                     .expect("decoded identity reaches integer transport");
                 assert_eq!(
-                    hydrated.return_steps[0].result.entities[0].reference,
+                    hydrated.return_steps[0].result.entities()[0].reference,
                     child.reference
                 );
             }
@@ -322,7 +362,7 @@ fn boundary_cached_relation_row_roundtrip_retains_typed_identity() {
                     .iter()
                     .map(|row| row.reference.clone())
                     .collect::<Vec<_>>(),
-                note.relations["owners"],
+                note.relations["owners"].iter().cloned().collect::<Vec<_>>(),
                 "internal relation JSON must be executable wire identity, not display text"
             );
         }
@@ -335,7 +375,7 @@ proptest! {
     fn boundary_union_uses_public_values_for_stable_distinct(ids in prop::collection::vec(1i64..12, 1..12)) {
         on_runtime(async move {
             let result = run_case("auth = Session.login()\nsaved = SavedNote{access_token=auth.access_token}\nnotes = saved => Note(_.note_id)\nowners = notes => _.owners\nprojected = owners | select owner_id, name, description, _tag\nmerged = owners | union projected\nmerged", "token".into(), ids.clone(), false, true).await.expect("public union");
-            let actual: Vec<_> = result.return_steps.iter().find(|step| step.name.as_deref()==Some("merged")).unwrap().result.entities.iter().map(|row| {
+            let actual: Vec<_> = result.return_steps.iter().find(|step| step.name.as_deref()==Some("merged")).unwrap().result.entities().iter().map(|row| {
                 let value = plasm_runtime::entity_to_agent_row_json(row, None);
                 let id = value["owner_id"].as_i64().unwrap();
                 assert_eq!(value["_tag"], format!("tag-{id}"), "declared underscore columns are public values");
@@ -371,7 +411,7 @@ fn boundary_union_retains_identity_for_following_relation() {
             .find(|step| step.name.as_deref() == Some("owners"))
             .unwrap()
             .result
-            .entities;
+            .entities();
         assert_eq!(
             rows.iter()
                 .map(|row| row.reference.primary_slot_str())
@@ -396,7 +436,7 @@ proptest::proptest! {
             let mut high=source.to_vec();high.sort_by(|a,b|b.cmp(a));high.truncate(cap);
             for (name, expected) in [("saved",source),("sample",&source[..source.len().min(cap)]),("high",high.as_slice())] {
                 let step=result.return_steps.iter().find(|s|s.name.as_deref()==Some(name)).expect("returned binding");
-                let actual:Vec<_>=step.result.entities.iter().map(|row|plasm_runtime::entity_to_agent_row_json(row,Some(&cgs))["note_id"].as_i64().unwrap()).collect();
+                let actual:Vec<_>=step.result.entities().iter().map(|row|plasm_runtime::entity_to_agent_row_json(row,Some(&cgs))["note_id"].as_i64().unwrap()).collect();
                 assert_eq!(actual,expected,"{name}: identity, order, multiplicity and integer type");
             }
         });
@@ -419,7 +459,7 @@ fn boundary_fanout_above_one_thousand_survives_compile_serde_and_execution() {
         let cgs = session().cgs;
         let actual: Vec<_> = step
             .result
-            .entities
+            .entities()
             .iter()
             .map(|row| {
                 plasm_runtime::entity_to_agent_row_json(row, Some(&cgs))["note_id"]
@@ -428,5 +468,52 @@ fn boundary_fanout_above_one_thousand_survives_compile_serde_and_execution() {
             })
             .collect();
         assert_eq!(actual, (1..=1002).collect::<Vec<_>>());
+    });
+}
+
+#[test]
+fn membership_evidence_survives_nested_python_filter_and_warm_cache() {
+    on_runtime(async {
+        let es = session();
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let program = format!(
+            r#"class Report(Program):
+    def build(self):
+        auth = {session}.{login}()
+        folder = {folder}.get("root")
+        notes = folder.{notes}.where(lambda note: note.note_id > 0)
+        owners = notes.flat_map(lambda note: note.{owners}.where(lambda owner: owner.owner_id > 0))
+        return owners
+"#,
+            session = symbols.entity_sym_for("matrix", "Session"),
+            login = symbols.method_sym_for("matrix", "Session", "login"),
+            folder = symbols.entity_sym_for("matrix", "Folder"),
+            notes = symbols.ident_sym_relation_for("matrix", "Folder", "wire_notes"),
+            owners = symbols.ident_sym_relation_for("matrix", "Note", "owners")
+        );
+        let result = run_source_case(
+            TestSource::Python(&program),
+            "membership-token".into(),
+            vec![1, 2, 2],
+            false,
+            false,
+        )
+        .await
+        .expect("nested complete memberships");
+        // Requested roots precede separate effect receipts, whose row count is zero.
+        let returned = &result
+            .return_steps
+            .first()
+            .expect("requested owners")
+            .result;
+        assert_eq!(returned.count(), 3);
+        assert_eq!(
+            returned
+                .entities()
+                .iter()
+                .map(|row| row.reference.primary_slot_str())
+                .collect::<Vec<_>>(),
+            ["1", "2", "2"]
+        );
     });
 }

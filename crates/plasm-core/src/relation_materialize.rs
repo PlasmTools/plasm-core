@@ -7,7 +7,7 @@
 //! are hydrated via target GET before plan compute (see `plasm_plan_run::relation_hydrate`).
 
 use crate::{Cardinality, EmbedOnMissPolicy, JsonPathSegment, Ref, RelationMaterialization};
-use serde_json::Value;
+use crate::{Value, ValueRow};
 
 /// Max depth for chained `from_parent_get` embed decode, graph insert, and wire-row rebuild (CEP-10).
 pub const MAX_FROM_PARENT_GET_EMBED_DEPTH: usize = 8;
@@ -45,6 +45,25 @@ pub fn extract_from_parent_get_value(row: &Value, path: &[JsonPathSegment]) -> V
         }
     }
     walk(row, path, 0)
+}
+
+/// Count exhaustive path leaves; explicit empty arrays are evidence, missing/null paths are not.
+/// Checks every wildcard branch, including suffixes after the wildcard.
+pub fn exhaustive_from_parent_get_count(value: &Value, path: &[JsonPathSegment]) -> Option<usize> {
+    let Some((segment, tail)) = path.split_first() else {
+        return (!value.is_null()).then_some(1);
+    };
+    match segment {
+        JsonPathSegment::Key { key } => {
+            exhaustive_from_parent_get_count(value.get(key.as_str())?, tail)
+        }
+        JsonPathSegment::Wildcard { wildcard: true } => {
+            value.as_array()?.iter().try_fold(0usize, |count, item| {
+                count.checked_add(exhaustive_from_parent_get_count(item, tail)?)
+            })
+        }
+        JsonPathSegment::Wildcard { wildcard: false } => None,
+    }
 }
 
 /// Returns true when every ref is present in `get` and has the expected target entity type.
@@ -239,7 +258,7 @@ pub(crate) fn find_entity_cycle(
 
 /// Flatten extracted path values across parent rows (plan materialize helper).
 pub fn flatten_from_parent_get_source_rows(
-    source_rows: &[Value],
+    source_rows: &[ValueRow],
     path: &[JsonPathSegment],
     cardinality: Cardinality,
 ) -> Vec<Value> {
@@ -281,6 +300,18 @@ mod tests {
     use indexmap::IndexMap;
 
     #[test]
+    fn embedded_collection_coverage_serialization_is_explicit() {
+        let absent = serde_json::json!({"kind":"from_parent_get", "path":[{"key":"items"},{"wildcard":true}]});
+        let parsed: RelationMaterialization = serde_json::from_value(absent.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), absent);
+        let complete = serde_json::json!({"kind":"from_parent_get", "collection_coverage":"complete", "path":[{"key":"items"},{"wildcard":true}]});
+        let parsed: RelationMaterialization = serde_json::from_value(complete.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), complete);
+        let invalid = serde_json::json!({"kind":"from_parent_get", "collection_coverage":"maybe", "path":[{"key":"items"}]});
+        assert!(serde_json::from_value::<RelationMaterialization>(invalid).is_err());
+    }
+
+    #[test]
     fn pure_query_scoped_always_scoped() {
         let mat = RelationMaterialization::QueryScopedBindings {
             capability: "cap".into(),
@@ -290,7 +321,7 @@ mod tests {
             &mat,
             "tags",
             "Tag",
-            &serde_json::json!({"tags": [{"id": 1}]}),
+            &crate::fixture_value!({"tags": [{"id": 1}]}),
             Some(&[Ref::new("Tag", "1")]),
             |_| true,
         );
@@ -313,7 +344,7 @@ mod tests {
             &mat,
             "labels",
             "Label",
-            &serde_json::json!({"labels": []}),
+            &crate::fixture_value!({"labels": []}),
             Some(&[]),
             |_| true,
         );
@@ -336,7 +367,7 @@ mod tests {
             },
         };
         let refs = vec![Ref::new("Label", "99")];
-        let row = serde_json::json!({"labels": [{"id": 99}]});
+        let row = crate::fixture_value!({"labels": [{"id": 99}]});
         let resolutions = partition_prefer_resolutions(
             &mat,
             "labels",
@@ -364,7 +395,7 @@ mod tests {
             },
         };
         let refs = vec![Ref::new("LangTag", "t1")];
-        let projected = serde_json::json!({"id": "i1", "title": "Demo"});
+        let projected = crate::fixture_value!({"id": "i1", "title": "Demo"});
         let res = resolve_relation_row_resolution(
             &mat,
             "tags",
@@ -392,7 +423,7 @@ mod tests {
             },
         };
         let refs = vec![Ref::new("LangTag", "t1")];
-        let row = serde_json::json!({"tags": [{"id": "t1"}]});
+        let row = crate::fixture_value!({"tags": [{"id": "t1"}]});
         let res =
             resolve_relation_row_resolution(&mat, "tags", "LangTag", &row, Some(&refs), |_| false);
         assert_eq!(res, RelationRowResolution::ScopedQuery);
@@ -431,7 +462,7 @@ mod tests {
                 get_capability: "pokemon_get".into(),
             },
         };
-        let row = serde_json::json!({
+        let row = crate::fixture_value!({
             "name": "electric",
             "pokemon": [
                 { "pokemon": { "name": "pikachu", "url": "https://pokeapi.co/api/v2/pokemon/25/" } }
@@ -439,7 +470,10 @@ mod tests {
         });
         let extracted = extract_from_parent_get_value(&row, &path);
         assert_eq!(extracted.len(), 1);
-        assert_eq!(extracted[0]["name"], "pikachu");
+        assert_eq!(
+            extracted[0].get("name").and_then(Value::as_str),
+            Some("pikachu")
+        );
         let res =
             resolve_relation_row_resolution(&mat, "pokemon", "Pokemon", &row, None, |_| false);
         assert_eq!(res, RelationRowResolution::ScopedQuery);
@@ -492,7 +526,7 @@ mod tests {
             &mat,
             "tags",
             "LangTag",
-            &serde_json::json!({ "item_id": "i1" }),
+            &crate::fixture_value!({ "item_id": "i1" }),
             None,
             |_| false,
         );

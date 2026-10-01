@@ -42,7 +42,9 @@ pub(super) fn analyze_static_cardinality(
         };
         let node = &plan.nodes[index];
         let proof = match node.kind {
-            PlanNodeKind::Get => RowCardinalityProof::StaticSingleton,
+            kind if surface_is_singleton(kind, node.result_shape) => {
+                RowCardinalityProof::StaticSingleton
+            }
             PlanNodeKind::Data => match &node.data {
                 Some(PlanValue::Array { items }) if items.len() == 1 => {
                     RowCardinalityProof::StaticSingleton
@@ -70,7 +72,9 @@ pub(super) fn analyze_static_cardinality(
                 .compute
                 .as_ref()
                 .map(|compute| match &compute.op {
-                    ComputeOp::Aggregate { .. } | ComputeOp::Python { per_row: false, .. } => {
+                    ComputeOp::MergeBranches { .. }
+                    | ComputeOp::Aggregate { .. }
+                    | ComputeOp::Python { per_row: false, .. } => {
                         RowCardinalityProof::StaticSingleton
                     }
                     ComputeOp::Render { .. } | ComputeOp::Python { per_row: true, .. } => {
@@ -151,8 +155,14 @@ fn validated_analyze_static_cardinality(
         };
         let node = &plan.nodes[index];
         let proof = match node {
-            ValidatedPlanNode::Capture(_) => RowCardinalityProof::StaticSingleton,
-            ValidatedPlanNode::Surface(s) if s.kind == PlanNodeKind::Get => {
+            ValidatedPlanNode::Capture(c) => {
+                if c.singleton {
+                    RowCardinalityProof::StaticSingleton
+                } else {
+                    RowCardinalityProof::StaticPlural
+                }
+            }
+            ValidatedPlanNode::Surface(s) if surface_is_singleton(s.kind, s.result_shape) => {
                 RowCardinalityProof::StaticSingleton
             }
             ValidatedPlanNode::Data(d) => match &d.data {
@@ -171,7 +181,8 @@ fn validated_analyze_static_cardinality(
             },
             ValidatedPlanNode::Derive(d) => inner(plan, by_id, d.source.as_str(), memo),
             ValidatedPlanNode::Compute(c) => match &c.compute.op {
-                ComputeOp::Aggregate { .. }
+                ComputeOp::MergeBranches { .. }
+                | ComputeOp::Aggregate { .. }
                 | ComputeOp::Render { .. }
                 | ComputeOp::Python { per_row: false, .. } => RowCardinalityProof::StaticSingleton,
                 ComputeOp::Python { per_row: true, .. } => {
@@ -212,6 +223,19 @@ fn validated_analyze_static_cardinality(
     inner(plan, by_id, node_id, &mut HashMap::new())
 }
 
+/// Catalog entity-returning mutations have the same singleton result contract
+/// as Get. A list read cannot acquire this proof by changing its wire shape.
+fn surface_is_singleton(kind: PlanNodeKind, shape: super::ResultShape) -> bool {
+    kind == PlanNodeKind::Get
+        || (matches!(
+            kind,
+            PlanNodeKind::Create
+                | PlanNodeKind::Update
+                | PlanNodeKind::Delete
+                | PlanNodeKind::Action
+        ) && shape == super::ResultShape::MutationResult)
+}
+
 /// Limit≤1 → BoundedSingleton; `from_plural_source` matches DAG binding_contract (StaticPlural /
 /// RuntimeChecked parents only).
 fn limit_one_bounded(source: RowCardinalityProof) -> RowCardinalityProof {
@@ -223,6 +247,26 @@ fn limit_one_bounded(source: RowCardinalityProof) -> RowCardinalityProof {
         kind: BoundedSingletonKind::LimitOne,
         from_plural_source,
     }
+}
+
+/// Reuse the ordinary cardinality lattice when admitting an enclosing scope port.
+pub(crate) fn scoped_capture_permits_singleton(nodes: &[ValidatedPlanNode], source: &str) -> bool {
+    let Ok(id) = super::PlanNodeId::new(source) else {
+        return false;
+    };
+    let plan = Plan::new_program(
+        plasm_core::plasm_monad::PLASM_COMP_WIRE_VERSION,
+        None,
+        nodes.to_vec(),
+        super::ValidatedPlanReturn::Node(id),
+        Default::default(),
+    );
+    let by_id = nodes
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.id().to_string(), i))
+        .collect();
+    validated_analyze_static_cardinality(&plan, &by_id, source).permits_scalar_field_extract()
 }
 
 #[cfg(test)]

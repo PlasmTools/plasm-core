@@ -11,10 +11,11 @@ pub(crate) fn cache_decoded_entity_tree(
     timestamp: u64,
     completeness: EntityCompleteness,
 ) -> Result<CachedEntity, RuntimeError> {
-    for embedded in flatten_decoded_embed_descendants(&decoded) {
-        if embedded.reference == decoded.reference {
-            continue;
-        }
+    let mut flattened = flatten_decoded_embed_descendants(decoded);
+    let decoded = flattened
+        .pop()
+        .expect("flattened embed tree always contains its root");
+    for embedded in flattened {
         let child = CachedEntity::from_decoded(
             embedded.reference,
             embedded.fields,
@@ -59,14 +60,19 @@ mod tests {
             relations: [(
                 "items".into(),
                 DecodedRelation::Specified(
-                    ids.iter()
-                        .map(|id| Ref::new("Item", id.to_string()))
-                        .collect(),
+                    plasm_core::row_contract::RelationMembership::observe(
+                        None,
+                        &"relation_fixture",
+                        ids.iter()
+                            .map(|id| Ref::new("Item", id.to_string()))
+                            .collect::<Vec<_>>(),
+                        None,
+                    )
+                    .unwrap(),
                 ),
             )]
             .into(),
             embedded_entities: Vec::new(),
-            field_diagnostics: Vec::new(),
         }
     }
 

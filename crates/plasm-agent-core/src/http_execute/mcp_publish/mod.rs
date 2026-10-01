@@ -130,10 +130,11 @@ mod tests {
             display: "pets".into(),
             projection: None,
             result: Arc::new(ExecutionResult {
-                count: 0,
-                entities: Vec::new(),
+                collection: crate::test_support::execution_fixtures::collection(
+                    Vec::new(),
+                    plasm_runtime::ResultCoverage::Unknown,
+                ),
                 has_more: false,
-                coverage: plasm_runtime::ResultCoverage::Unknown,
                 pagination_resume: None,
                 paging_handle: None,
                 source: ExecutionSource::Live,
@@ -376,10 +377,11 @@ mod tests {
             display: "effects".into(),
             projection: None,
             result: Arc::new(ExecutionResult {
-                count: 0,
-                entities: Vec::new(),
+                collection: crate::test_support::execution_fixtures::collection(
+                    Vec::new(),
+                    plasm_runtime::ResultCoverage::Unknown,
+                ),
                 has_more: false,
-                coverage: plasm_runtime::ResultCoverage::Unknown,
                 pagination_resume: None,
                 paging_handle: None,
                 source: ExecutionSource::Live,
@@ -420,6 +422,46 @@ mod tests {
     }
 
     #[test]
+    fn dag_compute_hidden_cell_defers_result_and_preserves_effect_receipt() {
+        let mut step = synthetic_published_result_step(1, None);
+        let result = Arc::make_mut(&mut step.result);
+        let mut row = result.entities()[0].clone();
+        row.fields.insert(
+            "name".into(),
+            plasm_core::Value::String("x".repeat(100_000)).into(),
+        );
+        result.collection = result.collection.replace(0, row).unwrap();
+        result.operations = plasm_runtime::OperationLedger::from_ack(plasm_runtime::OperationAck {
+            entry_id: "matrix".into(),
+            capability: "record_update".into(),
+            entity: "Record".into(),
+            logical_invocations: 1,
+            completed: 1,
+            failed: 0,
+            source: ExecutionSource::Live,
+            description: "Update record".into(),
+            outcomes: Vec::new(),
+        });
+        let policy = McpResultTransportPolicy {
+            artifact_access: crate::mcp_run_markdown::ArtifactAccessMode::DagCompute,
+            ..McpResultTransportPolicy::default()
+        };
+        let out = publish_plasm_result_steps_with_policy(None, None, &[step], &policy);
+        assert!(!out.markdown.contains("(in artifact)"), "{}", out.markdown);
+        assert!(!out.markdown.contains("resources/read"), "{}", out.markdown);
+        assert!(!out.markdown.contains("```tsv"), "{}", out.markdown);
+        assert!(out.markdown.contains("record_update"), "{}", out.markdown);
+        assert!(out.markdown.contains("completed=1"), "{}", out.markdown);
+        assert!(out.markdown.contains("compute"), "{}", out.markdown);
+        let meta = serde_json::to_string(&out.tool_meta).unwrap();
+        assert!(
+            !meta.contains("preview_entities"),
+            "deferred values must stay out of metadata"
+        );
+        assert!(meta.contains("snapshot_only"));
+    }
+
+    #[test]
     fn publish_empty_query_has_no_operations_block() {
         let step = PublishedResultStep {
             name: Some("items".into()),
@@ -430,10 +472,11 @@ mod tests {
             display: "items".into(),
             projection: None,
             result: Arc::new(ExecutionResult {
-                count: 0,
-                entities: Vec::new(),
+                collection: crate::test_support::execution_fixtures::collection(
+                    Vec::new(),
+                    plasm_runtime::ResultCoverage::Unknown,
+                ),
                 has_more: false,
-                coverage: plasm_runtime::ResultCoverage::Unknown,
                 pagination_resume: None,
                 paging_handle: None,
                 source: ExecutionSource::Live,
@@ -455,7 +498,10 @@ mod tests {
         coverage: plasm_runtime::ResultCoverage,
     ) -> PublishedResultStep {
         let mut result = (*step.result).clone();
-        result.coverage = coverage;
+        result.collection = crate::test_support::execution_fixtures::collection(
+            result.entities().iter().cloned().collect(),
+            coverage,
+        );
         step.result = Arc::new(result);
         step
     }

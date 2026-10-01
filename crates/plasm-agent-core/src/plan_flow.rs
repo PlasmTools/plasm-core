@@ -325,6 +325,77 @@ impl<'a, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, P> {
         }
     }
 
+    fn transfer_scope(
+        &mut self,
+        id: String,
+        body: &plasm_core::plasm_monad::CorrelatedBody,
+        plan: &crate::plasm_plan::ValidatedPlan,
+    ) {
+        let incoming = self
+            .facts
+            .get(body.parent.source.as_str())
+            .cloned()
+            .unwrap_or_default();
+        let order: Vec<_> = plan
+            .topological_order()
+            .iter()
+            .map(|id| id.as_str().to_string())
+            .collect();
+        let checked = FlowPass {
+            plan: plan.artifact(),
+            topological_order: &order,
+            catalog: self.catalog,
+            policy: self.policy,
+            topo_index: order
+                .iter()
+                .enumerate()
+                .map(|(i, id)| (id.clone(), i))
+                .collect(),
+            facts: std::iter::once((body.parent.local.to_string(), incoming.clone()))
+                .chain(body.captures.iter().map(|c| {
+                    (
+                        c.local.to_string(),
+                        self.facts
+                            .get(c.source.as_str())
+                            .cloned()
+                            .unwrap_or_default(),
+                    )
+                }))
+                .collect(),
+            node_dispositions: BTreeMap::new(),
+            sink_proofs: BTreeMap::new(),
+            violations: vec![],
+        }
+        .run();
+        let mut output = incoming;
+        for ret in plan.return_value().refs() {
+            if let Some(facts) = checked.analysis.node_facts.get(ret.as_str()) {
+                output.join(facts);
+            }
+        }
+        self.facts.insert(id.clone(), output);
+        self.node_dispositions.insert(
+            id.clone(),
+            match checked.analysis.verdict {
+                FlowVerdict::Clean => NodeDisposition::Allow,
+                FlowVerdict::NeedsReview => NodeDisposition::Review,
+                FlowVerdict::Denied => NodeDisposition::Deny,
+            },
+        );
+        for (local, disposition) in checked.analysis.node_dispositions {
+            self.node_dispositions
+                .insert(format!("{id}/{local}"), disposition);
+        }
+        for (local, facts) in checked.analysis.node_facts {
+            self.facts.insert(format!("{id}/{local}"), facts);
+        }
+        for (local, proof) in checked.analysis.sink_proofs {
+            self.sink_proofs.insert(format!("{id}/{local}"), proof);
+        }
+        self.sink_proofs.insert(id, SinkProof::StaticClean);
+        self.violations.extend(checked.analysis.violations);
+    }
+
     fn transfer_node(&mut self, node: &ValidatedPlanNode) {
         let id = node.id().as_str().to_string();
         match node {
@@ -335,53 +406,7 @@ impl<'a, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, P> {
                 self.sink_proofs.insert(id, SinkProof::StaticClean);
             }
             ValidatedPlanNode::MapBody(n) => {
-                let incoming = self
-                    .facts
-                    .get(n.body.parent.source.as_str())
-                    .cloned()
-                    .unwrap_or_default();
-                let order: Vec<_> = n
-                    .plan
-                    .topological_order()
-                    .iter()
-                    .map(|id| id.as_str().to_string())
-                    .collect();
-                let checked = FlowPass {
-                    plan: n.plan.artifact(),
-                    topological_order: &order,
-                    catalog: self.catalog,
-                    policy: self.policy,
-                    topo_index: order
-                        .iter()
-                        .enumerate()
-                        .map(|(i, id)| (id.clone(), i))
-                        .collect(),
-                    facts: BTreeMap::from([(
-                        n.body.parent.local.as_str().to_string(),
-                        incoming.clone(),
-                    )]),
-                    node_dispositions: BTreeMap::new(),
-                    sink_proofs: BTreeMap::new(),
-                    violations: vec![],
-                }
-                .run();
-                let mut output = incoming;
-                for ret in n.plan.return_value().refs() {
-                    if let Some(facts) = checked.analysis.node_facts.get(ret.as_str()) {
-                        output.join(facts);
-                    }
-                }
-                self.facts.insert(id.clone(), output);
-                self.node_dispositions.insert(
-                    id.clone(),
-                    match checked.analysis.verdict {
-                        FlowVerdict::Clean => NodeDisposition::Allow,
-                        FlowVerdict::NeedsReview => NodeDisposition::Review,
-                        FlowVerdict::Denied => NodeDisposition::Deny,
-                    },
-                );
-                self.sink_proofs.insert(id, SinkProof::StaticClean);
-                self.violations.extend(checked.analysis.violations);
+                self.transfer_scope(id, &n.body, &n.plan);
             }
             ValidatedPlanNode::Surface(surface) => {
                 if is_read_kind(surface.kind) {
@@ -447,24 +472,33 @@ impl<'a, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, P> {
                 });
             }
             ValidatedPlanNode::IterateUntil(n) => {
+                if let (Some(body), Some(plan)) = (&n.until_scope, &n.until_plan) {
+                    self.transfer_scope(format!("{id}/until"), body, plan);
+                }
                 let source_facts = self
                     .facts
                     .get(n.source.as_str())
                     .cloned()
                     .unwrap_or_default();
                 self.facts.insert(id.clone(), source_facts);
-                let cap_name = capability_name_from_expr(&n.effect_template.ir_template.expr)
-                    .unwrap_or_else(|| operation_name_for_kind(n.effect_template.kind).to_string());
-                self.transfer_mutation_template(MutationFlowCtx {
-                    node_id: id.clone(),
-                    qualified: &n.effect_template.qualified_entity,
-                    kind: n.effect_template.kind,
-                    effect_class: n.effect_template.effect_class,
-                    capability_name: cap_name.as_str(),
-                    template_expr: Some(&n.effect_template.ir_template.expr),
-                    uses_result: &n.uses_result,
-                    author_label: n.approval.as_deref(),
-                });
+                if let (Some(body), Some(plan)) = (&n.step_scope, &n.step_plan) {
+                    self.transfer_scope(format!("{id}/step"), body, plan);
+                } else {
+                    let cap_name = capability_name_from_expr(&n.effect_template.ir_template.expr)
+                        .unwrap_or_else(|| {
+                            operation_name_for_kind(n.effect_template.kind).to_string()
+                        });
+                    self.transfer_mutation_template(MutationFlowCtx {
+                        node_id: id.clone(),
+                        qualified: &n.effect_template.qualified_entity,
+                        kind: n.effect_template.kind,
+                        effect_class: n.effect_template.effect_class,
+                        capability_name: cap_name.as_str(),
+                        template_expr: Some(&n.effect_template.ir_template.expr),
+                        uses_result: &n.uses_result,
+                        author_label: n.approval.as_deref(),
+                    });
+                }
             }
             ValidatedPlanNode::RelationTraversal(n) => {
                 let parent_facts = self
@@ -737,7 +771,7 @@ impl<'a, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, P> {
             | ComputeOp::With { .. } => {
                 out = source_facts.clone();
             }
-            ComputeOp::Union { other } => {
+            ComputeOp::Union { other } | ComputeOp::MergeBranches { other } => {
                 let right = self.facts.get(other.as_str()).cloned().unwrap_or_default();
                 out = source_facts.clone();
                 out.union_join(&right);

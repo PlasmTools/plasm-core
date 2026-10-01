@@ -25,11 +25,19 @@ impl ExecutionEngine {
         let auth = self.resolve_compiled_http_auth(request).await?;
         let destination = crate::http_transport::compiled_http_url(base_url.as_ref(), request);
         let _permit = self.acquire_backend_http_permit(&destination).await?;
-        annotate_http_401_login_tail(
-            self.transport
-                .send_compiled_http(base_url.as_ref(), request, auth)
-                .await,
-        )
+        let receipt = super::mutation_evidence::DispatchReceipt::begin(
+            crate::RequestFingerprint::from_request(request).to_hex(),
+        );
+        let result = self
+            .transport
+            .send_compiled_http(base_url.as_ref(), request, auth)
+            .await;
+        if result.is_ok() {
+            if let Some(receipt) = receipt {
+                receipt.response_received();
+            }
+        }
+        annotate_http_401_login_tail(result)
     }
 
     pub(super) async fn resolve_compiled_http_auth(

@@ -69,7 +69,12 @@ fn project_union_row(row: &Value, cols: &[String]) -> Result<Value, String> {
     }
     let mut mapped = Map::new();
     for col in cols {
-        mapped.insert(col.clone(), obj.get(col).cloned().unwrap_or(Value::Null));
+        mapped.insert(
+            col.clone(),
+            obj.get(col)
+                .cloned()
+                .ok_or_else(|| format!("union row missing column `{col}` (RA-14)"))?,
+        );
     }
     Ok(Value::Object(mapped))
 }

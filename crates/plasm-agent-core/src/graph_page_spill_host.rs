@@ -3,10 +3,8 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use plasm_core::CGS;
 use plasm_runtime::{
-    entity_to_row_json, CachedEntity, GraphHotCacheBounds, GraphPageDelta, GraphPageSpill,
-    RuntimeError,
+    CachedEntity, GraphHotCacheBounds, GraphPageDelta, GraphPageSpill, RuntimeError,
 };
 
 use crate::execute_session::SessionCore;
@@ -41,7 +39,7 @@ impl GraphPageSpill for AgentGraphPageSpill {
     async fn append_page(
         &self,
         page_index: usize,
-        entities: &[CachedEntity],
+        entities: &plasm_core::collection_codec::SharedRows<CachedEntity>,
     ) -> Result<(), RuntimeError> {
         if entities.is_empty() {
             return Ok(());
@@ -58,7 +56,6 @@ impl GraphPageSpill for AgentGraphPageSpill {
                 page_index,
                 entity_type.as_str(),
                 entities,
-                None,
             )
             .await
         {
@@ -101,20 +98,23 @@ impl SessionGraphPersistence {
         seq: u64,
         page_index: usize,
         entity_type: &str,
-        entities: &[CachedEntity],
-        cgs: Option<&CGS>,
+        entities: &plasm_core::collection_codec::SharedRows<CachedEntity>,
     ) -> Result<(), String> {
-        let rows: Vec<serde_json::Value> = entities
-            .iter()
-            .map(|e| entity_to_row_json(e, cgs))
-            .collect();
-        let body = serde_json::json!({
-            "kind": "graph_page",
-            "schema_version": crate::session_graph_persistence::GRAPH_PAGE_DELTA_SCHEMA_VERSION,
-            "entity_type": entity_type,
-            "page_index": page_index,
-            "entities": rows,
-        });
+        #[derive(serde::Serialize)]
+        struct Page<'a> {
+            kind: &'static str,
+            schema_version: u32,
+            entity_type: &'a str,
+            page_index: usize,
+            entities: &'a plasm_core::collection_codec::SharedRows<CachedEntity>,
+        }
+        let body = Page {
+            kind: "graph_page",
+            schema_version: crate::session_graph_persistence::GRAPH_PAGE_DELTA_SCHEMA_VERSION,
+            entity_type,
+            page_index,
+            entities,
+        };
         let payload = crate::run_artifacts::ArtifactPayload {
             metadata: crate::run_artifacts::ArtifactPayloadMetadata {
                 content_type: "application/json".into(),

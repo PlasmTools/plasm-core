@@ -1,4 +1,4 @@
-//! Unified graph-surface rehydrate API (plan / apply / materialize / stream).
+//! Recorded graph-surface rehydrate API (plan / apply / materialize).
 //!
 //! **CEP-4:** spill/rehydrate I/O runs without the session graph mutex held.
 //! **CEP-5:** [`Self::resolve_source_parents`] keeps parent entities aligned with
@@ -13,15 +13,12 @@ use crate::execute_session::ExecuteSession;
 use crate::server_state::PlasmHostState;
 
 use super::ctx::GraphSurfaceWalkCtx;
-#[cfg(test)]
-use super::walk::stream_rows;
-use super::walk::{collect_entities, collect_row_json, snapshot_hot_entities};
+use super::walk::snapshot_hot_entities;
 
-/// Hot-cache snapshot + target count for spill rehydrate after the graph lock is released.
+/// Shared hot-cache snapshot for recorded rehydration after releasing the graph lock.
 pub(crate) struct GraphSpillSyncPlan {
     pub hot_snapshot: Arc<[CachedEntity]>,
     pub entity_type: String,
-    pub logical_count: usize,
     pub spill_enabled: bool,
 }
 
@@ -55,13 +52,12 @@ impl<'a> GraphSurfaceRehydrator<'a> {
         entity_type: &str,
         result: &ExecutionResult,
     ) -> Option<GraphSpillSyncPlan> {
-        if !result.entities.is_empty() || result.count == 0 {
+        if !result.collection.is_graph_backed() || result.count() == 0 {
             return None;
         }
         Some(GraphSpillSyncPlan {
             hot_snapshot: snapshot_hot_entities(hot, entity_type),
             entity_type: entity_type.to_string(),
-            logical_count: result.count,
             spill_enabled: st.session_graph_persistence.is_some(),
         })
     }
@@ -71,23 +67,18 @@ impl<'a> GraphSurfaceRehydrator<'a> {
         &self,
         plan: GraphSpillSyncPlan,
         result: &mut ExecutionResult,
-    ) {
-        let entities = collect_entities(
+    ) -> Result<(), plasm_runtime::RuntimeError> {
+        let rows = super::walk::collect_recorded_entities(
             &self.ctx,
-            plan.hot_snapshot,
-            plan.entity_type.as_str(),
+            plan.hot_snapshot.into(),
+            &plan.entity_type,
             plan.spill_enabled,
-            plan.logical_count,
+            result.collection.membership(),
         )
         .await
-        .unwrap_or_default();
-        if entities.is_empty() {
-            return;
-        }
-        result.entities = entities;
-        if result.count < result.entities.len() {
-            result.count = result.entities.len();
-        }
+        .map_err(|message| plasm_runtime::RuntimeError::CacheError { message })?;
+        result.collection = result.collection.with_materialization(rows)?;
+        Ok(())
     }
 
     pub(crate) async fn materialize_surface_rows(
@@ -95,12 +86,12 @@ impl<'a> GraphSurfaceRehydrator<'a> {
         entity_type: &str,
         result: &ExecutionResult,
     ) -> MaterializedRowSource {
-        if !result.entities.is_empty() {
+        if !result.collection.is_graph_backed() {
             let guard = self.ctx.es.lock_graph_cache().await;
             let mat = guard.materialization();
             return MaterializedRowSource::Inline(
                 result
-                    .entities
+                    .entities()
                     .iter()
                     .map(|e| {
                         super::relation_embed::wire_row_with_from_parent_embeds(
@@ -112,30 +103,16 @@ impl<'a> GraphSurfaceRehydrator<'a> {
                     .collect(),
             );
         }
-        if result.count == 0 {
+        if result.count() == 0 {
             return MaterializedRowSource::Inline(Vec::new());
         }
 
-        let spill_enabled = self.ctx.spill_enabled();
         let hot_snapshot = self.snapshot_hot_locked(entity_type).await;
 
-        if !spill_enabled || hot_snapshot.len() >= result.count {
-            let rows = collect_row_json(
-                &self.ctx,
-                Arc::clone(&hot_snapshot),
-                entity_type,
-                spill_enabled,
-                result.count,
-            )
-            .await
-            .unwrap_or_default();
-            return MaterializedRowSource::Inline(rows);
-        }
-
-        crate::graph_cache_metrics::record_graph_surface_graph_backed(result.count);
+        crate::graph_cache_metrics::record_graph_surface_graph_backed(result.count());
         MaterializedRowSource::GraphBacked {
             entity_type: entity_type.to_string(),
-            logical_count: result.count,
+            membership: result.collection.membership().clone(),
             hot_snapshot,
         }
     }
@@ -146,58 +123,72 @@ impl<'a> GraphSurfaceRehydrator<'a> {
         &self,
         entity_type: &str,
         result: &ExecutionResult,
-    ) -> Vec<CachedEntity> {
+    ) -> Result<plasm_core::collection_codec::SharedRows<CachedEntity>, String> {
         self.resolve_source_parents_with_identities(entity_type, result, &[])
             .await
     }
 
-    /// CEP-5 / project-then-relate: prefer session-graph parents keyed by [`RowIdentity`]
-    /// (and graph upgrades for synthetic/projected `result.entities`).
     pub(crate) async fn resolve_source_parents_with_identities(
         &self,
         entity_type: &str,
         result: &ExecutionResult,
         row_identities: &[Option<plasm_core::RowIdentity>],
-    ) -> Vec<CachedEntity> {
-        let identity_bound = row_identities.iter().any(|opt| opt.is_some());
-        let row_count = result.entities.len().max(row_identities.len());
-        if row_count > 0 || identity_bound {
-            let guard = self.ctx.es.lock_graph_cache().await;
-            let mat = guard.materialization();
-            let mut out = Vec::with_capacity(row_count);
-            for idx in 0..row_count {
-                let identity_row = row_identities.get(idx).and_then(|opt| opt.as_ref());
-                let graph_parent = identity_row
-                    .and_then(|id| mat.get(&id.reference))
-                    .or_else(|| result.entities.get(idx).and_then(|e| mat.get(&e.reference)));
-                if let Some(parent) = graph_parent {
-                    out.push(parent.clone());
-                } else if identity_row.is_none() {
-                    if let Some(fallback) = result.entities.get(idx) {
-                        out.push(fallback.clone());
-                    }
-                }
-            }
-            if !out.is_empty() || identity_bound {
-                return out;
-            }
+    ) -> Result<plasm_core::collection_codec::SharedRows<CachedEntity>, String> {
+        use plasm_core::collection_codec::{CollectionCodec, RecordingCodec, Transform};
+        if !row_identities.is_empty() && row_identities.len() != result.count() {
+            return Err("canonical row identity count differs from recorded membership".into());
         }
-        if !result.entities.is_empty() {
-            return result.entities.clone();
-        }
-        if result.count == 0 {
-            return Vec::new();
-        }
-        let hot_snapshot = self.snapshot_hot_locked(entity_type).await;
-        collect_entities(
+        let references: Vec<_> = result
+            .collection
+            .membership()
+            .observed()
+            .iter()
+            .enumerate()
+            .map(|(i, reference)| {
+                row_identities
+                    .get(i)
+                    .and_then(Option::as_ref)
+                    .map_or_else(|| reference.clone(), |row| row.reference.clone())
+            })
+            .collect();
+        let membership = RecordingCodec::new()
+            .derive(
+                result
+                    .collection
+                    .membership()
+                    .identity()
+                    .derived(&"canonical_identity_projection")
+                    .map_err(|e| e.to_string())?,
+                &[result.collection.membership()],
+                Transform::Map {
+                    rows: references.into(),
+                },
+            )
+            .map_err(|e| e.to_string())?;
+        let hot = self.snapshot_hot_locked(entity_type).await;
+        // An identity-preserving projection names its canonical graph row, but
+        // its projected payload cannot replace that row. Only unprojected source
+        // observations may supply resident payloads absent from the graph.
+        let existing: std::collections::HashSet<_> = hot.iter().map(|row| &row.reference).collect();
+        let positions = result.entities().iter().enumerate().filter_map(|(i, row)| {
+            (row_identities.get(i).and_then(Option::as_ref).is_none()
+                && !existing.contains(&row.reference))
+            .then_some(i)
+        });
+        let retained = result
+            .entities()
+            .select(positions)
+            .map_err(|e| e.to_string())?;
+        let available = plasm_core::collection_codec::SharedRows::concat([&hot.into(), &retained]);
+        let rows = super::walk::collect_recorded_entities(
             &self.ctx,
-            hot_snapshot,
+            available.into(),
             entity_type,
             self.ctx.spill_enabled(),
-            result.count,
+            &membership,
         )
-        .await
-        .unwrap_or_default()
+        .await?;
+        Ok(rows)
     }
 
     #[cfg(test)]
@@ -205,84 +196,55 @@ impl<'a> GraphSurfaceRehydrator<'a> {
         &self,
         entity_type: &str,
         result: &ExecutionResult,
-    ) -> Vec<CachedEntity> {
-        self.resolve_source_parents(entity_type, result).await
-    }
-
-    pub(crate) async fn rehydrate_rows(
-        &self,
-        hot_snapshot: Arc<[CachedEntity]>,
-        entity_type: &str,
-        logical_count: usize,
-    ) -> Result<Vec<serde_json::Value>, String> {
-        collect_row_json(
-            &self.ctx,
-            hot_snapshot,
-            entity_type,
-            self.ctx.spill_enabled(),
-            logical_count,
-        )
-        .await
+    ) -> plasm_core::collection_codec::SharedRows<CachedEntity> {
+        self.resolve_source_parents(entity_type, result)
+            .await
+            .unwrap()
     }
 
     #[cfg(test)]
     pub(crate) async fn rehydrate_rows_locked(
         &self,
         entity_type: &str,
-        logical_count: usize,
-    ) -> Result<Vec<serde_json::Value>, String> {
+        membership: &plasm_core::collection_codec::RecordedCollection<plasm_core::Ref>,
+    ) -> Result<Vec<plasm_core::ValueRow>, String> {
         let hot = self.snapshot_hot_locked(entity_type).await;
-        self.rehydrate_rows(hot, entity_type, logical_count).await
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn stream_entity_rows<F>(
-        &self,
-        hot_snapshot: Arc<[CachedEntity]>,
-        entity_type: &str,
-        on_row: F,
-    ) -> Result<(), String>
-    where
-        F: FnMut(&serde_json::Value) -> bool,
-    {
-        stream_rows(
+        let rows = super::walk::collect_recorded_entities(
             &self.ctx,
-            hot_snapshot,
+            hot.into(),
             entity_type,
             self.ctx.spill_enabled(),
-            on_row,
+            membership,
         )
-        .await
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn stream_entity_rows_locked<F>(
-        &self,
-        entity_type: &str,
-        on_row: F,
-    ) -> Result<(), String>
-    where
-        F: FnMut(&serde_json::Value) -> bool,
-    {
-        let hot = self.snapshot_hot_locked(entity_type).await;
-        self.stream_entity_rows(hot, entity_type, on_row).await
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|row| plasm_runtime::entity_to_row_values(row, Some(self.ctx.cgs)))
+            .collect())
     }
 
     pub(crate) async fn resolve_row_source_rows(
         &self,
         row_source: &MaterializedRowSource,
         max_rows: Option<usize>,
-    ) -> Result<Vec<serde_json::Value>, String> {
+    ) -> Result<Vec<plasm_core::ValueRow>, String> {
         let mut rows = match row_source {
             MaterializedRowSource::Inline(rows) => rows.clone(),
             MaterializedRowSource::GraphBacked {
                 entity_type,
-                logical_count,
+                membership,
                 hot_snapshot,
-            } => {
-                self.rehydrate_rows(Arc::clone(hot_snapshot), entity_type, *logical_count)
-                    .await?
-            }
+            } => super::walk::collect_recorded_entities(
+                &self.ctx,
+                Arc::clone(hot_snapshot).into(),
+                entity_type,
+                self.ctx.spill_enabled(),
+                membership,
+            )
+            .await?
+            .iter()
+            .map(|row| plasm_runtime::entity_to_row_values(row, Some(self.ctx.cgs)))
+            .collect(),
         };
         if let Some(n) = max_rows {
             rows.truncate(n);
@@ -301,13 +263,13 @@ impl GraphSurfaceRehydrator<'_> {
         entity_type: &str,
         cgs: &CGS,
         result: &mut ExecutionResult,
-    ) {
+    ) -> Result<(), plasm_runtime::RuntimeError> {
         let Some(plan) = GraphSurfaceRehydrator::plan_spill_sync(hot, st, entity_type, result)
         else {
-            return;
+            return Ok(());
         };
         GraphSurfaceRehydrator::new(es, st, session_id, cgs)
             .apply_spill_sync(plan, result)
-            .await;
+            .await
     }
 }

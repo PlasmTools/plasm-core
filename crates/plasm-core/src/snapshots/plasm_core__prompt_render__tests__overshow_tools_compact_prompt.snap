@@ -4,7 +4,6 @@ assertion_line: 4120
 expression: prompt
 ---
 plasm_expr	Meaning
-evaluation_now	<temporal-now> · relative date/time phrases resolve against this instant
 v11	integer
 v21	enum · ui | ocr | audio | document
 v40	string

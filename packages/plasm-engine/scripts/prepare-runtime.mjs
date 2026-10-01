@@ -9,6 +9,7 @@ const targets = {
   'aarch64-apple-darwin': 'darwin-arm64',
   'x86_64-apple-darwin': 'darwin-x64',
   'x86_64-unknown-linux-gnu': 'linux-x64-gnu',
+  'aarch64-unknown-linux-gnu': 'linux-arm64-gnu',
 };
 const [action, argument, output] = process.argv.slice(2);
 if (action === '--package') {

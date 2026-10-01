@@ -62,6 +62,35 @@ fn run_artifact_doc(
     sid: &str,
     entities: Vec<serde_json::Value>,
 ) -> RunArtifactDocument {
+    use plasm_core::collection_codec::{
+        CollectionCheckpoint, CollectionIdentity, Observation, RecordingCodec,
+    };
+    let rows = entities
+        .into_iter()
+        .enumerate()
+        .map(|(i, value)| {
+            let mut row =
+                plasm_runtime::CachedEntity::new(plasm_core::Ref::new("Profile", i.to_string()), 0);
+            row.fields = value
+                .as_object()
+                .unwrap()
+                .iter()
+                .map(|(key, value)| {
+                    (
+                        key.clone(),
+                        plasm_core::json_value_to_plasm_value(value).into(),
+                    )
+                })
+                .collect();
+            row
+        })
+        .collect();
+    let observed = plasm_runtime::execution::ExecutionCollection::observe(
+        CollectionIdentity::for_untyped_observation(&"artifact_fixture").unwrap(),
+        rows,
+        Observation::UnprovenPage,
+    )
+    .unwrap();
     RunArtifactDocument {
         run_id: run_wire.to_string(),
         prompt_hash: ph.to_string(),
@@ -86,8 +115,9 @@ fn run_artifact_doc(
         },
         display_lines: vec![],
         request_fingerprints: vec![],
-        entities,
-        coverage: plasm_runtime::ResultCoverage::Unknown,
+        entities: observed.resident_entities().clone(),
+        collection: CollectionCheckpoint::capture(&RecordingCodec::new(), observed.membership())
+            .unwrap(),
         source: ExecutionSource::Live,
         stats: ExecutionStats::default(),
         operations: plasm_runtime::OperationLedger::empty(),

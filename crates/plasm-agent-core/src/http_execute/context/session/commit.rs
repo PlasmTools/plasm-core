@@ -104,11 +104,7 @@ pub(crate) async fn commit_exposure_wave_delta(
         &sess.python_teaching,
     )
     .map_err(super::SessionMutateError::from)?;
-    let mut wave = if teaching.declarations.is_empty() {
-        String::new()
-    } else {
-        format!("```pyi\n{}\n```", teaching.declarations)
-    };
+    let mut wave = teaching.declarations;
     sess.python_teaching = teaching.next_state;
     let cheat = format_exposure_entity_cheat_sheet(&exp);
     if !cheat.is_empty() {

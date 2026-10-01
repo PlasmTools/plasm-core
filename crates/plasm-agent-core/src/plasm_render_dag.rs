@@ -22,6 +22,7 @@ use super::types::{CompileState, DagNode, DagNodeSource};
 
 pub(in crate::plasm_dag) fn plan_render_content_schema() -> Result<SyntheticResultSchema, String> {
     Ok(SyntheticResultSchema {
+        optional_fields: Default::default(),
         entity: Some("PlanRender".to_string()),
         fields: vec![SyntheticFieldSchema {
             value_type: None,

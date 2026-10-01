@@ -66,16 +66,16 @@ async fn todoist_assignment_survives_query_and_get_wire_shapes() {
             )
             .await
             .unwrap();
-        assert_eq!(result.entities.len(), 1);
+        assert_eq!(result.entities().len(), 1);
         assert_eq!(
-            result.entities[0].fields["assignee_email"].to_value(),
+            result.entities()[0].fields["assignee_email"].to_value(),
             Value::String("alex@example.com".into())
         );
         assert_eq!(
-            result.entities[0].fields["assignee_name"].to_value(),
+            result.entities()[0].fields["assignee_name"].to_value(),
             Value::String("Alex".into())
         );
-        assert!(!result.entities[0].fields.contains_key("assignee_id"));
+        assert!(!result.entities()[0].fields.contains_key("assignee_id"));
     }
     assert!(count.load(Ordering::SeqCst) > 0);
     server.abort();
@@ -84,7 +84,7 @@ async fn todoist_assignment_survives_query_and_get_wire_shapes() {
 #[tokio::test]
 async fn gmail_message_preserves_sender_recipients_and_attachment_identity() {
     let row = serde_json::json!({"email_id":7,"subject":"Documents","body":"Attached",
-        "created_at":"2026-01-02T03:04:05Z","response_to_email_id":null,
+        "created_at":"2026-01-02T03:04:05","response_to_email_id":null,
         "sender":{"name":"Alex","email":"alex@example.com"},
         "recipients":[{"name":"Sam","email":"sam@example.com"}],
         "attachments":[{"id":19,"file_name":"application.pdf"}]});
@@ -137,15 +137,15 @@ async fn gmail_message_preserves_sender_recipients_and_attachment_identity() {
             )
             .await
             .unwrap();
-        assert_eq!(result.entities.len(), 1, "{program}");
+        assert_eq!(result.entities().len(), 1, "{program}");
         assert_eq!(
-            result.entities[0].fields[field].to_value(),
+            result.entities()[0].fields[field].to_value(),
             Value::String(expected.into()),
             "{program}"
         );
         if field == "file_name" {
             assert_eq!(
-                result.entities[0].fields["attachment_id"].to_value(),
+                result.entities()[0].fields["attachment_id"].to_value(),
                 Value::Integer(19)
             );
         }
@@ -162,7 +162,7 @@ async fn amazon_order_lines_keep_purchase_identity_and_product_reference() {
                 axum::Json(serde_json::json!({"order_id":id,"order_items":[{
                 "product_id":9,"product_name":"Backpack","ordered_quantity":id,
                 "returned_quantity":0,"gift_wrap_quantity":0,"price":12.5,
-                "product_review_id":null,"expected_delivery_at":"2026-01-02T03:04:05Z",
+                "product_review_id":null,"expected_delivery_at":"2026-01-02T03:04:05",
                 "delivered_at":null}]}))
             },
         ),
@@ -210,8 +210,8 @@ async fn amazon_order_lines_keep_purchase_identity_and_product_reference() {
             )
             .await
             .unwrap();
-        assert_eq!(result.entities.len(), 1);
-        let row = &result.entities[0];
+        assert_eq!(result.entities().len(), 1);
+        let row = &result.entities()[0];
         assert_eq!(row.fields["order_id"].to_value(), Value::Integer(id));
         assert_eq!(
             row.fields["ordered_quantity"].to_value(),
@@ -230,7 +230,7 @@ async fn gmail_typed_schedule_encodes_only_at_transport_boundary() {
         "/gmail/drafts",
         axum::routing::post(
             |axum::Json(body): axum::Json<serde_json::Value>| async move {
-                assert_eq!(body["scheduled_send_at"], "2030-01-02|01:04:05");
+                assert_eq!(body["scheduled_send_at"], "2030-01-02|03:04:05");
                 axum::Json(serde_json::json!({"draft_id":7,"message":"Draft created."}))
             },
         ),
@@ -255,7 +255,7 @@ async fn gmail_typed_schedule_encodes_only_at_transport_boundary() {
         ("body".into(), Value::String("Scheduled".into())),
         (
             "scheduled_send_at".into(),
-            Value::String("2030-01-02T03:04:05+02:00".into()),
+            Value::String("2030-01-02T03:04:05".into()),
         ),
     ]));
     let expr = Expr::Create(plasm_core::CreateExpr::new("draft_create", "Draft", input));
@@ -278,7 +278,7 @@ async fn gmail_typed_schedule_encodes_only_at_transport_boundary() {
         )
         .await
         .unwrap();
-    assert_eq!(result.entities.len(), 1);
+    assert_eq!(result.entities().len(), 1);
     server.abort();
 }
 
@@ -362,11 +362,11 @@ async fn pinned_backend_catalog_contracts() {
         match result {
             Err(error) => failures.push(format!("{label}: {error}")),
             Ok(result) => {
-                if result.entities.is_empty() {
+                if result.entities().is_empty() {
                     failures.push(format!("{label}: no rows"));
                     continue;
                 }
-                for row in &result.entities {
+                for row in result.entities() {
                     for field in &case.fields {
                         if !row.fields.contains_key(field.as_str()) {
                             failures.push(format!("{label}: missing {field}"));
@@ -376,7 +376,7 @@ async fn pinned_backend_catalog_contracts() {
                 checked += 1;
                 println!(
                     "PROBE {label}: {} rows; {} requests",
-                    result.entities.len(),
+                    result.entities().len(),
                     result.stats.network_requests
                 );
             }
@@ -462,8 +462,8 @@ async fn amazon_cart_preserves_request_identity_across_totals_and_codec() {
             )
             .await
             .unwrap();
-        assert_eq!(result.entities.len(), 1);
-        let row = &result.entities[0];
+        assert_eq!(result.entities().len(), 1);
+        let row = &result.entities()[0];
         assert_eq!(row.fields["total_cost"].to_value(), Value::Float(expected));
         identities.push(row.reference.clone());
     }
@@ -511,4 +511,68 @@ fn gmail_and_amazon_deployment_requirements_are_closed() {
     let closure = prerequisite_closure(&catalogs, &bindings, &selected, &allowed).unwrap();
     assert_eq!(closure.business.len(), selected.len());
     assert!(!closure.acquisitions.is_empty());
+}
+
+/// The pinned AppWorld datetime processor deliberately stores timezone-free values.
+#[tokio::test]
+async fn spotify_song_release_date_is_preserved_and_invalid_wire_values_fail() {
+    for (timestamp, valid) in [
+        ("2023-01-02T00:00:00", true),
+        ("2023-01-02T00:00:00Z", false),
+    ] {
+        let app = axum::Router::new().route(
+            "/spotify/songs/1",
+            axum::routing::get(move || async move {
+                axum::Json(
+                    serde_json::json!({"song_id":1,"title":"Probe","release_date":timestamp,
+                "album_id":1,"album_title":"Album","duration":123,"artists":[],"genre":"rock",
+                "play_count":1,"rating":4,"like_count":1,"review_count":0,
+                "shareable_link":"https://spotify.com/songs/1"}),
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let cgs = plasm_core::load_schema_dir(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/appworld/spotify"),
+        )
+        .unwrap();
+        let compiled = Arc::new(plasm_compile::compile_cgs_capability_templates(&cgs).unwrap());
+        let engine = ExecutionEngine::new(ExecutionConfig {
+            base_url: Some(url),
+            ..Default::default()
+        })
+        .unwrap();
+        let mut mat = SessionMaterialization::new();
+        mat.stamp_capability_params(
+            &plasm_core::Ref::new("Song", "1"),
+            indexmap::IndexMap::from([("access_token".into(), Value::String("fixture".into()))]),
+        );
+        let result = engine
+            .execute(
+                &Expr::Get(GetExpr::new("Song", "1")),
+                &cgs,
+                &mut mat,
+                None,
+                StreamConsumeOpts::default(),
+                ExecuteOptions {
+                    compiled_catalog: Some(compiled),
+                    ..Default::default()
+                },
+            )
+            .await;
+        if valid {
+            let result = result.unwrap();
+            assert_eq!(
+                result.entities()[0].fields["release_date"].to_value(),
+                Value::String(timestamp.into())
+            );
+        } else {
+            assert!(result.unwrap_err().to_string().contains("release_date"));
+        }
+        server.abort();
+    }
 }

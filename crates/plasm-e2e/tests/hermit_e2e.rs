@@ -129,9 +129,9 @@ async fn query_pets_through_execution_engine() {
 
     assert!(result.is_ok(), "Query should succeed: {:?}", result);
     let result = result.unwrap();
-    assert!(result.count > 0, "Should return at least one pet");
+    assert!(result.count() > 0, "Should return at least one pet");
 
-    for entity in &result.entities {
+    for entity in result.entities() {
         assert!(
             entity.fields.contains_key("name"),
             "Decoded pet should have name"
@@ -169,13 +169,13 @@ async fn query_pets_with_hydrate_resolves_names() {
 
     assert!(result.is_ok(), "{:?}", result.err());
     let result = result.unwrap();
-    assert!(result.count > 0);
+    assert!(result.count() > 0);
     assert!(
         result.stats.network_requests >= 1,
         "expected at least the findByStatus request, got {}",
         result.stats.network_requests
     );
-    for entity in &result.entities {
+    for entity in result.entities() {
         assert!(entity.fields.contains_key("name"));
     }
 }
@@ -206,8 +206,8 @@ async fn get_pet_by_id_through_engine() {
 
     assert!(result.is_ok(), "Get should succeed: {:?}", result);
     let result = result.unwrap();
-    assert_eq!(result.count, 1);
-    assert_eq!(result.entities[0].reference.entity_type, "Pet");
+    assert_eq!(result.count(), 1);
+    assert_eq!(result.entities()[0].reference.entity_type, "Pet");
 }
 
 #[tokio::test]
@@ -236,9 +236,9 @@ async fn get_order_through_engine() {
 
     assert!(result.is_ok(), "Get order should succeed: {:?}", result);
     let result = result.unwrap();
-    assert_eq!(result.count, 1);
+    assert_eq!(result.count(), 1);
     assert!(
-        result.entities[0].fields.contains_key("status"),
+        result.entities()[0].fields.contains_key("status"),
         "Order should have status"
     );
 }
@@ -269,9 +269,9 @@ async fn get_user_by_username() {
 
     assert!(result.is_ok(), "Get user should succeed: {:?}", result);
     let result = result.unwrap();
-    assert_eq!(result.count, 1);
+    assert_eq!(result.count(), 1);
     assert!(
-        result.entities[0].fields.contains_key("email"),
+        result.entities()[0].fields.contains_key("email"),
         "User should have email"
     );
 }
@@ -348,23 +348,23 @@ async fn pokeapi_berry_query_paginates_with_cml() {
     assert!(result.is_ok(), "{:?}", result.err());
     let r = result.unwrap();
     // The fixture has exactly 40 rows; the spec and CML use 20-row pages.
-    assert_eq!(r.count, 40, "must consume both complete pages");
+    assert_eq!(r.count(), 40, "must consume both complete pages");
     assert_eq!(
         r.stats.network_requests, 2,
         "must advance to the second page and stop"
     );
     let ids: std::collections::BTreeSet<_> = r
-        .entities
+        .entities()
         .iter()
         .map(|e| e.reference.primary_slot_str())
         .collect();
     assert_eq!(
         ids.len(),
-        r.count,
+        r.count(),
         "paginated berry query must not overlap identities"
     );
     assert!(r
-        .entities
+        .entities()
         .iter()
         .all(|e| e.reference.entity_type == "Berry"));
 }
@@ -497,7 +497,7 @@ async fn concurrent_cold_identical_reads_no_materialization_conflict() {
                 )
                 .await
                 .expect("live berry query on branch");
-            assert!(result.count >= 1, "expected berries from Hermit");
+            assert!(result.count() >= 1, "expected berries from Hermit");
             let mut guard = session_bg.lock().await;
             let conflicts = detect_materialization_conflicts(&guard, &base, &branch);
             assert!(
@@ -733,7 +733,7 @@ fn appworld_record_authorship_matches_openapi() {
             .any(|v| v == wire));
         let parent = cgs.get_entity(entity).unwrap();
         let rel = parent.relations.get(relation).unwrap();
-        let Some(RelationMaterialization::FromParentGet { path }) = &rel.materialize else {
+        let Some(RelationMaterialization::FromParentGet { path, .. }) = &rel.materialize else {
             panic!("embedded identity required")
         };
         let target = cgs.get_entity(rel.target_resource.as_str()).unwrap();

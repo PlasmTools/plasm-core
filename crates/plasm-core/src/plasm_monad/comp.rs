@@ -86,6 +86,52 @@ impl PlasmComp {
         }
         self.bind.validate(&self.steps.keys().cloned().collect())?;
         for (id, payload) in &self.steps {
+            if let PlasmStepPayload::UnfoldUntil(unfold) = payload {
+                if let Some(body) = &unfold.step_scope {
+                    let effect = super::correlated::iteration_step_effect(body)?;
+                    if body.parent.source.as_str() != unfold.source
+                        || effect.kind != unfold.effect_template.kind
+                        || effect.qualified_entity != unfold.effect_template.qualified_entity
+                        || effect.ir_template.expr != unfold.effect_template.ir_template.expr
+                        || effect.ir_template.projection
+                            != unfold.effect_template.ir_template.projection
+                        || effect.effect_class != unfold.effect_template.effect_class
+                        || effect.result_shape != unfold.effect_template.result_shape
+                    {
+                        return Err("iteration step differs from its sealed effect contract".into());
+                    }
+                    let deps = self.bind.deps.get(&StepId(id.clone()));
+                    for source in std::iter::once(&body.parent.source)
+                        .chain(body.captures.iter().map(|c| &c.source))
+                    {
+                        if !deps.is_some_and(|deps| deps.contains(source)) {
+                            return Err("iteration step requires all captured dependencies".into());
+                        }
+                    }
+                }
+                if let Some(body) = &unfold.until_scope {
+                    body.execution_layers()?;
+                    if !matches!(body.output, super::ScopedOutput::Filter)
+                        || body.parent.source.as_str() != unfold.source
+                        || body.max_parents.get() != 1
+                        || !unfold.until_predicates.is_empty()
+                    {
+                        return Err(
+                            "iteration predicate must be a singleton filter over its seed".into(),
+                        );
+                    }
+                    let deps = self.bind.deps.get(&StepId(id.clone()));
+                    for source in std::iter::once(&body.parent.source)
+                        .chain(body.captures.iter().map(|c| &c.source))
+                    {
+                        if !deps.is_some_and(|deps| deps.contains(source)) {
+                            return Err(
+                                "iteration predicate requires all captured dependencies".into()
+                            );
+                        }
+                    }
+                }
+            }
             if let PlasmStepPayload::MapBody(body) = payload {
                 body.execution_layers()?;
                 if !self

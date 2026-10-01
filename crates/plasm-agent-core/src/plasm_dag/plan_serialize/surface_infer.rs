@@ -150,6 +150,7 @@ pub(in crate::plasm_dag) fn schema_from_output_fields<'a>(
     kind: SyntheticValueKind,
 ) -> SyntheticResultSchema {
     SyntheticResultSchema {
+        optional_fields: Default::default(),
         entity: Some(entity.to_string()),
         fields: fields
             .map(|name| SyntheticFieldSchema {
@@ -167,6 +168,7 @@ pub(in crate::plasm_dag) fn schema_from_aggregates(
     aggregates: &[crate::plasm_plan::AggregateSpec],
 ) -> SyntheticResultSchema {
     SyntheticResultSchema {
+        optional_fields: Default::default(),
         entity: Some(entity.to_string()),
         fields: aggregates
             .iter()
@@ -213,12 +215,14 @@ pub(in crate::plasm_dag) fn schema_from_group_by(
         source: None,
     }));
     SyntheticResultSchema {
+        optional_fields: Default::default(),
         entity: Some(entity.to_string()),
         fields,
     }
 }
 pub(in crate::plasm_dag) fn single_unknown_schema(entity: &str) -> SyntheticResultSchema {
     SyntheticResultSchema {
+        optional_fields: Default::default(),
         entity: Some(entity.to_string()),
         fields: vec![SyntheticFieldSchema {
             value_type: None,

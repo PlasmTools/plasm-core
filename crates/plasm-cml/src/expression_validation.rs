@@ -219,9 +219,34 @@ mod tests {
     }
 
     #[test]
+    fn datetime_layout_requires_an_explicit_encoding_and_preserves_naive_calendar_time() {
+        let mut wire = json!({"method":"POST","path":[],"body":{
+            "type":"datetime_format","wire":"iso8601_naive_datetime",
+            "value":{"type":"var","name":"at"},"format":"%Y-%m-%d|%H:%M:%S"
+        }});
+        let template = parse_capability_template(&wire).unwrap();
+        let env = serde_json::from_value(json!({"at":"2023-01-02T03:04:05"})).unwrap();
+        let crate::CompiledOperation::Http(request) = compile_operation(&template, &env).unwrap()
+        else {
+            panic!("HTTP")
+        };
+        assert_eq!(
+            request.body,
+            Some(plasm_core::Value::String("2023-01-02|03:04:05".into()))
+        );
+        let env = serde_json::from_value(json!({"at":"2023-01-02T03:04:05Z"})).unwrap();
+        assert!(compile_operation(&template, &env).is_err());
+        wire["body"].as_object_mut().unwrap().remove("wire");
+        assert!(
+            parse_capability_template(&wire).is_err(),
+            "encoding must not be inferred"
+        );
+    }
+
+    #[test]
     fn datetime_wire_format_is_typed_null_preserving_and_codec_stable() {
         let wire = json!({"method":"POST","path":[],"body":{"type":"object","fields":[["at",{
-            "type":"datetime_format","value":{"type":"var","name":"instant"},"format":"%Y-%m-%d|%H:%M:%S"
+            "type":"datetime_format","wire":"rfc3339","value":{"type":"var","name":"instant"},"format":"%Y-%m-%d|%H:%M:%S"
         }]]}});
         let template = parse_capability_template(&wire).unwrap();
         let mut bytes = Vec::new();

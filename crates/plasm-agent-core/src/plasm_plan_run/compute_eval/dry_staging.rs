@@ -17,8 +17,14 @@ fn dry_stub_entity_rows(
     cgs: &plasm_core::CGS,
     ent: &plasm_core::EntityDef,
     count: usize,
-) -> Result<(Vec<serde_json::Value>, Vec<Option<plasm_core::RowIdentity>>), String> {
-    let rows = plasm_core::dry_stub_entity_row_json(cgs, ent, count)?;
+) -> Result<
+    (
+        Vec<plasm_core::ValueRow>,
+        Vec<Option<plasm_core::RowIdentity>>,
+    ),
+    String,
+> {
+    let rows = plasm_core::dry_stub_entity_rows(cgs, ent, count)?;
     Ok((rows, vec![None; count]))
 }
 
@@ -30,18 +36,19 @@ async fn dry_stub_materialize_io(
     es: &ExecuteSession,
     step: &IoStep,
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
-) -> Result<Option<MaterializedNode>, String> {
+) -> Result<Option<MaterializedNode>, ExecutionFailure> {
     match step {
         IoStep::MapBody(_) => Ok(None),
         IoStep::Capture(capture) => {
             let (rows, identities) = dry_stub_entity_rows_for(es, &capture.entity, 1)?;
-            Ok(Some(MaterializedNode::inline_cache(
+            Ok(Some(MaterializedNode::dry_values(
+                es.cgs.as_ref(),
                 capture.entity.clone(),
                 rows,
                 identities,
                 "capture".into(),
                 None,
-            )))
+            )?))
         }
         IoStep::Surface(surface) => {
             let federated = es.contexts_by_entry.len() > 1;
@@ -59,13 +66,13 @@ async fn dry_stub_materialize_io(
                     ) => {
                         let (rows, row_identities) =
                             dry_stub_entity_rows_for(es, &qe, dry_stub_row_count(surface.result_shape))?;
-                        Ok(Some(MaterializedNode::inline_cache(
+                        Ok(Some(MaterializedNode::dry_values(es.cgs.as_ref(),
                             qe.clone(),
                             rows,
                             row_identities,
                             crate::plasm_plan_run::dry::render_surface_operation(surface),
                             Some(surface.projection.clone()).filter(|p| !p.is_empty()),
-                        )))
+                        )?))
                     }
                 }
         }
@@ -75,17 +82,19 @@ async fn dry_stub_materialize_io(
                     "dry staging: relation `{}` source `{}` not stubbed",
                     relation.id.as_str(),
                     relation.relation.source.as_str()
-                ));
+                )
+                .into());
             }
             let qe = &relation.relation.target;
             let (rows, row_identities) = dry_stub_entity_rows_for(es, qe, 2)?;
-            Ok(Some(MaterializedNode::inline_cache(
+            Ok(Some(MaterializedNode::dry_values(
+                es.cgs.as_ref(),
                 qe.clone(),
                 rows,
                 row_identities,
                 String::new(),
                 relation.relation.ir.projection.clone(),
-            )))
+            )?))
         }
         IoStep::ForEach(for_each) => {
             // A `for_each` body invokes a mutator/read per source row. Dry cannot invoke, so it
@@ -102,13 +111,14 @@ async fn dry_stub_materialize_io(
             }
             let (rows, row_identities) =
                 dry_stub_entity_rows_for(es, qe, dry_stub_row_count(for_each.result_shape))?;
-            Ok(Some(MaterializedNode::inline_cache(
+            Ok(Some(MaterializedNode::dry_values(
+                es.cgs.as_ref(),
                 qe.clone(),
                 rows,
                 row_identities,
                 String::new(),
                 Some(for_each.projection.clone()).filter(|p| !p.is_empty()),
-            )))
+            )?))
         }
         IoStep::IterateUntil(it) => {
             // Dry: stub final singleton state for the seed entity (step effects not invoked).
@@ -122,13 +132,14 @@ async fn dry_stub_materialize_io(
             }
             let (rows, row_identities) =
                 dry_stub_entity_rows_for(es, qe, dry_stub_row_count(it.result_shape))?;
-            Ok(Some(MaterializedNode::inline_cache(
+            Ok(Some(MaterializedNode::dry_values(
+                es.cgs.as_ref(),
                 qe.clone(),
                 rows,
                 row_identities,
                 String::new(),
                 None,
-            )))
+            )?))
         }
     }
 }
@@ -138,7 +149,13 @@ fn dry_stub_entity_rows_for(
     es: &ExecuteSession,
     qe: &QualifiedEntityKey,
     count: usize,
-) -> Result<(Vec<serde_json::Value>, Vec<Option<plasm_core::RowIdentity>>), String> {
+) -> Result<
+    (
+        Vec<plasm_core::ValueRow>,
+        Vec<Option<plasm_core::RowIdentity>>,
+    ),
+    String,
+> {
     let scoped = entry_scoped_execute_session(es, Some(qe))?;
     let ent = scoped
         .cgs
@@ -199,10 +216,11 @@ fn dry_stub_entity_rows_for(
 /// plan-node API: a new node kind is classified once, in
 /// [`ExecStep::classify`], and cannot silently bypass dry preflight.
 async fn dry_stub_materialize_node(
+    schema_nodes: &[ValidatedPlanNode],
     es: &ExecuteSession,
     node: &ValidatedPlanNode,
     materialized: &mut BTreeMap<PlanNodeId, MaterializedNode>,
-) -> Result<(), String> {
+) -> Result<(), ExecutionFailure> {
     let id = node.id().clone();
     if materialized.contains_key(&id) {
         return Ok(());
@@ -245,25 +263,32 @@ async fn dry_stub_materialize_node(
             let binding_rows = pure.binding_rows(materialized)?;
             let pm = pure.materialize(
                 &PureInputs {
+                    es,
+                    schema_nodes,
                     source_rows: &source_rows,
                     input_rows: &input_rows,
                     binding_rows: &binding_rows,
                 },
                 materialized,
             )?;
-            materialized.insert(
-                id,
-                MaterializedNode::inline_cache(
-                    QualifiedEntityKey {
-                        entry_id: owner_entry_id,
-                        entity: pm.entity_override.unwrap_or_default(),
-                    },
-                    pm.rows,
-                    pm.row_identities,
-                    String::new(),
-                    None,
-                ),
-            );
+            let optional_fields = match &pure {
+                PureStep::Compute(node) => node.compute.schema.optional_fields.clone(),
+                PureStep::Data(_) | PureStep::Derive(_) => Default::default(),
+            };
+            let mut result = MaterializedNode::dry_values(
+                es.cgs.as_ref(),
+                QualifiedEntityKey {
+                    entry_id: owner_entry_id,
+                    entity: pm.entity_override.unwrap_or_default(),
+                },
+                pm.rows,
+                pm.row_identities,
+                String::new(),
+                None,
+            )?;
+            result.value_shapes = pm.value_shapes;
+            result.optional_fields = optional_fields;
+            materialized.insert(id, result);
         }
         ExecStep::Io(io) => {
             if let Some(stub) = dry_stub_materialize_io(es, &io, materialized).await? {
@@ -278,7 +303,7 @@ async fn dry_stub_materialize_node(
 pub(crate) fn dry_validate_staged_surfaces(
     es: &ExecuteSession,
     plan: &crate::plasm_plan::Plan<crate::plasm_plan::ValidatedPlanState>,
-) -> Result<(), String> {
+) -> Result<(), ExecutionFailure> {
     use crate::plasm_plan::ValidatedPlanNode;
 
     let node_by_id: std::collections::HashMap<String, &ValidatedPlanNode> = plan
@@ -300,7 +325,10 @@ pub(crate) fn dry_validate_staged_surfaces(
             synthetic.insert(n.id().clone());
         }
         let needs_real_values = has_synthetic_input && matches!(step, ExecStep::Pure(_));
-        if matches!(n, ValidatedPlanNode::MapBody(_))
+        if matches!(
+            n,
+            ValidatedPlanNode::MapBody(_) | ValidatedPlanNode::Capture(_)
+        ) || matches!(n, ValidatedPlanNode::Compute(c) if matches!(c.compute.op, ComputeOp::Python { .. }))
             || needs_real_values
             || n.depends_on().iter().any(|id| deferred.contains(id))
         {
@@ -319,10 +347,10 @@ pub(crate) fn dry_validate_staged_surfaces(
                             n.id().as_str()
                         )
                     })?;
-                    dry_stub_materialize_node(es, dep_node, &mut materialized).await?;
+                    dry_stub_materialize_node(&plan.nodes, es, dep_node, &mut materialized).await?;
                 }
             }
-            dry_stub_materialize_node(es, n, &mut materialized).await
+            dry_stub_materialize_node(&plan.nodes, es, n, &mut materialized).await
         })?;
         let ValidatedPlanNode::Surface(surface) = n else {
             continue;
@@ -336,7 +364,7 @@ pub(crate) fn dry_validate_staged_surfaces(
         let input_rows =
             materialized_result_use_inputs(&materialized, &surface.uses_result, Some(template))?;
         let scope = EvalScope::Root {
-            row: &serde_json::Value::Null,
+            row: &plasm_core::Value::Null,
         };
         let inputs = InputEnv { rows: &input_rows };
         let empty_coercion = BTreeMap::new();
@@ -365,12 +393,14 @@ mod dry_stub_tests {
         let ent = cgs.get_entity("LangItem").expect("LangItem");
         let (rows, _) = dry_stub_entity_rows(&cgs, ent, 2).expect("stubs");
         assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0]["score"], serde_json::json!(0));
-        assert_eq!(rows[1]["score"], serde_json::json!(1));
-        assert!(rows[0]["score"].is_i64() || rows[0]["score"].is_u64());
+        assert_eq!(rows[0]["score"], crate::fixture_value!(0));
+        assert_eq!(rows[1]["score"], crate::fixture_value!(1));
         assert!(
-            rows[0]["active"].is_boolean(),
-            "active={}",
+            rows[0]["score"].as_integer().is_some() || rows[0]["score"].as_unsigned().is_some()
+        );
+        assert!(
+            rows[0]["active"].as_bool().is_some(),
+            "active={:?}",
             rows[0]["active"]
         );
     }

@@ -69,13 +69,13 @@ detail"#;
     .await
     .expect("live");
 
-    let return_rows: usize = live.return_steps.iter().map(|s| s.result.count).sum();
+    let return_rows: usize = live.return_steps.iter().map(|s| s.result.count()).sum();
     assert!(
         return_rows > 0,
         "expected non-zero detail return rows; return_steps={:?}\nmarkdown:\n{}",
         live.return_steps
             .iter()
-            .map(|s| (s.display.as_str(), s.result.count))
+            .map(|s| (s.display.as_str(), s.result.count()))
             .collect::<Vec<_>>(),
         live.run_markdown.as_deref().unwrap_or("")
     );

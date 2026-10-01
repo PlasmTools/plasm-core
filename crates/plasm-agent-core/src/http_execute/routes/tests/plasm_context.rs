@@ -25,8 +25,10 @@ async fn open_wire_preserves_python_reference_and_declarations() {
         .iter()
         .find(|w| w.mode == "open")
         .expect("open wave");
-    assert!(open.markdown_delta.contains("class Program:"));
-    assert!(open.markdown_delta.contains("class e1"));
+    assert!(open
+        .markdown_delta
+        .contains(plasm_core::prompt_render::python::LANGUAGE.trim()));
+    assert!(open.markdown_delta.contains("e1:"));
     assert!(!open.markdown_delta.contains("plasm_expr\tMeaning"));
     let created = st
         .get_execute_session(&out.prompt_hash, &out.session_id)
@@ -65,8 +67,8 @@ async fn open_wire_includes_seeded_abstract_entity_row() {
         "langmatrix LangItem seed must assign e1: {}",
         open.markdown_delta.chars().take(500).collect::<String>()
     );
-    assert!(open.markdown_delta.contains("class e1"));
-    assert!(open.markdown_delta.contains("def query("));
+    assert!(open.markdown_delta.contains("e1:"));
+    assert!(open.markdown_delta.contains("e1.query("));
 }
 
 #[test]

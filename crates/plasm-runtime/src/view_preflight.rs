@@ -195,7 +195,7 @@ impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
                 bound.insert(target_def.id_field.to_string(), "1".into());
                 bound.insert("id".into(), "1".into());
                 let result = stub_get_result(cap, self.cgs, &bound)?;
-                let get = GetExpr::from_ref(result.entities[0].reference.clone());
+                let get = GetExpr::from_ref(result.entities()[0].reference.clone());
                 preflight_compile_expr(
                     &plasm_core::Expr::Get(get),
                     self.cgs,
@@ -207,7 +207,15 @@ impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
             }
         };
         let mut result = result;
-        result.coverage = source.coverage;
+        result.collection = crate::execution::ExecutionCollection::evaluate(
+            result
+                .collection
+                .membership()
+                .identity()
+                .derived(&"preflight_traversal")?,
+            &[&source.collection, &result.collection],
+            result.entities().clone(),
+        )?;
         Ok(result)
     }
 

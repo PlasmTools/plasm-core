@@ -1,4 +1,4 @@
-version: 4
+version: 5
 auth:
   scheme: none
 http_backend: http://127.0.0.1:9
@@ -28,13 +28,33 @@ entities:
       label: {required: true, value_ref: label}
     relations: {}
 capabilities:
+  item_mark:
+    receiver: {kind: entity, entity: Item}
+    kind: action
+    entity: Item
+    description: Mark the selected item.
+    output:
+      type: side_effect
+      description: Records a mark against this item.
   item_touch:
     kind: action
     entity: Item
-    description: Record a root effect before correlated child reads.
+    description: Record a root effect before or after correlated child reads.
     output:
       type: side_effect
       description: Records a touch for this fixture.
+  item_publish:
+    kind: action
+    entity: Item
+    description: Store a derived document.
+    payload:
+      input_type:
+        type: object
+        fields:
+          - {name: content, value_ref: label, required: true}
+    output:
+      type: side_effect
+      description: Stores the supplied document.
   item_get:
     kind: get
     entity: Item

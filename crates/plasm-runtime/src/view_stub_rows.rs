@@ -8,8 +8,8 @@ use plasm_core::{FieldType, Ref, TypedFieldValue, Value, CGS};
 
 use crate::cache::{CachedEntity, EntityCompleteness};
 use crate::execution::{
-    current_timestamp, ExecutionResult, ExecutionSource, ExecutionStats, OperationLedger,
-    ResultCoverage,
+    current_timestamp, ExecutionCollection, ExecutionResult, ExecutionSource, ExecutionStats,
+    OperationLedger,
 };
 use crate::RuntimeError;
 
@@ -75,11 +75,18 @@ pub fn stub_query_result(
         ts,
         EntityCompleteness::Summary,
     );
+    let identity = plasm_core::collection_codec::CollectionIdentity::for_expression(
+        cgs,
+        &("dry_stub", cap, &cached.reference),
+        0,
+    )?;
     Ok(ExecutionResult {
-        entities: vec![cached],
-        count: 1,
+        collection: ExecutionCollection::observe(
+            identity,
+            vec![cached],
+            plasm_core::collection_codec::Observation::Literal,
+        )?,
         has_more: false,
-        coverage: ResultCoverage::Complete,
         pagination_resume: None,
         paging_handle: None,
         source: ExecutionSource::Cache,
@@ -140,11 +147,18 @@ pub fn stub_get_result(
         ts,
         EntityCompleteness::Complete,
     );
+    let identity = plasm_core::collection_codec::CollectionIdentity::for_expression(
+        cgs,
+        &("dry_stub", cap, &cached.reference),
+        0,
+    )?;
     Ok(ExecutionResult {
-        entities: vec![cached],
-        count: 1,
+        collection: ExecutionCollection::observe(
+            identity,
+            vec![cached],
+            plasm_core::collection_codec::Observation::Literal,
+        )?,
         has_more: false,
-        coverage: ResultCoverage::Complete,
         pagination_resume: None,
         paging_handle: None,
         source: ExecutionSource::Cache,
@@ -173,9 +187,9 @@ mod tests {
         let cap = cgs.get_capability("langitem_get").expect("cap");
         let res = stub_get_result(cap, &cgs, &BTreeMap::from([("id".into(), "item-1".into())]))
             .expect("stub");
-        assert_eq!(res.count, 1);
+        assert_eq!(res.count(), 1);
         assert_eq!(
-            res.entities[0]
+            res.entities()[0]
                 .fields
                 .get("id")
                 .map(TypedFieldValue::to_value),
@@ -189,6 +203,6 @@ mod tests {
         let cap = cgs.get_capability("langitem_query").expect("cap");
         let _ = ViewAmbientContext::default();
         let res = stub_query_result(cap, &cgs, &IndexMap::new()).expect("stub");
-        assert_eq!(res.count, 1);
+        assert_eq!(res.count(), 1);
     }
 }

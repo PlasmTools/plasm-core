@@ -7,6 +7,14 @@ pub fn plasm_comp_commit_canonical(comp: &PlasmComp) -> serde_json::Value {
         if let crate::PlasmStepPayload::MapBody(body) = payload {
             steps[id]["body"] = plasm_comp_commit_canonical(&body.body);
         }
+        if let crate::PlasmStepPayload::UnfoldUntil(unfold) = payload {
+            if let Some(body) = &unfold.step_scope {
+                steps[id]["step_scope"]["body"] = plasm_comp_commit_canonical(&body.body);
+            }
+            if let Some(body) = &unfold.until_scope {
+                steps[id]["until_scope"]["body"] = plasm_comp_commit_canonical(&body.body);
+            }
+        }
     }
     serde_json::json!({
         "version": comp.version,

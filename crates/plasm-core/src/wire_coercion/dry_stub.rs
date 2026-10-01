@@ -26,32 +26,29 @@ pub fn dry_stub_json_for_named_value(nv: &NamedValueSchema, i: usize) -> serde_j
 }
 
 /// Build typed dry-plan stub rows for an entity (RA-8 DryStub).
-pub fn dry_stub_entity_row_json(
+pub fn dry_stub_entity_rows(
     cgs: &CGS,
     ent: &EntityDef,
     count: usize,
-) -> Result<Vec<serde_json::Value>, String> {
+) -> Result<Vec<crate::ValueRow>, String> {
     let mut rows = Vec::with_capacity(count);
     for i in 0..count {
-        let mut obj = serde_json::Map::new();
+        let mut obj = IndexMap::new();
         for (field_name, field) in &ent.fields {
             let nv = field.named_value(cgs).map_err(|e| e.to_string())?;
             obj.insert(
                 field_name.as_str().to_string(),
-                dry_stub_json_for_named_value(nv, i),
+                dry_stub_value_for_named_value(nv, i),
             );
         }
         let id_name = ent.id_field.as_str();
         if let Some(id_field) = ent.fields.get(id_name) {
             let nv = id_field.named_value(cgs).map_err(|e| e.to_string())?;
-            obj.insert(id_name.to_string(), dry_stub_json_for_named_value(nv, i));
+            obj.insert(id_name.to_string(), dry_stub_value_for_named_value(nv, i));
         } else {
-            obj.insert(
-                id_name.to_string(),
-                serde_json::Value::String(format!("dry-{i}")),
-            );
+            obj.insert(id_name.to_string(), Value::String(format!("dry-{i}")));
         }
-        rows.push(serde_json::Value::Object(obj));
+        rows.push(crate::ValueRow::from(obj));
     }
     Ok(rows)
 }
@@ -88,7 +85,15 @@ fn dry_stub_value_for_field_type(
         }
         FieldType::Date => {
             let day = (i % 28) + 1;
-            let raw = Value::String(format!("2020-01-{day:02}T00:00:00Z"));
+            let raw = Value::String(match value_format {
+                Some(ValueWireFormat::Temporal(
+                    crate::TemporalWireFormat::Iso8601NaiveDatetime,
+                )) => format!("2020-01-{day:02}T00:00:00"),
+                Some(ValueWireFormat::Temporal(crate::TemporalWireFormat::Iso8601Date)) => {
+                    format!("2020-01-{day:02}")
+                }
+                _ => format!("2020-01-{day:02}T00:00:00Z"),
+            });
             match value_format {
                 Some(ValueWireFormat::Temporal(fmt)) => {
                     crate::temporal::normalize_temporal_value(raw.clone(), fmt).unwrap_or(raw)

@@ -84,7 +84,7 @@ impl<'a> ResolvedGet<'a> {
             plasm_core::IdentityProjectionCtx::Entity(target),
             Some(&Value::Object(bindings)),
         )?;
-        normalize_cml_env_scope_entity_refs(&mut env, cgs, capability)?;
+        normalize_cml_env_inputs(&mut env, cgs, capability)?;
         plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|error| {
             RuntimeError::ConfigurationError {
                 message: error.to_string(),

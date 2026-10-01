@@ -16,6 +16,8 @@ impl PlanNodeEmitter for DagNodeSource {
     fn emit_plan_node(&self, node: &DagNode) -> Result<PlanNode, String> {
         // This is an untrusted structural plan node. Admission owns checked construction.
         let mut out = PlanNode {
+            until_scope: None,
+            step_scope: None,
             id: node.id.clone(),
             kind: PlanNodeKind::Data,
             qualified_entity: None,
@@ -34,6 +36,7 @@ impl PlanNodeEmitter for DagNodeSource {
             derive_template: None,
             compute: None,
             relation: None,
+            map_body: None,
             depends_on: vec![],
             uses_result: vec![],
             page_size: None,
@@ -92,6 +95,20 @@ impl PlanNodeEmitter for DagNodeSource {
                 out.uses_result = relation_plan_uses_result(source_label, parsed);
                 out.page_size = node.page_size;
             }
+            Self::MapBody { body, .. } => {
+                out.kind = PlanNodeKind::MapBody;
+                out.effect_class = body.effect_class();
+                out.result_shape = body.result_shape();
+                out.map_body = Some(body.clone());
+                out.uses_result =
+                    std::iter::once(result_use(body.parent.source.as_str(), "source"))
+                        .chain(
+                            body.captures
+                                .iter()
+                                .map(|c| result_use(c.source.as_str(), c.local.as_str())),
+                        )
+                        .collect();
+            }
             Self::Data(value) => {
                 out.data = Some(value.clone());
                 if let PlanValue::Template { input_bindings, .. } = value {
@@ -109,8 +126,11 @@ impl PlanNodeEmitter for DagNodeSource {
                 collection_alias,
             } => {
                 out.kind = PlanNodeKind::Compute;
-                out.result_shape = if matches!(op, ComputeOp::Python { per_row: false, .. })
-                    || (matches!(op, ComputeOp::Render { .. }) && node.singleton)
+                out.result_shape = if matches!(
+                    op,
+                    ComputeOp::Python { per_row: false, .. } | ComputeOp::MergeBranches { .. }
+                ) || (matches!(op, ComputeOp::Render { .. })
+                    && node.singleton)
                 {
                     ResultShape::Single
                 } else {
@@ -128,7 +148,7 @@ impl PlanNodeEmitter for DagNodeSource {
                         render_bindings, ..
                     } => render_plan_graph_edges(source, render_bindings).1,
                     ComputeOp::Filter { predicates } => filter_plan_graph_edges(source, predicates),
-                    ComputeOp::Union { other } => {
+                    ComputeOp::Union { other } | ComputeOp::MergeBranches { other } => {
                         let mut uses = vec![result_use(source, "source")];
                         if other.as_str() != source {
                             uses.push(result_use(other.as_str(), other.as_str()));
@@ -139,11 +159,17 @@ impl PlanNodeEmitter for DagNodeSource {
                 };
             }
             Self::Derive {
+                value_type,
                 source,
                 value,
                 inputs,
             } => {
                 out.kind = PlanNodeKind::Derive;
+                out.result_shape = if node.singleton {
+                    ResultShape::Single
+                } else {
+                    ResultShape::List
+                };
                 out.uses_result = std::iter::once(result_use(source, "_"))
                     .chain(
                         inputs
@@ -152,7 +178,11 @@ impl PlanNodeEmitter for DagNodeSource {
                     )
                     .collect();
                 out.derive_template = Some(DeriveTemplate {
-                    kind: DeriveKind::Map,
+                    kind: if value_type.as_ref().is_some_and(|t| !t.is_non_null_record()) {
+                        DeriveKind::Cell
+                    } else {
+                        DeriveKind::Map
+                    },
                     source: Some(source.clone()),
                     item_binding: Some("_".into()),
                     inputs: inputs.clone(),
@@ -164,7 +194,7 @@ impl PlanNodeEmitter for DagNodeSource {
                 out.result_shape = ResultShape::Single;
                 out.uses_result = vec![result_use(source, "_")];
                 out.derive_template = Some(DeriveTemplate {
-                    kind: DeriveKind::Map,
+                    kind: DeriveKind::Cell,
                     source: Some(source.clone()),
                     item_binding: Some("_".into()),
                     inputs: vec![],
@@ -211,6 +241,8 @@ impl PlanNodeEmitter for DagNodeSource {
                 qualified_entity,
                 until_body,
                 until_predicates,
+                until_scope,
+                step_scope,
                 take,
                 uses_result,
             } => {
@@ -222,6 +254,8 @@ impl PlanNodeEmitter for DagNodeSource {
                 out.take = Some(*take);
                 out.until = Some(until_body.clone());
                 out.predicates = until_predicates.clone();
+                out.until_scope = until_scope.clone();
+                out.step_scope = step_scope.clone();
                 out.uses_result = std::iter::once(result_use(seed, "_"))
                     .chain(uses_result.iter().cloned())
                     .collect();

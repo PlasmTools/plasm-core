@@ -1,3 +1,4 @@
+import { terminalExecutionFailure, type ExecutionFailure } from "../runtime/execution-failure.js";
 import {
   streamText,
   stepCountIs,
@@ -123,7 +124,8 @@ export type EveToolLoopStopReason =
   | "unterminated"
   | "error"
   /** The configured consecutive provider-failure allowance was exhausted. */
-  | "provider_exhausted";
+  | "provider_exhausted"
+  | "execution_failed";
 
 export interface EveToolLoopResult {
   text: string;
@@ -131,6 +133,7 @@ export interface EveToolLoopResult {
   usage: LanguageModelUsage;
   messages: ModelMessage[];
   stopReason: EveToolLoopStopReason;
+  executionFailure?: ExecutionFailure;
   /** Per-model-step finish reasons; raw provider `error` overrides mapped `other`. */
   stepFinishReasons: FinishReason[];
   /**
@@ -522,6 +525,7 @@ export async function runEveToolLoop(
   let finalText = "";
   let lastUsage: LanguageModelUsage | undefined;
   let stopReason: EveToolLoopResult["stopReason"] = "budget_exhausted";
+  let executionFailure: ExecutionFailure | undefined;
   const aggregatedSteps: StepResult<ToolSet>[] = [];
   const stepFinishReasons: FinishReason[] = [];
   const outstandingRunRefs = new Set<string>();
@@ -748,6 +752,11 @@ export async function runEveToolLoop(
         { role: "user", content: INVALID_TOOL_INPUT_REPAIR_DIAGNOSTIC },
       ];
     }
+    executionFailure = terminalExecutionFailure(delta);
+    if (executionFailure) {
+      stopReason = "execution_failed";
+      break;
+    }
     const terminal = successfulEvalTerminalInStep({
       toolCalls: stepCalls,
       toolResults: stepToolResults,
@@ -849,6 +858,7 @@ export async function runEveToolLoop(
     usage: lastUsage,
     messages,
     stopReason,
+    executionFailure,
     stepFinishReasons,
     maxOutputTokens: options.modelOptions?.maxOutputTokens,
     lengthTruncationCount: stepFinishReasons.filter((r) => r === "length")

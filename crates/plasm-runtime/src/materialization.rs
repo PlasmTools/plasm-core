@@ -473,20 +473,20 @@ impl std::ops::DerefMut for SessionMaterialization {
 #[derive(Debug, Clone)]
 pub enum MaterializedRowSource {
     /// Rows fully in memory (small / non-graph-backed).
-    Inline(Vec<serde_json::Value>),
-    /// Hot graph + spilled pages; `logical_count` from [`crate::ExecutionResult::count`].
+    Inline(Vec<plasm_core::ValueRow>),
+    /// Hot graph + spilled pages, resolved in the recorded membership order.
     ///
     /// `hot_snapshot` is captured at materialize time so compute can rehydrate without
     /// re-acquiring the session graph mutex or re-copying hot entities.
     GraphBacked {
         entity_type: String,
-        logical_count: usize,
+        membership: plasm_core::collection_codec::RecordedCollection<plasm_core::Ref>,
         hot_snapshot: std::sync::Arc<[CachedEntity]>,
     },
 }
 
 impl MaterializedRowSource {
-    pub fn inline_rows(&self) -> Option<&[serde_json::Value]> {
+    pub fn inline_rows(&self) -> Option<&[plasm_core::ValueRow]> {
         match self {
             Self::Inline(rows) => Some(rows.as_slice()),
             Self::GraphBacked { .. } => None,
@@ -552,13 +552,22 @@ impl ExecutionCacheConsult {
         snapshot: &EntityGraphSnapshot,
         query_index: &QueryIndex,
         cgs: &CGS,
+        environment: &plasm_compile::CmlEnv,
         telemetry: &mut CacheTelemetry,
-    ) -> Option<Vec<CachedEntity>> {
-        let key = QueryCacheKey::from_query(query, capability_name)?;
-        let refs = query_index.get(&key)?;
-        if refs.is_empty() {
-            return None;
-        }
+    ) -> Option<(
+        plasm_core::collection_codec::RecordedCollection<Ref>,
+        Vec<CachedEntity>,
+    )> {
+        let key = QueryCacheKey::from_query(
+            query,
+            capability_name,
+            cgs,
+            environment,
+            snapshot.inner.stats().version,
+        )
+        .ok()?;
+        let record = query_index.get(&key)?;
+        let refs = record.observed();
         let mut entities = Vec::with_capacity(refs.len());
         for r in refs {
             let e = snapshot.get(r)?;
@@ -571,7 +580,7 @@ impl ExecutionCacheConsult {
             entities.push(e.clone());
         }
         telemetry.query_satisfied_from_graph += 1;
-        Some(entities)
+        Some((record.clone(), entities))
     }
 
     pub fn record_query_network(telemetry: &mut CacheTelemetry) {
@@ -583,11 +592,30 @@ impl ExecutionCacheConsult {
         query: &QueryExpr,
         capability_name: &str,
         entities: &[CachedEntity],
-    ) {
-        if let Some(key) = QueryCacheKey::from_query(query, capability_name) {
-            let refs: Vec<Ref> = entities.iter().map(|e| e.reference.clone()).collect();
-            mat.query_index.insert(key, refs);
-        }
+        cgs: &CGS,
+        environment: &plasm_compile::CmlEnv,
+    ) -> Result<plasm_core::collection_codec::RecordedCollection<Ref>, RuntimeError> {
+        use plasm_core::collection_codec::{CollectionCodec, PageTermination, RecordingCodec};
+        let key = QueryCacheKey::from_query(
+            query,
+            capability_name,
+            cgs,
+            environment,
+            mat.graph.stats().version,
+        )?;
+        let refs: Vec<Ref> = entities.iter().map(|e| e.reference.clone()).collect();
+        let codec = RecordingCodec::new();
+        let mut acquisition = codec.acquire(key.identity().clone());
+        acquisition.push(
+            key.identity(),
+            0,
+            refs.into(),
+            entities.len(),
+            PageTermination::Exhausted,
+        )?;
+        let record = acquisition.finish();
+        mat.query_index.insert(key, record.clone())?;
+        Ok(record)
     }
 }
 
@@ -689,7 +717,7 @@ mod tests {
         .unwrap();
         let key = QueryCacheKey::test("LangCursor\0get\0id=c1");
         mat.query_index
-            .insert(key.clone(), vec![Ref::new("LangCursor", "c1")]);
+            .insert_test_observation(key.clone(), vec![Ref::new("LangCursor", "c1")]);
 
         // Type-wide eviction ignores mutator echo identity; only invalidates_entities matters.
         mat.apply_post_mutation_cache_effects(cap, &cgs).unwrap();
@@ -821,7 +849,15 @@ mod tests {
             EntityCompleteness::Complete,
         );
         mat.insert(entity.clone()).expect("insert");
-        ExecutionCacheConsult::index_query_result(&mut mat, &q, "issue_label_query", &[entity]);
+        ExecutionCacheConsult::index_query_result(
+            &mut mat,
+            &q,
+            "issue_label_query",
+            &[entity],
+            &CGS::new(),
+            &Default::default(),
+        )
+        .unwrap();
         let snapshot = mat.snapshot();
         let mut telemetry = CacheTelemetry::default();
         let served = ExecutionCacheConsult::decide_query(
@@ -830,10 +866,11 @@ mod tests {
             &snapshot,
             &mat.query_index,
             &CGS::new(),
+            &Default::default(),
             &mut telemetry,
         )
         .expect("indexed query should consult-hit");
-        assert_eq!(served.len(), 1);
+        assert_eq!(served.1.len(), 1);
         assert_eq!(telemetry.query_satisfied_from_graph, 1);
         assert_eq!(telemetry.query_required_network, 0);
     }

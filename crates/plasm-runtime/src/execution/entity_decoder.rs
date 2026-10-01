@@ -162,7 +162,7 @@ fn create_entity_decoder_inner(
     if let Some(entity) = cgs.get_entity(entity_type) {
         for (rel_name, rel) in &entity.relations {
             if let Some(path) = match &rel.materialize {
-                Some(RelationMaterialization::FromParentGet { path })
+                Some(RelationMaterialization::FromParentGet { path, .. })
                 | Some(RelationMaterialization::PreferFromParentGet { path, .. }) => Some(path),
                 _ => None,
             } {

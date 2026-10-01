@@ -9,6 +9,8 @@ use sha2::{Digest, Sha256};
 mod input_projection;
 mod relation_use;
 mod retrieval_text;
+pub mod semantic_wire;
+pub mod structured;
 
 pub const DISCOVERY_RENDERER_VERSION: u32 = 18;
 pub const EMBEDDING_DIMENSIONS: usize = 1536;

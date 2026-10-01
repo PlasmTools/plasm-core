@@ -45,7 +45,7 @@ pub fn is_shared_minijinja_filter(name: &str) -> bool {
 
 pub const DEFAULT_MAX_INTERPOLATED_LEN: usize = 512 * 1024;
 
-const DOLLAR_HARD_ERROR: &str = "abolished `${…}` / `$$` string interpolation; use Minijinja `{{ path }}` (filters: `| split_part`) or a bare wire `param=binding.content`";
+const DOLLAR_HARD_ERROR: &str = "abolished `${…}` / `$$` string interpolation; use Minijinja `{{ path }}` (filters: `| split_part`) or a typed value `param=binding`";
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ProgramStringError {
@@ -309,16 +309,16 @@ impl Object for TemplateBindingValue {
 }
 
 /// Bind a program binding's materialized rows into the shared template context.
-pub fn template_binding_mj_value(rows: &[serde_json::Value]) -> MjValue {
-    let rows: Vec<MjValue> = rows.iter().map(MjValue::from_serialize).collect();
+pub fn template_binding_mj_value(rows: &[crate::ValueRow]) -> MjValue {
+    let rows: Vec<MjValue> = rows.iter().map(|row| plasm_to_mj(row)).collect();
     MjValue::from_object(TemplateBindingValue { rows })
 }
 
 /// Flatten a source row's fields into `ctx` (`{{ title }}` spelling).
-pub fn flatten_row_fields_into_ctx(row: &serde_json::Value, ctx: &mut BTreeMap<String, MjValue>) {
-    if let serde_json::Value::Object(map) = row {
+pub fn flatten_row_fields_into_ctx(row: &Value, ctx: &mut BTreeMap<String, MjValue>) {
+    if let Value::Object(map) = row {
         for (key, value) in map {
-            ctx.insert(key.clone(), MjValue::from_serialize(value));
+            ctx.insert(key.clone(), plasm_to_mj(value));
         }
     }
 }
@@ -326,8 +326,8 @@ pub fn flatten_row_fields_into_ctx(row: &serde_json::Value, ctx: &mut BTreeMap<S
 /// Build the unified template context: optional current-row fields + named bindings.
 /// Row-field / binding collisions are a compile-time error; this constructor does not pick a winner.
 pub fn unified_template_context(
-    current_row: Option<&serde_json::Value>,
-    bindings: &BTreeMap<String, Vec<serde_json::Value>>,
+    current_row: Option<&Value>,
+    bindings: &BTreeMap<String, Vec<crate::ValueRow>>,
 ) -> BTreeMap<String, MjValue> {
     let mut ctx = BTreeMap::new();
     if let Some(row) = current_row {
@@ -342,8 +342,8 @@ pub fn unified_template_context(
 /// Evaluate a Minijinja body with the shared registry (plain / per-row / argument).
 pub fn render_minijinja(
     template: &str,
-    current_row: Option<&serde_json::Value>,
-    bindings: &BTreeMap<String, Vec<serde_json::Value>>,
+    current_row: Option<&Value>,
+    bindings: &BTreeMap<String, Vec<crate::ValueRow>>,
 ) -> Result<String, ProgramStringError> {
     reject_dollar_interpolation(template)?;
     if !contains_minijinja_markers(template) {
@@ -375,6 +375,7 @@ fn plasm_to_mj(v: &Value) -> MjValue {
         Value::Null => MjValue::from(()),
         Value::Bool(b) => MjValue::from(*b),
         Value::Integer(i) => MjValue::from(*i),
+        Value::Unsigned(i) => MjValue::from(*i),
         Value::Float(f) => MjValue::from(*f),
         Value::String(s) | Value::PhraseIdent(s) => MjValue::from(s.as_str()),
         Value::Array(items) => {
@@ -385,7 +386,7 @@ fn plasm_to_mj(v: &Value) -> MjValue {
             for (k, val) in map {
                 obj.insert(k.clone(), plasm_to_mj(val));
             }
-            MjValue::from_serialize(&obj)
+            MjValue::from_iter(obj)
         }
         Value::Money(m) => MjValue::from(m.display()),
         Value::StringTemplate(_)

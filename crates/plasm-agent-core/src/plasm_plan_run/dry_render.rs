@@ -116,6 +116,8 @@ pub(crate) fn render_input_cardinality(
     proof: crate::plasm_plan::InputCardinalityProof,
 ) -> &'static str {
     match proof {
+        crate::plasm_plan::InputCardinalityProof::Acknowledgement => "acknowledgement",
+        crate::plasm_plan::InputCardinalityProof::Collection => "collection",
         crate::plasm_plan::InputCardinalityProof::StaticSingleton => "static-singleton",
         crate::plasm_plan::InputCardinalityProof::RuntimeCheckedSingleton => {
             "runtime-checked-singleton"
@@ -131,7 +133,7 @@ pub(crate) fn render_compute_template(compute: &ComputeTemplate) -> String {
             input_schema,
             ..
         } => format!(
-            "{} {} -> str",
+            "{} {} -> {}",
             if *per_row {
                 "python_map"
             } else {
@@ -140,8 +142,16 @@ pub(crate) fn render_compute_template(compute: &ComputeTemplate) -> String {
             if input_schema.is_some() {
                 "Row".to_owned()
             } else {
-                format!("Value[{entity}]")
-            }
+                format!("Value[{}]", entity.as_deref().unwrap_or("structural"))
+            },
+            compute
+                .schema
+                .fields
+                .iter()
+                .filter_map(|f| f.value_type.as_ref())
+                .map(|t| t.python_type())
+                .collect::<Vec<_>>()
+                .join(", ")
         ),
         ComputeOp::Project { fields } => {
             let fields = fields
@@ -216,6 +226,7 @@ pub(crate) fn render_compute_template(compute: &ComputeTemplate) -> String {
                 .join(", "),
             template.chars().count()
         ),
+        ComputeOp::MergeBranches { other } => format!("merge_branches({other})"),
         ComputeOp::Union { other } => {
             format!("union {} | {}", compute.source, other.as_str())
         }
@@ -252,6 +263,20 @@ pub(crate) fn render_predicate(predicate: &crate::plasm_plan::PlanPredicate) -> 
 
 pub(crate) fn render_plan_value(value: &PlanValue) -> String {
     match value {
+        PlanValue::Quantified {
+            all,
+            collection,
+            binding,
+            predicate,
+        } => format!(
+            "{}({} for {} in {})",
+            if *all { "all" } else { "any" },
+            render_plan_value(predicate),
+            binding,
+            render_plan_value(collection)
+        ),
+        PlanValue::Expression { expression } => expression.render(|v| render_plan_value(v)),
+
         PlanValue::Literal { value } => render_json_value(&value.to_wire()),
         PlanValue::Symbol { path } => format!("{{{{ {path} }}}}"),
         PlanValue::BindingSymbol { binding, path } => {

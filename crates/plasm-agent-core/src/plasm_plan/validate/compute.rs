@@ -335,7 +335,15 @@ pub(super) fn validate_compute_template(
             t.source
         ));
     }
-    if t.schema.fields.is_empty() {
+    if !t.schema.optional_fields.iter().all(|name| {
+        t.schema
+            .fields
+            .iter()
+            .any(|field| field.name.as_str() == name)
+    }) {
+        return Err("compute presence contract names an undeclared field".into());
+    }
+    if t.schema.fields.is_empty() && !matches!(t.op, ComputeOp::Python { .. }) {
         return Err(format!(
             "plan.nodes[{node_index}].compute.schema.fields must be non-empty"
         ));
@@ -355,18 +363,14 @@ pub(super) fn validate_compute_template(
         ));
     }
     match &t.op {
-        ComputeOp::Python { .. } => {
-            if t.schema.entity.is_some()
-                || t.schema.fields.len() != 1
-                || t.schema.fields[0].name.as_str() != "content"
-                || t.schema.fields[0].value_kind != SyntheticValueKind::String
-                || t.schema.fields[0].source.is_some()
+        ComputeOp::Python { output_type, .. } => {
+            if t.schema
+                != plasm_core::plasm_monad::SyntheticResultSchema::for_value(output_type.clone())?
                 || t.page_size.is_some()
                 || t.collection_alias.is_some()
             {
                 return Err(
-                    "Python reduction requires one synthetic string content field and no paging"
-                        .into(),
+                    "Python compute requires its exact typed value schema and no paging".into(),
                 );
             }
         }
@@ -415,12 +419,7 @@ pub(super) fn validate_compute_template(
                 }
             }
         }
-        ComputeOp::Limit { count } if *count == 0 => {
-            return Err(format!(
-                "plan.nodes[{node_index}].compute.limit.count must be greater than zero"
-            ));
-        }
-        ComputeOp::Union { other } => {
+        ComputeOp::Union { other } | ComputeOp::MergeBranches { other } => {
             if !by_id.contains_key(other.as_str()) {
                 return Err(format!(
                     "plan.nodes[{node_index}].compute.union.other references unknown id {:?}",
@@ -503,7 +502,7 @@ fn validate_render_compute_template(
     }
     if let Some(span) = plasm_core::find_dollar_interpolation_in_minijinja_body(template) {
         return Err(format!(
-            "plan.nodes[{node_index}].compute.render.template uses abolished `${{…}}` interpolation ({span}); use Minijinja `{{{{ field }}}}` on the current row, or a named program binding. Later string params use singleton `param=binding.content`."
+            "plan.nodes[{node_index}].compute.render.template uses abolished `${{…}}` interpolation ({span}); use Minijinja `{{{{ field }}}}` on the current row, or a named program binding."
         ));
     }
     let mut env = minijinja::Environment::new();
@@ -513,11 +512,10 @@ fn validate_render_compute_template(
         .map_err(|e| format!("plan.nodes[{node_index}].compute.render.template: {e}"))?;
     if t.schema.entity.as_deref() != Some("PlanRender")
         || t.schema.fields.len() != 1
-        || t.schema.fields[0].name.as_str() != "content"
         || t.schema.fields[0].value_kind != SyntheticValueKind::String
     {
         return Err(format!(
-            "plan.nodes[{node_index}].compute.render.schema must be entity PlanRender with a single string field named 'content'"
+            "plan.nodes[{node_index}].compute.render.schema must be entity PlanRender with a single string field"
         ));
     }
     Ok(())

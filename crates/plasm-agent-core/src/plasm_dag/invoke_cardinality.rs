@@ -1,7 +1,7 @@
 //! Compile-time gate: only static/bounded singleton field extracts / scalar-cell bindings may fill
 //! scalar invoke params (PLP-1).
 
-use super::binding_contract::{binding_contract, reject_illegal_content_stitch};
+use super::binding_contract::binding_contract;
 use super::prelude::*;
 use super::schema_validate::cgs_for_qualified_entity;
 use super::types::CompileState;
@@ -132,18 +132,17 @@ fn reject_non_scalar_cell_invoke_refs(
                 Err(plp::plp4_program(
                     node_id,
                     format!(
-                        "param `{param}` expects a scalar cell, but `{node}` denotes an entity row — bind a scalar cell (`x = ℓ.wire` or a string/heredoc binding) then pass `param=x`, or write `param=ℓ.wire` inline"
+                        "param `{param}` expects a scalar cell, but `{node}` does not denote one scalar cell — pass a scalar value or field from a proven singleton"
                     ),
                 ))
             }
         }
         Value::PlasmInputRef(PlasmInputRef::NodeInput { node, path }) if !path.is_empty() => {
-            reject_illegal_content_stitch(state, node, path)?;
             if !binding_permits_scalar_field_extract(state, node) {
                 return Err(plp::plp4_program(
                     node_id,
                     format!(
-                        "param `{param}` expects a scalar, but `{node}.{}` is not a singleton field extract — resolve the intended identity and use its Get before extracting; for every selected row, use `{node} => ...` with `_.{}`",
+                        "param `{param}` expects a scalar, but `{node}.{}` is not a singleton field extract — resolve the intended identity with get() before extracting; for every selected row, use a bounded map(lambda row: ..., max_parents=N) and pass `row.{}`",
                         path.join("."), path.join(".")
                     ),
                 ));
@@ -177,7 +176,8 @@ fn binding_permits_scalar_field_extract(state: &CompileState<'_>, label: &str) -
 }
 
 fn binding_is_scalar_cell(state: &CompileState<'_>, label: &str) -> bool {
-    binding_contract(state, label).is_some_and(|c| c.is_scalar_cell())
+    binding_contract(state, label)
+        .is_some_and(|c| c.is_scalar_cell() && c.row_cardinality.permits_scalar_field_extract())
 }
 
 /// Query selection uses the same scalar-field extraction law as invoke arguments.
@@ -224,10 +224,12 @@ fn validate_query_value_fields(
             reject_non_scalar_cell_invoke_refs(state, node_id, param, value)?;
             let contract = binding_contract(state, node).ok_or("unknown query operand binding")?;
             let path = plasm_core::FieldPath::from_dotted(&path.join("."))?;
-            let path = super::schema_validate::resolve_compute_field_path(
+            let schema = super::schema_validate::resolve_immediate_compute_schema(state, &[], node);
+            let path = super::schema_validate::resolve_schema_field_path(
                 session,
                 None,
                 Some(&contract.row_entity),
+                schema.as_ref(),
                 &path,
             )?;
             super::schema_validate::validate_compute_paths_for_dag_source(

@@ -265,36 +265,10 @@ pub(crate) fn assert_planning_federated_ra(
             }
         }
         "lang_money_predicate_gt" => {
-            let Some(ComputeOp::Filter { predicates }) = computes
-                .iter()
-                .map(|c| &c.op)
-                .find(|op| matches!(op, ComputeOp::Filter { .. }))
-            else {
-                return Err(format!("expected money Filter compute, got {computes:?}"));
-            };
-            let predicate_debug = format!("{predicates:?}");
-            if !predicate_debug.contains("price") || !predicate_debug.contains("10") {
-                return Err(format!(
-                    "unexpected money filter predicates: {predicate_debug}"
-                ));
-            }
+            require_python_filter(comp)?;
         }
         "lang_integer_where_gt_dry_coerce" => {
-            let Some(ComputeOp::Filter { predicates }) = computes
-                .iter()
-                .map(|c| &c.op)
-                .find(|op| matches!(op, ComputeOp::Filter { .. }))
-            else {
-                return Err(format!(
-                    "expected integer Filter compute (RA-8), got {computes:?}"
-                ));
-            };
-            let predicate_debug = format!("{predicates:?}");
-            if !predicate_debug.contains("score") || !predicate_debug.contains('0') {
-                return Err(format!(
-                    "unexpected integer filter predicates: {predicate_debug}"
-                ));
-            }
+            require_python_filter(comp)?;
         }
         "lang_money_create_body" => {
             let Some(Expr::Create(c)) = surfaces.iter().find(|e| matches!(e, Expr::Create(_)))
@@ -411,12 +385,7 @@ pub(crate) fn assert_planning_federated_ra(
             }
         }
         "lang_ra4_pipe_monolith" | "lang_ra4_pipe_bind_cut" => {
-            if !computes
-                .iter()
-                .any(|c| matches!(c.op, ComputeOp::Filter { .. }))
-            {
-                return Err(format!("expected Filter compute, got {:?}", computes));
-            }
+            require_python_filter(comp)?;
             if !computes
                 .iter()
                 .any(|c| matches!(c.op, ComputeOp::Limit { .. }))
@@ -432,7 +401,7 @@ pub(crate) fn assert_planning_federated_ra(
         }
         "lang_ra4_apply_monolith" | "lang_ra4_apply_bind_cut" => {
             let mut saw_map = false;
-            for nr in &dry.node_results {
+            for nr in dry_nodes(&dry.node_results) {
                 if nr.get("kind").and_then(|k| k.as_str()) != Some("derive") {
                     continue;
                 }
@@ -457,7 +426,7 @@ pub(crate) fn assert_planning_federated_ra(
         }
         "lang_ra4_apply_derive_message_field" => {
             let mut saw_derive = false;
-            for nr in &dry.node_results {
+            for nr in dry_nodes(&dry.node_results) {
                 if nr.get("kind").and_then(|k| k.as_str()) != Some("derive") {
                     continue;
                 }
@@ -489,7 +458,7 @@ pub(crate) fn assert_planning_federated_ra(
             }
         }
         "lang_ra4_apply_relation_monolith" | "lang_ra4_apply_relation_bind_cut" => {
-            if !dry.node_results.iter().any(|nr| {
+            if !comp_steps_values(comp).iter().any(|nr| {
                 matches!(
                     nr.get("kind").and_then(|k| k.as_str()),
                     Some("relation" | "relation_traversal" | "flat_map_relation")
@@ -499,23 +468,15 @@ pub(crate) fn assert_planning_federated_ra(
             }
         }
         "lang_ra4_apply_render_bind_cut" => {
-            if !computes.iter().any(|c| {
-                matches!(
-                    c.op,
-                    ComputeOp::Render { .. } | ComputeOp::Python { per_row: true, .. }
-                )
-            }) {
+            if !computes
+                .iter()
+                .any(|c| matches!(c.op, ComputeOp::Python { per_row: true, .. }))
+            {
                 return Err(format!("expected Render compute, got {:?}", computes));
             }
         }
         "lang_ra4_apply_foreach_monolith" | "lang_ra4_apply_foreach_bind_cut" => {
-            if !dry
-                .node_results
-                .iter()
-                .any(|nr| nr.get("kind").and_then(|k| k.as_str()) == Some("for_each"))
-            {
-                return Err("expected for_each node".into());
-            }
+            assert_for_each_action_node(dry, comp)?;
         }
         _ => return Ok(None),
     }

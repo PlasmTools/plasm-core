@@ -2,9 +2,6 @@
 
 use super::prelude::*;
 use super::types::{BindingContractSource, CompileState, DagNode, DagNodeSource};
-use crate::plasm_dag_surface_guards::{
-    content_reference_error, path_is_render_content_stitch, ContentReferenceSite,
-};
 use crate::program_binding::ContinuationCapability;
 
 pub(in crate::plasm_dag) fn binding_contract(
@@ -13,32 +10,6 @@ pub(in crate::plasm_dag) fn binding_contract(
 ) -> Option<ProgramBindingContract> {
     let node = state.get(label)?;
     Some(binding_contract_for_node(state, label, node))
-}
-
-/// Reject `label.content` when `label` is a scalar cell that is not a row-to-text render binding.
-pub(in crate::plasm_dag) fn reject_illegal_content_stitch(
-    state: &CompileState<'_>,
-    node: &str,
-    path: &[impl AsRef<str>],
-) -> Result<(), String> {
-    if !path_is_render_content_stitch(path) {
-        return Ok(());
-    }
-    let Some(contract) = binding_contract(state, node) else {
-        return Ok(());
-    };
-    if !matches!(
-        contract.continuation,
-        ContinuationCapability::RenderContentScalar
-    ) && contract.is_scalar_cell()
-    {
-        return Err(content_reference_error(
-            node,
-            ContentReferenceSite::Continuation,
-            contract.continuation,
-        ));
-    }
-    Ok(())
 }
 
 pub(in crate::plasm_dag) fn binding_contract_for_node(
@@ -82,6 +53,33 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
 ) -> ProgramBindingContract {
     let value_kind = binding_value_kind(source);
     match source {
+        DagNodeSource::MapBody { body, schema } => {
+            if matches!(body.output, plasm_core::plasm_monad::ScopedOutput::Filter) {
+                return binding_contract(state, body.parent.source.as_str())
+                    .expect("predicate source contract");
+            }
+            let mut contract = synthetic_row_contract(label, schema);
+            contract.result_shape = body.result_shape();
+            if let plasm_core::plasm_monad::ScopedOutput::Rows {
+                entity,
+                entity_authority,
+                ..
+            } = &body.output
+            {
+                contract.row_entity = QualifiedEntityKey {
+                    entry_id: entity.entry_id.clone(),
+                    entity: entity.entity.clone(),
+                };
+                if *entity_authority {
+                    contract.continuation = ContinuationCapability::RelationDot {
+                        segments: SegmentPolicy::MultiSegment,
+                        method_invoke: true,
+                    };
+                    contract.anchor = ContinuationAnchor::BindingLabel;
+                }
+            }
+            contract
+        }
         DagNodeSource::Surface {
             view_singleton,
             parsed,
@@ -231,7 +229,43 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
         }
         DagNodeSource::Compute {
             source,
-            op: ComputeOp::Render { .. } | ComputeOp::Python { per_row: true, .. },
+            op: op @ ComputeOp::Union { other },
+            schema,
+            ..
+        } => {
+            let left = binding_contract(state, source);
+            let right = binding_contract(state, other.as_str());
+            let authority = |contract: &ProgramBindingContract| {
+                contract.supports_method_invoke() && contract.anchor.is_present()
+            };
+            let left_owner = left
+                .as_ref()
+                .filter(|c| authority(c))
+                .map(|c| &c.row_entity);
+            let right_owner = right
+                .as_ref()
+                .filter(|c| authority(c))
+                .map(|c| &c.row_entity);
+            if let Some(left_contract) = left
+                .as_ref()
+                .filter(|_| op.preserved_identity(left_owner, right_owner).is_some())
+            {
+                let mut contract = inherit_row_preserving_contract(
+                    label,
+                    value_kind,
+                    left_contract,
+                    RowCardinalityProof::StaticPlural,
+                    ContinuationAnchor::BindingLabel,
+                );
+                contract.result_shape = crate::plasm_plan::ResultShape::List;
+                contract
+            } else {
+                synthetic_terminal_contract(label, schema)
+            }
+        }
+        DagNodeSource::Compute {
+            source,
+            op: ComputeOp::Render { .. },
             ..
         } => {
             let parent_card = binding_contract(state, source)
@@ -251,9 +285,47 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
                 result_shape,
                 row_cardinality: parent_card,
                 value_kind,
-                continuation: ContinuationCapability::RenderContentScalar,
+                continuation: ContinuationCapability::Terminal,
                 anchor: ContinuationAnchor::None,
             }
+        }
+        DagNodeSource::Compute {
+            op: ComputeOp::MergeBranches { .. },
+            schema,
+            ..
+        } => {
+            let mut contract = synthetic_terminal_contract(label, schema);
+            contract.row_cardinality = RowCardinalityProof::StaticSingleton;
+            contract
+        }
+        DagNodeSource::Compute {
+            source,
+            op:
+                ComputeOp::Python {
+                    output_type,
+                    per_row,
+                    ..
+                },
+            schema,
+            ..
+        } => {
+            let mut contract = synthetic_terminal_contract(label, schema);
+            if !output_type.is_non_null_record() {
+                contract.value_kind = BindingValueKind::ScalarCell;
+            }
+            contract.row_cardinality = if *per_row {
+                binding_contract(state, source)
+                    .map(|p| p.row_cardinality)
+                    .unwrap_or(RowCardinalityProof::RuntimeChecked)
+            } else {
+                RowCardinalityProof::StaticSingleton
+            };
+            contract.result_shape = if contract.row_cardinality.permits_scalar_field_extract() {
+                crate::plasm_plan::ResultShape::Single
+            } else {
+                crate::plasm_plan::ResultShape::List
+            };
+            contract
         }
         DagNodeSource::Compute { schema, .. } => synthetic_terminal_contract(label, schema),
         DagNodeSource::Data(value) => {
@@ -288,6 +360,23 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
             },
             anchor: ContinuationAnchor::BindingLabel,
         },
+        DagNodeSource::Derive {
+            value_type: Some(schema),
+            ..
+        } => {
+            let schema = plasm_core::plasm_monad::SyntheticResultSchema::for_value(schema.clone())
+                .expect("validated value contract");
+            let mut contract = synthetic_row_contract(label, &schema);
+            if !matches!(&source, DagNodeSource::Derive { value_type: Some(t), .. } if t.is_non_null_record())
+            {
+                contract.value_kind = BindingValueKind::ScalarCell;
+            }
+            if state.get(label).is_some_and(|node| node.singleton) {
+                contract.row_cardinality = RowCardinalityProof::StaticSingleton;
+                contract.result_shape = crate::plasm_plan::ResultShape::Single;
+            }
+            contract
+        }
         DagNodeSource::Derive { .. }
         | DagNodeSource::ForEach { .. }
         | DagNodeSource::IterateUntil { .. } => ProgramBindingContract {
@@ -338,6 +427,7 @@ fn data_literal_shape(value: &PlanValue) -> DataLiteralShape {
         PlanValue::Literal { value: lit } => match lit.value() {
             plasm_core::Value::Null
             | plasm_core::Value::Bool(_)
+            | plasm_core::Value::Unsigned(_)
             | plasm_core::Value::Integer(_)
             | plasm_core::Value::Float(_)
             | plasm_core::Value::Money(_)
@@ -441,13 +531,13 @@ mod tests {
     #[test]
     fn row_preserving_contract_never_creates_continuation_evidence() {
         let schema = SyntheticResultSchema {
+            optional_fields: Default::default(),
             entity: Some("Item".into()),
             fields: vec![],
         };
         for continuation in [
             ContinuationCapability::Terminal,
             ContinuationCapability::PostfixOnly,
-            ContinuationCapability::RenderContentScalar,
             ContinuationCapability::RelationDot {
                 segments: SegmentPolicy::SingleSegment,
                 method_invoke: true,
@@ -503,6 +593,7 @@ mod tests {
                     render_bindings: Vec::new(),
                 },
                 schema: SyntheticResultSchema {
+                    optional_fields: Default::default(),
                     entity: None,
                     fields: Vec::new(),
                 },
@@ -530,6 +621,7 @@ mod tests {
         );
         assert_eq!(
             binding_value_kind(&DagNodeSource::Derive {
+                value_type: None,
                 source: "src".into(),
                 value: PlanValue::Literal {
                     value: plasm_core::operand_binding::ResolvedValue::from_wire(

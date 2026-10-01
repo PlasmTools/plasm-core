@@ -1,6 +1,5 @@
 //! Surface parse helpers (aggregates, sort, plan-value literals).
 
-use super::super::binding_contract::reject_illegal_content_stitch;
 use super::super::prelude::*;
 use super::super::types::CompileState;
 use super::template_uses::dedupe_inputs;
@@ -252,7 +251,6 @@ fn lower_data_expression(
         }
         DataExpr::Reference { root, path } => {
             let dep = state.get(&root).ok_or_else(|| format!("unknown data binding `{root}`; quote literal text, or bind the value before using it"))?;
-            reject_illegal_content_stitch(state, &root, &path)?;
             let cardinality = if !path.is_empty() && dep.singleton {
                 crate::plasm_plan::InputCardinality::Auto
             } else {

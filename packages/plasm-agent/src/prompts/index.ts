@@ -18,9 +18,7 @@ export type PromptAssetName =
   | "initialize_workflow.txt"
   | "plasm_context_tool.txt"
   | "plasm_tool.txt"
-  | "plasm_run_tool_base.txt"
-  | "plasm_run_tool_artifact_tool.txt"
-  | "plasm_read_run_artifact_tool.txt";
+  | "plasm_run_tool_base.txt";
 
 export function loadPromptAsset(name: PromptAssetName): string {
   const monorepo = path.join(monorepoAssetsDir, name);
@@ -148,10 +146,6 @@ export function buildDefaultSystemLiturgy(options: SystemLiturgyOptions = {}): s
   const sections = [
     workflow,
     "",
-    "## Resource handling (tool-only host)",
-    loadPromptAsset("plasm_run_tool_artifact_tool.txt"),
-    loadPromptAsset("plasm_read_run_artifact_tool.txt"),
-    "",
     "## Plasm language (`plasm` tool)",
     loadPromptAsset("plasm_tool.txt"),
   ];
@@ -174,13 +168,5 @@ export function buildDiscoverToolDescription(): string {
 }
 
 export function buildPlasmRunToolDescription(): string {
-  return [
-    loadPromptAsset("plasm_run_tool_base.txt"),
-    "",
-    loadPromptAsset("plasm_run_tool_artifact_tool.txt"),
-  ].join("\n");
-}
-
-export function buildPlasmReadRunArtifactToolDescription(): string {
-  return loadPromptAsset("plasm_read_run_artifact_tool.txt");
+  return loadPromptAsset("plasm_run_tool_base.txt");
 }

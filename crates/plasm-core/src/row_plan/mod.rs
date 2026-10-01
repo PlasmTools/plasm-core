@@ -1,7 +1,7 @@
 //! Fused row-compute IR and engine ports.
 //!
 //! [`ComputeOp`](crate::ComputeOp) remains the hashed PlasmComp constructor. This module is the
-//! execute-time IR. Polars types do not appear here.
+//! execute-time IR over declared Plasm value contracts.
 
 mod collect;
 mod engine;
@@ -27,11 +27,8 @@ pub use expr::{ArithOp, ProjectSpec, WithColumn, WithExpr, WithExprError, WithLi
 pub use filter::{CatalogFilter, RowFilter};
 pub use fold::{fold_compute_ops, plan_node_from_compute};
 pub use ids::{EnginePlanId, FixtureScanId, FrameId, GraphSnapshotId, RowNodeId, SurfaceMeaningId};
-pub use plan::{MoneyAggLaw, NumericAgg, Pipeline, PlanNode, RowPlan, TypedAggregate};
-pub use schema::{
-    ColumnName, FrameShape, IdentityPreservation, LogicalColumn, LogicalColumnType,
-    MoneyColumnLayout, PlasmFrameSchema, RemapReason,
-};
+pub use plan::{MoneyAggLaw, Pipeline, PlanNode, ReductionFunction, RowPlan, TypedAggregate};
+pub use schema::{FrameShape, IdentityPreservation, PlasmFrameSchema, RemapReason};
 pub use with_parse::parse_with_body;
 
 #[cfg(test)]
@@ -206,3 +203,5 @@ mod tests {
         assert!(msg.contains("surface"));
     }
 }
+
+pub mod contracts;

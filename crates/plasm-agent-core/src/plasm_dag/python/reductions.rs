@@ -2,6 +2,23 @@
 use super::*;
 use ruff_python_ast::ExprCall;
 
+macro_rules! aggregate_descriptors {
+    ($($variant:ident => $name:literal),+ $(,)?) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub enum AggregateDescriptor { $($variant),+ }
+        impl AggregateDescriptor {
+            pub const ALL: &'static [Self] = &[$(Self::$variant),+];
+            pub fn name(self) -> &'static str { match self { $(Self::$variant => $name),+ } }
+            fn parse(name: &str) -> Option<Self> { match name { $($name => Some(Self::$variant),)+ _ => None } }
+            fn function(self) -> AggregateFunction { match self { $(Self::$variant => AggregateFunction::$variant),+ } }
+        }
+    }
+}
+aggregate_descriptors! {
+    Count => "count", Sum => "sum", Avg => "avg", Min => "min",
+    Max => "max", First => "first", Last => "last",
+}
+
 impl Lower<'_> {
     pub(super) fn reduction(
         &mut self,
@@ -53,24 +70,28 @@ impl Lower<'_> {
                 {
                     return Err(at(site, "expected a literal agg descriptor"));
                 }
-                let function = match function.attr.as_str() {
-                    "count" => AggregateFunction::Count,
-                    "sum" => AggregateFunction::Sum,
-                    "avg" => AggregateFunction::Avg,
-                    "min" => AggregateFunction::Min,
-                    "max" => AggregateFunction::Max,
-                    "first" => AggregateFunction::First,
-                    "last" => AggregateFunction::Last,
-                    _ => return Err(at(site, "unsupported aggregate function")),
-                };
-                let field = match (function, descriptor.arguments.args.as_ref()) {
-                    (AggregateFunction::Count, []) => None,
-                    (AggregateFunction::Count, _) => {
-                        return Err(at(site, "agg.count takes no arguments"))
+                let descriptor_kind = AggregateDescriptor::parse(function.attr.as_str())
+                    .ok_or_else(|| at(site, "unsupported aggregate function"))?;
+                let field = match descriptor_kind {
+                    AggregateDescriptor::Count => {
+                        if !descriptor.arguments.args.is_empty() {
+                            return Err(at(site, "agg.count takes no arguments"));
+                        }
+                        None
                     }
-                    (_, [field]) => Some(FieldPath::from_dotted(&string(field)?)?),
-                    _ => return Err(at(site, "aggregate requires one literal field name")),
+                    AggregateDescriptor::Sum
+                    | AggregateDescriptor::Avg
+                    | AggregateDescriptor::Min
+                    | AggregateDescriptor::Max
+                    | AggregateDescriptor::First
+                    | AggregateDescriptor::Last => {
+                        let [field] = descriptor.arguments.args.as_ref() else {
+                            return Err(at(site, "aggregate requires one literal field name"));
+                        };
+                        Some(FieldPath::from_dotted(&string(field)?)?)
+                    }
                 };
+                let function = descriptor_kind.function();
                 aggregates.push(AggregateSpec {
                     name: OutputName::new(alias.to_string())?,
                     function,

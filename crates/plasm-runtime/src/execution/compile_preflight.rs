@@ -44,7 +44,7 @@ fn preflight_compile_query(
     if let Some(pred) = &query.predicate {
         extract_predicate_vars(pred, &mut env);
     }
-    normalize_cml_env_scope_entity_refs(&mut env, cgs, capability)?;
+    normalize_cml_env_inputs(&mut env, cgs, capability)?;
     plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
         RuntimeError::ConfigurationError {
             message: e.to_string(),
@@ -123,7 +123,7 @@ fn preflight_compile_create(
             env.insert(k.clone(), v.clone());
         }
     }
-    normalize_cml_env_scope_entity_refs(&mut env, cgs, capability)?;
+    normalize_cml_env_inputs(&mut env, cgs, capability)?;
     plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
         RuntimeError::ConfigurationError {
             message: e.to_string(),
@@ -166,7 +166,7 @@ fn preflight_compile_delete(
     if let Some(input) = input_for_env {
         env.insert("input".to_string(), input);
     }
-    normalize_cml_env_scope_entity_refs(&mut env, cgs, capability)?;
+    normalize_cml_env_inputs(&mut env, cgs, capability)?;
     plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
         RuntimeError::ConfigurationError {
             message: e.to_string(),
@@ -208,7 +208,7 @@ fn preflight_compile_invoke(
     if let Some(input) = &input_for_env {
         env.insert("input".to_string(), input.clone());
     }
-    normalize_cml_env_scope_entity_refs(&mut env, cgs, capability)?;
+    normalize_cml_env_inputs(&mut env, cgs, capability)?;
     plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
         RuntimeError::ConfigurationError {
             message: e.to_string(),

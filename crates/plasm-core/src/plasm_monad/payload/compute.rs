@@ -22,15 +22,17 @@ pub struct ComputeTemplate {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ComputeOp {
-    /// Pure bounded rendering, checked against catalog or inferred row fields before execution.
+    /// Pure bounded computation with recursive input and declared output contracts.
     Python {
         source: String,
         entry_id: String,
-        entity: String,
+        entity: Option<String>,
         catalog_hash: String,
-        /// Version 3 seals recursive value contracts and collection/per-row cardinality.
+        /// Version 9 seals direct result types without a synthetic content field.
         contract_version: u32,
+        language_profile: String,
         input_schema: Option<SyntheticResultSchema>,
+        output_type: crate::value_contract::ValueContract,
         per_row: bool,
     },
     Project {
@@ -66,6 +68,11 @@ pub enum ComputeOp {
     Union {
         other: OutputName,
     },
+    /// Merge complementary value branches. Exactly one total row is required;
+    /// branch field types are joined, and no receiver authority is preserved.
+    MergeBranches {
+        other: OutputName,
+    },
     Render {
         columns: Vec<OutputName>,
         template: String,
@@ -84,9 +91,47 @@ pub enum ComputeOp {
 }
 
 impl ComputeOp {
+    /// Exact global consumers need the whole source. Row-local operators may
+    /// transform observed occurrences, retaining their source's uncertainty.
+    pub fn collection_demand(&self) -> crate::collection_codec::Demand {
+        use crate::collection_codec::Demand;
+        match self {
+            Self::Python { .. }
+            | Self::GroupBy { .. }
+            | Self::Aggregate { .. }
+            | Self::Sort { .. }
+            | Self::MergeBranches { .. }
+            | Self::Render { .. } => Demand::Whole,
+            Self::Project { .. }
+            | Self::Filter { .. }
+            | Self::Limit { .. }
+            | Self::DedupeBy { .. }
+            | Self::With { .. }
+            | Self::Union { .. } => Demand::Observed,
+        }
+    }
+
+    /// Meet of existing row authority. A union requires evidence from both arms;
+    /// equal row shapes alone are never evidence. Returns a borrowed witness.
+    /// Callers provide catalog-qualified witnesses from the same pinned session.
+    pub fn preserved_identity<'a, T: Eq>(
+        &self,
+        left: Option<&'a T>,
+        right: Option<&'a T>,
+    ) -> Option<&'a T> {
+        if self.preserves_row_identity() {
+            left
+        } else if matches!(self, Self::Union { .. }) {
+            left.filter(|identity| right == Some(*identity))
+        } else {
+            None
+        }
+    }
+
     /// RA-10: grain-preserving row algebra keeps parent Γ (entity, continuation).
     /// `Project` / `Filter` / `Sort` / `Limit` / `DedupeBy` / `With` inherit; grain-changing
-    /// `Aggregate` / `GroupBy` / `Render` / `Union` do not.
+    /// `Aggregate` / `GroupBy` / `Render` do not. Union requires two witnesses:
+    /// use `preserved_identity` for its authority meet.
     pub fn preserves_row_identity(&self) -> bool {
         matches!(
             self,
@@ -122,9 +167,79 @@ pub enum AggregateFunction {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SyntheticResultSchema {
+    /// Observation fields may be absent independently of value nullability.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub optional_fields: std::collections::BTreeSet<String>,
     #[serde(default)]
     pub entity: Option<String>,
     pub fields: Vec<SyntheticFieldSchema>,
+}
+
+impl SyntheticResultSchema {
+    /// Row-storage layout for a typed value. Records retain their fields; all other
+    /// values use the ordinary scalar value column, without a language-level accessor.
+    pub fn for_value(
+        value: crate::value_contract::ValueContract,
+    ) -> Result<SyntheticResultSchema, String> {
+        use crate::value_contract::ValueShape;
+        let (fields, optional_fields) = if !value.is_non_null_record() {
+            (
+                std::collections::BTreeMap::from([("value".into(), value)]),
+                Default::default(),
+            )
+        } else {
+            match value.shape {
+                ValueShape::Record { fields } => (fields, Default::default()),
+                ValueShape::ObservedRecord {
+                    fields,
+                    optional_fields,
+                } => (fields, optional_fields),
+                _ => unreachable!("non-null record shape"),
+            }
+        };
+        Ok(SyntheticResultSchema {
+            optional_fields,
+            entity: None,
+            fields: fields
+                .into_iter()
+                .map(|(name, value_type)| {
+                    Ok(SyntheticFieldSchema {
+                        name: OutputName::new(name)?,
+                        value_kind: value_type.summary(),
+                        value_type: Some(value_type),
+                        source: None,
+                    })
+                })
+                .collect::<Result<_, String>>()?,
+        })
+    }
+
+    pub fn row_contract(&self) -> Result<crate::value_contract::ValueContract, String> {
+        let fields = self
+            .fields
+            .iter()
+            .map(|field| {
+                Ok((
+                    field.name.to_string(),
+                    field
+                        .value_type
+                        .clone()
+                        .ok_or_else(|| format!("untyped record field {}", field.name))?,
+                ))
+            })
+            .collect::<Result<std::collections::BTreeMap<_, _>, String>>()?;
+        if !self
+            .optional_fields
+            .iter()
+            .all(|name| fields.contains_key(name))
+        {
+            return Err("presence contract names an undeclared field".into());
+        }
+        Ok(crate::value_contract::ValueContract::record(
+            fields,
+            self.optional_fields.clone(),
+        ))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -202,6 +317,49 @@ mod tests {
     use super::*;
 
     #[test]
+    fn global_consumers_reject_unproven_empty_input() {
+        use crate::collection_codec::{
+            CollectionCodec, CollectionIdentity, Observation, RecordingCodec,
+        };
+        let codec = RecordingCodec::new();
+        let input = codec
+            .record(
+                CollectionIdentity::for_untyped_observation(&"unproven empty page").unwrap(),
+                Vec::<u64>::new(),
+                Observation::UnprovenPage,
+            )
+            .unwrap();
+        for op in [
+            ComputeOp::Aggregate { aggregates: vec![] },
+            ComputeOp::GroupBy {
+                keys: vec![],
+                aggregates: vec![],
+            },
+            ComputeOp::Sort {
+                key: FieldPath::from_dotted("id").unwrap(),
+                descending: false,
+            },
+            ComputeOp::Render {
+                columns: vec![],
+                template: String::new(),
+                column_aliases: Default::default(),
+                render_bindings: vec![],
+            },
+            ComputeOp::MergeBranches {
+                other: OutputName::new("other").unwrap(),
+            },
+        ] {
+            assert!(
+                codec.materialize(&input, op.collection_demand()).is_err(),
+                "{op:?}"
+            );
+        }
+        assert!(codec
+            .materialize(&input, ComputeOp::Limit { count: 0 }.collection_demand())
+            .is_ok());
+    }
+
+    #[test]
     fn preserves_row_identity_table() {
         assert!(ComputeOp::Filter {
             predicates: Vec::new().into()
@@ -242,5 +400,44 @@ mod tests {
             other: OutputName::new("peers").expect("name"),
         }
         .preserves_row_identity());
+    }
+}
+
+#[cfg(test)]
+mod identity_meet_tests {
+    use super::*;
+
+    #[test]
+    fn union_identity_meet_is_commutative_associative_and_never_creates_evidence() {
+        let union = ComputeOp::Union {
+            other: OutputName::new("right").unwrap(),
+        };
+        // Qualified identity witnesses: equal entity names in different catalogs
+        // are deliberately distinct. Absence is absorbing, not an identity.
+        let a = ("catalog-a", "Item");
+        let b = ("catalog-b", "Item");
+        let c = ("catalog-a", "Other");
+        let witnesses = [None, Some(&a), Some(&b), Some(&c)];
+        for x in witnesses {
+            assert_eq!(union.preserved_identity(x, x), x);
+            for y in witnesses {
+                let xy = union.preserved_identity(x, y);
+                assert_eq!(xy, union.preserved_identity(y, x));
+                assert_eq!(xy.is_some(), x.is_some() && x == y);
+                if let Some(witness) = xy {
+                    assert!(std::ptr::eq(witness, x.unwrap()));
+                }
+                for z in witnesses {
+                    assert_eq!(
+                        union.preserved_identity(xy, z),
+                        union.preserved_identity(x, union.preserved_identity(y, z))
+                    );
+                }
+            }
+        }
+        let branches = ComputeOp::MergeBranches {
+            other: OutputName::new("right").unwrap(),
+        };
+        assert!(branches.preserved_identity(Some(&a), Some(&a)).is_none());
     }
 }

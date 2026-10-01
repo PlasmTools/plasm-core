@@ -1,19 +1,3 @@
-import type { ToolSet } from "ai";
-
-import { artifactRuntimeAvailable } from "./artifact-process.js";
-
-/** Advertise transform only when a snapshot exists and an artifact runtime is configured. */
-export function artefactTransformAdvertised(artefactReady: boolean): boolean {
-  return artefactReady && artifactRuntimeAvailable();
-}
-
-/** Harness TypeScript only after materialization and runtime configuration. */
-export function gateArtefactTransform(tools: ToolSet, artefactReady: boolean): ToolSet {
-  if (artefactTransformAdvertised(artefactReady)) return tools;
-  const { plasm_artefact_transform: _omit, ...rest } = tools;
-  return rest;
-}
-
 export function formatPlasmContextMarkdown(
   logicalSessionRef: string,
   prompt: string,
@@ -60,7 +44,7 @@ export function formatPlasmRunMarkdown(
 ): string {
   if (!ok) return `**plasm_run** (pending transport)\n\n${message}`;
   const runLine = runId
-    ? `\n\n**run_id:** \`${runId}\` — call **plasm_read_run_artifact** with this id to materialize the snapshot for programmatic processing.`
+    ? `\n\n**run_id:** \`${runId}\``
     : "";
   return `${message}${runLine}`;
 }

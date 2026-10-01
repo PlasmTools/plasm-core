@@ -29,6 +29,7 @@ pub mod discovery_matcher;
 pub mod discovery_recovery;
 pub mod discovery_service;
 pub mod discovery_store;
+pub mod discovery_support;
 pub mod dispatch;
 pub mod domain_revision;
 pub mod dotenv_safe;
@@ -192,6 +193,8 @@ pub mod plasm_plan_run;
 mod plasm_render_compile;
 mod program_binding;
 pub mod python_compute;
+mod python_datetime;
+mod python_money;
 pub mod python_pool;
 pub mod query_args;
 pub(crate) mod resolved_plan_http;
@@ -292,3 +295,12 @@ mod map_body;
 mod map_body_schema;
 
 pub mod occurrence_progress;
+
+#[cfg(test)]
+macro_rules! fixture_value { ($($tt:tt)*) => { serde_json::from_value::<plasm_core::Value>(serde_json::json!($($tt)*)).unwrap() }; }
+#[cfg(test)]
+macro_rules! fixture_row { ($($tt:tt)*) => { plasm_core::ValueRow::try_from($crate::fixture_value!($($tt)*)).unwrap() }; }
+#[cfg(test)]
+pub(crate) use {fixture_row, fixture_value};
+
+pub mod compilation_error;

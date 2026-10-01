@@ -70,13 +70,17 @@ pub(crate) async fn execute_derived_get(
         .execute_query(&query, cgs, cache, mode, consume, ambient)
         .await?;
 
-    if result.has_more {
+    if result
+        .collection
+        .materialize(plasm_core::collection_codec::Demand::Whole)
+        .is_err()
+    {
         return Err(RuntimeError::DerivedGetIncompleteSource {
             capability: plan.get_capability.to_string(),
         });
     }
 
-    let matches = entities_matching_field_value(&result.entities, &plan.match_field, &needle);
+    let matches = entities_matching_field_value(result.entities(), &plan.match_field, &needle);
     let matched = match matches.len() {
         0 => {
             return Err(RuntimeError::DerivedGetNotFound {

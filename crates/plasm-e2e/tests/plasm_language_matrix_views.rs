@@ -12,7 +12,7 @@ mod language_matrix_views;
 use std::sync::Arc;
 
 #[path = "plasm_language_matrix_views/python.rs"]
-mod python_parity;
+mod python_programs;
 use plasm_agent::plasm_plan_run::{evaluate_plasm_comp_dry, run_plasm_comp};
 use plasm_compile::{validate_cgs_capability_templates, validate_cgs_views};
 use plasm_core::QueryExpr;
@@ -22,7 +22,7 @@ use plasm_runtime::{
     SessionMaterialization, ViewAmbientContext,
 };
 use plasm_runtime::{ExecutionConfig, ExecutionEngine};
-use python_parity::compile_views_program;
+use python_programs::compile_views_program;
 
 use language_matrix_views::{
     language_matrix_views_schema_dir, load_language_matrix_views_cgs, views_execute_session,
@@ -31,8 +31,9 @@ use language_matrix_views::{
 
 fn block_on_views_live<Make, F>(make: Make)
 where
-    Make: Fn(bool) -> F + Send + 'static,
-    F: std::future::Future<Output = ()> + Send + 'static,
+    Make: Fn() -> F + Send + 'static,
+    // The future is created and polled inside the test thread; only Make crosses threads.
+    F: std::future::Future<Output = ()> + 'static,
 {
     std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)
@@ -41,9 +42,7 @@ where
                 .enable_all()
                 .build()
                 .expect("views live runtime");
-            for python in [false, true] {
-                rt.block_on(make(python));
-            }
+            rt.block_on(make());
         })
         .expect("spawn views live harness")
         .join()
@@ -57,8 +56,8 @@ fn matrix_views_catalog_passes_static_validation() {
     validate_cgs_views(&cgs).expect("views DAG");
 }
 
-#[test]
-fn matrix_views_all_preflight() {
+#[tokio::test]
+async fn matrix_views_all_preflight() {
     let cgs = matrix_views_cgs();
     let compiled = plasm_compile::compile_cgs_capability_templates(&cgs).expect("compile CML");
     let ambient = ViewAmbientContext::default();
@@ -81,6 +80,7 @@ fn matrix_views_all_preflight() {
         };
         let source = format!("class ViewPreflight(Program):\n    def build(self):\n        return {symbol}.query({args})\n");
         let bundle = plasm_agent::plasm_compile::compile_python_program(&es, &source)
+            .await
             .unwrap_or_else(|err| panic!("{view_name} Python admission: {err}"));
         evaluate_plasm_comp_dry(&es, &bundle)
             .unwrap_or_else(|err| panic!("{view_name} Python dry: {err}"));
@@ -116,8 +116,8 @@ fn matrix_views_all_preflight() {
     }
 }
 
-#[test]
-fn matrix_views_missing_scope_preflight_errors() {
+#[tokio::test]
+async fn matrix_views_missing_scope_preflight_errors() {
     let cgs = matrix_views_cgs();
     let compiled = plasm_compile::compile_cgs_capability_templates(&cgs).expect("compile CML");
     let query = QueryExpr::all("LangDigest");
@@ -138,6 +138,7 @@ fn matrix_views_missing_scope_preflight_errors() {
         "class MissingScope(Program):\n    def build(self):\n        return {symbol}.query()\n"
     );
     let err = plasm_agent::plasm_compile::compile_python_program(&es, &source)
+        .await
         .expect_err("Python must reject missing required view scope");
     assert!(err.to_string().contains("item_id"), "{err}");
 }
@@ -147,7 +148,7 @@ fn matrix_views_missing_scope_preflight_errors() {
 /// wire names and the alias keys must be those wire names.
 #[test]
 fn matrix_views_row_to_text_wire_column_aliases() {
-    block_on_views_live(|python| async move {
+    block_on_views_live(|| async move {
         let base = hermit_lang_matrix::language_matrix_hermit_base_url()
             .await
             .clone();
@@ -167,15 +168,14 @@ fn matrix_views_row_to_text_wire_column_aliases() {
             f_title, "title",
             "LangItem.title teaching token is its wire name"
         );
-        let program = format!(
-            "items = LangItem(\"i1\") | select {f_id}, {f_title}\nreport = items => <<PLASM_VIEWS_WIRE_BODY\n- {{{{ {f_id} }}}}: {{{{ {f_title} }}}}\nPLASM_VIEWS_WIRE_BODY\nreport"
-        );
-        let bundle = compile_views_program(
-            python,
+        let bundle = python_programs::render(
             es.as_ref(),
-            "matrix_views_wire_body_render",
-            &program,
+            false,
+            "row",
+            "id, title",
+            "f\"- {row.id}: {row.title}\\n\"",
         )
+        .await
         .expect("compile row-to-text wire body");
         evaluate_plasm_comp_dry(es.as_ref(), &bundle).expect("dry row-to-text wire body");
         let comp_wire = serde_json::to_string(&bundle.artifact().comp).expect("comp json");
@@ -235,27 +235,22 @@ fn matrix_views_row_to_text_wire_column_aliases() {
 
 #[test]
 fn matrix_views_row_to_text_source_alias_iteration() {
-    block_on_views_live(|python| async move {
+    block_on_views_live(|| async move {
         let base = hermit_lang_matrix::language_matrix_hermit_base_url()
             .await
             .clone();
         let cgs = load_language_matrix_views_cgs();
         plasm_compile::validate_cgs_capability_templates(&cgs).expect("templates");
         let es = Arc::new(views_execute_session(cgs.clone()));
-        let map = es
-            .teaching_exposure
-            .as_ref()
-            .expect("views session exposure")
-            .symbol_map_arc();
-        let p_id = map.ident_sym_entity_field_for(VIEWS_MATRIX_ENTRY_ID, "LangItem", "id");
-        let p_title = map.ident_sym_entity_field_for(VIEWS_MATRIX_ENTRY_ID, "LangItem", "title");
-        let p_score = map.ident_sym_entity_field_for(VIEWS_MATRIX_ENTRY_ID, "LangItem", "score");
-        let program = format!(
-            "items = LangItem(\"i1\") | select {p_id}, {p_title}, {p_score}\nreport = <<PLASM_VIEWS_ALIAS_BODY\n{{% for r in items %}}- {{{{ r.{p_id} }}}}: {{{{ r.{p_title} }}}} (score: {{{{ r.{p_score} or \"—\" }}}})\n{{% endfor %}}\nPLASM_VIEWS_ALIAS_BODY\nreport"
-        );
-        let bundle =
-            compile_views_program(python, es.as_ref(), "matrix_views_alias_render", &program)
-                .expect("compile plain-template collection render");
+        let bundle = python_programs::render(
+            es.as_ref(),
+            true,
+            "r",
+            "id, title, score",
+            "f\"- {r.id}: {r.title} (score: {r.score or '—'})\\n\"",
+        )
+        .await
+        .expect("compile plain-template collection render");
         evaluate_plasm_comp_dry(es.as_ref(), &bundle)
             .expect("dry plain-template collection render");
         let comp_wire = serde_json::to_string(&bundle.artifact().comp).expect("comp json");
@@ -301,20 +296,21 @@ fn matrix_views_row_to_text_source_alias_iteration() {
 /// Whole-collection text is one template evaluation (PLP-12); there is no implicit `rows` list.
 #[test]
 fn matrix_views_row_to_text_named_loop_cursor() {
-    block_on_views_live(|python| async move {
+    block_on_views_live(|| async move {
         let base = hermit_lang_matrix::language_matrix_hermit_base_url()
             .await
             .clone();
         let cgs = load_language_matrix_views_cgs();
         plasm_compile::validate_cgs_capability_templates(&cgs).expect("templates");
         let es = Arc::new(views_execute_session(cgs.clone()));
-        let program = "items = LangItem(\"i1\") | select id, title\nreport = <<PLASM_VIEWS_NAMED_CURSOR\n{% for entry in items %}- {{ entry.id }}: {{ entry.title or \"—\" }}\n{% endfor %}\nPLASM_VIEWS_NAMED_CURSOR\nreport";
-        let bundle = compile_views_program(
-            python,
+        let bundle = python_programs::render(
             es.as_ref(),
-            "matrix_views_named_cursor_render",
-            program,
+            true,
+            "entry",
+            "id, title",
+            "f\"- {entry.id}: {entry.title or '—'}\\n\"",
         )
+        .await
         .expect("compile row-to-text named loop cursor");
         evaluate_plasm_comp_dry(es.as_ref(), &bundle).expect("dry row-to-text named loop cursor");
         let st = Arc::new(views_matrix_host_state(
@@ -353,7 +349,7 @@ fn matrix_views_row_to_text_named_loop_cursor() {
 /// View-backed many-relations must execute via `view_embed` (not Unavailable cached-embed side door).
 #[test]
 fn matrix_views_view_embed_relation_traversal() {
-    block_on_views_live(|python| async move {
+    block_on_views_live(|| async move {
         let base = hermit_lang_matrix::language_matrix_hermit_base_url()
             .await
             .clone();
@@ -368,10 +364,10 @@ fn matrix_views_view_embed_relation_traversal() {
             Some(plasm_core::RelationMaterialization::ViewEmbed { .. })
         ));
         let es = Arc::new(views_execute_session(cgs.clone()));
-        let program = "LangTriageContext(\"i1\").tags";
-        let bundle =
-            compile_views_program(python, es.as_ref(), "matrix_views_view_embed_tags", program)
-                .expect("compile view_embed relation traversal");
+        let program = "return LangTriageContext.get(\"i1\").tags";
+        let bundle = compile_views_program(es.as_ref(), program)
+            .await
+            .expect("compile view_embed relation traversal");
         evaluate_plasm_comp_dry(es.as_ref(), &bundle).expect("dry view_embed relation traversal");
         let st = Arc::new(views_matrix_host_state(
             ExecutionEngine::new(ExecutionConfig {
@@ -410,18 +406,19 @@ fn matrix_views_view_embed_relation_traversal() {
 
 #[test]
 fn matrix_views_query_parent_fanout_preserves_embeds() {
-    block_on_views_live(|python| async move {
+    block_on_views_live(|| async move {
         let base = hermit_lang_matrix::language_matrix_hermit_base_url()
             .await
             .clone();
         let cgs = load_language_matrix_views_cgs();
         for program in [
-            "parent = LangTriageContext{item_id=\"i1\"}\ntags = parent => _.tags\ntags",
-            "parent = LangTriageContext{item_id=\"i1\"}\ntags = parent.tags\ntags",
-            "parent = LangTriageContext{item_id=\"i1\"} | take 1\ntags = parent => _.tags\ntags",
+            "parent = LangTriageContext.query(item_id=\"i1\")\ntags = parent.flat_map(lambda row: row.tags)\nreturn tags",
+            "parent = LangTriageContext.query(item_id=\"i1\")\ntags = parent.tags\nreturn tags",
+            "parent = LangTriageContext.query(item_id=\"i1\").take(1)\ntags = parent.flat_map(lambda row: row.tags)\nreturn tags",
         ] {
             let es = Arc::new(views_execute_session(cgs.clone()));
-            let bundle = compile_views_program(python, es.as_ref(), "view_parent_fanout", program)
+            let bundle = compile_views_program(es.as_ref(), program)
+                .await
                 .expect("compile view parent relation");
             evaluate_plasm_comp_dry(es.as_ref(), &bundle).expect("preflight view parent relation");
             let st = Arc::new(views_matrix_host_state(
@@ -458,7 +455,7 @@ fn matrix_views_query_parent_fanout_preserves_embeds() {
 /// Parameterless dashboard view: nonempty assigned items via view_embed.
 #[test]
 fn matrix_views_parameterless_dashboard_view_embed_nonempty() {
-    block_on_views_live(|python| async move {
+    block_on_views_live(|| async move {
         let base = hermit_lang_matrix::language_matrix_hermit_base_url()
             .await
             .clone();
@@ -470,22 +467,13 @@ fn matrix_views_parameterless_dashboard_view_embed_nonempty() {
             .expect("views session exposure")
             .symbol_map_arc();
         let esym = map.entity_sym_for(VIEWS_MATRIX_ENTRY_ID, "LangWorkSnapshot");
-        let msym = map.method_sym_for(
-            VIEWS_MATRIX_ENTRY_ID,
-            "LangWorkSnapshot",
-            "lang_work_snapshot_get",
-        );
         let items_rel =
             map.ident_sym_relation_for(VIEWS_MATRIX_ENTRY_ID, "LangWorkSnapshot", "items");
         // Pathless dashboard Get: taught `e#.m#().r#` (receiver none), not kebab `e#.slug()`.
-        let program = format!("{esym}.{msym}().{items_rel}");
-        let bundle = compile_views_program(
-            python,
-            es.as_ref(),
-            "matrix_views_work_snapshot_items",
-            &program,
-        )
-        .expect("compile parameterless dashboard relation");
+        let program = format!("return {esym}.get().{items_rel}");
+        let bundle = compile_views_program(es.as_ref(), &program)
+            .await
+            .expect("compile parameterless dashboard relation");
         evaluate_plasm_comp_dry(es.as_ref(), &bundle)
             .expect("dry parameterless dashboard relation");
         let st = Arc::new(views_matrix_host_state(
@@ -526,7 +514,7 @@ fn matrix_views_parameterless_dashboard_view_embed_nonempty() {
 /// Parameterless dashboard view: zero assigned items still succeeds via present-empty provenance.
 #[test]
 fn matrix_views_parameterless_dashboard_view_embed_empty() {
-    block_on_views_live(|python| async move {
+    block_on_views_live(|| async move {
         let base = hermit_lang_matrix::language_matrix_hermit_base_url()
             .await
             .clone();
@@ -538,22 +526,13 @@ fn matrix_views_parameterless_dashboard_view_embed_empty() {
             .expect("views session exposure")
             .symbol_map_arc();
         let esym = map.entity_sym_for(VIEWS_MATRIX_ENTRY_ID, "LangWorkSnapshotEmpty");
-        let msym = map.method_sym_for(
-            VIEWS_MATRIX_ENTRY_ID,
-            "LangWorkSnapshotEmpty",
-            "lang_work_snapshot_empty_get",
-        );
         let items_rel =
             map.ident_sym_relation_for(VIEWS_MATRIX_ENTRY_ID, "LangWorkSnapshotEmpty", "items");
         // Pathless dashboard Get: taught `e#.m#().r#` (receiver none), not kebab `e#.slug()`.
-        let program = format!("{esym}.{msym}().{items_rel}");
-        let bundle = compile_views_program(
-            python,
-            es.as_ref(),
-            "matrix_views_work_snapshot_empty_items",
-            &program,
-        )
-        .expect("compile empty dashboard relation");
+        let program = format!("return {esym}.get().{items_rel}");
+        let bundle = compile_views_program(es.as_ref(), &program)
+            .await
+            .expect("compile empty dashboard relation");
         evaluate_plasm_comp_dry(es.as_ref(), &bundle).expect("dry empty dashboard relation");
         let st = Arc::new(views_matrix_host_state(
             ExecutionEngine::new(ExecutionConfig {
@@ -590,20 +569,18 @@ fn matrix_views_parameterless_dashboard_view_embed_empty() {
 async fn matrix_views_scoped_view_embed_empty_relation_dry() {
     let cgs = load_language_matrix_views_cgs();
     let es = Arc::new(views_execute_session(cgs.clone()));
-    let program = "LangTriageContext(\"i2\").tags";
-    for python in [false, true] {
-        let bundle =
-            compile_views_program(python, es.as_ref(), "matrix_views_empty_tags_dry", program)
-                .expect("compile empty scoped tags relation");
+    let program = "return LangTriageContext.get(\"i2\").tags";
+    {
+        let bundle = compile_views_program(es.as_ref(), program)
+            .await
+            .expect("compile empty scoped tags relation");
         evaluate_plasm_comp_dry(es.as_ref(), &bundle).expect("dry empty scoped tags");
     }
 }
 
-#[test]
-fn matrix_views_parse_rejects_unmaterialized_many_relation_before_normalize() {
-    use plasm_core::expr_parser::{parse_with_cgs_layers, ParseErrorKind};
+#[tokio::test]
+async fn matrix_views_python_rejects_unmaterialized_many_relation_before_normalize() {
     use plasm_core::loader::load_schema_dir_unvalidated;
-    use plasm_core::{CgsLayer, SymbolMap};
     use std::sync::Arc;
 
     let dir = language_matrix_views_schema_dir();
@@ -620,32 +597,18 @@ fn matrix_views_parse_rejects_unmaterialized_many_relation_before_normalize() {
         "validate must reject many-relation before normalize"
     );
 
-    let (full, _) = plasm_core::entity_slices_for_render(&cgs, plasm_core::FocusSpec::All);
-    let sym_map = Arc::new(SymbolMap::build(&cgs, &full));
-    let stack = [CgsLayer::new("langmatrix_views", &cgs)];
-    let err = parse_with_cgs_layers(r#"LangTriageContext("i1").tags"#, &stack, sym_map)
-        .expect_err("parse must reject unmaterialized many-relation");
-    assert!(
-        matches!(err.kind, ParseErrorKind::ManyRelationUnmaterialized { .. }),
-        "expected ManyRelationUnmaterialized, got {:?}",
-        err.kind
-    );
     let es = views_execute_session(Arc::new(cgs));
-    let error = compile_views_program(
-        true,
-        &es,
-        "matrix_views_view_embed_tags",
-        "LangTriageContext(\"i1\").tags",
-    )
-    .expect_err("Python must also reject an unmaterialized many relation");
+    let error = compile_views_program(&es, "return LangTriageContext.get(\"i1\").tags")
+        .await
+        .expect_err("Python must also reject an unmaterialized many relation");
     assert!(
         error.contains("materializ"),
         "unexpected rejection: {error}"
     );
 }
 
-#[test]
-fn matrix_views_rowsets_taught_navigation_compiles_and_preflights() {
+#[tokio::test]
+async fn matrix_views_rowsets_taught_navigation_compiles_and_preflights() {
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/schemas/view_rowsets");
     let cgs = Arc::new(plasm_core::loader::load_schema_dir(&dir).unwrap());
@@ -653,12 +616,13 @@ fn matrix_views_rowsets_taught_navigation_compiles_and_preflights() {
         cgs,
         &["Library", "Item", "Collection"],
     );
-    for python in [false, true] {
+    {
         for program in [
-            "items = Library{access_token=\"test-token\"}.items\nitems",
-            "library = Library{access_token=\"test-token\"}\nitems = library.items\nitems",
+            "items = Library.query(access_token=\"test-token\").items\nreturn items",
+            "library = Library.query(access_token=\"test-token\")\nitems = library.items\nreturn items",
         ] {
-            let bundle = compile_views_program(python, &session, "rowset_view", program)
+            let bundle = compile_views_program(&session, program)
+                .await
                 .expect("ordinary taught query and relation navigation");
             evaluate_plasm_comp_dry(&session, &bundle).expect("dry composed rowset view");
         }
@@ -667,7 +631,7 @@ fn matrix_views_rowsets_taught_navigation_compiles_and_preflights() {
 
 #[test]
 fn matrix_views_query_only_parent_relations_live() {
-    block_on_views_live(|python| async move {
+    block_on_views_live(|| async move {
         let app =
             axum::Router::new().fallback(axum::routing::get(|uri: axum::http::Uri| async move {
                 let body = match uri.path() {
@@ -698,43 +662,43 @@ fn matrix_views_query_only_parent_relations_live() {
         cgs.http_backend = base.clone();
         let cgs = Arc::new(cgs);
         for program in [
-            "library = Library{access_token=\"test-token\"}\nitems = library => _.items\nitems",
-            "library = Library{access_token=\"test-token\"}\nitems = library.items\nitems",
-            "library = Library{access_token=\"test-token\"} | take 1\nitems = library => _.items\nitems",
-            "library = Library{access_token=\"test-token\"} | take 1\nitems = library.items\nitems",
-            "library = Library{access_token=\"test-token\"}\ncopy = library | select access_token\nitems = copy => _.items\nitems",
-            "library = Library{access_token=\"test-token\"} | select access_token\nitems = library => _.items\nitems",
+            "library = Library.query(access_token=\"test-token\")\nitems = library.flat_map(lambda row: row.items)\nreturn items",
+            "library = Library.query(access_token=\"test-token\")\nitems = library.items\nreturn items",
+            "library = Library.query(access_token=\"test-token\").take(1)\nitems = library.flat_map(lambda row: row.items)\nreturn items",
+            "library = Library.query(access_token=\"test-token\").take(1)\nitems = library.items\nreturn items",
+            "library = Library.query(access_token=\"test-token\")\ncopy = library.select(\"access_token\")\nitems = copy.flat_map(lambda row: row.items)\nreturn items",
+            "library = Library.query(access_token=\"test-token\").select(\"access_token\")\nitems = library.flat_map(lambda row: row.items)\nreturn items",
         ] {
             let es = language_matrix_views::execute_session_for_entities(cgs.clone(), &["Library", "Item", "Collection"]);
-            let bundle = compile_views_program(python, &es, "query_only_view", program).unwrap_or_else(|e| panic!("compile {program}: {e}"));
+            let bundle = compile_views_program(&es, program).await.unwrap_or_else(|e| panic!("compile {program}: {e}"));
             evaluate_plasm_comp_dry(&es, &bundle).unwrap();
             let st = views_matrix_host_state(ExecutionEngine::new(ExecutionConfig { base_url: Some(base.clone()), ..Default::default() }).unwrap(), cgs.clone());
             let live = run_plasm_comp(&es, &st, es.prompt_hash.as_str(), "query_only_view", &bundle, true, None, None, None, None).await
                 .expect("query-only view relation must execute");
             let children = live.return_steps.iter().find(|s| s.node_id.as_deref() == Some("items")).expect("returned child relation");
-            let titles: std::collections::BTreeSet<_> = children.result.entities.iter().map(|e| e.fields.get("title").unwrap().to_value().as_str().unwrap().to_string()).collect();
+            let titles: std::collections::BTreeSet<_> = children.result.entities().iter().map(|e| e.fields.get("title").unwrap().to_value().as_str().unwrap().to_string()).collect();
             assert_eq!(titles, std::collections::BTreeSet::from(["one".into(), "two".into(), "three".into()]));
-            assert_eq!(children.result.entities.len(), 3, "overlapping child IDs must deduplicate");
+            assert_eq!(children.result.entities().len(), 3, "overlapping child IDs must deduplicate");
         }
         for program in [
-            "library = Library{access_token=\"test-token\"} | where access_token = \"absent\"\nitems = library => _.items\nitems",
+            "library = Library.query(access_token=\"test-token\").where(lambda row: row.access_token == \"absent\")\nitems = library.flat_map(lambda row: row.items)\nreturn items",
         ] {
             let es = language_matrix_views::execute_session_for_entities(cgs.clone(), &["Library", "Item", "Collection"]);
-            let bundle = compile_views_program(python, &es, "empty_query_view", program).unwrap();
+            let bundle = compile_views_program(&es, program).await.unwrap();
             evaluate_plasm_comp_dry(&es, &bundle).unwrap();
             let st = views_matrix_host_state(ExecutionEngine::new(ExecutionConfig { base_url: Some(base.clone()), ..Default::default() }).unwrap(), cgs.clone());
             let live = run_plasm_comp(&es, &st, es.prompt_hash.as_str(), "empty_query_view", &bundle, true, None, None, None, None).await
                 .expect("empty view fanout must succeed");
             let children = live.return_steps.iter().find(|s| s.node_id.as_deref() == Some("items")).expect("returned empty relation");
-            assert_eq!(children.result.count, 0, "empty parent set must not read all cached children");
-            assert!(children.result.entities.is_empty());
+            assert_eq!(children.result.count(), 0, "empty parent set must not read all cached children");
+            assert!(children.result.entities().is_empty());
         }
         let es = language_matrix_views::execute_session_for_entities(
             cgs.clone(),
             &["Library", "Item", "Collection"],
         );
-        let program = "library = Library{access_token=\"test-token\"} | where access_token = \"absent\" | take 1\nitems = library.items\nitems";
-        let bundle = compile_views_program(python, &es, "empty_singleton_view", program).unwrap();
+        let program = "library = Library.query(access_token=\"test-token\").where(lambda row: row.access_token == \"absent\").take(1)\nitems = library.items\nreturn items";
+        let bundle = compile_views_program(&es, program).await.unwrap();
         evaluate_plasm_comp_dry(&es, &bundle).unwrap();
         let st = views_matrix_host_state(
             ExecutionEngine::new(ExecutionConfig {
@@ -759,9 +723,136 @@ fn matrix_views_query_only_parent_relations_live() {
         .await
         .expect_err("empty bounded receiver must fail rather than read cached parents");
         assert!(
-            error.contains("zero rows") || error.contains("0 rows"),
+            error.diagnostic().contains("zero rows") || error.diagnostic().contains("0 rows"),
             "unexpected singleton error: {error}"
         );
+        server.abort();
+    });
+}
+
+/// Whole-collection compute must retain proven coverage through view relations.
+#[test]
+fn matrix_views_relation_collection_compute_coverage() {
+    block_on_views_live(|| async move {
+        use axum::{
+            extract::{Path, Query},
+            routing::get,
+            Json,
+        };
+        use serde_json::json;
+        let item =
+            |id: &str, score: i64| json!({"id":id,"title":id,"score":score,"owner":"viewer"});
+        let app = axum::Router::new()
+            .route(
+                "/language/v1/viewer",
+                get(|| async { Json(json!({"id":"v1","display_name":"viewer"})) }),
+            )
+            .route(
+                "/language/v1/viewer/nobody",
+                get(|| async { Json(json!({"id":"v0","display_name":"nobody"})) }),
+            )
+            .route(
+                "/language/v1/items",
+                get(
+                    move |Query(q): Query<std::collections::HashMap<String, String>>| async move {
+                        Json(if q.get("owner").is_some_and(|s| s == "nobody") {
+                            json!([])
+                        } else {
+                            json!([item("i1", 3), item("i2", 1), item("i3", 2)])
+                        })
+                    },
+                ),
+            )
+            .route(
+                "/language/v1/items/{id}",
+                get(move |Path(id): Path<String>| async move {
+                    Json(item(
+                        &id,
+                        match id.as_str() {
+                            "i1" => 3,
+                            "i2" => 1,
+                            _ => 2,
+                        },
+                    ))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let transforms = [
+            ("LangWorkSnapshot", "", "i1|i2|i3"),
+            (
+                "LangWorkSnapshot",
+                concat!(
+                    ".where(lambda r: r.score is not None and r.score >= 2)",
+                    ".order_by(\"score\", descending=True).take(1).select(\"title\")",
+                ),
+                "i1",
+            ),
+            (
+                "LangWorkSnapshot",
+                ".where(lambda r: r.score is not None and r.score > 99).select(\"title\")",
+                "",
+            ),
+            ("LangWorkSnapshotEmpty", "", ""),
+        ];
+        for acquisition in ["get", "query"] {
+            for (root, transform, expected) in transforms {
+                let cgs = load_language_matrix_views_cgs();
+                let es = views_execute_session(cgs.clone());
+                let map = es.teaching_exposure.as_ref().unwrap().symbol_map_arc();
+                let entity = map.entity_sym_for(VIEWS_MATRIX_ENTRY_ID, root);
+                let relation = map.ident_sym_relation_for(VIEWS_MATRIX_ENTRY_ID, root, "items");
+                let source = format!(
+                    r#"class Render(Program):
+    @compute
+    def render(self, rows: list[Row]) -> str:
+        return "|".join(row.title for row in rows)
+    def build(self):
+        rows = {entity}.{acquisition}().{relation}{transform}
+        return self.render(rows)
+"#
+                );
+                let bundle = plasm_agent::plasm_compile::compile_python_program(&es, &source)
+                    .await
+                    .unwrap();
+                evaluate_plasm_comp_dry(&es, &bundle).unwrap();
+                let host = views_matrix_host_state(
+                    ExecutionEngine::new(ExecutionConfig {
+                        base_url: Some(base.clone()),
+                        ..Default::default()
+                    })
+                    .unwrap(),
+                    cgs,
+                );
+                let live = plasm_agent::plasm_plan_run::run_plasm_comp_python(
+                    &es,
+                    &host,
+                    &es.prompt_hash,
+                    "view_collection_coverage",
+                    &bundle,
+                    true,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .await
+                .unwrap_or_else(|error| panic!("{root}/{acquisition}/{transform}: {error}"));
+                let result = &live.return_steps[0].result;
+                assert_eq!(result.coverage(), plasm_runtime::ResultCoverage::Complete);
+                assert!(
+                    !result.has_more
+                        && result.paging_handle.is_none()
+                        && result.pagination_resume.is_none()
+                );
+                assert_eq!(result.count(), 1);
+                assert_eq!(
+                    result.entities()[0].fields["value"].to_value(),
+                    plasm_core::Value::String(expected.into())
+                );
+            }
+        }
         server.abort();
     });
 }

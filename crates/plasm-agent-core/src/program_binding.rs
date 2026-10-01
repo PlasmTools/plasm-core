@@ -91,8 +91,6 @@ pub(crate) enum ContinuationCapability {
     },
     /// Postfix only: `.limit`, `[proj]`, `<<render`, `.page_size`, `.singleton`.
     PostfixOnly,
-    /// `label.content` scalar for render rows (not a relation receiver).
-    RenderContentScalar,
     /// Aggregate, render row, derive, data literal — no `label.` extension.
     Terminal,
 }

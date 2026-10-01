@@ -98,7 +98,6 @@ async fn check_transports() {
         }
         let card = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(Some("LangItem")))
             .lines()
-            .filter(|line| !line.starts_with("evaluation_now\t"))
             .collect::<Vec<_>>()
             .join("\n");
         if let Some(expected) = &first_card {
@@ -122,7 +121,7 @@ async fn check_transports() {
             evaluate_plasm_comp_dry(&es, &bundle).unwrap_or_else(|e| panic!("dry {program}: {e}"));
             let live = Box::pin(run_plasm_comp(&es, &st, es.prompt_hash.as_str(), "receiver", &bundle, true, None, None, None, None)).await;
             if expected_ids.is_empty() {
-                assert!(live.unwrap_err().contains("zero rows"));
+                assert!(live.unwrap_err().diagnostic().contains("zero rows"));
             } else { live.unwrap_or_else(|e| panic!("live {program}: {e}")); }
             let observed = writes.lock().unwrap();
             let ids: Vec<_> = observed.iter().map(|(id, _)| id.as_str()).collect();

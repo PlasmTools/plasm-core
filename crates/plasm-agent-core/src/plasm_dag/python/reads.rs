@@ -1,6 +1,6 @@
-use super::super::schema_validate::*;
+use super::catalog_operations::{CatalogOperation, CatalogReadKind};
 use super::*;
-use ruff_python_ast::{CmpOp, ExprCall};
+use ruff_python_ast::ExprCall;
 impl Lower<'_> {
     pub(super) fn read(
         &mut self,
@@ -27,17 +27,26 @@ impl Lower<'_> {
             }
             Some(binding.capability.clone())
         };
-        let method = specific
-            .as_ref()
-            .and_then(|cap| cgs.get_capability(cap.as_str()))
-            .map(|cap| cap.kind.as_str())
-            .unwrap_or(method);
-        let mut expr = match method {
-            "query" | "search" if call.arguments.args.is_empty() => {
+        let kind = if let Some(capability) = &specific {
+            let cap = cgs
+                .get_capability(capability.as_str())
+                .ok_or("missing method capability")?;
+            let CatalogOperation::Read(kind) = CatalogOperation::from_kind(cap.kind) else {
+                return Err(at(site, "method is not a catalog read"));
+            };
+            kind
+        } else {
+            CatalogReadKind::primary(method).ok_or("unknown primary read")?
+        };
+        let mut expr = match kind {
+            CatalogReadKind::Query | CatalogReadKind::Search => {
+                if !call.arguments.args.is_empty() {
+                    return Err(at(site, "query/search require named selection arguments"));
+                }
                 let mut q = plasm_core::QueryExpr::all(owner.entity.as_str());
                 if let Some(capability) = &specific {
                     q.capability_name = Some(capability.clone());
-                } else if method == "search" {
+                } else if kind == CatalogReadKind::Search {
                     q.capability_name = Some(
                         cgs.primary_search_capability(owner.entity.as_str())
                             .ok_or("entity has no primary search capability")?
@@ -89,7 +98,7 @@ impl Lower<'_> {
                 )?;
                 plasm_core::Expr::Query(q)
             }
-            "get" => {
+            CatalogReadKind::Get => {
                 let entity = cgs
                     .get_entity(owner.entity.as_str())
                     .ok_or("missing Get entity")?;
@@ -130,10 +139,24 @@ impl Lower<'_> {
                     }
                     plasm_core::Ref::compound_slots(owner.entity.as_str(), slots)
                 } else {
-                    if call.arguments.args.len() != 1 || !call.arguments.keywords.is_empty() {
-                        return Err(at(site, "simple Get requires one positional identity"));
+                    if call.arguments.args.len() > 1 {
+                        return Err(at(site, "Get takes at most one positional identity"));
                     }
-                    match self.identity_slot(&call.arguments.args[0])? {
+                    let mut identity = call.arguments.args.first();
+                    for kw in &call.arguments.keywords {
+                        let key = kw.arg.as_ref().ok_or_else(|| {
+                            at(site, "identity keyword unpacking is not admitted")
+                        })?;
+                        if key.as_str() != "identity" {
+                            return Err(at(site, "unexpected Get argument; expected identity"));
+                        }
+                        if identity.replace(&kw.value).is_some() {
+                            return Err(at(site, "Get received multiple values for identity"));
+                        }
+                    }
+                    let identity = identity
+                        .ok_or_else(|| at(site, "Get requires identity (positional or keyword)"))?;
+                    match self.identity_slot(identity)? {
                         plasm_core::IdentitySlot::Binding(input) => {
                             plasm_core::Ref::simple_binding(owner.entity.as_str(), input)
                         }
@@ -147,18 +170,12 @@ impl Lower<'_> {
                 g.catalog_entry_id = plasm_core::CatalogEntryStamp::some(owner.entry_id.clone());
                 plasm_core::Expr::Get(g)
             }
-            _ => {
-                return Err(at(
-                    site,
-                    "supported catalog calls are query(selection=value) and get(identity)",
-                ))
-            }
         };
         plasm_core::apply_required_selection_defaults_in_expr(&mut expr, cgs, "")
             .map_err(|e| e.to_string())?;
         self.emit_catalog(id, expr)
     }
-    fn identity_slot(&self, e: &PyExpr) -> Result<plasm_core::IdentitySlot, String> {
+    fn identity_slot(&mut self, e: &PyExpr) -> Result<plasm_core::IdentitySlot, String> {
         let value = if let PyExpr::UnaryOp(unary) = e {
             if unary.op != ruff_python_ast::UnaryOp::USub {
                 return Err(at(e, "unsupported identity expression"));
@@ -194,271 +211,26 @@ impl Lower<'_> {
         site: &PyExpr,
         source: &str,
         id: &str,
-        e: &PyExpr,
+        expression: &PyExpr,
     ) -> Result<String, String> {
-        let predicates = self.boolean_predicates(site, source, e)?;
-        let node = DagNode {
+        let callback = self.callback(expression)?;
+        let body = self.scoped_callback_body(
+            site,
+            source,
+            &callback,
+            std::num::NonZeroU32::new(65_536).expect("positive bound"),
+            super::body::ScopeMode::Filter,
+        )?;
+        let schema = crate::map_body_schema::output_schema(self.es, &body)?;
+        self.insert(DagNode {
             id: id.into(),
             expr: String::new(),
             singleton: false,
             page_size: None,
-            source: super::super::types::DagNodeSource::Compute {
-                source: source.into(),
-                op: ComputeOp::Filter { predicates },
-                schema: compute_passthrough_or_fallback_schema(
-                    self.es,
-                    &self.state,
-                    &[],
-                    source,
-                    "PythonFilter",
-                ),
-                collection_alias: None,
+            source: super::super::types::DagNodeSource::MapBody {
+                body: Box::new(body),
+                schema,
             },
-        };
-        self.insert(node)
-    }
-    fn boolean_predicates(
-        &mut self,
-        site: &PyExpr,
-        source: &str,
-        e: &PyExpr,
-    ) -> Result<plasm_core::BooleanExpr<crate::plasm_plan::PlanPredicate>, String> {
-        let PyExpr::Lambda(lambda) = e else {
-            return Err(at(e, "where requires a lambda"));
-        };
-        self.boolean_body(site, source, lambda, &lambda.body)
-    }
-    fn boolean_body(
-        &mut self,
-        site: &PyExpr,
-        source: &str,
-        lambda: &ruff_python_ast::ExprLambda,
-        body: &PyExpr,
-    ) -> Result<plasm_core::BooleanExpr<crate::plasm_plan::PlanPredicate>, String> {
-        use plasm_core::BooleanExpr;
-        match body {
-            PyExpr::BoolOp(op) => {
-                let args = op
-                    .values
-                    .iter()
-                    .map(|value| self.boolean_body(site, source, lambda, value))
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(match op.op {
-                    ruff_python_ast::BoolOp::And => BooleanExpr::And(args),
-                    ruff_python_ast::BoolOp::Or => BooleanExpr::Or(args),
-                })
-            }
-            PyExpr::UnaryOp(op) if op.op == ruff_python_ast::UnaryOp::Not => Ok(BooleanExpr::Not(
-                Box::new(self.boolean_body(site, source, lambda, &op.operand)?),
-            )),
-            _ => {
-                let mut atom = lambda.clone();
-                atom.body = Box::new(body.clone());
-                Ok(self
-                    .comparison_predicates(site, source, &PyExpr::Lambda(atom), false)?
-                    .into())
-            }
-        }
-    }
-    pub(super) fn comparison_predicates(
-        &mut self,
-        site: &PyExpr,
-        source: &str,
-        e: &PyExpr,
-        allow_binding: bool,
-    ) -> Result<Vec<crate::plasm_plan::PlanPredicate>, String> {
-        let PyExpr::Lambda(lambda) = e else {
-            return Err(at(e, "where requires a lambda"));
-        };
-        let p = lambda
-            .parameters
-            .as_ref()
-            .ok_or("where requires one row parameter")?;
-        if p.args.len() != 1
-            || !p.posonlyargs.is_empty()
-            || !p.kwonlyargs.is_empty()
-            || p.vararg.is_some()
-            || p.kwarg.is_some()
-            || p.args[0].default.is_some()
-        {
-            return Err(at(e, "where requires one row parameter"));
-        }
-        let PyExpr::Compare(c) = &*lambda.body else {
-            return Err(at(e, "where admits one scalar comparison"));
-        };
-        if c.ops.len() != 1 || c.comparators().len() != 1 {
-            return Err(at(e, "chained comparisons are not admitted"));
-        }
-        let contains = c.ops[0] == CmpOp::In
-            && matches!(&c.operands[0], PyExpr::StringLiteral(_))
-            && matches!(&c.comparators()[0], PyExpr::Attribute(_));
-        let left = if contains {
-            &c.comparators()[0]
-        } else {
-            &c.operands[0]
-        };
-        let right = if contains {
-            &c.operands[0]
-        } else {
-            &c.comparators()[0]
-        };
-        let literal_membership = !contains
-            && matches!(c.ops[0], CmpOp::In | CmpOp::NotIn)
-            && matches!(right, PyExpr::List(_) | PyExpr::Tuple(_));
-        let PyExpr::Attribute(field) = left else {
-            return Err(at(e, "comparison requires a row field"));
-        };
-        if name(&field.value) != Some(p.args[0].parameter.name.as_str()) {
-            return Err(at(e, "comparison must reference its row"));
-        }
-        let qe = resolve_qualified_entity_for_dag_source(&self.state, &[], source.to_owned())
-            .ok_or("where requires entity rows")?;
-        let row_schema = super::super::schema_validate::resolve_immediate_compute_schema(
-            &self.state,
-            &[],
-            source,
-        );
-        let path = super::super::schema_validate::resolve_sort_field_path(
-            self.es,
-            None,
-            Some(&qe),
-            row_schema.as_ref(),
-            &FieldPath::from_dotted(field.attr.as_str())?,
-        )?;
-        validate_compute_paths_for_dag_source(
-            self.es,
-            &self.state,
-            &[],
-            source,
-            std::slice::from_ref(&path),
-            "where",
-        )?;
-        if !contains && !literal_membership && matches!(c.ops[0], CmpOp::In | CmpOp::NotIn) {
-            if allow_binding {
-                return Err(at(
-                    site,
-                    "iteration stop predicates require scalar comparisons",
-                ));
-            }
-            let rhs_expr = &c.comparators()[0];
-            super::membership::validate_closed_rhs(rhs_expr, p.args[0].parameter.name.as_str())?;
-            let rhs = self.expr(rhs_expr, None)?;
-            if super::super::binding_contract(&self.state, &rhs)
-                .is_some_and(|contract| contract.is_scalar_cell())
-            {
-                return Err(at(site, "membership requires a rowset, not a scalar cell"));
-            }
-            let column_path =
-                super::super::row_suffix::membership_rhs_column_path(&self.state, &[], &rhs)?;
-            if column_path.len() != 1 {
-                return Err(at(
-                    site,
-                    "membership requires an explicit one-column rowset",
-                ));
-            }
-            return Ok(vec![crate::plasm_plan::PlanPredicate {
-                field_path: path,
-                op: if c.ops[0] == CmpOp::In {
-                    crate::plasm_plan::PlanPredicateOp::In
-                } else {
-                    crate::plasm_plan::PlanPredicateOp::NotIn
-                },
-                value: crate::plasm_plan::PlanValue::BindingSymbol {
-                    binding: rhs.to_owned(),
-                    path: column_path,
-                },
-            }]);
-        }
-        let op = if contains {
-            plasm_core::CompOp::Contains
-        } else {
-            match c.ops[0] {
-                CmpOp::Eq => plasm_core::CompOp::Eq,
-                CmpOp::NotEq => plasm_core::CompOp::Neq,
-                CmpOp::Lt => plasm_core::CompOp::Lt,
-                CmpOp::LtE => plasm_core::CompOp::Lte,
-                CmpOp::Gt => plasm_core::CompOp::Gt,
-                CmpOp::GtE => plasm_core::CompOp::Gte,
-                CmpOp::In | CmpOp::NotIn if literal_membership => plasm_core::CompOp::In,
-                _ => return Err(at(site, "unsupported comparison")),
-            }
-        };
-        let pred = plasm_core::RowPredicate(vec![plasm_core::RowComparison {
-            field: path.segments()[0].clone(),
-            op,
-            value: plasm_core::TypedComparisonValue::from_value(if allow_binding {
-                let operand = &c.comparators()[0];
-                if let Some(binding) = name(operand) {
-                    if !super::super::binding_contract(&self.state, binding)
-                        .is_some_and(|c| c.is_scalar_cell())
-                    {
-                        return Err(at(operand, "comparison operand must be a scalar cell"));
-                    }
-                }
-                self.write_value(operand)?
-            } else {
-                if let PyExpr::Tuple(tuple) = right {
-                    plasm_core::Value::Array(
-                        tuple.elts.iter().map(literal).collect::<Result<_, _>>()?,
-                    )
-                } else {
-                    literal(right)?
-                }
-            }),
-        }]);
-        let cgs = cgs_for_qualified_entity(self.es, &qe).ok_or("missing catalog")?;
-        let mut catalog_pred = pred.clone();
-        if row_schema.is_some() {
-            catalog_pred.0.retain(|clause| {
-                cgs.get_entity(qe.entity.as_str())
-                    .is_some_and(|entity| entity.fields.contains_key(clause.field.as_str()))
-            });
-        }
-        if literal_membership {
-            let mut element_comparisons = Vec::new();
-            for clause in catalog_pred.0 {
-                let plasm_core::Value::Array(values) = clause.value.to_value() else {
-                    return Err(at(site, "membership requires a literal list or tuple"));
-                };
-                element_comparisons.extend(values.into_iter().map(|value| {
-                    plasm_core::RowComparison {
-                        field: clause.field.clone(),
-                        op: plasm_core::CompOp::Eq,
-                        value: plasm_core::TypedComparisonValue::from_value(value),
-                    }
-                }));
-            }
-            catalog_pred.0 = element_comparisons;
-        }
-        plasm_core::type_check_row_predicate(
-            &catalog_pred,
-            &plasm_core::RowPredicateTypeCtx {
-                qe: &plasm_core::QualifiedEntityKey::new(&qe.entry_id, &qe.entity),
-                cgs: cgs.as_ref(),
-                symbol_map: None,
-            },
-        )
-        .map_err(|e| e.to_string())?;
-        let mut lowered = crate::row_predicate_lower::lower_row_predicate_to_plan(
-            &pred,
-            self.es,
-            &qe,
-            None,
-            &row_schema
-                .map(|schema| {
-                    schema
-                        .fields
-                        .iter()
-                        .map(|field| field.name.to_string())
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default(),
-        )?;
-        if literal_membership && c.ops[0] == CmpOp::NotIn {
-            for predicate in &mut lowered {
-                predicate.op = crate::plasm_plan::PlanPredicateOp::NotIn;
-            }
-        }
-        Ok(lowered)
+        })
     }
 }

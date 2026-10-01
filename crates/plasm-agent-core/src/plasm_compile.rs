@@ -1,6 +1,10 @@
 //! Canonical compile surface → [`PlasmCompBundle`] (monadic execution contract).
 
 pub use crate::plasm_comp_bundle::PlasmCompBundle;
+pub use crate::plasm_dag::{
+    PythonAggregateDescriptor, PythonBuildStatement, PythonCatalogOperation, PythonDeclaration,
+    PythonQuantifierOperation, PythonRelationOperation, PythonRowOperation,
+};
 
 use crate::execute_session::ExecuteSession;
 use crate::plasm_comp_wire::plasm_comp_from_validated;
@@ -85,20 +89,25 @@ pub fn compile_plasm_surface_line_to_comp(
 
 /// Compile the statically admitted Python `Program.build` frontend.
 /// This does not execute the module or infer effects by running Python.
-pub fn compile_python_program(
+pub async fn compile_python_program(
     session: &ExecuteSession,
     source: &str,
 ) -> Result<PlasmCompBundle, String> {
-    crate::plasm_dag::compile_python_program(session, source)
+    let bundle = crate::plasm_dag::compile_python_program(session, source)?;
+    let admission = Box::pin(crate::python_compute::admit_bundle(session, &bundle)).await;
+    admission.map_err(|error| error.to_string())?;
+    Ok(bundle)
 }
 
 /// Sole production source-language entry point. Never retries the native parser.
-pub fn compile_program(
+pub async fn compile_program(
     _pipeline: &PromptPipelineConfig,
     _symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     session: &ExecuteSession,
     _name: &str,
     source: &str,
-) -> Result<PlasmCompBundle, ProgramStageError> {
-    crate::python_program_diagnostic::compile(session, source)
+) -> Result<PlasmCompBundle, crate::compilation_error::CompilationError> {
+    let bundle = crate::python_program_diagnostic::compile(session, source)?;
+    Box::pin(crate::python_compute::admit_bundle(session, &bundle)).await?;
+    Ok(bundle)
 }

@@ -171,11 +171,13 @@ fn automatic_approval_policy_emits_receipt_for_gate() {
 
 #[test]
 fn for_each_plan_eval_env_interpolates_row_and_cross_binding_strings() {
-    let row = serde_json::json!({"title": "Bolt"});
+    let row = crate::fixture_value!({"title": "Bolt"});
     let mut input_rows = BTreeMap::new();
     input_rows.insert(
         InputAlias::new("report".to_string()).expect("alias"),
         MaterializedInputRow {
+            optional_fields: Default::default(),
+            value_projection: None,
             node: PlanNodeId::new("report").expect("node"),
             qualified_entity: crate::plasm_plan::QualifiedEntityKey {
                 entry_id: "acme".into(),
@@ -183,8 +185,8 @@ fn for_each_plan_eval_env_interpolates_row_and_cross_binding_strings() {
             },
             id_field: "id".into(),
             proof: crate::plasm_plan::InputCardinalityProof::StaticSingleton,
-            row: serde_json::json!({"content": "STATS"}),
-            rows: vec![serde_json::json!({"content": "STATS"})],
+            row: crate::fixture_value!({"content": "STATS"}),
+            rows: vec![crate::fixture_row!({"content": "STATS"})],
             row_identity: None,
             row_identities: vec![None],
         },

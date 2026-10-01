@@ -44,7 +44,7 @@ pub(crate) fn lossy_summary_field_names(
         return LossySummaryFieldNames::default();
     };
     let mut names = BTreeSet::new();
-    for entity in &result.entities {
+    for entity in result.entities() {
         for key in entity.fields.keys() {
             if matches!(
                 field_presentation(Some(cgs), &entity.reference.entity_type, key.as_str()),

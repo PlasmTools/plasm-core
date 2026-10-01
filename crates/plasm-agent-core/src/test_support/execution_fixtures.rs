@@ -49,10 +49,17 @@ pub fn synthetic_published_result_step_with_paging(
         display: "Move[id,name]".into(),
         projection: Some(vec!["id".into(), "name".into()]),
         result: Arc::new(ExecutionResult {
-            count: row_count,
-            entities,
+            collection: plasm_runtime::execution::ExecutionCollection::observe(
+                plasm_core::collection_codec::CollectionIdentity {
+                    catalog: [1; 32],
+                    expression: [2; 32],
+                    epoch: 0,
+                },
+                entities,
+                plasm_core::collection_codec::Observation::UnprovenPage,
+            )
+            .unwrap(),
             has_more: paging_handle.is_some(),
-            coverage: ResultCoverage::Unknown,
             pagination_resume: None,
             paging_handle,
             source: ExecutionSource::Live,
@@ -62,4 +69,37 @@ pub fn synthetic_published_result_step_with_paging(
         }),
         artifact,
     }
+}
+
+/// Construct an explicit producer observation for tests; production accepts no coverage setter.
+pub fn collection(
+    rows: Vec<CachedEntity>,
+    coverage: ResultCoverage,
+) -> plasm_runtime::execution::ExecutionCollection {
+    use plasm_core::collection_codec::{CollectionIdentity, Observation};
+    let observation = match coverage {
+        ResultCoverage::Complete => Observation::ExactOutput {
+            decoded: rows.len(),
+        },
+        ResultCoverage::Partial => Observation::MoreAvailable,
+        ResultCoverage::Unknown => Observation::UnprovenPage,
+    };
+    plasm_runtime::execution::ExecutionCollection::observe(
+        CollectionIdentity::for_untyped_observation(&"execution_fixture").unwrap(),
+        rows,
+        observation,
+    )
+    .unwrap()
+}
+
+#[cfg(test)]
+pub fn checkpoint(
+    rows: Vec<CachedEntity>,
+    coverage: ResultCoverage,
+) -> plasm_core::collection_codec::CollectionCheckpoint {
+    plasm_core::collection_codec::CollectionCheckpoint::capture(
+        &plasm_core::collection_codec::RecordingCodec::new(),
+        collection(rows, coverage).membership(),
+    )
+    .unwrap()
 }

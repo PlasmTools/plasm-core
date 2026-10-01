@@ -14,11 +14,12 @@ pub fn graph_write_conflict_user_message() -> String {
 #[derive(Debug)]
 pub enum RunLineError {
     Parse(String),
+    OperationFailed(crate::operation_error::OperationError),
     Normalize(String),
     /// [`ExecutionEngine::auto_resolve_projection`] failed; surface to clients instead of silent degradation.
     Projection(String),
-    /// Runtime failure after successful parse; second field is the **source** line for logging and MCP.
-    Runtime(RuntimeError, String),
+    /// Runtime failure after successful admission. Authored source is not diagnostic payload.
+    Runtime(RuntimeError),
     ArtifactSerialization(serde_json::Error),
     /// Durable run snapshot write failed (object store / memory backend).
     ArtifactPersist(String),
@@ -31,19 +32,34 @@ pub enum RunLineError {
     Operation(Box<crate::plasm_plan_run::PlasmPlanRunResult>),
 }
 
-/// User-facing message for HTTP/MCP/plan fan-out execute paths.
-#[must_use]
-pub fn display_run_line_error(e: RunLineError) -> String {
-    match e {
-        RunLineError::Parse(d) | RunLineError::Normalize(d) | RunLineError::Projection(d) => d,
-        RunLineError::Runtime(err, src) => format!("{err}\nsource expression: {src}"),
-        RunLineError::ArtifactSerialization(err) => {
-            format!("artifact serialization failed: {err}")
-        }
-        RunLineError::ArtifactPersist(d) => format!("run artifact persist failed: {d}"),
-        RunLineError::GraphWriteConflict { .. } => graph_write_conflict_user_message(),
-        RunLineError::Operation(_) => {
-            "operation continuation is not valid inside a plan surface node".to_string()
+impl From<RunLineError> for plasm_runtime::ExecutionFailure {
+    fn from(error: RunLineError) -> Self {
+        use plasm_runtime::{ExecutionFailure, FailureCause};
+        match error {
+            RunLineError::OperationFailed(error) => error.into(),
+            RunLineError::Runtime(error) => ExecutionFailure::from(error),
+            RunLineError::Parse(detail) | RunLineError::Normalize(detail) => {
+                ExecutionFailure::new(FailureCause::Program, "program_admission", detail)
+            }
+            RunLineError::Projection(detail) | RunLineError::ArtifactPersist(detail) => {
+                ExecutionFailure::from(detail)
+            }
+            RunLineError::ArtifactSerialization(error) => ExecutionFailure::from(error.to_string()),
+            RunLineError::GraphWriteConflict { .. } => ExecutionFailure::new(
+                FailureCause::Runtime,
+                "graph_write_conflict",
+                "concurrent graph conflict",
+            ),
+            RunLineError::Operation(_) => ExecutionFailure::new(
+                FailureCause::Runtime,
+                "invalid_operation_continuation",
+                "invalid continuation",
+            ),
         }
     }
+}
+
+/// Presentation only; execution paths must retain the typed failure.
+pub fn display_run_line_error(error: RunLineError) -> String {
+    plasm_runtime::ExecutionFailure::from(error).to_string()
 }

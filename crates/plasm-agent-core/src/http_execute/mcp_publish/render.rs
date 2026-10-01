@@ -36,6 +36,14 @@ pub(crate) fn format_resolved_steps(
             step.cgs.as_deref().or(cgs),
             resolved.mode.max_entity_rows(),
         );
+        if plan.artifact_access == crate::mcp_run_markdown::ArtifactAccessMode::DagCompute
+            && formatted.in_band_report.any_loss()
+        {
+            // A compute-only agent cannot consume snapshot placeholders as values.
+            // Defer the whole result explicitly instead of advertising rows with hidden cells.
+            resolved.mode = StepInBandMode::SnapshotOnly;
+            continue;
+        }
         resolved.format = Some(StepFormatOutcome {
             omitted: formatted.reference_only_omitted.clone(),
             lossy: formatted.lossy_summary_fields.clone(),
@@ -126,6 +134,13 @@ fn build_step_section(
             }
         }
     } else if resolved.mode.skips_inline_format() {
+        sections.push_str(&format_operations_block(&step.result));
+        if plan.artifact_access == crate::mcp_run_markdown::ArtifactAccessMode::DagCompute {
+            sections.push_str(&plan.artifact_access.artifact_only_read_instruction());
+            append_coverage_note(sections, resolved, plan);
+            append_paging_if_needed(sections, paging, step, resolved, i);
+            return;
+        }
         if let Some(handle) = &resolved.artifact {
             let uri = if handle.canonical_plasm_uri.is_empty() {
                 handle.plasm_uri.as_str()

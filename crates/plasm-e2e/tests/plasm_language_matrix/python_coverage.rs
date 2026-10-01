@@ -1,4 +1,4 @@
-//! Exhaustive migration ledger over the original matrix, never a second feature universe.
+//! Exhaustive semantic-obligation ledger with Python execution witnesses.
 use super::*;
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -39,18 +39,6 @@ struct Ledger {
 
 fn ledger() -> Ledger {
     serde_json::from_str(include_str!("python_coverage.json")).expect("Python coverage ledger")
-}
-
-/// A covered obligation executes the original matrix program, including synthesized symbols.
-/// Supplemental experiments do not certify an original feature.
-pub(super) fn baseline_program(
-    case: &python::Case,
-    es: &plasm_agent::execute_session::ExecuteSession,
-) -> String {
-    if let Some(row) = covered_row(case) {
-        return matrix_program_for_row(row, es);
-    }
-    case.plasm.to_owned()
 }
 
 pub(super) fn covered_row(case: &python::Case) -> Option<&'static row::MatrixRow> {
@@ -168,7 +156,13 @@ fn python_coverage_tracks_every_original_obligation() {
         .flat_map(|r| &r.features)
         .chain(ledger.non_row_features.keys())
         .collect();
-    println!("Python parity: {}/{} rows covered; {}/{} features covered; {} views covered by matrix_views_all_preflight. Supplemental pairs are not substitutes for original obligations.", ledger.rows.len(), ledger.rows.len(), all_tags.len(), all_tags.len(), ledger.views.len());
+    println!("Original obligation inventory: {}/{} rows linked; {}/{} features accounted for; {} views linked to matrix_views_all_preflight. Execution results are separate; supplemental cases do not substitute for original obligations.", ledger.rows.len(), ledger.rows.len(), all_tags.len(), all_tags.len(), ledger.views.len());
+    println!(
+        "{} executable Python cases registered; execution verdict is reported by the live suite.",
+        ledger.cases.len()
+    );
+    println!("{}", super::scoped_composition::report());
+    println!("{}", super::semantic_contract::report());
 }
 
 #[test]
@@ -210,4 +204,34 @@ fn python_coverage_requires_union_suite_evidence() {
     let mut value = ledger();
     value.supplemental_suites.clear();
     assert!(validate(&value).unwrap_err().contains("supplemental suite"));
+}
+
+#[test]
+fn python_conformance_has_no_historical_source_compiler() {
+    for (name, source) in [
+        ("runner", include_str!("python.rs")),
+        ("completion", include_str!("python_completion.rs")),
+        ("federation", include_str!("python_federated_parity.rs")),
+        ("render", include_str!("python_render_parity.rs")),
+        ("relations", include_str!("relation_fanout.rs")),
+        ("entry", include_str!("main.rs")),
+        ("views", include_str!("../plasm_language_matrix_views.rs")),
+        (
+            "view programs",
+            include_str!("../plasm_language_matrix_views/python.rs"),
+        ),
+    ] {
+        for forbidden in [
+            "compile_plasm_program",
+            "compile_plasm_expression",
+            "compile_plasm_surface_line",
+            "parse_with_cgs_layers",
+            "baseline_program",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{name} reintroduced historical compiler dependency {forbidden}"
+            );
+        }
+    }
 }

@@ -8,7 +8,7 @@ use plasm_agent::{
 };
 use plasm_core::{CgsRegistry, CGS};
 use plasm_eval::baml_client::types::{PlanChatTurn, Union2KassistantOrKuser};
-use plasm_eval::baml_client::{sync_client::B, ClientRegistry};
+use plasm_eval::baml_client::{async_client::B, ClientRegistry};
 use plasm_eval::{
     build_correction_feedback, nl_translate_user_bundle, openrouter_eval_llm_options,
     validate_programs, ProgramSession, DEFAULT_OPENROUTER_EVAL_SEED,
@@ -133,7 +133,7 @@ pub async fn run_repl(
                         eprintln!("Use :llm MODEL | :llm off | :llm attempts N");
                     }
                 }
-                ":plan" | ":run" => match session.compile(&source) {
+                ":plan" | ":run" => match session.compile(&source).await {
                     Ok(bundle) => {
                         if execute(&session, &host, &bundle, command == ":run", format).await {
                             source.clear();
@@ -148,9 +148,7 @@ pub async fn run_repl(
         if llm.model.is_some() && source.is_empty() && !line.trim().is_empty() {
             let compile_session = session.clone();
             let state = llm.clone();
-            match tokio::task::spawn_blocking(move || translate(&compile_session, &state, &line))
-                .await?
-            {
+            match translate(&compile_session, &state, &line).await {
                 Ok((text, turns)) => {
                     println!("{text}\nUse :plan or :run.");
                     source = text;
@@ -212,7 +210,7 @@ async fn execute(
     }
 }
 
-fn translate(
+async fn translate(
     session: &ProgramSession,
     state: &LlmState,
     goal: &str,
@@ -250,12 +248,13 @@ fn translate(
             .TranslatePlan
             .with_client_registry(&registry)
             .call(&messages)
+            .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         turns.push(PlanChatTurn {
             role: Union2KassistantOrKuser::Kassistant,
             content: plan.text.clone(),
         });
-        match validate_programs(session, std::slice::from_ref(&plan.text)) {
+        match validate_programs(session, std::slice::from_ref(&plan.text)).await {
             Ok(_) => return Ok((plan.text, turns)),
             Err(diagnostics) => {
                 feedback = build_correction_feedback(

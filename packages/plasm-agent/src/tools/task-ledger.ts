@@ -17,8 +17,6 @@ const KNOWN_EVIDENCE_TOOLS = new Set([
   "plasm",
   "plasm_run",
   "plasm_context",
-  "plasm_read_run_artifact",
-  "plasm_artefact_transform",
 ]);
 
 const RUN_REF_RE = /^pc\d+$/;

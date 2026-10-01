@@ -3,6 +3,166 @@ use super::*;
 use ruff_python_ast::ExprCall;
 
 impl Lower<'_> {
+    fn project_scope(
+        &mut self,
+        site: &PyExpr,
+        call: &ExprCall,
+        source: &str,
+        id: &str,
+    ) -> Result<String, String> {
+        use ruff_python_ast::visitor::transformer::{self, Transformer};
+        struct Rename<'a> {
+            from: &'a str,
+            to: &'a str,
+            shadows: std::cell::Cell<bool>,
+        }
+        impl Transformer for Rename<'_> {
+            fn visit_expr(&self, expr: &mut PyExpr) {
+                if let PyExpr::Name(name) = expr {
+                    if name.id.as_str() == self.from {
+                        if name.ctx != ruff_python_ast::ExprContext::Load {
+                            self.shadows.set(true);
+                        }
+                        name.id = self.to.into();
+                    }
+                }
+                if let PyExpr::Lambda(lambda) = expr {
+                    if projection_parameter(lambda).ok() == Some(self.from) {
+                        self.shadows.set(true);
+                    }
+                }
+                transformer::walk_expr(self, expr);
+            }
+        }
+        let parameter = self.fresh_parameter("projection");
+        let parsed = ruff_python_parser::parse_expression(&format!("lambda {parameter}: {{}}"))
+            .map_err(|e| e.to_string())?;
+        let PyExpr::Lambda(mut lambda) = *parsed.into_syntax().body else {
+            unreachable!()
+        };
+        let PyExpr::Dict(dict) = lambda.body.as_mut() else {
+            unreachable!()
+        };
+        let mut fields = BTreeMap::new();
+        for argument in &call.arguments.args {
+            let field = string(argument)?;
+            let expr = ruff_python_parser::parse_expression(&format!("{parameter}.field"))
+                .map_err(|e| e.to_string())?;
+            let mut expr = *expr.into_syntax().body;
+            let PyExpr::Attribute(attr) = &mut expr else {
+                unreachable!()
+            };
+            attr.attr = ruff_python_ast::Identifier::new(field.clone(), site.range());
+            if fields.insert(field, expr).is_some() {
+                return Err(at(site, "duplicate projection column"));
+            }
+        }
+        for keyword in &call.arguments.keywords {
+            let alias = keyword
+                .arg
+                .as_ref()
+                .ok_or("projection unpacking is not admitted")?
+                .to_string();
+            let expression = if let PyExpr::Lambda(value) = &keyword.value {
+                let row = projection_parameter(value)?;
+                if self.state.contains(row) {
+                    return Err(at(
+                        site,
+                        "projection parameter must not shadow an outer binding",
+                    ));
+                }
+                let mut expression = *value.body.clone();
+                let rename = Rename {
+                    from: row,
+                    to: &parameter,
+                    shadows: std::cell::Cell::new(false),
+                };
+                rename.visit_expr(&mut expression);
+                if rename.shadows.get() {
+                    return Err(at(
+                        site,
+                        "projection parameter must not be shadowed in a nested scope",
+                    ));
+                }
+                expression
+            } else if name(&keyword.value).is_some_and(|n| self.callbacks.contains_key(n)) {
+                let mut expr =
+                    *ruff_python_parser::parse_expression(&format!("callback({parameter})"))
+                        .map_err(|e| e.to_string())?
+                        .into_syntax()
+                        .body;
+                let PyExpr::Call(call) = &mut expr else {
+                    unreachable!()
+                };
+                call.func = Box::new(keyword.value.clone());
+                expr
+            } else {
+                let field = string(&keyword.value)?;
+                let expr = ruff_python_parser::parse_expression(&format!("{parameter}.field"))
+                    .map_err(|e| e.to_string())?;
+                let mut expr = *expr.into_syntax().body;
+                let PyExpr::Attribute(attr) = &mut expr else {
+                    unreachable!()
+                };
+                attr.attr = ruff_python_ast::Identifier::new(field, site.range());
+                expr
+            };
+            if fields.insert(alias, expression).is_some() {
+                return Err(at(site, "duplicate projection column"));
+            }
+        }
+        for (alias, value) in fields {
+            let key = ruff_python_parser::parse_expression(
+                &serde_json::to_string(&alias).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+            dict.items.push(ruff_python_ast::DictItem {
+                key: Some(*key.into_syntax().body),
+                value,
+            });
+        }
+        let body = self.scoped_body(
+            site,
+            source,
+            &lambda,
+            std::num::NonZeroU32::new(65_536).unwrap(),
+            super::body::ScopeMode::Record,
+        )?;
+        if !matches!(
+            body.effect_class(),
+            EffectClass::Read | EffectClass::ArtifactRead
+        ) {
+            return Err(at(site, "projection expressions cannot introduce effects"));
+        }
+        let schema = crate::map_body_schema::output_schema(self.es, &body)?;
+        self.insert(DagNode {
+            id: id.into(),
+            expr: String::new(),
+            singleton: super::super::binding_contract(&self.state, source)
+                .is_some_and(|c| c.row_cardinality.permits_scalar_field_extract()),
+            page_size: None,
+            source: super::super::types::DagNodeSource::MapBody {
+                body: Box::new(body),
+                schema,
+            },
+        })
+    }
+
+    pub(super) fn projection_field(
+        &self,
+        source: &str,
+        field: &str,
+    ) -> Result<PlasmDataValue, String> {
+        let schema = super::text::inferred_schema(self.es, &self.state, source, 0)?;
+        if !schema.fields.iter().any(|f| f.name.as_str() == field) {
+            return Err(format!("unknown projected field {field}"));
+        }
+        Ok(PlasmDataValue::BindingSymbol {
+            binding: "_".into(),
+            path: vec![field.into()],
+        })
+    }
+
     pub(super) fn project_aliases(
         &mut self,
         site: &PyExpr,
@@ -10,64 +170,39 @@ impl Lower<'_> {
         source: &str,
         id: &str,
     ) -> Result<String, String> {
-        let mut fields = call
-            .arguments
-            .args
-            .iter()
-            .map(string)
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut seen = std::collections::BTreeSet::new();
-        for field in &fields {
-            if !seen.insert(field.clone()) {
+        if call.arguments.keywords.iter().any(|k| {
+            matches!(k.value, PyExpr::Lambda(_))
+                || name(&k.value).is_some_and(|n| self.callbacks.contains_key(n))
+        }) {
+            return self.project_scope(site, call, source, id);
+        }
+        let mut fields = BTreeMap::new();
+        for argument in &call.arguments.args {
+            let name = string(argument)?;
+            let value = self.projection_field(source, &name)?;
+            if fields.insert(name, value).is_some() {
                 return Err(at(site, "duplicate projection column"));
             }
         }
-        let mut columns = Vec::new();
         for keyword in &call.arguments.keywords {
             let alias = keyword
                 .arg
                 .as_ref()
-                .ok_or_else(|| at(site, "projection unpacking is not admitted"))?;
-            if !seen.insert(alias.to_string()) {
+                .ok_or("projection unpacking is not admitted")?
+                .to_string();
+            let value = self.projection_field(source, &string(&keyword.value)?)?;
+            if fields.insert(alias, value).is_some() {
                 return Err(at(site, "duplicate projection column"));
             }
-            fields.push(alias.to_string());
-            columns.push(plasm_core::WithColumn {
-                name: OutputName::new(alias.to_string())?,
-                expr: match &keyword.value {
-                    PyExpr::Lambda(lambda) => {
-                        let row = projection_parameter(lambda)?;
-                        projection_expression(&lambda.body, row, 0)?
-                    }
-                    value => plasm_core::WithExpr::Field(FieldPath::from_dotted(&string(value)?)?),
-                },
-            });
         }
-        let derived = self.fresh();
-        let node = super::super::row_suffix::lower_with_compute(
-            self.es,
-            &self.state,
-            &[],
-            source,
-            &derived,
-            "",
-            columns,
-        )?;
-        self.insert(node)?;
-        let node = super::super::row_suffix_to_compute(
-            self.es,
-            &self.state,
-            &[],
-            &RowSuffix::Project { fields },
-            &derived,
-            id,
-            "",
-        )?;
-        self.insert(node)
+        let previous = self.scope_row.replace(source.into());
+        let result = self.emit_value(PlasmDataValue::Object { fields }, vec![], id);
+        self.scope_row = previous;
+        result
     }
 }
 
-fn projection_parameter(lambda: &ruff_python_ast::ExprLambda) -> Result<&str, String> {
+pub(super) fn projection_parameter(lambda: &ruff_python_ast::ExprLambda) -> Result<&str, String> {
     let p = lambda
         .parameters
         .as_ref()
@@ -87,121 +222,4 @@ fn projection_parameter(lambda: &ruff_python_ast::ExprLambda) -> Result<&str, St
         return Err("reserved projection parameter".into());
     }
     Ok(row)
-}
-
-pub(super) fn projection_expression(
-    e: &PyExpr,
-    row: &str,
-    depth: usize,
-) -> Result<plasm_core::WithExpr, String> {
-    use plasm_core::{ArithOp, WithExpr as W, WithLiteral as L};
-    use ruff_python_ast::{CmpOp, Operator};
-    if depth >= 64 {
-        return Err("projection expression depth exceeds 64".into());
-    }
-    let sub = |e: &PyExpr| projection_expression(e, row, depth + 1).map(Box::new);
-    Ok(match e {
-        PyExpr::Attribute(a) if name(&a.value) == Some(row) => {
-            W::Field(FieldPath::from_dotted(a.attr.as_str())?)
-        }
-        PyExpr::BinOp(b) => W::Arith {
-            op: match b.op {
-                Operator::Add => ArithOp::Add,
-                Operator::Sub => ArithOp::Sub,
-                Operator::Mult => ArithOp::Mul,
-                Operator::Div => ArithOp::Div,
-                _ => return Err(at(e, "unsupported projection arithmetic")),
-            },
-            lhs: sub(&b.left)?,
-            rhs: sub(&b.right)?,
-        },
-        PyExpr::Call(c)
-            if name(&c.func) == Some("len")
-                && c.arguments.args.len() == 1
-                && c.arguments.keywords.is_empty() =>
-        {
-            let W::Field(field) = projection_expression(&c.arguments.args[0], row, depth + 1)?
-            else {
-                return Err(at(e, "len requires a row field"));
-            };
-            W::Len { field }
-        }
-        PyExpr::If(c) => {
-            let PyExpr::Compare(test) = &*c.test else {
-                return Err(at(e, "conditional projection requires one comparison"));
-            };
-            if test.ops.len() != 1 || test.comparators().len() != 1 {
-                return Err(at(e, "conditional projection requires one comparison"));
-            }
-            W::When {
-                lhs: sub(&test.operands[0])?,
-                op: match test.ops[0] {
-                    CmpOp::Eq => PlanPredicateOp::Eq,
-                    CmpOp::NotEq => PlanPredicateOp::Ne,
-                    CmpOp::Lt => PlanPredicateOp::Lt,
-                    CmpOp::LtE => PlanPredicateOp::Lte,
-                    CmpOp::Gt => PlanPredicateOp::Gt,
-                    CmpOp::GtE => PlanPredicateOp::Gte,
-                    _ => return Err(at(e, "unsupported conditional comparison")),
-                },
-                rhs: sub(&test.comparators()[0])?,
-                then: sub(&c.body)?,
-                else_: sub(&c.orelse)?,
-            }
-        }
-        _ => W::Literal(match literal(e)? {
-            plasm_core::Value::Null => L::Null,
-            plasm_core::Value::Bool(v) => L::Bool(v),
-            plasm_core::Value::Integer(v) => L::Integer(v),
-            plasm_core::Value::Float(v) => L::Number(v.to_string()),
-            plasm_core::Value::String(v) => L::String(v),
-            _ => return Err(at(e, "projection requires scalar values")),
-        }),
-    })
-}
-
-/// Format string fields as a typed row computation before the reviewed write.
-pub(super) fn string_interpolation(
-    e: &PyExpr,
-    row: &str,
-    schema: &SyntheticResultSchema,
-) -> Result<plasm_core::WithExpr, String> {
-    use plasm_core::{ArithOp, WithExpr as W, WithLiteral as L};
-    let PyExpr::FString(text) = e else {
-        return Err(at(e, "expected f-string"));
-    };
-    let mut out = W::Literal(L::String(String::new()));
-    for element in text.value.elements() {
-        let part = match element {
-            ruff_python_ast::InterpolatedStringElement::Literal(value) => {
-                W::Literal(L::String(value.value.to_string()))
-            }
-            ruff_python_ast::InterpolatedStringElement::Interpolation(value) => {
-                if value.format_spec.is_some()
-                    || value.conversion != ruff_python_ast::ConversionFlag::None
-                    || value.debug_text.is_some()
-                {
-                    return Err(at(
-                        e,
-                        "formatted write arguments require explicit @compute formatting",
-                    ));
-                }
-                let part = projection_expression(&value.expression, row, 0)?;
-                match &part {
-                    W::Literal(L::String(_)) => {}
-                    W::Field(path) if schema.fields.iter().any(|f| f.name.as_str() == path.dotted()
-                        && f.value_kind == SyntheticValueKind::String
-                        && f.value_type.as_ref().is_some_and(|t| !t.nullable)) => {}
-                    _ => return Err(at(e, "inline write interpolation requires non-null string fields; use @compute for other Python formatting")),
-                }
-                part
-            }
-        };
-        out = W::Arith {
-            op: ArithOp::Add,
-            lhs: Box::new(out),
-            rhs: Box::new(part),
-        };
-    }
-    Ok(out)
 }

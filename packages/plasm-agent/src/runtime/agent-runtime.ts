@@ -1,3 +1,4 @@
+import { AgentExecutionFailure, executionFailureSchema } from "./execution-failure.js";
 import { routingExplanationLines, routingRecoveryMarkdown } from "../engine/routing.js";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -15,18 +16,15 @@ import { createDefaultHostTransport } from "../engine/host-transport.js";
 import { formatLogicalSessionWireRef } from "../runtime/logical-session.js";
 import { logicalSessionRefSchema, workflowIntentSchema, deriveIntent, type IntentProvenance } from "./session-contract.js";
 import { SessionManager, type AgentSessionState } from "../session-state.js";
-import { runIdFromArtifactRef } from "../tools/artifact-contract.js";
 import {
   formatPlasmContextMarkdown,
   formatPlasmDryRunMarkdown,
   formatPlasmRunMarkdown,
-  writeCountFromSummary,
 } from "../tools/format.js";
 import { LocalArchiveStore } from "../archive/index.js";
 import { createArchiveStore } from "../archive/resolve-backend.js";
 import type { ProdArchiveStore } from "../archive/prod-archive-store.js";
 import { z } from "zod";
-import { artifactRuntimeAvailable } from "../tools/artifact-process.js";
 import { writeWorkspaceFile } from "../tools/workspace-files.js";
 import { activeTraceId, plasmSpans } from "../telemetry/plasm-spans.js";
 import { PlasmSpanAttributes } from "../instrumentation.js";
@@ -80,30 +78,6 @@ export interface PlasmRunInput {
   logicalSessionRef: string;
   runRef: string;
   reasoning?: string;
-}
-
-export interface PlasmReadRunArtifactInput {
-  logicalSessionRef: string;
-  runId?: string;
-  artifactUri?: string;
-  reasoning?: string;
-}
-
-function resolveReadRunId(input: PlasmReadRunArtifactInput): string {
-  const runId = input.runId?.trim() ?? "";
-  const uri = input.artifactUri?.trim() ?? "";
-  if (Boolean(runId) === Boolean(uri)) {
-    throw new Error("plasm_read_run_artifact: provide exactly one of run_id or artifact_uri");
-  }
-  const resolved = runIdFromArtifactRef(runId || uri);
-  if (!resolved) {
-    throw new Error(
-      uri
-        ? "plasm_read_run_artifact: artifact_uri must contain a pr… run_id"
-        : `plasm_read_run_artifact: invalid run_id \`${runId}\``,
-    );
-  }
-  return resolved;
 }
 
 function seedKey(seed: { api: string; entity: string }): string {
@@ -179,8 +153,6 @@ export class AgentRuntime {
   /** Most recently used live session; explicit new calls create distinct workflows. */
   private workflowSession: AgentSessionState | null = null;
 
-  /** True after the first successful `plasm_read_run_artifact` this runtime. */
-  private artefactMaterialized = false;
 
   /** True after the first successful `plasm_context` mint on this runtime. */
   hasOpenWorkflow(): boolean {
@@ -190,10 +162,6 @@ export class AgentRuntime {
   /** Successful `plasm_run` write-node count this process (fused 0w reads stay 0). */
   private committedWriteOps = 0;
 
-  /** True after a run snapshot has been written under the artefact workspace. */
-  hasMaterializedArtefact(): boolean {
-    return this.artefactMaterialized;
-  }
 
   /** Live write ops committed via `plasm_run` on this runtime. */
   committedLiveWriteOps(): number {
@@ -326,7 +294,7 @@ export class AgentRuntime {
           ...(recoveryMarkdown ? [] : routingExplanationLines(routing.matching)),
         ].filter(Boolean).join("\n\n");
       }
-      if (!routing.closure || !teaching?.prompt.trim()) {
+      if (!teaching || (!teaching.prompt.trim() && (!existing || teaching.delta_refs.length > 0))) {
         throw new Error("Routing is missing its prerequisite closure or canonical teaching");
       }
       // Keep exact capability and prerequisite distinctions as returned by Rust.
@@ -338,10 +306,12 @@ export class AgentRuntime {
       });
       session.seeds = mergeSeeds(session.seeds, exposed);
       session.teachingPrompt = [session.teachingPrompt.trim(), teaching.prompt.trim()].filter(Boolean).join("\n\n");
-      session.waves.push({
-        entryId: exposed[0]?.api ?? "unknown", entities: exposed.map((entry) => entry.entity),
-        prompt: teaching.prompt, at: new Date().toISOString(),
-      });
+      if (teaching.prompt.trim()) {
+        session.waves.push({
+          entryId: exposed[0]?.api ?? "unknown", entities: exposed.map((entry) => entry.entity),
+          prompt: teaching.prompt, at: new Date().toISOString(),
+        });
+      }
       await this.sessionManager.update(session);
       this.workflowSession = session;
       span.setAttribute("plasm.logical_session_ref", session.logicalSessionRef);
@@ -372,11 +342,19 @@ export class AgentRuntime {
       async (span) => {
         const started = Date.now();
         const dry = await this.engine.dryRun(input.program, session.logicalSessionId);
+        if (dry.failureJson) {
+          const failure = executionFailureSchema.parse(JSON.parse(dry.failureJson));
+          if (failure.cause === "program" && failure.recovery === "repair_program") return dry.summary;
+          throw new AgentExecutionFailure(failure);
+        }
+        if (!Number.isSafeInteger(dry.writeCount) || dry.writeCount < 0) {
+          throw new Error("Engine did not provide a valid typed write count");
+        }
         session.planCommits.push({
           ref: dry.planCommitRef,
           program: input.program,
           at: new Date().toISOString(),
-          writeCount: writeCountFromSummary(dry.summary),
+          writeCount: dry.writeCount,
         });
         await this.sessionManager.update(session);
 
@@ -449,6 +427,10 @@ export class AgentRuntime {
         const result = this.hostTransport
           ? await this.engine.runPlanLive!(input.runRef, this.hostTransport, session.logicalSessionId)
           : await this.engine.runPlan(input.runRef, session.logicalSessionId);
+        if (result.failureJson) {
+          const failure = executionFailureSchema.parse(JSON.parse(result.failureJson));
+          throw new AgentExecutionFailure(failure);
+        }
         const runMeta = parseRunMeta(result.metaJson);
         const requestFingerprints = collectRequestFingerprints(runMeta);
         const artifacts = result.ok
@@ -499,40 +481,9 @@ export class AgentRuntime {
           runId,
         );
         return markdown + artifacts.slice(1).map(artifact =>
-          `\n\n**run_id:** \`${artifact.run_id}\` — read with plasm_read_run_artifact.`).join("");
+          `\n\n**run_id:** \`${artifact.run_id}\``).join("");
       },
     );
-  }
-
-  async readRunArtifact(input: PlasmReadRunArtifactInput): Promise<string> {
-    void input.reasoning;
-    await this.requireSessionByRef(input.logicalSessionRef);
-    if (!this.archive || typeof this.archive.getRun !== "function") {
-      throw new Error("plasm_read_run_artifact: archive store unavailable");
-    }
-    const runId = resolveReadRunId(input);
-    const snap = await this.archive.getRun(runId, input.logicalSessionRef.trim());
-    if (!snap) {
-      throw new Error(`plasm_read_run_artifact: unknown run_id \`${runId}\``);
-    }
-    if (
-      snap.logical_session_ref &&
-      snap.logical_session_ref !== input.logicalSessionRef.trim()
-    ) {
-      throw new Error(
-        "plasm_read_run_artifact: run_id does not belong to this logical_session_ref",
-      );
-    }
-    await this.materializeRunArtefact(snap.run_id, snap.native_snapshot ?? snap, input.logicalSessionRef.trim());
-    this.artefactMaterialized = true;
-    return [
-      `**run_id:** \`${snap.run_id}\``,
-      artifactRuntimeAvailable()
-        ? "Pass this file locator in **plasm_artefact_transform.paths** and write a default TypeScript function over the parsed artifacts; return only the needed derived result."
-        : "Materialized under artefact workspace.",
-      `File: artefacts/${input.logicalSessionRef.trim()}/${snap.run_id}.json`,
-      "Snapshot contents are available only to programmatic processing; they are not inserted into model context.",
-    ].join("\n");
   }
 
   private async materializeRunArtefact(runId: string, payload: unknown, logicalSessionRef: string): Promise<void> {

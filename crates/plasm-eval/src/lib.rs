@@ -17,12 +17,12 @@ pub mod baml_client;
 mod correction;
 mod program_facts;
 mod program_session;
-pub use program_session::ProgramSession;
+pub use program_session::{ProgramCompileFailure, ProgramSession};
 pub mod coverage;
 
 pub use correction::{
     build_correction_feedback, build_correction_metrics, compute_pipeline_score, validate_programs,
-    CorrectionMetrics, EvalAttemptReport, EvalPlanStep, StepDiagnostic,
+    CorrectionMetrics, EvalAttemptReport, EvalPlanStep, StepDiagnostic, ValidationFailure,
 };
 pub use coverage::{
     apply_coverage_override, build_coverage_report, cases_with_effective_covers,
@@ -368,12 +368,13 @@ pub fn entities_from_expr(expr: &Expr) -> HashSet<String> {
 }
 
 /// Compile a Python Program against `cgs` and return entity names it references.
-pub fn entities_from_reference_expr(
+pub async fn entities_from_reference_expr(
     reference_expr: &str,
     cgs: &CGS,
 ) -> Result<HashSet<String>, String> {
     let program = ProgramSession::new(cgs, None)?
         .compile(reference_expr)
+        .await
         .map_err(|error| error.agent_markdown())?;
     let mut facts = program_facts::ProgramFacts::default();
     facts.visit(&program.artifact().comp);
@@ -557,11 +558,11 @@ mod tests {
         ProgramSession::new(&cgs, Some("Item")).unwrap()
     }
 
-    #[test]
-    fn python_dag_scoring_observes_row_filters_and_projection() {
+    #[tokio::test]
+    async fn python_dag_scoring_observes_row_filters_and_projection() {
         let session = matrix_session();
         let source = "class Read(Program):\n    def build(self):\n        rows = e1.query().where(lambda row: row.title == \"chosen\")\n        return rows.select(\"id\", \"title\")\n";
-        let program = session.compile(source).unwrap();
+        let program = session.compile(source).await.unwrap();
         let expect = ExpectBlock {
             entities_any: vec!["Item".into()],
             pred_fields_any: vec!["title".into()],
@@ -578,11 +579,11 @@ mod tests {
         );
     }
 
-    #[test]
-    fn source_text_expectations_measure_the_original_python() {
+    #[tokio::test]
+    async fn source_text_expectations_measure_the_original_python() {
         let session = matrix_session();
         let source = "class Read(Program):\n    def build(self):\n        return e1.query()\n";
-        let program = session.compile(source).unwrap();
+        let program = session.compile(source).await.unwrap();
         let expect = ExpectBlock {
             step_text_contains_any: vec!["class Read(Program)".into()],
             ..Default::default()

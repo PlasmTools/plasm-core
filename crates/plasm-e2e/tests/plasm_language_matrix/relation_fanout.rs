@@ -46,11 +46,11 @@ fn scoped_relation_composition_preserves_parent_scope_across_wire() {
             let base = format!("http://{}", listener.local_addr().unwrap());
             let server = tokio::spawn(async move { axum::serve(listener, router).await });
             for (name, program, expected) in [
-                ("direct_scope", "LangItem(\"i1\").tags_by_score", vec!["LangTag:t1"]),
-                ("bound_scope", "parent = LangItem(\"i1\")\nparent => _.tags_by_score", vec!["LangTag:t1"]),
-                ("fanout_scope", "parents = LangItem\nparents => _.tags_by_score", vec!["LangTag:t2", "LangTag:t1"]),
-                ("composed_scope", "parents = LangItem\nparents => LangItem(_.id).tags_by_score", vec!["LangTag:t2", "LangTag:t1"]),
-                ("separate_scope", "items = LangItem\nparents = items => LangItem(_.id)\nparents => _.tags_by_score", vec!["LangTag:t2", "LangTag:t1"]),
+                ("direct_scope", "return E.get(\"i1\").tags_by_score", vec!["LangTag:t1"]),
+                ("bound_scope", "parent = E.get(\"i1\")\nreturn parent.flat_map(lambda row: row.tags_by_score)", vec!["LangTag:t1"]),
+                ("fanout_scope", "parents = E.query()\nreturn parents.flat_map(lambda row: row.tags_by_score)", vec!["LangTag:t2", "LangTag:t1"]),
+                ("composed_scope", "parents = E.query()\nloaded = parents.flat_map(lambda row: E.get(row.id))\nreturn loaded.flat_map(lambda row: row.tags_by_score)", vec!["LangTag:t2", "LangTag:t1"]),
+                ("separate_scope", "items = E.query()\nparents = items.flat_map(lambda row: E.get(row.id))\nreturn parents.flat_map(lambda row: row.tags_by_score)", vec!["LangTag:t2", "LangTag:t1"]),
             ] {
                 let mut cgs = (*language_matrix::load_language_matrix_cgs()).clone();
                 cgs.http_backend = base.clone();
@@ -59,7 +59,7 @@ fn scoped_relation_composition_preserves_parent_scope_across_wire() {
                 let st = language_matrix::matrix_host_state(ExecutionEngine::new(ExecutionConfig {
                     base_url: Some(base.clone()), ..Default::default()
                 }).unwrap(), cgs);
-                let bundle = compile_plasm_program(&PromptPipelineConfig::default(), None, &es, name, program).unwrap();
+                let bundle = super::python::compile_fixture(&es, program).await.unwrap();
                 let dry = evaluate_plasm_comp_dry(&es, &bundle).unwrap();
                 assert_comp_witness(&dry).unwrap();
                 let wire = serde_json::to_vec(&bundle.artifact().comp).unwrap();
@@ -71,7 +71,7 @@ fn scoped_relation_composition_preserves_parent_scope_across_wire() {
                 let out = Box::pin(plasm_agent::plasm_plan_run::run_plasm_comp(
                     &es, &st, &es.prompt_hash, name, &bundle, true, None, None, None, None,
                 )).await.unwrap();
-                let actual: Vec<_> = out.return_steps.iter().flat_map(|step| step.result.entities.iter().map(|e| e.reference.to_string())).collect();
+                let actual: Vec<_> = out.return_steps.iter().flat_map(|step| step.result.entities().iter().map(|e| e.reference.to_string())).collect();
                 assert_eq!(actual, expected, "{name}: composed traversal changed scope or row order");
                 let requests = requests.lock().unwrap();
                 assert!(!requests.is_empty());
@@ -86,8 +86,8 @@ fn scoped_relation_composition_preserves_parent_scope_across_wire() {
             let st = language_matrix::matrix_host_state(ExecutionEngine::new(ExecutionConfig {
                 base_url: Some(base.clone()), ..Default::default()
             }).unwrap(), cgs);
-            let program = "items = LangItem\ncomputed = items | select id, label = owner\ncomputed => LangItem.create(title=_.label)";
-            let bundle = compile_plasm_program(&PromptPipelineConfig::default(), None, &es, "null_input", program).unwrap();
+            let program = "items = E.query()\ncomputed = items.select(\"id\", label=\"owner\")\nreturn computed.flat_map(lambda row: E.CREATE(title=row.label))";
+            let bundle = super::python::compile_fixture(&es, program).await.unwrap();
             let wire = serde_json::to_vec(&bundle.artifact().comp).unwrap();
             let bundle = plasm_agent::PlasmCompBundle::new(plasm_agent::PlasmCompArtifact {
                 comp: serde_json::from_slice(&wire).unwrap(),
@@ -98,10 +98,10 @@ fn scoped_relation_composition_preserves_parent_scope_across_wire() {
             )).await;
             assert_eq!(writes.load(std::sync::atomic::Ordering::SeqCst), 0);
             let diagnostic = match outcome {
-                Err(error) => error.to_string(),
+                Err(error) => error.diagnostic().to_owned(),
                 Ok(out) => out.run_markdown.unwrap_or_default(),
             };
-            assert!(diagnostic.contains("non-null required input"), "{diagnostic}");
+            assert!(diagnostic.contains("field `owner` is unobserved (not null)"), "{diagnostic}");
             server.abort();
         });
     }).unwrap().join().unwrap();
@@ -151,7 +151,7 @@ fn relation_read_fanout_matches_unary_parent_gets() {
                 let base = format!("http://{}", listener.local_addr().expect("fixture address"));
                 let server = tokio::spawn(async move { axum::serve(listener, router).await });
                 let mut cgs = (*language_matrix::load_language_matrix_cgs()).clone();
-                if let Some(plasm_core::RelationMaterialization::FromParentGet { path }) =
+                if let Some(plasm_core::RelationMaterialization::FromParentGet { path, .. }) =
                     cgs.entities.get_mut("LangItem").expect("parent entity")
                         .relations.get_mut("lines").expect("child relation").materialize.as_mut()
                 {
@@ -171,16 +171,16 @@ fn relation_read_fanout_matches_unary_parent_gets() {
                 );
                 let mut sets = Vec::new();
                 for (name, program) in [
-                    ("unary", "first = LangItem(\"i1\").lines\nsecond = LangItem(\"i2\").lines\nfirst, second"),
-                    ("fanout", "items = LangItem | take 2\nlines = items => _.lines\nlines"),
-                    ("fanout_evicted", "items = LangItem | take 2\nlines = items => _.lines\nlines"),
-                    ("unary_evicted", "first = LangItem(\"i1\").lines\nsecond = LangItem(\"i2\").lines\nfirst, second"),
-                    ("get_relation_fanout", "items = LangItem | take 2\nlines = items => LangItem(_.id).lines\nlines"),
-                    ("bound_get_relation_fanout", "items = LangItem | take 2\nparents = items => LangItem(_.id)\nlines = parents => _.lines\nlines"),
-                    ("filtered_candidates", "candidates = LangItem~\"i1\"\nselected = candidates | where title = \"i1\" | where score > 0\nlines = selected => _.lines\nlines"),
-                    ("filtered_application", "items = LangItem | take 2\nparents = items => LangItem(_.id)\nselected = parents | where title = \"i1\"\nlines = selected => _.lines\nlines"),
-                    ("scalar_filter", "one = LangItem(\"i2\")\nselected = LangItem | where title = one.title | take 1\nlines = selected => _.lines\nlines"),
-                    ("template_filter", "one = LangItem(\"i1\")\nselected = LangItem | where title = \"{{ one.title }}\"\nlines = selected => _.lines\nlines"),
+                    ("unary", "first = E.get(\"i1\").lines\nsecond = E.get(\"i2\").lines\nreturn first, second"),
+                    ("fanout", "items = E.query().take(2)\nlines = items.flat_map(lambda row: row.lines)\nreturn lines"),
+                    ("fanout_evicted", "items = E.query().take(2)\nlines = items.flat_map(lambda row: row.lines)\nreturn lines"),
+                    ("unary_evicted", "first = E.get(\"i1\").lines\nsecond = E.get(\"i2\").lines\nreturn first, second"),
+                    ("get_relation_fanout", "items = E.query().take(2)\nparents = items.flat_map(lambda row: E.get(row.id))\nlines = parents.flat_map(lambda row: row.lines)\nreturn lines"),
+                    ("bound_get_relation_fanout", "items = E.query().take(2)\nparents = items.flat_map(lambda row: E.get(row.id))\nlines = parents.flat_map(lambda row: row.lines)\nreturn lines"),
+                    ("filtered_candidates", "candidates = E.search(q=\"i1\")\nselected = candidates.where(lambda row: row.title == \"i1\").where(lambda row: row.score is not None and row.score > 0)\nlines = selected.flat_map(lambda row: row.lines)\nreturn lines"),
+                    ("filtered_application", "items = E.query().take(2)\nparents = items.flat_map(lambda row: E.get(row.id))\nselected = parents.where(lambda row: row.title == \"i1\")\nlines = selected.flat_map(lambda row: row.lines)\nreturn lines"),
+                    ("scalar_filter", "one = E.get(\"i2\")\nselected = E.query().where(lambda row: row.title == one.title).take(1)\nlines = selected.flat_map(lambda row: row.lines)\nreturn lines"),
+                    ("template_filter", "one = E.get(\"i1\")\nselected = E.query().where(lambda row: row.title == one.title)\nlines = selected.flat_map(lambda row: row.lines)\nreturn lines"),
 
                 ] {
                     if name == "fanout_evicted" {
@@ -188,15 +188,13 @@ fn relation_read_fanout_matches_unary_parent_gets() {
                         for (parent_id, child_id) in [("i1", "l1"), ("i2", "l2")] {
                             let parent = graph.get(&plasm_core::Ref::new("LangItem", parent_id))
                                 .expect("parent remains cached");
-                            assert_eq!(parent.relations.get("lines").expect("parent retains refs"),
-                                &vec![plasm_core::Ref::new("LangLine", child_id)]);
+                            assert_eq!(parent.relations.get("lines").expect("parent retains refs").iter().collect::<Vec<_>>(),
+                                vec![&plasm_core::Ref::new("LangLine", child_id)]);
                             assert!(graph.remove(&plasm_core::Ref::new("LangLine", child_id)).is_some(),
                                 "eviction must remove a previously cached child");
                         }
                     }
-                    let bundle = compile_plasm_program(
-                        &PromptPipelineConfig::default(), None, &es, name, program,
-                    ).expect("compile relation reads");
+                    let bundle = super::python::compile_fixture(&es, program).await.expect("compile relation reads");
                     if matches!(name, "filtered_candidates" | "filtered_application") {
                         let dry = evaluate_plasm_comp_dry(&es, &bundle).expect("candidate filter dry validation");
                         assert_comp_witness(&dry).expect("candidate filter serialized comp witness");
@@ -217,18 +215,21 @@ fn relation_read_fanout_matches_unary_parent_gets() {
                         assert!(out.return_steps.iter().map(|step| step.result.stats.network_requests).sum::<usize>() >= 2, "follow-up GETs must be counted");
                     }
                     for step in &out.return_steps {
-                        for entity in &step.result.entities {
+                        for entity in step.result.entities() {
                             assert_eq!(entity.payload_to_json()["note"], "observed", "relation must return hydrated content");
                         }
                         let artifact = step.artifact.as_ref().expect("relation result has an artifact");
                         let bytes = st.run_artifacts.get(&es.prompt_hash, name, artifact.run_id).await.expect("stored relation artifact");
-                        let document: serde_json::Value = serde_json::from_slice(&bytes).expect("artifact JSON");
-                        let expected: Vec<_> = step.result.entities.iter().map(|entity| entity.payload_to_json()).collect();
-                        assert_eq!(document["entities"], serde_json::json!(expected), "artifact must contain hydrated rows");
+                        let document: plasm_agent::run_artifacts::RunArtifactDocument = serde_json::from_slice(&bytes).expect("typed artifact");
+                        let stored = document.recorded_collection().expect("validated collection checkpoint");
+                        assert_eq!(stored.membership(), step.result.collection.membership());
+                        assert_eq!(stored.resident_entities(), step.result.entities(), "stored rows must retain hydrated fields and relation evidence");
+                        let expected: Vec<_> = step.result.entities().iter().map(|entity| entity.payload_to_json()).collect();
+                        assert_eq!(document.agent_view().expect("public projection").entities, expected, "agent projection must contain hydrated rows");
                     }
 
                     sets.push(out.return_steps.iter().flat_map(|step| {
-                        step.result.entities.iter().map(|entity| entity.reference.to_string())
+                        step.result.entities().iter().map(|entity| entity.reference.to_string())
                     }).collect::<BTreeSet<_>>());
                 }
                 assert!(!sets[0].is_empty(), "unary fixture must provide child rows");

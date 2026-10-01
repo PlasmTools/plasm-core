@@ -19,7 +19,8 @@ pub(in crate::plasm_dag) fn resolve_surface_dag_node<'a>(
                 return Some(node);
             }
             DagNodeSource::Compute { source, .. } => node_id = source.clone(),
-            DagNodeSource::Derive { .. }
+            DagNodeSource::MapBody { .. }
+            | DagNodeSource::Derive { .. }
             | DagNodeSource::ScalarExtract { .. }
             | DagNodeSource::Data(_)
             | DagNodeSource::ForEach { .. }
@@ -62,6 +63,11 @@ pub(in crate::plasm_dag) fn logical_row_field_paths_for_surface_node(
         return Ok(None);
     }
     let mut paths = logical_row_field_paths_from_names(&fields);
+    // Observed relation references are row values. Selecting them neither
+    // traverses a relation nor certifies collection completeness.
+    if let Some(entity) = cgs.get_entity(qe.entity.as_str()) {
+        paths.extend(entity.relations.keys().map(|name| vec![name.to_string()]));
+    }
     if matches!(&node.source, DagNodeSource::RelationTraversal { .. }) {
         if let Some(ent) = cgs.get_entity(qe.entity.as_str()) {
             paths.extend(logical_row_field_paths_for_entity(ent));
@@ -86,7 +92,12 @@ pub(in crate::plasm_dag) fn resolve_immediate_compute_schema(
         .find(|n| n.id == source_id)
         .or_else(|| state.get(source_id))?;
     match &node.source {
-        DagNodeSource::Compute { schema, .. } => Some(schema.clone()),
+        DagNodeSource::Compute { schema, .. } | DagNodeSource::MapBody { schema, .. } => {
+            Some(schema.clone())
+        }
+        DagNodeSource::Derive { value_type, .. } => value_type.as_ref().and_then(|t| {
+            plasm_core::plasm_monad::SyntheticResultSchema::for_value(t.clone()).ok()
+        }),
         _ => None,
     }
 }
@@ -117,10 +128,27 @@ pub(in crate::plasm_dag) fn resolve_qualified_entity_for_dag_source(
             } => {
                 return Some(qualified_entity.clone());
             }
-            DagNodeSource::Compute { source, .. } | DagNodeSource::Derive { source, .. } => {
-                node_id = source.clone()
+            DagNodeSource::Compute { source, .. }
+            | DagNodeSource::Derive { source, .. }
+            | DagNodeSource::ScalarExtract { source, .. } => node_id = source.clone(),
+            DagNodeSource::MapBody { body, .. } => {
+                match &body.output {
+                    plasm_core::plasm_monad::ScopedOutput::Record
+                    | plasm_core::plasm_monad::ScopedOutput::Quantify { .. }
+                    | plasm_core::plasm_monad::ScopedOutput::Filter => {
+                        // A structural parent has a scope label, not a nominal
+                        // catalog entity. Recover provenance from its source.
+                        node_id = body.parent.source.to_string();
+                    }
+                    plasm_core::plasm_monad::ScopedOutput::Rows { entity, .. } => {
+                        return Some(QualifiedEntityKey {
+                            entry_id: entity.entry_id.clone(),
+                            entity: entity.entity.clone(),
+                        });
+                    }
+                }
             }
-            DagNodeSource::ScalarExtract { .. } | DagNodeSource::Data(_) => return None,
+            DagNodeSource::Data(_) => return None,
         }
     }
     None

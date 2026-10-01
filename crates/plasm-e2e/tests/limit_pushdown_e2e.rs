@@ -133,13 +133,13 @@ async fn limit_pushdown_bounds_paginated_berry_query_async() {
         .find(|s| s.node_id.as_deref() == Some("limited"))
         .expect("limited step");
     assert!(
-        limited.result.count <= 5,
+        limited.result.count() <= 5,
         "expected at most 5 rows, got {}",
-        limited.result.count
+        limited.result.count()
     );
     assert!(
-        limited.result.entities.len() <= 5,
+        limited.result.entities().len() <= 5,
         "expected at most 5 entity rows, got {}",
-        limited.result.entities.len()
+        limited.result.entities().len()
     );
 }

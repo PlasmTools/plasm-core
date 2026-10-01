@@ -33,7 +33,7 @@ impl WriteConflictDetails {
 #[derive(Debug, Clone, PartialEq)]
 pub struct BranchMaterializationBase {
     pub responses: HashMap<RequestFingerprint, Arc<StoredResponse>>,
-    pub query_index: HashMap<QueryCacheKey, Vec<Ref>>,
+    pub query_index: HashMap<QueryCacheKey, crate::query_index::QueryObservation>,
 }
 
 impl BranchMaterializationBase {

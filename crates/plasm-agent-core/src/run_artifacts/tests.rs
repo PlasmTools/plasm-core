@@ -122,8 +122,11 @@ async fn memory_insert_get_round_trip() {
         parsed_preimage: sample_parsed_preimage(),
         display_lines: vec![],
         request_fingerprints: vec![],
-        entities: vec![],
-        coverage: plasm_runtime::ResultCoverage::Unknown,
+        entities: vec![].into(),
+        collection: crate::test_support::execution_fixtures::checkpoint(
+            vec![],
+            plasm_runtime::ResultCoverage::Unknown,
+        ),
         source: ExecutionSource::Live,
         stats: ExecutionStats {
             duration_ms: 0,
@@ -147,10 +150,11 @@ async fn memory_insert_get_round_trip() {
 #[test]
 fn document_from_run_persists_coverage() {
     let result = plasm_runtime::ExecutionResult {
-        entities: vec![],
-        count: 0,
+        collection: crate::test_support::execution_fixtures::collection(
+            vec![],
+            plasm_runtime::ResultCoverage::Partial,
+        ),
         has_more: false,
-        coverage: plasm_runtime::ResultCoverage::Partial,
         pagination_resume: None,
         paging_handle: None,
         source: ExecutionSource::Live,
@@ -168,10 +172,14 @@ fn document_from_run_persists_coverage() {
         parsed_preimage: &sample_parsed_preimage(),
         result: &result,
         resource_index: Some(1),
-    });
-    assert_eq!(doc.coverage, plasm_runtime::ResultCoverage::Partial);
+    })
+    .unwrap();
     assert_eq!(
-        doc.agent_view().coverage,
+        doc.agent_view().unwrap().coverage,
+        plasm_runtime::ResultCoverage::Partial
+    );
+    assert_eq!(
+        doc.agent_view().unwrap().coverage,
         plasm_runtime::ResultCoverage::Partial
     );
 }
@@ -412,8 +420,11 @@ async fn fs_backend_resource_index_round_trip() {
         parsed_preimage: sample_parsed_preimage(),
         display_lines: vec![],
         request_fingerprints: vec![],
-        entities: vec![],
-        coverage: plasm_runtime::ResultCoverage::Unknown,
+        entities: vec![].into(),
+        collection: crate::test_support::execution_fixtures::checkpoint(
+            vec![],
+            plasm_runtime::ResultCoverage::Unknown,
+        ),
         source: ExecutionSource::Live,
         stats: ExecutionStats {
             duration_ms: 0,
@@ -474,8 +485,11 @@ async fn init_from_env_url_precedes_dir() {
         parsed_preimage: sample_parsed_preimage(),
         display_lines: vec![],
         request_fingerprints: vec![],
-        entities: vec![],
-        coverage: plasm_runtime::ResultCoverage::Unknown,
+        entities: vec![].into(),
+        collection: crate::test_support::execution_fixtures::checkpoint(
+            vec![],
+            plasm_runtime::ResultCoverage::Unknown,
+        ),
         source: ExecutionSource::Live,
         stats: ExecutionStats {
             duration_ms: 0,
@@ -514,8 +528,11 @@ fn project_artifact_payload_for_agent_slim_by_default() {
         parsed_preimage: sample_parsed_preimage(),
         display_lines: vec!["line".into()],
         request_fingerprints: vec!["fp1".into()],
-        entities: vec![serde_json::json!({"id": 1})],
-        coverage: plasm_runtime::ResultCoverage::Unknown,
+        entities: artifact_test_rows().into(),
+        collection: crate::test_support::execution_fixtures::checkpoint(
+            artifact_test_rows(),
+            plasm_runtime::ResultCoverage::Unknown,
+        ),
         source: ExecutionSource::Live,
         stats: ExecutionStats {
             duration_ms: 1,
@@ -559,8 +576,11 @@ fn project_artifact_payload_for_mcp_read_run_explorer_ui_is_full() {
         parsed_preimage: sample_parsed_preimage(),
         display_lines: vec!["line".into()],
         request_fingerprints: vec!["fp1".into()],
-        entities: vec![serde_json::json!({"id": 1})],
-        coverage: plasm_runtime::ResultCoverage::Partial,
+        entities: artifact_test_rows().into(),
+        collection: crate::test_support::execution_fixtures::checkpoint(
+            artifact_test_rows(),
+            plasm_runtime::ResultCoverage::Partial,
+        ),
         source: ExecutionSource::Live,
         stats: ExecutionStats {
             duration_ms: 1,
@@ -582,14 +602,88 @@ fn project_artifact_payload_for_mcp_read_run_explorer_ui_is_full() {
     .expect("ui read");
     let ui_doc: RunArtifactDocument = serde_json::from_slice(&ui.bytes).expect("full doc");
     assert_eq!(ui_doc.prompt_hash, doc.prompt_hash);
-    assert_eq!(ui_doc.coverage, plasm_runtime::ResultCoverage::Partial);
+    assert_eq!(
+        ui_doc.agent_view().unwrap().coverage,
+        plasm_runtime::ResultCoverage::Partial
+    );
 
     let agent = project_artifact_payload_for_mcp_read(&payload, None).expect("agent read");
     let agent_v: serde_json::Value = serde_json::from_slice(&agent.bytes).expect("json");
     assert!(agent_v.get("prompt_hash").is_none());
     assert_eq!(agent_v["coverage"], "partial");
     assert_eq!(
-        doc.agent_view().coverage,
+        doc.agent_view().unwrap().coverage,
         plasm_runtime::ResultCoverage::Partial
     );
+}
+
+fn artifact_test_rows() -> Vec<plasm_runtime::CachedEntity> {
+    let mut row = plasm_runtime::CachedEntity::new(plasm_core::Ref::new("Widget", "1"), 0);
+    row.fields
+        .insert("id".into(), plasm_core::Value::Integer(1).into());
+    vec![row]
+}
+
+#[test]
+fn snapshot_roundtrip_preserves_typed_membership_and_rejects_row_substitution() {
+    use plasm_runtime::{execution::ExecutionCollection, CachedEntity};
+    let rows = vec![
+        CachedEntity::new(plasm_core::Ref::new("Item", "a"), 0),
+        CachedEntity::new(plasm_core::Ref::new("Item", "b"), 0),
+        CachedEntity::new(plasm_core::Ref::new("Item", "a"), 0),
+    ];
+    let result = plasm_runtime::ExecutionResult {
+        collection: crate::test_support::execution_fixtures::collection(
+            rows,
+            plasm_runtime::ResultCoverage::Complete,
+        ),
+        has_more: false,
+        pagination_resume: None,
+        paging_handle: None,
+        source: ExecutionSource::Live,
+        stats: ExecutionStats::default(),
+        request_fingerprints: vec![],
+        operations: Default::default(),
+    };
+    let doc = document_from_run(DocumentFromRun {
+        run_id: sample_run_id(),
+        prompt_hash: "ph",
+        session_id: "sid",
+        entry_id: "matrix",
+        principal: None,
+        display_lines: vec![],
+        parsed_preimage: &sample_parsed_preimage(),
+        result: &result,
+        resource_index: None,
+    })
+    .unwrap();
+    assert!(std::ptr::eq(&doc.entities[0], &result.entities()[0]));
+    let restored = parse_run_artifact_document_bytes(&serde_json::to_vec(&doc).unwrap()).unwrap();
+    assert_eq!(
+        restored.recorded_collection().unwrap().membership(),
+        result.collection.membership()
+    );
+    for positions in [vec![0, 2, 1], vec![0, 1], vec![0, 1, 1]] {
+        let mut bad = restored.clone();
+        bad.entities = restored.entities.select(positions).unwrap();
+        assert!(validate_run_artifact_document(&bad).is_err());
+        assert!(bad.agent_view().is_err());
+    }
+    let graph = ExecutionCollection::graph(result.collection.membership().clone());
+    let partial = plasm_runtime::ExecutionResult {
+        collection: graph,
+        ..result
+    };
+    assert!(document_from_run(DocumentFromRun {
+        run_id: sample_run_id(),
+        prompt_hash: "ph",
+        session_id: "sid",
+        entry_id: "matrix",
+        principal: None,
+        display_lines: vec![],
+        parsed_preimage: &sample_parsed_preimage(),
+        result: &partial,
+        resource_index: None
+    })
+    .is_err());
 }

@@ -20,10 +20,10 @@ pub(crate) fn assert_comp_witness(dry: &DryPlasmPlanEvaluation) -> Result<(), St
 pub(crate) fn assert_row(row: &MatrixRow, out: &PlasmPlanRunResult) -> Result<(), String> {
     if row.id == "lang_group_then_global_aggregate" {
         let step = out.return_steps.first().ok_or("missing global total")?;
-        if step.result.entities.len() != 1 {
+        if step.result.entities().len() != 1 {
             return Err("global total must be a singleton".into());
         }
-        let total = step.result.entities[0]
+        let total = step.result.entities()[0]
             .fields
             .get("total")
             .ok_or("missing total field")?
@@ -38,8 +38,8 @@ pub(crate) fn assert_row(row: &MatrixRow, out: &PlasmPlanRunResult) -> Result<()
     }
     if row.id == "lang_distinct_projected_values" {
         let step = out.return_steps.first().ok_or("missing distinct result")?;
-        if step.result.entities.len() != 1
-            || step.result.entities[0]
+        if step.result.entities().len() != 1
+            || step.result.entities()[0]
                 .fields
                 .get("shelf")
                 .map(|v| v.to_value())
@@ -52,24 +52,26 @@ pub(crate) fn assert_row(row: &MatrixRow, out: &PlasmPlanRunResult) -> Result<()
         && out
             .return_steps
             .iter()
-            .any(|step| !step.result.entities.is_empty())
+            .any(|step| !step.result.entities().is_empty())
     {
         return Err("empty parent fanout must remain empty".into());
     }
     if row.id == "lang_relation_one_chain" {
         let step = out.return_steps.first().ok_or("missing detail result")?;
-        if step.result.entities.len() != 1 || !step.result.entities[0].fields.contains_key("body") {
+        if step.result.entities().len() != 1
+            || !step.result.entities()[0].fields.contains_key("body")
+        {
             return Err(format!(
                 "one-to-one chain must return one detail row with body: {:?}",
-                step.result.entities
+                step.result.entities()
             ));
         }
     }
 
     if row.id == "lang_apply_query_multirow" {
         let peers = out.return_steps.first().ok_or("missing peers result")?;
-        if peers.result.entities.is_empty()
-            || peers.result.entities.iter().any(|entity| {
+        if peers.result.entities().is_empty()
+            || peers.result.entities().iter().any(|entity| {
                 entity.fields.get("owner").map(|v| v.to_value())
                     != Some(plasm_core::Value::String("alice".into()))
             })
@@ -93,7 +95,7 @@ pub(crate) fn assert_row(row: &MatrixRow, out: &PlasmPlanRunResult) -> Result<()
         let result = out.return_steps.first().ok_or("missing identity result")?;
         let entity = result
             .result
-            .entities
+            .entities()
             .first()
             .ok_or("missing identity row")?;
         if entity.fields.get("id").map(|v| v.to_value())
@@ -109,7 +111,7 @@ pub(crate) fn assert_row(row: &MatrixRow, out: &PlasmPlanRunResult) -> Result<()
         for step in &out.return_steps {
             let entity = step
                 .result
-                .entities
+                .entities()
                 .first()
                 .ok_or("missing compound Get row")?;
             for key in ["owner", "item_id", "name"] {
@@ -123,7 +125,9 @@ pub(crate) fn assert_row(row: &MatrixRow, out: &PlasmPlanRunResult) -> Result<()
                 return Err("expected compound source and result".into());
             };
             for key in ["owner", "item_id", "name"] {
-                if source.result.entities[0].fields[key] != result.result.entities[0].fields[key] {
+                if source.result.entities()[0].fields[key]
+                    != result.result.entities()[0].fields[key]
+                {
                     return Err(format!("compound roundtrip changed {key}"));
                 }
             }
@@ -140,17 +144,21 @@ pub(crate) fn assert_row(row: &MatrixRow, out: &PlasmPlanRunResult) -> Result<()
         let [source, result] = out.return_steps.as_slice() else {
             return Err("bound read must return source and result witnesses".into());
         };
-        let source = source.result.entities.first().ok_or("missing source row")?;
+        let source = source
+            .result
+            .entities()
+            .first()
+            .ok_or("missing source row")?;
         let field = if row.features.contains(&"bound_get_identity") {
             "id"
         } else {
             "owner"
         };
         let expected = source.fields.get(field).ok_or("missing source operand")?;
-        if result.result.entities.is_empty()
+        if result.result.entities().is_empty()
             || result
                 .result
-                .entities
+                .entities()
                 .iter()
                 .any(|r| r.fields.get(field) != Some(expected))
         {
@@ -161,7 +169,7 @@ pub(crate) fn assert_row(row: &MatrixRow, out: &PlasmPlanRunResult) -> Result<()
         let result = out.return_steps.first().ok_or("missing iteration result")?;
         let current = result
             .result
-            .entities
+            .entities()
             .first()
             .ok_or("missing observed cursor")?;
         if current.fields.get("phase").map(|v| v.to_value())
@@ -193,12 +201,12 @@ pub(crate) fn assert_row(row: &MatrixRow, out: &PlasmPlanRunResult) -> Result<()
         };
         let source_row = source
             .result
-            .entities
+            .entities()
             .first()
             .ok_or("missing selected row")?;
         let result_row = target
             .result
-            .entities
+            .entities()
             .first()
             .ok_or("missing extracted result")?;
         let field = if row.id == "lang_take_one_field_bind" {
@@ -221,10 +229,10 @@ pub(crate) fn assert_row(row: &MatrixRow, out: &PlasmPlanRunResult) -> Result<()
             .iter()
             .find(|step| step.entity.as_deref() == Some("LangTag"))
             .ok_or("filtered continuation must return LangTag rows")?;
-        if tags.result.entities.is_empty()
+        if tags.result.entities().is_empty()
             || tags
                 .result
-                .entities
+                .entities()
                 .iter()
                 .any(|entity| entity.reference.entity_type.as_str() != "LangTag")
         {
@@ -293,7 +301,7 @@ pub(crate) fn assert_row(row: &MatrixRow, out: &PlasmPlanRunResult) -> Result<()
                     || s.display.contains("update")
                     || s.display.contains("secured_touch")
             })
-            .map(|s| s.result.count)
+            .map(|s| s.result.count())
             .sum();
         if fe_entities < 3 {
             return Err(format!(
@@ -301,13 +309,13 @@ pub(crate) fn assert_row(row: &MatrixRow, out: &PlasmPlanRunResult) -> Result<()
                 row.id,
                 out.return_steps
                     .iter()
-                    .map(|s| (s.node_id.clone(), s.display.clone(), s.result.count))
+                    .map(|s| (s.node_id.clone(), s.display.clone(), s.result.count()))
                     .collect::<Vec<_>>()
             ));
         }
     }
     if row.features.iter().any(|f| f.starts_with("relation_")) {
-        let return_rows: usize = out.return_steps.iter().map(|s| s.result.count).sum();
+        let return_rows: usize = out.return_steps.iter().map(|s| s.result.count()).sum();
         if return_rows == 0
             && !matches!(
                 row.id,
@@ -358,12 +366,13 @@ pub(crate) fn assert_row(row: &MatrixRow, out: &PlasmPlanRunResult) -> Result<()
             .iter()
             .find(|s| s.node_id.as_deref() == Some("done"))
             .ok_or_else(|| format!("row {}: missing done return step", row.id))?;
-        if done.result.entities.is_empty() || done.result.count != done.result.entities.len() {
+        if done.result.entities().is_empty() || done.result.count() != done.result.entities().len()
+        {
             return Err(format!(
                 "row {}: iterate done advertised count={} entities={} (HTTP-2)",
                 row.id,
-                done.result.count,
-                done.result.entities.len()
+                done.result.count(),
+                done.result.entities().len()
             ));
         }
         if row.id == "lang_iterate_until_bound" && done.result.operations.is_empty() {
@@ -387,7 +396,7 @@ fn assert_ra13_membership_universe(row_id: &str, out: &PlasmPlanRunResult) -> Re
     let titles: Vec<String> = out
         .return_steps
         .iter()
-        .flat_map(|s| s.result.entities.iter())
+        .flat_map(|s| s.result.entities().iter())
         .filter_map(|e| {
             e.fields
                 .get("title")

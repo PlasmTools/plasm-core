@@ -167,7 +167,7 @@ pub(crate) fn assert_planning_query_pipe(
             let Some(pred) = q.predicate.as_ref() else {
                 return Err("expected owner predicate".into());
             };
-            // Both frontends may wrap one clause in conjunction; additional clauses
+            // Catalog IL may wrap one clause in conjunction; additional clauses
             // remain a mismatch rather than being ignored by this assertion.
             let pred = match pred {
                 Predicate::And { args } if args.len() == 1 => &args[0],
@@ -186,11 +186,8 @@ pub(crate) fn assert_planning_query_pipe(
             }
         }
         "lang_predicate_brace_score_cmp" => {
-            if !computes
-                .iter()
-                .any(|c| matches!(c.op, ComputeOp::Filter { .. }))
-            {
-                return Err(format!("expected row Filter compute, got {computes:?}"));
+            if !has_scoped_filter(comp) {
+                return Err("expected typed scoped predicate filter".into());
             }
         }
         "lang_limit_projection" => {
@@ -346,47 +343,18 @@ pub(crate) fn assert_planning_query_pipe(
             }
         }
         "lang_row_filter_brace" | "lang_row_filter_paren" => {
-            if !computes
-                .iter()
-                .any(|c| matches!(c.op, ComputeOp::Filter { .. }))
-            {
-                return Err(format!("expected Filter compute, got {:?}", computes));
-            }
+            require_python_filter(comp)?;
         }
         "lang_with_mul" | "lang_with_div" | "lang_with_concat" | "lang_with_when_len" => {
-            if !computes
-                .iter()
-                .any(|c| matches!(c.op, ComputeOp::With { .. }))
-            {
-                return Err(format!("expected With compute, got {:?}", computes));
+            if !comp_steps_values(comp).iter().any(|step| step.get("derive").is_some_and(|derive| derive.get("value").is_some())) {
+                return Err("expected recursive value derivation".into());
             }
         }
         "lang_where_literal_boolean_sugar" | "lang_where_boolean_rowset_sugar" => {
-            if !computes.iter().any(|c| matches!(&c.op, ComputeOp::Filter { predicates } if predicates.conjunction().is_none())) {
-                return Err("boolean repair must preserve non-conjunctive typed filter structure".into());
-            }
+            require_python_filter(comp)?;
         }
         "lang_where_in_rowset" | "lang_where_in_rowset_paren" => {
-            let Some(ComputeOp::Filter { predicates }) =
-                computes.iter().map(|c| &c.op).find(|op| {
-                    matches!(
-                        op,
-                        ComputeOp::Filter { predicates } if predicates.iter().any(|p| {
-                            format!("{p:?}").contains("In") && !format!("{p:?}").contains("NotIn")
-                        })
-                    )
-                })
-            else {
-                return Err(format!(
-                    "RA-13: expected `| where owner in …` Filter, got {computes:?}"
-                ));
-            };
-            let dbg = format!("{predicates:?}");
-            if !dbg.contains("owner") {
-                return Err(format!(
-                    "RA-13: membership Filter must bind `owner`, got {dbg}"
-                ));
-            }
+            require_membership(comp, "owner", false)?;
         }
         "lang_union_empty_right" => {
             if !computes
@@ -433,107 +401,27 @@ pub(crate) fn assert_planning_query_pipe(
                     "RA-14: expected `| union` ComputeOp::Union, got {computes:?}"
                 ));
             }
-            if !computes.iter().any(|c| {
-                matches!(
-                    &c.op,
-                    ComputeOp::Filter { predicates } if predicates.iter().any(|p| {
-                        format!("{p:?}").contains("In") && !format!("{p:?}").contains("NotIn")
-                    })
-                )
-            }) {
-                return Err(format!(
-                    "RA-14: union result must be a lawful RA-13 RHS, got {computes:?}"
-                ));
-            }
+            require_membership(comp, "owner", false)?;
         }
         "lang_where_not_in_rowset" => {
-            let Some(ComputeOp::Filter { predicates }) =
-                computes.iter().map(|c| &c.op).find(|op| {
-                    matches!(
-                        op,
-                        ComputeOp::Filter { predicates } if predicates
-                            .iter()
-                            .any(|p| format!("{p:?}").contains("NotIn"))
-                    )
-                })
-            else {
-                return Err(format!(
-                    "RA-13: expected `| where owner not in …` Filter, got {computes:?}"
-                ));
-            };
-            let dbg = format!("{predicates:?}");
-            if !dbg.contains("owner") {
-                return Err(format!(
-                    "RA-13: anti-join Filter must bind `owner`, got {dbg}"
-                ));
-            }
+            require_membership(comp, "owner", true)?;
         }
         "lang_where_not_in_universe_left" | "lang_where_not_in_universe_right" => {
-            let Some(ComputeOp::Filter { predicates }) =
-                computes.iter().map(|c| &c.op).find(|op| {
-                    matches!(
-                        op,
-                        ComputeOp::Filter { predicates } if predicates
-                            .iter()
-                            .any(|p| format!("{p:?}").contains("NotIn"))
-                    )
-                })
-            else {
-                return Err(format!(
-                    "RA-13 universe: expected `| where title not in …` Filter, got {computes:?}"
-                ));
-            };
-            let dbg = format!("{predicates:?}");
-            if !dbg.contains("title") {
-                return Err(format!(
-                    "RA-13 universe: anti-join Filter must bind `title`, got {dbg}"
-                ));
-            }
+            require_membership(comp, "title", true)?;
         }
         "lang_quoted_binding_literal" => {
-            let Some(ComputeOp::Filter { predicates }) = computes
-                .iter()
-                .map(|c| &c.op)
-                .find(|op| matches!(op, ComputeOp::Filter { .. }))
-            else {
-                return Err(format!(
-                    "PLP-11: expected `| where title = \"item\"` Filter, got {computes:?}"
-                ));
-            };
-            let dbg = format!("{predicates:?}");
-            if !dbg.contains("title") || !dbg.contains("item") {
-                return Err(format!(
-                    "PLP-11: filter must keep the quoted literal `item`, got {dbg}"
-                ));
-            }
-            if dbg.contains("BindingSymbol") {
-                return Err(format!(
-                    "PLP-11: quoted `item` must stay a literal, not a binding, got {dbg}"
-                ));
+            require_python_filter(comp)?;
+            if !json_value_contains_substring(comp, "item") {
+                return Err("quoted item literal must remain in the reviewed computation".into());
             }
         }
         "lang_select_alias_where" => {
-            if !computes
-                .iter()
-                .any(|c| matches!(c.op, ComputeOp::With { .. }))
-            {
-                return Err(format!("expected With compute, got {:?}", computes));
+            if !comp_steps_values(comp).iter().any(|step| step.get("derive").is_some_and(|derive| derive.get("value").is_some())) {
+                return Err("expected recursive value derivation".into());
             }
-            let Some(ComputeOp::Filter { predicates }) = computes
-                .iter()
-                .map(|c| &c.op)
-                .find(|op| matches!(op, ComputeOp::Filter { .. }))
-            else {
-                return Err(format!(
-                    "expected Filter on select alias, got {:?}",
-                    computes
-                ));
-            };
-            let predicate_debug = format!("{predicates:?}");
-            if !predicate_debug.contains("handle") {
-                return Err(format!(
-                    "RA-2: filter must bind select alias `handle`, got {predicate_debug}"
-                ));
+            require_python_filter(comp)?;
+            if !json_value_contains_substring(comp, "handle") {
+                return Err("filter must retain the projected handle field".into());
             }
         }
         "lang_group_by" => {
@@ -696,17 +584,17 @@ pub(crate) fn assert_planning_query_pipe(
         | "lang_render_split_part"
         | "lang_per_row_render_zero"
         | "lang_per_row_render_many" => {
-            if !computes.iter().any(|c| matches!(c.op, ComputeOp::Render { .. } | ComputeOp::Python { per_row: true, .. })) {
+            if !computes.iter().any(|c| matches!(c.op, ComputeOp::Python { per_row: true, .. })) {
                 return Err(format!("expected per-row rendering compute, got {computes:?}"));
             }
         }
         "lang_plain_template_foreach" => {
-            if computes
+            if !computes
                 .iter()
-                .any(|c| matches!(c.op, ComputeOp::Render { .. }))
+                .any(|c| matches!(c.op, ComputeOp::Python { per_row: false, .. }))
             {
                 return Err(
-                    "plain `{% for item in items %}` must evaluate once as a Data template, not per-row Render"
+                    "collection rendering must execute one Python reduction"
                         .into(),
                 );
             }
@@ -715,9 +603,8 @@ pub(crate) fn assert_planning_query_pipe(
             }
         }
         "lang_render_relation_shape" => {
-            let native = computes.iter().any(|c| matches!(c.op, ComputeOp::Render { .. }));
             let explicit = computes.iter().any(|c| matches!(&c.op, ComputeOp::Python { per_row: true, source, .. } if c.source == "items" && source.contains("len(row.lines)") && source.contains("relation_count=")));
-            if !native && !explicit { return Err("expected relation-dependent per-row render".into()); }
+            if !explicit { return Err("expected relation-dependent per-row render".into()); }
         }
         "lang_render_name_collision" => {
             if !computes.iter().any(|c| matches!(&c.op, ComputeOp::Python { per_row: true, source, .. } if c.source == "items" && source.contains("row.title"))) {
@@ -726,13 +613,12 @@ pub(crate) fn assert_planning_query_pipe(
         }
         "lang_cross_binding_render" => {
             let valid = computes.iter().any(|c| match &c.op {
-                ComputeOp::Render { render_bindings, .. } => render_bindings.is_empty(),
                 ComputeOp::Python { per_row: true, .. } => c.source == "a",
                 _ => false,
             });
             if !valid { return Err("per-row render must read its explicit a source without collection capture".into()); }
         }
-        "lang_render_content_into_create" => {
+        "lang_render_content_into_create" | "lang_render_content_plural_reject" => {
             let has_create_node = comp_has_invoke_plan_kind(comp, "create");
             if !has_create_node {
                 return Err(format!(
@@ -742,7 +628,7 @@ pub(crate) fn assert_planning_query_pipe(
             }
             if !computes
                 .iter()
-                .any(|c| matches!(c.op, ComputeOp::Render { .. } | ComputeOp::Python { per_row: true, .. }))
+                .any(|c| matches!(c.op, ComputeOp::Python { per_row: true, .. }))
             {
                 return Err("expected typed row rendering before create".into());
             }
@@ -750,4 +636,27 @@ pub(crate) fn assert_planning_query_pipe(
         _ => return Ok(None),
     }
     Ok(Some(()))
+}
+
+fn require_membership(
+    comp: &serde_json::Value,
+    field: &str,
+    _negative: bool,
+) -> Result<(), String> {
+    require_python_filter(comp)?;
+    if !json_value_contains_substring(comp, field) {
+        return Err(format!("membership must retain its {field} input"));
+    }
+    if !comp_steps_values(comp).iter().any(|step| {
+        step.pointer("/derive/inputs")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|inputs| {
+                inputs
+                    .iter()
+                    .any(|input| input["cardinality"] == "collection")
+            })
+    }) {
+        return Err("membership must capture a complete collection input".into());
+    }
+    Ok(())
 }

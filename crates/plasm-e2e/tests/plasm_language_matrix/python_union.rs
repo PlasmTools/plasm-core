@@ -60,7 +60,14 @@ fn fixture() -> (ExecuteSession, String, String, String, String) {
 #[tokio::test]
 async fn python_union_matrix_preserves_variants_and_rejects_mixtures() {
     let (session, entity, write, batch, declarations) = fixture();
-    assert!(declarations.contains("@overload"));
+    assert_eq!(
+        declarations
+            .lines()
+            .filter(|line| line.trim_start().starts_with(&format!("row.{write}(")))
+            .count(),
+        2,
+        "both tagged alternatives must be served as distinct signatures"
+    );
     assert!(declarations.contains("Literal[\"text\"]"));
     assert!(declarations.contains("Literal[\"count\"]"));
     assert!(declarations.contains(" | "));
@@ -71,12 +78,13 @@ async fn python_union_matrix_preserves_variants_and_rejects_mixtures() {
     ] {
         let source = format!("class Change(Program):\n    def build(self):\n        return {entity}.get('r1').{write}(tenant='t1', request_id='req1', {args})");
         let bundle = compile_python_program(&session, &source)
+            .await
             .unwrap_or_else(|error| panic!("{source}: {error}"));
         let dry = plasm_agent::plasm_plan_run::evaluate_plasm_comp_dry(&session, &bundle).unwrap();
         assert!(!dry.node_results.is_empty());
     }
     let source = format!("class Change(Program):\n    def build(self):\n        return {entity}.get('r1').{batch}(operations=[{{'kind':'text','text':'hello'}},{{'kind':'count','count':3,'labels':['red']}}])");
-    let bundle = compile_python_program(&session, &source).unwrap();
+    let bundle = compile_python_program(&session, &source).await.unwrap();
     plasm_agent::plasm_plan_run::evaluate_plasm_comp_dry(&session, &bundle).unwrap();
 
     for args in [
@@ -92,7 +100,7 @@ async fn python_union_matrix_preserves_variants_and_rejects_mixtures() {
     ] {
         let source = format!("class Change(Program):\n    def build(self):\n        return {entity}.get('r1').{write}(tenant='t1', request_id='req1', {args})");
         assert!(
-            compile_python_program(&session, &source).is_err(),
+            compile_python_program(&session, &source).await.is_err(),
             "accepted invalid union: {args}"
         );
     }
@@ -103,7 +111,7 @@ async fn python_union_matrix_preserves_variants_and_rejects_mixtures() {
     ] {
         let source = format!("class Change(Program):\n    def build(self):\n        return {entity}.get('r1').{batch}(operations={operations})");
         assert!(
-            compile_python_program(&session, &source).is_err(),
+            compile_python_program(&session, &source).await.is_err(),
             "accepted invalid nested union: {operations}"
         );
     }
@@ -156,7 +164,7 @@ async fn python_union_matrix_live_wire_preserves_nested_variant_shapes() {
         (&batch, "operations=[{'kind':'text','text':'nested'},{'kind':'count','count':2,'labels':['blue']}]"),
     ] {
         let source = format!("class Change(Program):\n    def build(self):\n        return {entity}.get('r1').{method}({args})");
-        let bundle = compile_python_program(&session, &source).unwrap();
+        let bundle = compile_python_program(&session, &source).await.unwrap();
         plasm_agent::plasm_plan_run::run_plasm_comp(
             &session, &host, &session.prompt_hash, "union-live", &bundle, true,
             None, None, None, None,

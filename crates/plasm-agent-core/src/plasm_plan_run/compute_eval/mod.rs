@@ -8,6 +8,7 @@ mod hole_paths;
 mod input_rows;
 mod iterate_until;
 mod relation;
+mod relation_coverage;
 
 pub(crate) use compute_ops::*;
 pub(crate) use dry_staging::*;
@@ -17,3 +18,5 @@ pub(crate) use hole_paths::NodeInputHoleIndex;
 pub(crate) use input_rows::*;
 pub(crate) use iterate_until::*;
 pub(crate) use relation::*;
+
+pub(crate) use relation_coverage::embedded_collection;

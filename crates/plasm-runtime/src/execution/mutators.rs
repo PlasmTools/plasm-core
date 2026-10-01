@@ -46,7 +46,7 @@ impl ExecutionEngine {
                 env.insert(k.clone(), v.clone());
             }
         }
-        normalize_cml_env_scope_entity_refs(&mut env, cgs, capability)?;
+        normalize_cml_env_inputs(&mut env, cgs, capability)?;
         plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
             RuntimeError::ConfigurationError {
                 message: e.to_string(),
@@ -56,9 +56,14 @@ impl ExecutionEngine {
         apply_preflight_steps(self, capability, cgs, mat, mode, &mut env, None, true).await?;
 
         if crate::workflow_reconcile::should_skip_write_after_preflight(&env) {
-            return Ok(crate::workflow_reconcile::skipped_write_result(
+            return crate::workflow_reconcile::skipped_write_result(
                 create.entity.as_str(),
-            ));
+                plasm_core::collection_codec::CollectionIdentity::for_expression(
+                    cgs,
+                    create,
+                    mat.graph.stats().version,
+                )?,
+            );
         }
 
         merge_plasm_execute_session_env(&mut env);
@@ -70,7 +75,13 @@ impl ExecutionEngine {
                 ensure_mutating_operation(&compiled, "create")?;
                 let http_res = with_dispatch_entity(
                     Some(create.entity.as_str()),
-                    self.execute_operation_full(&compiled),
+                    super::mutation_evidence::with_mutation_identity(
+                        OperationIdentity {
+                            entry_id: create.catalog_entry_id.as_deref().unwrap_or("").into(),
+                            capability: create.capability.to_string(),
+                        },
+                        self.execute_operation_full(&compiled),
+                    ),
                 )
                 .await;
                 let (response, _) = match http_res {
@@ -83,7 +94,7 @@ impl ExecutionEngine {
                                 cgs,
                                 mat,
                                 mode,
-                                &input,
+                                &Value::Object(env.clone()),
                                 create.entity.as_str(),
                             )
                             .await;
@@ -130,10 +141,14 @@ impl ExecutionEngine {
                 };
 
                 Ok(ExecutionResult {
-                    entities,
-                    count,
+                    collection: ExecutionCollection::observe_for(
+                        cgs,
+                        create,
+                        mat.graph.stats().version,
+                        entities,
+                        plasm_core::collection_codec::Observation::ExactOutput { decoded: count },
+                    )?,
                     has_more: false,
-                    coverage: ResultCoverage::Complete,
                     pagination_resume: None,
                     paging_handle: None,
                     source: ExecutionSource::Live,
@@ -197,7 +212,7 @@ impl ExecutionEngine {
         if let Some(input) = input_for_env {
             env.insert("input".to_string(), input);
         }
-        normalize_cml_env_scope_entity_refs(&mut env, cgs, capability)?;
+        normalize_cml_env_inputs(&mut env, cgs, capability)?;
         plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
             RuntimeError::ConfigurationError {
                 message: e.to_string(),
@@ -213,7 +228,13 @@ impl ExecutionEngine {
                 ensure_mutating_operation(&compiled, "delete")?;
                 let (response, _) = with_dispatch_entity(
                     Some(delete.target.entity_type.as_str()),
-                    self.execute_operation_full(&compiled),
+                    super::mutation_evidence::with_mutation_identity(
+                        OperationIdentity {
+                            entry_id: delete.catalog_entry_id.as_deref().unwrap_or("").into(),
+                            capability: delete.capability.to_string(),
+                        },
+                        self.execute_operation_full(&compiled),
+                    ),
                 )
                 .await?;
                 preflight_fibery_command_envelope(&response)?;
@@ -234,10 +255,14 @@ impl ExecutionEngine {
                 };
 
                 Ok(ExecutionResult {
-                    entities: vec![],
-                    count: 0,
+                    collection: ExecutionCollection::observe_for(
+                        cgs,
+                        delete,
+                        mat.graph.stats().version,
+                        vec![],
+                        plasm_core::collection_codec::Observation::ExactOutput { decoded: 0 },
+                    )?,
                     has_more: false,
-                    coverage: ResultCoverage::Complete,
                     pagination_resume: None,
                     paging_handle: None,
                     source: ExecutionSource::Live,
@@ -311,7 +336,7 @@ impl ExecutionEngine {
         if let Some(input) = &input_for_env {
             env.insert("input".to_string(), input.clone());
         }
-        normalize_cml_env_scope_entity_refs(&mut env, cgs, capability)?;
+        normalize_cml_env_inputs(&mut env, cgs, capability)?;
         plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
             RuntimeError::ConfigurationError {
                 message: e.to_string(),
@@ -332,9 +357,14 @@ impl ExecutionEngine {
         .await?;
 
         if crate::workflow_reconcile::should_skip_write_after_preflight(&env) {
-            return Ok(crate::workflow_reconcile::skipped_write_result(
+            return crate::workflow_reconcile::skipped_write_result(
                 invoke.target.entity_type.as_str(),
-            ));
+                plasm_core::collection_codec::CollectionIdentity::for_expression(
+                    cgs,
+                    invoke,
+                    mat.graph.stats().version,
+                )?,
+            );
         }
 
         merge_plasm_execute_session_env(&mut env);
@@ -346,15 +376,18 @@ impl ExecutionEngine {
                 ensure_mutating_operation(&compiled, "invoke")?;
                 let http_res = with_dispatch_entity(
                     Some(invoke.target.entity_type.as_str()),
-                    self.execute_operation_full(&compiled),
+                    super::mutation_evidence::with_mutation_identity(
+                        OperationIdentity {
+                            entry_id: invoke.catalog_entry_id.as_deref().unwrap_or("").into(),
+                            capability: invoke.capability.to_string(),
+                        },
+                        self.execute_operation_full(&compiled),
+                    ),
                 )
                 .await;
                 let (response, _) = match http_res {
                     Ok(v) => v,
                     Err(e) => {
-                        let input_val = input_for_env
-                            .clone()
-                            .unwrap_or(Value::Object(indexmap::IndexMap::new()));
                         return self
                             .try_reconcile_mutator_error(
                                 e,
@@ -362,7 +395,7 @@ impl ExecutionEngine {
                                 cgs,
                                 mat,
                                 mode,
-                                &input_val,
+                                &Value::Object(env.clone()),
                                 invoke.target.entity_type.as_str(),
                             )
                             .await;
@@ -460,10 +493,14 @@ impl ExecutionEngine {
                 };
 
                 Ok(ExecutionResult {
-                    entities,
-                    count,
+                    collection: ExecutionCollection::observe_for(
+                        cgs,
+                        invoke,
+                        mat.graph.stats().version,
+                        entities,
+                        plasm_core::collection_codec::Observation::ExactOutput { decoded: count },
+                    )?,
                     has_more: false,
-                    coverage: ResultCoverage::Complete,
                     pagination_resume: None,
                     paging_handle: None,
                     source: ExecutionSource::Live,

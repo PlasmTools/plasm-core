@@ -15,6 +15,10 @@ impl HttpTransport for IterationTransport {
         auth: Option<ResolvedAuth>,
     ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
         let (mut body, next) = self.inner.send_compiled_http(base, req, auth).await?;
+        if req.path == "/counter" {
+            let id = body["value"].to_string();
+            body["members"] = json!([{ "id": id }, { "id": id }]);
+        }
         if req.path == "/advance" {
             body["value"] = json!(999);
         }
@@ -56,7 +60,7 @@ impl Case {
         }
     }
 }
-async fn check(case: Case, python_source: bool, python_host: bool) {
+async fn check(case: Case, python_host: bool, entity_name: &str) {
     let es = session();
     let events = Arc::new(Mutex::new(vec![]));
     let scope = crate::operation::ExecutionScope::new();
@@ -91,13 +95,17 @@ async fn check(case: Case, python_source: bool, python_host: bool) {
         oss_local_filesystem_defaults: false,
     });
     let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
-    let entity = symbols.entity_sym_for("matrix", "Counter");
-    let method = symbols.method_sym_for("matrix", "Counter", "advance");
-    let bundle = if python_source {
-        crate::plasm_compile::compile_python_program(&es,&format!("class Iterate(Program):\n    def build(self):\n        seed = {entity}.get(\"one\")\n        done = seed.iterate(lambda row: {entity}.{method}(id=row.id), until=lambda row: row.value >= {}, max_steps={})\n        return done\n",case.target,case.bound)).unwrap()
-    } else {
-        crate::compile_plasm_program(&Default::default(),None,&es,"iteration",&format!("seed = Counter(\"one\")\ndone = iterate seed step Counter.advance(id=_.id) until value >= {} take {}\ndone",case.target,case.bound)).unwrap()
-    };
+    let entity = symbols.entity_sym_for("matrix", entity_name);
+    let method = symbols.method_sym_for(
+        "matrix",
+        entity_name,
+        if entity_name == "Wire" {
+            "advance_wire"
+        } else {
+            "advance"
+        },
+    );
+    let bundle = crate::plasm_compile::compile_python_program(&es,&format!("class Iterate(Program):\n    def build(self):\n        seed = {entity}.get(\"one\")\n        done = seed.iterate(lambda row: {entity}.{method}(id=row.id), until=lambda row: row.value >= {}, max_steps={})\n        return done\n",case.target,case.bound)).await.unwrap();
     assert!(events.lock().unwrap().is_empty());
     let comp =
         serde_json::from_slice(&serde_json::to_vec(&bundle.artifact().comp).unwrap()).unwrap();
@@ -125,7 +133,18 @@ async fn check(case: Case, python_source: bool, python_host: bool) {
     let events = events.lock().unwrap();
     if let Some(expected) = case.expected_error {
         let error = run.unwrap_err();
-        assert!(error.contains(expected), "{error}; events={events:?}");
+        if case.fail_after.is_some() {
+            assert_eq!(error.cause, plasm_runtime::FailureCause::Upstream);
+            assert_eq!(
+                error.recovery,
+                plasm_runtime::RecoveryDisposition::ReconcileEffects
+            );
+            assert!(error.effects.iter().any(|effect| effect.completed > 0));
+        }
+        assert!(
+            error.diagnostic().contains(expected),
+            "{error}; events={events:?}"
+        );
     } else {
         let run = run.unwrap();
         let done = run
@@ -133,8 +152,31 @@ async fn check(case: Case, python_source: bool, python_host: bool) {
             .iter()
             .find(|s| s.name.as_deref() == Some("done"))
             .unwrap();
+        if entity_name == "Wire" {
+            let membership = done.result.entities()[0]
+                .relations
+                .get("members")
+                .unwrap_or_else(|| {
+                    panic!(
+                        "missing membership: target={}, python_host={python_host}, row={:?}",
+                        case.target,
+                        done.result.entities()[0]
+                    )
+                });
+            assert!(membership.is_exhaustive());
+            assert_eq!(
+                membership
+                    .iter()
+                    .map(|r| r.primary_slot_str())
+                    .collect::<Vec<_>>(),
+                vec![case.target.to_string(); 2]
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+            );
+        }
         assert_eq!(
-            done.result.entities[0].fields["value"].to_value(),
+            done.result.entities()[0].fields["value"].to_value(),
             Value::Integer(case.target as i64)
         );
         assert_eq!(
@@ -180,7 +222,7 @@ async fn check(case: Case, python_source: bool, python_host: bool) {
     );
 }
 #[test]
-fn python_iteration_stateful_contract_native_and_async() {
+fn python_iteration_stateful_contract_both_drivers() {
     let cases = [
         Case::success(0),
         Case::success(1),
@@ -220,9 +262,11 @@ fn python_iteration_stateful_contract_native_and_async() {
                 .build()
                 .unwrap();
             for case in cases {
-                for source in [false, true] {
+                {
                     for host in [false, true] {
-                        rt.block_on(check(case, source, host));
+                        for entity in ["Counter", "Wire"] {
+                            rt.block_on(check(case, host, entity));
+                        }
                     }
                 }
             }

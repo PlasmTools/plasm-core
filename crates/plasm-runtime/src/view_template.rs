@@ -29,6 +29,7 @@ fn template_data(v: &Value) -> Result<minijinja::Value, minijinja::Error> {
         Value::Null => M::from(()),
         Value::Bool(v) => M::from(*v),
         Value::Integer(v) => M::from(*v),
+        Value::Unsigned(v) => M::from(*v),
         Value::Float(v) if v.is_finite() => M::from(*v),
         Value::String(v) => M::from(v.clone()),
         Value::Money(v) => M::from(v.display()),
@@ -171,6 +172,7 @@ fn register_view_template_filters(env: &mut Environment<'_>) {
             Ok(match out {
                 Value::String(s) | Value::PhraseIdent(s) => s,
                 Value::Integer(i) => i.to_string(),
+                Value::Unsigned(i) => i.to_string(),
                 Value::Float(f) => f.to_string(),
                 Value::Bool(b) => b.to_string(),
                 Value::Null => String::new(),
@@ -443,14 +445,24 @@ mod tests {
     #[test]
     fn wire_time_filter_in_template() {
         let mut scope = IndexMap::new();
-        scope.insert("from".to_string(), Value::String("now-1h".into()));
+        scope.insert(
+            "from".to_string(),
+            Value::String("2024-01-01T00:00:00Z".into()),
+        );
         let out = render_view_computed_template(
             "{{ from | wire_time('unix_ms') }}",
             &scope,
             &IndexMap::new(),
         )
         .unwrap();
-        assert_eq!(out, Value::String("now-1h".into()));
+        assert_eq!(out, Value::String("1704067200000".into()));
+        scope.insert("from".into(), Value::String("now-1h".into()));
+        assert!(render_view_computed_template(
+            "{{ from | wire_time('unix_ms') }}",
+            &scope,
+            &IndexMap::new()
+        )
+        .is_err());
     }
 
     #[test]

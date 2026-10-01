@@ -27,13 +27,13 @@ pub fn value_to_match_string(v: &Value) -> String {
 
 /// Rows whose `where_field` scalar matches `needle` under [`value_to_match_string`] rules.
 pub fn entities_matching_field_value<'a>(
-    entities: &'a [CachedEntity],
+    entities: impl IntoIterator<Item = &'a CachedEntity>,
     where_field: &str,
     needle: &Value,
 ) -> Vec<&'a CachedEntity> {
     let needle_str = value_to_match_string(needle);
     entities
-        .iter()
+        .into_iter()
         .filter(|entity| {
             entity
                 .fields

@@ -26,12 +26,13 @@ mod relation_binding;
 
 pub(crate) use digit_id::{coerce_digit_id, digit_id_json_to_plasm, encode_digit_id_identity};
 pub use dry_stub::{
-    dry_stub_entity_row_json, dry_stub_json_for_named_value, dry_stub_value_for_named_value,
+    dry_stub_entity_rows, dry_stub_json_for_named_value, dry_stub_value_for_named_value,
 };
 pub use relation_binding::{
     apply_identity_slots_to_row, binding_value_as_plasm_value, collect_relation_binding_proofs,
-    field_type_assignable_for_relation_binding, identity_slot_to_json, parent_entity_field_type,
-    relation_binding_assignable, restore_id_field_from_compound_ref, RelationBindingProof,
+    field_type_assignable_for_relation_binding, identity_slot_to_json, identity_slot_to_value,
+    parent_entity_field_type, relation_binding_assignable, restore_id_field_from_compound_ref,
+    RelationBindingProof,
 };
 
 pub(crate) fn stringish(val: &Value) -> Option<&str> {
@@ -127,11 +128,17 @@ pub fn coerce_value_for_field_type_with_policy(
             }
         }
         FieldType::Date => {
-            // Relative tokens (`now`, `now-1h`) often arrive as PhraseIdent in program mode.
+            // Internal literal tokens cross the same strict transport boundary.
             let val = phrase_ident_to_string(val);
             match value_format {
                 Some(ValueWireFormat::Temporal(fmt)) => {
                     crate::temporal::normalize_temporal_value(val, fmt)
+                }
+                None if matches!(&val, Value::Object(o) if o.contains_key("__plasm_temporal")) => {
+                    crate::temporal::normalize_temporal_value(
+                        val,
+                        crate::TemporalWireFormat::Rfc3339,
+                    )
                 }
                 None => match val {
                     Value::String(_) | Value::Integer(_) | Value::Float(_) => Ok(val),
@@ -148,23 +155,15 @@ pub fn coerce_value_for_field_type_with_policy(
         FieldType::DigitId => coerce_digit_id(val),
         FieldType::String | FieldType::Uuid | FieldType::Select => Ok(match val {
             Value::Integer(n) => Value::String(n.to_string()),
+            Value::Unsigned(n) => Value::String(n.to_string()),
             Value::Float(f) => Value::String(normalize_numeric_id_float(f)),
             Value::PhraseIdent(s) => Value::String(s),
             Value::String(s) => Value::String(s),
             other => return Err(format!("cannot coerce {} to {ft:?}", other.type_name())),
         }),
-        FieldType::Blob => {
-            if val.is_plasm_attachment_object() {
-                return Ok(val);
-            }
-            Ok(match val {
-                Value::Integer(n) => Value::String(n.to_string()),
-                Value::Float(f) => Value::String(normalize_numeric_id_float(f)),
-                Value::PhraseIdent(s) => Value::String(s),
-                Value::String(s) => Value::String(s),
-                other => return Err(format!("cannot coerce {} to blob", other.type_name())),
-            })
-        }
+        // Opaque payloads have JSON representation; normalization must not erase
+        // object/array contents or replace a valid blob with null.
+        FieldType::Blob => Ok(val),
         FieldType::MultiSelect => match val {
             Value::Array(_) => Ok(val),
             Value::PhraseIdent(s) => Ok(Value::String(s)),
@@ -203,12 +202,14 @@ pub fn coerce_value_for_field_type_with_policy(
             }
             match val {
                 Value::Integer(n) => Ok(Value::Float(n as f64)),
+                Value::Unsigned(n) => Ok(Value::Float(n as f64)),
                 Value::Float(f) => Ok(Value::Float(f)),
                 other => Err(format!("cannot coerce {} to number", other.type_name())),
             }
         }
         FieldType::EntityRef { .. } => Ok(match val {
             Value::Integer(n) => Value::String(n.to_string()),
+            Value::Unsigned(n) => Value::String(n.to_string()),
             Value::Float(f) => Value::String(normalize_numeric_id_float(f)),
             Value::PhraseIdent(s) => Value::String(s),
             Value::String(s) => Value::String(s),
@@ -347,6 +348,8 @@ pub fn json_value_to_plasm_value(v: &serde_json::Value) -> Value {
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
                 Value::Integer(i)
+            } else if let Some(n) = n.as_u64() {
+                Value::Unsigned(n)
             } else if let Some(f) = n.as_f64() {
                 Value::Float(f)
             } else {
@@ -380,6 +383,7 @@ pub fn try_plasm_value_to_json(v: &Value) -> Result<serde_json::Value, String> {
         Value::Null => Ok(serde_json::Value::Null),
         Value::Bool(b) => Ok(serde_json::Value::Bool(*b)),
         Value::Integer(i) => Ok(serde_json::json!(i)),
+        Value::Unsigned(i) => Ok(serde_json::json!(i)),
         Value::Float(f) => Ok(serde_json::Number::from_f64(*f)
             .map(serde_json::Value::Number)
             .unwrap_or(serde_json::Value::Null)),
@@ -421,62 +425,41 @@ pub struct DecodeFieldDiagnostic {
     pub message: String,
 }
 
-/// Shape-coerce a decoded wire scalar, then validate profile/constraints.
-///
-/// On failure the returned value is [`Value::Null`] and a diagnostic is emitted; the row decode continues.
+/// Coerce and validate a present wire value. Invalid data is never nullable absence.
 pub fn decode_coerce_and_validate_field(
     field_name: &str,
     nv: &NamedValueSchema,
     val: Value,
-) -> (Value, Option<DecodeFieldDiagnostic>) {
-    let fail = |message: String| {
-        (
-            Value::Null,
-            Some(DecodeFieldDiagnostic {
-                field: field_name.to_string(),
-                message,
-            }),
-        )
+) -> Result<Value, DecodeFieldDiagnostic> {
+    let error = |message: String| DecodeFieldDiagnostic {
+        field: field_name.to_owned(),
+        message,
     };
-
-    if matches!(nv.field_type, FieldType::Money) {
-        let val = phrase_ident_to_string(val);
-        match crate::money::normalize(
-            val,
+    let coerced = if matches!(nv.field_type, FieldType::Money) {
+        crate::money::normalize(
+            phrase_ident_to_string(val),
             crate::money::MoneyWireFormat::DecimalString,
             nv.currency.as_deref(),
-        ) {
-            Ok(coerced) => match validate_named_value_domain_value(&coerced, nv) {
-                Ok(()) => (coerced, None),
-                Err(msg) => fail(msg),
-            },
-            Err(e) => fail(e.to_string()),
-        }
+        )
+        .map_err(|e| error(e.to_string()))?
     } else {
-        match coerce_value_for_field_type(
+        coerce_value_for_field_type(
             &nv.field_type,
             nv.value_format,
             nv.array_items.as_ref(),
             val,
-        ) {
-            Ok(coerced) => {
-                // Enum membership / profile / constraints are all owned by `domain`.
-                if let Err(msg) = validate_named_value_domain_value(&coerced, nv) {
-                    return fail(msg);
-                }
-                (coerced, None)
-            }
-            Err(msg) => fail(msg),
-        }
-    }
+        )
+        .map_err(error)?
+    };
+    validate_named_value_domain_value(&coerced, nv).map_err(error)?;
+    Ok(coerced)
 }
 
-/// Attach sibling currency to decoded money fields; soft-fail normalize and currency slot shape errors.
+/// Decode money with sibling currency. Invalid amounts/currency fail the response contract.
 pub fn decode_coerce_money_fields(
     fields: &mut IndexMap<String, Value>,
     specs: impl IntoIterator<Item = (String, crate::MoneyDecodeSpec)>,
-    diagnostics: &mut Vec<DecodeFieldDiagnostic>,
-) {
+) -> Result<(), DecodeFieldDiagnostic> {
     for (field, spec) in specs {
         let Some(raw) = fields.get(&field).cloned() else {
             continue;
@@ -484,41 +467,35 @@ pub fn decode_coerce_money_fields(
         if matches!(raw, Value::Null) {
             continue;
         }
-        let fmt = crate::money::MoneyWireFormat::DecimalString;
-        match crate::money::normalize(raw, fmt, spec.default_currency()) {
-            Ok(mut coerced) => {
-                if let Value::Money(ref mut m) = coerced {
-                    if let Some(cf) = spec.currency_field() {
-                        match fields.get(cf) {
-                            None | Some(Value::Null) => {}
-                            Some(sibling) => {
-                                let Some(s) = sibling.as_str() else {
-                                    diagnostics.push(DecodeFieldDiagnostic {
-                                        field: field.clone(),
-                                        message: format!(
-                                            "money currency field `{cf}` must be a string (got {})",
-                                            sibling.type_name()
-                                        ),
-                                    });
-                                    fields.insert(field, Value::Null);
-                                    continue;
-                                };
-                                m.attach_currency_if_absent(Some(s));
-                            }
-                        }
+        let error = |message: String| DecodeFieldDiagnostic {
+            field: field.clone(),
+            message,
+        };
+        let mut coerced = crate::money::normalize(
+            raw,
+            crate::money::MoneyWireFormat::DecimalString,
+            spec.default_currency(),
+        )
+        .map_err(|e| error(e.to_string()))?;
+        if let Value::Money(ref mut money) = coerced {
+            if let Some(currency_field) = spec.currency_field() {
+                match fields.get(currency_field) {
+                    None | Some(Value::Null) => {}
+                    Some(sibling) => {
+                        let currency = sibling.as_str().ok_or_else(|| {
+                            error(format!(
+                                "money currency field `{currency_field}` must be a string (got {})",
+                                sibling.type_name()
+                            ))
+                        })?;
+                        money.attach_currency_if_absent(Some(currency));
                     }
                 }
-                fields.insert(field, coerced);
-            }
-            Err(e) => {
-                diagnostics.push(DecodeFieldDiagnostic {
-                    field: field.clone(),
-                    message: e.to_string(),
-                });
-                fields.insert(field, Value::Null);
             }
         }
+        fields.insert(field, coerced);
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -530,6 +507,33 @@ mod tests {
     use crate::FieldValueKind;
     use crate::ValueDomainKey;
     use indexmap::IndexMap;
+
+    #[test]
+    fn opaque_json_preserves_unsigned_boundaries_and_blob_structure() {
+        let wire = serde_json::json!({"items": [
+            i64::MAX as u64, i64::MAX as u64 + 1, u64::MAX,
+            {"bytes": "AAEC", "nested": [null, false, "000123"]}
+        ]});
+        let value = json_value_to_plasm_value(&wire);
+        assert_eq!(try_plasm_value_to_json(&value).unwrap(), wire);
+        let encoded = serde_json::to_string(&value).unwrap();
+        let decoded: Value = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(try_plasm_value_to_json(&decoded).unwrap(), wire);
+        let resolved = crate::operand_binding::ResolvedValue::from_wire(wire.clone()).unwrap();
+        assert_eq!(resolved.to_wire(), wire);
+        let row_value = crate::typed_row::TypedFieldValue::from_value(value.clone());
+        assert_eq!(
+            try_plasm_value_to_json(&row_value.to_value()).unwrap(),
+            wire
+        );
+        for kind in [FieldType::Json, FieldType::Blob] {
+            let coerced = coerce_value_for_field_type(&kind, None, None, value.clone()).unwrap();
+            assert_eq!(try_plasm_value_to_json(&coerced).unwrap(), wire);
+        }
+        let unsigned = json_value_to_plasm_value(&serde_json::json!(u64::MAX));
+        assert!(matches!(unsigned, Value::Unsigned(u64::MAX)));
+        assert!(coerce_value_for_field_type(&FieldType::Integer, None, None, unsigned).is_err());
+    }
 
     #[test]
     fn integer_param_accepts_integer_and_string_parent() {
@@ -826,7 +830,7 @@ mod tests {
     }
 
     #[test]
-    fn decode_invalid_profile_string_becomes_null_with_diagnostic() {
+    fn decode_invalid_profile_string_returns_field_error() {
         use crate::schema::NamedValueSchema;
         use crate::value_domain::{Constraints, KernelKind, ProfileId, ValueDomain};
 
@@ -842,10 +846,9 @@ mod tests {
             .expect("email domain"),
             None,
         );
-        let (value, diag) =
-            decode_coerce_and_validate_field("email", &nv, Value::String("not-an-email".into()));
-        assert!(matches!(value, Value::Null));
-        let d = diag.expect("diagnostic");
+        let d =
+            decode_coerce_and_validate_field("email", &nv, Value::String("not-an-email".into()))
+                .expect_err("invalid present field must fail decoding");
         assert_eq!(d.field, "email");
         assert!(d.message.contains("email") || d.message.contains("invalid"));
     }

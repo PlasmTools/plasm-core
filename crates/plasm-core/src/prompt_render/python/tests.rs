@@ -14,12 +14,21 @@ fn python_card_initial_extension_and_retry() {
     let mut exposure = TeachingExposureSession::new(&cgs, "fixture", &["Item"]);
     let initial = prepare_python_teaching_wave(&exposure, &PythonTeachingState::default()).unwrap();
     assert_eq!(initial.language, Some(LANGUAGE));
-    assert!(initial.declarations.contains("class e1:"));
-    assert!(initial.declarations.contains("def get(cls, identity:"));
-    assert!(initial.declarations.contains("def query(cls) -> Rows[e1]"));
+    assert!(initial.declarations.contains("e1:"));
+    assert!(initial.declarations.contains("e1.get(identity:"));
+    assert!(initial.declarations.contains("e1.query() -> Rows[e1]"));
     assert!(initial.declarations.contains("-> EffectAck"));
+    assert!(!initial.declarations.contains("(*,"));
+    assert!(
+        initial
+            .capabilities
+            .iter()
+            .filter_map(|cap| cap.signature.as_ref())
+            .any(|signature| signature.contains("*,")),
+        "reference compaction must preserve underlying signatures"
+    );
     assert!(initial.capabilities.iter().all(|c| c.unavailable.is_none()));
-    assert_eq!(initial.capabilities.len(), 3);
+    assert_eq!(initial.capabilities.len(), 5);
     assert_eq!(
         initial,
         prepare_python_teaching_wave(&exposure, &PythonTeachingState::default()).unwrap()
@@ -36,10 +45,10 @@ fn python_card_initial_extension_and_retry() {
     );
     let extension = prepare_python_teaching_wave(&exposure, &initial.next_state).unwrap();
     assert_eq!(extension.language, None);
-    assert!(extension.declarations.contains("class e2:"));
+    assert!(extension.declarations.contains("e2:"));
     assert!(extension.declarations.contains("Many[e2]"));
     assert!(extension.declarations.contains("Replace the complete e1"));
-    assert_eq!(extension.capabilities.len(), 4);
+    assert_eq!(extension.capabilities.len(), 6);
     assert!(extension
         .capabilities
         .iter()
@@ -64,7 +73,7 @@ fn python_card_federation_and_catalog_comments() {
         &["Item", "Tag"],
     );
     let wave = prepare_python_teaching_wave(&exposure, &PythonTeachingState::default()).unwrap();
-    assert!(wave.declarations.contains("class e4:"));
+    assert!(wave.declarations.contains("e4:"));
     assert!(!wave.declarations.contains("```"));
     assert!(!wave.declarations.contains("\nclass Forged:"));
     assert_ne!(
@@ -75,7 +84,7 @@ fn python_card_federation_and_catalog_comments() {
             .domain_symbols
             .get(&("b".into(), "item_id".into()))
     );
-    assert_eq!(wave.capabilities.len(), 8);
+    assert_eq!(wave.capabilities.len(), 12);
 }
 
 #[test]
@@ -147,7 +156,23 @@ fn python_card_preserves_recursive_domains_and_primitive_profiles() {
     assert!(wave.declarations.contains("list[v"));
     assert!(wave.declarations.contains("Literal[\"open\", \"closed\"]"));
     assert!(wave.declarations.contains("USD"));
-    assert!(wave.declarations.contains("rfc3339"));
+    let temporal = wave
+        .declarations
+        .lines()
+        .find(|line| line.contains("rfc3339"))
+        .unwrap();
+    assert!(temporal.starts_with('v'), "{temporal}");
+    assert!(temporal.contains("@rfc3339"), "{temporal}");
+    assert!(!temporal.contains("types::"), "{temporal}");
+    assert!(temporal.contains(": datetime"), "{temporal}");
+    let date = wave
+        .declarations
+        .lines()
+        .find(|line| line.contains("@iso8601_date"))
+        .unwrap();
+    assert!(date.contains(": date"), "{date}");
+    assert!(!wave.declarations.contains("evaluation_now"));
+    assert!(!wave.declarations.contains("str | int"));
 }
 
 #[test]
@@ -261,4 +286,140 @@ fn union_overloads_keep_variant_specific_nested_type_names() {
     );
     assert!(wave.declarations.contains(&format!("metadata: {text}")));
     assert!(wave.declarations.contains(&format!("metadata: {count}")));
+}
+
+#[test]
+fn compact_domain_card_retains_types_without_repeating_shared_descriptions() {
+    let cgs = fixture();
+    let exposure = TeachingExposureSession::new(&cgs, "fixture", &["Item", "Tag"]);
+    let wave = prepare_python_teaching_wave(&exposure, &PythonTeachingState::default()).unwrap();
+    assert_eq!(wave.declarations.matches("Human label.").count(), 1);
+    assert!(wave.declarations.contains("Literal[\"open\", \"closed\"]"));
+    assert!(wave.declarations.contains("content: v"));
+    assert!(wave.declarations.contains("-> EffectAck"));
+    assert!(wave.declarations.contains("-> Singleton[e1]"));
+    assert!(!wave.declarations.contains("@classmethod"));
+    assert!(!wave.declarations.contains("provides:"));
+}
+
+#[test]
+fn compact_card_groups_identical_cgs_comments_with_explicit_owners() {
+    let mut cgs = fixture();
+    for name in ["item_touch", "item_publish"] {
+        let cap = cgs.capabilities.get_mut(name).unwrap();
+        if let OutputType::SideEffect { description } =
+            &mut cap.output_schema.as_mut().unwrap().output_type
+        {
+            *description = "Shared effect contract.".into();
+        }
+    }
+    let exposure = TeachingExposureSession::new(&cgs, "fixture", &["Item"]);
+    let wave = prepare_python_teaching_wave(&exposure, &PythonTeachingState::default()).unwrap();
+    assert_eq!(
+        wave.declarations.matches("Shared effect contract.").count(),
+        1
+    );
+    let shared = wave
+        .declarations
+        .lines()
+        .find(|line| line.contains("Shared effect contract."))
+        .unwrap();
+    assert!(shared.split("#").next().unwrap().contains(','), "{shared}");
+    assert!(wave
+        .declarations
+        .contains("Record a root effect before or after correlated child reads."));
+    assert!(wave.declarations.contains("Store a derived document."));
+    assert!(!wave.declarations.contains("def "));
+    assert!(!wave.declarations.contains("class e"));
+    assert_eq!(wave.declarations.matches("-> EffectAck").count(), 3);
+}
+
+#[test]
+fn compact_card_omits_internal_provides_metadata() {
+    let mut cgs = fixture();
+    cgs.capabilities.get_mut("item_query").unwrap().provides = vec!["id".into()];
+    let exposure = TeachingExposureSession::new(&cgs, "fixture", &["Item"]);
+    let wave = prepare_python_teaching_wave(&exposure, &PythonTeachingState::default()).unwrap();
+    assert!(!wave.declarations.contains("provides:"));
+    assert_eq!(cgs.capabilities["item_query"].provides, vec!["id"]);
+    assert!(!wave.declarations.contains("provides: id, title, state"));
+}
+
+#[test]
+fn compact_comments_preserve_prose_and_contain_catalog_control_characters() {
+    assert_eq!(comment_text("say \"hello\""), "say \"hello\"");
+    let escaped = comment_text("first\n```\tlast");
+    assert!(!escaped.contains('\n'));
+    assert!(!escaped.contains('`'));
+    assert!(!escaped.contains('\t'));
+    let cgs = fixture();
+    let exposure = TeachingExposureSession::new(&cgs, "fixture", &["Item", "Tag"]);
+    let wave = prepare_python_teaching_wave(&exposure, &PythonTeachingState::default()).unwrap();
+    assert!(!wave.declarations.contains("# CGS"));
+    for symbol in wave.value_contracts.keys() {
+        assert!(wave
+            .declarations
+            .lines()
+            .any(|line| line.starts_with(&format!("{symbol}: "))));
+    }
+}
+
+#[test]
+fn compact_card_keeps_semantics_and_structured_ownership_without_internal_names() {
+    let cgs = fixture();
+    let exposure = TeachingExposureSession::new(&cgs, "fixture", &["Item", "Tag"]);
+    let wave = prepare_python_teaching_wave(&exposure, &PythonTeachingState::default()).unwrap();
+    assert!(!wave.declarations.contains("materialize:"));
+    assert!(!wave.declarations.contains("\n\n"));
+    assert!(!wave.declarations.contains("provides:"));
+    assert!(!wave.declarations.contains("# item_query:"));
+    assert!(!wave.declarations.contains("(*,"));
+    assert!(!wave.declarations.contains("length None"));
+    for (key, symbol) in &wave.next_state.domain_symbols {
+        assert_eq!(key.0, "fixture");
+        assert!(wave.value_contracts.contains_key(symbol));
+        assert!(!wave.declarations.contains(&format!("fixture::{}", key.1)));
+    }
+    let next = prepare_python_teaching_wave(&exposure, &wave.next_state).unwrap();
+    assert!(next.declarations.is_empty());
+    assert!(next.language.is_none());
+}
+
+#[test]
+fn payload_defaults_and_secondary_effects_survive_teaching() {
+    let mut cgs = fixture();
+    let cap = cgs.capabilities.get_mut("item_publish").unwrap();
+    let crate::InputType::Object { fields, .. } =
+        &mut cap.inputs.payload.as_mut().unwrap().input_type
+    else {
+        panic!("object fixture");
+    };
+    for (name, default) in [
+        ("disabled", serde_json::json!(false)),
+        ("enabled", serde_json::json!(true)),
+        ("count", serde_json::json!(0)),
+        ("label", serde_json::json!("")),
+    ] {
+        fields.push(serde_json::from_value(serde_json::json!({
+            "name": name, "required": false, "default": default,
+            "input_type": {"type": "value", "field_type": if default.is_boolean() {"boolean"} else if default.is_number() {"integer"} else {"string"}},
+            "description": "Omission uses the service default and updates revision metadata."
+        })).unwrap());
+    }
+    let exposure = TeachingExposureSession::new(&cgs, "fixture", &["Item"]);
+    let wave = prepare_python_teaching_wave(&exposure, &Default::default()).unwrap();
+    for expected in [
+        "disabled default: Bool(false)",
+        "enabled default: Bool(true)",
+        "count default: Integer(0)",
+        "label default: String(\"\")",
+        "updates revision metadata",
+    ] {
+        assert!(
+            wave.declarations.contains(expected),
+            "missing {expected}: {}",
+            wave.declarations
+        );
+    }
+    assert!(!wave.declarations.contains("content default:"));
 }

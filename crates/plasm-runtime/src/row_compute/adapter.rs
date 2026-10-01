@@ -1,30 +1,29 @@
-//! Three sync engine ports. Polars types do not escape this module.
+//! Borrowed-value implementation of the typed row engine ports.
 
 use super::eval::apply_stored_plan;
-use super::json_frame::{collect_json, ingest_json_rows, FrameState};
-use indexmap::IndexMap;
+use super::rows::{collect_rows, ingest_rows, FrameState};
 use plasm_core::{
     CollectReason, CollectRows, CollectedFrame, CompileRowPlan, EnginePlanId, FrameId, IngestBatch,
-    IngestRows, PlasmFrameSchema, RowComputeError, RowPlan, ScanError, ScanSource, Value,
+    IngestRows, PlasmFrameSchema, RowComputeError, RowPlan, ScanError, ScanSource,
 };
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
-/// Polars-backed row engine. Handles are session-local and never stored on `PlasmComp`.
-pub struct PolarsAdapter {
-    frames: RefCell<HashMap<FrameId, FrameState>>,
+/// Typed row engine. Handles are session-local and never stored on `PlasmComp`.
+pub struct ValueRowEngine<'a> {
+    frames: RefCell<HashMap<FrameId, FrameState<'a>>>,
     plans: RefCell<HashMap<EnginePlanId, RowPlan>>,
     next_frame: Cell<u64>,
     next_engine: Cell<u64>,
 }
 
-impl Default for PolarsAdapter {
+impl Default for ValueRowEngine<'_> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl PolarsAdapter {
+impl ValueRowEngine<'_> {
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -34,28 +33,22 @@ impl PolarsAdapter {
             next_engine: Cell::new(1),
         }
     }
-
-    fn json_from_values(rows: &[IndexMap<String, Value>]) -> Vec<serde_json::Value> {
-        rows.iter()
-            .map(|row| {
-                let mut map = serde_json::Map::new();
-                for (k, v) in row {
-                    map.insert(k.clone(), plasm_core::plasm_value_to_json(v));
-                }
-                serde_json::Value::Object(map)
-            })
-            .collect()
-    }
 }
 
-impl IngestRows for PolarsAdapter {
+impl<'a> IngestRows<'a> for ValueRowEngine<'a> {
     fn ingest(
         &mut self,
-        _source: &ScanSource,
-        batch: IngestBatch<'_>,
+        source: &ScanSource,
+        batch: IngestBatch<'a>,
     ) -> Result<FrameId, RowComputeError> {
-        let json_rows = Self::json_from_values(batch.rows);
-        let state = ingest_json_rows(&json_rows).map_err(|_| ScanError::UnboundFrame)?;
+        let schema = match source {
+            ScanSource::Inline { schema }
+            | ScanSource::Fixture { schema, .. }
+            | ScanSource::Graph { schema, .. } => schema,
+        };
+        let mut state = ingest_rows(batch.rows, schema.contract())
+            .map_err(|e| RowComputeError::Execution(e.to_string()))?;
+        state.shape = schema.shape().clone();
         let id = FrameId::new(self.next_frame.get());
         self.next_frame.set(id.as_u64() + 1);
         self.frames.borrow_mut().insert(id, state);
@@ -63,8 +56,15 @@ impl IngestRows for PolarsAdapter {
     }
 }
 
-impl CompileRowPlan for PolarsAdapter {
+impl CompileRowPlan for ValueRowEngine<'_> {
     fn compile(&self, plan: &RowPlan) -> Result<EnginePlanId, RowComputeError> {
+        let frames = self.frames.borrow();
+        let frame = frames.get(&plan.source()).ok_or(ScanError::UnboundFrame)?;
+        let mut contract = frame.contract.clone();
+        for (_, node) in plan.nodes().iter() {
+            contract = plasm_core::row_plan::contracts::output_contract(&contract, node)
+                .map_err(RowComputeError::Contract)?;
+        }
         let id = EnginePlanId::new(self.next_engine.get());
         self.next_engine.set(id.as_u64() + 1);
         self.plans.borrow_mut().insert(id, plan.clone());
@@ -72,41 +72,31 @@ impl CompileRowPlan for PolarsAdapter {
     }
 }
 
-impl CollectRows for PolarsAdapter {
+impl CollectRows for ValueRowEngine<'_> {
     fn collect(
         &self,
         id: EnginePlanId,
-        _reason: CollectReason,
+        reason: CollectReason,
     ) -> Result<CollectedFrame, RowComputeError> {
         let plans = self.plans.borrow();
         let plan = plans.get(&id).ok_or(ScanError::UnboundFrame)?;
+        if &reason != plan.collect() {
+            return Err(plasm_core::row_plan::CollectError::CollectNotAtBarrier.into());
+        }
         let frames = self.frames.borrow();
         let mut state = frames
             .get(&plan.source())
             .cloned()
             .ok_or(ScanError::UnboundFrame)?;
         drop(frames);
-        apply_stored_plan(plan, &mut state).map_err(|_| ScanError::UnboundFrame)?;
-        let rows_json = collect_json(&state).map_err(|_| ScanError::UnboundFrame)?;
-        let rows = rows_json
-            .into_iter()
-            .map(|v| match v {
-                serde_json::Value::Object(map) => map
-                    .into_iter()
-                    .map(|(k, val)| (k, plasm_core::json_value_to_plasm_value(&val)))
-                    .collect(),
-                other => {
-                    let mut m = IndexMap::new();
-                    m.insert(
-                        "value".into(),
-                        plasm_core::json_value_to_plasm_value(&other),
-                    );
-                    m
-                }
-            })
-            .collect();
+        apply_stored_plan(plan, &mut state)
+            .map_err(|e| RowComputeError::Execution(e.to_string()))?;
+        let rows = collect_rows(&state).map_err(|e| RowComputeError::Execution(e.to_string()))?;
+        let occurrences = state.rows.iter().map(|row| row.1).collect();
         Ok(CollectedFrame {
-            schema: PlasmFrameSchema::opaque_object(),
+            occurrences,
+            schema: PlasmFrameSchema::new(state.shape, state.contract)
+                .map_err(RowComputeError::Contract)?,
             rows,
         })
     }

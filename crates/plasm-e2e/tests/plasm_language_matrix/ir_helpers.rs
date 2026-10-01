@@ -5,8 +5,8 @@ use plasm_agent::plasm_plan_run::DryPlasmPlanEvaluation;
 use plasm_core::{ChainStep, EntityKey, Expr, GetExpr, QueryExpr, TypedComparisonValue, Value};
 
 pub(crate) fn surface_exprs(dry: &DryPlasmPlanEvaluation) -> Vec<Expr> {
-    dry.node_results
-        .iter()
+    dry_nodes(&dry.node_results)
+        .into_iter()
         .filter_map(|nr| {
             let ev = nr.get("ir")?.get("expr")?;
             serde_json::from_value(ev.clone()).ok()
@@ -15,8 +15,8 @@ pub(crate) fn surface_exprs(dry: &DryPlasmPlanEvaluation) -> Vec<Expr> {
 }
 
 pub(crate) fn relation_exprs(dry: &DryPlasmPlanEvaluation) -> Vec<Expr> {
-    dry.node_results
-        .iter()
+    dry_nodes(&dry.node_results)
+        .into_iter()
         .filter_map(|nr| {
             let ev = nr.get("execution_contract")?.get("ir")?;
             serde_json::from_value(ev.clone()).ok()
@@ -25,8 +25,8 @@ pub(crate) fn relation_exprs(dry: &DryPlasmPlanEvaluation) -> Vec<Expr> {
 }
 
 pub(crate) fn compute_templates(dry: &DryPlasmPlanEvaluation) -> Vec<ComputeTemplate> {
-    dry.node_results
-        .iter()
+    dry_nodes(&dry.node_results)
+        .into_iter()
         .filter_map(|nr| {
             nr.get("compute")
                 .and_then(|c| serde_json::from_value::<ComputeTemplate>(c.clone()).ok())
@@ -59,16 +59,24 @@ pub(crate) fn comp_has_relation_named(comp: &serde_json::Value, relation: &str) 
     comp_relation_named(comp, relation).is_some()
 }
 
-pub(crate) fn comp_relation_named<'a>(
-    comp: &'a serde_json::Value,
+pub(crate) fn comp_relation_named(
+    comp: &serde_json::Value,
     relation: &str,
-) -> Option<&'a serde_json::Value> {
-    let steps = comp.get("steps")?.as_object()?;
-    for step in steps.values() {
-        if step.get("kind").and_then(|k| k.as_str()) == Some("flat_map_relation")
-            && step.pointer("/relation/relation").and_then(|x| x.as_str()) == Some(relation)
-        {
-            return step.get("relation");
+) -> Option<serde_json::Value> {
+    for step in comp.get("steps")?.as_object()?.values() {
+        if step["kind"] == "flat_map_relation" && step["relation"]["relation"] == relation {
+            return Some(step["relation"].clone());
+        }
+        if step["kind"] == "map_body" {
+            if let Some(mut result) = comp_relation_named(&step["body"], relation) {
+                // The child consumes one captured parent; the enclosing scope
+                // applies that same relation to the parent collection.
+                if result["source"] == step["parent"]["local"] {
+                    result["source"] = step["parent"]["source"].clone();
+                    result["source_cardinality"] = serde_json::json!("many");
+                }
+                return Some(result);
+            }
         }
     }
     None
@@ -117,10 +125,22 @@ pub(crate) fn comp_surface_page_size(comp: &serde_json::Value) -> Option<u64> {
 }
 
 pub(crate) fn comp_steps_values(comp: &serde_json::Value) -> Vec<&serde_json::Value> {
-    comp.get("steps")
-        .and_then(|s| s.as_object())
-        .map(|m| m.values().collect())
-        .unwrap_or_default()
+    let mut steps = Vec::new();
+    if let Some(local) = comp.get("steps").and_then(|s| s.as_object()) {
+        for step in local.values() {
+            steps.push(step);
+            if step["kind"] == "map_body" {
+                steps.extend(comp_steps_values(&step["body"]));
+            }
+            for scope in [step.get("until_scope"), step.get("step_scope")]
+                .into_iter()
+                .flatten()
+            {
+                steps.extend(comp_steps_values(&scope["body"]));
+            }
+        }
+    }
+    steps
 }
 
 pub(crate) fn comp_first_invoke_qualified_entity(
@@ -140,6 +160,11 @@ pub(crate) fn comp_has_invoke_plan_kind(comp: &serde_json::Value, plan_kind: &st
 }
 
 pub(crate) fn matches_for_each_action_node(nr: &serde_json::Value) -> bool {
+    if nr["kind"] == "map_body" {
+        return comp_steps_values(&nr["body"])
+            .iter()
+            .any(|step| step["kind"] == "invoke" && step["plan_kind"] == "action");
+    }
     (nr.get("kind").and_then(|k| k.as_str()) == Some("for_each")
         || nr.get("kind").and_then(|k| k.as_str()) == Some("flat_map_apply"))
         && nr.pointer("/effect_template/kind").and_then(|k| k.as_str()) == Some("action")
@@ -168,6 +193,11 @@ pub(crate) fn assert_row_apply_node(
     expected_kind: &str,
 ) -> Result<(), String> {
     let matches = |node: &serde_json::Value| {
+        if node["kind"] == "map_body" || node["kind"] == "until_predicate" {
+            return comp_steps_values(&node["body"])
+                .iter()
+                .any(|step| step["kind"] == "invoke" && step["plan_kind"] == expected_kind);
+        }
         matches!(
             node.get("kind").and_then(|kind| kind.as_str()),
             Some("for_each" | "flat_map_apply")
@@ -237,4 +267,38 @@ pub(crate) fn expr_mentions_langline(e: &Expr) -> bool {
         }
         _ => false,
     }
+}
+
+pub(crate) fn dry_nodes(nodes: &[serde_json::Value]) -> Vec<&serde_json::Value> {
+    let mut all = Vec::new();
+    for node in nodes {
+        all.push(node);
+        if node["kind"] == "map_body" || node["kind"] == "until_predicate" {
+            if let Some(body) = node["body"].as_array() {
+                all.extend(dry_nodes(body));
+            }
+        }
+    }
+    all
+}
+
+/// Python predicates are reviewed computations inside a filter scope. Their
+/// truth tables are asserted by the live matrix, not by matching source syntax.
+pub(crate) fn has_scoped_filter(comp: &serde_json::Value) -> bool {
+    comp_steps_values(comp)
+        .iter()
+        .any(|step| step["kind"] == "map_body" && step["output"] == "Filter")
+}
+
+pub(crate) fn require_python_filter(comp: &serde_json::Value) -> Result<(), String> {
+    if !has_scoped_filter(comp) {
+        return Err("expected reviewed filter scope".into());
+    }
+    if !comp_steps_values(comp).iter().any(|step| {
+        step.get("compute")
+            .is_some_and(|compute| compute["op"]["kind"] == "python")
+    }) {
+        return Err("expected sealed Python predicate computation".into());
+    }
+    Ok(())
 }

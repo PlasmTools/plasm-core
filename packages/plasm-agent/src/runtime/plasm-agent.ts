@@ -18,7 +18,6 @@ import { createAgentTelemetry } from "../instrumentation.js";
 import { maybeCompactMessages } from "../runtime/compaction.js";
 import { AgentRuntime, type AgentRuntimeConfig } from "../runtime/agent-runtime.js";
 import { createHarnessTools, renderSkillIndex } from "../tools/harness-tools.js";
-import { gateArtefactTransform } from "../tools/format.js";
 import { createPlasmTools } from "../tools/plasm-tools.js";
 import { buildDefaultSystemLiturgy } from "../prompts/index.js";
 import { runEveToolLoop, type AgentStepEvent } from "../telemetry/eve-tool-loop.js";
@@ -102,6 +101,7 @@ export interface AgentTurnResult {
   toolInvocations: string[];
   messages: ModelMessage[];
   stopReason: Awaited<ReturnType<typeof runEveToolLoop>>["stopReason"];
+  executionFailure?: Awaited<ReturnType<typeof runEveToolLoop>>["executionFailure"];
   /** Per-model-step finish reasons from the tool loop. */
   stepFinishReasons: Awaited<ReturnType<typeof runEveToolLoop>>["stepFinishReasons"];
   /** Per-generation output ceiling applied to the model (if configured). */
@@ -224,8 +224,6 @@ export class PlasmAgent {
     const harnessTools = createHarnessTools({
       skills: this.skillsMode === "index" ? this.loadedSkills : undefined,
       subagents: this.subagentRegistry,
-      artefactWorkspaceRoot: this.runtime.artefactWorkspaceRoot,
-      includeArtefactTransform: true,
       includeEvalTerminals: this.includeEvalTerminals,
       discoveryCompleted: this.includeEvalTerminals
         ? () => this.runtime.hasOpenWorkflow()
@@ -297,7 +295,7 @@ export class PlasmAgent {
     const result = await runEveToolLoop({
       model,
       system,
-      tools: () => gateArtefactTransform(tools, this.runtime.hasMaterializedArtefact()),
+      tools: () => tools,
       prepareMessages: this.includeTaskLedger
         ? (history) => [
             ...history,
@@ -338,6 +336,7 @@ export class PlasmAgent {
       toolInvocations,
       messages: result.messages,
       stopReason: result.stopReason,
+      executionFailure: result.executionFailure,
       stepFinishReasons: result.stepFinishReasons,
       maxOutputTokens: result.maxOutputTokens,
       lengthTruncationCount: result.lengthTruncationCount,

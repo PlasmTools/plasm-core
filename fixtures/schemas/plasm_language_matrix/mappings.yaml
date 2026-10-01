@@ -86,9 +86,15 @@ langitem_update:
   body:
     type: object
     fields:
-    - ["title", { type: var, name: title }]
-    - ["score", { type: var, name: score }]
-    - ["owner", { type: var, name: owner }]
+    - [title, { type: if, condition: { type: exists, var: title },
+              then_expr: { type: var, name: title },
+              else_expr: { type: const, value: null } }]
+    - [score, { type: if, condition: { type: exists, var: score },
+              then_expr: { type: var, name: score },
+              else_expr: { type: const, value: null } }]
+    - [owner, { type: if, condition: { type: exists, var: owner },
+              then_expr: { type: var, name: owner },
+              else_expr: { type: const, value: null } }]
     - [active, { type: if, condition: { type: exists, var: active },
                then_expr: { type: var, name: active },
                else_expr: { type: const, value: null } }]

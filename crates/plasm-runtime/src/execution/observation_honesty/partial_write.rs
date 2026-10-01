@@ -52,7 +52,7 @@ fn coverage_to_obs(c: ResultCoverage) -> ObservationCoverage {
 
 fn expense_ids_from_result(result: &crate::execution::ExecutionResult) -> BTreeSet<String> {
     result
-        .entities
+        .entities()
         .iter()
         .filter_map(|e| {
             e.fields
@@ -173,7 +173,7 @@ fn run_individual_create_sequence(
     let rel_ids = expense_ids_from_result(&rel);
     harness.with_model(|m| {
         m.check_partial_write_visibility(group_id, &rel_ids)?;
-        m.check_coverage_honesty(group_id, coverage_to_obs(rel.coverage), &rel_ids)
+        m.check_coverage_honesty(group_id, coverage_to_obs(rel.coverage()), &rel_ids)
     })?;
 
     // Direct query path.
@@ -192,7 +192,7 @@ fn run_individual_create_sequence(
     let q_ids = expense_ids_from_result(&listed);
     harness.with_model(|m| {
         m.check_partial_write_visibility(group_id, &q_ids)?;
-        m.check_coverage_honesty(group_id, coverage_to_obs(listed.coverage), &q_ids)
+        m.check_coverage_honesty(group_id, coverage_to_obs(listed.coverage()), &q_ids)
     })?;
 
     Ok(())

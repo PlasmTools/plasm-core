@@ -49,8 +49,8 @@ pub enum ArtifactAccessMode {
     ResourcesRead,
     /// Tool-only host (e.g. Claude API MCP connector): expose `plasm_read_run_artifact`.
     ToolFallback,
-    /// Snapshots are files for a sandboxed TypeScript function, never tool payloads.
-    Programmatic,
+    /// Agent computes inside the reviewed DAG; snapshots remain host-side evidence.
+    DagCompute,
 }
 
 impl ArtifactAccessMode {
@@ -58,16 +58,14 @@ impl ArtifactAccessMode {
     /// into model context — [`crate::mcp_delivery::McpDeliveryProfile::ToolFallback`]
     /// therefore emits content (+ optional `_meta.ui`) only.
     pub fn exposes_read_tool(self) -> bool {
-        matches!(self, Self::ToolFallback | Self::Programmatic)
+        matches!(self, Self::ToolFallback)
     }
 
     pub fn artifact_read_instruction(self) -> &'static str {
         match self {
             Self::ResourcesRead => "MCP `resources/read`",
             Self::ToolFallback => "MCP `plasm_read_run_artifact`",
-            Self::Programmatic => {
-                "`plasm_read_run_artifact` followed by `plasm_artefact_transform`"
-            }
+            Self::DagCompute => "typed Python DAG computation",
         }
     }
 
@@ -92,6 +90,9 @@ impl ArtifactAccessMode {
     }
 
     pub fn snapshot_line(self, uri: &str) -> String {
+        if self == Self::DagCompute {
+            return self.artifact_only_read_instruction();
+        }
         format!(
             "\n\n_Snapshot ({}; not a Plasm expression):_ `{uri}`\n",
             self.artifact_read_instruction()
@@ -99,8 +100,8 @@ impl ArtifactAccessMode {
     }
 
     pub fn artifact_only_read_instruction(self) -> String {
-        if self == Self::Programmatic {
-            return "\n\nMaterialize this snapshot with `plasm_read_run_artifact`, then pass the returned file path to `plasm_artefact_transform`. Write a TypeScript function over the artifacts and return only the needed summary or derived values. Artifact contents do not enter model context.\n".to_owned();
+        if self == Self::DagCompute {
+            return "\n\nResult exceeds inline delivery bounds. Select, aggregate or use typed `@compute` in a Python `Program` to return only the needed result. Preserve selection criteria and inspect completed effects before issuing further writes.\n".to_owned();
         }
         format!(
             "\n\n**Required:** fetch this step's rows via {} on the snapshot URI above — no inline TSV is sent when a snapshot is stored.\n",
@@ -109,6 +110,9 @@ impl ArtifactAccessMode {
     }
 
     pub fn artifact_only_body(self, uri: &str) -> String {
+        if self == Self::DagCompute {
+            return self.artifact_only_read_instruction();
+        }
         format!(
             "{}{}",
             self.snapshot_line(uri),
@@ -250,7 +254,11 @@ pub(crate) fn format_coverage_preview_note(
         "Showing {shown} of {snapshot_rows} snapshot rows. Result coverage: {}.",
         coverage.as_str()
     );
-    if has_snapshot {
+    if artifact_access == ArtifactAccessMode::DagCompute {
+        if shown < snapshot_rows {
+            line.push_str(" Compute over the source rows in the DAG and return the needed result.");
+        }
+    } else if has_snapshot {
         if let Some(uri) = snapshot_uri {
             line.push_str(&format!(
                 " Full snapshot: {} `{uri}`.",
@@ -307,7 +315,7 @@ pub(crate) fn mcp_format_execute_result_table_or_tsv(
         || !reference_only_omitted.is_empty()
         || !schema_lossy_summary_fields.is_empty();
     let full_fidelity_allowed = needs_restore
-        && result.count <= MCP_IN_BAND_ENTITY_ROW_CAP
+        && result.count() <= MCP_IN_BAND_ENTITY_ROW_CAP
         && restore_bytes <= MCP_INLINE_FULL_FIDELITY_BYTE_BUDGET;
     if full_fidelity_allowed {
         let (full_tsv, full_report) =
@@ -336,7 +344,7 @@ pub(crate) fn return_label_for_step(name: Option<&str>, node_id: Option<&str>) -
 }
 
 pub(crate) fn slim_result_count_label(result: &ExecutionResult) -> String {
-    format!("{} rows", result.count)
+    format!("{} rows", result.count())
 }
 
 pub(crate) fn slim_result_section_header_label(
@@ -688,10 +696,11 @@ mod tests {
             EntityCompleteness::Complete,
         );
         let result = ExecutionResult {
-            entities: vec![entity],
-            count: 1,
+            collection: crate::test_support::execution_fixtures::collection(
+                vec![entity],
+                plasm_runtime::ResultCoverage::Unknown,
+            ),
             has_more: false,
-            coverage: plasm_runtime::ResultCoverage::Unknown,
             pagination_resume: None,
             paging_handle: None,
             source: ExecutionSource::Live,
@@ -720,21 +729,33 @@ mod tests {
 }
 
 #[cfg(test)]
-mod programmatic_artifact_tests {
+mod dag_compute_delivery_tests {
     use super::*;
     #[test]
-    fn programmatic_delivery_teaches_materialization_and_typescript() {
-        let mode = ArtifactAccessMode::Programmatic;
-        let text = mode.artifact_only_body("plasm://test");
-        assert!(mode.exposes_read_tool());
-        for required in [
-            "plasm_read_run_artifact",
-            "plasm_artefact_transform",
-            "TypeScript",
-            "file path",
+    fn dag_delivery_keeps_snapshots_out_of_agent_tools() {
+        let mode = ArtifactAccessMode::DagCompute;
+        assert!(!mode.exposes_read_tool());
+        for text in [
+            mode.artifact_only_body("plasm://test"),
+            mode.snapshot_line("plasm://test"),
+            mode.coverage_preview_note(
+                0,
+                600,
+                plasm_runtime::ResultCoverage::Complete,
+                Some("plasm://test"),
+                None,
+            ),
         ] {
-            assert!(text.contains(required));
+            assert!(text.contains("DAG") || text.contains("@compute"));
+            for absent in [
+                "plasm_read_run_artifact",
+                "plasm_artefact_transform",
+                "resources/read",
+                "plasm://test",
+                "TypeScript",
+            ] {
+                assert!(!text.contains(absent), "{text}");
+            }
         }
-        assert!(!text.contains("resources/read"));
     }
 }

@@ -73,19 +73,10 @@ pub enum ConsumeBoundKind {
 /// Result of a query execution
 #[derive(Debug, Clone, Serialize)]
 pub struct ExecutionResult {
-    /// The entities returned by the query
-    pub entities: Vec<CachedEntity>,
-    /// Number of entities in the result
-    pub count: usize,
-    /// For paginated queries: whether more rows may exist after this materialized batch.
-    #[serde(default)]
+    #[serde(flatten)]
+    pub collection: super::ExecutionCollection,
+    /// Presentation/acquisition continuation metadata; never a completeness proof.
     pub has_more: bool,
-    /// Coverage of this result relative to the requested expression.
-    ///
-    /// Distinct from [`Self::has_more`] (presentation / opaque paging). A Partial
-    /// result stays Partial if a continuation expires. Wire name: `coverage`.
-    #[serde(default)]
-    pub coverage: super::ResultCoverage,
     /// Host-only continuation payload for opaque LLM paging (`page(pg#)`); never serialized on wire.
     #[serde(skip)]
     pub pagination_resume: Option<QueryPaginationResumeData>,
@@ -105,18 +96,14 @@ pub struct ExecutionResult {
 }
 
 impl ExecutionResult {
-    /// Stamp coverage on an already-built result (prefer over field mutation at call sites).
-    #[must_use]
-    pub fn with_coverage(mut self, coverage: super::ResultCoverage) -> Self {
-        self.coverage = coverage;
-        self
+    pub fn entities(&self) -> &plasm_core::collection_codec::SharedRows<CachedEntity> {
+        self.collection.resident_entities()
     }
-
-    /// No completeness proof — default for unproven / cache-without-proof paths.
-    #[must_use]
-    pub fn unproven(mut self) -> Self {
-        self.coverage = super::ResultCoverage::Unknown;
-        self
+    pub fn count(&self) -> usize {
+        self.collection.count()
+    }
+    pub fn coverage(&self) -> super::ResultCoverage {
+        self.collection.coverage()
     }
 }
 
@@ -210,7 +197,7 @@ pub struct StreamConsumeOpts {
 pub type RowsProgressFn = std::sync::Arc<dyn Fn(usize) + Send + Sync>;
 
 /// Snapshot of [`PaginationLoopState`] for opaque LLM paging continuations (host-only; not for wire serde).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct QueryPaginationState {
     pub param_values: Vec<(String, Option<serde_json::Value>)>,
     pub next_absolute_url: Option<String>,
@@ -232,43 +219,19 @@ pub struct QueryPaginationResumeData {
     pub state: QueryPaginationState,
 }
 
-/// One page of decoded, hydrated query results.
-#[derive(Debug, Clone, Serialize)]
-pub struct PageResult {
-    pub entities: Vec<CachedEntity>,
-    pub page_index: usize,
-    /// Whether another poll may return more rows (same query / stream).
-    pub has_more: bool,
-    /// Coverage of this page relative to the requested expression.
-    #[serde(default)]
-    pub coverage: super::ResultCoverage,
-    /// When present, host may mint an opaque `page(pg#)` handle for the next batch.
-    #[serde(skip)]
-    pub pagination_resume: Option<QueryPaginationResumeData>,
-    pub stats: ExecutionStats,
-    /// HTTP-2 ledger for this page (writes); empty on a pure read page.
-    #[serde(default)]
-    pub operations: super::OperationLedger,
-}
-
-impl PageResult {
-    /// Lift a finished [`ExecutionResult`] into a single stream page, preserving coverage.
-    #[must_use]
-    pub fn from_execution_result(res: ExecutionResult) -> Self {
-        Self {
-            entities: res.entities,
-            page_index: 0,
-            has_more: res.has_more,
-            coverage: res.coverage,
-            pagination_resume: res.pagination_resume,
-            stats: res.stats,
-            operations: res.operations,
-        }
-    }
+/// Page delivery is progress, not a second collection proof. Every stream
+/// terminates with exactly one recorded logical result.
+#[derive(Debug)]
+pub enum ExecutionEvent {
+    Page {
+        entities: plasm_core::collection_codec::SharedRows<CachedEntity>,
+        stats: ExecutionStats,
+    },
+    Complete(ExecutionResult),
 }
 
 pub type QueryStream<'a> =
-    Pin<Box<dyn futures_util::Stream<Item = Result<PageResult, RuntimeError>> + Send + 'a>>;
+    Pin<Box<dyn futures_util::Stream<Item = Result<ExecutionEvent, RuntimeError>> + Send + 'a>>;
 
 impl Default for ExecutionConfig {
     fn default() -> Self {

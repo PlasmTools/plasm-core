@@ -142,6 +142,7 @@ pub async fn simulate_flow_policy_with_options(
         "flow_policy_simulate",
         program,
     )
+    .await
     .map_err(|e| SimulateError::CompileFailed(e.to_string()))?;
     let dry = evaluate_plasm_comp_dry(es.as_ref(), &bundle)
         .map_err(|e| SimulateError::Other(e.to_string()))?;

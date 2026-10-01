@@ -28,7 +28,10 @@ fn session_unknown_handle(
     }
 }
 
-fn session_operation_failed(handle: impl AsRef<str>, error: String) -> OperationError {
+fn session_operation_failed(
+    handle: impl AsRef<str>,
+    error: plasm_runtime::ExecutionFailure,
+) -> OperationError {
     OperationError::OperationFailed {
         handle: handle.as_ref().to_string(),
         error,

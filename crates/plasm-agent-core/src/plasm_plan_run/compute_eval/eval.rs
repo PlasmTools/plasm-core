@@ -11,7 +11,7 @@ pub(crate) fn instantiate_parsed_expr_plan_inputs_with_rows(
     wire_coercion_by_alias: &BTreeMap<InputAlias, WireCoercionCtx<'_>>,
 ) -> Result<ParsedExpr, String> {
     let scope = EvalScope::Root {
-        row: &serde_json::Value::Null,
+        row: &plasm_core::Value::Null,
     };
     let inputs = InputEnv { rows: input_rows };
     let env = PlanEvalEnv {
@@ -66,7 +66,7 @@ pub(crate) fn wire_coercion_by_alias_from_inputs<'a>(
         let entry_id = row.qualified_entity.entry_id.as_str();
         let entity = row.qualified_entity.entity.as_str();
         if entry_id.is_empty() || entity.is_empty() {
-            // Synthetic / data-literal rows: row JSON only, no catalog coercion.
+            // Synthetic / data-literal rows have no catalog coercion.
             continue;
         }
         let cgs = es
@@ -81,7 +81,7 @@ pub(crate) fn wire_coercion_by_alias_from_inputs<'a>(
                     entity
                 )
             })?;
-        // Plan-computed / render synthetics have no EntityDef — skip coercion, keep row JSON fills.
+        // Plan-computed / render synthetics have no EntityDef; retain their native fields.
         if let Some(ctx) = wire_coercion_ctx_for_source_entity(cgs, entity) {
             row.id_field = ctx.source_entity.id_field.to_string();
             out.insert(alias.clone(), ctx);
@@ -112,8 +112,7 @@ impl OperandResolver for RuntimeOperands<'_, '_> {
         reference: &plasm_core::PlasmInputRef,
     ) -> Result<plasm_core::operand_binding::ResolvedValue, String> {
         let value = resolve_input_reference(reference, self.0)?;
-        plasm_core::operand_binding::ResolvedValue::new(json_row_to_plasm_value(&value))
-            .map_err(str::to_owned)
+        plasm_core::operand_binding::ResolvedValue::new(value).map_err(str::to_owned)
     }
     fn identity(
         &mut self,
@@ -136,12 +135,12 @@ impl OperandResolver for RuntimeOperands<'_, '_> {
 pub(crate) fn plan_binding_scope_owned(
     env: &PlanEvalEnv<'_>,
 ) -> BTreeMap<String, plasm_core::Value> {
-    insert_plan_eval_scope(env, json_row_to_plasm_value)
+    insert_plan_eval_scope(env, Clone::clone)
 }
 
 fn insert_plan_eval_scope(
     env: &PlanEvalEnv<'_>,
-    mut row_to_value: impl FnMut(&serde_json::Value) -> plasm_core::Value,
+    mut row_to_value: impl FnMut(&plasm_core::Value) -> plasm_core::Value,
 ) -> BTreeMap<String, plasm_core::Value> {
     let mut scope = BTreeMap::new();
     // Flatten bound row fields first so `{{ title }}` works; aliases overwrite on conflict.
@@ -166,34 +165,11 @@ fn insert_plan_eval_scope(
     scope
 }
 
-pub(crate) fn json_row_to_plasm_value(row: &serde_json::Value) -> plasm_core::Value {
-    match row {
-        serde_json::Value::Null => plasm_core::Value::Null,
-        serde_json::Value::Bool(b) => plasm_core::Value::Bool(*b),
-        serde_json::Value::Number(n) => n
-            .as_i64()
-            .map(plasm_core::Value::Integer)
-            .or_else(|| n.as_f64().map(plasm_core::Value::Float))
-            .unwrap_or(plasm_core::Value::Null),
-        serde_json::Value::String(s) => plasm_core::Value::String(s.clone()),
-        serde_json::Value::Array(items) => {
-            plasm_core::Value::Array(items.iter().map(json_row_to_plasm_value).collect())
-        }
-        serde_json::Value::Object(map) => {
-            let mut out = indexmap::IndexMap::new();
-            for (k, v) in map {
-                out.insert(k.clone(), json_row_to_plasm_value(v));
-            }
-            plasm_core::Value::Object(out)
-        }
-    }
-}
-
-pub(crate) fn coerce_node_input_json(
+pub(crate) fn coerce_node_input_value(
     ctx: Option<&WireCoercionCtx<'_>>,
     path: &[String],
-    value: serde_json::Value,
-) -> serde_json::Value {
+    value: plasm_core::Value,
+) -> plasm_core::Value {
     let Some(ctx) = ctx else {
         return value;
     };
@@ -207,12 +183,13 @@ pub(crate) fn coerce_node_input_json(
                 .fields
                 .get(field)
                 .and_then(|f| f.named_value(ctx.cgs).ok());
-            plasm_core::coerce_json_value_for_field_type(
+            plasm_core::coerce_value_for_field_type(
                 &ft,
                 nv.and_then(|n| n.value_format),
                 nv.and_then(|n| n.array_items.as_ref()),
-                value,
+                value.clone(),
             )
+            .unwrap_or(value)
         }
         Err(_) => value,
     }
@@ -223,53 +200,53 @@ pub(crate) fn node_input_hole_from_identity(
     id_field: &str,
     identity: &Option<plasm_core::RowIdentity>,
     path: &[String],
-    row: &serde_json::Value,
-) -> Option<serde_json::Value> {
+    row: &plasm_core::Value,
+) -> Option<plasm_core::Value> {
     let identity = identity.as_ref()?;
     if path.is_empty() {
         let slot = identity.reference.primary_slot_str();
-        return Some(coerce_node_input_json(
+        return Some(coerce_node_input_value(
             ctx,
             path,
-            serde_json::Value::String(slot),
+            plasm_core::Value::String(slot),
         ));
     }
     if path.len() == 1 {
         let key = path[0].as_str();
         if let Some(v) = identity.ambient.get(key) {
-            return Some(coerce_node_input_json(
+            return Some(coerce_node_input_value(
                 ctx,
                 path,
-                serde_json::Value::String(v.clone()),
+                plasm_core::Value::String(v.clone()),
             ));
         }
         if let plasm_core::EntityKey::Compound(parts) = &identity.reference.key {
             if let Some(v) = parts.get(key).and_then(|s| s.as_lit_str()) {
                 let raw = ctx
-                    .map(|c| plasm_core::identity_slot_to_json(c.cgs, c.source_entity, key, v))
-                    .unwrap_or_else(|| serde_json::Value::String(v.to_string()));
-                return Some(coerce_node_input_json(ctx, path, raw));
+                    .map(|c| plasm_core::identity_slot_to_value(c.cgs, c.source_entity, key, v))
+                    .unwrap_or_else(|| plasm_core::Value::String(v.to_string()));
+                return Some(coerce_node_input_value(ctx, path, raw));
             }
         }
         // Primary identity: CGS `id_field` (e.g. AuthSession.access_token) or legacy `"id"`.
         if key == "id" || key == id_field {
             let slot = identity.reference.primary_slot_str();
-            return Some(coerce_node_input_json(
+            return Some(coerce_node_input_value(
                 ctx,
                 path,
-                serde_json::Value::String(slot),
+                plasm_core::Value::String(slot),
             ));
         }
     }
     value_at_segments(row, path)
         .cloned()
-        .map(|v| coerce_node_input_json(ctx, path, v))
+        .map(|v| coerce_node_input_value(ctx, path, v))
 }
 
 pub(crate) fn resolve_input_reference(
     reference: &plasm_core::PlasmInputRef,
     env: &PlanEvalEnv<'_>,
-) -> Result<serde_json::Value, String> {
+) -> Result<plasm_core::Value, String> {
     match reference {
         plasm_core::PlasmInputRef::RowBinding { binding, path } => {
             let EvalScope::Bound {
@@ -287,7 +264,7 @@ pub(crate) fn resolve_input_reference(
             }
             Ok(value_at_segments(env.scope.row(), path)
                 .cloned()
-                .unwrap_or(serde_json::Value::Null))
+                .unwrap_or(plasm_core::Value::Null))
         }
         plasm_core::PlasmInputRef::NodeInput { node, path } => {
             let alias = node;
@@ -317,7 +294,7 @@ pub(crate) fn resolve_input_reference(
                             )
                         })?;
                     if !cell.is_null() {
-                        values.push(coerce_node_input_json(wire_ctx, path, cell));
+                        values.push(coerce_node_input_value(wire_ctx, path, cell));
                     }
                 }
                 if values.is_empty() {
@@ -329,7 +306,7 @@ pub(crate) fn resolve_input_reference(
                         input.qualified_entity.entity
                     ));
                 }
-                return Ok(serde_json::Value::Array(values));
+                return Ok(plasm_core::Value::Array(values));
             }
             if path.is_empty() {
                 if let Some(value) = node_input_hole_from_identity(
@@ -345,12 +322,14 @@ pub(crate) fn resolve_input_reference(
                 }
                 return Ok(input.row.clone());
             }
-            let from_row = value_at_segments(&input.row, path).cloned();
-            let from_row_usable = from_row
-                .as_ref()
-                .is_some_and(|v| !v.is_null() && v.as_str().is_none_or(|s| !s.is_empty()));
+            let from_row = input
+                .rows
+                .first()
+                .and_then(|row| value_at_segments(row, path))
+                .cloned();
+            let from_row_usable = from_row.as_ref().is_some_and(|v| !v.is_null());
             if from_row_usable {
-                return Ok(coerce_node_input_json(wire_ctx, path, from_row.unwrap()));
+                return Ok(coerce_node_input_value(wire_ctx, path, from_row.unwrap()));
             }
             if let Some(value) = node_input_hole_from_identity(
                 wire_ctx,
@@ -364,7 +343,7 @@ pub(crate) fn resolve_input_reference(
                 }
             }
             Err(format!(
-                "node_input hole {:?}.{} unresolved on catalog {}:{} (row field empty; id_field={})",
+                "node_input hole {:?}.{} unresolved on catalog {}:{} (row field missing or null; id_field={})",
                 alias.as_str(),
                 path.join("."),
                 input.qualified_entity.entry_id,
@@ -374,10 +353,35 @@ pub(crate) fn resolve_input_reference(
         }
     }
 }
-pub(crate) fn plan_value_to_rows(value: &PlanValue) -> Result<Vec<serde_json::Value>, String> {
+/// Keep the scalar/record distinction explicit while storing every row as a native record.
+fn native_output_rows(
+    values: Vec<plasm_core::Value>,
+) -> Result<(Vec<plasm_core::ValueRow>, Vec<MaterializedValueShape>), String> {
+    let shapes = values
+        .iter()
+        .map(|value| {
+            if value.is_object() {
+                MaterializedValueShape::Record
+            } else {
+                MaterializedValueShape::ScalarColumn
+            }
+        })
+        .collect();
+    Ok((
+        values
+            .into_iter()
+            .map(plasm_core::ValueRow::from_output)
+            .collect(),
+        shapes,
+    ))
+}
+
+pub(crate) fn plan_value_to_rows(
+    value: &PlanValue,
+) -> Result<(Vec<plasm_core::ValueRow>, Vec<MaterializedValueShape>), String> {
     let inputs = BTreeMap::new();
     let scope = EvalScope::Root {
-        row: &serde_json::Value::Null,
+        row: &plasm_core::Value::Null,
     };
     let input_env = InputEnv { rows: &inputs };
     let empty_coercion = BTreeMap::new();
@@ -386,11 +390,11 @@ pub(crate) fn plan_value_to_rows(value: &PlanValue) -> Result<Vec<serde_json::Va
         inputs: input_env,
         wire_coercion_by_alias: &empty_coercion,
     };
-    let json = eval_plan_value(value, &env)?;
-    Ok(match json {
-        serde_json::Value::Array(items) => items,
-        other => vec![other],
-    })
+    let value = eval_plan_value(value, &env)?;
+    match value {
+        plasm_core::Value::Array(items) => native_output_rows(items),
+        value => native_output_rows(vec![value]),
+    }
 }
 
 /// Pure `derive` (map) row production: evaluate `value` once per source row under the item binding
@@ -398,11 +402,12 @@ pub(crate) fn plan_value_to_rows(value: &PlanValue) -> Result<Vec<serde_json::Va
 /// ([`materialize_executable_plan_step`]) and dry preflight materialize derive rows through here, so
 /// the only planned/live difference is the source of `source_rows` (I/O), never the derivation.
 pub(crate) fn derive_node_rows(
+    kind: crate::plasm_plan::DeriveKind,
     item_binding: &BindingName,
     value: &PlanValue,
-    source_rows: &[serde_json::Value],
+    source_rows: &[plasm_core::ValueRow],
     input_rows: &BTreeMap<InputAlias, MaterializedInputRow>,
-) -> Result<Vec<serde_json::Value>, String> {
+) -> Result<(Vec<plasm_core::ValueRow>, Vec<MaterializedValueShape>), String> {
     let empty_coercion = BTreeMap::new();
     let mut rows = Vec::with_capacity(source_rows.len());
     for row in source_rows {
@@ -418,21 +423,30 @@ pub(crate) fn derive_node_rows(
         };
         rows.push(eval_plan_value(value, &env)?);
     }
-    Ok(rows)
+    if kind == crate::plasm_plan::DeriveKind::Cell {
+        let shapes = vec![MaterializedValueShape::ScalarColumn; rows.len()];
+        let rows = rows
+            .into_iter()
+            .map(|value| plasm_core::ValueRow::from_iter([("value".into(), value)]))
+            .collect();
+        Ok((rows, shapes))
+    } else {
+        native_output_rows(rows)
+    }
 }
 
 pub(crate) enum EvalScope<'a> {
     Root {
-        row: &'a serde_json::Value,
+        row: &'a plasm_core::Value,
     },
     Bound {
-        row: &'a serde_json::Value,
+        row: &'a plasm_core::Value,
         binding: &'a BindingName,
     },
 }
 
 impl<'a> EvalScope<'a> {
-    fn row(&self) -> &'a serde_json::Value {
+    fn row(&self) -> &'a plasm_core::Value {
         match self {
             Self::Root { row } | Self::Bound { row, .. } => row,
         }
@@ -464,12 +478,8 @@ impl<'a> PlanEvalEnv<'a> {
 pub(crate) fn eval_plan_value(
     value: &PlanValue,
     env: &PlanEvalEnv<'_>,
-) -> Result<serde_json::Value, String> {
-    use plasm_core::operand_binding::BindOperands;
-    Ok(value
-        .bind_operands(&mut DataOperands(env))?
-        .into_resolved()?
-        .to_wire())
+) -> Result<plasm_core::Value, String> {
+    Ok(value.evaluate(&mut DataOperands(env))?.into_value())
 }
 
 struct DataOperands<'a, 'b>(&'a PlanEvalEnv<'b>);
@@ -493,9 +503,11 @@ impl plasm_core::operand_binding::OperandResolver for DataOperands<'_, '_> {
                     }
                     _ => return Err(format!("unknown row binding `{binding}`")),
                 };
-                let value = value_at_dotted(self.0.scope.row(), path)
-                    .ok_or_else(|| format!("row binding `{binding}` has no field `{path}`"))?;
-                plasm_core::operand_binding::ResolvedValue::from_wire(value.clone())
+                let value = value_at_dotted(self.0.scope.row(), path).ok_or_else(|| {
+                    format!("row binding `{binding}` field `{path}` is unobserved (not null)")
+                })?;
+                plasm_core::operand_binding::ResolvedValue::new(value.clone())
+                    .map_err(str::to_owned)
             }
         }
     }
@@ -518,12 +530,24 @@ impl plasm_core::operand_binding::OperandResolver for DataOperands<'_, '_> {
             ));
         }
         match input.proof {
-            crate::plasm_plan::InputCardinalityProof::StaticSingleton
+            crate::plasm_plan::InputCardinalityProof::Acknowledgement
+            | crate::plasm_plan::InputCardinalityProof::Collection
+            | crate::plasm_plan::InputCardinalityProof::StaticSingleton
             | crate::plasm_plan::InputCardinalityProof::RuntimeCheckedSingleton => {}
         }
         let value = value_at_segments(&input.row, path)
             .ok_or_else(|| format!("input `{node}` has no field `{}`", path.join(".")))?;
-        plasm_core::operand_binding::ResolvedValue::from_wire(value.clone())
+        let value = if path.is_empty() {
+            match &input.value_projection {
+                Some(fields) => {
+                    super::input_rows::project_value_rows(value, fields, &input.optional_fields)?
+                }
+                None => value.clone(),
+            }
+        } else {
+            value.clone()
+        };
+        plasm_core::operand_binding::ResolvedValue::new(value).map_err(str::to_owned)
     }
     fn identity(
         &mut self,
@@ -596,10 +620,14 @@ pub(crate) fn render_template(
         .map_err(|e| e.to_string())
 }
 
-pub(crate) use plasm_core::json_value_to_plasm_value as json_to_plasm_value;
-
 pub(crate) fn synthetic_projection(node: &ValidatedPlanNode) -> Option<Vec<String>> {
     match node {
+        ValidatedPlanNode::Compute(compute)
+            if matches!(&compute.compute.op, ComputeOp::Python { output_type, .. }
+                if !output_type.is_non_null_record()) =>
+        {
+            None
+        }
         ValidatedPlanNode::Compute(compute) => Some(
             compute
                 .compute
@@ -610,5 +638,91 @@ pub(crate) fn synthetic_projection(node: &ValidatedPlanNode) -> Option<Vec<Strin
                 .collect(),
         ),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod native_output_shape_tests {
+    use super::*;
+    #[test]
+    fn row_scoped_derivation_binds_records_and_requires_explicit_scalar_extraction() {
+        let (source, _) = native_output_rows(vec![plasm_core::Value::Integer(7)]).unwrap();
+        let binding = BindingName::new("item").unwrap();
+        let reference = |path| PlanValue::BindingSymbol {
+            binding: "item".into(),
+            path,
+        };
+        let (records, shapes) = derive_node_rows(
+            crate::plasm_plan::DeriveKind::Map,
+            &binding,
+            &reference(vec![]),
+            &source,
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        assert_eq!(records, source);
+        assert_eq!(shapes, [MaterializedValueShape::Record]);
+        let (scalars, shapes) = derive_node_rows(
+            crate::plasm_plan::DeriveKind::Cell,
+            &binding,
+            &reference(vec!["value".into()]),
+            &source,
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        assert_eq!(scalars, source);
+        assert_eq!(shapes, [MaterializedValueShape::ScalarColumn]);
+    }
+
+    #[test]
+    fn scalar_extraction_keeps_object_and_array_payloads_in_one_cell() {
+        use plasm_core::{Value, ValueRow};
+        let binding = BindingName::new("item").unwrap();
+        for payload in [
+            Value::Object(indexmap::IndexMap::from([(
+                "url".into(),
+                Value::String("fixture".into()),
+            )])),
+            Value::Object(indexmap::IndexMap::from([(
+                "value".into(),
+                Value::Integer(7),
+            )])),
+            Value::Object(indexmap::IndexMap::new()),
+            Value::Array(vec![Value::Integer(1), Value::Null]),
+            Value::Null,
+        ] {
+            let source = vec![ValueRow::from_iter([("payload".into(), payload.clone())])];
+            let (rows, shapes) = derive_node_rows(
+                crate::plasm_plan::DeriveKind::Cell,
+                &binding,
+                &PlanValue::BindingSymbol {
+                    binding: "item".into(),
+                    path: vec!["payload".into()],
+                },
+                &source,
+                &BTreeMap::new(),
+            )
+            .unwrap();
+            assert_eq!(rows, vec![ValueRow::from_iter([("value".into(), payload)])]);
+            assert_eq!(shapes, [MaterializedValueShape::ScalarColumn]);
+        }
+    }
+
+    #[test]
+    fn normalization_retains_each_value_shape_without_inspecting_encoded_rows() {
+        use plasm_core::Value;
+        let record = Value::Object(indexmap::IndexMap::from([(
+            "value".into(),
+            Value::Integer(7),
+        )]));
+        let (rows, shapes) = native_output_rows(vec![Value::Integer(7), record]).unwrap();
+        assert_eq!(rows[0], rows[1]);
+        assert_eq!(
+            shapes,
+            [
+                MaterializedValueShape::ScalarColumn,
+                MaterializedValueShape::Record
+            ]
+        );
     }
 }

@@ -89,19 +89,19 @@ pub fn reference_only_omitted_field_names(
 /// Top-level wire keys match directly; **dotted paths** walk nested JSON/object shapes (e.g.
 /// `author.login` pulls `login` from the `author` object field).
 pub fn apply_projection(result: &mut ExecutionResult, fields: &[String]) {
-    for entity in &mut result.entities {
+    result.collection = result.collection.map_fields(|observed_fields| {
         let mut next: IndexMap<String, TypedFieldValue> = IndexMap::new();
         for f in fields {
-            if let Some(v) = entity.fields.get(f.as_str()) {
+            if let Some(v) = observed_fields.get(f.as_str()) {
                 next.insert(f.clone(), v.clone());
             } else if f.contains('.') {
-                if let Some(v) = typed_field_value_at_dotted_path(&entity.fields, f.as_str()) {
+                if let Some(v) = typed_field_value_at_dotted_path(&observed_fields, f.as_str()) {
                     next.insert(f.clone(), v);
                 }
             }
         }
-        entity.fields = next;
-    }
+        *observed_fields = next;
+    });
 }
 
 fn typed_field_value_at_dotted_path(
@@ -127,7 +127,7 @@ pub(crate) fn format_empty_result_body(_result: &ExecutionResult) -> String {
 
 /// HTTP-2 wire object: `rows` plus `operations`. Never a bare entity array.
 pub fn http_execute_results_value(result: &ExecutionResult) -> serde_json::Value {
-    let rows: Vec<serde_json::Value> = result.entities.iter().map(entity_to_json).collect();
+    let rows: Vec<serde_json::Value> = result.entities().iter().map(entity_to_json).collect();
     let operations: Vec<serde_json::Value> = result
         .operations
         .entries()
@@ -137,7 +137,7 @@ pub fn http_execute_results_value(result: &ExecutionResult) -> serde_json::Value
     serde_json::json!({
         "rows": rows,
         "operations": operations,
-        "coverage": result.coverage.as_str(),
+        "coverage": result.coverage().as_str(),
     })
 }
 
@@ -252,17 +252,16 @@ pub(crate) fn union_entity_table_columns(
     cgs: Option<&CGS>,
     max_entity_rows: Option<usize>,
 ) -> Vec<String> {
-    let entities: &[plasm_runtime::CachedEntity] = match max_entity_rows {
-        Some(max) => {
-            let end = result.entities.len().min(max);
-            &result.entities[..end]
-        }
-        None => &result.entities,
+    let entities = || {
+        result
+            .entities()
+            .iter()
+            .take(max_entity_rows.unwrap_or(usize::MAX))
     };
     let mut columns: Vec<String> = Vec::new();
     let mut emitted: BTreeSet<String> = BTreeSet::new();
 
-    for entity in entities {
+    for entity in entities() {
         let ent_def = cgs.and_then(|g| g.get_entity(entity.reference.entity_type.as_str()));
         for key in entity.fields.keys().chain(entity.unavailable_fields.iter()) {
             if emitted.contains(key.as_str()) {
@@ -273,9 +272,8 @@ pub(crate) fn union_entity_table_columns(
                     continue;
                 }
             }
-            let any_blob = entities
-                .iter()
-                .any(|e| field_type_is_blob(cgs, &e.reference.entity_type, key.as_str()));
+            let any_blob =
+                entities().any(|e| field_type_is_blob(cgs, &e.reference.entity_type, key.as_str()));
             if any_blob {
                 let kref = format!("{key}_ref");
                 let kmime = format!("{key}_mime");
@@ -557,7 +555,7 @@ pub(crate) fn summary_sensitive_string_bytes(
     max_entity_rows: Option<usize>,
 ) -> usize {
     result
-        .entities
+        .entities()
         .iter()
         .take(max_entity_rows.unwrap_or(usize::MAX))
         .flat_map(|entity| {
@@ -576,10 +574,10 @@ pub(crate) fn summary_sensitive_string_bytes(
 }
 
 fn format_json(result: &ExecutionResult) -> String {
-    let entities: Vec<serde_json::Value> = result.entities.iter().map(entity_to_json).collect();
+    let entities: Vec<serde_json::Value> = result.entities().iter().map(entity_to_json).collect();
 
     serde_json::to_string_pretty(&serde_json::json!({
-        "count": result.count,
+        "count": result.count(),
         "source": format!("{:?}", result.source),
         "results": entities,
     }))
@@ -592,7 +590,7 @@ fn format_compact_with_cgs(
 ) -> (String, Vec<String>, InBandSummaryReport) {
     let mut omitted = BTreeSet::new();
     let lines: Vec<String> = result
-        .entities
+        .entities()
         .iter()
         .map(|e| {
             let v = entity_to_json_with_cgs(e, cgs, &mut omitted);
@@ -678,7 +676,7 @@ pub(crate) fn format_table_inner(
     omitted: &mut BTreeSet<String>,
     report: &mut InBandSummaryReport,
 ) -> String {
-    if result.entities.is_empty() {
+    if result.entities().is_empty() {
         let mut body = format_empty_result_body(result);
         body.push_str(&format_operations_block(result));
         return body;
@@ -689,7 +687,7 @@ pub(crate) fn format_table_inner(
     let mut widths: Vec<usize> = columns.iter().map(|c| c.len()).collect();
     let row_limit = max_entity_rows.unwrap_or(usize::MAX);
     let rows: Vec<Vec<String>> = result
-        .entities
+        .entities()
         .iter()
         .take(row_limit)
         .map(|entity| {
@@ -959,10 +957,11 @@ mod tests {
             plasm_runtime::EntityCompleteness::Complete,
         );
         let result = ExecutionResult {
-            entities: vec![entity],
-            count: 1,
+            collection: crate::test_support::execution_fixtures::collection(
+                vec![entity],
+                ResultCoverage::Unknown,
+            ),
             has_more: false,
-            coverage: ResultCoverage::Unknown,
             pagination_resume: None,
             paging_handle: None,
             source: ExecutionSource::Live,
@@ -1004,10 +1003,11 @@ mod tests {
             plasm_runtime::EntityCompleteness::Complete,
         );
         let result = ExecutionResult {
-            entities: vec![entity],
-            count: 1,
+            collection: crate::test_support::execution_fixtures::collection(
+                vec![entity],
+                ResultCoverage::Unknown,
+            ),
             has_more: false,
-            coverage: ResultCoverage::Unknown,
             pagination_resume: None,
             paging_handle: None,
             source: ExecutionSource::Live,
@@ -1068,10 +1068,11 @@ mod tests {
             plasm_runtime::EntityCompleteness::Complete,
         );
         let result = ExecutionResult {
-            entities: vec![entity],
-            count: 1,
+            collection: crate::test_support::execution_fixtures::collection(
+                vec![entity],
+                ResultCoverage::Unknown,
+            ),
             has_more: false,
-            coverage: ResultCoverage::Unknown,
             pagination_resume: None,
             paging_handle: None,
             source: ExecutionSource::Live,
@@ -1205,10 +1206,11 @@ mod tests {
             plasm_runtime::EntityCompleteness::Complete,
         );
         let result = ExecutionResult {
-            entities: vec![entity],
-            count: 1,
+            collection: crate::test_support::execution_fixtures::collection(
+                vec![entity],
+                ResultCoverage::Unknown,
+            ),
             has_more: false,
-            coverage: ResultCoverage::Unknown,
             pagination_resume: None,
             paging_handle: None,
             source: ExecutionSource::Live,
@@ -1260,9 +1262,9 @@ mod tests {
         );
         assert_eq!(cells["content_ref"], REFERENCE_ONLY_PLACEHOLDER);
         let mut unavailable = result;
-        unavailable.entities[0]
-            .unavailable_fields
-            .insert("content".into());
+        let mut row = unavailable.entities()[0].clone();
+        row.unavailable_fields.insert("content".into());
+        unavailable.collection = unavailable.collection.replace(0, row).unwrap();
         let (tsv, _, _) = format_result_tsv_with_cgs(&unavailable, Some(&cgs), None);
         let lines = tsv.lines().collect::<Vec<_>>();
         let cells = lines[0]
@@ -1297,10 +1299,11 @@ mod tests {
             plasm_runtime::EntityCompleteness::Complete,
         );
         let result = ExecutionResult {
-            entities: vec![entity],
-            count: 1,
+            collection: crate::test_support::execution_fixtures::collection(
+                vec![entity],
+                ResultCoverage::Unknown,
+            ),
             has_more: false,
-            coverage: ResultCoverage::Unknown,
             pagination_resume: None,
             paging_handle: None,
             source: ExecutionSource::Live,
@@ -1341,10 +1344,11 @@ mod tests {
             plasm_runtime::EntityCompleteness::Complete,
         );
         let result = ExecutionResult {
-            entities: vec![entity],
-            count: 1,
+            collection: crate::test_support::execution_fixtures::collection(
+                vec![entity],
+                ResultCoverage::Unknown,
+            ),
             has_more: false,
-            coverage: ResultCoverage::Unknown,
             pagination_resume: None,
             paging_handle: None,
             source: ExecutionSource::Live,
@@ -1391,10 +1395,11 @@ mod tests {
             plasm_runtime::EntityCompleteness::Complete,
         );
         let result = ExecutionResult {
-            entities: vec![entity],
-            count: 1,
+            collection: crate::test_support::execution_fixtures::collection(
+                vec![entity],
+                ResultCoverage::Unknown,
+            ),
             has_more: false,
-            coverage: ResultCoverage::Unknown,
             pagination_resume: None,
             paging_handle: None,
             source: ExecutionSource::Live,
@@ -1433,10 +1438,11 @@ mod tests {
             plasm_runtime::EntityCompleteness::Complete,
         );
         let result = ExecutionResult {
-            entities: vec![entity],
-            count: 1,
+            collection: crate::test_support::execution_fixtures::collection(
+                vec![entity],
+                ResultCoverage::Unknown,
+            ),
             has_more: false,
-            coverage: ResultCoverage::Unknown,
             pagination_resume: None,
             paging_handle: None,
             source: ExecutionSource::Live,
@@ -1479,10 +1485,11 @@ mod tests {
         source: ExecutionSource,
     ) -> ExecutionResult {
         ExecutionResult {
-            entities: vec![],
-            count: 0,
+            collection: crate::test_support::execution_fixtures::collection(
+                vec![],
+                ResultCoverage::Unknown,
+            ),
             has_more: false,
-            coverage: ResultCoverage::Unknown,
             pagination_resume: None,
             paging_handle: None,
             source,
@@ -1640,10 +1647,11 @@ mod tests {
         soft.mark_detail_fields_unavailable(["body"]);
 
         let soft_result = ExecutionResult {
-            entities: vec![soft],
-            count: 1,
+            collection: crate::test_support::execution_fixtures::collection(
+                vec![soft],
+                ResultCoverage::Partial,
+            ),
             has_more: false,
-            coverage: ResultCoverage::Partial,
             pagination_resume: None,
             paging_handle: None,
             source: ExecutionSource::Live,
@@ -1652,10 +1660,11 @@ mod tests {
             operations: plasm_runtime::OperationLedger::empty(),
         };
         let empty_result = ExecutionResult {
-            entities: vec![empty_present],
-            count: 1,
+            collection: crate::test_support::execution_fixtures::collection(
+                vec![empty_present],
+                ResultCoverage::Complete,
+            ),
             has_more: false,
-            coverage: ResultCoverage::Complete,
             pagination_resume: None,
             paging_handle: None,
             source: ExecutionSource::Live,
@@ -1679,14 +1688,14 @@ mod tests {
             "present-empty must not be marked unavailable:\n{empty_tsv}"
         );
         let soft_row =
-            plasm_runtime::entity_to_agent_row_json(&soft_result.entities[0], Some(&cgs));
+            plasm_runtime::entity_to_agent_row_json(&soft_result.entities()[0], Some(&cgs));
         assert_eq!(
             soft_row.get("_unavailable_fields"),
             Some(&serde_json::json!(["body"]))
         );
         assert!(soft_row.get("body").is_none());
         let empty_row =
-            plasm_runtime::entity_to_agent_row_json(&empty_result.entities[0], Some(&cgs));
+            plasm_runtime::entity_to_agent_row_json(&empty_result.entities()[0], Some(&cgs));
         assert!(empty_row.get("_unavailable_fields").is_none());
         assert_eq!(empty_row.get("body"), Some(&serde_json::json!("")));
     }

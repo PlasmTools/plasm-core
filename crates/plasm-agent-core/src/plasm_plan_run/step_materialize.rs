@@ -22,12 +22,13 @@ pub(crate) struct PlanStepMaterializeCtx<'a> {
     pub st: &'a PlasmHostState,
     pub session_id: &'a str,
     pub plan_shared: &'a Arc<PlanLineExecuteShared>,
-    pub approval_policy: &'a PlasmPlanApprovalPolicy,
+    pub(super) approval_policy: &'a PlasmPlanApprovalPolicy,
     pub flow: &'a crate::plan_flow::PlanFlowAnalysis,
     pub trace: Option<&'a PlasmTraceContext>,
     pub sink: Option<&'a McpPlasmTraceSink>,
     pub python_host_calls: bool,
     pub scope_path: Vec<String>,
+    pub(super) scope_budget: Arc<super::map_body::ScopeBudget>,
     pub occurrence_path: Vec<usize>,
     pub rows_progress: Option<plasm_runtime::RowsProgressFn>,
     pub execution_scope: Option<&'a crate::operation::ExecutionScope>,
@@ -50,8 +51,8 @@ pub(crate) fn apply_step_materialize_outcomes(
                 outcome
                     .mat
                     .result
-                    .count
-                    .max(outcome.mat.result.entities.len()),
+                    .count()
+                    .max(outcome.mat.result.entities().len()),
             );
         }
         if let Some(receipt) = outcome.approval {
@@ -67,8 +68,9 @@ pub(crate) async fn materialize_executable_plan_step(
     step_idx: usize,
     step_id: &StepId,
     node: ValidatedPlanNode,
+    schema_nodes: &[ValidatedPlanNode],
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
-) -> Result<PlanStepMaterializeOutcome, String> {
+) -> Result<PlanStepMaterializeOutcome, ExecutionFailure> {
     use crate::occurrence_progress::{OccurrenceGuard, OccurrencePhase, OccurrenceProgress};
     let mut occurrence = OccurrenceGuard::new(
         ctx.execution_scope,
@@ -78,25 +80,37 @@ pub(crate) async fn materialize_executable_plan_step(
             ctx.occurrence_path.clone(),
         ),
     );
+    // Nested maps expose receipts at the executing child address, not twice
+    // through both the child and the aggregate container.
+    let owns_operations = !matches!(&node, ValidatedPlanNode::MapBody(_));
     let source_line = render_node_operation(&node);
     let parsed_evidence = parsed_expr_for_plan_node(&node);
+    let qualified_step = ctx
+        .scope_path
+        .iter()
+        .map(String::as_str)
+        .chain(std::iter::once(node.id().as_str()))
+        .collect::<Vec<_>>()
+        .join("/");
     let approval = ctx
         .flow
-        .approval_gate_for_node(node.id().as_str())
+        .approval_gate_for_node(&qualified_step)
         .map(|gate| ctx.approval_policy.review(gate));
     let node_id = node.id().clone();
     // Classify once: pure steps use the shared kernel; runtime steps stay inside this closed
     // execution machine until a compiled request reaches the transport boundary.
     let mut scope_instances = None;
     let execution = async {
-        Ok::<_, String>(match ExecStep::classify(node) {
+        Ok::<_, ExecutionFailure>(match ExecStep::classify(node) {
             ExecStep::Io(IoStep::MapBody(map)) => {
                 let (mat, instances) =
-                    super::map_body::materialize(ctx, &map, materialized).await?;
+                    Box::pin(super::map_body::materialize(ctx, &map, materialized)).await?;
                 scope_instances = Some(instances);
                 mat
             }
-            ExecStep::Pure(pure) => live_materialize_pure(ctx, pure, materialized).await?,
+            ExecStep::Pure(pure) => {
+                Box::pin(live_materialize_pure(ctx, pure, schema_nodes, materialized)).await?
+            }
             ExecStep::Io(io) => {
                 let operation = async {
                     if ctx.python_host_calls {
@@ -121,22 +135,47 @@ pub(crate) async fn materialize_executable_plan_step(
             }
         })
     };
-    let mat = match Box::pin(execution).await {
+    let mat = match occurrence
+        .mutation_journal()
+        .scope(Box::pin(execution))
+        .await
+    {
         Ok(mat) => mat,
         Err(error) => {
-            occurrence.fail(error.clone());
-            return Err(error);
+            let mut failure = ExecutionFailure::from(error)
+                .at(qualified_step.clone(), ctx.occurrence_path.clone());
+            failure = failure.with_dispatches(occurrence.mutation_journal().snapshot());
+            failure = failure.with_catalog(&ctx.es.catalog_cgs_hash);
+            occurrence.fail(failure.to_string());
+            return Err(failure);
         }
     };
+    occurrence.record_result(
+        mat.result.count(),
+        mat.artifact.as_ref().map(|a| a.plasm_uri.clone()),
+        mat.result.request_fingerprints.clone(),
+        if owns_operations {
+            mat.result.operations.clone()
+        } else {
+            plasm_runtime::OperationLedger::empty()
+        },
+    );
     if let Some(scope) = ctx.execution_scope {
         if let Err(error) = scope.check() {
-            occurrence.fail(error.clone());
-            return Err(error);
+            let failure = ExecutionFailure::new(
+                plasm_runtime::FailureCause::Cancelled,
+                "execution_cancelled",
+                error,
+            )
+            .at(qualified_step.clone(), ctx.occurrence_path.clone())
+            .with_effects(&mat.result.operations);
+            occurrence.fail(failure.to_string());
+            return Err(failure);
         }
     }
     occurrence.finish(
         OccurrencePhase::Done,
-        Some(mat.result.count),
+        Some(mat.result.count()),
         mat.artifact.as_ref().map(|a| a.plasm_uri.clone()),
         mat.result.request_fingerprints.clone(),
         None,
@@ -169,10 +208,11 @@ pub(crate) async fn materialize_executable_plan_step(
 async fn live_materialize_pure(
     ctx: &PlanStepMaterializeCtx<'_>,
     pure: PureStep,
+    schema_nodes: &[ValidatedPlanNode],
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
-) -> Result<MaterializedNode, String> {
+) -> Result<MaterializedNode, ExecutionFailure> {
     if let PureStep::Compute(compute) = &pure {
-        let source_id = PlanNodeId::new(compute.compute.source.clone())?;
+        let source_id = compute.source_node.clone();
         let source_mat = materialized.get(&source_id).ok_or_else(|| {
             format!(
                 "source node {:?} has not been materialized",
@@ -180,8 +220,28 @@ async fn live_materialize_pure(
             )
         })?;
         let owner_entry_id = source_mat.qualified_entity.entry_id.clone();
+        {
+            use plasm_core::collection_codec::{CollectionCodec, RecordingCodec};
+            RecordingCodec::new().materialize(
+                source_mat.result.collection.membership(),
+                compute.compute.op.collection_demand(),
+            )?;
+        }
         let binding_rows = binding_rows_for_compute(&compute.compute, materialized)?;
-        let rows = if matches!(compute.compute.op, ComputeOp::Python { .. }) {
+        // These are value inputs, unlike scheduling-only depends_on edges.
+        // Union preserves uncertainty; every other collection capture is
+        // consumed as a whole value (membership, rendering or branch choice).
+        if !matches!(compute.compute.op, ComputeOp::Union { .. }) {
+            for binding in binding_rows.keys() {
+                let binding_id = PlanNodeId::new(binding.clone())?;
+                let input = materialized.get(&binding_id).ok_or_else(|| {
+                    format!("compute binding {binding:?} has not been materialized")
+                })?;
+                crate::python_compute::require_complete_collection(&input.result)?;
+            }
+        }
+        let mut value_shapes = Vec::new();
+        let computed = if matches!(compute.compute.op, ComputeOp::Python { .. }) {
             use crate::occurrence_progress::{ExecutionStage, OccurrenceProgress};
             let report = |stage| {
                 if let Some(scope) = ctx.execution_scope {
@@ -201,10 +261,19 @@ async fn live_materialize_pure(
                 entity: source_mat.qualified_entity.entity.clone().into(),
             };
             crate::python_compute::require_complete_collection(&source_mat.result)?;
-            if source_mat.result.count > crate::python_compute::MAX_INPUT_ROWS {
+            if source_mat.result.count() > crate::python_compute::MAX_INPUT_ROWS {
                 return Err("compute input row budget exceeded".into());
             }
-            let scoped = entry_scoped_execute_session(ctx.es, Some(&source_mat.qualified_entity))?;
+            let context = QualifiedEntityKey {
+                entry_id: checked.context_entry().into(),
+                entity: String::new(),
+            };
+            let source_context = if source_mat.qualified_entity.entry_id.is_empty() {
+                &context
+            } else {
+                &source_mat.qualified_entity
+            };
+            let scoped = entry_scoped_execute_session(ctx.es, Some(source_context))?;
             let input = crate::graph_rehydrate::GraphSurfaceRehydrator::new(
                 &scoped,
                 ctx.st,
@@ -216,7 +285,7 @@ async fn live_materialize_pure(
                 Some(crate::python_compute::MAX_INPUT_ROWS + 1),
             )
             .await?;
-            if input.len() != source_mat.result.count {
+            if input.len() != source_mat.result.count() {
                 return Err(
                     "Python compute materialization does not match the complete source count"
                         .into(),
@@ -226,41 +295,75 @@ async fn live_materialize_pure(
             report(ExecutionStage::Executing);
             let mut rendered = Vec::new();
             if checked.per_row {
-                let mut bytes = 0usize;
-                for row in input {
+                let mut remaining = 1_048_576;
+                for (index, row) in input.into_iter().enumerate() {
+                    use plasm_core::collection_codec::{
+                        CollectionCodec, RecordingCodec, Transform,
+                    };
+                    let source = source_mat.result.collection.membership();
+                    let membership = RecordingCodec::new().derive(
+                        source.identity().derived(&("compute_occurrence", index))?,
+                        &[source],
+                        Transform::Filter {
+                            retained: &[index],
+                            captures: &[],
+                        },
+                    )?;
                     let content = crate::python_compute::await_checked(
                         ctx.execution_scope,
-                        checked.run(
-                            &ctx.st.python_pool,
-                            &owner,
-                            source_mat.result.coverage,
-                            &[row],
-                        ),
+                        checked.run(&ctx.st.python_pool, &owner, &membership, &[row]),
                     )
                     .await?;
-                    bytes += content.len();
-                    if bytes > 1_048_576 {
-                        return Err("Python output byte budget exceeded".into());
-                    }
-                    rendered.push(serde_json::json!({"content": content}));
+                    plasm_core::charge_value_budget(&content, &mut remaining)?;
+                    rendered.push(content);
                 }
             } else {
                 let content = crate::python_compute::run_worker(
                     &ctx.st.python_pool,
                     checked,
                     owner,
-                    source_mat.result.coverage,
+                    source_mat.result.collection.membership(),
                     input,
                     ctx.execution_scope,
                 )
                 .await?;
-                rendered.push(serde_json::json!({"content": content}));
+                rendered.push(content);
             }
             report(ExecutionStage::Validating);
-            rendered
+            let ComputeOp::Python { output_type, .. } = &compute.compute.op else {
+                unreachable!()
+            };
+            let record = output_type.is_non_null_record();
+            value_shapes = vec![
+                if record {
+                    MaterializedValueShape::Record
+                } else {
+                    MaterializedValueShape::ScalarColumn
+                };
+                rendered.len()
+            ];
+            let rows = rendered
+                .into_iter()
+                .map(|value| {
+                    if record {
+                        plasm_core::ValueRow::from_output(value)
+                    } else {
+                        plasm_core::ValueRow::from_iter([("value".into(), value)])
+                    }
+                })
+                .collect();
+            ComputedRows::synthetic(rows)
         } else {
+            let input_contract = crate::map_body_schema::row_operation_contract(
+                ctx.es,
+                schema_nodes,
+                &compute.compute.source,
+            )?;
+            let input_contract =
+                plasm_core::SyntheticResultSchema::for_value(input_contract)?.row_contract()?;
             eval_compute_with_row_source(
                 &compute.compute,
+                &input_contract,
                 &source_mat.row_source,
                 &binding_rows,
                 ctx.es,
@@ -270,14 +373,14 @@ async fn live_materialize_pure(
             )
             .await?
         };
-        let row_identities =
-            propagate_row_identities(&source_id, &compute.compute.op, materialized, rows.len())?;
-        let entity_override = compute.compute.schema.entity.as_deref().map(str::to_string);
-        let input_coverage = coverage_from_compute_collections(
-            source_mat.result.coverage,
+        let row_identities = propagate_row_identities(
+            &source_id,
             &compute.compute.op,
             materialized,
-        );
+            &computed.occurrences,
+            computed.rows.len(),
+        )?;
+        let entity_override = compute.compute.schema.entity.as_deref().map(str::to_string);
         return materialize_synthetic_node(
             ctx.st,
             ctx.es,
@@ -285,9 +388,10 @@ async fn live_materialize_pure(
             &pure.into_validated_node(),
             owner_entry_id.as_str(),
             entity_override.as_deref(),
-            rows,
+            computed.rows,
+            value_shapes,
             row_identities,
-            input_coverage,
+            materialized,
             ctx.trace,
         )
         .await;
@@ -311,14 +415,15 @@ async fn live_materialize_pure(
     let binding_rows = pure.binding_rows(materialized)?;
     let pm = pure.materialize(
         &PureInputs {
+            es: ctx.es,
+            schema_nodes,
             source_rows: &source_rows,
             input_rows: &input_rows,
             binding_rows: &binding_rows,
         },
         materialized,
     )?;
-    let source_coverage = coverage_of_declared_source(source.as_ref(), materialized)?;
-    materialize_synthetic_node(
+    let result = materialize_synthetic_node(
         ctx.st,
         ctx.es,
         ctx.session_id,
@@ -326,11 +431,13 @@ async fn live_materialize_pure(
         owner_entry_id.as_str(),
         pm.entity_override.as_deref(),
         pm.rows,
+        pm.value_shapes,
         pm.row_identities,
-        source_coverage,
+        materialized,
         ctx.trace,
     )
-    .await
+    .await?;
+    Ok(result)
 }
 
 pub(super) async fn live_materialize_io(
@@ -338,7 +445,7 @@ pub(super) async fn live_materialize_io(
     step: &IoStep,
     step_idx: usize,
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
-) -> Result<MaterializedNode, String> {
+) -> Result<MaterializedNode, ExecutionFailure> {
     match step {
         IoStep::MapBody(_) => Err("map body must execute through scoped materialization".into()),
         IoStep::Capture(_) => Err("capture must be installed by its enclosing scope".into()),
@@ -373,7 +480,7 @@ pub(super) async fn live_materialize_io(
                 let wire_coercion_by_alias =
                     wire_coercion_by_alias_from_inputs(ctx.es, &mut input_rows)?;
                 let scope = EvalScope::Root {
-                    row: &serde_json::Value::Null,
+                    row: &plasm_core::Value::Null,
                 };
                 let inputs = InputEnv { rows: &input_rows };
                 let env = PlanEvalEnv {
@@ -383,10 +490,9 @@ pub(super) async fn live_materialize_io(
                 };
                 instantiate_expr_template(template, &env, &scoped_es.cgs)?
             } else {
-                return Err(format!(
-                    "plan node {} has no executable IR",
-                    surface.id.as_str()
-                ));
+                return Err(
+                    format!("plan node {} has no executable IR", surface.id.as_str()).into(),
+                );
             };
             let expr_label = &crate::plan_dry_display::render_executable_expr(
                 &parsed.expr,
@@ -394,7 +500,10 @@ pub(super) async fn live_materialize_io(
                 Some(&scoped_es),
             );
             let host_page = crate::plan_read_bounds::effective_host_page_size(&surface);
-            let (parsed, mut result, artifact) = execute_plasm_parsed_expr(
+            // Surface IO is a deep async execution tree, just like relation and
+            // control-flow IO below. Keep it out of the dispatcher's future so
+            // nested hydration does not pay its stack cost on every poll.
+            let (parsed, mut result, artifact) = Box::pin(execute_plasm_parsed_expr(
                 ctx.st,
                 &scoped_es,
                 ctx.session_id,
@@ -406,7 +515,7 @@ pub(super) async fn live_materialize_io(
                 surface.pushed_read_budget.clone(),
                 ctx.rows_progress.clone(),
                 Some(ctx.plan_shared.as_ref()),
-            )
+            ))
             .await?;
             let entity_type = surface
                 .qualified_entity
@@ -418,7 +527,12 @@ pub(super) async fn live_materialize_io(
             // it hides rows from downstream algebra and mislabels a page Complete.
             // Presentation previews belong to the renderer; only an explicit
             // page_size requests a synthetic cursor over these acquired rows.
-            if let Some(cap) = surface.page_size {
+            if let Some(cap) = surface.page_size.filter(|_| {
+                !matches!(
+                    surface.pushed_read_budget,
+                    Some(crate::plan_read_bounds::PushedReadBudget::Complete)
+                )
+            }) {
                 crate::plan_read_bounds::cap_execution_result_page(
                     &scoped_es,
                     &mut result,
@@ -428,10 +542,10 @@ pub(super) async fn live_materialize_io(
                         format!("pageable step `{}` lacks catalog ownership", surface.id)
                     })?,
                     ctx.trace.and_then(|t| t.logical_session_ref.as_deref()),
-                );
+                )?;
             }
             if let Some(scope) = ctx.execution_scope {
-                scope.sync_rows_materialized(result.count.max(result.entities.len()));
+                scope.sync_rows_materialized(result.count().max(result.entities().len()));
             }
             let rehydrator = crate::graph_rehydrate::GraphSurfaceRehydrator::new(
                 &scoped_es,
@@ -444,7 +558,7 @@ pub(super) async fn live_materialize_io(
                 .await;
             let identity_entities = rehydrator
                 .resolve_source_parents(entity_type, &result)
-                .await;
+                .await?;
             let row_identities = row_identities_from_entities(
                 &scoped_es,
                 parsed.expr.primary_entity(),
@@ -455,6 +569,8 @@ pub(super) async fn live_materialize_io(
                     .await;
             }
             Ok(MaterializedNode {
+                value_shapes: Vec::new(),
+                optional_fields: Default::default(),
                 qualified_entity: surface
                     .qualified_entity
                     .clone()
@@ -512,15 +628,10 @@ pub(super) async fn live_materialize_io(
         ))
         .await?),
         IoStep::IterateUntil(it) => Ok(Box::pin(materialize_iterate_until_node(
-            ctx.st,
-            ctx.es,
-            ctx.session_id,
+            ctx,
             step_idx,
             it,
             materialized,
-            ctx.trace,
-            ctx.sink,
-            Some(Arc::clone(ctx.plan_shared)),
         ))
         .await?),
     }

@@ -194,7 +194,7 @@ impl PlasmMcpHandler {
                 .get_execute_session(&b.prompt_hash, &b.session_id)
                 .await
             else {
-                return Err(HostFault(MCP_EXECUTE_SESSION_UNAVAILABLE.to_string()));
+                return Err(HostFault::from(MCP_EXECUTE_SESSION_UNAVAILABLE));
             };
             if let Some(program) = invocation.program() {
                 if let Some(op_result) = try_dispatch_operation_program(
@@ -206,7 +206,7 @@ impl PlasmMcpHandler {
                 )
                 .await
                 {
-                    return op_result.map_err(HostFault);
+                    return op_result.map_err(HostFault::from);
                 }
             }
             if run_live {
@@ -222,7 +222,7 @@ impl PlasmMcpHandler {
                     call_index,
                 )
                 .await
-                .map_err(HostFault)?;
+                .map_err(HostFault::from)?;
                 let wire = committed_plasm_run::McpExecuteWire {
                     prompt_hash: b.prompt_hash.clone(),
                     session_id: b.session_id.clone(),
@@ -250,7 +250,7 @@ impl PlasmMcpHandler {
                     wait_live,
                 })
                 .await
-                .map_err(HostFault)
+                .map_err(HostFault::from)
             } else {
                 let program = invocation.program().ok_or_else(|| {
                     HostFault("missing `program`: call `plasm` with a program".into())
@@ -347,7 +347,7 @@ impl PlasmMcpHandler {
             Err(super::host_fault::HostFault(msg)) => {
                 self.plasm
                     .trace_hub
-                    .trace_add_plasm_error(&ls_key, call_index, None, msg.clone())
+                    .trace_add_plasm_error(&ls_key, call_index, None, msg.to_string())
                     .await;
                 let (tok_prompt, tok_inv, tok_resp, tok_total) =
                     self.mcp_plasm_token_snapshot_logical(key, &ls_key).await;
@@ -368,7 +368,7 @@ impl PlasmMcpHandler {
                     "execute_failed",
                     started.elapsed(),
                 );
-                Ok(CallToolResult::with_error(CallToolError::from_message(msg)))
+                Ok(super::host_fault::HostFault(msg).into_tool_result())
             }
         }
     }

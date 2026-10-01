@@ -88,9 +88,14 @@ async fn execute_plasm_tool_dry_run_inner(
 
     let mut phase = Instant::now();
     let bundle =
-        match crate::compile_program(pipeline, Some(cross), ctx.es.as_ref(), &plan_name, program) {
+        match crate::compile_program(pipeline, Some(cross), ctx.es.as_ref(), &plan_name, program)
+            .await
+        {
             Ok(b) => b,
-            Err(stage) => {
+            Err(crate::compilation_error::CompilationError::Host(failure)) => {
+                return Err(failure.into())
+            }
+            Err(crate::compilation_error::CompilationError::Program(stage)) => {
                 record_mcp_plasm_dry_run_phase("compile", phase.elapsed());
                 record_mcp_plasm_dry_run_phase("total", total_started.elapsed());
                 return Ok(plan_result_from_stage(&ctx, program, stage));
@@ -214,7 +219,7 @@ async fn execute_plasm_tool_dry_run_inner(
             },
         )
         .await
-        .map_err(HostFault);
+        .map_err(HostFault::from);
     }
 
     let commit_ref = ctx.es.mint_plan_commit_ref();
@@ -252,7 +257,7 @@ async fn execute_plasm_tool_dry_run_inner(
         !inline_fits,
     )
     .await
-    .map_err(|e| HostFault(e.to_string()))?;
+    .map_err(|e| HostFault::from(e.to_string()))?;
     record_mcp_plasm_dry_run_phase("commit_register", phase.elapsed());
 
     phase = Instant::now();

@@ -3,9 +3,9 @@
 Plan from the current requirement, taught symbols and observed results. Stop with no tool call when observations establish every requested effect. Intermediate results alone are not completion.
 
 1. Call `plasm_context` with `session_mode: "new"`, the original `intent`. Relevant capabilities open the language card and `logical_session_ref`.
-2. You own conversational decisions. Teaching does not authorize execution. Use available capabilities according to the current intent and observed evidence. Routing errors are operational failures.
-3. One workflow uses one `logical_session_ref`. Reuse it for `plasm` / `plasm_run`. Extend only for current discovery needs; the runtime preserves intent ancestry and existing symbols. Repair parse errors in the same session. Intent does not select the session.
+2. Teaching does not authorize execution. Choose capabilities from current intent and evidence. Routing errors are operational failures.
+3. One workflow uses one `logical_session_ref`. Reuse it for `plasm` / `plasm_run`. Extend for discovery; intent ancestry and existing symbols persist. Repair parse errors in the same session. Intent does not select the session.
 4. Follow declared prerequisites and input bindings in the card. Write acquisition as ordinary calls, binding provider outputs into consumer inputs. Discovery and teaching perform no acquisition.
-5. Submit the program to `plasm`. Clean reads may execute directly; a returned `run_ref` identifies a reviewed plan for `plasm_run`.
+5. Write one Python class derived from `Program`, following the supplied semantic card and incremental domain declarations. `build` declares the DAG; typed `@compute` methods render or derive values after their declared inputs materialize. Submit the program to `plasm`. Clean reads may execute directly; a returned `run_ref` identifies a reviewed plan for `plasm_run`.
 
-Copy symbols, wire names and enum literals exactly. Reuse observed rows and labels. When needed, follow artifact links through `resources/read` or `plasm_read_run_artifact` for complete results. If requested effects remain absent, revise the plan within the same session.
+Copy symbols, wire names and enum literals exactly. Reuse observed rows and labels. Select, aggregate and compute inside the DAG; return only the requested results. For omitted values, revise the projection or typed compute. For missing effects, revise the plan. Keep the same session.

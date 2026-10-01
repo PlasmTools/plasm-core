@@ -30,10 +30,14 @@ impl ExecutionEngine {
             let cached = entity.clone();
             stamp_get_capability_params(mat, cgs, get, ambient, &cached);
             return Ok(ExecutionResult {
-                entities: vec![cached],
-                count: 1,
+                collection: ExecutionCollection::observe_for(
+                    cgs,
+                    get,
+                    mat.graph.stats().version,
+                    vec![cached],
+                    plasm_core::collection_codec::Observation::ExactOutput { decoded: 1 },
+                )?,
                 has_more: false,
-                coverage: ResultCoverage::Complete,
                 pagination_resume: None,
                 paging_handle: None,
                 source: ExecutionSource::Cache,
@@ -64,10 +68,14 @@ impl ExecutionEngine {
         stamp_get_capability_params(mat, cgs, get, ambient, &cached);
 
         Ok(ExecutionResult {
-            entities: vec![cached],
-            count: 1,
+            collection: ExecutionCollection::observe_for(
+                cgs,
+                get,
+                mat.graph.stats().version,
+                vec![cached],
+                plasm_core::collection_codec::Observation::ExactOutput { decoded: 1 },
+            )?,
             has_more: false,
-            coverage: ResultCoverage::Complete,
             pagination_resume: None,
             paging_handle: None,
             source,
@@ -100,10 +108,14 @@ impl ExecutionEngine {
             required_relation.is_none_or(|name| entity.relations.contains_key(name))
         }) {
             return Ok(ExecutionResult {
-                entities: vec![entity.clone()],
-                count: 1,
+                collection: ExecutionCollection::observe_for(
+                    cgs,
+                    get,
+                    mat.graph.stats().version,
+                    vec![entity.clone()],
+                    plasm_core::collection_codec::Observation::ExactOutput { decoded: 1 },
+                )?,
                 has_more: false,
-                coverage: ResultCoverage::Complete,
                 pagination_resume: None,
                 paging_handle: None,
                 source: ExecutionSource::Cache,
@@ -152,10 +164,14 @@ impl ExecutionEngine {
         stamp_get_capability_params(mat, cgs, get, &ambient, &cached);
 
         Ok(ExecutionResult {
-            entities: vec![cached],
-            count: 1,
+            collection: ExecutionCollection::observe_for(
+                cgs,
+                get,
+                mat.graph.stats().version,
+                vec![cached],
+                plasm_core::collection_codec::Observation::ExactOutput { decoded: 1 },
+            )?,
             has_more: false,
-            coverage: ResultCoverage::Complete,
             pagination_resume: None,
             paging_handle: None,
             source,
@@ -392,13 +408,13 @@ impl ExecutionEngine {
                 ambient,
             )
             .await?;
-            let cached = res
-                .entities
-                .first()
-                .cloned()
-                .ok_or_else(|| RuntimeError::CacheError {
-                    message: format!("composed view `{}` returned no entity row", vt.view),
-                })?;
+            let cached =
+                res.entities()
+                    .first()
+                    .cloned()
+                    .ok_or_else(|| RuntimeError::CacheError {
+                        message: format!("composed view `{}` returned no entity row", vt.view),
+                    })?;
             return Ok((cached, res.source));
         }
 

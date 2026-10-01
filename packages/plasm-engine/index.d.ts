@@ -30,6 +30,8 @@ export interface JsCatalogInfo {
 }
 
 export interface JsDryRunResult {
+  writeCount: number
+  failureJson?: string
   planCommitRef: string
   summary: string
   compJson: string
@@ -42,6 +44,7 @@ export interface JsRunPlanResult {
   rowsJson?: string
   metaJson?: string
   artifactsJson?: string
+  failureJson?: string
 }
 
 export interface JsSeed {

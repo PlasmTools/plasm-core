@@ -87,7 +87,7 @@ async fn embedded_relation_without_get_preserves_rows_and_summary_status() {
             .unwrap();
         assert_eq!(
             result
-                .entities
+                .entities()
                 .iter()
                 .map(|row| row.fields["note"].to_value())
                 .collect::<Vec<_>>(),
@@ -99,7 +99,7 @@ async fn embedded_relation_without_get_preserves_rows_and_summary_status() {
             "{program}"
         );
         assert!(result
-            .entities
+            .entities()
             .iter()
             .all(|row| row.completeness == plasm_runtime::EntityCompleteness::Summary));
         assert_eq!(result.stats.network_requests, requests, "{program}");

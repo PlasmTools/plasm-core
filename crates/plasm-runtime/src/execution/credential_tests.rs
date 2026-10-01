@@ -159,13 +159,13 @@ async fn exercise_scoped_injection() {
         let create = plasm_core::CreateExpr::new("acquire", "Receipt", input);
         let mut cache = SessionMaterialization::new();
         let result = engine.execute_create(&create, &cgs, &mut cache, ExecutionMode::Live).await.unwrap();
-        assert_eq!(result.count, 1);
+        assert_eq!(result.count(), 1);
         assert_eq!(store.records.lock().unwrap()[0].1, CredentialSource::Host {});
         assert!(!serde_json::to_string(&operation).unwrap().contains("synthetic-token"));
         assert_eq!(result.stats.network_requests, 0);
         assert_eq!(secrets.0.load(Ordering::SeqCst), 0, "binding must not resolve secrets");
         assert_eq!(transport.0.load(Ordering::SeqCst), 0);
-        let reference = result.entities[0].fields["reference"].to_value();
+        let reference = result.entities()[0].fields["reference"].to_value();
         let request = serde_json::json!({"method":"GET","path":[{"type":"literal","value":"records"}],"auth":{"scheme":"credential","slot":"record_access","resource":{"type":"const","value":{"record":"a"}},"reference":{"type":"const","value":reference}}});
         let template = parse_capability_template(&request).unwrap();
         let mut operation = compile_operation_dispatch(&template, &CmlEnv::new()).unwrap();

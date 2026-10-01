@@ -67,6 +67,7 @@ paths:
               example:
                 - id: "i1"
                   title: "Alpha"
+                  code: "AAA"
                   score: 10
                   owner: "alice"
                   lines:
@@ -85,6 +86,7 @@ paths:
                       label: "review"
                 - id: "i2"
                   title: "Beta"
+                  code: "BBB"
                   score: 20
                   owner: "bob"
                 - id: "i3"
@@ -144,6 +146,7 @@ paths:
               example:
                 - id: "i1"
                   title: "Alpha"
+                  code: "AAA"
                   score: 10
                   owner: "alice"
   /language/v1/viewer:
@@ -191,6 +194,9 @@ paths:
               example:
                 id: "i1"
                 title: "Alpha"
+                code: "AAA"
+                status: "draft"
+                recorded_at: "2026-01-01T00:00:00Z"
                 score: 10
                 owner: "alice"
                 summary:
@@ -617,6 +623,7 @@ components:
       example:
         id: "i1"
         title: "Alpha"
+        code: "AAA"
         score: 10
         owner: "alice"
         lines:
@@ -639,6 +646,17 @@ components:
         owner:
           type: string
           example: "alice"
+        code:
+          type: string
+          example: "AAA"
+        status:
+          type: string
+          enum: [draft, published, archived]
+          example: "draft"
+        recorded_at:
+          type: string
+          format: date-time
+          example: "2026-01-01T00:00:00Z"
     LangItemCreate:
       type: object
       required: [title]
@@ -720,6 +738,7 @@ components:
       example:
         id: "i1"
         title: "Alpha"
+        code: "AAA"
         score: 10
         owner: "alice"
         summary:

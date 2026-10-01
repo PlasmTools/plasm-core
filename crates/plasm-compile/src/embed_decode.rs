@@ -47,7 +47,6 @@ fn decode_single_entity(
     let core = decode_entity_fields_and_ref(decoder, source, cgs)?;
     let mut relations = IndexMap::new();
     let mut embedded_entities = Vec::new();
-    let field_diagnostics = core.field_diagnostics;
 
     for relation_decoder in &decoder.relations {
         if !relation_decode_path_specified(source, &relation_decoder.decoder.source) {
@@ -65,6 +64,17 @@ fn decode_single_entity(
                 ),
             });
         }
+        let exhaustive_count = cgs
+            .map(|cgs| {
+                validate_exhaustive_embed(
+                    cgs,
+                    decoder.entity.as_str(),
+                    &relation_decoder.relation,
+                    source,
+                )
+            })
+            .transpose()?
+            .flatten();
         let child_decoder =
             child_decoder_with_parent_ambient(&core.fields, &relation_decoder.decoder);
         let child_sources = extract_path(&child_decoder.source, source)?;
@@ -78,7 +88,6 @@ fn decode_single_entity(
                 fields: related.fields,
                 relations: IndexMap::new(),
                 embedded_entities: Vec::new(),
-                field_diagnostics: related.field_diagnostics,
             };
             if let Some(cgs) = cgs {
                 expand_transitive_from_parent_get_embeds(
@@ -93,7 +102,17 @@ fn decode_single_entity(
         }
         relations.insert(
             relation_decoder.relation.clone(),
-            DecodedRelation::Specified(refs),
+            DecodedRelation::Specified(observed_membership(
+                cgs,
+                &(
+                    "decoded_embed",
+                    &core.reference,
+                    &relation_decoder.relation,
+                    source,
+                ),
+                refs,
+                exhaustive_count,
+            )?),
         );
     }
 
@@ -102,14 +121,12 @@ fn decode_single_entity(
         fields: core.fields,
         relations,
         embedded_entities,
-        field_diagnostics,
     })
 }
 
 struct DecodedEntityCore {
     reference: Ref,
     fields: IndexMap<String, Value>,
-    field_diagnostics: Vec<plasm_core::DecodeFieldDiagnostic>,
 }
 
 fn value_to_key_slot(v: &Value) -> Option<String> {
@@ -117,6 +134,7 @@ fn value_to_key_slot(v: &Value) -> Option<String> {
         Value::PlasmInputRef(_) | Value::GetScalarExtract(_) | Value::StringTemplate(_) => None,
         Value::String(s) | Value::PhraseIdent(s) => Some(s.clone()),
         Value::Integer(i) => Some(i.to_string()),
+        Value::Unsigned(i) => Some(i.to_string()),
         Value::Float(f) => {
             if f.is_finite() && f.fract() == 0.0 {
                 Some((*f as i64).to_string())
@@ -136,7 +154,6 @@ fn decode_entity_fields_and_ref(
     cgs: Option<&CGS>,
 ) -> Result<DecodedEntityCore, DecodeError> {
     let mut fields = IndexMap::new();
-    let mut field_diagnostics = Vec::new();
     let entity_def = cgs.and_then(|c| c.get_entity(decoder.entity.as_str()));
 
     let id_value = if let Some(ref rid) = decoder.request_identity_override {
@@ -170,15 +187,12 @@ fn decode_entity_fields_and_ref(
                     if let (Some(cgs), Some(ent)) = (cgs, entity_def) {
                         if let Some(fs) = ent.fields.get(field_decoder.field.as_str()) {
                             if let Ok(nv) = fs.named_value(cgs) {
-                                let (v, diag) = plasm_core::decode_coerce_and_validate_field(
+                                decoded_value = plasm_core::decode_coerce_and_validate_field(
                                     field_decoder.field.as_str(),
                                     nv,
                                     decoded_value,
-                                );
-                                decoded_value = v;
-                                if let Some(d) = diag {
-                                    field_diagnostics.push(d);
-                                }
+                                )
+                                .map_err(field_decode_error)?;
                             }
                         }
                     }
@@ -222,14 +236,8 @@ fn decode_entity_fields_and_ref(
                         .ok_or_else(|| DecodeError::InvalidStructure {
                             message: format!("identity field `{name}` has no declared value type"),
                         })?;
-                    let (value, diagnostic) =
-                        plasm_core::decode_coerce_and_validate_field(name, schema, raw);
-                    if let Some(diagnostic) = diagnostic {
-                        return Err(DecodeError::InvalidStructure {
-                            message: diagnostic.message,
-                        });
-                    }
-                    value
+                    plasm_core::decode_coerce_and_validate_field(name, schema, raw)
+                        .map_err(field_decode_error)?
                 } else {
                     raw
                 };
@@ -244,7 +252,8 @@ fn decode_entity_fields_and_ref(
         .filter_map(|fd| fd.money.clone().map(|spec| (fd.field.clone(), spec)))
         .collect();
     if !money_specs.is_empty() {
-        plasm_core::decode_coerce_money_fields(&mut fields, money_specs, &mut field_diagnostics);
+        plasm_core::decode_coerce_money_fields(&mut fields, money_specs)
+            .map_err(field_decode_error)?;
     }
 
     // Parent-scoped identity components are also observable typed fields.
@@ -268,14 +277,8 @@ fn decode_entity_fields_and_ref(
                 .ok_or_else(|| DecodeError::InvalidStructure {
                     message: format!("identity field `{key}` has no declared value type"),
                 })?;
-            let (value, diagnostic) =
-                plasm_core::decode_coerce_and_validate_field(key, schema, raw);
-            if let Some(diagnostic) = diagnostic {
-                return Err(DecodeError::InvalidStructure {
-                    message: diagnostic.message,
-                });
-            }
-            value
+            plasm_core::decode_coerce_and_validate_field(key, schema, raw)
+                .map_err(field_decode_error)?
         } else {
             raw
         };
@@ -283,11 +286,7 @@ fn decode_entity_fields_and_ref(
     }
 
     let reference = build_decoded_reference(decoder, &fields, &id_value)?;
-    Ok(DecodedEntityCore {
-        reference,
-        fields,
-        field_diagnostics,
-    })
+    Ok(DecodedEntityCore { reference, fields })
 }
 
 fn build_decoded_reference(
@@ -364,6 +363,47 @@ fn value_for_id_field_from_string(s: &str) -> Value {
     }
 }
 
+fn validate_exhaustive_embed(
+    cgs: &CGS,
+    parent: &str,
+    relation: &str,
+    wire: &serde_json::Value,
+) -> Result<Option<usize>, DecodeError> {
+    let materialize = cgs
+        .get_entity(parent)
+        .and_then(|entity| entity.relations.get(relation))
+        .and_then(|relation| relation.materialize.as_ref());
+    if let Some(RelationMaterialization::FromParentGet {
+        collection_coverage: plasm_core::EmbeddedCollectionCoverage::Complete,
+        path,
+    }) = materialize
+    {
+        if path.is_empty() {
+            return Err(DecodeError::InvalidStructure {
+                message: "exhaustive embedded relation requires a nonempty path".into(),
+            });
+        }
+        return plasm_core::relation_materialize::exhaustive_from_parent_get_count(
+            &plasm_core::json_value_to_plasm_value(wire), path,
+        ).map(Some).ok_or_else(|| DecodeError::InvalidStructure {
+            message: format!("exhaustive embedded relation `{parent}.{relation}` has a missing, null or malformed path branch"),
+        });
+    }
+    Ok(None)
+}
+
+fn observed_membership(
+    cgs: Option<&CGS>,
+    context: &impl serde::Serialize,
+    refs: Vec<Ref>,
+    exhaustive_count: Option<usize>,
+) -> Result<plasm_core::row_contract::RelationMembership, DecodeError> {
+    plasm_core::row_contract::RelationMembership::observe(cgs, context, refs, exhaustive_count)
+        .map_err(|e| DecodeError::InvalidStructure {
+            message: e.to_string(),
+        })
+}
+
 fn expand_transitive_from_parent_get_embeds(
     root: &mut DecodedEntity,
     root_wire: &serde_json::Value,
@@ -384,7 +424,7 @@ fn expand_transitive_from_parent_get_embeds(
         };
         for (rel_name, rel_schema) in &def.relations {
             let path_seg = match &rel_schema.materialize {
-                Some(RelationMaterialization::FromParentGet { path })
+                Some(RelationMaterialization::FromParentGet { path, .. })
                 | Some(RelationMaterialization::PreferFromParentGet { path, .. }) => path,
                 _ => continue,
             };
@@ -396,6 +436,8 @@ fn expand_transitive_from_parent_get_embeds(
             if !relation_decode_path_specified(&wire, &rel_path) {
                 continue;
             }
+            let exhaustive_count =
+                validate_exhaustive_embed(cgs, &ent_type, rel_name.as_str(), &wire)?;
             let target_type = rel_schema.target_resource.as_str();
             let Some(target_ent) = cgs.get_entity(target_type) else {
                 continue;
@@ -415,7 +457,6 @@ fn expand_transitive_from_parent_get_embeds(
                     fields: related.fields,
                     relations: IndexMap::new(),
                     embedded_entities: Vec::new(),
-                    field_diagnostics: related.field_diagnostics,
                 });
                 let mut child_path = path.clone();
                 child_path.push(child_idx);
@@ -423,7 +464,12 @@ fn expand_transitive_from_parent_get_embeds(
             }
             entity.relations.insert(
                 rel_name.as_str().to_string(),
-                DecodedRelation::Specified(refs),
+                DecodedRelation::Specified(observed_membership(
+                    Some(cgs),
+                    &("decoded_embed", &entity.reference, rel_name, &wire),
+                    refs,
+                    exhaustive_count,
+                )?),
             );
         }
     }
@@ -493,6 +539,55 @@ mod tests {
     use crate::decoder::{PathExpr, RelationDecoder};
     use plasm_core::Cardinality;
     use serde_json::json;
+
+    #[test]
+    fn exhaustive_embed_rejects_missing_wildcard_suffix_before_cache_normalization() {
+        let mut cgs = plasm_core::load_schema_dir(
+            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/hydration_boundary_matrix"),
+        )
+        .unwrap();
+        cgs.entities
+            .get_mut("Folder")
+            .unwrap()
+            .relations
+            .get_mut("notes")
+            .unwrap()
+            .materialize = Some(
+            serde_json::from_value(
+                json!({"kind":"from_parent_get", "collection_coverage":"complete",
+                "path":[{"key":"notes"},{"wildcard":true},{"key":"target"}]}),
+            )
+            .unwrap(),
+        );
+        let parent = cgs.get_entity("Folder").unwrap();
+        let target = cgs.get_entity("Note").unwrap();
+        let Some(RelationMaterialization::FromParentGet { path, .. }) =
+            &parent.relations["notes"].materialize
+        else {
+            panic!("fixture embed")
+        };
+        let child = entity_decoder_for_from_parent_get_target(
+            target,
+            parent,
+            path_expr_from_json_segments(path).unwrap(),
+        );
+        let decoder =
+            EntityDecoder::new("Folder", PathExpr::empty()).with_relations(vec![RelationDecoder {
+                relation: "notes".into(),
+                decoder: child,
+                cardinality: Cardinality::Many,
+            }]);
+        let invalid = json!({"id":"root", "notes":[{"target":{"note_id":1}},{}]});
+        let error = decode_entities_with_cgs(&decoder, &invalid, Some(&cgs)).unwrap_err();
+        assert!(
+            error.to_string().contains("exhaustive embedded relation"),
+            "{error}"
+        );
+        for valid in [json!({"id":"root", "notes":[]}), json!({"id":"root"})] {
+            decode_entities_with_cgs(&decoder, &valid, Some(&cgs)).unwrap();
+        }
+    }
 
     proptest::proptest! {
         #[test]
@@ -595,7 +690,11 @@ mod tests {
             let rows = decode_entities_with_cgs(&decoder,&body,Some(&cgs)).unwrap();
             let summary = &rows[0].embedded_entities[0];
             let expected: Vec<_> = ids.iter().map(|id| Ref::new("LangDetail",format!("d{id}"))).collect();
-            proptest::prop_assert_eq!(summary.relations.get("detail"),Some(&DecodedRelation::Specified(expected)));
+            let Some(DecodedRelation::Specified(membership)) = summary.relations.get("detail") else {
+                return Err(proptest::test_runner::TestCaseError::fail("missing observed detail membership"));
+            };
+            proptest::prop_assert_eq!(membership.iter().collect::<Vec<_>>(), expected.iter().collect::<Vec<_>>());
+            proptest::prop_assert!(!membership.is_exhaustive());
             proptest::prop_assert_eq!(summary.embedded_entities.len(),ids.len());
             let omitted = json!({"id":"i1","summary":{"id":"s1"}});
             let rows = decode_entities_with_cgs(&decoder,&omitted,Some(&cgs)).unwrap();
@@ -627,5 +726,12 @@ mod tests {
         });
         let err = decode_entities(&item, &body).unwrap_err();
         assert!(err.to_string().contains("leaf"), "{err}");
+    }
+}
+
+fn field_decode_error(error: plasm_core::DecodeFieldDiagnostic) -> DecodeError {
+    DecodeError::FieldContract {
+        field: error.field,
+        reason: error.message,
     }
 }

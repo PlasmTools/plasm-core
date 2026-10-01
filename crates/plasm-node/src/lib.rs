@@ -46,6 +46,8 @@ pub struct JsTeachingResult {
 
 #[napi(object)]
 pub struct JsDryRunResult {
+    pub write_count: u32,
+    pub failure_json: Option<String>,
     pub plan_commit_ref: String,
     pub summary: String,
     pub comp_json: String,
@@ -62,6 +64,8 @@ pub struct JsRunPlanResult {
     pub meta_json: Option<String>,
     #[napi(js_name = "artifactsJson")]
     pub artifacts_json: Option<String>,
+    #[napi(js_name = "failureJson")]
+    pub failure_json: Option<String>,
 }
 
 fn map_err(err: anyhow::Error) -> Error {
@@ -351,8 +355,10 @@ impl PlasmEngine {
         logical_session_id: Option<String>,
     ) -> Result<JsDryRunResult> {
         let mut engine = self.execution_engine(logical_session_id.as_deref()).await?;
-        let result = engine.dry_run(&program).map_err(map_err)?;
+        let result = engine.dry_run(&program).await.map_err(map_err)?;
         Ok(JsDryRunResult {
+            write_count: result.write_count,
+            failure_json: result.failure_json,
             plan_commit_ref: result.plan_commit_ref,
             summary: result.summary,
             comp_json: serde_json::to_string(&result.comp_json)
@@ -375,6 +381,7 @@ impl PlasmEngine {
             rows_json: result.rows_json,
             meta_json: result.meta_json,
             artifacts_json: result.artifacts_json,
+            failure_json: result.failure_json,
         })
     }
 
@@ -399,6 +406,7 @@ impl PlasmEngine {
             rows_json: result.rows_json,
             meta_json: result.meta_json,
             artifacts_json: result.artifacts_json,
+            failure_json: result.failure_json,
         })
     }
 }

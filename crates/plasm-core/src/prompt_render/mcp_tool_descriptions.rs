@@ -1,9 +1,9 @@
-//! Static MCP tool descriptions — canonical home of Plasm language grammar.
+//! Static MCP protocol descriptions; context serves the Python semantic card.
 //!
 //! MCP initialize is poorly supported by clients; **`tools/list` descriptions carry the canonical truth**.
 //! The same bytes are prepended to eval/REPL/`plasm init`/terminal surfaces via [`PLASM_TOOL_DESCRIPTION`].
 
-/// Canonical `plasm` tool description: plan-only framing + full Plasm grammar contract.
+/// Canonical `plasm` protocol: inline reads and reviewed effect plans.
 pub const PLASM_TOOL_DESCRIPTION: &str = include_str!("assets/plasm_tool.txt");
 
 /// Canonical `plasm_run` tool body (without transport-specific artifact-read suffix).
@@ -33,8 +33,8 @@ pub const PLASM_CONTEXT_TOOL_DESCRIPTION: &str = include_str!("assets/plasm_cont
 /// JSON-schema description for the MCP `plasm` tool `program` parameter.
 ///
 /// Truncation-survival stub only: hosts sometimes clip [`PLASM_TOOL_DESCRIPTION`] but keep
-/// per-parameter schema text. **Canonical grammar and worked examples live in
-/// [`PLASM_TOOL_DESCRIPTION`] / `plasm_tool.txt`** — do not duplicate them here.
+/// per-parameter schema text. The Python semantic card and domain declarations arrive through context;
+/// [`PLASM_TOOL_DESCRIPTION`] owns submission protocol, not duplicated grammar.
 /// Budget: [`PLASM_PROGRAM_PARAM_MAX_BYTES`].
 pub const PLASM_PROGRAM_PARAM_DESCRIPTION: &str = include_str!("assets/program_param.txt");
 
@@ -42,7 +42,7 @@ pub const PLASM_PROGRAM_PARAM_DESCRIPTION: &str = include_str!("assets/program_p
 pub const PLASM_PROGRAM_PARAM_MAX_BYTES: usize = 1600;
 
 /// Max bytes for [`PLASM_TOOL_DESCRIPTION`].
-/// Measured `plasm_tool.txt` is 5792 B; cap holds `<>` hole-fill + Get-identity + RA-14 union.
+/// Submission protocol budget; language teaching is served separately by context.
 pub const PLASM_TOOL_DESCRIPTION_MAX_BYTES: usize = 5800;
 
 /// Host-truncation prefixes that must still carry program-authoring mandates.
@@ -62,7 +62,7 @@ pub const TEACHING_VALID_EXPR_MARKER: &str = "Submit exactly one class derived f
 const PROGRAM_PARAM_CONTRACT_MARKERS: &[&str] = &[
     "not JSON data",
     "plasm_context",
-    "language card",
+    "semantic card",
     "explicit return",
     "@compute",
     "session_mode: \"extend\"",

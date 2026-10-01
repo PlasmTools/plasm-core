@@ -91,6 +91,7 @@ pub mod cgs_context;
 pub mod cgs_expression_validate;
 pub mod cgs_federation;
 pub mod cgs_normalize;
+pub mod collection_codec;
 pub mod connect_profile;
 pub mod cross_entity;
 pub mod derived_get;
@@ -130,6 +131,10 @@ pub mod resolved_identity;
 pub mod result_gloss;
 pub mod row_composition;
 pub mod row_contract;
+mod value_hash;
+pub use value_hash::{hash_resolved_value, visit_resolved_value_bytes, visit_stored_value_bytes};
+mod value_row;
+pub use value_row::ValueRow;
 pub mod row_membership;
 pub mod row_plan;
 pub mod row_predicate;
@@ -147,6 +152,8 @@ pub mod taught_seat;
 pub mod teaching_term;
 pub mod template_ref;
 pub mod temporal;
+pub mod temporal_input;
+pub mod temporal_value;
 pub mod tests;
 pub mod text;
 pub mod type_checker;
@@ -296,10 +303,9 @@ pub use row_membership::{
 };
 pub use row_plan::{
     fold_compute_ops, parse_with_body, CatalogFilter, CollectCardinality, CollectReason,
-    CollectRows, CollectedFrame, ColumnName, CompileRowPlan, EnginePlanId, FrameId, FrameShape,
-    IngestBatch, IngestRows, LogicalColumn, LogicalColumnType, PlanNode, PlasmFrameSchema,
-    ProjectSpec, RowComputeEngine, RowComputeError, RowFilter, RowPlan, ScanError, ScanSource,
-    TypedAggregate,
+    CollectRows, CollectedFrame, CompileRowPlan, EnginePlanId, FrameId, FrameShape, IngestBatch,
+    IngestRows, PlanNode, PlasmFrameSchema, ProjectSpec, RowComputeEngine, RowComputeError,
+    RowFilter, RowPlan, ScanError, ScanSource, TypedAggregate,
 };
 pub use row_predicate::{
     entity_def_for_row_predicate, parse_row_predicate_list, row_predicate_from_expr,
@@ -318,12 +324,12 @@ pub use wire_coercion::{
     apply_identity_slots_to_row, binding_value_as_plasm_value, coerce_json_value_for_field_type,
     coerce_value_for_field_type, coerce_value_for_field_type_with_policy,
     collect_relation_binding_proofs, compare_unify_json_ordered_numbers,
-    decode_coerce_and_validate_field, decode_coerce_money_fields, dry_stub_entity_row_json,
+    decode_coerce_and_validate_field, decode_coerce_money_fields, dry_stub_entity_rows,
     dry_stub_json_for_named_value, dry_stub_value_for_named_value,
-    field_type_assignable_for_relation_binding, identity_slot_to_json, json_value_to_plasm_value,
-    parent_entity_field_type, plasm_value_to_json, relation_binding_assignable,
-    restore_id_field_from_compound_ref, try_plasm_value_to_json, value_compatible_with_field_type,
-    DecodeFieldDiagnostic, RelationBindingProof,
+    field_type_assignable_for_relation_binding, identity_slot_to_json, identity_slot_to_value,
+    json_value_to_plasm_value, parent_entity_field_type, plasm_value_to_json,
+    relation_binding_assignable, restore_id_field_from_compound_ref, try_plasm_value_to_json,
+    value_compatible_with_field_type, DecodeFieldDiagnostic, RelationBindingProof,
 };
 pub mod relation_materialize;
 pub mod view_embed_proof;
@@ -366,8 +372,8 @@ pub use schema::{
     CapabilitySchema, CapabilityTemplateJson, Cardinality, CgsCapabilityIndex, CrossFieldRule,
     CrossFieldRuleType, DataClassDimension, DataClassName, DataClassSchema, DataClassSeverity,
     DiscoveryCapabilityHints, DiscoveryEntityHints, DiscoveryRelationHints, EmbedOnMissPolicy,
-    EntityDef, FieldDeriveRule, FieldSchema, FieldValueKind, IdFormat, InputFieldSchema,
-    InputFieldWire, InputSchema, InputType, InputValidation, InputVariantSchema,
+    EmbeddedCollectionCoverage, EntityDef, FieldDeriveRule, FieldSchema, FieldValueKind, IdFormat,
+    InputFieldSchema, InputFieldWire, InputSchema, InputType, InputValidation, InputVariantSchema,
     InvocationControlsSchema, JsonPathSegment, NamedValueSchema, OauthDefaultScopeSet,
     OauthExtension, OauthRequirements, OauthScopeEntry, OutputSchema, OutputType,
     ParentScopeSchema, RelationMaterialization, RelationSchema, RelationScopedFallback,
@@ -407,9 +413,8 @@ pub use symbol_tuning::{
 };
 pub use template_ref::{RefKind, TemplateRefContext};
 pub use temporal::{
-    normalize_temporal_value, parse_temporal_now_env, rewrite_temporal_aliases,
-    rewrite_temporal_aliases_in_predicate_body, temporal_predicate_alias_hint,
-    temporal_reference_now, temporal_wire_format_from_name, wire_temporal_value,
+    normalize_temporal_value, parse_temporal_now_env, temporal_reference_now,
+    temporal_wire_format_from_name, wire_temporal_value,
 };
 pub use type_checker::{
     reject_domain_placeholder_in_executable, type_check_chain, type_check_create,
@@ -431,9 +436,8 @@ pub use value_domain::{
 };
 pub use view_embed_proof::ValidatedViewEmbedProof;
 pub use workflow_identity::{
-    conflict_rules_from_mapping_template, match_conflict_rule, ConflictRule, ConflictRuleExtract,
-    ConflictRuleWhen, ReconcileBindSource, ReconcileSpec, ViewNodeCondition, ViewNodeWhen,
-    WorkflowConflict, WorkflowConflictKind, WriteOutcome,
+    ReconcileBindSource, ReconcileSpec, ViewNodeCondition, ViewNodeWhen, WorkflowConflict,
+    WorkflowConflictKind, WriteOutcome,
 };
 
 pub mod operand_binding;
@@ -448,3 +452,18 @@ pub mod entity_projection;
 
 /// Recursive materialized value contracts shared by source frontends.
 pub mod value_contract;
+
+pub mod value_expression;
+
+pub use value::charge_value_budget;
+
+#[cfg(test)]
+macro_rules! fixture_value { ($($tt:tt)*) => { serde_json::from_value::<$crate::Value>(serde_json::json!($($tt)*)).unwrap() }; }
+#[cfg(test)]
+macro_rules! fixture_row { ($($tt:tt)*) => { $crate::ValueRow::try_from($crate::fixture_value!($($tt)*)).unwrap() }; }
+#[cfg(test)]
+pub(crate) use {fixture_row, fixture_value};
+
+pub mod value_arithmetic;
+pub mod value_equality;
+pub mod value_order;

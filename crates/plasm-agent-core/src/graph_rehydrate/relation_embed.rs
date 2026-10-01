@@ -1,13 +1,8 @@
 //! CEP-4: relation embed snapshot — one graph lock, then lock-free apply.
 
 use indexmap::IndexMap;
-use plasm_core::{
-    partition_prefer_resolutions, Cardinality, Ref, RelationMaterialization, RelationRowResolution,
-    CGS, MAX_FROM_PARENT_GET_EMBED_DEPTH,
-};
-use plasm_runtime::{entity_to_row_json, CachedEntity, SessionMaterialization};
-
-use crate::execute_session::ExecuteSession;
+use plasm_core::{Cardinality, Ref, RelationMaterialization, CGS, MAX_FROM_PARENT_GET_EMBED_DEPTH};
+use plasm_runtime::{entity_to_row_values, CachedEntity, SessionMaterialization};
 
 fn relation_is_embed_materialize(materialize: &Option<RelationMaterialization>) -> bool {
     matches!(
@@ -23,7 +18,7 @@ pub(crate) fn wire_row_with_from_parent_embeds(
     entity: &CachedEntity,
     cgs: &CGS,
     mat: &SessionMaterialization,
-) -> serde_json::Value {
+) -> plasm_core::ValueRow {
     let root = entity.reference.clone();
     let mut depths: IndexMap<Ref, usize> = IndexMap::new();
     let mut queue = vec![(root.clone(), 0usize)];
@@ -53,7 +48,7 @@ pub(crate) fn wire_row_with_from_parent_embeds(
         }
     }
 
-    let mut memo: IndexMap<Ref, serde_json::Value> = IndexMap::new();
+    let mut memo: IndexMap<Ref, plasm_core::ValueRow> = IndexMap::new();
     let mut refs_by_depth: Vec<(Ref, usize)> = depths.into_iter().collect();
     refs_by_depth.sort_by(|(_, a), (_, b)| b.cmp(a));
 
@@ -61,9 +56,9 @@ pub(crate) fn wire_row_with_from_parent_embeds(
         let Some(e) = (if r == root { Some(entity) } else { mat.get(&r) }) else {
             continue;
         };
-        let mut row = entity_to_row_json(e, Some(cgs));
+        let mut row = entity_to_row_values(e, Some(cgs));
         if let (Some(obj), Some(def)) = (
-            row.as_object_mut(),
+            Some(row.fields_mut()),
             cgs.get_entity(e.reference.entity_type.as_str()),
         ) {
             for (rel_name, rel_schema) in &def.relations {
@@ -85,7 +80,7 @@ pub(crate) fn wire_row_with_from_parent_embeds(
                             .iter()
                             .map(|child| embedded_identity_row(child, &memo, cgs))
                             .collect();
-                        obj.insert(wire.to_string(), serde_json::Value::Array(arr));
+                        obj.insert(wire.to_string(), plasm_core::Value::Array(arr));
                     }
                 }
             }
@@ -95,18 +90,22 @@ pub(crate) fn wire_row_with_from_parent_embeds(
 
     memo.get(&root)
         .cloned()
-        .unwrap_or_else(|| entity_to_row_json(entity, Some(cgs)))
+        .unwrap_or_else(|| entity_to_row_values(entity, Some(cgs)))
 }
 
 /// A missing cache payload is still a known identity, never a display string or a dropped row.
 fn embedded_identity_row(
     reference: &Ref,
-    observed: &IndexMap<Ref, serde_json::Value>,
+    observed: &IndexMap<Ref, plasm_core::ValueRow>,
     cgs: &CGS,
-) -> serde_json::Value {
-    observed.get(reference).cloned().unwrap_or_else(|| {
-        plasm_core::row_contract::RowCodec::new(Some(cgs)).identity_row(reference)
-    })
+) -> plasm_core::Value {
+    observed
+        .get(reference)
+        .cloned()
+        .unwrap_or_else(|| {
+            plasm_core::row_contract::RowCodec::new(Some(cgs)).identity_values(reference)
+        })
+        .into_value()
 }
 
 fn identity_only_entity(reference: &Ref) -> CachedEntity {
@@ -126,94 +125,18 @@ pub(crate) fn wire_rows_for_embed_entities(
     entities: &[CachedEntity],
     cgs: &CGS,
     mat: &SessionMaterialization,
-) -> Vec<serde_json::Value> {
+) -> Vec<plasm_core::ValueRow> {
     entities
         .iter()
         .map(|e| wire_row_with_from_parent_embeds(e, cgs, mat))
         .collect()
 }
 
-/// Embed partition captured under one graph lock; consumed without lock.
-pub(crate) struct RelationEmbedSnapshot {
-    pub resolutions: Vec<RelationRowResolution>,
-    pub embedded_per_row: Vec<Vec<CachedEntity>>,
-    /// Fast path when every parent row is fully embedded in the session graph.
-    pub all_embedded: Option<Vec<CachedEntity>>,
-}
-
-/// Single lock: resolutions + cloned embed targets.
-pub(crate) async fn plan_prefer_from_parent_get(
-    scoped_es: &ExecuteSession,
-    materialize: &RelationMaterialization,
-    rel_name: &str,
-    target_entity: &str,
-    parents: &[CachedEntity],
-    source_rows: &[serde_json::Value],
-) -> Result<RelationEmbedSnapshot, String> {
-    if parents.len() != source_rows.len() {
-        return Err(format!(
-            "prefer embed plan: parent count {} != source row count {}",
-            parents.len(),
-            source_rows.len()
-        ));
-    }
-    let parent_rows: Vec<(&serde_json::Value, Option<&[Ref]>)> = source_rows
-        .iter()
-        .enumerate()
-        .map(|(row_index, row)| {
-            (
-                row,
-                parents
-                    .get(row_index)
-                    .and_then(|p| p.relations.get(rel_name).map(|v| v.as_slice())),
-            )
-        })
-        .collect();
-
-    let guard = scoped_es.lock_graph_cache().await;
-    let mat = guard.materialization();
-    let resolutions =
-        partition_prefer_resolutions(materialize, rel_name, target_entity, parent_rows, |r| {
-            mat.get(r).is_some()
-        });
-    let row_count = resolutions.len();
-    let mut embedded_per_row = vec![Vec::new(); row_count];
-    let all_rows_embedded = resolutions
-        .iter()
-        .all(|r| matches!(r, RelationRowResolution::EmbeddedRefs(_)));
-    let mut all_embedded = if all_rows_embedded {
-        Some(Vec::new())
-    } else {
-        None
-    };
-    for (row_index, resolution) in resolutions.iter().enumerate() {
-        let RelationRowResolution::EmbeddedRefs(refs) = resolution else {
-            continue;
-        };
-        for r in refs {
-            let Some(entity) = mat.get(r) else {
-                continue;
-            };
-            embedded_per_row[row_index].push(entity.clone());
-            if let Some(all) = &mut all_embedded {
-                all.push(entity.clone());
-            }
-        }
-    }
-    drop(guard);
-
-    Ok(RelationEmbedSnapshot {
-        resolutions,
-        embedded_per_row,
-        all_embedded,
-    })
-}
-
 /// When every parent row has fully resolved embed refs in the session graph.
 pub(crate) fn collect_all_embedded_relation_targets(
     relation_name: &str,
     target_entity: &str,
-    parents: &[CachedEntity],
+    parents: &plasm_core::collection_codec::SharedRows<CachedEntity>,
     graph: &SessionMaterialization,
 ) -> Option<Vec<CachedEntity>> {
     let mut out = Vec::new();
@@ -240,7 +163,10 @@ pub(crate) fn collect_all_embedded_relation_targets(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use plasm_core::{EmbedOnMissPolicy, JsonPathSegment, RelationScopedFallback};
+    use plasm_core::{
+        partition_prefer_resolutions, EmbedOnMissPolicy, JsonPathSegment, RelationRowResolution,
+        RelationScopedFallback,
+    };
 
     #[test]
     fn shuttle_relation_refs_survive_concurrent_child_eviction() {
@@ -259,7 +185,21 @@ mod tests {
                 let parent = CachedEntity {
                     reference: Ref::new("Parent", "p"),
                     fields: Default::default(),
-                    relations: IndexMap::from([("children".into(), vec![reference.clone()])]),
+                    relations: IndexMap::from([("children".into(), vec![reference.clone()])])
+                        .into_iter()
+                        .map(|(key, refs)| {
+                            (
+                                key,
+                                plasm_core::row_contract::RelationMembership::observe(
+                                    None,
+                                    &"relation_fixture",
+                                    refs,
+                                    None,
+                                )
+                                .unwrap(),
+                            )
+                        })
+                        .collect(),
                     last_updated: 0,
                     version: 0,
                     completeness: plasm_runtime::EntityCompleteness::Complete,
@@ -284,7 +224,7 @@ mod tests {
                         let rows = collect_all_embedded_relation_targets(
                             "children",
                             "Child",
-                            std::slice::from_ref(&parent),
+                            &vec![parent.clone()].into(),
                             &graph.lock().unwrap(),
                         )
                         .unwrap();
@@ -309,7 +249,7 @@ mod tests {
             let parent = CachedEntity {
                 reference: Ref::new("Parent", "p"),
                 fields: Default::default(),
-                relations: IndexMap::from([("children".into(), refs.clone())]),
+                relations: IndexMap::from([("children".into(), refs.clone())]).into_iter().map(|(key, refs)| (key, plasm_core::row_contract::RelationMembership::observe(None, &"relation_fixture", refs, None).unwrap())).collect(),
                 last_updated: 0, version: 0,
                 completeness: plasm_runtime::EntityCompleteness::Complete,
                 unavailable_fields: Default::default(),
@@ -326,14 +266,14 @@ mod tests {
                     }]).unwrap();
                 }
             }
-            let rows = collect_all_embedded_relation_targets("children", "Child", std::slice::from_ref(&parent), &graph).unwrap();
+            let rows = collect_all_embedded_relation_targets("children", "Child", &vec![parent.clone()].into(), &graph).unwrap();
             proptest::prop_assert_eq!(rows.iter().map(|r| r.reference.clone()).collect::<Vec<_>>(), refs);
             for (row, exists) in rows.iter().zip(&present) {
                 proptest::prop_assert_eq!(row.completeness, if *exists { plasm_runtime::EntityCompleteness::Complete } else { plasm_runtime::EntityCompleteness::Summary });
             }
-            proptest::prop_assert!(collect_all_embedded_relation_targets("missing", "Child", std::slice::from_ref(&parent), &graph).is_none());
+            proptest::prop_assert!(collect_all_embedded_relation_targets("missing", "Child", &vec![parent.clone()].into(), &graph).is_none());
             if !present.is_empty() {
-                proptest::prop_assert!(collect_all_embedded_relation_targets("children", "Other", &[parent], &graph).is_none());
+                proptest::prop_assert!(collect_all_embedded_relation_targets("children", "Other", &vec![parent].into(), &graph).is_none());
             }
         }
     }
@@ -354,7 +294,7 @@ mod tests {
             let parent = CachedEntity {
                 reference: Ref::new("LangItem", "parent"),
                 fields: Default::default(),
-                relations: IndexMap::from([("lines".into(), refs.clone())]),
+                relations: IndexMap::from([("lines".into(), refs.clone())]).into_iter().map(|(key, refs)| (key, plasm_core::row_contract::RelationMembership::observe(None, &"relation_fixture", refs, None).unwrap())).collect(),
                 last_updated: 0, version: 0,
                 completeness: plasm_runtime::EntityCompleteness::Complete,
                 unavailable_fields: Default::default(),
@@ -395,7 +335,21 @@ mod tests {
             relations: indexmap::IndexMap::from([(
                 "detail".into(),
                 vec![Ref::new("LangDetail", "det-i1")],
-            )]),
+            )])
+            .into_iter()
+            .map(|(key, refs)| {
+                (
+                    key,
+                    plasm_core::row_contract::RelationMembership::observe(
+                        None,
+                        &"relation_fixture",
+                        refs,
+                        None,
+                    )
+                    .unwrap(),
+                )
+            })
+            .collect(),
             last_updated: 0,
             version: 0,
             completeness: plasm_runtime::EntityCompleteness::Complete,
@@ -441,7 +395,7 @@ mod tests {
             },
         };
         let refs = vec![Ref::new("Pokemon", "jolteon")];
-        let projected = serde_json::json!({"name": "electric"});
+        let projected = crate::fixture_value!({"name": "electric"});
         let resolutions = partition_prefer_resolutions(
             &mat,
             "pokemon",
@@ -463,7 +417,7 @@ mod tests {
                 param: "p".into(),
             },
         };
-        let row = serde_json::json!({"tags": [{"id": 1}]});
+        let row = crate::fixture_value!({"tags": [{"id": 1}]});
         let refs = vec![Ref::new("Tag", "1")];
         let resolutions = partition_prefer_resolutions(
             &mat,

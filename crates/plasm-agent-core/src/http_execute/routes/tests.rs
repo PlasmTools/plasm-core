@@ -83,10 +83,11 @@ fn plasm_plan_publication_renders_named_output_owner() {
             display: "Pokemon[id,name]".to_string(),
             projection: Some(vec!["id".to_string(), "name".to_string()]),
             result: Arc::new(ExecutionResult {
-                count: 0,
-                entities: vec![],
+                collection: crate::test_support::execution_fixtures::collection(
+                    vec![],
+                    ResultCoverage::Unknown,
+                ),
                 has_more: false,
-                coverage: ResultCoverage::Unknown,
                 pagination_resume: None,
                 paging_handle: None,
                 source: ExecutionSource::Cache,
@@ -395,9 +396,11 @@ async fn get_execute_session_preserves_cached_python_teaching() {
         .to_owned();
 
     let full = get_execute_session_json(&app, loc.as_str()).await;
-    assert!(full.prompt.contains("class Program:"));
-    assert!(full.prompt.contains("class e1"));
-    assert!(full.prompt.contains("```pyi"));
+    assert!(full
+        .prompt
+        .contains(plasm_core::prompt_render::python::LANGUAGE.trim()));
+    assert!(full.prompt.contains("e1:"));
+    assert!(!full.prompt.contains("```"));
     assert!(!full.prompt.contains("plasm_expr\tMeaning"));
 
     let get = Request::builder()
@@ -781,7 +784,10 @@ async fn expand_domain_session_updates_session_entities() {
     .await
     .expect("expand");
     assert!(
-        first_wave.markdown.contains("```pyi"),
+        first_wave
+            .markdown
+            .lines()
+            .any(|line| line.starts_with('e') && line.contains(':')),
         "expected incremental Python declarations: {}",
         first_wave.markdown
     );

@@ -49,9 +49,23 @@ cargo run -p plasm-repl --features baml -- --schema apis/<api> --backend http://
 
 Production entry points accept Python `Program` subclasses over the typed DAG.
 Serve the library reference once and add typed domain declarations incrementally;
-TSV remains a result format. Native syntax is an internal matrix oracle only.
+TSV remains a result format. Language and view conformance matrices compile Python only and assert semantic
+laws directly. Do not introduce historical source syntax as a comparison oracle.
 See `doc-site/docs/reference/plasm-language-definition.md` and
 `crates/plasm-e2e/tests/plasm_language_matrix/PYTHON-COVERAGE.md`.
+
+## Python language specification maintenance
+
+The normative inner-Python boundary is
+[Python compute contract](doc-site/docs/reference/python-compute-contract.md).
+Monty and its upstream checker own Python semantics; Plasm owns DAG, rowset,
+identity, dependency and effect laws. Do not extend a local expression whitelist
+in response to task failures. The inner checker runs in-process through the pinned monty-analysis library; Plasm only checks boundary contracts and capability policy.
+Changes to admission, supported language, upstream pins, boundary types or
+corrections must update the specification's implementation ledger, teaching and
+matrix witnesses together. Preserve the distinction between normative rules and
+verified implementation status. Do not claim upstream cutover until complete
+pre-review admission and removal of the old checker are proven across entry points.
 
 ## Core Boundaries
 

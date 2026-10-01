@@ -8,3 +8,5 @@ cargo test -p plasm-agent-core --lib python_pool -- --test-threads=1
 cargo test -p plasm-agent-core --test python_compute_feasibility
 cargo test -p plasm-agent-core --lib map_body
 cargo test -p plasm-agent-core --lib python_host
+cargo test -p plasm-agent-core --lib membership_evidence
+cargo test -p plasm-agent-core --lib python_iteration_stateful_contract_both_drivers

@@ -802,21 +802,8 @@ fn prompt_matrix_synthesis_time_limit() -> std::time::Duration {
 ///
 /// Serialize snapshot reads/writes: parallel `cargo test` threads share Insta's global settings and
 /// can otherwise flake snapshot comparisons.
-fn pin_teaching_snapshot_clock(s: &str) -> String {
-    s.lines()
-        .map(|l| {
-            if let Some(rest) = l.strip_prefix("evaluation_now\t") {
-                if let Some((_, gloss)) = rest.split_once(" · ") {
-                    format!("evaluation_now\t<temporal-now> · {gloss}")
-                } else {
-                    "evaluation_now\t<temporal-now>".to_string()
-                }
-            } else {
-                l.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+fn normalize_snapshot_lines(s: &str) -> String {
+    s.lines().collect::<Vec<_>>().join("\n")
 }
 
 fn with_insta_snapshots<R>(f: impl FnOnce() -> R) -> R {
@@ -2188,19 +2175,23 @@ fn plasm_tool_description_snapshot() {
 fn python_reference_includes_composition_contract() {
     let reference = include_str!("assets/python-plasm-dag.txt");
     for required in [
-        "class Program:",
-        "class Rows[T]:",
-        "def where(",
-        "def select(",
-        "def take(",
-        "def union(",
-        "def flat_map",
-        "def compute(",
-        "def iterate(",
+        "Program",
+        "where(",
+        "select(",
+        "take(",
+        "union(",
+        "flat_map(",
+        "@compute",
+        "Row.field retains its contract",
+        "validate returns before effects",
+        "T | U/None",
+        "iterate(",
         "max_steps",
         "one-column RHS",
-        "immutable local assignments",
-        "explicit return",
+        "immutable locals",
+        "return result/record/tuple",
+        "None",
+        "completed/unknown effect receipts",
     ] {
         assert!(
             reference.contains(required),
@@ -2275,9 +2266,10 @@ fn plasm_tool_description_stats() {
     let full = super::PLASM_TOOL_DESCRIPTION;
     assert!(full.len() <= super::PLASM_TOOL_DESCRIPTION_MAX_BYTES);
     let reference = include_str!("assets/python-plasm-dag.txt");
+    // Temporal, money, callbacks, recovery, structural inference and authority meet.
     assert!(
-        reference.len() < 12_000,
-        "reference exceeded compact library budget"
+        reference.len() < 4_500,
+        "teaching card exceeded semantic-delta budget"
     );
     assert!(
         !full.contains("class Rows"),
@@ -2345,12 +2337,12 @@ fn language_matrix_search_tilde_teaches_search_text_not_exact_or_complete() {
         );
     }
     let card = include_str!("assets/python-plasm-dag.txt");
-    assert!(card.contains("Search yields candidates, not verified identities"));
-    assert!(card.contains("where filters rows already acquired"));
-    assert!(card.contains("one-column RHS rowset"));
+    assert!(card.contains("Verify search matches/identities before effects"));
+    assert!(card.contains("where filters acquired rows"));
+    assert!(card.contains("one-column RHS membership"));
     let run = include_str!("assets/plasm_run_tool_base.txt");
     assert!(
-        run.contains(r#"more pages — call plasm_run with run_ref: "…""#),
+        run.contains("follow a returned continuation with the same logical_session_ref"),
         "remainder is taught only when the result says more pages"
     );
 }
@@ -2360,13 +2352,15 @@ fn language_matrix_search_tilde_teaches_search_text_not_exact_or_complete() {
 fn plasm_tool_teaches_semantic_operation_receivers() {
     let card = include_str!("assets/python-plasm-dag.txt");
     for law in [
-        "Receiver-free calls use eN.mN",
-        "receiver-bound calls use a singleton",
-        "flat_map capture",
-        "fails on empty input",
-        "an id grants no authority",
-        "completed writes",
-        "never blindly replay",
+        "eN.method=root",
+        "row.method=entity row/singleton",
+        "Entity rows/captures retain identity",
+        "empty extraction fails",
+        "records/compute do not",
+        "both arms already carry the same catalog/entity authority",
+        "single return expression may omit the return annotation",
+        "completed/unknown effect receipts",
+        "A new program may read or write in the same session",
     ] {
         assert!(card.contains(law), "missing receiver law: {law}");
     }
@@ -2375,10 +2369,11 @@ fn plasm_tool_teaches_semantic_operation_receivers() {
 #[test]
 fn plasm_tool_teaches_typed_identity_holes() {
     let card = include_str!("assets/python-plasm-dag.txt");
-    assert!(card.contains("eN.get(identity) or exact compound named keys"));
-    assert!(card.contains("vN aliases retain Plasm domain identity"));
-    assert!(card.contains("not constructors or enum members"));
-    assert!(card.contains("Substitute only supplied symbols and fields"));
+    assert!(card.contains("eN.get(value) or eN.get(identity=value)"));
+    assert!(card.contains("compound Get uses exact named keys"));
+    assert!(card.contains("vN=domain identity"));
+    assert!(card.contains("vN annotates, not constructs"));
+    assert!(card.contains("exact signatures"));
 }
 
 /// `plasm_prompt_matrix` TSV method rows follow catalog seat: pathless `eN.mK(` only when pathless.
@@ -3004,9 +2999,12 @@ fn static_grammar_includes_symbols_only_rule() {
     let tool = super::PLASM_TOOL_DESCRIPTION;
     let reference = include_str!("assets/python-plasm-dag.txt");
     assert!(tool.contains("wire names"));
-    assert!(reference.contains("session-local and append-only"));
-    assert!(reference.contains("No vendor namespaces or invented APIs"));
-    assert!(reference.contains("Locals must not shadow methods"));
+    assert!(reference.contains("session-local/append-only"));
+    assert!(reference.contains("exact signatures"));
+    assert!(reference.contains("No imports, loops, statement if, mutation or rebinding in build"));
+    assert!(reference.contains("optional bound 1..65536"));
+    assert!(reference.contains("required bound 1..256"));
+    assert!(!reference.contains("inspection cannot authorize writes"));
     assert!(!tool.contains("label = e#"));
 }
 
@@ -3879,7 +3877,7 @@ fn overshow_tools_compact_prompt_snapshot() {
         return;
     }
     let cgs = load_schema_dir(&dir).unwrap();
-    let prompt = pin_teaching_snapshot_clock(&render_prompt_with_config(
+    let prompt = normalize_snapshot_lines(&render_prompt_with_config(
         &cgs,
         RenderConfig::for_eval(None).with_render_mode(PromptRenderMode::Compact),
     ));
@@ -3896,7 +3894,7 @@ fn overshow_tools_prompt_tsv_snapshot() {
         return;
     }
     let cgs = load_schema_dir(&dir).unwrap();
-    let tsv = pin_teaching_snapshot_clock(&render_prompt_tsv_with_config(
+    let tsv = normalize_snapshot_lines(&render_prompt_tsv_with_config(
         &cgs,
         RenderConfig::for_eval(None),
     ));
@@ -4313,5 +4311,23 @@ proptest::proptest! {
                 proptest::prop_assert!(card.contains(&meaning));
             }
         }
+    }
+}
+
+#[test]
+fn scalar_compute_adaptation_is_not_taught() {
+    let reference = include_str!("assets/python-plasm-dag.txt");
+    assert!(reference.contains("Row/Value[eN] per row; list[...] per collection."));
+    assert!(reference.contains("return e1.query()") && reference.contains(".select(\"title\")"));
+    for untaught in [
+        "scalar compute",
+        "value column",
+        "value: int",
+        "values: list[int]",
+    ] {
+        assert!(
+            !reference.contains(untaught),
+            "admission convenience leaked into teaching: {untaught}"
+        );
     }
 }

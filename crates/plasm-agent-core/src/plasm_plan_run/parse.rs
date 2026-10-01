@@ -380,13 +380,13 @@ pub(crate) fn reference_for_row_identity(entity: &plasm_runtime::CachedEntity, c
     entity.reference.clone()
 }
 
-pub(crate) fn row_identities_from_entities(
+pub(crate) fn row_identities_from_entities<'a>(
     es: &ExecuteSession,
     entity: &str,
-    entities: &[plasm_runtime::CachedEntity],
+    entities: impl IntoIterator<Item = &'a plasm_runtime::CachedEntity>,
 ) -> Vec<Option<plasm_core::RowIdentity>> {
     entities
-        .iter()
+        .into_iter()
         .map(|e| {
             let plan_qe = crate::catalog_ownership::resolve_qualified_entity_key(
                 es,
@@ -441,45 +441,46 @@ pub(crate) fn propagate_row_identities(
     source: &PlanNodeId,
     op: &ComputeOp,
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
-    out_len: usize,
+    occurrences: &[Option<usize>],
+    output_len: usize,
 ) -> Result<Vec<Option<plasm_core::RowIdentity>>, String> {
-    let mat = materialized.get(source).ok_or_else(|| {
-        format!(
-            "compute source node {:?} has not been materialized",
-            source.as_str()
-        )
-    })?;
-    match op {
-        ComputeOp::Limit { count } => Ok(mat.row_identities.iter().take(*count).cloned().collect()),
-        ComputeOp::Project { .. } => Ok(mat.row_identities.iter().take(out_len).cloned().collect()),
-        ComputeOp::With { .. } => Ok(mat.row_identities.iter().take(out_len).cloned().collect()),
-        ComputeOp::Filter { predicates } => {
-            let Some(rows) = mat.row_source.inline_rows() else {
-                return Ok(Vec::new());
-            };
-            let resolved =
-                super::resolve_filter_predicates_with_materialized(predicates, materialized)?;
-            let resolved = resolved.try_map(&mut crate::plan_read_bounds::bind_row_predicate)?;
-            let mut identities = Vec::new();
-            for (id, row) in mat.row_identities.iter().zip(rows) {
-                let evaluated = resolved.try_map(&mut |p| -> Result<Option<bool>, String> {
-                    if p.op != crate::plasm_plan::PlanPredicateOp::Exists
-                        && value_at_dotted(row, &p.field_path.dotted())
-                            .is_none_or(serde_json::Value::is_null)
-                    {
-                        Ok(None)
-                    } else {
-                        predicate_matches(row, p).map(Some)
-                    }
-                })?;
-                if evaluated.evaluate(&|value| *value) == Some(true) {
-                    identities.push(id.clone());
-                }
-            }
-            Ok(identities)
-        }
-        _ => Ok(vec![None; out_len]),
+    if occurrences.len() != output_len {
+        return Err("row correspondence length does not match output rows".into());
     }
+    let left = materialized
+        .get(source)
+        .ok_or("compute source is not materialized")?;
+    let right = if let ComputeOp::Union { other } = op {
+        Some(
+            materialized
+                .get(&PlanNodeId::new(other.as_str())?)
+                .ok_or("union source is not materialized")?,
+        )
+    } else {
+        None
+    };
+    if right.is_some_and(|right| right.qualified_entity != left.qualified_entity) {
+        return Ok(vec![None; occurrences.len()]);
+    }
+    let identities: Vec<_> = left
+        .row_identities
+        .iter()
+        .chain(
+            right
+                .into_iter()
+                .flat_map(|node| node.row_identities.iter()),
+        )
+        .collect();
+    occurrences
+        .iter()
+        .map(|occurrence| match occurrence {
+            None => Ok(None),
+            Some(index) => identities
+                .get(*index)
+                .map(|identity| (*identity).clone())
+                .ok_or_else(|| format!("row correspondence {index} has no source identity slot")),
+        })
+        .collect()
 }
 
 /// Simulated execution step: human **intent**, compact **il** (query `cap=` from schema), and **bindings** JSON, without HTTP or the `plasm` tool.

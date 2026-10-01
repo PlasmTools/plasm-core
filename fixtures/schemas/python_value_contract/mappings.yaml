@@ -3,3 +3,36 @@ sample_get:
   path:
     - {type: literal, value: samples}
     - {type: var, name: id}
+sample_update:
+  method: PATCH
+  path:
+    - {type: literal, value: samples}
+    - {type: var, name: id}
+  body:
+    type: object
+    fields:
+      - [count, {type: var, name: count}]
+sample_update_times:
+  method: PATCH
+  path:
+    - {type: literal, value: samples}
+    - {type: var, name: id}
+    - {type: literal, value: times}
+  body:
+    type: object
+    fields:
+      - [date, {type: var, name: date}]
+      - [timestamp, {type: var, name: timestamp}]
+      - [epoch, {type: var, name: epoch}]
+
+sample_query:
+  method: GET
+  path:
+    - {type: literal, value: samples}
+  query:
+    type: object
+    fields:
+      - [date, {type: var, name: date}]
+      - [timestamp, {type: var, name: timestamp}]
+      - [local_timestamp, {type: var, name: local_timestamp}]
+      - [epoch, {type: var, name: epoch}]

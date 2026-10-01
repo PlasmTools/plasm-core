@@ -1,4 +1,4 @@
-//! Shared row field paths and JSON predicate evaluation on [`CachedEntity`].
+//! Shared row field paths and native predicate evaluation on [`CachedEntity`].
 
 use crate::cache::CachedEntity;
 use serde::{Deserialize, Serialize};
@@ -10,27 +10,39 @@ pub struct BoundRowPredicate {
     pub value: plasm_core::operand_binding::ResolvedValue,
 }
 
+/// Unavailable is an acquisition failure, not a Python null or a false predicate.
+/// Call when a field is actually consumed so Boolean short-circuiting stays lazy.
+pub(crate) fn require_entity_field_available(
+    entity: &CachedEntity,
+    field: &str,
+) -> Result<(), crate::RuntimeError> {
+    if entity.unavailable_fields.contains(field) {
+        return Err(crate::RuntimeError::FieldUnavailable {
+            reference: entity.reference.clone(),
+            field: field.into(),
+        });
+    }
+    Ok(())
+}
+
 pub fn entity_field_path_value(
     entity: &CachedEntity,
     path: &[String],
-) -> Option<serde_json::Value> {
+) -> Option<plasm_core::Value> {
     if path.is_empty() {
         return None;
     }
-    let mut cur = entity
-        .fields
-        .get(path[0].as_str())
-        .map(|v| plasm_core::plasm_value_to_json(&v.to_value()))?;
+    let mut cur = entity.fields.get(path[0].as_str()).map(|v| v.to_value())?;
     for seg in path.iter().skip(1) {
         cur = cur.get(seg.as_str())?.clone();
     }
     Some(cur)
 }
 
-pub fn json_value_field_path(
-    value: &serde_json::Value,
+pub fn row_value_field_path(
+    value: &plasm_core::Value,
     path: &[String],
-) -> Option<serde_json::Value> {
+) -> Option<plasm_core::Value> {
     if path.is_empty() {
         return None;
     }
@@ -57,26 +69,21 @@ pub fn entity_matches_predicate(
     entity: &CachedEntity,
     pred: &BoundRowPredicate,
 ) -> Result<bool, crate::RuntimeError> {
+    if let Some(field) = pred.field_path.segments().first() {
+        require_entity_field_available(entity, field)?;
+    }
     let lhs = entity_field_path_value(entity, pred.field_path.segments())
-        .unwrap_or(serde_json::Value::Null);
-    value_predicate_matches(
-        &plasm_core::json_value_to_plasm_value(&lhs),
-        pred.op,
-        pred.value.value(),
-    )
+        .unwrap_or(plasm_core::Value::Null);
+    value_predicate_matches(&lhs, pred.op, pred.value.value())
 }
 
-pub fn json_matches_predicate(
-    value: &serde_json::Value,
+pub fn row_matches_predicate(
+    value: &plasm_core::Value,
     pred: &BoundRowPredicate,
 ) -> Result<bool, crate::RuntimeError> {
     let lhs =
-        json_value_field_path(value, pred.field_path.segments()).unwrap_or(serde_json::Value::Null);
-    value_predicate_matches(
-        &plasm_core::json_value_to_plasm_value(&lhs),
-        pred.op,
-        pred.value.value(),
-    )
+        row_value_field_path(value, pred.field_path.segments()).unwrap_or(plasm_core::Value::Null);
+    value_predicate_matches(&lhs, pred.op, pred.value.value())
 }
 
 pub fn value_predicate_matches(
@@ -134,10 +141,10 @@ pub fn value_predicate_matches(
                 found
             }
         }
-        plasm_core::PlanPredicateOp::Lt => compare_ordered(lhs, rhs, |l, r| l < r),
-        plasm_core::PlanPredicateOp::Lte => compare_ordered(lhs, rhs, |l, r| l <= r),
-        plasm_core::PlanPredicateOp::Gt => compare_ordered(lhs, rhs, |l, r| l > r),
-        plasm_core::PlanPredicateOp::Gte => compare_ordered(lhs, rhs, |l, r| l >= r),
+        plasm_core::PlanPredicateOp::Lt
+        | plasm_core::PlanPredicateOp::Lte
+        | plasm_core::PlanPredicateOp::Gt
+        | plasm_core::PlanPredicateOp::Gte => compare_ordered(lhs, rhs, op),
     })
 }
 
@@ -164,19 +171,48 @@ fn value_as_boolish(v: &plasm_core::Value) -> Option<bool> {
 fn compare_ordered(
     lhs: &plasm_core::Value,
     rhs: &plasm_core::Value,
-    op: impl Fn(f64, f64) -> bool,
+    op: plasm_core::PlanPredicateOp,
 ) -> bool {
-    let number = |value: &plasm_core::Value| {
-        value
-            .as_number()
-            .or_else(|| value.as_str()?.parse::<f64>().ok())
-    };
-    number(lhs).zip(number(rhs)).is_some_and(|(l, r)| op(l, r))
+    fn number(value: &plasm_core::Value) -> Option<std::borrow::Cow<'_, plasm_core::Value>> {
+        use plasm_core::Value;
+        if value.is_number() {
+            return Some(std::borrow::Cow::Borrowed(value));
+        }
+        let text = value.as_str()?;
+        // Residual wire strings retain exact integer magnitude before considering floats.
+        let parsed = text
+            .parse::<i64>()
+            .map(Value::Integer)
+            .or_else(|_| text.parse::<u64>().map(Value::Unsigned))
+            .or_else(|_| text.parse::<f64>().map(Value::Float))
+            .ok()?;
+        Some(std::borrow::Cow::Owned(parsed))
+    }
+    number(lhs)
+        .zip(number(rhs))
+        .is_some_and(|(l, r)| plasm_core::value_expression::compare(op, &l, &r).unwrap_or(false))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ordered_native_and_wire_integers_do_not_round_through_float() {
+        use plasm_core::{PlanPredicateOp::Gt, Value};
+        for high in [
+            Value::Integer(9007199254740993),
+            Value::String("9007199254740993".into()),
+        ] {
+            assert!(value_predicate_matches(&high, Gt, &Value::Integer(9007199254740992)).unwrap());
+        }
+        assert!(value_predicate_matches(
+            &Value::Unsigned(u64::MAX),
+            Gt,
+            &Value::Unsigned(u64::MAX - 1)
+        )
+        .unwrap());
+    }
 
     #[test]
     fn ordered_compare_unifies_numeric_string_lhs() {

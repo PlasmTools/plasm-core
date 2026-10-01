@@ -1195,23 +1195,13 @@ output:
   entity_type: Branch
   idempotent: true
   reconcile:
-    on: resource_exists          # WorkflowConflictKind from conflict_rules
     via: branch_get              # get capability to fetch existing row
     bind_identity_from: params   # params | scope
 ```
 
 Live execute stamps `outcome: created | reused` on entity projections. Content divergence after key match surfaces `WorkflowConflict::IdentityMismatch` — never silent reuse.
 
-**Conflict taxonomy** — catalog-local HTTP rules in `mappings.yaml`:
-
-```yaml
-conflict_rules:
-  - when: { status: 422, body_json_path: message, contains: Reference already exists }
-    kind: resource_exists
-    extract:
-      entity: Branch
-      fields: { name: $.ref }
-```
+Service error status/body/message does not decide write effects. `conflict_rules` is rejected. On an opaque failure, an explicitly idempotent capability may observe its declared `reconcile.via` read with the original bound inputs. Reconciliation requires a complete singleton with every requested identity field present and equal; conflicting returned values reject reuse. The read bypasses pre-write cache state. It does not retry the write or prove that a missing row means no effect occurred.
 
 **Conditional write views** extend `views:` with mutator nodes and `when:` guards:
 
@@ -1225,7 +1215,7 @@ when:
 
 Use `write_created` / `write_reused` / `write_skipped` output bindings for `outcome`. PLT `verify_existence_flow` expands view DAGs at dry-run: non-idempotent inner creates without a dominating read or `when:` guard → `NeedsReview` (`unguarded mutation`).
 
-**Preflight** — `existence_check` for atomic mutators:
+**Preflight** — `existence_check` before mutators (not atomic with the service write):
 
 ```yaml
 preflight:
@@ -1235,7 +1225,9 @@ preflight:
     on_exists: fail   # fail | skip_write
 ```
 
-Matrix conformance: `fixtures/schemas/workflow_matrix` (not production `apis/`).
+For desired-state operations such as follow/like/download, acquire complete existing membership, deduplicate desired identities, and write the set difference. A declared `skip_write` preflight can additionally avoid already-satisfied targets; it must bind every identity key and observe authoritative state. This does not eliminate races: post-dispatch failures still require read-backed reconciliation or remain unknown.
+
+Matrix conformance: `cargo test -p plasm-e2e --test write_contract` and `fixtures/schemas/workflow_matrix` (not production `apis/`).
 
 ---
 

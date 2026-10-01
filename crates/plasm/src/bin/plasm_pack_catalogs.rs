@@ -240,7 +240,8 @@ fn prepare_catalogs(
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    pack(Args::parse()).await
+    let args = Args::parse();
+    pack(args).await
 }
 
 async fn pack(args: Args) -> Result<()> {

@@ -1,0 +1,399 @@
+use super::*;
+use plasm_core::{value_contract::DomainRef, ValueDomainKey};
+
+fn fields(items: &[(&str, Type)]) -> Type {
+    Type::record(
+        items
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.clone()))
+            .collect(),
+        Default::default(),
+    )
+}
+
+#[test]
+fn upstream_expression_contracts_preserve_python_semantics() {
+    let mut optional = Type::scalar(FieldType::String);
+    optional.nullable = true;
+    let input = fields(&[
+        ("description", optional),
+        ("number", Type::scalar(FieldType::Integer)),
+        ("values", array(Type::scalar(FieldType::Integer))),
+    ]);
+    for (expression, expected) in [
+        (
+            "'grocery' in (row.description or '').lower()",
+            Type::scalar(FieldType::Boolean),
+        ),
+        ("row.number // 2", Type::scalar(FieldType::Integer)),
+        (
+            "[n * 2 for n in row.values][0]",
+            Type::scalar(FieldType::Integer),
+        ),
+        (
+            "sum(n for n in row.values if n > 0)",
+            Type::scalar(FieldType::Integer),
+        ),
+        (
+            "row.number or 'missing'",
+            Type::join(
+                Type::scalar(FieldType::Integer),
+                Type::scalar(FieldType::String),
+            ),
+        ),
+    ] {
+        assert_eq!(
+            infer(expression, "row", &input, "").unwrap(),
+            expected,
+            "{expression}"
+        );
+    }
+}
+
+#[test]
+fn nominal_selection_and_record_presence_survive_inference() {
+    let mut id = Type::scalar(FieldType::String);
+    id.domain = Some(DomainRef {
+        entry_id: "catalog-a".into(),
+        catalog_hash: "pin-a".into(),
+        value_ref: ValueDomainKey::new("id").unwrap(),
+    });
+    let mut other = id.clone();
+    other.domain.as_mut().unwrap().entry_id = "catalog-b".into();
+    let observed = Type::record(
+        BTreeMap::from([("id".into(), id.clone())]),
+        ["id".into()].into(),
+    );
+    let input = fields(&[
+        ("id", id.clone()),
+        ("other", other.clone()),
+        ("record", observed.clone()),
+        ("flag", Type::scalar(FieldType::Boolean)),
+    ]);
+    assert_eq!(infer("row.id", "row", &input, "").unwrap(), id);
+    assert_eq!(infer("row['id']", "row", &input, "").unwrap(), id);
+    assert_eq!(infer("row['record']['id']", "row", &input, "").unwrap(), id);
+    let dynamic = fields(&[
+        (
+            "value",
+            fields(&[("id", id.clone()), ("other", other.clone())]),
+        ),
+        ("key", Type::scalar(FieldType::String)),
+    ]);
+    assert_eq!(
+        infer("row.value[row.key]", "row", &dynamic, "").unwrap(),
+        Type::join(id.clone(), other.clone())
+    );
+    assert_eq!(infer("row.record", "row", &input, "").unwrap(), observed);
+    assert_eq!(
+        infer("row.id if row.flag else row.other", "row", &input, "").unwrap(),
+        Type::join(id.clone(), other)
+    );
+    assert_eq!(
+        infer("{'id': row.id, 'nested': [row.record]}", "row", &input, "").unwrap(),
+        fields(&[("id", id), ("nested", array(observed))])
+    );
+    assert_eq!(
+        infer("row.id.lower()", "row", &input, "").unwrap(),
+        Type::scalar(FieldType::String)
+    );
+}
+
+#[test]
+fn unsupported_result_shapes_do_not_become_json() {
+    let input = fields(&[]);
+    for expression in ["(1, 2)", "{1, 2}", "lambda: 1", "{str(1): 2}"] {
+        assert!(
+            infer(expression, "row", &input, "").is_err(),
+            "{expression}"
+        );
+    }
+    assert_eq!(
+        infer(
+            "[{'n': n, 's': str(n)} for n in range(3)]",
+            "row",
+            &input,
+            ""
+        )
+        .unwrap(),
+        array(fields(&[
+            ("n", Type::scalar(FieldType::Integer)),
+            ("s", Type::scalar(FieldType::String))
+        ]))
+    );
+}
+
+#[test]
+fn exact_money_functions_have_static_contracts() {
+    let money = Type::scalar(FieldType::Money);
+    let input = fields(&[("price", money.clone())]);
+    for expression in [
+        "money_mul(row.price, '1.25')",
+        "money_add(row.price, row.price)",
+        "money_div(factor=2, value=row.price)",
+    ] {
+        assert_eq!(
+            infer(expression, "row", &input, "").unwrap(),
+            money,
+            "{expression}"
+        );
+    }
+    for expression in [
+        "money_compare(row.price, 1)",
+        "money_compare(row.price, '1.25')",
+        "money_compare(right=row.price, left=row.price)",
+    ] {
+        assert_eq!(
+            infer(expression, "row", &input, "").unwrap(),
+            Type::scalar(FieldType::Integer)
+        );
+    }
+    for expression in [
+        "money_mul(row.price, 1.25)",
+        "money_add(row.price, 1)",
+        "money_mul(row.price, None)",
+        "money_compare(row.price, 1.25)",
+        "money_compare(row.price, None)",
+    ] {
+        assert!(
+            infer(expression, "row", &input, "").is_err(),
+            "{expression}"
+        );
+    }
+}
+
+#[test]
+fn branch_contracts_are_general_and_do_not_leak_facts() {
+    let mut optional = Type::scalar(FieldType::Integer);
+    optional.nullable = true;
+    let input = fields(&[("value", optional.clone()), ("other", optional.clone())]);
+    let source = "@compute\ndef check(row: Row):\n    return row.value is not None\n";
+    let facts = branch_contracts(
+        source,
+        &input,
+        &[vec!["value".into()], vec!["other".into()]],
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(facts[0].0, Type::scalar(FieldType::Integer));
+    assert_eq!(facts[0].1.shape, ValueShape::Null);
+    assert_eq!(facts[1], (optional.clone(), optional));
+    let input = fields(&[(
+        "value",
+        Type::join(
+            Type::scalar(FieldType::Integer),
+            Type::scalar(FieldType::String),
+        ),
+    )]);
+    let source = "@compute\ndef check(row: Row):\n    return isinstance(row.value, str)\n";
+    let facts = branch_contracts(source, &input, &[vec!["value".into()]])
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        facts[0],
+        (
+            Type::scalar(FieldType::String),
+            Type::scalar(FieldType::Integer)
+        )
+    );
+}
+
+#[test]
+fn branch_literal_exclusions_project_to_sound_materialized_contracts() {
+    let text = Type::scalar(FieldType::String);
+    let input = fields(&[("value", text.clone())]);
+    for predicate in ["row.value == 'skip'", "row.value != 'skip'", "row.value"] {
+        let source = format!("def predicate(row: Row):\n    return {predicate}\n");
+        let contracts = branch_contracts(&source, &input, &[vec!["value".into()]])
+            .unwrap()
+            .unwrap();
+        assert_eq!(contracts, vec![(text.clone(), text.clone())]);
+    }
+}
+
+#[test]
+fn upstream_temporal_equality_has_a_boolean_contract() {
+    let input = fields(&[]);
+    for operand in [
+        "datetime.fromisoformat('2024-01-01T01:00:00+01:00')",
+        "datetime(2024, 1, 1, tzinfo=timezone.utc)",
+    ] {
+        assert_eq!(
+            infer(operand, "row", &input, crate::python_datetime::PRELUDE).unwrap(),
+            plasm_core::temporal_value::TemporalKind::Datetime.contract(),
+            "{operand}"
+        );
+    }
+    for expression in [
+        "datetime.fromisoformat('2024-01-01T01:00:00+01:00') == datetime(2024, 1, 1, tzinfo=timezone.utc)",
+        "date(2024, 1, 1) == date(2024, 1, 1)",
+        "datetime(2024, 1, 1) != datetime(2024, 1, 2)",
+        "timedelta(days=1) == timedelta(hours=24)",
+    ] {
+        assert_eq!(infer(expression, "row", &input, crate::python_datetime::PRELUDE).unwrap(),
+            Type::scalar(FieldType::Boolean), "{expression}");
+    }
+}
+
+#[test]
+fn upstream_chained_guards_narrow_nullable_operands() {
+    for mut value in [
+        Type::scalar(FieldType::Integer),
+        plasm_core::temporal_value::TemporalKind::Datetime.contract(),
+    ] {
+        let cutoff = value.clone();
+        value.nullable = true;
+        let input = fields(&[("value", value), ("cutoff", cutoff)]);
+        assert_eq!(
+            infer("None is not row.value < row.cutoff", "row", &input, "").unwrap(),
+            Type::scalar(FieldType::Boolean)
+        );
+    }
+}
+
+#[test]
+fn boolean_membership_branches_preserve_materialized_contracts() {
+    for (nullable, nominal) in [(false, false), (true, false), (false, true), (true, true)] {
+        let mut flag = Type::scalar(FieldType::Boolean);
+        flag.nullable = nullable;
+        if nominal {
+            flag.domain = Some(DomainRef {
+                entry_id: "matrix".into(),
+                catalog_hash: "pin".into(),
+                value_ref: ValueDomainKey::new("flag").unwrap(),
+            });
+        }
+        let input = fields(&[("value", flag.clone())]);
+        for predicate in [
+            "row.value is True",
+            "row.value is not True",
+            "row.value is False",
+            "row.value is not False",
+            "row.value",
+        ] {
+            let source = format!("def predicate(row: Row):\n    return {predicate}\n");
+            let result = branch_contracts(&source, &input, &[vec!["value".into()]]);
+            let branches = result
+                .unwrap_or_else(|error| {
+                    panic!("{predicate}, nullable={nullable}, nominal={nominal}: {error}")
+                })
+                .unwrap();
+            for branch in [&branches[0].0, &branches[0].1] {
+                assert_eq!(branch.domain, flag.domain, "{predicate}: domain erased");
+                assert_eq!(branch.shape, flag.shape, "{predicate}: carrier changed");
+            }
+            if predicate == "row.value is True" || predicate == "row.value is False" {
+                assert!(!branches[0].0.nullable);
+                assert_eq!(branches[0].1.nullable, nullable);
+            }
+        }
+    }
+}
+
+// Drive the exported graph boundary directly: upstream intersection ordering is
+// not an authority ordering, including when metadata occurs under containers.
+fn decode_intersection_contracts(values: &[Type]) -> Result<Type, String> {
+    let mut declarations = declarations::Declarations::default();
+    let mut nodes = Vec::new();
+    for (index, value) in values.iter().enumerate() {
+        let name = format!("Sealed{index}");
+        declarations.contracts.insert(name.clone(), value.clone());
+        nodes.push(Node::Instance {
+            identity: monty_analysis::Identity {
+                source: "/analysis_stubs.pyi".into(),
+                start: None,
+                path: vec![name],
+            },
+            arguments: vec![],
+        });
+    }
+    let root = TypeId(nodes.len() as u32);
+    nodes.push(Node::Intersection {
+        positive: (0..values.len()).map(|i| TypeId(i as u32)).collect(),
+        negative: vec![],
+    });
+    let graph = Graph {
+        roots: vec![root],
+        nodes,
+    };
+    Decoder {
+        graph: &graph,
+        declarations: &declarations,
+    }
+    .decode(root, 0)
+}
+
+#[test]
+fn intersection_metadata_is_recursive_and_order_independent() {
+    let plain = Type::scalar(FieldType::String);
+    let mut sealed = plain.clone();
+    sealed.domain = Some(DomainRef {
+        entry_id: "matrix".into(),
+        catalog_hash: "pin".into(),
+        value_ref: ValueDomainKey::new("identifier").unwrap(),
+    });
+    let temporal = plasm_core::temporal_value::TemporalKind::Datetime.contract();
+    let mut wired = temporal.clone();
+    let ValueShape::Temporal { wire, .. } = &mut wired.shape else {
+        unreachable!()
+    };
+    *wire = Some(plasm_core::TemporalWireFormat::UnixMs);
+    for (carrier, expected) in [
+        (plain.clone(), sealed.clone()),
+        (array(plain.clone()), array(sealed.clone())),
+        (fields(&[("id", plain)]), fields(&[("id", sealed)])),
+        (temporal, wired),
+    ] {
+        for operands in [
+            vec![carrier.clone(), expected.clone()],
+            vec![expected.clone(), carrier.clone()],
+        ] {
+            assert_eq!(decode_intersection_contracts(&operands).unwrap(), expected);
+        }
+        assert_eq!(
+            decode_intersection_contracts(&[expected.clone(), expected.clone()]).unwrap(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn nominal_literal_branch_constraints_preserve_nested_domains() {
+    for (field_type, literal) in [
+        (FieldType::Integer, "42"),
+        (FieldType::String, "'selected'"),
+        (FieldType::Uuid, "'123e4567-e89b-12d3-a456-426614174000'"),
+        (FieldType::DigitId, "'000123'"),
+        (FieldType::Select, "'open'"),
+    ] {
+        let mut value = Type::scalar(field_type);
+        value.domain = Some(DomainRef {
+            entry_id: "matrix".into(),
+            catalog_hash: "pin".into(),
+            value_ref: ValueDomainKey::new("value").unwrap(),
+        });
+        for nullable in [false, true] {
+            value.nullable = nullable;
+            let input = fields(&[("box", fields(&[("value", value.clone())]))]);
+            for operator in ["==", "!="] {
+                let source = format!(
+                    "def predicate(row: Row):\n    return row.box.value {operator} {literal}\n"
+                );
+                let branches =
+                    branch_contracts(&source, &input, &[vec!["box".into(), "value".into()]])
+                        .unwrap_or_else(|e| panic!("{source}: {e}"))
+                        .unwrap();
+                for branch in [&branches[0].0, &branches[0].1] {
+                    assert_eq!(branch.domain, value.domain, "{source}");
+                    assert_eq!(branch.shape, value.shape, "{source}");
+                }
+                let selected = if operator == "==" {
+                    &branches[0].0
+                } else {
+                    &branches[0].1
+                };
+                assert!(!selected.nullable, "{source}");
+            }
+        }
+    }
+}

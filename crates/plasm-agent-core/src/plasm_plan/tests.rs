@@ -791,14 +791,13 @@ fn validate_render_rejects_empty_column_name() {
 }
 
 #[test]
-fn validate_render_rejects_non_content_schema() {
+fn validate_render_accepts_any_declared_string_output_name() {
     let mut plan = render_plan(serde_json::json!(["name"]), serde_json::json!("{{ rows }}"));
     plan["nodes"][1]["compute"]["schema"] = serde_json::json!({
         "entity": "PlanRender",
         "fields": [{ "name": "body", "value_kind": "string" }]
     });
-    let err = validate_plan_value(&plan).expect_err("bad schema rejected");
-    assert!(err.contains("single string field named 'content'"), "{err}");
+    validate_plan_value(&plan).expect("declared string output names are not reserved");
 }
 
 #[test]

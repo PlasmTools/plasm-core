@@ -33,6 +33,8 @@ pub struct DeriveTemplate {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeriveKind {
+    /// Extract one cell without expanding an object-valued payload into columns.
+    Cell,
     Map,
     Data,
 }

@@ -1,11 +1,11 @@
-**Run Plasm** (live write / review commit): **`logical_session_ref`** + **`run_ref`** — a `pcN` from **`plasm`** when the plan needed review, or the page handle from a prior "more pages" line. Real HTTP/API; may return **`resource_link`** snapshots.
+**Run Plasm**: `logical_session_ref` + `run_ref` from a reviewed Python plan, or a continuation handle returned by an earlier run. This executes real API operations.
 
-**When to call:** only after **`plasm`** returned a **`run_ref`** for a mutating / review-gated plan, or to continue paging. Clean read-only **`plasm`** calls already return rows — do not re-run them with **`plasm_run`**.
+Call only after `plasm` returns a run_ref for a mutation or review gate, or to continue paging. Clean read-only `plasm` calls already execute; do not execute them again.
 
-**Review gate:** first live write executes the reviewed plan for that `pcN`. If the token is missing, expired, or from another plan, call **`plasm`** again.
+The commit identifies the reviewed DAG. If it is missing, expired or mismatched, submit the program to `plasm` again. Preserve the logical session and selection criteria.
 
-**Paging:** when a result says `more pages — call plasm_run with run_ref: "…"`, copy that handle into **`run_ref`** (same **`logical_session_ref`**). A snapshot contains the acquired batch; it does not fetch further backend pages. Follow a returned continuation even when that batch has a snapshot. `page(...)` is HTTP-execute program syntax only.
+Return only needed results: select and aggregate rowsets, and use typed @compute for rendering and processing inside the DAG. TSV is a result format. A preview may omit rows or fields; it does not establish absence or collection completeness. Inspect coverage and follow a returned continuation with the same logical_session_ref.
 
-**Live results:** `## {return_label} ({n} rows)` header. Small results (≤25 rows): inline ` ```tsv ` when `result_delivery` is `inline`; `snapshot_only` / `(in artifact)` mark omitted data, available through the optional artifact read path (suffix below).
+A failed or cancelled run may have completed writes. Inspect operation outcomes before issuing further effects; do not blindly replay a program. A transient `session materialization changed during concurrent execute` permits reissuing that same run_ref once.
 
-**Retry:** transient `session materialization changed during concurrent execute` — re-issue the same `plasm_run` once.
+Failure evidence belongs to one execution. A new program may perform reads or writes in the same logical session; it does not resume or roll back an earlier execution. Service diagnostics inform the agent but do not determine effect status.

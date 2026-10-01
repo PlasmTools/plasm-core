@@ -1,7 +1,7 @@
 use super::*;
 use crate::plasm_monad::{
     empty_comp, invoke_step_payload, map_step_payload, BindingName, DeriveKind, DerivePayload,
-    DeriveTemplate, InputCardinality, OutputName, PlanDataInput, PlasmDataValue,
+    DeriveTemplate, InputCardinality, OutputName, PlanDataInput, PlasmDataValue, SurfaceKind,
 };
 use std::collections::BTreeMap;
 
@@ -99,6 +99,7 @@ fn body() -> CorrelatedBody {
     ]);
     comp.return_ = PlasmReturn::Step { step: id("output") };
     CorrelatedBody {
+        output: ScopedOutput::Record,
         parent: ParentCapture {
             source: id("items"),
             local: id("parent"),
@@ -108,6 +109,9 @@ fn body() -> CorrelatedBody {
             },
         },
         max_parents: NonZeroU32::new(256).unwrap(),
+        parent_entity_authority: true,
+        parent_schema: None,
+        captures: vec![],
         body: comp,
     }
 }
@@ -338,4 +342,52 @@ fn correlated_body_rejects_query_operand_from_a_different_scope() {
         .execution_layers()
         .unwrap_err()
         .contains("escapes scope"));
+}
+
+#[test]
+fn rowset_identity_scope_returns_only_admitted_ports() {
+    let mut body = body();
+    body.body.steps.clear();
+    body.body.bind = Default::default();
+    body.body.return_ = PlasmReturn::Step {
+        step: body.parent.local.clone(),
+    };
+    let schema = crate::plasm_monad::SyntheticResultSchema {
+        entity: Some("Item".into()),
+        fields: vec![],
+        optional_fields: Default::default(),
+    };
+    body.output = ScopedOutput::Rows {
+        entity: body.parent.entity.clone(),
+        schema: schema.clone(),
+        entity_authority: true,
+        acknowledgement: false,
+    };
+    assert!(body.execution_layers().unwrap().is_empty());
+    body.captures.push(ScopedCapture {
+        source: id("outer"),
+        local: id("captured"),
+        entity: body.parent.entity.clone(),
+        schema,
+        value_contract: None,
+        singleton: false,
+        entity_authority: true,
+    });
+    body.body.return_ = PlasmReturn::Step {
+        step: id("captured"),
+    };
+    assert!(body.execution_layers().unwrap().is_empty());
+    body.body.return_ = PlasmReturn::Step { step: id("outer") };
+    assert!(
+        body.execution_layers().is_err(),
+        "outer names cannot escape through the scope return"
+    );
+    body.body.return_ = PlasmReturn::Step {
+        step: body.parent.local.clone(),
+    };
+    body.output = ScopedOutput::Record;
+    assert!(
+        body.execution_layers().is_err(),
+        "a rowset port is not a synthetic record constructor"
+    );
 }

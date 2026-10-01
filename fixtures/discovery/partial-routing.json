@@ -77,7 +77,7 @@
     "recovery": null
   },
   "teaching": {
-    "tsv": "e1\tRecord",
+    "prompt": "e1 Record",
     "delta_refs": [
       "matrix:Record"
     ]

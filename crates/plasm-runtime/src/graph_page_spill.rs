@@ -40,7 +40,7 @@ pub struct GraphPageDelta {
     pub page_index: usize,
     pub entity_type: String,
     pub schema_version: u32,
-    pub entities: Vec<serde_json::Value>,
+    pub entities: Vec<CachedEntity>,
 }
 
 /// Host-provided spill sink: append each paginated page to durable storage, trim hot RAM, and re-read pages.
@@ -49,7 +49,7 @@ pub trait GraphPageSpill: Send + Sync {
     async fn append_page(
         &self,
         page_index: usize,
-        entities: &[CachedEntity],
+        entities: &plasm_core::collection_codec::SharedRows<CachedEntity>,
     ) -> Result<(), RuntimeError>;
 
     async fn graph_pages(&self) -> Result<Vec<GraphPageDelta>, RuntimeError>;

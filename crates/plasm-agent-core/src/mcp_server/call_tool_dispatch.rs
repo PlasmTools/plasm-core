@@ -43,7 +43,7 @@ where
     let pool = handler.plasm.live_plan_pool();
     match pool
         .run_local(move || async move {
-            Ok(match f().await {
+            Ok::<_, String>(match f().await {
                 Ok(r) => r,
                 Err(e) => CallToolResult::with_error(e),
             })

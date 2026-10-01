@@ -52,7 +52,16 @@ pub fn type_entity_with_relation(relation: &str, target: Ref) -> plasm_runtime::
         TypedFieldValue::from(Value::String("electric".to_string())),
     );
     let mut relations = IndexMap::new();
-    relations.insert(relation.to_string(), vec![target]);
+    relations.insert(
+        relation.to_string(),
+        plasm_core::row_contract::RelationMembership::observe(
+            None,
+            &("fixture", relation, &reference),
+            vec![target],
+            None,
+        )
+        .unwrap(),
+    );
     plasm_runtime::CachedEntity {
         reference,
         fields,
@@ -128,7 +137,7 @@ pub async fn spill_one_page(
     let core = SessionCore::new();
     let seq = core.alloc_delta_seq().await.0;
     fx.persistence
-        .append_graph_page(prompt_hash, session_id, seq, 0, "Berry", &page, None)
+        .append_graph_page(prompt_hash, session_id, seq, 0, "Berry", &page.into())
         .await
         .expect("append spill page");
 }

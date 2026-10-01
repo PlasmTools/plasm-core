@@ -1679,13 +1679,16 @@ proptest::proptest! {
     ) {
         let program = format!("items = LangItem\nreads = items => LangItem(_.id)\nselected = reads | where score >= {cutoff}\nselected");
         let ops = compiled_filter_roundtrip(&program);
-        let rows: Vec<_> = source.iter().map(|n| serde_json::json!({
+        let rows: Vec<_> = source.iter().map(|n| crate::fixture_row!({
             "id": format!("row-{n}"), "score": n, "active": n % 2 == 0,
             "owner": "same-owner", "title": format!("title-{n}"),
         })).collect();
-        let expected: Vec<_> = rows.iter().filter(|r| r["score"].as_i64().unwrap() >= cutoff).cloned().collect();
-        let plasm_runtime::row_compute::ComputeEvalOutcome::Rows(actual) =
-            plasm_runtime::row_compute::eval_compute_ops(&ops, &rows).unwrap() else { panic!("rows") };
+        let expected: Vec<_> = rows.iter().filter(|r| r["score"].as_integer().unwrap() >= cutoff).cloned().collect();
+        let plasm_runtime::row_compute::ComputeEvalOutcome::Rows(plasm_core::CollectedFrame { rows: actual, .. }) =
+            plasm_runtime::row_compute::eval_compute_ops(&ops, &rows, &plasm_core::value_contract::ValueContract::record([
+                ("id", plasm_core::FieldType::String), ("score", plasm_core::FieldType::Integer), ("active", plasm_core::FieldType::Boolean),
+                ("owner", plasm_core::FieldType::String), ("title", plasm_core::FieldType::String)
+            ].into_iter().map(|(name,ty)| (name.into(),plasm_core::value_contract::ValueContract::scalar(ty))).collect(), Default::default())).unwrap() else { panic!("rows") };
         proptest::prop_assert_eq!(actual, expected);
     }
 
@@ -1698,12 +1701,15 @@ proptest::proptest! {
         let list = chosen.iter().map(ToString::to_string).collect::<Vec<_>>().join(",");
         let program = format!("LangItem | where score in ({list}) OR (score >= {cutoff} AND active = true)");
         let ops = compiled_filter_roundtrip(&program);
-        let rows: Vec<_> = source.iter().map(|n| serde_json::json!({"id":format!("row-{n}"),"score":n,"active":n%2==0})).collect();
+        let rows: Vec<_> = source.iter().map(|n| crate::fixture_row!({"id":format!("row-{n}"),"score":n,"active":n%2==0})).collect();
         let expected: Vec<_> = rows.iter().filter(|r| {
-            let n = r["score"].as_i64().unwrap(); chosen.contains(&n) || (n>=cutoff && n%2==0)
+            let n = r["score"].as_integer().unwrap(); chosen.contains(&n) || (n>=cutoff && n%2==0)
         }).cloned().collect();
-        let plasm_runtime::row_compute::ComputeEvalOutcome::Rows(out) =
-            plasm_runtime::row_compute::eval_compute_ops(&ops, &rows).unwrap() else { panic!("rows") };
+        let plasm_runtime::row_compute::ComputeEvalOutcome::Rows(plasm_core::CollectedFrame { rows: out, occurrences, .. }) =
+            plasm_runtime::row_compute::eval_compute_ops(&ops, &rows, &plasm_core::value_contract::ValueContract::record([
+                ("id", plasm_core::FieldType::String), ("score", plasm_core::FieldType::Integer), ("active", plasm_core::FieldType::Boolean),
+                ("owner", plasm_core::FieldType::String), ("title", plasm_core::FieldType::String)
+            ].into_iter().map(|(name,ty)| (name.into(),plasm_core::value_contract::ValueContract::scalar(ty))).collect(), Default::default())).unwrap() else { panic!("rows") };
         proptest::prop_assert_eq!(&out, &expected);
         let node = PlanNodeId::new("source").unwrap();
         let identities: Vec<_> = rows.iter().map(|row| Some(plasm_core::RowIdentity::new(
@@ -1712,19 +1718,25 @@ proptest::proptest! {
             indexmap::IndexMap::new(), plasm_core::IdEncoding::Simple,
         ))).collect();
         let materialized = [(node.clone(), MaterializedNode {
+            value_shapes: Vec::new(),
+            optional_fields: Default::default(),
             qualified_entity: crate::plasm_plan::QualifiedEntityKey { entry_id: "matrix".into(), entity: "LangItem".into() },
             result: Arc::new(ExecutionResult {
-                count: rows.len(), entities: Vec::new(), has_more: false,
-                coverage: plasm_runtime::ResultCoverage::Complete,
-                pagination_resume: None, paging_handle: None, source: ExecutionSource::Cache,
-                stats: Default::default(), request_fingerprints: vec![], operations: plasm_runtime::OperationLedger::empty(),
-            }),
+collection: crate::test_support::execution_fixtures::collection(Vec::new(), plasm_runtime::ResultCoverage::Complete),
+has_more: false,
+pagination_resume: None,
+paging_handle: None,
+source: ExecutionSource::Cache,
+stats: Default::default(),
+request_fingerprints: vec![],
+operations: plasm_runtime::OperationLedger::empty(),
+}),
             row_source: MaterializedRowSource::Inline(rows.clone()), row_identities: identities.clone(),
             artifact: None, display: String::new(), projection: None,
         })].into_iter().collect();
-        let actual_ids = propagate_row_identities(&node, &ops[0], &materialized, out.len()).unwrap();
+        let actual_ids = propagate_row_identities(&node, &ops[0], &materialized, &occurrences, out.len()).unwrap();
         let expected_ids: Vec<_> = rows.iter().zip(identities).filter(|(r, _)| {
-            let n=r["score"].as_i64().unwrap(); chosen.contains(&n) || (n>=cutoff && n%2==0)
+            let n=r["score"].as_integer().unwrap(); chosen.contains(&n) || (n>=cutoff && n%2==0)
         }).map(|(_, id)| id).collect();
         proptest::prop_assert_eq!(actual_ids, expected_ids);
     }
@@ -1770,4 +1782,52 @@ fn dry_render_validates_structure_without_inventing_observations() {
         ).expect("statically valid render");
         evaluate_plasm_plan_dry(&s, &plan).expect("unknown observations cannot fail value-dependent computation");
     }
+}
+
+#[test]
+fn union_correspondence_preserves_ambient_identity_and_rejects_invalid_indices() {
+    let es = language_matrix_session();
+    let left = PlanNodeId::new("left").unwrap();
+    let right = PlanNodeId::new("right").unwrap();
+    let op = ComputeOp::Union {
+        other: plasm_core::OutputName::new("right").unwrap(),
+    };
+    let make = |owner: &str, key: &str| {
+        let mut identity = plasm_core::RowIdentity::new(
+            plasm_core::QualifiedEntityKey::new(owner, "LangItem"),
+            plasm_core::Ref::new("LangItem", key),
+            indexmap::IndexMap::new(),
+            plasm_core::IdEncoding::Simple,
+        );
+        identity
+            .ambient
+            .insert("workspace".into(), "scope-7".into());
+        MaterializedNode::dry_values(
+            es.cgs.as_ref(),
+            crate::plasm_plan::QualifiedEntityKey {
+                entry_id: owner.into(),
+                entity: "LangItem".into(),
+            },
+            vec![crate::fixture_row!({"alias":"same public value"})],
+            vec![Some(identity)],
+            String::new(),
+            None,
+        )
+        .unwrap()
+    };
+    let mut materialized = BTreeMap::from([
+        (left.clone(), make("matrix", "original-a")),
+        (right.clone(), make("matrix", "original-b")),
+    ]);
+    let actual =
+        propagate_row_identities(&left, &op, &materialized, &[Some(0), Some(1)], 2).unwrap();
+    assert_eq!(actual[0], materialized[&left].row_identities[0]);
+    assert_eq!(actual[1], materialized[&right].row_identities[0]);
+    assert!(propagate_row_identities(&left, &op, &materialized, &[Some(2)], 1).is_err());
+    assert!(propagate_row_identities(&left, &op, &materialized, &[Some(0)], 2).is_err());
+    materialized.insert(right.clone(), make("another-catalog", "original-b"));
+    assert_eq!(
+        propagate_row_identities(&left, &op, &materialized, &[Some(0), Some(1)], 2).unwrap(),
+        [None, None]
+    );
 }

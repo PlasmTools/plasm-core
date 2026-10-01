@@ -58,6 +58,30 @@ pub fn collect_relation_binding_proofs(
     Ok(out)
 }
 
+/// Resolve a catalog identity slot without crossing the wire boundary.
+pub fn identity_slot_to_value(
+    cgs: &CGS,
+    entity: &EntityDef,
+    field_name: &str,
+    slot: &str,
+) -> Value {
+    let raw = Value::String(slot.to_owned());
+    let Ok(ft) = parent_entity_field_type(cgs, entity, field_name) else {
+        return raw;
+    };
+    let nv = entity
+        .fields
+        .get(field_name)
+        .and_then(|f| f.named_value(cgs).ok());
+    coerce_value_for_field_type(
+        &ft,
+        nv.and_then(|n| n.value_format),
+        nv.and_then(|n| n.array_items.as_ref()),
+        raw.clone(),
+    )
+    .unwrap_or(raw)
+}
+
 /// Coerce a string identity slot into JSON using the parent entity field's catalog type.
 pub fn identity_slot_to_json(
     cgs: &CGS,
@@ -153,9 +177,7 @@ pub fn restore_id_field_from_compound_ref(
         return;
     };
     fields.entry(id_name.to_string()).or_insert_with(|| {
-        let json = identity_slot_to_json(cgs, ent, id_name, val);
-        serde_json::from_value(json)
-            .unwrap_or_else(|_| crate::TypedFieldValue::from(crate::Value::String(val.to_string())))
+        crate::TypedFieldValue::from(identity_slot_to_value(cgs, ent, id_name, val))
     });
 }
 

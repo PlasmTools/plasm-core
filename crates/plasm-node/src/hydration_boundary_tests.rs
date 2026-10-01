@@ -30,8 +30,10 @@ impl HttpTransport for Transport {
                 .iter()
                 .map(|id| json!({"note_id":id}))
                 .collect::<Vec<_>>()),
-            ["folders", _] => {
-                json!({"id":"root", "notes":self.ids.iter().map(|id| json!({"note_id":id})).collect::<Vec<_>>()})
+            ["folders", "missing"] => json!({"id":"missing"}),
+            ["folders", "empty"] => json!({"id":"empty", "notes":[]}),
+            ["folders", id] => {
+                json!({"id":id, "notes":self.ids.iter().map(|id| json!({"note_id":id})).collect::<Vec<_>>()})
             }
             ["notes", id] => {
                 let id: i64 = id.parse().expect("note identity must be a wire integer");
@@ -81,7 +83,7 @@ impl HttpTransport for Transport {
 #[test]
 fn native_boundary_hydration_repeated_live() {
     std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
+        .stack_size(2 * 1024 * 1024)
         .spawn(|| {
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -107,7 +109,7 @@ async fn run_native_hydration() {
         [("matrix".into(), compiled)].into(),
         "hydration-session".into(),
     );
-    let seeds = ["Session", "SavedNote", "Note", "Owner"].map(|entity| CapabilitySeed {
+    let seeds = ["Session", "SavedNote", "Note", "Owner", "Folder"].map(|entity| CapabilitySeed {
         entry_id: "matrix".into(),
         entity: entity.into(),
     });
@@ -126,6 +128,7 @@ async fn run_native_hydration() {
     let session = symbol("Session");
     let saved = symbol("SavedNote");
     let note = symbol("Note");
+    let folder = symbol("Folder");
     let cgs = &engine.catalogs["matrix"];
     let login = plasm_core::prompt_render::python::capability_method_name(
         cgs,
@@ -134,8 +137,106 @@ async fn run_native_hydration() {
         &cgs.capabilities["login"],
     );
     let program = format!("class Read(Program):\n    def build(self):\n        auth = {session}.{login}()\n        saved = {saved}.query(access_token=auth.access_token)\n        notes = saved.flat_map(lambda row: {note}.get(row.note_id))\n        return notes.flat_map(lambda row: row.owners)\n");
+    let owner = symbol("Owner");
+    let owner_relation = plasm_core::symbol_tuning::SymbolRender::ident_sym_relation_for(
+        &exposure.to_symbol_map(),
+        "matrix",
+        "Note",
+        "owners",
+    );
+    let mapped_program = format!("class MapNotes(Program):\n    @compute\n    def names(self, owners: list[Value[{owner}]]) -> str:\n        return '|'.join(owner.name for owner in owners)\n    @compute\n    def document(self, rows: list[Row]) -> str:\n        return '\\n'.join(row.title + ':' + row.names for row in rows)\n    def build(self):\n        auth = {session}.{login}()\n        notes = {folder}.get(\"root\").notes.distinct(\"note_id\").order_by(\"note_id\")\n        mapped = notes.map(lambda note: {{\"title\": note.title, \"names\": self.names(note.{owner_relation})}}, max_parents=32)\n        return self.document(mapped)\n");
+    let dry = engine.dry_run(&mapped_program).await.unwrap();
+    let result = engine
+        .run_plan_live(&dry.plan_commit_ref, transport.clone())
+        .await
+        .unwrap();
+    assert!(result.ok, "{}", result.message);
+    let envelope: serde_json::Value =
+        serde_json::from_str(result.rows_json.as_deref().unwrap()).unwrap();
+    assert_eq!(
+        envelope[0]["rows"][0]["content"],
+        json!((1..=18)
+            .map(|i| format!("note-{i}:owner-{i}"))
+            .collect::<Vec<_>>()
+            .join("\n"))
+    );
+    let folder_program = format!("class ReadFolder(Program):\n    def build(self):\n        auth = {session}.{login}()\n        notes = {folder}.get(\"root\").notes\n        return notes.aggregate(n=agg.count())\n");
+    let dry = engine.dry_run(&folder_program).await.unwrap();
+    let result = engine
+        .run_plan_live(&dry.plan_commit_ref, transport.clone())
+        .await
+        .unwrap();
+    assert!(result.ok, "{}", result.message);
+    let envelope: serde_json::Value =
+        serde_json::from_str(result.rows_json.as_deref().unwrap()).unwrap();
+    assert_eq!(envelope[0]["rows"][0]["n"], json!(18));
+    let compute_program = format!("class CountFolder(Program):\n    @compute\n    def size(self, rows: list[Value[{note}]]) -> str:\n        return str(len(rows))\n    def build(self):\n        auth = {session}.{login}()\n        notes = {folder}.get(\"root\").notes\n        return self.size(notes.select(\"note_id\"))\n");
+    let dry = engine.dry_run(&compute_program).await.unwrap();
+    let result = engine
+        .run_plan_live(&dry.plan_commit_ref, transport.clone())
+        .await
+        .unwrap();
+    assert!(result.ok, "{}", result.message);
+    let envelope: serde_json::Value =
+        serde_json::from_str(result.rows_json.as_deref().unwrap()).unwrap();
+    assert_eq!(envelope[0]["rows"][0]["content"], json!("18"));
+    let derived_program = compute_program
+        .replace(&format!("list[Value[{note}]]"), "list[Row]")
+        .replace("return self.size(notes.select(\"note_id\"))", "ids = notes.select(\"note_id\")\n        members = notes.where(lambda row: row.note_id in ids).select(\"note_id\")\n        combined = members.union(ids).distinct(\"note_id\")\n        return self.size(combined)");
+    let dry = engine.dry_run(&derived_program).await.unwrap();
+    let result = engine
+        .run_plan_live(&dry.plan_commit_ref, transport.clone())
+        .await
+        .unwrap();
+    assert!(result.ok, "{}", result.message);
+    let envelope: serde_json::Value =
+        serde_json::from_str(result.rows_json.as_deref().unwrap()).unwrap();
+    assert_eq!(envelope[0]["rows"][0]["content"], json!("18"));
+
+    for (identity, edge, expected) in [
+        ("empty", "notes", Some("0")),
+        ("missing", "notes", None),
+        ("root", "unproven_notes", None),
+    ] {
+        let program =
+            compute_program.replace("get(\"root\").notes", &format!("get({identity:?}).{edge}"));
+        let dry = engine.dry_run(&program).await.unwrap();
+        let result = engine
+            .run_plan_live(&dry.plan_commit_ref, transport.clone())
+            .await;
+        if let Some(expected) = expected {
+            let result = result.unwrap();
+            assert!(result.ok, "{}", result.message);
+            let envelope: serde_json::Value =
+                serde_json::from_str(result.rows_json.as_deref().unwrap()).unwrap();
+            assert_eq!(envelope[0]["rows"][0]["content"], json!(expected));
+        } else {
+            let result = result.unwrap();
+            assert!(
+                !result.ok,
+                "incomplete input must not produce a compute result"
+            );
+            let failure: plasm_runtime::ExecutionFailure = serde_json::from_str(
+                result
+                    .failure_json
+                    .as_ref()
+                    .expect("typed runtime rejection"),
+            )
+            .unwrap();
+            assert_eq!(
+                failure.recovery,
+                plasm_runtime::RecoveryDisposition::ReconcileEffects
+            );
+            assert!(failure
+                .effects
+                .iter()
+                .any(|effect| effect.capability == "login" && effect.completed == 1));
+            assert!(result.rows_json.is_none());
+        }
+    }
+
     for _ in 0..2 {
-        let dry = engine.dry_run(&program).unwrap();
+        let dry = engine.dry_run(&program).await.unwrap();
         let result = engine
             .run_plan_live(&dry.plan_commit_ref, transport.clone())
             .await

@@ -1,4 +1,4 @@
-//! Idempotent reconcile and conflict mapping for mutating capabilities.
+//! Declared read-backed postconditions for mutating capabilities; service errors are opaque.
 
 use indexmap::IndexMap;
 use plasm_core::plasm_value_to_json;
@@ -11,53 +11,12 @@ use plasm_core::{
 };
 use serde_json::Value as JsonValue;
 
-#[cfg(test)]
-use crate::api_error_detail::workflow_conflict_from_http;
 use crate::execution::{
-    compiled_conflict_rules, CapabilityParamEnv, ExecutionEngine, ExecutionMode, ExecutionResult,
-    OperationLedger, ResultCoverage, StreamConsumeOpts,
+    CapabilityParamEnv, ExecutionEngine, ExecutionMode, ExecutionResult, OperationLedger,
+    StreamConsumeOpts,
 };
 use crate::materialization::SessionMaterialization;
 use crate::RuntimeError;
-
-pub fn map_capability_http_error(
-    capability: &CapabilitySchema,
-    status: u16,
-    body: &serde_json::Value,
-    fallback_message: String,
-) -> RuntimeError {
-    let rules = match compiled_conflict_rules(capability) {
-        Ok(rules) => rules,
-        Err(error) => return error,
-    };
-    if let Some(conflict) = plasm_core::match_conflict_rule(&rules, status, body) {
-        let md = conflict.markdown_block();
-        return RuntimeError::WorkflowConflict {
-            conflict: Box::new(conflict),
-            message: format!("{fallback_message}\n\n{md}"),
-            attempts: 1,
-        };
-    }
-    RuntimeError::RequestError {
-        message: fallback_message,
-        attempts: 1,
-        status: Some(status),
-        body: Some(body.clone()),
-    }
-}
-
-pub fn extract_http_error_parts(err: &RuntimeError) -> Option<(u16, serde_json::Value, String)> {
-    match err {
-        RuntimeError::RequestError {
-            message,
-            status: Some(status),
-            body: Some(body),
-            ..
-        } => Some((*status, body.clone(), message.clone())),
-        RuntimeError::HydrationGet { source, .. } => extract_http_error_parts(source),
-        _ => None,
-    }
-}
 
 impl ExecutionEngine {
     #[allow(clippy::too_many_arguments)]
@@ -71,31 +30,23 @@ impl ExecutionEngine {
         env_input: &Value,
         entity: &str,
     ) -> Result<ExecutionResult, RuntimeError> {
-        let Some(output) = capability.output_schema.as_ref() else {
-            return map_request_to_conflict_or_return(err, capability);
+        // Even an opaque rejection may follow a commit. Reconciliation must not
+        // consult a pre-dispatch observation, including when no contract exists.
+        mat.poison_read_caches_after_mutation();
+        mat.apply_post_mutation_cache_effects(capability, cgs)?;
+        let Some(output) = capability
+            .output_schema
+            .as_ref()
+            .filter(|output| output.idempotent)
+        else {
+            return Err(err);
         };
-        if !output.idempotent {
-            return map_request_to_conflict_or_return(err, capability);
-        }
         let Some(reconcile) = &output.reconcile else {
             return Err(err);
         };
-        let (status, body, message) = match extract_http_error_parts(&err) {
-            Some(parts) => parts,
-            None => return Err(err),
-        };
-        let rules = compiled_conflict_rules(capability)?;
-        let Some(conflict) = plasm_core::match_conflict_rule(&rules, status, &body) else {
-            return Err(err);
-        };
-        if conflict.kind != reconcile.on {
-            let md = conflict.markdown_block();
-            return Err(RuntimeError::WorkflowConflict {
-                conflict: Box::new(conflict),
-                message: format!("{message}\n\n{md}"),
-                attempts: 1,
-            });
-        }
+        // Service-level failures are opaque. Only the declared read postcondition
+        // can establish that the requested state exists; neither status nor body
+        // grants success, no-effect evidence, or retry authority.
         let via_cap = cgs.get_capability(reconcile.via.as_str()).ok_or_else(|| {
             RuntimeError::ConfigurationError {
                 message: format!(
@@ -106,43 +57,49 @@ impl ExecutionEngine {
         })?;
         let identity =
             identity_values_from_env(capability, env_input, reconcile.bind_identity_from);
+        if identity.is_empty()
+            || capability
+                .identity_key
+                .as_ref()
+                .is_none_or(|keys| keys.len() != identity.len())
+        {
+            return Err(err);
+        }
         let res = self
-            .fetch_reconcile_row(via_cap, cgs, mat, mode, &identity, entity)
+            .fetch_reconcile_row(
+                via_cap,
+                cgs,
+                mat,
+                mode,
+                &identity,
+                env_input.as_object().expect("identity object"),
+                entity,
+            )
             .await?;
+        if res.count() != 1
+            || res
+                .collection
+                .materialize(plasm_core::collection_codec::Demand::Whole)
+                .is_err()
+            || identity.iter().any(|(key, value)| {
+                res.entities()
+                    .first()
+                    .and_then(|row| row.fields.get(key))
+                    .is_none_or(|field| !values_equal(value, &field.to_value()))
+            })
+        {
+            return Err(err);
+        }
         if let Some(mismatch) = detect_identity_mismatch(capability, env_input, &res) {
             let md = mismatch.markdown_block();
             return Err(RuntimeError::WorkflowConflict {
                 conflict: Box::new(mismatch),
-                message: format!("{message}\n\n{md}"),
+                message: md,
                 attempts: 1,
             });
         }
-        Ok(stamp_outcome_on_result(res, WriteOutcome::Reused))
+        stamp_outcome_on_result(res, WriteOutcome::Reused)
     }
-}
-
-fn map_request_to_conflict_or_return(
-    err: RuntimeError,
-    capability: &CapabilitySchema,
-) -> Result<ExecutionResult, RuntimeError> {
-    if let RuntimeError::RequestError {
-        message,
-        status: Some(status),
-        body: Some(body),
-        ..
-    } = &err
-    {
-        let rules = compiled_conflict_rules(capability)?;
-        if let Some(conflict) = plasm_core::match_conflict_rule(&rules, *status, body) {
-            let md = conflict.markdown_block();
-            return Err(RuntimeError::WorkflowConflict {
-                conflict: Box::new(conflict.clone()),
-                message: format!("{message}\n\n{md}"),
-                attempts: 1,
-            });
-        }
-    }
-    Err(err)
 }
 
 fn identity_values_from_env(
@@ -161,7 +118,10 @@ fn identity_values_from_env(
         return out;
     };
     for key in keys {
-        if let Some(v) = map.get(key.as_str()) {
+        if let Some(v) = map
+            .get(key.as_str())
+            .filter(|value| !matches!(value, Value::Null))
+        {
             out.insert(key.clone(), v.clone());
         }
     }
@@ -173,7 +133,7 @@ pub fn detect_identity_mismatch(
     env_input: &Value,
     fetched: &ExecutionResult,
 ) -> Option<WorkflowConflict> {
-    let row = fetched.entities.first()?;
+    let row = fetched.entities().first()?;
     let input_obj = env_input.as_object()?;
     let identity = capability.identity_key.as_deref().unwrap_or(&[]);
     let mut key_map = IndexMap::new();
@@ -222,44 +182,46 @@ fn row_fields_to_json(fields: &IndexMap<String, TypedFieldValue>) -> IndexMap<St
 }
 
 fn values_equal(a: &Value, b: &Value) -> bool {
-    match (a, b) {
-        (Value::String(x), Value::String(y)) => x == y,
-        (Value::Integer(x), Value::Integer(y)) => x == y,
-        (Value::Float(x), Value::Float(y)) => (x - y).abs() < f64::EPSILON,
-        (Value::Bool(x), Value::Bool(y)) => x == y,
-        (Value::Null, Value::Null) => true,
-        _ => false,
-    }
+    a == b
 }
 
 impl ExecutionEngine {
-    async fn fetch_reconcile_row(
+    pub(crate) async fn fetch_reconcile_row(
         &self,
         via_cap: &CapabilitySchema,
         cgs: &CGS,
         mat: &mut SessionMaterialization,
         mode: ExecutionMode,
         identity: &IndexMap<String, Value>,
+        bindings: &IndexMap<String, Value>,
         entity: &str,
     ) -> Result<ExecutionResult, RuntimeError> {
         match via_cap.kind {
             CapabilityKind::Get => {
                 let mut bound = IndexMap::new();
                 for (k, v) in identity {
-                    if let Value::String(s) = v {
-                        bound.insert(k.clone(), s.clone());
-                    }
+                    let token = match v {
+                        Value::String(s) => s.clone(),
+                        Value::Integer(n) => n.to_string(),
+                        _ => {
+                            return Err(RuntimeError::ConfigurationError {
+                                message: "read-backed identity must be a string or integer".into(),
+                            })
+                        }
+                    };
+                    bound.insert(k.clone(), token);
                 }
-                let target_ent =
-                    cgs.get_entity(entity)
-                        .ok_or_else(|| RuntimeError::ConfigurationError {
-                            message: format!("unknown entity {entity}"),
-                        })?;
+                let target_ent = cgs.get_entity(via_cap.domain.as_str()).ok_or_else(|| {
+                    RuntimeError::ConfigurationError {
+                        message: format!("unknown entity {entity}"),
+                    }
+                })?;
                 let bound: std::collections::BTreeMap<String, String> = bound.into_iter().collect();
                 let reference =
                     crate::view_plan::ref_from_view_get_node(target_ent, via_cap, &bound)?;
-                let inherit = CapabilityParamEnv::from_bindings(identity, via_cap);
-                let get = plasm_core::GetExpr::from_ref(reference);
+                let inherit = CapabilityParamEnv::from_bindings(bindings, via_cap);
+                let get =
+                    plasm_core::GetExpr::from_ref(reference).with_capability(via_cap.name.clone());
                 self.execute_get(
                     &get,
                     cgs,
@@ -272,14 +234,20 @@ impl ExecutionEngine {
             }
             CapabilityKind::Query | CapabilityKind::Search => {
                 let pred = identity_predicate(identity);
-                let q = QueryExpr::filtered(via_cap.domain.as_str(), pred);
+                let q = QueryExpr::filtered(via_cap.domain.as_str(), pred)
+                    .with_capability(via_cap.name.clone());
+                let inherit = CapabilityParamEnv::from_bindings(bindings, via_cap);
                 self.execute_query(
                     &q,
                     cgs,
                     mat,
                     mode,
-                    StreamConsumeOpts::default(),
-                    &crate::view_plan::ViewAmbientContext::default(),
+                    StreamConsumeOpts {
+                        fetch_all: true,
+                        ..Default::default()
+                    },
+                    &crate::view_plan::ViewAmbientContext::default()
+                        .with_capability_params(inherit.bindings().clone()),
                 )
                 .await
             }
@@ -311,35 +279,42 @@ fn identity_predicate(identity: &IndexMap<String, Value>) -> Predicate {
 pub fn stamp_outcome_on_result(
     mut result: ExecutionResult,
     outcome: WriteOutcome,
-) -> ExecutionResult {
-    if let Some(row) = result.entities.first_mut() {
+) -> Result<ExecutionResult, RuntimeError> {
+    if let Some(observed) = result.entities().first() {
+        let mut row = observed.clone();
         row.fields.insert(
             "outcome".to_string(),
             TypedFieldValue::from_value(Value::String(outcome_label(outcome).into())),
         );
+        result.collection = result.collection.replace(0, row)?;
     }
-    result
+    Ok(result)
 }
 
-pub fn skipped_write_result(entity: &str) -> ExecutionResult {
-    ExecutionResult {
-        entities: vec![crate::cache::CachedEntity::from_decoded(
-            plasm_core::Ref::new(entity, ""),
-            IndexMap::from([("outcome".to_string(), Value::String("skipped".into()))]),
-            IndexMap::new(),
-            crate::execution::current_timestamp(),
-            crate::cache::EntityCompleteness::Complete,
-        )],
-        count: 1,
+pub fn skipped_write_result(
+    entity: &str,
+    identity: plasm_core::collection_codec::CollectionIdentity,
+) -> Result<ExecutionResult, RuntimeError> {
+    Ok(ExecutionResult {
+        collection: crate::execution::ExecutionCollection::observe(
+            identity,
+            vec![crate::cache::CachedEntity::from_decoded(
+                plasm_core::Ref::new(entity, ""),
+                IndexMap::from([("outcome".to_string(), Value::String("skipped".into()))]),
+                IndexMap::new(),
+                crate::execution::current_timestamp(),
+                crate::cache::EntityCompleteness::Complete,
+            )],
+            plasm_core::collection_codec::Observation::ExactOutput { decoded: 1 },
+        )?,
         has_more: false,
-        coverage: ResultCoverage::Complete,
         pagination_resume: None,
         paging_handle: None,
         source: crate::execution::ExecutionSource::Cache,
         stats: Default::default(),
         request_fingerprints: Vec::new(),
         operations: OperationLedger::empty(),
-    }
+    })
 }
 
 pub fn should_skip_write_after_preflight(env: &plasm_compile::CmlEnv) -> bool {
@@ -359,6 +334,7 @@ fn outcome_label(outcome: WriteOutcome) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::execution::ResultCoverage;
     use plasm_core::schema::{CapabilityMapping, CapabilityTemplateJson, OutputSchema, OutputType};
     use plasm_core::{CapabilityName, EntityName, ReconcileSpec};
 
@@ -372,10 +348,7 @@ mod tests {
             mapping: Some(CapabilityMapping {
                 template: CapabilityTemplateJson(serde_json::json!({
                     "method": "POST",
-                    "conflict_rules": [{
-                        "when": { "status": 422, "body_json_path": "message", "contains": "already exists" },
-                        "kind": "resource_exists"
-                    }]
+
                 })),
             }),
             derived: None,
@@ -386,7 +359,6 @@ mod tests {
                 decoder: serde_json::json!({}),
                 idempotent: true,
                 reconcile: Some(ReconcileSpec {
-                    on: WorkflowConflictKind::ResourceExists,
                     via: "workitem_query".into(),
                     bind_identity_from: ReconcileBindSource::Params,
                 }),
@@ -406,16 +378,17 @@ mod tests {
         fields.insert("title".into(), Value::String("a".into()));
         fields.insert("extra".into(), Value::String("old".into()));
         let fetched = ExecutionResult {
-            entities: vec![crate::cache::CachedEntity::from_decoded(
-                plasm_core::Ref::new("WorkItem", ""),
-                fields,
-                IndexMap::new(),
-                0,
-                crate::cache::EntityCompleteness::Complete,
-            )],
-            count: 1,
+            collection: crate::execution::test_collection(
+                vec![crate::cache::CachedEntity::from_decoded(
+                    plasm_core::Ref::new("WorkItem", ""),
+                    fields,
+                    IndexMap::new(),
+                    0,
+                    crate::cache::EntityCompleteness::Complete,
+                )],
+                ResultCoverage::Complete,
+            ),
             has_more: false,
-            coverage: ResultCoverage::Complete,
             pagination_resume: None,
             paging_handle: None,
             source: crate::execution::ExecutionSource::Cache,
@@ -425,18 +398,5 @@ mod tests {
         };
         let conflict = detect_identity_mismatch(&cap, &input, &fetched).expect("mismatch");
         assert_eq!(conflict.kind, WorkflowConflictKind::IdentityMismatch);
-    }
-
-    #[test]
-    fn workflow_conflict_from_mapping_template() {
-        let cap = idempotent_cap();
-        let body = serde_json::json!({ "message": "title already exists" });
-        let c = workflow_conflict_from_http(
-            &cap.require_mapping().expect("cml mapping").template.0,
-            422,
-            &body,
-        )
-        .expect("match");
-        assert_eq!(c.kind, WorkflowConflictKind::ResourceExists);
     }
 }

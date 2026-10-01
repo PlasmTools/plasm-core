@@ -48,7 +48,7 @@ fn compile_predicate_internal(
         Predicate::False => Ok(BackendFilter::False),
 
         Predicate::Comparison { field, op, value } => {
-            compile_comparison(field, *op, value, entity, cap_params)
+            compile_comparison(field, *op, value, entity, cap_params, cgs)
         }
 
         Predicate::And { args } => {
@@ -87,14 +87,22 @@ fn compile_comparison(
     value: &plasm_core::TypedComparisonValue,
     entity: &EntityDef,
     cap_params: &[InputFieldSchema],
+    cgs: &CGS,
 ) -> Result<BackendFilter, CompileError> {
-    let wire = value.to_value();
+    let mut wire = value.to_value();
     // Declared query inputs belong to the source request even when a returned row
     // has the same field name. Row predicates call this with no capability inputs.
     if cap_params.iter().any(|p| p.name == field) {
         return Ok(BackendFilter::True);
     }
-    if entity.fields.contains_key(field) {
+    if let Some(schema) = entity.fields.get(field) {
+        let domain = schema
+            .named_value(cgs)
+            .map_err(|e| CompileError::CompilationFailed {
+                message: e.to_string(),
+            })?;
+        plasm_core::temporal_input::encode_domain_temporals(&mut wire, domain, cgs)
+            .map_err(|message| CompileError::CompilationFailed { message })?;
         return Ok(BackendFilter::field(field, BackendOp::from(op), wire));
     }
 

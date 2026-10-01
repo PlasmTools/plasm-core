@@ -83,8 +83,8 @@ async fn derived_get_preserves_bound_query_credentials() {
             )
             .await
             .unwrap();
-        assert_eq!(out.entities.len(), 1);
-        assert_eq!(out.entities[0].reference.primary_slot_str(), "row-a");
+        assert_eq!(out.entities().len(), 1);
+        assert_eq!(out.entities()[0].reference.primary_slot_str(), "row-a");
     }
     assert_eq!(*tokens.lock().unwrap(), ["bound-a", "bound-b"]);
 }
@@ -340,7 +340,7 @@ fn normalize_cml_scope_entity_ref_keeps_scalar_unary_ref_for_path_var() {
         "workspace_id".to_string(),
         Value::String("workspace_123".to_string()),
     );
-    normalize_cml_env_scope_entity_refs(&mut env, &cgs, &cap).expect("normalize");
+    normalize_cml_env_inputs(&mut env, &cgs, &cap).expect("normalize");
     assert_eq!(
         env.get("workspace_id"),
         Some(&Value::String("workspace_123".to_string()))
@@ -358,7 +358,7 @@ fn normalize_cml_scope_entity_ref_narrows_unary_ref_row_to_path_scalar() {
             "name".to_string() => Value::String("General Workspace".to_string()),
         }),
     );
-    normalize_cml_env_scope_entity_refs(&mut env, &cgs, &cap).expect("normalize");
+    normalize_cml_env_inputs(&mut env, &cgs, &cap).expect("normalize");
     assert_eq!(
         env.get("workspace_id"),
         Some(&Value::String("workspace_123".to_string()))
@@ -638,10 +638,8 @@ fn test_basic_decoder_creation() {
 #[test]
 fn test_execution_result_serialization() {
     let result = ExecutionResult {
-        entities: vec![],
-        count: 0,
+        collection: crate::execution::test_collection(vec![], ResultCoverage::Unknown),
         has_more: false,
-        coverage: ResultCoverage::Unknown,
         pagination_resume: None,
         paging_handle: None,
         source: ExecutionSource::Live,
@@ -666,10 +664,8 @@ fn test_execution_result_serialization() {
 fn test_execution_result_json_skips_host_pagination_fields() {
     use plasm_core::PagingHandle;
     let result = ExecutionResult {
-        entities: vec![],
-        count: 0,
+        collection: crate::execution::test_collection(vec![], ResultCoverage::Unknown),
         has_more: true,
-        coverage: ResultCoverage::Unknown,
         pagination_resume: None,
         paging_handle: Some(PagingHandle::mint_monotonic(1)),
         source: ExecutionSource::Live,
@@ -2384,13 +2380,23 @@ fn prefer_graph_miss_yields_scoped_not_error() {
         0,
         EntityCompleteness::Summary,
     );
-    parent.update_relations("tags".into(), vec![tag_ref], 0);
+    parent.update_relations(
+        "tags".into(),
+        plasm_core::row_contract::RelationMembership::observe(
+            None,
+            &"relation_fixture",
+            vec![tag_ref],
+            None,
+        )
+        .unwrap(),
+        0,
+    );
     let res = resolve_relation_row_resolution(
         &materialize,
         "tags",
         "LangTag",
-        &parent.payload_to_json(),
-        parent.relations.get("tags").map(|v| v.as_slice()),
+        &parent.to_row_values(None),
+        Some(&parent.relations["tags"].iter().cloned().collect::<Vec<_>>()),
         |_| false,
     );
     assert_eq!(res, RelationRowResolution::ScopedQuery);
@@ -2471,7 +2477,17 @@ fn parent_row_relation_decoded_and_resolve_cached_targets() {
         0,
         EntityCompleteness::Summary,
     );
-    parent.update_relations("tags".into(), vec![tag_ref.clone()], 0);
+    parent.update_relations(
+        "tags".into(),
+        plasm_core::row_contract::RelationMembership::observe(
+            None,
+            &"relation_fixture",
+            vec![tag_ref.clone()],
+            None,
+        )
+        .unwrap(),
+        0,
+    );
     assert!(parent.relations.contains_key("tags"));
 
     let tag = CachedEntity::from_decoded(
@@ -2576,25 +2592,26 @@ async fn host_page_resume_preserves_crossing_backend_page() {
         .unwrap();
     let resume = first
         .pagination_resume
+        .clone()
         .expect("bounded host read must offer continuation");
     let second = engine
         .execute_pagination_resume(resume, &cgs, &mut mat, None, consume, opts)
         .await
         .unwrap();
     let ids: std::collections::BTreeSet<_> = first
-        .entities
+        .entities()
         .iter()
-        .chain(&second.entities)
+        .chain(second.entities())
         .map(|e| e.reference.primary_slot_str())
         .collect();
     assert_eq!(
-        first.entities.len() + second.entities.len(),
+        first.entities().len() + second.entities().len(),
         48,
         "no lost or duplicate rows"
     );
     assert_eq!(ids.len(), 48);
-    assert_eq!(first.coverage, ResultCoverage::Partial);
-    assert_eq!(second.coverage, ResultCoverage::Complete);
+    assert_eq!(first.coverage(), ResultCoverage::Partial);
+    assert_eq!(second.coverage(), ResultCoverage::Complete);
 
     let mut mat = SessionMaterialization::new();
     let taken = engine
@@ -2617,8 +2634,12 @@ async fn host_page_resume_preserves_crossing_backend_page() {
         )
         .await
         .unwrap();
-    assert_eq!(taken.entities.len(), 3, "explicit expression take is exact");
-    assert_eq!(taken.coverage, ResultCoverage::Complete);
+    assert_eq!(
+        taken.entities().len(),
+        3,
+        "explicit expression take is exact"
+    );
+    assert_eq!(taken.coverage(), ResultCoverage::Complete);
 }
 
 #[test]

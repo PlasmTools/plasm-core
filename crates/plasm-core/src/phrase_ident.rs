@@ -220,6 +220,7 @@ fn validate_value_phrase_idents(
         Value::PlasmInputRef(_)
         | Value::Null
         | Value::Bool(_)
+        | Value::Unsigned(_)
         | Value::Integer(_)
         | Value::Float(_)
         | Value::String(_)

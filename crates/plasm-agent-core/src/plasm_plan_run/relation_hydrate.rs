@@ -1,15 +1,15 @@
 //! Ensure relation traversal rows are typed target-entity rows (decode + GET hydrate).
 
+use plasm_runtime::ExecutionFailure;
 use std::sync::Arc;
 
 use plasm_core::expr_parser::ParsedExpr;
 use plasm_core::{Expr, GetExpr, Ref, CGS};
-use plasm_runtime::{entity_to_row_json, CachedEntity, ExecutionResult};
+use plasm_runtime::{entity_to_row_values, CachedEntity, ExecutionResult};
 
 use crate::execute_session::ExecuteSession;
 use crate::http_execute::execute_plasm_parsed_expr;
 use crate::plan_execute_shared::PlanLineExecuteShared;
-use crate::plan_read_bounds::truncate_to_read_cap;
 use crate::plasm_plan::QualifiedEntityKey;
 use crate::plasm_plan_run::plan_bounded_parallel::{bounded_parallel_map, BoundedParallelConfig};
 use crate::server_state::PlasmHostState;
@@ -41,7 +41,7 @@ pub(crate) fn entity_row_schema_incomplete(
 pub(crate) fn relation_entities_need_hydration(
     cgs: &CGS,
     entity_type: &str,
-    entities: &[CachedEntity],
+    entities: &plasm_core::collection_codec::SharedRows<CachedEntity>,
 ) -> bool {
     entities
         .iter()
@@ -65,14 +65,11 @@ async fn fetch_entity_get_by_ref(
         Vec<String>,
         plasm_runtime::ExecutionSource,
     ),
-    String,
+    ExecutionFailure,
 > {
     let scoped = entry_scoped_execute_session(es, Some(target))?;
     if reference.primary_slot_str().is_empty() {
-        return Err(format!(
-            "relation hydrate GET: empty identity for `{}`",
-            reference
-        ));
+        return Err(format!("relation hydrate GET: empty identity for `{}`", reference).into());
     }
     let mut get_expr = GetExpr::from_ref(reference.clone());
     if let Some(cap) = get_capability {
@@ -82,7 +79,7 @@ async fn fetch_entity_get_by_ref(
         plasm_core::RegistryEntryId::from(target.entry_id.as_str()),
     );
     let parsed = ParsedExpr::from_expr(Expr::Get(get_expr));
-    let (_, result, _) = execute_plasm_parsed_expr(
+    let (_, result, _) = Box::pin(execute_plasm_parsed_expr(
         st,
         &scoped,
         session_id,
@@ -94,9 +91,9 @@ async fn fetch_entity_get_by_ref(
         None,
         None,
         plan_shared,
-    )
+    ))
     .await?;
-    let entity = result.entities.into_iter().next().ok_or_else(|| {
+    let entity = result.entities().first().cloned().ok_or_else(|| {
         format!(
             "relation hydrate GET returned no `{}` row",
             reference.entity_type
@@ -112,7 +109,7 @@ async fn fetch_entity_get_by_ref(
 
 #[derive(Default)]
 struct RelationHydration {
-    entities: Vec<CachedEntity>,
+    entities: plasm_core::collection_codec::SharedRows<CachedEntity>,
     stats: plasm_runtime::ExecutionStats,
     request_fingerprints: Vec<String>,
     source: Option<plasm_runtime::ExecutionSource>,
@@ -130,16 +127,14 @@ async fn hydrate_relation_entities_if_needed(
     es: &ExecuteSession,
     session_id: &str,
     target: &QualifiedEntityKey,
-    entities: Vec<CachedEntity>,
+    entities: plasm_core::collection_codec::SharedRows<CachedEntity>,
     trace: Option<&PlasmTraceContext>,
     max_hydrate: Option<usize>,
     plan_shared: Option<Arc<PlanLineExecuteShared>>,
-) -> Result<RelationHydration, String> {
+) -> Result<RelationHydration, ExecutionFailure> {
     let scoped = entry_scoped_execute_session(es, Some(target))?;
     let cgs = scoped.cgs.as_ref();
     let entity_type = target.entity.as_str();
-    let mut entities = entities;
-    truncate_to_read_cap(&mut entities, max_hydrate);
     if !relation_entities_need_hydration(cgs, entity_type, &entities) {
         return Ok(RelationHydration {
             entities,
@@ -147,7 +142,9 @@ async fn hydrate_relation_entities_if_needed(
         });
     }
 
-    let mut out: Vec<Option<CachedEntity>> = entities.iter().cloned().map(Some).collect();
+    let mut out = (0..entities.len())
+        .map(|i| entities.select([i]))
+        .collect::<Result<Vec<_>, _>>()?;
     let mut work = Vec::new();
     for (index, entity) in entities.iter().enumerate() {
         if entity_row_schema_incomplete(cgs, entity_type, entity) {
@@ -162,6 +159,9 @@ async fn hydrate_relation_entities_if_needed(
             entities,
             ..Default::default()
         });
+    }
+    if let Some(limit) = max_hydrate {
+        work.truncate(limit);
     }
     {
         let mut cache = scoped.lock_graph_cache().await;
@@ -198,13 +198,16 @@ async fn hydrate_relation_entities_if_needed(
                 plan_shared.as_deref(),
             )
             .await?;
-            Ok((item.index, entity))
+            Ok::<_, ExecutionFailure>((item.index, entity))
         }
     })
     .await?;
     let mut summary = RelationHydration::default();
     for (index, (entity, stats, fingerprints, source)) in hydrated {
-        out[index] = Some(entity);
+        if entity.reference != entities[index].reference {
+            return Err(plasm_core::collection_codec::CollectionFault::Conservation.into());
+        }
+        out[index] = vec![entity].into();
         super::plan_fanout_parallel::merge_execution_stats(
             &mut summary.stats,
             &stats,
@@ -216,33 +219,29 @@ async fn hydrate_relation_entities_if_needed(
             None => source,
         });
     }
-    summary.entities = out
-        .into_iter()
-        .enumerate()
-        .map(|(i, slot)| slot.ok_or_else(|| format!("relation hydrate missing row at index {i}")))
-        .collect::<Result<_, _>>()?;
+    summary.entities = plasm_core::collection_codec::SharedRows::concat(&out);
     Ok(summary)
 }
 
 /// Rebuild agent row JSON from typed entities after hydration.
 pub(crate) fn relation_rows_from_entities(
-    entities: &[CachedEntity],
+    entities: &plasm_core::collection_codec::SharedRows<CachedEntity>,
     cgs: &CGS,
-) -> Vec<serde_json::Value> {
+) -> Vec<plasm_core::ValueRow> {
     entities
         .iter()
-        .map(|e| entity_to_row_json(e, Some(cgs)))
+        .map(|e| entity_to_row_values(e, Some(cgs)))
         .collect()
 }
 
 /// Preserve nested wire embed keys (e.g. `detail` on LangSummary) not declared on the target
 /// entity so chained `from_parent_get` hops can read the next path segment.
 fn merge_wire_embed_superset_rows(
-    prior_wire: &[serde_json::Value],
-    entity_rows: &[serde_json::Value],
+    prior_wire: &[plasm_core::ValueRow],
+    entity_rows: &[plasm_core::ValueRow],
     cgs: &CGS,
     entity_type: &str,
-) -> Vec<serde_json::Value> {
+) -> Vec<plasm_core::ValueRow> {
     use std::collections::HashSet;
 
     let declared: HashSet<&str> = cgs
@@ -262,12 +261,12 @@ fn merge_wire_embed_superset_rows(
 }
 
 fn merge_wire_embed_superset_row(
-    wire: &serde_json::Value,
-    entity_row: &serde_json::Value,
+    wire: &plasm_core::ValueRow,
+    entity_row: &plasm_core::ValueRow,
     declared_fields: &std::collections::HashSet<&str>,
-) -> serde_json::Value {
+) -> plasm_core::ValueRow {
     let mut merged = entity_row.clone();
-    let (Some(wire_obj), Some(merged_obj)) = (wire.as_object(), merged.as_object_mut()) else {
+    let (Some(wire_obj), Some(merged_obj)) = (wire.as_object(), Some(merged.fields_mut())) else {
         return merged;
     };
     for (k, v) in wire_obj {
@@ -289,20 +288,22 @@ pub(crate) async fn finalize_typed_relation_materialized_node(
     trace: Option<&PlasmTraceContext>,
     max_hydrate: Option<usize>,
     plan_shared: Option<Arc<PlanLineExecuteShared>>,
-) -> Result<MaterializedNode, String> {
+) -> Result<MaterializedNode, ExecutionFailure> {
     let scoped = entry_scoped_execute_session(es, Some(target))?;
     let cgs = scoped.cgs.as_ref();
     let entity_type = target.entity.as_str();
-    let hydration = hydrate_relation_entities_if_needed(
+    // Keep the transport hydration future out of every enclosing relation frame.
+    // Direct Get -> relation execution also runs on ordinary 2 MiB worker stacks.
+    let hydration = Box::pin(hydrate_relation_entities_if_needed(
         st,
         es,
         session_id,
         target,
-        mat.result.entities.clone(),
+        mat.result.entities().clone(),
         trace,
         max_hydrate,
         plan_shared.clone(),
-    )
+    ))
     .await?;
     let hydrated = hydration.entities;
     let mut stats = mat.result.stats.clone();
@@ -328,12 +329,12 @@ pub(crate) async fn finalize_typed_relation_materialized_node(
         }
         _ => entity_rows,
     };
-    let count = hydrated.len();
     mat.result = Arc::new(ExecutionResult {
-        count,
-        entities: hydrated,
+        collection: mat
+            .result
+            .collection
+            .with_materialization(hydrated.into())?,
         has_more: mat.result.has_more,
-        coverage: mat.result.coverage,
         pagination_resume: mat.result.pagination_resume.clone(),
         paging_handle: mat.result.paging_handle.clone(),
         source,
@@ -343,7 +344,7 @@ pub(crate) async fn finalize_typed_relation_materialized_node(
     });
     mat.row_source = super::inline_row_source(&rows);
     mat.row_identities =
-        super::row_identities_from_entities(&scoped, entity_type, &mat.result.entities);
+        super::row_identities_from_entities(&scoped, entity_type, mat.result.entities());
     Ok(mat)
 }
 
@@ -395,7 +396,7 @@ mod tests {
         use plasm_core::{flatten_from_parent_get_source_rows, Cardinality};
 
         let cgs = langmatrix_cgs();
-        let item_row = serde_json::json!({
+        let item_row = crate::fixture_row!({
             "id": "i1",
             "title": "Alpha",
             "summary": {
@@ -413,19 +414,26 @@ mod tests {
             Cardinality::One,
         );
         assert_eq!(wire_summary.len(), 1);
-        let summary_entity_row = serde_json::json!({
+        let summary_entity_row = crate::fixture_row!({
             "id": "sum-i1",
             "headline": "Alpha summary"
         });
         let merged = merge_wire_embed_superset_rows(
-            &wire_summary,
+            &wire_summary
+                .into_iter()
+                .map(plasm_core::ValueRow::try_from)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap(),
             std::slice::from_ref(&summary_entity_row),
             &cgs,
             "LangSummary",
         );
         assert_eq!(merged.len(), 1);
         assert_eq!(
-            merged[0].pointer("/detail/body").and_then(|v| v.as_str()),
+            merged[0]
+                .get("detail")
+                .and_then(|v| v.get("body"))
+                .and_then(|v| v.as_str()),
             Some("nested detail"),
             "chained hop must retain nested detail embed on summary row_source"
         );
@@ -437,21 +445,8 @@ mod tests {
             flatten_from_parent_get_source_rows(&merged, &detail_path, Cardinality::One);
         assert_eq!(detail_rows.len(), 1);
         assert_eq!(
-            detail_rows[0].pointer("/body").and_then(|v| v.as_str()),
+            detail_rows[0].get("body").and_then(|v| v.as_str()),
             Some("nested detail")
         );
-    }
-
-    #[test]
-    fn truncate_to_read_cap_limits_hydrate_input() {
-        let mut entities: Vec<CachedEntity> = (0..10)
-            .map(|i| {
-                let mut e = stub_langitem_entity();
-                e.reference = Ref::new("LangItem", format!("item-{i}"));
-                e
-            })
-            .collect();
-        truncate_to_read_cap(&mut entities, Some(3));
-        assert_eq!(entities.len(), 3);
     }
 }

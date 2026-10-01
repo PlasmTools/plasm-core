@@ -26,6 +26,21 @@ pub(super) fn validate_plan_value_expr(
     path: &str,
 ) -> Result<(), String> {
     match value {
+        PlanValue::Quantified {
+            binding,
+            collection,
+            predicate,
+            ..
+        } => {
+            if binding.is_empty() || binding.contains('.') {
+                return Err("invalid quantifier binding".into());
+            }
+            validate_plan_value_expr(collection, node_index, path)?;
+            validate_plan_value_expr(predicate, node_index, path)
+        }
+        PlanValue::Expression { expression } => expression
+            .try_map(|v| validate_plan_value_expr(v, node_index, path))
+            .map(|_| ()),
         PlanValue::Literal { value } => {
             validate_data_no_js_object_coercion(value.value(), node_index, path)
         }

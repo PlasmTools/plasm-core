@@ -5,6 +5,7 @@ use super::super::row::MatrixRow;
 use plasm_agent::plasm_plan::{AggregateFunction, ComputeOp, ComputeTemplate, PlanValue};
 use plasm_agent::plasm_plan_run::DryPlasmPlanEvaluation;
 use plasm_core::{Expr, InvokeExpr};
+use serde_json::Value;
 
 pub(crate) fn assert_planning_effects_program(
     row: &MatrixRow,
@@ -51,12 +52,10 @@ pub(crate) fn assert_planning_effects_program(
                     comp.get("steps")
                 ));
             }
-            if !computes.iter().any(|c| {
-                matches!(
-                    c.op,
-                    ComputeOp::Render { .. } | ComputeOp::Python { per_row: true, .. }
-                )
-            }) {
+            if !computes
+                .iter()
+                .any(|c| matches!(c.op, ComputeOp::Python { per_row: true, .. }))
+            {
                 return Err("expected bracket Render compute before create".into());
             }
             let mut saw_utf8 = false;
@@ -71,21 +70,8 @@ pub(crate) fn assert_planning_effects_program(
             }
         }
         "lang_heredoc_binding" => {
-            let mut saw_literal = false;
-            for nr in &dry.node_results {
-                if nr.get("kind").and_then(|k| k.as_str()) != Some("data") {
-                    continue;
-                }
-                let Some(data_v) = nr.get("data") else {
-                    continue;
-                };
-                if json_value_contains_substring(data_v, "hello-matrix") {
-                    saw_literal = true;
-                    break;
-                }
-            }
-            if !saw_literal {
-                return Err("expected data node carrying hello-matrix payload".into());
+            if !json_value_contains_substring(comp, "hello-matrix") {
+                return Err("expected hello-matrix literal in reviewed computation".into());
             }
             let q = first_query(surfaces)?;
             if q.entity != "LangItem" {
@@ -111,20 +97,25 @@ pub(crate) fn assert_planning_effects_program(
             {
                 return Err("expected heredoc string body wired into create title".into());
             }
-            // Option A: bare `title=body` — empty path on the body node_input, not `.content`.
-            let comp_s = serde_json::to_string(comp).unwrap_or_default();
-            if comp_s.contains(r#""node":"body""#)
-                && comp_s.contains(r#""path":["content"]"#)
-                && comp_s.matches(r#""node":"body""#).count()
-                    <= comp_s.matches(r#""path":["content"]"#).count()
-            {
-                // Only fail when body is paired with a content path in the same IR blob heuristically:
-                // prefer explicit hole shape check below.
+            // Scalar bindings flow directly into the capability parameter.
+            fn check_body_paths(value: &Value) -> bool {
+                match value {
+                    Value::Object(fields) => {
+                        if fields.get("node").and_then(Value::as_str) == Some("body") {
+                            if let Some(Value::Array(path)) = fields.get("path") {
+                                if !path.is_empty() {
+                                    return false;
+                                }
+                            }
+                        }
+                        fields.values().all(check_body_paths)
+                    }
+                    Value::Array(values) => values.iter().all(check_body_paths),
+                    _ => true,
+                }
             }
-            if comp_s.contains(r#""node":"body","path":["content"]"#)
-                || comp_s.contains(r#""node": "body", "path": ["content"]"#)
-            {
-                return Err("option A forbids body.content path on literal heredoc bind".into());
+            if !check_body_paths(comp) {
+                return Err("literal scalar binding must not acquire a field path".into());
             }
         }
         "lang_heredoc_body_with_equals" => {
@@ -247,14 +238,11 @@ pub(crate) fn assert_planning_effects_program(
                     "aggregate report must retain per-row langitem_update: {comp}"
                 ));
             }
-            if computes
+            if !computes
                 .iter()
-                .any(|c| matches!(c.op, ComputeOp::Render { .. }))
+                .any(|c| matches!(c.op, ComputeOp::Python { per_row: false, .. }))
             {
-                return Err(
-                    "aggregate `{% for item in done %}` is a plain template, not per-row Render"
-                        .into(),
-                );
+                return Err("aggregate rendering must execute one Python reduction".into());
             }
             if !json_value_contains_substring(comp, "done") {
                 return Err("aggregate plain template must depend on named binding `done`".into());

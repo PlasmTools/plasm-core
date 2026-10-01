@@ -1,5 +1,6 @@
 use crate::DecodeError;
 use indexmap::IndexMap;
+use plasm_core::row_contract::RelationMembership;
 use plasm_core::{Cardinality, FieldDeriveRule, Ref, Value};
 use serde::{Deserialize, Serialize};
 
@@ -105,8 +106,8 @@ pub enum Transform {
 pub enum DecodedRelation {
     /// Response did not include this relation's path (or it was null before the collection).
     Unspecified,
-    /// Relation was projected; empty means an authoritative empty edge set.
-    Specified(Vec<Ref>),
+    /// Observed membership and its evidence; an empty observation need not be exhaustive.
+    Specified(RelationMembership),
 }
 
 /// A decoded entity instance
@@ -118,9 +119,6 @@ pub struct DecodedEntity {
     /// Fully decoded `from_parent_get` relation targets (also inserted into graph cache at parent GET).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub embedded_entities: Vec<DecodedEntity>,
-    /// Soft-fail field coerce / domain validation diagnostics (field set to null when present).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub field_diagnostics: Vec<plasm_core::DecodeFieldDiagnostic>,
 }
 
 impl PathExpr {
@@ -679,14 +677,12 @@ impl plasm_core::row_contract::EntityRow for DecodedEntity {
             .iter()
             .map(|(key, value)| (key.as_str(), value.clone().into()))
     }
-    fn relations(&self) -> impl Iterator<Item = (&str, &[Ref])> {
+    fn relations(&self) -> impl Iterator<Item = (&str, &RelationMembership)> {
         self.relations
             .iter()
             .filter_map(|(key, relation)| match relation {
                 DecodedRelation::Unspecified => None,
-                DecodedRelation::Specified(references) => {
-                    Some((key.as_str(), references.as_slice()))
-                }
+                DecodedRelation::Specified(references) => Some((key.as_str(), references)),
             })
     }
     fn unavailable_fields(&self) -> impl Iterator<Item = &str> {
@@ -1361,5 +1357,58 @@ mod tests {
             Some(&Value::String("Hello".to_string()))
         );
         assert_eq!(entities[0].reference.simple_id().unwrap().as_str(), "42");
+    }
+}
+
+#[cfg(test)]
+mod temporal_response_contract_tests {
+    use super::*;
+    use crate::decode_entities_with_cgs;
+    use serde_json::json;
+
+    #[test]
+    fn response_temporal_contract_distinguishes_missing_null_and_invalid() {
+        let cgs = plasm_core::load_schema(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/python_value_contract"),
+        )
+        .unwrap();
+        let decoder = EntityDecoder::new("Sample", PathExpr::empty()).with_fields(vec![
+            FieldDecoder::new("id", PathExpr::from_slice(&["id"])),
+            FieldDecoder::new(
+                "local_timestamp",
+                PathExpr::from_slice(&["local_timestamp"]),
+            ),
+            FieldDecoder::new("timestamp", PathExpr::from_slice(&["timestamp"])),
+        ]);
+        for (name, valid, invalid) in [
+            (
+                "local_timestamp",
+                "2023-01-02T03:04:05.123456",
+                "2023-01-02T03:04:05Z",
+            ),
+            ("timestamp", "2023-01-02T03:04:05Z", "2023-01-02T03:04:05"),
+        ] {
+            for value in [json!(valid), json!(null)] {
+                let mut body = json!({"id":"000123"});
+                body[name] = value.clone();
+                let rows = decode_entities_with_cgs(&decoder, &body, Some(&cgs)).unwrap();
+                if value.is_null() {
+                    assert!(rows[0].fields[name].is_null());
+                } else {
+                    assert!(rows[0].fields[name].as_str().is_some());
+                }
+            }
+            for value in [invalid, "not-a-date"] {
+                let mut body = json!({"id":"000123"});
+                body[name] = json!(value);
+                let error = decode_entities_with_cgs(&decoder, &body, Some(&cgs))
+                    .unwrap_err()
+                    .to_string();
+                assert!(error.contains(name), "{error}");
+            }
+        }
+        let rows = decode_entities_with_cgs(&decoder, &json!({"id":"000123"}), Some(&cgs)).unwrap();
+        assert!(!rows[0].fields.contains_key("local_timestamp"));
     }
 }

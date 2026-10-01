@@ -97,14 +97,7 @@ pub(crate) async fn post_run_execute_session_inner(
     {
         return match op_result {
             Ok(result) => respond_plan_run_live_result(kind, &result, &sess),
-            Err(e) => problem_response(
-                Problem::custom(
-                    ProblemStatus::BAD_REQUEST,
-                    Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
-                )
-                .with_title("Bad Request")
-                .with_detail(e),
-            ),
+            Err(e) => crate::http_execute::execution_failure_response(e),
         };
     }
 
@@ -118,9 +111,14 @@ pub(crate) async fn post_run_execute_session_inner(
         &sess,
         plan_name,
         &program,
-    ) {
+    )
+    .await
+    {
         Ok(b) => b,
-        Err(stage) => {
+        Err(crate::compilation_error::CompilationError::Host(failure)) => {
+            return crate::http_execute::execution_failure_response(failure)
+        }
+        Err(crate::compilation_error::CompilationError::Program(stage)) => {
             if plan_only {
                 let diag = crate::program_diagnostic::ProgramDiagnostic::from_stage(
                     pipeline,
@@ -144,7 +142,8 @@ pub(crate) async fn post_run_execute_session_inner(
                     Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
                 )
                 .with_title("Bad Request")
-                .with_detail(stage.to_string()),
+                .with_detail(stage.to_string())
+                .with_extension("failure", plasm_runtime::ExecutionFailure::from(stage)),
             );
         }
     };
@@ -417,13 +416,8 @@ pub(crate) async fn post_run_execute_session_inner(
             .with_title("Gateway Timeout")
             .with_detail(format!("live run timed out after {d:?}")),
         ),
-        Err(crate::run_delivery::LiveRunError::Failed(e)) => problem_response(
-            Problem::custom(
-                ProblemStatus::BAD_REQUEST,
-                Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
-            )
-            .with_title("Bad Request")
-            .with_detail(e),
-        ),
+        Err(crate::run_delivery::LiveRunError::Failed(e)) => {
+            crate::http_execute::execution_failure_response(e)
+        }
     }
 }

@@ -429,6 +429,7 @@ fn value_short(v: &Value) -> String {
         ),
         Value::String(s) | Value::PhraseIdent(s) => format!("{s:?}"),
         Value::Integer(i) => i.to_string(),
+        Value::Unsigned(i) => i.to_string(),
         Value::Float(f) => f.to_string(),
         Value::Bool(b) => b.to_string(),
         Value::Null => "null".to_string(),

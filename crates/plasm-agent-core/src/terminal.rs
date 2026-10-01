@@ -503,6 +503,10 @@ async fn run_context_command(
         teaching.push_str("\n\n");
         teaching.push_str(&recovery.render_unmatched_markdown());
     }
+    if let Some(support) = &reply.routing.environment_support {
+        teaching.push_str("\n\n");
+        teaching.push_str(support.guidance());
+    }
     let artifact = mirror.write_file(&op_dir, "teaching.md", teaching.as_bytes())?;
     mirror.update_latest_pointer(&mirror.rel_dir_for_display(&op_dir))?;
     state.persist(server)?;

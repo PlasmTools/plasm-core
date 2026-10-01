@@ -20,7 +20,7 @@ pub(crate) fn build_run_step_column_schema(
     entry_id: Option<&str>,
     entity_type_hint: Option<&str>,
 ) -> Option<RunStepColumnSchema> {
-    let first = result.entities.first()?;
+    let first = result.entities().first()?;
     let entity_type = entity_type_hint
         .map(str::to_string)
         .unwrap_or_else(|| first.reference.entity_type.to_string());

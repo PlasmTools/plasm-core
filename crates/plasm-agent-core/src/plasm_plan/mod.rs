@@ -7,6 +7,8 @@ mod cardinality;
 mod types;
 mod validate;
 
-pub(crate) use cardinality::validated_source_is_static_singleton;
+pub(crate) use cardinality::{
+    scoped_capture_permits_singleton, validated_source_is_static_singleton,
+};
 pub use types::*;
 pub use validate::*;

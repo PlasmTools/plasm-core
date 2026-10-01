@@ -12,7 +12,7 @@ use plasm_core::PlanCommitRef;
 use plasm_core::TeachingExposureSession;
 use plasm_core::CGS;
 use plasm_runtime::{
-    CachedEntity, GraphCache, MutexGraphCacheSession, QueryPaginationResumeData, ViewAmbientContext,
+    GraphCache, MutexGraphCacheSession, QueryPaginationResumeData, ViewAmbientContext,
 };
 use std::collections::{HashMap, VecDeque};
 use std::env;
@@ -349,12 +349,10 @@ pub struct SessionRunSummary {
 pub struct SyntheticPageCursor {
     pub node_id: String,
     pub qualified_entity: crate::plasm_plan::QualifiedEntityKey,
-    pub rows: Vec<CachedEntity>,
+    pub collection: plasm_runtime::execution::ExecutionCollection,
     pub offset: usize,
     pub page_size: usize,
     pub request_fingerprints: Vec<String>,
-    /// Expression coverage of the archived snapshot these rows belong to.
-    pub coverage: plasm_runtime::ResultCoverage,
 }
 
 #[derive(Clone, Debug)]
@@ -1024,7 +1022,9 @@ impl ExecuteSession {
             .get(handle)
         {
             if let Some(tx) = &op.terminal_tx {
-                let _ = tx.send(phase);
+                // Completion may precede the first waiter. Retain terminal state
+                // even when no watch receiver currently exists.
+                tx.send_replace(phase);
             }
         }
     }
@@ -1056,7 +1056,7 @@ impl ExecuteSession {
                     } else {
                         crate::operation::OperationPollSnapshot::Failed(
                             "operation succeeded; poll again after cross-pod artifact hydrate"
-                                .to_string(),
+                                .into(),
                         )
                     }
                 }
@@ -1064,7 +1064,7 @@ impl ExecuteSession {
                     crate::operation::OperationPollSnapshot::Failed(
                         op.error
                             .clone()
-                            .unwrap_or_else(|| "operation failed".to_string()),
+                            .unwrap_or_else(|| "operation failed".into()),
                     )
                 }
                 crate::operation::OperationPhase::Cancelled => {
@@ -1126,16 +1126,44 @@ impl ExecuteSession {
         let Some(op) = map.get_mut(handle) else {
             return;
         };
-        if op.phase != crate::operation::OperationPhase::Running
-            || !crate::occurrence_progress::update(&mut op.occurrences, event.clone())
+        // Cancellation stops new work, not observation of an in-flight write's
+        // eventual receipt. Only existing occurrences can be enriched afterward.
+        let terminal = op.phase != crate::operation::OperationPhase::Running;
+        if terminal
+            && (!matches!(
+                op.phase,
+                crate::operation::OperationPhase::Cancelled
+                    | crate::operation::OperationPhase::Failed
+            ) || !op.occurrences.iter().any(|old| {
+                old.address == event.address && old.occurrence_path == event.occurrence_path
+            }))
         {
             return;
         }
+        if !crate::occurrence_progress::update(&mut op.occurrences, event.clone()) {
+            return;
+        }
+        let event = op
+            .occurrences
+            .iter()
+            .find(|old| {
+                old.address == event.address && old.occurrence_path == event.occurrence_path
+            })
+            .expect("updated occurrence")
+            .clone();
         op.agent_emit.seq += 1;
         let seq = op.agent_emit.seq;
         let line = crate::operation_progress::render_op_wire_line(
             handle,
-            crate::operation_progress::OpWireSig::Running,
+            match op.phase {
+                crate::operation::OperationPhase::Cancelled => {
+                    crate::operation_progress::OpWireSig::Cancelled
+                }
+                crate::operation::OperationPhase::Failed => {
+                    crate::operation_progress::OpWireSig::Failed
+                }
+                _ => crate::operation_progress::OpWireSig::Running,
+            },
             Some(&op.progress),
             op.plan_commit_ref.as_ref(),
             op.dry_verdict,
@@ -1151,7 +1179,7 @@ impl ExecuteSession {
         let _ = tx.send(crate::operation_progress::OpProgressEvent {
             seq,
             line: line.clone(),
-            terminal: false,
+            terminal,
             stats,
             occurrences: vec![event.clone()],
             occurrence_snapshot: false,
@@ -1356,7 +1384,7 @@ impl ExecuteSession {
             Some(&op.progress),
             None,
             None,
-            op.error.as_deref(),
+            op.error.as_ref().map(ToString::to_string).as_deref(),
         );
         op.agent_emit.last_line = line.clone();
         let seq = op.agent_emit.seq;
@@ -1478,7 +1506,7 @@ impl ExecuteSession {
     pub fn finalize_operation_failed(
         &self,
         handle: &OperationHandle,
-        error: String,
+        error: plasm_runtime::ExecutionFailure,
         st: Option<&crate::server_state::PlasmHostState>,
     ) {
         if let Some(op) = self
@@ -1493,7 +1521,7 @@ impl ExecuteSession {
             for event in &mut op.occurrences {
                 if !event.terminal() {
                     event.phase = crate::occurrence_progress::OccurrencePhase::Failed;
-                    event.error = Some(error.clone());
+                    event.error = Some(error.to_string());
                     event.stage = None;
                 }
             }

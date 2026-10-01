@@ -18,7 +18,7 @@ pub(crate) enum StepInBandMode {
 
 impl StepInBandMode {
     pub(crate) fn resolve(step: &PublishedResultStep, policy: &McpResultTransportPolicy) -> Self {
-        let row_count = step.result.count;
+        let row_count = step.result.count();
         if step.artifact.is_some()
             && (row_count > MCP_SNAPSHOT_ONLY_ROW_THRESHOLD || policy.exceeds_in_band(row_count))
         {
@@ -72,9 +72,9 @@ impl ResolvedStepPublish {
                 step.name.as_deref(),
                 step.node_id.as_deref(),
             ),
-            row_count: step.result.count,
+            row_count: step.result.count(),
             count_label: crate::mcp_run_markdown::slim_result_count_label(&step.result),
-            coverage: step.result.coverage,
+            coverage: step.result.coverage(),
             continue_handle: step
                 .result
                 .paging_handle
@@ -110,6 +110,11 @@ impl ResolvedStepPublish {
         truncated: bool,
         policy: &McpResultTransportPolicy,
     ) -> bool {
+        if policy.artifact_access == crate::mcp_run_markdown::ArtifactAccessMode::DagCompute
+            && self.mode.skips_inline_format()
+        {
+            return false;
+        }
         if self.format.is_some() && !self.mode.skips_inline_format() {
             return false;
         }

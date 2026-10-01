@@ -118,7 +118,7 @@ async fn execute_on_branch(
             parsed_expression = %log_expr,
             "execute failed (expression detail)"
         );
-        RunLineError::Runtime(e, line.to_string())
+        RunLineError::Runtime(e)
     })?;
 
     crate::graph_rehydrate::GraphSurfaceRehydrator::sync_result_from_materialization(
@@ -130,11 +130,12 @@ async fn execute_on_branch(
         exec_cgs,
         &mut result,
     )
-    .await;
+    .await
+    .map_err(RunLineError::Runtime)?;
 
     if let Some(ref fields) = parsed.projection {
-        if !result.entities.is_empty() {
-            let entity_type = result.entities[0].reference.entity_type.clone();
+        if !result.entities().is_empty() {
+            let entity_type = result.entities()[0].reference.entity_type.clone();
             let proj_cgs =
                 crate::catalog_ownership::resolve_cgs_for_entity(sess, entity_type.as_str(), None)
                     .map_err(RunLineError::Parse)?;
@@ -154,7 +155,7 @@ async fn execute_on_branch(
             match st
                 .engine
                 .auto_resolve_projection(
-                    result.entities.clone(),
+                    result.entities().clone(),
                     &entity_type,
                     &wire_fields,
                     proj_cgs,
@@ -166,8 +167,10 @@ async fn execute_on_branch(
                 .await
             {
                 Ok(enriched) => {
-                    result.entities = enriched;
-                    result.count = result.entities.len();
+                    result.collection = result
+                        .collection
+                        .with_materialization(enriched)
+                        .map_err(|e| RunLineError::Runtime(e.into()))?;
                 }
                 Err(e) => {
                     tracing::error!(
@@ -197,7 +200,6 @@ pub async fn run_with_write_conflict_retry(
     sess: &ExecuteSession,
     input: &LiveBranchExecuteInput<'_>,
 ) -> Result<ExecutionResult, RunLineError> {
-    let line = input.line;
     for attempt in 0..=MAX_WRITE_CONFLICT_RETRIES {
         let mut branch = GraphExecuteBranch::fork(sess).await;
         let branch_result = execute_on_branch(&mut branch, input).await;
@@ -216,7 +218,7 @@ pub async fn run_with_write_conflict_retry(
                 .into());
             }
             Err(GraphCommitError::Merge(e)) => {
-                return Err(RunLineError::Runtime(e, line.to_string()));
+                return Err(RunLineError::Runtime(e));
             }
         }
     }

@@ -1,11 +1,10 @@
 //! Type-boundary matrix: concrete CGS domains through the real checked Monty worker.
-use plasm_agent::python_compute::{CheckedCompute, ValueContract};
+use plasm_agent::python_compute::{PreparedCompute, ValueContract};
 use plasm_core::symbol_tuning::SymbolRender;
 use plasm_core::{TeachingExposureSession, CGS};
-use plasm_runtime::ResultCoverage;
 use serde_json::{json, Value};
 
-fn fixture() -> CGS {
+pub(in super::super) fn fixture() -> CGS {
     plasm_core::loader::load_schema_dir(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/schemas/python_value_contract"),
@@ -13,11 +12,24 @@ fn fixture() -> CGS {
     .unwrap()
 }
 
-fn record() -> Value {
+fn membership(cgs: &CGS) -> plasm_core::collection_codec::RecordedCollection<plasm_core::Ref> {
+    use plasm_core::collection_codec::{
+        CollectionCodec, CollectionIdentity, Observation, RecordingCodec,
+    };
+    RecordingCodec::new()
+        .record(
+            CollectionIdentity::for_expression(cgs, &"value contract fixture", 0).unwrap(),
+            vec![plasm_core::Ref::new("Sample", "000123")],
+            Observation::Literal,
+        )
+        .unwrap()
+}
+
+pub(in super::super) fn record() -> Value {
     json!({
         "id": "000123", "text": "plain", "uuid": "123e4567-e89b-12d3-a456-426614174000", "date": "2026-09-25", "flag": true, "count": 9007199254740993_i64, "ratio": 1.25,
         "address": "person@example.test", "state": "open", "states": ["open", "closed"],
-        "timestamp": "2026-09-25T12:34:56.123456Z", "epoch": 1720000000123_i64,
+        "timestamp": "2026-09-25T12:34:56.123456Z", "local_timestamp": "2026-09-25T12:34:56.123456", "epoch": 1720000000123_i64,
         "price": {"__plasm_money": "12345678901234567890.12345678", "currency": "USD"},
         "reference": "000456", "document": {"nested": [{"n": 18446744073709551615_u64}]},
         "attachment": {"bytes": "AAEC"}, "numbers": [1, 2, 3], "matrix": [[1, 2], []],
@@ -25,8 +37,8 @@ fn record() -> Value {
     })
 }
 
-#[test]
-fn python_value_contract_matrix_projection_alias_and_review_seal() {
+#[tokio::test]
+async fn python_value_contract_matrix_projection_alias_and_review_seal() {
     use plasm_agent::execute_session::ExecuteSession;
     use plasm_agent::plasm_compile::compile_python_program;
     use std::sync::Arc;
@@ -54,8 +66,9 @@ fn python_value_contract_matrix_projection_alias_and_review_seal() {
     );
     for field in cgs.get_entity("Sample").unwrap().fields.values() {
         let source = format!("class Typed(Program):\n    @compute\n    def render(self, row: Row) -> str:\n        return str(row.copied)\n    def build(self):\n        rows = {token}.get('000123').select(copied='{name}')\n        text = self.render(rows)\n        return text\n", name = field.name);
-        let compiled =
-            compile_python_program(&es, &source).unwrap_or_else(|e| panic!("{}: {e}", field.name));
+        let compiled = compile_python_program(&es, &source)
+            .await
+            .unwrap_or_else(|e| panic!("{}: {e}", field.name));
         let wire = serde_json::to_value(&compiled.artifact().comp).unwrap();
         let fields = wire["steps"]["text"]["compute"]["op"]["input_schema"]["fields"]
             .as_array()
@@ -123,8 +136,8 @@ fn python_value_contract_matrix_materialization_and_rejections() {
     let rows = contract
         .materialize(
             &contract.owner,
-            ResultCoverage::Complete,
-            std::slice::from_ref(&input),
+            &membership(&cgs),
+            &[serde_json::from_value(input.clone()).unwrap()],
         )
         .unwrap();
     assert_eq!(serde_json::to_value(&rows[0]).unwrap(), input);
@@ -148,7 +161,11 @@ fn python_value_contract_matrix_materialization_and_rejections() {
         row[field] = invalid;
         assert!(
             contract
-                .materialize(&contract.owner, ResultCoverage::Complete, &[row])
+                .materialize(
+                    &contract.owner,
+                    &membership(&cgs),
+                    &[serde_json::from_value(row).unwrap()]
+                )
                 .is_err(),
             "accepted {field}"
         );
@@ -157,7 +174,11 @@ fn python_value_contract_matrix_materialization_and_rejections() {
     empty["matrix"] = json!([]);
     empty["numbers"] = json!([]);
     contract
-        .materialize(&contract.owner, ResultCoverage::Complete, &[empty])
+        .materialize(
+            &contract.owner,
+            &membership(&cgs),
+            &[serde_json::from_value(empty).unwrap()],
+        )
         .unwrap();
     let domain = contract.fields["matrix"]
         .value_type
@@ -168,7 +189,7 @@ fn python_value_contract_matrix_materialization_and_rejections() {
     assert_eq!(domain.catalog_hash, cgs.catalog_cgs_hash_hex());
     assert!(contract.fields["matrix"]
         .value_type
-        .validate(&json!([]), &cgs, "another", "matrix")
+        .validate(&plasm_core::Value::Array(vec![]), &cgs, "another", "matrix")
         .is_err());
 }
 
@@ -189,37 +210,65 @@ async fn python_value_contract_matrix_real_monty() {
         ("rows[0].address", "person@example.test"),
         ("rows[0].state", "open"),
         ("'|'.join(s for s in rows[0].states)", "open|closed"),
-        ("str(rows[0].timestamp)", "2026-09-25T12:34:56.123456Z"),
-        ("str(rows[0].epoch)", "1720000000123"),
+        ("rows[0].timestamp.isoformat()", "2026-09-25T12:34:56.123456+00:00"),
+        ("rows[0].epoch.isoformat()", "2024-07-03T09:46:40.123000+00:00"),
         (
-            "rows[0].price['__plasm_money']",
+            "str(rows[0].price['__plasm_money'])",
             "12345678901234567890.12345678",
         ),
         ("str(rows[0].reference)", "000456"),
         (
-            "str(rows[0].document['nested'][0]['n'])",
+            "str(obj['n']) if isinstance(doc := rows[0].document, dict) and isinstance(xs := doc.get('nested'), list) and xs and isinstance(obj := xs[0], dict) else ''",
             "18446744073709551615",
         ),
-        ("str(rows[0].attachment['bytes'])", "AAEC"),
+        ("str(blob['bytes']) if isinstance(blob := rows[0].attachment, dict) else ''", "AAEC"),
         ("'|'.join(str(n) for n in rows[0].numbers)", "1|2|3"),
         ("str(rows[0].matrix[0][1])", "2"),
-        ("str(rows[0].records[0]['label'])", "nested"),
+        ("str(record['label']) if isinstance(record := rows[0].records[0], dict) else ''", "nested"),
         ("str(rows[0].optional_count)", "None"),
     ] {
         let source = format!(
             "@compute\ndef render(rows: list[Value[{token}]]) -> str:\n    return {expression}\n"
         );
-        let checked = CheckedCompute::compile(&source, &cgs, "types", symbols.as_ref())
+        let checked = PreparedCompute::prepare(&source, &cgs, "types", symbols.as_ref())
             .unwrap_or_else(|e| panic!("{expression}: {e}"));
         let result = checked
             .run(
                 &pool,
-                &checked.contract.owner,
-                ResultCoverage::Complete,
-                &[record()],
+                &checked.contract.as_ref().unwrap().owner,
+                &membership(&cgs),
+                &[serde_json::from_value(record()).unwrap()],
             )
             .await
             .unwrap_or_else(|e| panic!("{expression}: {e}"));
-        assert_eq!(result, expected, "{expression}");
+        assert_eq!(result.as_str(), Some(expected), "{expression}");
+    }
+}
+
+#[tokio::test]
+async fn python_outer_record_preserves_every_fixture_value_domain() {
+    let (es, _, token) =
+        super::super::recursive_values::fixture_context("http://127.0.0.1:1".into());
+    let cgs = &es.cgs;
+    for field in cgs.get_entity("Sample").unwrap().fields.values() {
+        let source = format!("class Typed(Program):\n    @compute\n    def consume(self, row: Row) -> Row.copied:\n        return row.copied\n    def build(self):\n        item = {token}.get('000123')\n        record = {{'copied': item.{name}}}\n        result = self.consume(record)\n        return result\n", name = field.name);
+        let compiled = plasm_agent::plasm_compile::compile_python_program(&es, &source)
+            .await
+            .unwrap_or_else(|e| panic!("{}: {e}", field.name));
+        let wire = serde_json::to_value(&compiled.artifact().comp).unwrap();
+        let copied = &wire["steps"]["result"]["compute"]["op"]["input_schema"]["fields"][0];
+        let mut expected = plasm_core::value_contract::ValueContract::from_domain(
+            cgs,
+            "types",
+            field.kind.registry_key(),
+        )
+        .unwrap();
+        expected.nullable = !field.required;
+        assert_eq!(
+            copied["value_type"],
+            serde_json::to_value(expected).unwrap(),
+            "{}",
+            field.name
+        );
     }
 }

@@ -64,16 +64,13 @@ export {
 } from "./authoring/subagent-loader.js";
 export type { LoadedSubagent, SubagentRegistry } from "./authoring/subagent-loader.js";
 export {
-  createArtefactTransformTool,
   createCompleteTaskTool,
   createEvalTerminalTools,
   createHarnessTools,
   createSubmitAnswerTool,
   renderSkillIndex,
-  runArtefactTransform,
   COMPLETE_TASK_TOOL_DESCRIPTION,
   EVAL_TERMINAL_REQUIRES_DISCOVERY,
-  PLASM_ARTEFACT_TRANSFORM_TOOL_DESCRIPTION,
   SUBMIT_ANSWER_TOOL_DESCRIPTION,
 } from "./tools/harness-tools.js";
 export type { EvalTerminalGate } from "./tools/harness-tools.js";
@@ -93,9 +90,7 @@ export {
 } from "./tools/task-ledger.js";
 export type { ParseTaskLedgerResult, TaskLedgerRecord } from "./tools/task-ledger.js";
 export {
-  artefactTransformAdvertised,
   extractGradedScalarFromObservation,
-  gateArtefactTransform,
   evalTerminalGrade,
   gradedScalarAfterLiveWrites,
   hostMayInjectAppWorldComplete,
@@ -113,12 +108,6 @@ export type { EvalTerminalGrade, SuccessfulEvalTerminal } from "./tools/format.j
 export {
   runIdFromArtifactRef,
 } from "./tools/artifact-contract.js";
-export {
-  ARTIFACT_IMAGE_PIN_RE,
-  pinLocalArtifactImageSync,
-  artifactRuntimeAvailable,
-  pinnedArtifactImage,
-} from "./tools/artifact-process.js";
 export { maybeCompactMessages } from "./runtime/compaction.js";
 
 export { defineEval, isEvalDefinition } from "./evals/define-eval.js";
@@ -262,12 +251,10 @@ export type { PromptAssetName, SystemLiturgyOptions } from "./prompts/index.js";
 export {
   DISCOVER_TOOL_DESCRIPTION,
   PLASM_CONTEXT_TOOL_DESCRIPTION,
-  PLASM_READ_RUN_ARTIFACT_TOOL_DESCRIPTION,
   PLASM_RUN_TOOL_DESCRIPTION,
   PLASM_TOOL_DESCRIPTION,
 } from "./tools/descriptions.js";
 
-export type { PlasmReadRunArtifactInput } from "./runtime/agent-runtime.js";
 
 export { createOperatorRoutes, nitroOperatorHandler } from "./operator/routes.js";
 export { renderOperatorShell } from "./operator/ui-shell.js";

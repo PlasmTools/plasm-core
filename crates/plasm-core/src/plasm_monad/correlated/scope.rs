@@ -38,8 +38,11 @@ pub(super) fn check(comp: &PlasmComp, id: &str, payload: &PlasmStepPayload) -> R
         item,
     };
     match payload {
-        PlasmStepPayload::MapBody(_) => {
-            return Err("nested map bodies are outside this slice".into())
+        PlasmStepPayload::MapBody(child) => {
+            check.dependency(child.parent.source.as_str())?;
+            for capture in &child.captures {
+                check.dependency(capture.source.as_str())?;
+            }
         }
         PlasmStepPayload::Invoke(p) => {
             if p.ir.is_some() == p.ir_template.is_some() {
@@ -50,7 +53,7 @@ pub(super) fn check(comp: &PlasmComp, id: &str, payload: &PlasmStepPayload) -> R
             } else {
                 &p.ir_template.as_ref().expect("checked").expr
             };
-            check_read(expr)?;
+
             expr.bind_operands(&mut check)?;
             for predicate in &p.predicates {
                 predicate.bind_operands(&mut check)?;
@@ -73,8 +76,28 @@ pub(super) fn check(comp: &PlasmComp, id: &str, payload: &PlasmStepPayload) -> R
                 }
             }
         }
-        PlasmStepPayload::FlatMapApply(_) | PlasmStepPayload::UnfoldUntil(_) => {
-            return Err("nested effect control flow is outside the correlated slice".into());
+        PlasmStepPayload::FlatMapApply(p) => {
+            check.item = Some(p.item_binding.as_str());
+            p.effect_template
+                .ir_template
+                .expr
+                .bind_operands(&mut check)?;
+            for predicate in &p.predicates {
+                predicate.bind_operands(&mut check)?;
+            }
+        }
+        PlasmStepPayload::UnfoldUntil(p) => {
+            check.item = Some(p.item_binding.as_str());
+            p.effect_template
+                .ir_template
+                .expr
+                .bind_operands(&mut check)?;
+            for predicate in &p.until_predicates {
+                predicate.bind_operands(&mut check)?;
+            }
+            if let Some(seed) = &p.seed_ir {
+                seed.expr.bind_operands(&mut check)?;
+            }
         }
     }
     Ok(())

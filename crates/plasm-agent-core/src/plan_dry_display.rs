@@ -173,6 +173,9 @@ pub enum PlanDryOp {
     Union {
         other: String,
     },
+    MergeBranches {
+        other: String,
+    },
     ForEach {
         source: String,
         binding: String,
@@ -362,6 +365,7 @@ pub(crate) fn human_ux_headline_for_op(op: &PlanDryOp) -> String {
         PlanDryOp::Dedupe { keys } => format!("Dedupe on {}", keys.join(", ")),
         PlanDryOp::With { columns } => format!("Add columns {}", columns.join(", ")),
         PlanDryOp::Render { .. } => "Render text".into(),
+        PlanDryOp::MergeBranches { other } => format!("Merge exclusive branches {other}"),
         PlanDryOp::Union { other } => format!("Union {other}"),
         PlanDryOp::ForEach { .. } => "For each row".into(),
         PlanDryOp::IterateUntil { .. } => "Iterate until".into(),
@@ -411,6 +415,7 @@ pub(crate) fn human_ux_summary_for_op(op: &PlanDryOp) -> String {
         PlanDryOp::Dedupe { keys } => format!("Dedupe on {}", keys.join(", ")),
         PlanDryOp::With { columns } => format!("Add {}", columns.join(", ")),
         PlanDryOp::Render { columns, .. } => format!("Render {}", columns.join(", ")),
+        PlanDryOp::MergeBranches { other } => format!("Merge exclusive branches {other}"),
         PlanDryOp::Union { other } => format!("Union {other}"),
         PlanDryOp::Relation {
             relation, target, ..
@@ -464,6 +469,7 @@ pub(crate) fn render_plan_dry_op(op: &PlanDryOp) -> String {
             columns,
             template_chars,
         } => format!("render [{}] ({} chars)", columns.join(", "), template_chars),
+        PlanDryOp::MergeBranches { other } => format!("Merge exclusive branches {other}"),
         PlanDryOp::Union { other } => format!("union {other}"),
         PlanDryOp::ForEach {
             source,
@@ -557,7 +563,7 @@ fn compact_op_from_compute(
             entity: if input_schema.is_some() {
                 "Row".into()
             } else {
-                entity.clone()
+                entity.clone().unwrap_or_else(|| "Value".into())
             },
             per_row: *per_row,
         },
@@ -593,6 +599,9 @@ fn compact_op_from_compute(
         } => PlanDryOp::Render {
             columns: columns.iter().map(|c| c.as_str().to_string()).collect(),
             template_chars: template.chars().count(),
+        },
+        ComputeOp::MergeBranches { other } => PlanDryOp::MergeBranches {
+            other: other.to_string(),
         },
         ComputeOp::Union { other } => PlanDryOp::Union {
             other: other.as_str().to_string(),
@@ -794,6 +803,20 @@ fn render_aggregate_function(function: AggregateFunction) -> &'static str {
 
 fn render_plan_value_compact(value: &PlanValue) -> String {
     match value {
+        PlanValue::Quantified {
+            all,
+            collection,
+            binding,
+            predicate,
+        } => format!(
+            "{}({} for {} in {})",
+            if *all { "all" } else { "any" },
+            render_plan_value_compact(predicate),
+            binding,
+            render_plan_value_compact(collection)
+        ),
+        PlanValue::Expression { expression } => expression.render(|v| render_plan_value_compact(v)),
+
         PlanValue::Literal { value } => render_json_value(&value.to_wire()),
         PlanValue::Object { fields } => format!("{{{}}}", fields.len()),
         PlanValue::Array { items } => format!("[{}]", items.len()),
@@ -1037,6 +1060,7 @@ mod tests {
                 source: "open_auth".to_string(),
                 op: ComputeOp::Project { fields },
                 schema: SyntheticResultSchema {
+                    optional_fields: Default::default(),
                     entity: None,
                     fields: Vec::new(),
                 },

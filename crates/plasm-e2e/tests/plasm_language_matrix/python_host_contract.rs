@@ -39,10 +39,10 @@ fn source(es: &plasm_agent::execute_session::ExecuteSession) -> String {
     )
 }
 
-#[test]
-fn python_monadic_comp_witness_uses_production_admission() {
+#[tokio::test]
+async fn python_monadic_comp_witness_uses_production_admission() {
     let es = language_matrix::matrix_execute_session(language_matrix::load_language_matrix_cgs());
-    let bundle = compile_python_program(&es, &source(&es)).unwrap();
+    let bundle = compile_python_program(&es, &source(&es)).await.unwrap();
     assert_eq!(bundle.artifact().comp.metadata["source_language"], "python");
     let dry = evaluate_plasm_comp_dry(&es, &bundle).unwrap();
     assert_comp_witness(&dry).unwrap();
@@ -71,7 +71,7 @@ fn python_http_wait_retrieves_actual_completed_python_result() {
                 .await
                 .is_none()
         );
-        let bundle = compile_python_program(&es, &program).unwrap();
+        let bundle = compile_python_program(&es, &program).await.unwrap();
         let handle = es.mint_operation_handle_plain();
         es.try_begin_async_operation(
             handle.clone(),
@@ -81,7 +81,7 @@ fn python_http_wait_retrieves_actual_completed_python_result() {
         .unwrap();
         let command = format!("wait({handle})");
         assert!(
-            compile_python_program(&es, &command).is_err(),
+            compile_python_program(&es, &command).await.is_err(),
             "host commands are not DAG Python"
         );
         let pending = try_dispatch_operation_program(&es, Some(&st), None, &command, None)
@@ -130,7 +130,7 @@ fn python_http_wait_retrieves_actual_completed_python_result() {
                 "dispatched non-protocol source: {rejected}"
             );
             assert!(
-                compile_python_program(&es, rejected).is_err(),
+                compile_python_program(&es, rejected).await.is_err(),
                 "native source fallback: {rejected}"
             );
         }
@@ -170,7 +170,7 @@ fn python_http_cancel_interrupts_inflight_reviewed_read() {
             .unwrap(),
             cgs,
         ));
-        let bundle = compile_python_program(&es, &source(&es)).unwrap();
+        let bundle = compile_python_program(&es, &source(&es)).await.unwrap();
         let handle = es.mint_operation_handle_plain();
         let cancel = plasm_runtime::CancelSignal::new();
         es.try_begin_async_operation(handle.clone(), cancel.clone(), OpAcceptContext::default())
@@ -217,7 +217,7 @@ fn python_http_cancel_interrupts_inflight_reviewed_read() {
             .expect("cancel must interrupt pending HTTP")
             .unwrap()
             .expect_err("cancelled run must fail");
-        assert!(error.contains("cancel"), "{error}");
+        assert!(error.diagnostic().contains("cancel"), "{error}");
         let waited =
             try_dispatch_operation_program(&es, Some(&st), None, &format!("wait({handle})"), None)
                 .await
@@ -276,7 +276,7 @@ fn python_http_cancel_drains_inflight_write_without_replay() {
         let entity = symbols.entity_sym_for(language_matrix::MATRIX_ENTRY_ID, "LangItem");
         let create = symbols.method_sym_for(language_matrix::MATRIX_ENTRY_ID, "LangItem", "create");
         let program = format!("class WriteContract(Program):\n    def build(self):\n        return {entity}.{create}(title=\"once\", score=1, owner=\"alice\")\n");
-        let bundle = compile_python_program(&es, &program).unwrap();
+        let bundle = compile_python_program(&es, &program).await.unwrap();
         let handle = es.mint_operation_handle_plain();
         let cancel = plasm_runtime::CancelSignal::new();
         es.try_begin_async_operation(handle.clone(), cancel.clone(), OpAcceptContext::default())
@@ -302,6 +302,18 @@ fn python_http_cancel_drains_inflight_write_without_replay() {
         tokio::time::timeout(Duration::from_secs(10), entered.notified())
             .await
             .expect("reviewed write started");
+        let pending_dispatches: Vec<_> = es
+            .get_operation(&handle)
+            .unwrap()
+            .occurrences
+            .into_iter()
+            .flat_map(|o| o.mutation_dispatches)
+            .collect();
+        assert_eq!(pending_dispatches.len(), 1);
+        assert_eq!(
+            pending_dispatches[0].status,
+            plasm_runtime::MutationDispatchStatus::Unresolved
+        );
         let cancelled = try_dispatch_operation_program(
             &es,
             Some(&st),
@@ -331,7 +343,7 @@ fn python_http_cancel_drains_inflight_write_without_replay() {
             .expect("cancel must complete after write acknowledgement")
             .unwrap()
             .expect_err("cancelled run must fail");
-        assert!(error.contains("cancel"), "{error}");
+        assert!(error.diagnostic().contains("cancel"), "{error}");
         let waited =
             try_dispatch_operation_program(&es, Some(&st), None, &format!("wait({handle})"), None)
                 .await
@@ -341,6 +353,26 @@ fn python_http_cancel_drains_inflight_write_without_replay() {
         assert_eq!(
             es.get_operation(&handle).unwrap().phase,
             OperationPhase::Cancelled
+        );
+        let finished = es.get_operation(&handle).unwrap();
+        let dispatches: Vec<_> = finished
+            .occurrences
+            .iter()
+            .flat_map(|o| &o.mutation_dispatches)
+            .collect();
+        assert_eq!(dispatches.len(), 1);
+        assert_eq!(
+            dispatches[0].status,
+            plasm_runtime::MutationDispatchStatus::ResponseReceived
+        );
+        assert_eq!(
+            finished
+                .occurrences
+                .iter()
+                .flat_map(|o| o.operations.entries())
+                .map(|ack| ack.completed)
+                .sum::<usize>(),
+            1
         );
         assert!(acknowledged.load(std::sync::atomic::Ordering::SeqCst));
         assert_eq!(

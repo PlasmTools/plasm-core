@@ -126,6 +126,10 @@ pub struct PlanResultUse {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InputCardinality {
+    /// A typed receipt derived from the operation ledger, never an entity row.
+    Acknowledgement,
+    /// Preserve the entire complete rowset as a typed array, including empty.
+    Collection,
     /// Host may broadcast only when the dependency is statically provable as singleton.
     Auto,
     /// The author explicitly requested singleton broadcast; runtime still verifies one row.
@@ -135,6 +139,8 @@ pub enum InputCardinality {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InputCardinalityProof {
+    Acknowledgement,
+    Collection,
     StaticSingleton,
     RuntimeCheckedSingleton,
 }
@@ -392,6 +398,10 @@ pub struct ValidatedMapBodyNode {
 pub struct ValidatedCaptureNode {
     pub(crate) id: PlanNodeId,
     pub(crate) entity: QualifiedEntityKey,
+    pub(crate) schema: Option<SyntheticResultSchema>,
+    pub(crate) value_contract: Option<plasm_core::value_contract::ValueContract>,
+    pub(crate) singleton: bool,
+    pub(crate) entity_authority: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -424,6 +434,7 @@ pub struct ValidatedDataNode {
 
 #[derive(Debug, Clone)]
 pub struct ValidatedDeriveNode {
+    pub(crate) kind: DeriveKind,
     pub(crate) id: PlanNodeId,
     pub(crate) effect_class: EffectClass,
     pub(crate) result_shape: ResultShape,
@@ -437,6 +448,7 @@ pub struct ValidatedDeriveNode {
 
 #[derive(Debug, Clone)]
 pub struct ValidatedComputeNode {
+    pub(crate) source_node: PlanNodeId,
     pub(crate) id: PlanNodeId,
     pub(crate) effect_class: EffectClass,
     pub(crate) result_shape: ResultShape,
@@ -470,6 +482,10 @@ pub struct ValidatedIterateUntilNode {
     pub(crate) item_binding: BindingName,
     pub(crate) effect_template: ValidatedEffectTemplate,
     pub(crate) until_predicates: Vec<PlanPredicate>,
+    pub(crate) until_scope: Option<Box<plasm_core::plasm_monad::CorrelatedBody>>,
+    pub(crate) step_scope: Option<Box<plasm_core::plasm_monad::CorrelatedBody>>,
+    pub(crate) until_plan: Option<Box<ValidatedPlan>>,
+    pub(crate) step_plan: Option<Box<ValidatedPlan>>,
     pub(crate) take: u32,
     /// Seed Get IR for re-observe after each step (PLP-8).
     pub(crate) seed_ir: Option<ValidatedPlanExprIr>,
@@ -506,6 +522,25 @@ pub struct ValidatedPlanRelationTraversal {
 }
 
 impl ValidatedPlanNode {
+    /// Every nested executable scope, independent of its surface consumer.
+    pub(crate) fn nested_plans(&self) -> impl Iterator<Item = &ValidatedPlan> {
+        let plans = match self {
+            Self::MapBody(map) => [Some(map.plan.as_ref()), None],
+            Self::IterateUntil(it) => [it.until_plan.as_deref(), it.step_plan.as_deref()],
+            _ => [None, None],
+        };
+        plans.into_iter().flatten()
+    }
+
+    pub(crate) fn nested_plans_mut(&mut self) -> impl Iterator<Item = &mut ValidatedPlan> {
+        let plans = match self {
+            Self::MapBody(map) => [Some(map.plan.as_mut()), None],
+            Self::IterateUntil(it) => [it.until_plan.as_deref_mut(), it.step_plan.as_deref_mut()],
+            _ => [None, None],
+        };
+        plans.into_iter().flatten()
+    }
+
     pub fn id(&self) -> &PlanNodeId {
         match self {
             Self::Surface(n) => &n.id,
@@ -543,7 +578,7 @@ impl ValidatedPlanNode {
             Self::ForEach(n) => n.effect_class,
             Self::IterateUntil(n) => n.effect_class,
             Self::RelationTraversal(n) => n.effect_class,
-            Self::MapBody(_) => EffectClass::Read,
+            Self::MapBody(map) => map.body.effect_class(),
             Self::Capture(_) => EffectClass::ArtifactRead,
         }
     }
@@ -557,8 +592,14 @@ impl ValidatedPlanNode {
             Self::ForEach(n) => n.result_shape,
             Self::IterateUntil(n) => n.result_shape,
             Self::RelationTraversal(n) => n.result_shape,
-            Self::MapBody(_) => ResultShape::List,
-            Self::Capture(_) => ResultShape::Single,
+            Self::MapBody(map) => map.body.result_shape(),
+            Self::Capture(c) => {
+                if c.singleton {
+                    ResultShape::Single
+                } else {
+                    ResultShape::List
+                }
+            }
         }
     }
 
@@ -734,6 +775,12 @@ pub struct PlanNode {
     pub compute: Option<ComputeTemplate>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relation: Option<PlanRelationTraversal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub map_body: Option<Box<plasm_core::plasm_monad::CorrelatedBody>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until_scope: Option<Box<plasm_core::plasm_monad::CorrelatedBody>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_scope: Option<Box<plasm_core::plasm_monad::CorrelatedBody>>,
     #[serde(default)]
     pub depends_on: Vec<String>,
     #[serde(default)]
@@ -826,6 +873,8 @@ pub struct DeriveTemplate {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeriveKind {
+    /// A single opaque cell, including object-valued primitive domains.
+    Cell,
     Map,
     Data,
 }

@@ -113,6 +113,7 @@ pub(in crate::plasm_dag) fn is_opaque_passthrough_compute_schema(
     schema.fields.len() == 1
         && schema.fields[0].name.as_str() == "value"
         && matches!(schema.fields[0].value_kind, SyntheticValueKind::Unknown)
+        && schema.fields[0].value_type.is_none()
 }
 
 pub(in crate::plasm_dag) fn agent_program_error(
@@ -176,8 +177,9 @@ pub(in crate::plasm_dag) fn resolve_compute_field_path(
     FieldPath::from_dotted(&wire)
 }
 
-/// Sort keys may name synthetic compute outputs (e.g. `group_by` aggregate `n`) without wire resolution.
-pub(in crate::plasm_dag) fn resolve_sort_field_path(
+/// Resolve declared output fields before consulting catalog tokens. Synthetic values
+/// have typed schemas without entity receiver authority.
+pub(in crate::plasm_dag) fn resolve_schema_field_path(
     session: &ExecuteSession,
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     qe: Option<&QualifiedEntityKey>,

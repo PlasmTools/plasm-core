@@ -34,14 +34,13 @@ pub struct CompiledCatalog {
     entry_id: Option<String>,
     cgs_hash: String,
     capabilities: BTreeMap<String, CapabilityTemplate>,
-    conflict_rules: BTreeMap<String, Vec<plasm_core::ConflictRule>>,
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CompiledCatalogArtifact {
     cgs_hash: String,
     capabilities: BTreeMap<String, CapabilityTemplate>,
-    conflict_rules: BTreeMap<String, Vec<plasm_core::ConflictRule>>,
 }
 
 impl CompiledCatalog {
@@ -56,7 +55,6 @@ impl CompiledCatalog {
             entry_id: cgs.entry_id.clone(),
             cgs_hash: artifact.cgs_hash,
             capabilities: artifact.capabilities,
-            conflict_rules: artifact.conflict_rules,
         };
         compiled.validate_against(cgs)?;
         Ok(compiled)
@@ -75,15 +73,6 @@ impl CompiledCatalog {
             .get(name)
             .ok_or_else(|| CmlError::InvalidTemplate {
                 message: format!("compiled catalog has no request recipe for `{name}`"),
-            })
-    }
-
-    pub fn conflict_rules(&self, name: &str) -> Result<&[plasm_core::ConflictRule], CmlError> {
-        self.conflict_rules
-            .get(name)
-            .map(Vec::as_slice)
-            .ok_or_else(|| CmlError::InvalidTemplate {
-                message: format!("compiled catalog has no conflict contract for `{name}`"),
             })
     }
 
@@ -111,16 +100,6 @@ impl CompiledCatalog {
         if expected != actual {
             return Err(CmlError::InvalidTemplate {
                 message: "compiled request recipe capability set does not match the CGS".into(),
-            });
-        }
-        let conflict_actual = self
-            .conflict_rules
-            .keys()
-            .map(String::as_str)
-            .collect::<std::collections::BTreeSet<_>>();
-        if expected != conflict_actual {
-            return Err(CmlError::InvalidTemplate {
-                message: "compiled conflict contract set does not match the CGS".into(),
             });
         }
         Ok(())
@@ -152,25 +131,22 @@ pub fn load_compiled_catalog_artifact(
 pub fn compile_cgs_capability_templates(
     cgs: &plasm_core::CGS,
 ) -> Result<CompiledCatalog, CmlError> {
+    for capability in cgs.capabilities.values() {
+        if capability
+            .require_mapping()
+            .ok()
+            .is_some_and(|mapping| mapping.template.0.get("conflict_rules").is_some())
+        {
+            return Err(CmlError::InvalidTemplate {
+                message: "service error bodies are opaque; conflict_rules are not supported; declare read-backed reconciliation".into(),
+            });
+        }
+    }
     let capabilities = compile_capability_templates(cgs)?;
     let compiled = CompiledCatalog {
         entry_id: cgs.entry_id.clone(),
         cgs_hash: cgs.catalog_cgs_hash_hex(),
         capabilities,
-        conflict_rules: cgs
-            .capabilities
-            .iter()
-            .filter(|(_, capability)| capability.derived.is_none())
-            .map(|(name, capability)| {
-                let rules = capability
-                    .require_mapping()
-                    .map(|mapping| {
-                        plasm_core::conflict_rules_from_mapping_template(&mapping.template.0)
-                    })
-                    .unwrap_or_default();
-                (name.to_string(), rules)
-            })
-            .collect(),
     };
     compiled.validate_against(cgs)?;
     Ok(compiled)
@@ -1049,11 +1025,14 @@ mod tests {
         assert_eq!(compiled.entry_id(), Some("trusted"));
         let mut artifact = serde_json::to_value(&compiled).unwrap();
         assert!(artifact.get("entry_id").is_none());
-        artifact["entry_id"] = serde_json::json!("invented");
         let decoded =
             CompiledCatalog::decode_artifact(&serde_json::to_vec(&artifact).unwrap(), &cgs)
                 .unwrap();
         assert_eq!(decoded.entry_id(), Some("trusted"));
+        artifact["entry_id"] = serde_json::json!("invented");
+        let error = CompiledCatalog::decode_artifact(&serde_json::to_vec(&artifact).unwrap(), &cgs)
+            .expect_err("artifact cannot supply registry identity");
+        assert!(error.to_string().contains("unknown field `entry_id`"));
     }
 
     #[test]

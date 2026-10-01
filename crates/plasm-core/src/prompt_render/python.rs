@@ -172,7 +172,6 @@ pub fn prepare_python_teaching_wave(
                     declarations.push_str(&format!("# Replace the complete {symbol} declaration; existing symbols retain meaning.\n"));
                 }
                 declarations.push_str(body);
-                declarations.push('\n');
             }
         }
     }
@@ -232,9 +231,6 @@ impl Renderer<'_> {
             let element = self.domain(cgs, entry, "", "", items.kind.registry_key())?;
             ty = format!("list[{element}]");
         }
-        if value.field_type == FieldType::Date {
-            ty = "str".into();
-        }
         if let Some(choices) = &value.allowed_values {
             let literal = format!(
                 "Literal[{}]",
@@ -251,11 +247,7 @@ impl Renderer<'_> {
             };
         }
         let mut body = String::new();
-        comment(
-            &mut body,
-            "",
-            &format!("{entry} value {}: {}", key.as_str(), value.description),
-        );
+        body.push_str(&format!("{symbol}: {ty}"));
         // Shape is already in the alias. Keep non-redundant profile/constraint
         // meaning in comments; the complete recursive contract remains structured.
         let mut details = serde_json::to_value(&value.domain).map_err(|e| e.to_string())?;
@@ -264,11 +256,30 @@ impl Renderer<'_> {
                 fields.remove("kernel");
             }
             fields.remove("enum"); // Literal[...] above retains every enum member.
-            if !fields.is_empty() {
-                comment(&mut body, "", &format!("constraints: {details}"));
+            if fields.len() == 1
+                && fields
+                    .get("profile")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|profile| {
+                        !profile.is_empty()
+                            && profile
+                                .chars()
+                                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                    })
+            {
+                body.push_str(&format!(
+                    " @{}",
+                    comment_text(fields["profile"].as_str().unwrap())
+                ));
+            } else if !fields.is_empty() {
+                body.push_str(&format!(" {}", comment_text(&details.to_string())));
             }
         }
-        body.push_str(&format!("type {symbol} = {ty}\n"));
+        if !value.description.is_empty() {
+            body.push_str(" # ");
+            body.push_str(&comment_text(&value.description));
+        }
+        body.push('\n');
         if let Some(existing) = self.definitions.insert(symbol.clone(), body.clone()) {
             if existing != body {
                 return Err(format!("conflicting domain declarations for {symbol}"));
@@ -285,7 +296,8 @@ impl Renderer<'_> {
             "",
             &format!("{entry}::{name} — {}", entity.description),
         );
-        body.push_str(&format!("class {symbol}:\n"));
+        body.push_str(&format!("{symbol}:\n"));
+        let mut previous_plain_field = false;
         for (name, field) in &entity.fields {
             identifier(name.as_str())?;
             let ty = self.domain(
@@ -295,17 +307,25 @@ impl Renderer<'_> {
                 name.as_str(),
                 field.kind.registry_key(),
             )?;
-            if cgs
+            let has_comment = cgs
                 .values
                 .get(field.kind.registry_key().as_str())
                 .is_none_or(|v| v.description != field.description)
-            {
+                && !field.description.is_empty();
+            if has_comment {
                 comment(&mut body, "    ", &field.description);
             }
+            let prefix = if previous_plain_field && !has_comment {
+                body.pop();
+                "; "
+            } else {
+                "    "
+            };
             body.push_str(&format!(
-                "    {name}: {ty}{}\n",
+                "{prefix}{name}: {ty}{}\n",
                 if field.required { "" } else { " | None" }
             ));
+            previous_plain_field = !has_comment;
         }
         for relation in self.symbols.exposed_relation_symbol_rows() {
             if relation.entry_id != entry || relation.entity != name {
@@ -324,14 +344,6 @@ impl Renderer<'_> {
                 &mut body,
                 "    ",
                 &format!("{}: {}", relation.wire, schema.description),
-            );
-            comment(
-                &mut body,
-                "    ",
-                &format!(
-                    "materialize: {}",
-                    serde_json::to_string(&schema.materialize).map_err(|e| e.to_string())?
-                ),
             );
             if matches!(schema.cardinality, crate::Cardinality::Many)
                 && matches!(
@@ -355,6 +367,8 @@ impl Renderer<'_> {
                 relation.symbol
             ));
         }
+        let mut operation_notes: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut signatures = Vec::new();
         for key in &self.exposure.surface.capabilities {
             if key.entry_id != entry || key.domain.as_str() != name {
                 continue;
@@ -362,26 +376,65 @@ impl Renderer<'_> {
             let cap = cgs
                 .get_capability(key.capability.as_str())
                 .ok_or("missing capability")?;
-            comment(
-                &mut body,
-                "    ",
-                &format!("{}: {}", cap.name, cap.description),
-            );
-            if !cap.provides.is_empty() {
-                comment(
-                    &mut body,
-                    "    ",
-                    &format!("provides: {}", cap.provides.join(", ")),
-                );
-            }
+            let mut meaning = String::new();
+            comment(&mut meaning, "", &cap.description);
             let result = self.signature(cgs, entry, symbol, cap);
             let signature = result.as_ref().ok().cloned();
             let unavailable = match result {
                 Ok(signature) => {
-                    body.push_str(&signature);
+                    let seat = if matches!(
+                        cap.kind,
+                        CapabilityKind::Get | CapabilityKind::Query | CapabilityKind::Search
+                    ) || !cap.requires_receiver()
+                    {
+                        symbol
+                    } else {
+                        "row"
+                    };
+                    let method = capability_method_name(cgs, self.symbols, entry, cap);
+                    let target = format!("{seat}.{method}");
+                    let notes: Vec<String> = meaning
+                        .lines()
+                        .chain(
+                            signature
+                                .lines()
+                                .map(str::trim)
+                                .filter(|line| line.starts_with("# ")),
+                        )
+                        .map(str::to_owned)
+                        .collect();
+                    for note in &notes {
+                        operation_notes
+                            .entry(note.clone())
+                            .or_default()
+                            .push(target.clone());
+                    }
+                    let mut compact = String::new();
+                    for line in signature.lines().map(str::trim) {
+                        if let Some(declaration) = line.strip_prefix("def ") {
+                            let (method, arguments) = declaration
+                                .split_once('(')
+                                .ok_or("invalid generated signature")?;
+                            let arguments = arguments
+                                .strip_prefix("cls, ")
+                                .or_else(|| arguments.strip_prefix("self, "))
+                                .or_else(|| arguments.strip_prefix("cls"))
+                                .or_else(|| arguments.strip_prefix("self"))
+                                .ok_or("missing generated receiver")?;
+                            let arguments = arguments
+                                .strip_suffix(": ...")
+                                .ok_or("invalid generated signature body")?;
+                            // Reference cards teach named inputs once in the tool contract.
+                            // Preserve the executable signature in coverage metadata.
+                            let arguments = arguments.strip_prefix("*, ").unwrap_or(arguments);
+                            compact.push_str(&format!("  {seat}.{method}({arguments}\n"));
+                        }
+                    }
+                    signatures.push((compact, notes));
                     None
                 }
                 Err(reason) => {
+                    body.push_str(&meaning);
                     comment(
                         &mut body,
                         "    ",
@@ -397,7 +450,22 @@ impl Renderer<'_> {
                 signature,
             });
         }
-        body.push_str("    ...\n");
+        // Group identical CGS prose with explicit owners; no meaning is discarded.
+        for (note, targets) in &mut operation_notes {
+            targets.sort();
+            targets.dedup();
+            if targets.len() > 1 {
+                body.push_str(&format!("  {} {note}\n", targets.join(",")));
+            }
+        }
+        for (signature, notes) in signatures {
+            for note in notes {
+                if operation_notes[&note].len() == 1 {
+                    body.push_str(&format!("  {note}\n"));
+                }
+            }
+            body.push_str(&signature);
+        }
         self.definitions.insert(symbol.into(), body);
         Ok(())
     }
@@ -467,9 +535,16 @@ impl Renderer<'_> {
                     element_type,
                     depth + 1,
                 )?;
+                if min_length.is_none() && max_length.is_none() {
+                    return Ok(format!("list[{element}]"));
+                }
                 format!(
                     "Annotated[list[{element}], {}]",
-                    quote(&format!("length {min_length:?}..{max_length:?}"))
+                    quote(&format!(
+                        "length {}..{}",
+                        min_length.map_or("*".into(), |n| n.to_string()),
+                        max_length.map_or("*".into(), |n| n.to_string())
+                    ))
                 )
             }
             InputType::Object {
@@ -659,7 +734,7 @@ impl Renderer<'_> {
                     field,
                     0,
                 )?;
-                comment(&mut body, "    ", &format!("Requires session provision {}: {ty}; acquire it through the declared prerequisite before Get. It is not an identity argument.", field.name));
+                comment(&mut body, "    ", &format!("session({}:{ty})", field.name));
             }
         } else {
             for schema in cap.invocation_input_schemas() {
@@ -696,7 +771,13 @@ impl Renderer<'_> {
                     }
                 ));
                 if let Some(description) = &field.description {
-                    comment(&mut body, "    ", &format!("{}: {description}", field.name));
+                    let shared = match &field.wire {
+                        InputFieldWire::Registry(key) => cgs.values.get(key.as_str()),
+                        InputFieldWire::Inline(_) => None,
+                    };
+                    if shared.is_none_or(|value| value.description != *description) {
+                        comment(&mut body, "    ", &format!("{}: {description}", field.name));
+                    }
                 }
                 if let Some(default) = &field.default {
                     comment(
@@ -747,29 +828,6 @@ impl Renderer<'_> {
         {
             body.push_str("    @overload\n");
         }
-        for (lane, fields) in [
-            ("scope", cap.scope_params()),
-            ("selection", cap.selection_params()),
-            ("controls", cap.control_params()),
-        ] {
-            if !fields.is_empty() {
-                comment(
-                    &mut body,
-                    "    ",
-                    &format!(
-                        "{lane}: {}",
-                        fields
-                            .iter()
-                            .map(|f| f.name.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ),
-                );
-            }
-        }
-        if root {
-            body.push_str("    @classmethod\n");
-        }
         let receiver = if root { "cls" } else { "self" };
         let tail = if params.is_empty() {
             String::new()
@@ -787,12 +845,23 @@ fn quote(value: &str) -> String {
     serde_json::to_string(value).expect("string serialization")
 }
 
+// Catalog prose remains data on a comment line. Escape controls and fence
+// delimiters without JSON-string quoting ordinary prose or embedded constraints.
+fn comment_text(text: &str) -> String {
+    text.chars()
+        .flat_map(|ch| {
+            if ch == '`' || ch.is_control() {
+                ch.escape_unicode().collect::<Vec<_>>()
+            } else {
+                vec![ch]
+            }
+        })
+        .collect()
+}
+
 fn comment(out: &mut String, indent: &str, text: &str) {
-    for line in text.lines() {
-        // JSON escaping prevents control characters/backticks in catalog prose
-        // from changing the enclosing prompt fence or declaration structure.
-        let escaped = quote(line).replace('`', "\\u0060");
-        out.push_str(&format!("{indent}# CGS {}\n", escaped));
+    for line in text.lines().filter(|line| !line.is_empty()) {
+        out.push_str(&format!("{indent}# {}\n", comment_text(line)));
     }
 }
 

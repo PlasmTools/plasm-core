@@ -603,6 +603,7 @@ fn add_multipart_part(
         Value::String(s) | Value::PhraseIdent(s) => s.clone(),
         Value::Bool(b) => b.to_string(),
         Value::Integer(i) => i.to_string(),
+        Value::Unsigned(i) => i.to_string(),
         Value::Float(f) => f.to_string(),
         Value::Null => {
             return Err(RuntimeError::ConfigurationError {
@@ -712,6 +713,7 @@ pub fn plasm_value_to_form_urlencoded(body: &Value) -> Result<String, RuntimeErr
             Value::String(s) | Value::PhraseIdent(s) => s.clone(),
             Value::Bool(b) => b.to_string(),
             Value::Integer(i) => i.to_string(),
+            Value::Unsigned(i) => i.to_string(),
             Value::Float(f) => f.to_string(),
             Value::Money(m) => m
                 .to_wire_text()
@@ -1180,7 +1182,7 @@ pub fn attempt_result_into_result(
                 Err(RuntimeError::RequestError {
                     message,
                     attempts,
-                    status: None,
+                    status: Some(status),
                     body: None,
                 })
             }
@@ -1274,6 +1276,7 @@ fn plasm_value_to_json(value: &Value) -> Result<serde_json::Value, RuntimeError>
         Value::Null => Ok(serde_json::Value::Null),
         Value::Bool(b) => Ok(serde_json::Value::Bool(*b)),
         Value::Integer(i) => Ok(serde_json::Value::Number((*i).into())),
+        Value::Unsigned(i) => Ok(serde_json::Value::Number((*i).into())),
         Value::Float(f) => Ok(serde_json::Number::from_f64(*f)
             .map(serde_json::Value::Number)
             .unwrap_or(serde_json::Value::Null)),

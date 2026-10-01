@@ -1,0 +1,7 @@
+cursor: {method: GET, path: [{type: literal, value: cursors}]}
+record_get: {method: GET, path: [{type: literal, value: records}, {type: var, name: record_id}]}
+restricted_get: {method: GET, path: [{type: literal, value: restricted}, {type: var, name: record_id}]}
+owner_get: {method: GET, path: [{type: literal, value: owners}, {type: var, name: owner_id}]}
+embedded_get: {method: GET, path: [{type: literal, value: labels}, {type: var, name: label}]}
+owner_query: {method: GET, path: [{type: literal, value: owners}, {type: var, name: owner_id}]}
+delete: {method: DELETE, path: [{type: literal, value: records}, {type: var, name: record_id}]}

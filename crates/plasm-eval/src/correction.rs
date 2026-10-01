@@ -3,6 +3,12 @@ use crate::ProgramSession;
 use plasm_agent_core::PlasmCompBundle;
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug)]
+pub enum ValidationFailure {
+    Program(Vec<StepDiagnostic>),
+    Host(plasm_agent_core::compilation_error::ExecutionFailure),
+}
+
 /// One failed step with structured error (parse or type).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StepDiagnostic {
@@ -43,12 +49,12 @@ pub struct EvalAttemptReport {
 }
 
 /// Compile complete programs in one stable session. No source rewrites or native parser.
-pub fn validate_programs(
+pub async fn validate_programs(
     session: &ProgramSession,
     sources: &[String],
-) -> Result<Vec<PlasmCompBundle>, Vec<StepDiagnostic>> {
+) -> Result<Vec<PlasmCompBundle>, ValidationFailure> {
     if sources.is_empty() {
-        return Err(vec![StepDiagnostic {
+        return Err(ValidationFailure::Program(vec![StepDiagnostic {
             step_index: 0,
             expression: String::new(),
             error: StepErrorPayload {
@@ -59,14 +65,17 @@ pub fn validate_programs(
                 span_offset: None,
                 details: serde_json::json!({}),
             },
-        }]);
+        }]));
     }
     let mut bundles = Vec::new();
     let mut errors = Vec::new();
     for (step_index, source) in sources.iter().enumerate() {
-        match session.compile(source) {
+        match session.compile(source).await {
             Ok(bundle) => bundles.push(bundle),
-            Err(error) => errors.push(StepDiagnostic {
+            Err(crate::ProgramCompileFailure::Host(failure)) => {
+                return Err(ValidationFailure::Host(failure))
+            }
+            Err(crate::ProgramCompileFailure::Program(error)) => errors.push(StepDiagnostic {
                 step_index,
                 expression: source.clone(),
                 error: StepErrorPayload {
@@ -83,7 +92,7 @@ pub fn validate_programs(
     if errors.is_empty() {
         Ok(bundles)
     } else {
-        Err(errors)
+        Err(ValidationFailure::Program(errors))
     }
 }
 

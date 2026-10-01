@@ -261,7 +261,7 @@ pub struct OperationState {
     pub started_at: Instant,
     pub progress: OperationProgress,
     pub result: Option<Arc<PlasmPlanRunResult>>,
-    pub error: Option<String>,
+    pub error: Option<plasm_runtime::ExecutionFailure>,
     /// When false, this row was rehydrated from Redis (no local executor).
     pub live_executor: bool,
     /// Durable run snapshot id for cross-pod terminal `wait`.
@@ -304,7 +304,7 @@ pub struct OpAcceptContext {
 pub enum OperationPollSnapshot {
     Running(OperationProgress),
     Succeeded(Arc<PlasmPlanRunResult>),
-    Failed(String),
+    Failed(plasm_runtime::ExecutionFailure),
     Cancelled(OperationProgress),
 }
 
@@ -845,7 +845,7 @@ async fn run_plasm_comp_on_pool(
     mcp_result_policy: Option<crate::mcp_run_markdown::McpResultTransportPolicy>,
     telemetry: Arc<plasm_runtime::LiveRunTelemetry>,
     dry: Option<DryPlasmPlanEvaluation>,
-) -> Result<PlasmPlanRunResult, String> {
+) -> Result<PlasmPlanRunResult, plasm_runtime::ExecutionFailure> {
     pool.run(move || async move {
         plasm_runtime::with_live_run_telemetry(telemetry, async move {
             crate::plasm_plan_run::run_plasm_comp_python(
@@ -1138,6 +1138,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "wall-clock performance gate: run explicitly in isolation (scripts/ci/circle-validate.sh)"]
     fn plan_commit_semantic_comp_hash_benchmark() {
         use std::time::{Duration, Instant};
 
@@ -1183,6 +1184,7 @@ mod tests {
             let _ = compute_plan_commit_id(&presentation);
         }
         let elapsed = start.elapsed();
+        eprintln!("plan commit hash (100 iter, 64 steps): {elapsed:?}");
         let cap = Duration::from_millis(
             std::env::var("PLASM_PLAN_COMMIT_DAG_HASH_MAX_MS")
                 .ok()

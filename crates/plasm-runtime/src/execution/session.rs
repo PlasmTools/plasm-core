@@ -68,21 +68,6 @@ pub(crate) fn compiled_capability_template(
         })?
 }
 
-pub(crate) fn compiled_conflict_rules(
-    capability: &CapabilitySchema,
-) -> Result<Vec<plasm_core::ConflictRule>, RuntimeError> {
-    EXECUTION_COMPILED_CATALOG
-        .try_with(|compiled| {
-            compiled
-                .conflict_rules(capability.name.as_str())
-                .map(<[_]>::to_vec)
-                .map_err(RuntimeError::from)
-        })
-        .map_err(|_| RuntimeError::ConfigurationError {
-            message: "execution requires a pinned compiled catalog scope".into(),
-        })?
-}
-
 /// Reserved CML env key: 64-char lowercase hex (rendered teaching prompt digest for the row).
 pub const CML_ENV_PLASM_EXECUTE_PROMPT_HASH: &str = "plasm_execute_prompt_hash";
 /// Reserved CML env key: 32-char lowercase hex UUID (simple form) for the execute row.
@@ -99,74 +84,37 @@ pub async fn collect_query_stream(
     consume: &StreamConsumeOpts,
 ) -> Result<ExecutionResult, RuntimeError> {
     use futures_util::StreamExt;
-    let mut all_entities = Vec::new();
-    let mut total_rows = 0usize;
-    let mut total_net = 0usize;
-    let mut any_live = false;
-    let mut last_has_more = false;
-    let mut last_resume: Option<QueryPaginationResumeData> = None;
-    let mut coverage = ResultCoverage::Unknown;
-    let mut operations = OperationLedger::empty();
-    while let Some(item) = stream.next().await {
-        let page = item?;
-        last_has_more = page.has_more;
-        coverage = page.coverage;
-        if page.pagination_resume.is_some() {
-            last_resume = page.pagination_resume.clone();
+    let mut batches = Vec::new();
+    let mut complete = None;
+    while let Some(event) = stream.next().await {
+        if complete.is_some() {
+            return Err(plasm_core::collection_codec::CollectionFault::Conservation.into());
         }
-        operations.merge(&page.operations);
-        total_net += page.stats.network_requests;
-        if page.stats.network_requests > 0 {
-            any_live = true;
-        }
-        total_rows =
-            total_rows.saturating_add(if consume.graph_backed_result && page.entities.is_empty() {
-                page.stats.cache_misses
-            } else {
-                page.entities.len()
-            });
-        if !consume.graph_backed_result {
-            all_entities.extend(page.entities);
-        }
-        if page.stats.network_requests == 0 && page.stats.cache_hits > 0 {
-            // page carried consult hits
+        match event? {
+            ExecutionEvent::Page { entities, .. } => {
+                batches.push(entities);
+            }
+            ExecutionEvent::Complete(result) => {
+                complete = Some(result);
+            }
         }
     }
-    let count = if consume.graph_backed_result {
-        total_rows
-    } else {
-        all_entities.len()
-    };
-    let entities = if consume.graph_backed_result {
-        Vec::new()
-    } else {
-        all_entities
-    };
-    let mut stats = ExecutionStats::from_telemetry(CacheTelemetry::default(), total_net);
-    stats.record_rows_materialized(count);
-    Ok(ExecutionResult {
-        entities,
-        count,
-        has_more: last_has_more,
-        coverage,
-        pagination_resume: last_resume,
-        paging_handle: None,
-        source: if any_live {
-            ExecutionSource::Live
-        } else {
-            ExecutionSource::Replay
-        },
-        stats,
-        request_fingerprints: Vec::new(),
-        operations,
-    })
+    let mut result = complete.ok_or(plasm_core::collection_codec::CollectionFault::Conservation)?;
+    if !consume.graph_backed_result && result.collection.is_graph_backed() {
+        let entities = plasm_core::collection_codec::SharedRows::concat(&batches);
+        result.collection = result.collection.with_materialization(entities)?;
+    } else if batches.iter().any(|batch| !batch.is_empty()) && !result.collection.is_graph_backed()
+    {
+        return Err(plasm_core::collection_codec::CollectionFault::Conservation.into());
+    }
+    Ok(result)
 }
 
 pub(crate) async fn graph_spill_page_and_trim_hot(
     spill: &crate::graph_page_spill::GraphPageSpillHandle,
     mat: &mut SessionMaterialization,
     page_index: usize,
-    page_entities: &[CachedEntity],
+    page_entities: &plasm_core::collection_codec::SharedRows<CachedEntity>,
 ) -> Result<(), RuntimeError> {
     use std::time::Instant;
 

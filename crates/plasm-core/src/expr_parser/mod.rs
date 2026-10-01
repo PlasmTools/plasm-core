@@ -464,57 +464,6 @@ fn is_root_union_ctor_surface_label(name: &str) -> bool {
     !tail.is_empty() && tail.bytes().all(|x| x.is_ascii_digit())
 }
 
-/// End index (exclusive) of a comparison RHS inside `{…}` / row-filter bodies.
-fn scan_top_level_pred_rhs_end(input: &str, start: usize) -> usize {
-    let bytes = input.as_bytes();
-    let mut i = start;
-    let mut depth_paren = 0i32;
-    let mut depth_brace = 0i32;
-    let mut depth_bracket = 0i32;
-    let mut in_single = false;
-    let mut in_double = false;
-    while i < bytes.len() {
-        let b = bytes[i];
-        if in_single {
-            if b == b'\\' && i + 1 < bytes.len() {
-                i += 2;
-                continue;
-            }
-            if b == b'\'' {
-                in_single = false;
-            }
-            i += 1;
-            continue;
-        }
-        if in_double {
-            if b == b'\\' && i + 1 < bytes.len() {
-                i += 2;
-                continue;
-            }
-            if b == b'"' {
-                in_double = false;
-            }
-            i += 1;
-            continue;
-        }
-        match b {
-            b'\'' => in_single = true,
-            b'"' => in_double = true,
-            b'(' => depth_paren += 1,
-            b')' => depth_paren -= 1,
-            b'{' => depth_brace += 1,
-            b'}' if depth_brace == 0 && depth_paren == 0 && depth_bracket == 0 => break,
-            b'}' => depth_brace -= 1,
-            b'[' => depth_bracket += 1,
-            b']' => depth_bracket -= 1,
-            b',' if depth_paren == 0 && depth_brace == 0 && depth_bracket == 0 => break,
-            _ => {}
-        }
-        i += 1;
-    }
-    i
-}
-
 /// Classification of unparsed input tail after a prefix parse.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParseRemainder {
@@ -2915,40 +2864,9 @@ impl<'a> Parser<'a> {
         self.skip_ws();
         if matches!(self.peek_char(), Some(',') | Some('}')) {
             Ok(Value::Null)
-        } else if let Some(v) = self.try_rewrite_temporal_predicate_rhs()? {
-            Ok(v)
         } else {
             self.parse_predicate_value_rhs()
         }
-    }
-
-    /// If the upcoming RHS is a Kusto/wire temporal expression, rewrite to a string literal.
-    fn try_rewrite_temporal_predicate_rhs(&mut self) -> Result<Option<Value>, ParseError> {
-        let start = self.pos;
-        let end = scan_top_level_pred_rhs_end(self.input, start);
-        if end <= start {
-            return Ok(None);
-        }
-        let raw = self.input[start..end].trim();
-        if raw.is_empty() {
-            return Ok(None);
-        }
-        let rewritten = crate::temporal::rewrite_temporal_aliases_in_predicate_body(raw);
-        if rewritten.as_ref() == raw {
-            return Ok(None);
-        }
-        self.pos = end;
-        // Rewritten surface is either `now` or a quoted English phrase.
-        let t = rewritten.trim();
-        if t.eq_ignore_ascii_case("now") {
-            return Ok(Some(Value::String("now".into())));
-        }
-        if let Some(inner) = t.strip_prefix('"').and_then(|x| x.strip_suffix('"')) {
-            return Ok(Some(Value::String(
-                inner.replace("\\\"", "\"").replace("\\\\", "\\"),
-            )));
-        }
-        Ok(Some(Value::String(t.to_string())))
     }
 
     /// Parse comma-separated predicates inside `{ }`.
@@ -5312,39 +5230,22 @@ mod tests {
     }
 
     #[test]
-    fn parse_langitem_recorded_at_now_normalizes_temporal() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
-        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
-        let r = parse(r#"LangItem.create(title="t", recorded_at=now)"#, &cgs).unwrap();
-        let Expr::Create(c) = &r.expr else {
-            panic!("expected create");
-        };
-        let wire = c.input.to_value();
-        let obj = wire.as_object().expect("object input");
-        let value = obj.get("recorded_at").expect("recorded_at");
-        assert!(
-            !matches!(value, Value::String(s) if s == "now"),
-            "recorded_at=now should normalize, got {value:?}"
-        );
-        crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
-    }
-
-    #[test]
-    fn parse_langitem_recorded_at_next_week_normalizes_temporal() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
-        let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
-        let r = parse(r#"LangItem.create(title="t", recorded_at=next-week)"#, &cgs).unwrap();
-        let Expr::Create(c) = &r.expr else {
-            panic!("expected create");
-        };
-        let wire = c.input.to_value();
-        let obj = wire.as_object().expect("object input");
-        let value = obj.get("recorded_at").expect("recorded_at");
-        assert!(
-            !matches!(value, Value::String(s) if s == "next-week"),
-            "recorded_at=next-week should normalize, got {value:?}"
-        );
-        crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
+    fn temporal_wire_boundary_rejects_retired_relative_phrases() {
+        let cgs = load_schema_dir(std::path::Path::new(
+            "../../fixtures/schemas/plasm_language_matrix",
+        ))
+        .unwrap();
+        for phrase in ["now", "next-week", "today"] {
+            let error = parse(
+                &format!("LangItem.create(title=\"t\", recorded_at={phrase})"),
+                &cgs,
+            )
+            .unwrap_err();
+            assert!(matches!(
+                error.kind,
+                ParseErrorKind::InvalidTemporalValue { .. }
+            ));
+        }
     }
 
     #[test]
@@ -6427,7 +6328,7 @@ mod tests {
     }
 
     /// Create capabilities author body fields under `inputs.payload`. Parse coerce must walk
-    /// that lane (payload ∪ arguments) — Boolean and temporal PhraseIdent alike.
+    /// that lane (payload ∪ arguments) — Boolean tokens and explicit temporal wire values alike.
     #[test]
     fn program_create_payload_bare_tokens_coerce_like_invoke_args() {
         use std::sync::Arc;
@@ -6442,7 +6343,7 @@ mod tests {
         let stack = test_layer(&cgs);
 
         let mut r = parse_with_cgs_layers_program(
-            r#"LangItem.create(title="payload-coerce", active=false, recorded_at=now)"#,
+            r#"LangItem.create(title="payload-coerce", active=false, recorded_at="2026-01-01T00:00:00Z")"#,
             &stack,
             sym_map,
             None,

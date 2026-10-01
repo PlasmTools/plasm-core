@@ -91,7 +91,13 @@ fn find_view_producer_node(
             | DagNodeSource::ScalarExtract { source, .. } => {
                 cur = source.clone();
             }
-            DagNodeSource::Data(_) => {
+            DagNodeSource::MapBody { body, .. }
+                if matches!(body.output, plasm_core::plasm_monad::ScopedOutput::Filter) =>
+            {
+                // A filter selects original rows; it does not construct new owners.
+                cur = body.parent.source.to_string();
+            }
+            DagNodeSource::MapBody { .. } | DagNodeSource::Data(_) => {
                 return Err(format!(
                     "synthetic binding `{cur}` cannot produce view_embed parent rows for `{expected_view}`"
                 ));

@@ -4,8 +4,10 @@ expression: "super::PLASM_TOOL_DESCRIPTION"
 ---
 **Plasm** — `logical_session_ref` + `program`. Clean read-only plans execute inline. Plans containing mutations or a review gate return a `run_ref` for `plasm_run`; do not echo the program there.
 
-`program` is Python source text, not JSON data. Submit exactly one class derived from Program, with build(self), immutable bindings and an explicit return. The Python library reference and incremental domain declarations arrive through plasm_context. Do not copy those declarations, import libraries, instantiate the class or call build.
+`program` is Python source text, not JSON data. Submit exactly one class derived from Program, with build(self), immutable bindings and an explicit return. The Python semantic card and incremental domain declarations arrive through plasm_context. Do not copy declarations, instantiate the class or call build. Only datetime imports are admitted.
 
-Use only taught e#/m#/r# symbols and exact wire names. The class declares a deferred, typed DAG; @compute methods process materialized values later in bounded Monty. Python parse, type and plan failures return needs_fix with a correction; preserve selection criteria and repair within the same logical session. No other source syntax is accepted and failed Python is never retried as another language.
+Use only taught e#/m#/r# symbols and exact wire names. Pass catalog method arguments by name; Get also accepts its single identity positionally. The class declares a deferred, typed DAG; @compute methods process materialized values later in bounded Monty. Program-owned Python parse, type and plan rejections return needs_fix with a correction; preserve selection criteria and repair within the same logical session. No other source syntax is accepted and failed Python is never retried as another language.
 
 Inspect coverage and operation outcomes. A failed or cancelled run can have completed writes: inspect evidence before issuing further effects. Extend the existing context for missing capabilities. Never open a new session to repair syntax.
+
+Failure evidence belongs to one execution. A new program may perform reads or writes in the same logical session; it does not resume or roll back an earlier execution. Service diagnostics inform the agent but do not determine effect status.

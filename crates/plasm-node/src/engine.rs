@@ -92,6 +92,9 @@ pub struct TeachingExposureResult {
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct DryRunResult {
+    /// Compiler-owned count; never inferred from rendered review text.
+    pub write_count: u32,
+    pub failure_json: Option<String>,
     pub plan_commit_ref: String,
     pub summary: String,
     pub comp_json: serde_json::Value,
@@ -106,6 +109,7 @@ pub struct RunPlanResult {
     pub rows_json: Option<String>,
     pub meta_json: Option<String>,
     pub artifacts_json: Option<String>,
+    pub failure_json: Option<String>,
 }
 
 fn live_run_rows_json(
@@ -545,7 +549,8 @@ impl AgentEngine {
         es: &ExecuteSession,
         program: &str,
         stage: ProgramStageError,
-    ) -> anyhow::Error {
+    ) -> DryRunResult {
+        let failure = plasm_runtime::ExecutionFailure::from(stage.clone());
         let diag = ProgramDiagnostic::from_stage(
             &self.pipeline,
             Some(&self.sym_cross),
@@ -553,28 +558,56 @@ impl AgentEngine {
             program,
             stage,
         );
-        anyhow!("{}", diag.agent_markdown())
+        DryRunResult {
+            write_count: 0,
+            failure_json: Some(serde_json::to_string(&failure).expect("typed failure serializes")),
+            plan_commit_ref: String::new(),
+            summary: diag.agent_markdown(),
+            comp_json: serde_json::Value::Null,
+            fused_clean_read: false,
+        }
     }
 
-    pub fn dry_run(&mut self, program: &str) -> Result<DryRunResult> {
+    pub async fn dry_run(&mut self, program: &str) -> Result<DryRunResult> {
         let trimmed = program.trim();
-        if trimmed.is_empty() {
-            return Err(anyhow!("program is empty"));
-        }
         let es = self.ensure_execute_session()?;
-        let bundle = match compile_program(
+        if trimmed.is_empty() {
+            return Ok(self.reject_from_stage(
+                &es,
+                trimmed,
+                ProgramStageError::Parse {
+                    correction: "Submit a Python Program subclass with build(self).".into(),
+                    span_offset: None,
+                },
+            ));
+        }
+        let bundle = match Box::pin(compile_program(
             &self.pipeline,
             Some(&self.sym_cross),
             &es,
             "plasm_node",
             trimmed,
-        ) {
+        ))
+        .await
+        {
             Ok(b) => b,
-            Err(stage) => return Err(self.reject_from_stage(&es, trimmed, stage)),
+            Err(plasm_agent_core::compilation_error::CompilationError::Program(stage)) => {
+                return Ok(self.reject_from_stage(&es, trimmed, stage))
+            }
+            Err(plasm_agent_core::compilation_error::CompilationError::Host(failure)) => {
+                return Ok(DryRunResult {
+                    write_count: 0,
+                    failure_json: Some(serde_json::to_string(&failure)?),
+                    plan_commit_ref: String::new(),
+                    summary: failure.to_string(),
+                    comp_json: serde_json::Value::Null,
+                    fused_clean_read: false,
+                })
+            }
         };
         let dry = match evaluate_plasm_comp_dry(&es, &bundle) {
             Ok(d) => d,
-            Err(stage) => return Err(self.reject_from_stage(&es, trimmed, stage)),
+            Err(stage) => return Ok(self.reject_from_stage(&es, trimmed, stage)),
         };
         let fused_clean_read = dry.fuse_clean_read();
         let summary = render_plasm_plan_dry_text_for_session(&dry, None, Some(&es));
@@ -599,6 +632,11 @@ impl AgentEngine {
         es.register_plan_commit(record);
         self.execute_session = Some(es);
         Ok(DryRunResult {
+            write_count: compact
+                .write_count
+                .try_into()
+                .expect("bounded plan write count"),
+            failure_json: None,
             plan_commit_ref: commit_ref.as_str().to_string(),
             summary,
             comp_json: serde_json::to_value(&bundle.artifact().comp)?,
@@ -626,6 +664,7 @@ impl AgentEngine {
             rows_json: None,
             meta_json: None,
             artifacts_json: None,
+            failure_json: None,
         })
     }
 
@@ -663,7 +702,7 @@ impl AgentEngine {
         };
 
         let host = self.build_host_state(transport)?;
-        let live = Box::pin(run_plasm_comp(
+        let live_result = Box::pin(run_plasm_comp(
             &es,
             &host,
             AGENT_PROMPT_HASH,
@@ -674,39 +713,73 @@ impl AgentEngine {
             None,
             Some(dry),
             Some(plasm_agent_core::McpResultTransportPolicy {
-                artifact_access: plasm_agent_core::ArtifactAccessMode::Programmatic,
+                artifact_access: plasm_agent_core::ArtifactAccessMode::DagCompute,
                 ..Default::default()
             }),
         ))
-        .await
-        .map_err(|e| anyhow!("live execute failed: {e}"))?;
+        .await;
+        let live = match live_result {
+            Ok(live) => live,
+            Err(failure) => {
+                return Ok(RunPlanResult {
+                    ok: false,
+                    message: failure.to_string(),
+                    rows_json: None,
+                    meta_json: None,
+                    artifacts_json: None,
+                    failure_json: Some(serde_json::to_string(&failure)?),
+                })
+            }
+        };
 
-        let message = live
-            .run_markdown
-            .clone()
-            .unwrap_or_else(|| format!("Live run completed for `{trimmed}`."));
-        let mut artifacts = Vec::new();
-        for artifact in &live.code_plan_run_artifacts {
-            let id = plasm_agent_core::run_artifacts::RunArtifactId::from_wire(&artifact.run_id)
-                .ok_or_else(|| anyhow!("invalid canonical run id"))?;
-            let payload = host
-                .run_artifacts
-                .get_payload_result(AGENT_PROMPT_HASH, &self.session_id, id)
-                .await
-                .map_err(|error| anyhow!("reading canonical run artifact: {error}"))?
-                .ok_or_else(|| anyhow!("canonical run artifact missing"))?;
-            artifacts.push(serde_json::json!({
-                "run_id": artifact.run_id,
-                "snapshot": serde_json::from_slice::<serde_json::Value>(&payload.bytes)?,
-            }));
+        let publication: Result<RunPlanResult> = async {
+            let message = live
+                .run_markdown
+                .clone()
+                .unwrap_or_else(|| format!("Live run completed for `{trimmed}`."));
+            let mut artifacts = Vec::new();
+            for artifact in &live.code_plan_run_artifacts {
+                let id =
+                    plasm_agent_core::run_artifacts::RunArtifactId::from_wire(&artifact.run_id)
+                        .ok_or_else(|| anyhow!("invalid canonical run id"))?;
+                let payload = host
+                    .run_artifacts
+                    .get_payload_result(AGENT_PROMPT_HASH, &self.session_id, id)
+                    .await
+                    .map_err(|error| anyhow!("reading canonical run artifact: {error}"))?
+                    .ok_or_else(|| anyhow!("canonical run artifact missing"))?;
+                artifacts.push(serde_json::json!({
+                    "run_id": artifact.run_id,
+                    "snapshot": serde_json::from_slice::<serde_json::Value>(&payload.bytes)?,
+                }));
+            }
+            Ok(RunPlanResult {
+                ok: true,
+                message,
+                rows_json: live_run_rows_json(&live),
+                meta_json: live_run_meta_json(&live),
+                failure_json: None,
+                artifacts_json: Some(serde_json::to_string(&artifacts)?),
+            })
         }
-        Ok(RunPlanResult {
-            ok: true,
-            message,
-            rows_json: live_run_rows_json(&live),
-            meta_json: live_run_meta_json(&live),
-            artifacts_json: Some(serde_json::to_string(&artifacts)?),
-        })
+        .await;
+        match publication {
+            Ok(result) => Ok(result),
+            Err(error) => {
+                let mut failure = plasm_runtime::ExecutionFailure::from(error.to_string());
+                for step in &live.return_steps {
+                    failure = failure.with_effects(&step.result.operations);
+                }
+                Ok(RunPlanResult {
+                    ok: false,
+                    message: failure.to_string(),
+                    rows_json: None,
+                    meta_json: None,
+                    artifacts_json: None,
+                    failure_json: Some(serde_json::to_string(&failure)?),
+                })
+            }
+        }
     }
 
     fn build_host_state(
@@ -787,7 +860,7 @@ impl AgentEngine {
             String::new()
         } else {
             format!(
-                "{}\n\n```pyi\n{}\n```",
+                "{}\n{}",
                 wave.language.unwrap_or_default(),
                 wave.declarations
             )
@@ -878,7 +951,6 @@ mod tests {
     use plasm_core::{EntityKey, Ref, Value};
     use plasm_runtime::{
         CachedEntity, EntityCompleteness, ExecutionResult, ExecutionSource, ExecutionStats,
-        ResultCoverage,
     };
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -911,10 +983,16 @@ mod tests {
             display: "products".into(),
             projection: None,
             result: Arc::new(ExecutionResult {
-                count: 1,
-                entities: vec![entity],
+                collection: plasm_runtime::execution::ExecutionCollection::observe(
+                    plasm_core::collection_codec::CollectionIdentity::for_untyped_observation(
+                        &"node_fixture",
+                    )
+                    .unwrap(),
+                    vec![entity],
+                    plasm_core::collection_codec::Observation::UnprovenPage,
+                )
+                .unwrap(),
                 has_more: false,
-                coverage: ResultCoverage::Unknown,
                 pagination_resume: None,
                 paging_handle: None,
                 source: ExecutionSource::Live,
@@ -1007,9 +1085,15 @@ mod tests {
                 continue;
             }
             assert!(
-                teaching
-                    .prompt
-                    .contains(&format!("def {}(", cap.python.method)),
+                teaching.prompt.contains(&format!(
+                    "  {}.{}(",
+                    if cap.python.receiver {
+                        "row"
+                    } else {
+                        &cap.python.entity_symbol
+                    },
+                    cap.python.method
+                )),
                 "missing {}",
                 cap.name
             );
@@ -1033,8 +1117,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn load_expose_and_dry_run_execute_tiny() {
+    #[tokio::test]
+    async fn load_expose_and_dry_run_execute_tiny() {
         let (mut engine, info) = tiny_engine();
         assert!(!info.catalog_cgs_hash.is_empty());
         let teaching = engine
@@ -1049,6 +1133,7 @@ mod tests {
         assert!(teaching.prompt.contains("e1") || !teaching.prompt.is_empty());
         let dry = engine
             .dry_run("class Read(Program):\n    def build(self):\n        return e1.query()\n")
+            .await
             .expect("dry run");
         assert!(dry.plan_commit_ref.starts_with("pc"));
         assert!(!dry.summary.is_empty());
@@ -1059,8 +1144,54 @@ mod tests {
         );
     }
 
-    #[test]
-    fn identical_dry_run_reject_names_already_rejected() {
+    #[tokio::test]
+    async fn execution_failure_missing_worker_is_not_a_node_program_correction() {
+        let (mut engine, info) = tiny_engine();
+        engine
+            .expose_seeds(
+                "test intent",
+                &[CapabilitySeed {
+                    entry_id: info.entry_id,
+                    entity: "Product".into(),
+                }],
+            )
+            .unwrap();
+        engine.set_python_pool(Arc::new(
+            plasm_agent_core::python_pool::PythonPool::with_binary(std::path::PathBuf::from(
+                "/nonexistent-plasm-conformance-worker",
+            )),
+        ));
+        let result = engine.dry_run("class Read(Program):\n    @compute\n    def count(self, rows: list[Row]) -> int:\n        return len(rows)\n    def build(self):\n        return self.count(e1.query())\n").await.unwrap();
+        let failure: plasm_runtime::ExecutionFailure = serde_json::from_str(
+            result
+                .failure_json
+                .as_ref()
+                .expect("host-owned failure envelope"),
+        )
+        .unwrap();
+        assert_eq!(failure.cause, plasm_runtime::FailureCause::Runtime);
+        assert_eq!(failure.recovery, plasm_runtime::RecoveryDisposition::Stop);
+        assert!(result.plan_commit_ref.is_empty());
+        assert!(!result.summary.contains("/nonexistent"));
+        assert!(!result.summary.contains("class Read"));
+        engine.python_pool.close().await;
+    }
+
+    fn program_correction(rejection: DryRunResult) -> String {
+        let failure: plasm_runtime::ExecutionFailure =
+            serde_json::from_str(rejection.failure_json.as_ref().expect("typed rejection"))
+                .unwrap();
+        assert_eq!(failure.cause, plasm_runtime::FailureCause::Program);
+        assert_eq!(
+            failure.recovery,
+            plasm_runtime::RecoveryDisposition::RepairProgram
+        );
+        assert!(rejection.plan_commit_ref.is_empty());
+        rejection.summary
+    }
+
+    #[tokio::test]
+    async fn identical_dry_run_reject_names_already_rejected() {
         let (mut engine, info) = tiny_engine();
         engine
             .expose_seeds(
@@ -1074,8 +1205,9 @@ mod tests {
         let program = "class Read(Program):\n    def build(self):\n        return e1.query().select(\"not_a_taught_field\")\n";
         let first = engine
             .dry_run(program)
-            .expect_err("unknown field is a compile reject")
-            .to_string();
+            .await
+            .map(program_correction)
+            .expect("structured program rejection");
         assert!(
             first.contains("not_a_taught_field"),
             "first reject names the field: {first}"
@@ -1086,16 +1218,17 @@ mod tests {
         );
         let second = engine
             .dry_run(program)
-            .expect_err("identical resubmit is a compile reject")
-            .to_string();
+            .await
+            .map(program_correction)
+            .expect("structured program rejection");
         assert!(
             second.contains("This exact program was already rejected"),
             "NAPI dry_run must record through from_stage: {second}"
         );
     }
 
-    #[test]
-    fn identical_parse_reject_names_already_rejected() {
+    #[tokio::test]
+    async fn identical_parse_reject_names_already_rejected() {
         let (mut engine, info) = tiny_engine();
         engine
             .expose_seeds(
@@ -1109,16 +1242,18 @@ mod tests {
         let program = "note = e1(3084, access_token=missing)";
         let first = engine
             .dry_run(program)
-            .expect_err("extra identity args are a parse reject")
-            .to_string();
+            .await
+            .map(program_correction)
+            .expect("structured program rejection");
         assert!(
             !first.contains("already rejected"),
             "first parse reject is fresh: {first}"
         );
         let second = engine
             .dry_run(program)
-            .expect_err("identical parse resubmit is a reject")
-            .to_string();
+            .await
+            .map(program_correction)
+            .expect("structured program rejection");
         assert!(
             second.contains("This exact program was already rejected"),
             "NAPI parse reject must record through from_stage: {second}"
@@ -1241,6 +1376,7 @@ mod tests {
             .expect("expose");
         let dry = engine
             .dry_run("class Read(Program):\n    def build(self):\n        return e1.query()\n")
+            .await
             .expect("dry run");
         let transport = Arc::new(MockProductListTransport);
         let live = engine
@@ -1330,7 +1466,7 @@ mod tests {
                     }]).unwrap();
                     let cgs = &engine.catalogs["matrix"];
                     let symbol = plasm_core::prompt_render::python::capability_method_name(cgs, &engine.exposure.as_ref().unwrap().to_symbol_map(), "matrix", &cgs.capabilities["langitem_update"]);
-                    let dry = engine.dry_run(&format!("class Update(Program):\n    def build(self):\n        return e1.query().flat_map(lambda row: row.{symbol}(title=\"checked\", score=2, owner=\"alice\"))\n")).unwrap();
+                    let dry = engine.dry_run(&format!("class Update(Program):\n    def build(self):\n        return e1.query().flat_map(lambda row: row.{symbol}(title=\"checked\", score=2, owner=\"alice\"))\n")).await.unwrap();
                     let transport = Arc::new(RecordingItemTransport(std::sync::Mutex::new(Vec::new())));
                     let live = engine.run_plan_live(&dry.plan_commit_ref, transport.clone()).await.unwrap();
                     assert!(live.ok, "{}", live.message);
@@ -1339,8 +1475,8 @@ mod tests {
         }).unwrap().join().unwrap();
     }
 
-    #[test]
-    fn routed_extension_preserves_symbols_and_reviewed_plans() {
+    #[tokio::test]
+    async fn routed_extension_preserves_symbols_and_reviewed_plans() {
         use plasm_core::prerequisites::{CapabilityRef, PrerequisiteClosure};
         let (mut engine, _) = tiny_engine();
         let pin = DiscoverySessionPin {
@@ -1377,6 +1513,7 @@ mod tests {
         let initial_entities = engine.exposure.as_ref().unwrap().entities.clone();
         let dry = engine
             .dry_run("class Read(Program):\n    def build(self):\n        return e1.query()\n")
+            .await
             .unwrap();
         assert_eq!(
             engine
@@ -1461,6 +1598,7 @@ mod tests {
             handles.push(tokio::spawn(async move {
                 let mut g = eng.lock().await;
                 g.dry_run("class Read(Program):\n    def build(self):\n        return e1.query()\n")
+                    .await
             }));
         }
         for (i, h) in handles.into_iter().enumerate() {
@@ -1553,6 +1691,7 @@ mod tests {
             .unwrap();
         let dry = engine
             .dry_run("class Read(Program):\n    def build(self):\n        return e1.query()\n")
+            .await
             .unwrap();
         let first = engine
             .run_plan_live(&dry.plan_commit_ref, Arc::new(Pages))

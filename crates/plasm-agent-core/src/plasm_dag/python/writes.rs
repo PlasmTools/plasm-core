@@ -1,7 +1,8 @@
 //! Session-taught effects lowered into the same typed admission and ordering as Plasm.
+use super::catalog_operations::{CatalogOperation, CatalogWriteKind};
 use super::*;
 use plasm_core::symbol_tuning::{CatalogScope, EntityBinding};
-use plasm_core::{CapabilityKind, CatalogEntryStamp, IdentitySlot, PlasmInputRef, Value};
+use plasm_core::{CatalogEntryStamp, IdentitySlot, PlasmInputRef, Value};
 use ruff_python_ast::ExprCall;
 
 impl Lower<'_> {
@@ -32,15 +33,9 @@ impl Lower<'_> {
         let cap = cgs
             .get_capability(method.capability.as_str())
             .ok_or("missing method capability")?;
-        if !matches!(
-            cap.kind,
-            CapabilityKind::Create
-                | CapabilityKind::Update
-                | CapabilityKind::Delete
-                | CapabilityKind::Action
-        ) {
+        let CatalogOperation::Write(kind) = CatalogOperation::from_kind(cap.kind) else {
             return Err(at(site, "method is not a mutation or action"));
-        }
+        };
         if !call.arguments.args.is_empty() {
             return Err(at(
                 site,
@@ -106,8 +101,8 @@ impl Lower<'_> {
             plasm_core::GetExpr::pathless_nullary(owner.entity.as_str()).reference
         };
         let value = inputs::normalize(cap, input, cgs).map_err(|error| at(site, &error))?;
-        let expr = match cap.kind {
-            CapabilityKind::Create => {
+        let expr = match kind {
+            CatalogWriteKind::Create => {
                 let mut create =
                     plasm_core::CreateExpr::new(method.capability, owner.entity, value);
                 create.catalog_entry_id = stamp;
@@ -118,96 +113,99 @@ impl Lower<'_> {
                 }
                 plasm_core::Expr::Create(create)
             }
-            CapabilityKind::Delete => {
+            CatalogWriteKind::Delete => {
                 let mut delete = plasm_core::DeleteExpr::with_target(method.capability, target);
                 delete.catalog_entry_id = stamp;
                 delete.input = Some(value.into());
                 plasm_core::Expr::Delete(delete)
             }
-            CapabilityKind::Update | CapabilityKind::Action => {
+            CatalogWriteKind::Update | CatalogWriteKind::Action => {
                 let mut invoke =
                     plasm_core::InvokeExpr::with_target(method.capability, target, Some(value));
                 invoke.catalog_entry_id = stamp;
                 plasm_core::Expr::Invoke(invoke)
             }
-            _ => return Err(at(site, "unsupported write kind")),
         };
         self.emit_catalog(id, expr)
     }
 
-    pub(super) fn write_value(&self, e: &PyExpr) -> Result<Value, String> {
-        match e {
-            PyExpr::Name(n) => {
-                if self
-                    .row_scope
-                    .as_ref()
-                    .is_some_and(|scope| scope.parameter == n.id.as_str())
-                {
-                    return Err(at(e, "pass a row field, not the whole lambda row"));
-                }
-                if !self.state.contains(n.id.as_str()) {
-                    return Err(at(e, "unknown write input binding"));
-                }
-                Ok(Value::PlasmInputRef(PlasmInputRef::node_output(
-                    n.id.as_str(),
-                    vec![],
-                )))
-            }
-            PyExpr::Attribute(a) => {
-                let binding = name(&a.value)
-                    .ok_or_else(|| at(e, "write field inputs require a named binding"))?;
-                let binding = self.scoped_binding(binding);
-                let contract = super::super::binding_contract(&self.state, binding)
-                    .ok_or("unknown input binding")?;
-                if !contract.row_cardinality.permits_scalar_field_extract() {
-                    return Err(at(e, "write field input requires a proven singleton"));
-                }
-                let row_schema = super::super::schema_validate::resolve_immediate_compute_schema(
-                    &self.state,
-                    &[],
-                    binding,
-                );
-                let path = super::super::schema_validate::resolve_sort_field_path(
-                    self.es,
-                    None,
-                    Some(&contract.row_entity),
-                    row_schema.as_ref(),
-                    &FieldPath::from_dotted(a.attr.as_str())?,
-                )?;
-                super::super::schema_validate::validate_compute_paths_for_dag_source(
-                    self.es,
-                    &self.state,
-                    &[],
-                    binding,
-                    std::slice::from_ref(&path),
-                    "write input",
-                )?;
-                Ok(Value::PlasmInputRef(
-                    self.input_ref(binding, path.segments().to_vec()),
-                ))
-            }
-            PyExpr::List(list) => Ok(Value::Array(
-                list.elts
-                    .iter()
-                    .map(|e| self.write_value(e))
-                    .collect::<Result<_, _>>()?,
-            )),
-            PyExpr::Dict(dict) => {
-                let mut fields = indexmap::IndexMap::new();
-                for item in &dict.items {
-                    let key = string(
-                        item.key
-                            .as_ref()
-                            .ok_or("write input dictionary unpacking is not admitted")?,
-                    )?;
-                    if fields.insert(key, self.write_value(&item.value)?).is_some() {
-                        return Err(at(e, "duplicate input field"));
-                    }
-                }
-                Ok(Value::Object(fields))
-            }
-            PyExpr::NoneLiteral(_) => Ok(Value::Null),
-            _ => literal(e),
+    pub(super) fn write_value(&mut self, e: &PyExpr) -> Result<Value, String> {
+        if self
+            .row_scope
+            .as_ref()
+            .is_some_and(|scope| name(e) == Some(scope.parameter.as_str()))
+        {
+            return Err(at(e, "pass a row field, not the whole lambda row"));
         }
+        let mut inputs = BTreeMap::new();
+        let value = self.scoped_value(e, &mut inputs)?;
+        self.value_operand(value, &inputs.into_values().collect::<Vec<_>>())
+    }
+
+    fn value_operand(
+        &mut self,
+        value: PlasmDataValue,
+        inputs: &[crate::plasm_plan::PlanDataInput],
+    ) -> Result<Value, String> {
+        Ok(match value {
+            PlasmDataValue::Literal { value } => value.into_value(),
+            PlasmDataValue::NodeSymbol { node, path, .. } => {
+                Value::PlasmInputRef(PlasmInputRef::node_output(node, path))
+            }
+            PlasmDataValue::BindingSymbol { binding, path } => {
+                Value::PlasmInputRef(PlasmInputRef::row_binding(binding, path))
+            }
+            PlasmDataValue::Array { items } => Value::Array(
+                items
+                    .into_iter()
+                    .map(|v| self.value_operand(v, inputs))
+                    .collect::<Result<_, _>>()?,
+            ),
+            PlasmDataValue::Object { fields } => Value::Object(
+                fields
+                    .into_iter()
+                    .map(|(k, v)| Ok((k, self.value_operand(v, inputs)?)))
+                    .collect::<Result<_, String>>()?,
+            ),
+            value => {
+                let id = self.fresh();
+                let node = self.emit_value(value, inputs.to_vec(), &id)?;
+                Value::PlasmInputRef(PlasmInputRef::node_output(node, vec![]))
+            }
+        })
+    }
+
+    pub(super) fn field_input(&mut self, e: &PyExpr) -> Result<PlasmInputRef, String> {
+        let PyExpr::Attribute(a) = e else {
+            return Err(at(e, "expected a field dependency"));
+        };
+        let source = self.expr(&a.value, None)?;
+        let binding = source.as_str();
+        let contract =
+            super::super::binding_contract(&self.state, binding).ok_or("unknown input binding")?;
+        if !contract.row_cardinality.permits_scalar_field_extract() {
+            return Err(at(e, "field input requires a proven singleton"));
+        }
+        let row_schema = super::super::schema_validate::resolve_immediate_compute_schema(
+            &self.state,
+            &[],
+            binding,
+        );
+        let path = super::super::schema_validate::resolve_schema_field_path(
+            self.es,
+            None,
+            Some(&contract.row_entity),
+            row_schema.as_ref(),
+            &FieldPath::from_dotted(a.attr.as_str())?,
+        )?;
+        super::super::schema_validate::validate_compute_paths_for_dag_source(
+            self.es,
+            &self.state,
+            &[],
+            binding,
+            std::slice::from_ref(&path),
+            "field input",
+        )?;
+        Ok(self.input_ref(binding, path.segments().to_vec()))
     }
 }

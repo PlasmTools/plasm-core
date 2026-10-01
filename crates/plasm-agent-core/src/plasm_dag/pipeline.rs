@@ -356,6 +356,7 @@ fn lower_expr_node(
                         singleton: false,
                         page_size: None,
                         source: DagNodeSource::Derive {
+                            value_type: None,
                             source: source.to_string(),
                             value,
                             inputs,
@@ -533,6 +534,8 @@ fn lower_iterate_until(
             qualified_entity: qualified,
             until_body: it.until.clone(),
             until_predicates,
+            until_scope: None,
+            step_scope: None,
             take: it.take,
             uses_result: uses,
         },
@@ -815,14 +818,6 @@ pub(in crate::plasm_dag) fn compile_surface_nodes(
             format!("Plasm program `{id}`: unknown binding `{label}` for continuation")
         })?;
         let tail_trim = tail.trim();
-        if tail_trim == "content" || tail_trim.starts_with("content.") {
-            let site = if id.starts_with("return_") {
-                ContentReferenceSite::ProgramRoot
-            } else {
-                ContentReferenceSite::Continuation
-            };
-            return Err(content_reference_error(&label, site, contract.continuation));
-        }
         if matches!(contract.continuation, ContinuationCapability::Terminal) {
             return Err(format!(
                 "Plasm program `{id}`: `{label}` is not a Plasm expression anchor — only surface/relation bindings and row-preserving projection bindings can be extended with `{label}.…`; aggregate/render/derive/data/for_each bindings must use postfix transforms or an explicit entity constructor"
@@ -867,7 +862,6 @@ pub(in crate::plasm_dag) fn validate_catalog_operands(
     expr: &Expr,
 ) -> Result<(), String> {
     validate_invoke_scalar_field_refs(session, state, id, expr)?;
-    super::password_domain::validate_password_domain_bind(session, state, id, expr)?;
     super::prerequisite_seats::validate_prerequisite_seat_bind(session, state, id, expr)?;
     Ok(())
 }

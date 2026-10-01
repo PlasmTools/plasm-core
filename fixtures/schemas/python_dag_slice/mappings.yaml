@@ -17,3 +17,18 @@ item_get:
 item_touch:
   method: POST
   path: [{type: literal, value: touch}]
+
+item_publish:
+  method: POST
+  path: [{type: literal, value: publish}]
+  body:
+    type: object
+    fields:
+      - - content
+        - {type: var, name: content}
+
+item_mark:
+  method: POST
+  path:
+    - {type: literal, value: marks}
+    - {type: var, name: id}

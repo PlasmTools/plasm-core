@@ -8,7 +8,6 @@ use super::expr::ProjectSpec;
 use super::filter::RowFilter;
 use super::ids::{FrameId, RowNodeId, SurfaceMeaningId};
 use super::plan::{Pipeline, PlanNode, RowPlan, TypedAggregate};
-use std::num::NonZeroUsize;
 
 /// Fold a linear Map-spine `ComputeOp` chain. `Render` is a collect barrier, not a node.
 pub fn fold_compute_ops(
@@ -68,10 +67,7 @@ pub fn plan_node_from_compute(op: &ComputeOp) -> Result<PlanNode, RowComputeErro
             key: key.clone(),
             descending: *descending,
         }),
-        ComputeOp::Limit { count } => {
-            let count = NonZeroUsize::new(*count).ok_or(FrameSchemaError::ZeroLimit)?;
-            Ok(PlanNode::Limit { count })
-        }
+        ComputeOp::Limit { count } => Ok(PlanNode::Limit { count: *count }),
         ComputeOp::DedupeBy { keys } => Ok(PlanNode::Dedupe { keys: keys.clone() }),
         ComputeOp::Project { fields } => Ok(PlanNode::Project(ProjectSpec {
             fields: fields.clone(),
@@ -105,7 +101,9 @@ pub fn plan_node_from_compute(op: &ComputeOp) -> Result<PlanNode, RowComputeErro
             Ok(PlanNode::Aggregate { aggs })
         }
         ComputeOp::Render { .. } => Err(FusionError::RenderInPipeline.into()),
-        ComputeOp::Union { .. } => Err(FusionError::UnionInPipeline.into()),
+        ComputeOp::Union { .. } | ComputeOp::MergeBranches { .. } => {
+            Err(FusionError::UnionInPipeline.into())
+        }
         ComputeOp::Python { .. } => Err(FusionError::PythonInPipeline.into()),
     }
 }

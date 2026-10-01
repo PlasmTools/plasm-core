@@ -361,13 +361,6 @@ pub(crate) async fn post_execute_session_plan(
             )
                 .into_response()
         }
-        Err(e) => problem_response(
-            Problem::custom(
-                ProblemStatus::BAD_REQUEST,
-                Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
-            )
-            .with_title("Bad Request")
-            .with_detail(e),
-        ),
+        Err(e) => crate::http_execute::execution_failure_response(e),
     }
 }

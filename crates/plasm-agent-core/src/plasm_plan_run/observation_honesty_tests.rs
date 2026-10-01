@@ -66,7 +66,7 @@ impl HttpTransport for Transport {
     }
 }
 
-async fn best_effort_fanout_case(count: usize, fail_at: usize) {
+async fn ordered_fanout_case(count: usize, fail_at: usize) {
     let cgs = Arc::new(
         load_schema_dir(
             &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -126,7 +126,7 @@ async fn best_effort_fanout_case(count: usize, fail_at: usize) {
         None,
         None,
         None,
-        "best effort fanout",
+        "ordered effect fanout",
     ))
     .await
     .unwrap();
@@ -161,7 +161,7 @@ async fn best_effort_fanout_case(count: usize, fail_at: usize) {
         .await
         .unwrap();
         assert_eq!(
-            projected.return_steps[0].result.entities.len(),
+            projected.return_steps[0].result.entities().len(),
             count,
             "an acquired collection must not be silently repaged before or after projection"
         );
@@ -188,7 +188,7 @@ async fn best_effort_fanout_case(count: usize, fail_at: usize) {
         None,
     ))
     .await
-    .expect("explicit mutating fanout returns partial application");
+    .expect_err("upstream rejection stops before the next effect occurrence");
 
     let (_, persisted, _) = Box::pin(crate::http_execute::execute_plasm_plasm_line(
         &host,
@@ -201,31 +201,34 @@ async fn best_effort_fanout_case(count: usize, fail_at: usize) {
     .await
     .unwrap();
     assert_eq!(
-        persisted.entities.len(),
-        count - 1,
+        persisted.entities().len(),
+        fail_at,
         "same-session read must expose every successful fanout write"
     );
 
     let store = store.lock().unwrap();
     assert_eq!(
-        store.attempts, count,
-        "every source row attempted exactly once"
+        store.attempts,
+        fail_at + 1,
+        "only the successful prefix and failed occurrence are dispatched"
     );
-    assert_eq!(store.rows.len(), count - 1, "only rejected row is absent");
-    let ack = result
-        .return_steps
+    assert_eq!(store.rows.len(), fail_at, "the suffix remains undispatched");
+    assert_eq!(result.cause, plasm_runtime::FailureCause::Upstream);
+    assert_eq!(
+        result.recovery,
+        plasm_runtime::RecoveryDisposition::ReconcileEffects
+    );
+    let receipts: Vec<_> = result
+        .effects
         .iter()
-        .flat_map(|step| step.result.operations.entries())
-        .find(|ack| ack.capability == "pwexpense_create")
-        .expect("fanout operation acknowledgment");
-    assert_eq!(ack.logical_invocations, count);
-    assert_eq!(ack.completed, count - 1);
-    assert_eq!(ack.failed, 1);
-    assert_eq!(ack.outcomes.len(), count);
-    for (index, outcome) in ack.outcomes.iter().enumerate() {
-        assert_eq!(outcome.source_index, index);
-        assert_eq!(outcome.error.is_some(), index == fail_at);
-    }
+        .filter(|ack| ack.capability == "pwexpense_create")
+        .collect();
+    assert_eq!(
+        receipts.iter().map(|ack| ack.completed).sum::<usize>(),
+        fail_at
+    );
+    assert_eq!(receipts.iter().map(|ack| ack.failed).sum::<usize>(), 1);
+    assert!(result.effects_unresolved);
 }
 
 async fn case(count: usize, fail_at: usize) {
@@ -326,26 +329,42 @@ async fn case(count: usize, fail_at: usize) {
         return;
     }
     let error = result.expect_err("plan should abort at injected failure");
-    let marker = "Confirmed operations before failure (not rolled back): ";
-    if fail_at > 0 {
-        let line = error
-            .lines()
-            .find_map(|line| line.strip_prefix(marker))
-            .expect("durable prefix must be reported on plan failure");
-        let acks: Vec<serde_json::Value> = serde_json::from_str(line).unwrap();
-        assert_eq!(
-            acks.iter()
-                .map(|a| a["completed"].as_u64().unwrap())
-                .sum::<u64>(),
-            fail_at as u64
-        );
-    } else {
-        assert!(!error.contains(marker));
-    }
+    assert_eq!(
+        error.effects.iter().map(|ack| ack.completed).sum::<usize>(),
+        fail_at,
+        "typed failure must retain acknowledged prefix exactly once"
+    );
+    assert_ne!(
+        error.recovery,
+        plasm_runtime::RecoveryDisposition::RepairProgram
+    );
     assert_eq!(
         store.lock().unwrap().attempts,
         fail_at + 1,
         "production plan must stop at failure"
+    );
+    let attempts_before_replay = store.lock().unwrap().attempts;
+    let blocked = Box::pin(ExecutePipeline::run_program(
+        &session,
+        &host,
+        &opened.prompt_hash,
+        &opened.session_id,
+        &bundle,
+        ExecutionIntent::Live,
+        None,
+        None,
+        None,
+    ))
+    .await
+    .expect_err("unresolved writes cannot be replayed");
+    assert_eq!(
+        blocked.recovery,
+        plasm_runtime::RecoveryDisposition::ReconcileEffects
+    );
+    assert_eq!(
+        store.lock().unwrap().attempts,
+        attempts_before_replay,
+        "rejected replay must not reach transport"
     );
     let expected = store.lock().unwrap().rows.clone();
     assert_eq!(expected.len(), fail_at);
@@ -361,7 +380,7 @@ async fn case(count: usize, fail_at: usize) {
         .await
         .unwrap();
         let mut got: Vec<_> = result
-            .entities
+            .entities()
             .iter()
             .map(|e| e.fields.get("expense_id").unwrap().to_value())
             .collect();
@@ -371,9 +390,10 @@ async fn case(count: usize, fail_at: usize) {
         got.sort_by_key(|v| format!("{v:?}"));
         want.sort_by_key(|v| format!("{v:?}"));
         assert_eq!(
-            got, want,
+            got,
+            want,
             "same-session read lost durable prefix (coverage={:?})",
-            result.coverage
+            result.coverage()
         );
     }
 }
@@ -389,9 +409,9 @@ proptest! {
 proptest! {
  #![proptest_config(proptest::test_runner::Config::with_cases(8))]
  #[test]
- fn oph_mutating_fanout_is_best_effort(count in 1usize..6, fail_seed in 0usize..6) {
+ fn oph_mutating_fanout_preserves_effects_on_system_failure(count in 1usize..6, fail_seed in 0usize..6) {
   let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-  rt.block_on(Box::pin(best_effort_fanout_case(count, fail_seed % count)));
+  rt.block_on(Box::pin(ordered_fanout_case(count, fail_seed % count)));
  }
 }
 
@@ -402,5 +422,5 @@ async fn successful_plan_publishes_unreturned_write_receipts() {
 
 #[tokio::test]
 async fn materialized_collection_over_default_page_retains_all_writes() {
-    Box::pin(best_effort_fanout_case(31, 30)).await;
+    Box::pin(ordered_fanout_case(31, 30)).await;
 }

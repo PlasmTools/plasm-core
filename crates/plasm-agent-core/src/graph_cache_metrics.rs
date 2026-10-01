@@ -107,7 +107,7 @@ pub(crate) fn record_graph_surface_graph_backed(logical_count: usize) {
     instruments().surface_graph_backed.add(1, attrs);
 }
 
-/// `mode`: `full` (merge hot + pages) | `stream` (row callback scan).
+/// `mode`: `recorded` (resolve recorded occurrences from hot rows and spill).
 pub(crate) fn record_graph_rehydrate(
     mode: &'static str,
     rows: usize,

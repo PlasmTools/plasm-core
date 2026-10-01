@@ -1,8 +1,8 @@
 //! Catalog integration evidence: every retained reference uses the production Python frontend.
 use plasm_eval::ProgramSession;
 
-#[test]
-fn published_catalog_references_compile_as_python() {
+#[tokio::test]
+async fn published_catalog_references_compile_as_python() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut failures = Vec::new();
     let mut count = 0;
@@ -18,7 +18,7 @@ fn published_catalog_references_compile_as_python() {
                 continue;
             };
             count += 1;
-            if let Err(error) = session.compile(source) {
+            if let Err(error) = session.compile(source).await {
                 failures.push(format!(
                     "{}: {}",
                     case["id"].as_str().unwrap(),

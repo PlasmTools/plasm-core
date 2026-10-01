@@ -1,10 +1,10 @@
+import { failureObservation } from "../runtime/execution-failure.js";
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 
 import type { AgentRuntime } from "../runtime/agent-runtime.js";
 import {
   PLASM_CONTEXT_TOOL_DESCRIPTION,
-  PLASM_READ_RUN_ARTIFACT_TOOL_DESCRIPTION,
   PLASM_RUN_TOOL_DESCRIPTION,
   PLASM_TOOL_DESCRIPTION,
 } from "./descriptions.js";
@@ -56,94 +56,46 @@ const plasmRunInputSchema = z.object({
     .describe("Optional short note explaining the intent of this call"),
 });
 
-const plasmReadRunArtifactInputSchema = z
-  .object({
-    logical_session_ref: z
-      .string()
-      .describe("Same logical_session_ref returned by plasm_context"),
-    run_id: z
-      .string()
-      .min(1)
-      .optional()
-      .describe("Run snapshot id (pr… hex) from _meta.plasm.steps[] / markdown"),
-    artifact_uri: z
-      .string()
-      .min(1)
-      .optional()
-      .describe("plasm://… snapshot URI from _meta.plasm.steps[] / resource_link"),
-    reasoning: z
-      .string()
-      .optional()
-      .describe("Optional short note explaining the intent of this call"),
-  })
-  .strict()
-  .refine(
-    (value) =>
-      [Boolean(value.run_id?.trim()), Boolean(value.artifact_uri?.trim())].filter(Boolean)
-        .length === 1,
-    { message: "provide exactly one of run_id or artifact_uri" },
-  );
-
 export function createPlasmTools(
-  runtime: AgentRuntime,
+  runtime: Pick<AgentRuntime, "plasmContext" | "plasm" | "plasmRun">,
 ): ToolSet {
   const tools: ToolSet = {};
+  async function invoke(run: () => Promise<string>) {
+    try { return await run(); } catch (error) {
+      return failureObservation(error);
+    }
+  }
 
   tools.plasm_context = tool({
     description: PLASM_CONTEXT_TOOL_DESCRIPTION,
     inputSchema: toolInput(plasmContextInputSchema),
-    execute: async (args) =>
-      runtime.plasmContext({
-        intent: args.intent,
-        sessionMode: args.session_mode ?? "new",
-        logicalSessionRef: args.logical_session_ref,
-      }),
+    execute: async (args) => invoke(() => runtime.plasmContext({
+      intent: args.intent,
+      sessionMode: args.session_mode ?? "new",
+      logicalSessionRef: args.logical_session_ref,
+    })),
   });
 
   tools.plasm = tool({
     description: PLASM_TOOL_DESCRIPTION,
     inputSchema: toolInput(plasmInputSchema),
-    execute: async ({ logical_session_ref, program, reasoning }) => {
-      try {
-        return await runtime.plasm({
-          logicalSessionRef: logical_session_ref,
-          program,
-          reasoning,
-        });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return `**plasm** error — revise \`program\` on the same logical_session_ref:\n\n${msg}`;
-      }
-    },
+    execute: async ({ logical_session_ref, program, reasoning }) =>
+      invoke(() => runtime.plasm({
+        logicalSessionRef: logical_session_ref,
+        program,
+        reasoning,
+      })),
   });
 
   tools.plasm_run = tool({
     description: PLASM_RUN_TOOL_DESCRIPTION,
     inputSchema: toolInput(plasmRunInputSchema),
-    execute: async ({ logical_session_ref, run_ref, reasoning }) => {
-      try {
-        return await runtime.plasmRun({
-          logicalSessionRef: logical_session_ref,
-          runRef: run_ref,
-          reasoning,
-        });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return `**plasm_run** error:\n\n${msg}`;
-      }
-    },
-  });
-
-  tools.plasm_read_run_artifact = tool({
-    description: PLASM_READ_RUN_ARTIFACT_TOOL_DESCRIPTION,
-    inputSchema: toolInput(plasmReadRunArtifactInputSchema),
-    execute: async ({ logical_session_ref, run_id, artifact_uri, reasoning }) =>
-      runtime.readRunArtifact({
+    execute: async ({ logical_session_ref, run_ref, reasoning }) =>
+      invoke(() => runtime.plasmRun({
         logicalSessionRef: logical_session_ref,
-        runId: run_id,
-        artifactUri: artifact_uri,
+        runRef: run_ref,
         reasoning,
-      }),
+      })),
   });
 
   return tools;

@@ -102,7 +102,6 @@ fn check_observations_with_driver(
     interleave: bool,
     direct: bool,
     python: bool,
-    python_source: bool,
     fail_after: Option<usize>,
     cancel_after: Option<usize>,
 ) {
@@ -129,31 +128,45 @@ fn check_observations_with_driver(
                         )),
                         None,
                     );
-                    let entity = if direct { "Wire" } else { "Counter" };
-                    let mut program = String::new();
+                    use plasm_core::symbol_tuning::SymbolRender;
+                    let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+                    let counter = symbols.entity_sym_for("matrix", "Counter");
+                    let wire = symbols.entity_sym_for("matrix", "Wire");
+                    let advance = symbols.method_sym_for("matrix", "Counter", "advance");
+                    let entity = if direct { &wire } else { &counter };
+                    let companion = if direct { &counter } else { &wire };
+                    let mut body = Vec::new();
                     let mut expected = Vec::new();
                     if interleave {
-                        program.push_str(&format!("before = {entity}{{id=\"one\"}}\n"));
+                        body.push(format!("before = {entity}.get(\"one\")"));
                         expected.push(("before".to_string(), 0));
                     }
                     for n in 0..writes {
-                        program.push_str(&format!("w{n} = Counter.advance(id=\"one\")\n"));
+                        // Discarding a Python result must not discard the reviewed effect.
+                        body.push(format!("{counter}.{advance}(id=\"one\")"));
                         if interleave {
-                            program.push_str(&format!("read_{n} = {entity}{{id=\"one\"}}\n"));
+                            body.push(format!("read_{n} = {entity}.get(\"one\")"));
                             expected.push((format!("read_{n}"), n + 1));
                         }
                     }
-                    program.push_str(&format!("current = {entity}{{id=\"one\"}}\n"));
+                    body.push(format!("current = {entity}.get(\"one\")"));
                     expected.push(("current".to_string(), writes));
-                    let companion = if direct { "Counter" } else { "Wire" };
-                    program.push_str(&format!("companion = {companion}{{id=\"one\"}}\n"));
+                    body.push(format!("companion = {companion}.get(\"one\")"));
                     expected.push(("companion".to_string(), writes));
-                    program.push_str(
-                        &expected
+                    body.push(format!(
+                        "return {}",
+                        expected
                             .iter()
                             .map(|(name, _)| name.as_str())
                             .collect::<Vec<_>>()
-                            .join(", "),
+                            .join(", ")
+                    ));
+                    let source = format!(
+                        "class Writes(Program):\n    def build(self):\n{}\n",
+                        body.iter()
+                            .map(|line| format!("        {line}"))
+                            .collect::<Vec<_>>()
+                            .join("\n")
                     );
                     let host =
                         crate::http::build_plasm_host_state(crate::http::PlasmHostBootstrap {
@@ -173,60 +186,9 @@ fn check_observations_with_driver(
                             session_graph_persistence: None,
                             oss_local_filesystem_defaults: false,
                         });
-                    let bundle = if python_source {
-                        use plasm_core::symbol_tuning::SymbolRender;
-                        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
-                        let counter = symbols.entity_sym_for("matrix", "Counter");
-                        let wire = symbols.entity_sym_for("matrix", "Wire");
-                        let advance = symbols.method_sym_for("matrix", "Counter", "advance");
-                        let mut body = program
-                            .lines()
-                            .map(|line| {
-                                if line.contains("Counter.advance") {
-                                    // Deliberately discard every write result: effects are retained.
-                                    format!("{counter}.{advance}(id=\"one\")")
-                                } else if line.contains("{id=") {
-                                    line.replace(
-                                        "Counter{id=\"one\"}",
-                                        &format!("{counter}.get(\"one\")"),
-                                    )
-                                    .replace("Wire{id=\"one\"}", &format!("{wire}.get(\"one\")"))
-                                } else {
-                                    format!("return {line}")
-                                }
-                            })
-                            .map(|line| format!("        {line}"))
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        body.insert_str(0, "class Writes(Program):\n    def build(self):\n");
-                        crate::plasm_compile::compile_python_program(&es, &body)
-                            .expect("Python compile")
-                    } else {
-                        crate::compile_plasm_program(
-                            &Default::default(),
-                            None,
-                            &es,
-                            "boundary",
-                            &program,
-                        )
-                        .expect("compile")
-                    };
-                    let comp = serde_json::from_slice(
-                        &serde_json::to_vec(&bundle.artifact().comp).unwrap(),
-                    )
-                    .unwrap();
-                    let bundle = crate::PlasmCompBundle::new(
-                        crate::plasm_comp_wire::plasm_comp_artifact_from_comp(comp).unwrap(),
-                    )
-                    .unwrap();
-
-                    let current_id = plasm_core::plasm_monad::StepId::new("current").unwrap();
-                    let companion_id = plasm_core::plasm_monad::StepId::new("companion").unwrap();
-                    assert_eq!(
-                        bundle.artifact().comp.bind.deps.get(&current_id),
-                        bundle.artifact().comp.bind.deps.get(&companion_id),
-                        "independent reads share the effect frontier"
-                    );
+                    let bundle = crate::plasm_compile::compile_python_program(&es, &source)
+                        .await
+                        .expect("Python compile");
                     let dry = super::super::evaluate_plasm_comp_dry(&es, &bundle).expect("dry");
                     let result =
                         Box::pin(super::super::orchestrator::run_plasm_comp_with_dispatch(
@@ -245,7 +207,7 @@ fn check_observations_with_driver(
                         .await;
                     if let Some(committed) = cancel_after {
                         let error = result.expect_err("cancelled write sequence");
-                        assert!(error.contains("cancel"), "{error}");
+                        assert!(error.diagnostic().contains("cancel"), "{error}");
                         let observed = events.lock().unwrap();
                         assert_eq!(
                             observed.iter().filter(|&&e| e == Event::Advance).count(),
@@ -260,7 +222,10 @@ fn check_observations_with_driver(
                     }
                     if let Some(committed) = fail_after {
                         let error = result.expect_err("write must fail");
-                        assert!(error.contains("fixture write rejected"), "{error}");
+                        assert!(
+                            error.diagnostic().contains("fixture write rejected"),
+                            "{error}"
+                        );
                         let observed = events.lock().unwrap();
                         assert_eq!(
                             observed.iter().filter(|&&e| e == Event::Advance).count(),
@@ -276,6 +241,38 @@ fn check_observations_with_driver(
                             Some(&Event::Rejected),
                             "no later read or write may execute"
                         );
+                        drop(observed);
+                        // A new execution reaches the driver in the same session.
+                        // The fixture still rejects, proving admission is not the
+                        // previous execution's stored failure.
+                        let next_dry =
+                            super::super::evaluate_plasm_comp_dry(&es, &bundle).expect("next dry");
+                        let next =
+                            Box::pin(super::super::orchestrator::run_plasm_comp_with_dispatch(
+                                &es,
+                                &host,
+                                &es.prompt_hash,
+                                "boundary",
+                                &bundle,
+                                true,
+                                None,
+                                Some(&scope),
+                                Some(next_dry),
+                                None,
+                                python,
+                            ))
+                            .await;
+                        assert!(next.is_err());
+                        assert_eq!(
+                            events
+                                .lock()
+                                .unwrap()
+                                .iter()
+                                .filter(|&&e| e == Event::Rejected)
+                                .count(),
+                            2,
+                            "each new execution independently reaches the rejected write"
+                        );
                         return;
                     }
                     let result = result.expect("live");
@@ -286,7 +283,7 @@ fn check_observations_with_driver(
                             .find(|s| s.name.as_deref() == Some(name.as_str()))
                             .expect("observation");
                         assert_eq!(
-                            step.result.entities[0]
+                            step.result.entities()[0]
                                 .fields
                                 .get("value")
                                 .map(|v| v.to_value()),
@@ -325,11 +322,11 @@ proptest::proptest! {
 }
 
 fn check_observations(writes: usize, interleave: bool, direct: bool) {
-    check_observations_with_driver(writes, interleave, direct, false, false, None, None)
+    check_observations_with_driver(writes, interleave, direct, false, None, None)
 }
 #[test]
 fn python_host_reads_and_writes_preserve_each_observation() {
-    check_observations_with_driver(2, true, true, true, false, None, None);
+    check_observations_with_driver(2, true, true, true, None, None);
 }
 
 #[test]
@@ -337,21 +334,21 @@ fn python_source_unreturned_writes_preserve_each_observation() {
     for writes in [1, 2, 5] {
         for direct in [false, true] {
             for interleave in [false, true] {
-                check_observations_with_driver(writes, interleave, direct, false, true, None, None);
+                check_observations_with_driver(writes, interleave, direct, false, None, None);
             }
         }
     }
 }
 #[test]
 fn python_source_async_host_writes_preserve_each_observation() {
-    check_observations_with_driver(3, true, true, true, true, None, None);
+    check_observations_with_driver(3, true, true, true, None, None);
 }
 
 #[test]
 fn python_source_failed_write_stops_later_effects_without_replay() {
     for python_host in [false, true] {
         for committed in [0, 2] {
-            check_observations_with_driver(4, true, true, python_host, true, Some(committed), None);
+            check_observations_with_driver(4, true, true, python_host, Some(committed), None);
         }
     }
 }
@@ -359,7 +356,7 @@ fn python_source_failed_write_stops_later_effects_without_replay() {
 #[test]
 fn python_source_cancellation_keeps_committed_writes_and_stops_later_effects() {
     for python_host in [false, true] {
-        check_observations_with_driver(4, true, true, python_host, true, None, Some(2));
+        check_observations_with_driver(4, true, true, python_host, None, Some(2));
     }
 }
 

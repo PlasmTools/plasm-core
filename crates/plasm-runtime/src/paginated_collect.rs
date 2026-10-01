@@ -22,9 +22,32 @@ pub enum PageCollector {
 }
 
 impl PageCollector {
-    pub fn new(consume: &StreamConsumeOpts) -> Self {
-        if let Some(ref spec) = consume.top_k {
-            Self::TopK(TopKHeap::new(spec.clone()))
+    pub fn new(
+        consume: &StreamConsumeOpts,
+        cgs: &plasm_core::CGS,
+        entity: &str,
+    ) -> Result<Self, crate::RuntimeError> {
+        let fault = |message: String| crate::RuntimeError::ConfigurationError { message };
+        Ok(if let Some(ref spec) = consume.top_k {
+            let (field, path) = spec
+                .sort_key
+                .split_first()
+                .ok_or_else(|| fault("empty top-k field".into()))?;
+            let field = cgs
+                .get_entity(entity)
+                .and_then(|e| e.fields.get(field.as_str()))
+                .ok_or_else(|| fault("unknown top-k field".into()))?;
+            let mut contract = plasm_core::value_contract::ValueContract::from_domain(
+                cgs,
+                "",
+                field.kind.registry_key(),
+            )
+            .map_err(&fault)?;
+            contract.nullable = !field.required;
+            for segment in path {
+                contract = contract.field(segment).map_err(&fault)?;
+            }
+            Self::TopK(TopKHeap::new(spec.clone(), contract)?)
         } else if let Some(ref budget) = consume.row_match_budget {
             Self::RowMatch {
                 budget: budget.clone(),
@@ -32,7 +55,7 @@ impl PageCollector {
             }
         } else {
             Self::Standard
-        }
+        })
     }
 
     pub fn skips_pre_page_merge(&self) -> bool {
@@ -99,5 +122,44 @@ impl PageCollector {
             }
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn top_k_resolves_declared_catalog_domain_before_any_page() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs =
+            plasm_core::load_schema(&root.join("../../fixtures/schemas/plasm_pagination_matrix"))
+                .unwrap();
+        let mut consume = StreamConsumeOpts {
+            top_k: Some(crate::TopKSpec {
+                count: 1,
+                sort_key: vec!["n".into()],
+                descending: false,
+                row_filter: vec![],
+            }),
+            ..Default::default()
+        };
+        let mut collector = PageCollector::new(&consume, &cgs, "Item").unwrap();
+        // A numeric declaration cannot be inferred as a string from its first page.
+        let entity = CachedEntity {
+            reference: plasm_core::Ref::new("Item", "a"),
+            fields: [(
+                "n".into(),
+                plasm_core::TypedFieldValue::from(plasm_core::Value::String("2024-01-01".into())),
+            )]
+            .into(),
+            relations: Default::default(),
+            last_updated: 0,
+            version: 0,
+            completeness: crate::EntityCompleteness::Summary,
+            unavailable_fields: Default::default(),
+        };
+        assert!(collector.ingest_page(vec![entity]).is_err());
+        consume.top_k.as_mut().unwrap().sort_key = vec!["absent".into()];
+        assert!(PageCollector::new(&consume, &cgs, "Item").is_err());
     }
 }

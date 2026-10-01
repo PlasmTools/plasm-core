@@ -128,7 +128,7 @@ pub enum LiveRunError {
     #[error("live run timed out after {0:?}")]
     Timeout(Duration),
     #[error("{0}")]
-    Failed(String),
+    Failed(plasm_runtime::ExecutionFailure),
 }
 
 impl From<AwaitError> for LiveRunError {
@@ -194,7 +194,7 @@ fn spawn_live_plan_run(
         accept,
         spawn.dry,
     )
-    .map_err(LiveRunError::Failed)?;
+    .map_err(|e| LiveRunError::Failed(e.into()))?;
     Ok(handle)
 }
 

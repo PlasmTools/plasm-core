@@ -268,6 +268,12 @@ pub fn coerce_dyn_value(value: &Value, ty: &DynSolType) -> Result<DynSolValue, C
             .map_err(|e| CmlError::EvaluationError {
                 message: format!("failed to coerce integer '{i}' to solidity type '{ty}': {e}"),
             }),
+        Value::Unsigned(i) => {
+            ty.coerce_str(&i.to_string())
+                .map_err(|e| CmlError::EvaluationError {
+                    message: format!("failed to coerce integer '{i}' to solidity type '{ty}': {e}"),
+                })
+        }
         Value::Float(f) => ty
             .coerce_str(&f.to_string())
             .map_err(|e| CmlError::EvaluationError {

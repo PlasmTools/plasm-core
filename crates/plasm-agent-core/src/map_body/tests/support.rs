@@ -5,6 +5,7 @@ struct Transport {
     parents: usize,
     pause_on_child: Option<Arc<(tokio::sync::Notify, tokio::sync::Notify)>>,
     cancel_on_child: Option<crate::operation::ExecutionScope>,
+    unproven_child: bool,
 }
 #[async_trait]
 impl HttpTransport for Transport {
@@ -14,7 +15,15 @@ impl HttpTransport for Transport {
         req: &CompiledRequest,
         _: Option<ResolvedAuth>,
     ) -> Result<(Value, Option<String>), RuntimeError> {
-        self.calls.lock().unwrap().push(req.path.clone());
+        let recorded = req
+            .body
+            .as_ref()
+            .and_then(|body| body.as_object())
+            .and_then(|body| body.get("content"))
+            .and_then(plasm_core::Value::as_str)
+            .map(|content| format!("{}:{content}", req.path))
+            .unwrap_or_else(|| req.path.clone());
+        self.calls.lock().unwrap().push(recorded);
         if req.path.ends_with("/tags") {
             if let Some(gate) = &self.pause_on_child {
                 gate.0.notify_one();
@@ -25,8 +34,12 @@ impl HttpTransport for Transport {
             }
         }
         let parts: Vec<_> = req.path.trim_matches('/').split('/').collect();
+        if self.unproven_child && req.path == "/items/i2/tags" {
+            // An empty page with an explicit next link is not exhaustion.
+            return Ok((json!([]), Some("http://127.0.0.1:9/next-tags".into())));
+        }
         let rows = match parts.as_slice() {
-            ["touch"] => vec![],
+            ["touch"] | ["publish"] | ["marks", _] => vec![],
             ["items"] => (0..self.parents)
                 .map(|i| json!({"id":format!("i{i}"), "title":format!("Title {i}"),"state":"open"}))
                 .collect::<Vec<_>>(),
@@ -60,11 +73,34 @@ pub(super) fn fixture_with_controls(
     cancel_on_child: Option<crate::operation::ExecutionScope>,
     pause_on_child: Option<Arc<(tokio::sync::Notify, tokio::sync::Notify)>>,
 ) -> (ExecuteSession, PlasmHostState, Arc<Mutex<Vec<String>>>) {
+    fixture_with_evidence(parents, cancel_on_child, pause_on_child, false)
+}
+pub(super) fn fixture_with_unproven_child(
+    parents: usize,
+) -> (ExecuteSession, PlasmHostState, Arc<Mutex<Vec<String>>>) {
+    fixture_with_evidence(parents, None, None, true)
+}
+fn fixture_with_evidence(
+    parents: usize,
+    cancel_on_child: Option<crate::operation::ExecutionScope>,
+    pause_on_child: Option<Arc<(tokio::sync::Notify, tokio::sync::Notify)>>,
+    unproven_child: bool,
+) -> (ExecuteSession, PlasmHostState, Arc<Mutex<Vec<String>>>) {
     let mut cgs = plasm_core::load_schema(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/schemas/python_dag_slice"),
     )
     .unwrap();
+    if unproven_child {
+        cgs.capabilities
+            .get_mut("tag_query")
+            .unwrap()
+            .mapping
+            .as_mut()
+            .unwrap()
+            .template
+            .0["pagination"] = json!({"strategy":"link_header", "location":"link_header"});
+    }
     cgs.bind_registry_entry_id("fixture");
     let cgs = Arc::new(cgs);
     let contexts = indexmap::IndexMap::from([(
@@ -98,6 +134,7 @@ pub(super) fn fixture_with_controls(
             parents,
             pause_on_child,
             cancel_on_child,
+            unproven_child,
         }),
         None,
     );
@@ -201,17 +238,24 @@ pub(super) fn program(es: &ExecuteSession) -> (PlasmCompBundle, CorrelatedBody) 
                 op: ComputeOp::Python {
                     source,
                     entry_id: "fixture".into(),
-                    entity: "Tag".into(),
+                    entity: Some("Tag".into()),
                     catalog_hash: es.cgs.catalog_cgs_hash_hex(),
-                    contract_version: 3,
+                    contract_version: 9,
+                    language_profile: crate::python_compute::LANGUAGE_PROFILE.into(),
                     input_schema: None,
+                    output_type: plasm_core::value_contract::ValueContract::scalar(
+                        plasm_core::FieldType::String,
+                    ),
                     per_row: false,
                 },
                 schema: SyntheticResultSchema {
+                    optional_fields: Default::default(),
                     entity: None,
                     fields: vec![SyntheticFieldSchema {
-                        value_type: None,
-                        name: OutputName::new("content").unwrap(),
+                        value_type: Some(plasm_core::value_contract::ValueContract::scalar(
+                            plasm_core::FieldType::String,
+                        )),
+                        name: OutputName::new("value").unwrap(),
                         value_kind: SyntheticValueKind::String,
                         source: None,
                     }],
@@ -249,7 +293,7 @@ pub(super) fn program(es: &ExecuteSession) -> (PlasmCompBundle, CorrelatedBody) 
                             PlasmDataValue::NodeSymbol {
                                 node: "reduced".into(),
                                 alias: "labels".into(),
-                                path: vec!["content".into()],
+                                path: vec![],
                             },
                         ),
                     ]),
@@ -276,12 +320,16 @@ pub(super) fn program(es: &ExecuteSession) -> (PlasmCompBundle, CorrelatedBody) 
     (
         root,
         CorrelatedBody {
+            output: ScopedOutput::Record,
             parent: ParentCapture {
                 source: id("items"),
                 local: id("parent"),
                 entity: owner("Item"),
             },
             max_parents: NonZeroU32::new(256).unwrap(),
+            parent_entity_authority: true,
+            parent_schema: None,
+            captures: vec![],
             body,
         },
     )
@@ -319,7 +367,7 @@ pub(super) async fn execute(
     es: &ExecuteSession,
     host: &PlasmHostState,
     bundle: &PlasmCompBundle,
-) -> Result<crate::plasm_plan_run::PlasmPlanRunResult, String> {
+) -> Result<crate::plasm_plan_run::PlasmPlanRunResult, plasm_runtime::ExecutionFailure> {
     let dry = evaluate_plasm_comp_dry(es, bundle).map_err(|e| e.to_string())?;
     Box::pin(run_plasm_comp(
         es,
@@ -338,7 +386,7 @@ pub(super) async fn execute(
 pub(super) fn rows(run: &crate::plasm_plan_run::PlasmPlanRunResult) -> Vec<Value> {
     run.return_steps[0]
         .result
-        .entities
+        .entities()
         .iter()
         .map(|e| {
             let row = plasm_runtime::entity_to_agent_row_json(e, None);

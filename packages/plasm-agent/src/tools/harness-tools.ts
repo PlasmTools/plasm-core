@@ -1,6 +1,3 @@
-import { artifactRuntimeAvailable, runArtefactTransform } from "./artifact-process.js";
-export { artifactRuntimeAvailable, pinnedArtifactImage, runArtefactTransform } from "./artifact-process.js";
-
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 
@@ -12,11 +9,6 @@ import { toolInput } from "./tool-input.js";
 
 const readSkillInputSchema = z.object({
   name: z.string().min(1).describe("Skill name from the index"),
-});
-
-const artefactTransformInputSchema = z.object({
-  paths: z.array(z.string()).min(1).max(16).describe("File locators returned by plasm_read_run_artifact, in argument order"),
-  code: z.string().min(1).describe("TypeScript module exporting a default function: export default (artifacts: any[]) => derivedResult"),
 });
 
 const completeTaskInputSchema = z.object({});
@@ -102,36 +94,9 @@ export function createEvalTerminalTools(gate?: EvalTerminalGate): ToolSet {
   };
 }
 
-export const PLASM_ARTEFACT_TRANSFORM_TOOL_DESCRIPTION = `Process materialized artifacts with TypeScript. Pass their file locators in paths and export a default function receiving the parsed JSON artifacts in the same order. A Plasm snapshot is an envelope: snapshot.entities is Row[], with fields from the taught row type; snapshot.coverage describes collection completeness. Example: export default ([snapshot]: any[]) => ({coverage: snapshot.coverage, count: snapshot.entities.length}). Relation values such as "Entity:123" are identity references, not embedded rows; use taught Plasm relation traversal/Get for their fields. A partial or unknown collection cannot establish absence; use the run response's continuation when available. The function may be async. Return only the needed JSON summary (maximum 8192 bytes). Inputs stay outside model context. No network or external side effects; execution is isolated and bounded to 30 seconds. This is harness computation, not Plasm language.`;
-
-export function createArtefactTransformTool(workspaceRoot: string): ToolSet {
-  return {
-    plasm_artefact_transform: tool({
-      description: PLASM_ARTEFACT_TRANSFORM_TOOL_DESCRIPTION,
-      inputSchema: toolInput(artefactTransformInputSchema),
-      execute: async ({ code, paths }) => {
-        try {
-          return await runArtefactTransform(workspaceRoot, code, paths);
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          // Tool errors must stay in-band — never throw out of execute (kills the agent process).
-          return (
-            `**plasm_artefact_transform** failed: ${msg}\n` +
-            `Use a relative path under the artefact workspace (e.g. \`latest.json\` after plasm_read_run_artifact), ` +
-            `or continue with \`plasm\` / \`plasm_run\`.`
-          );
-        }
-      },
-    }),
-  };
-}
-
 export function createHarnessTools(options: {
   skills?: SkillDefinition[];
   subagents?: SubagentRegistry;
-  /** When set, register plasm_artefact_transform only if an artifact runtime is configured. */
-  artefactWorkspaceRoot?: string;
-  includeArtefactTransform?: boolean;
   /**
    * Register `complete_task` / `submit_answer`. Same gate as
    * `buildDefaultSystemLiturgy({ includeEvalTerminals })`.
@@ -188,13 +153,6 @@ export function createHarnessTools(options: {
         return `${result.text}\n\n(steps: ${result.steps})`;
       },
     });
-  }
-
-  const includeTransform =
-    (options.includeArtefactTransform ?? Boolean(options.artefactWorkspaceRoot)) &&
-    artifactRuntimeAvailable();
-  if (includeTransform && options.artefactWorkspaceRoot) {
-    Object.assign(tools, createArtefactTransformTool(options.artefactWorkspaceRoot));
   }
 
   if (options.includeEvalTerminals) {

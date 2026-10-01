@@ -90,7 +90,7 @@ The CGS is the semantic domain model. It declares what entities exist, how they 
 
 Split **`domain.yaml`** declares a catalog-local registry of **named semantic slots** under top-level **`values:`** (stable keys, usually `snake_case`). Each row carries the **wire** `type:` and gloss-related keys — the same vocabulary as the former inline `field_type` / param `type` — but the **key** is a semantic identity for this catalog, not "dedupe by primitive wire shape alone":
 
-- **`type:`** — a **kernel** name (`string`, `integer`, `number`, `boolean`, `array`, `json`, `entity_ref`, `blob`, `money`) or a **core profile** name (`markdown`, `document`, `html`, `json_text`, `uuid`, `digit_id`, `email`, `url`, `http_url`, `hostname`, `e164`, `ipv4`, `ipv6`, `hex`, `base64`, `base64url`, `rfc3339`, `iso8601_date`, `unix_ms`, `unix_sec`, `enum`, `multi_enum`). See [Field Types](#field-types).
+- **`type:`** — a **kernel** name (`string`, `integer`, `number`, `boolean`, `array`, `json`, `entity_ref`, `blob`, `money`) or a **core profile** name (`markdown`, `document`, `html`, `json_text`, `uuid`, `digit_id`, `email`, `url`, `http_url`, `hostname`, `e164`, `ipv4`, `ipv6`, `hex`, `base64`, `base64url`, `rfc3339`, `iso8601_naive_datetime`, `iso8601_date`, `unix_ms`, `unix_sec`, `enum`, `multi_enum`). See [Field Types](#field-types).
 - Type-specific keys on the **value row**: `target` (`entity_ref`), **`enum:`** (`enum` / `multi_enum`; multi_enum must be non-empty), **`constraints:`** (length, pattern, min/max — see Field Types), `currency` (`money`), **`items: { value_ref: <key> }`** (`array` — element shape is another `values` row).
 
 **Entity `fields:`** and capability **lane** field lists (`selection` / `scope` / `controls` / …) declare **only** how that slot uses a shape:
@@ -235,6 +235,17 @@ History-browse phrases belong on the **Source** entity `names`. Materialize Quer
 
 **`from_parent_get` pitfall:** The JSON path must match the **parent GET response** for that relation. Array-of-ref shapes differ by API (e.g. PokéAPI Pokémon `moves[].move` vs Type `moves[]` as bare `{name,url}`). Copying one entity's `materialize.path` to another without checking the wire JSON yields empty relations at decode time.
 
+**Exhaustive embedded collections:** `from_parent_get` may declare
+`collection_coverage: complete` only when the backend contract guarantees every
+observed collection at its path is exhaustive. Omit this key for previews,
+independently paginated arrays, limited samples or unverified contracts; omission
+means `unknown`. The runtime combines this assertion with parent coverage and
+observed path evidence. Missing arrays are not empty arrays, and child hydration
+does not establish complete membership. Verify the path against both wire data
+and decoded observations; prefer the child object path when it preserves fields
+and identity. Record source-contract evidence and a real traversal-to-collection
+compute witness before claiming the assertion works end to end.
+
 **Mutual embed pairs (CEP-10):** When both directions expose nested refs on parent GET bodies (e.g. Pokémon `types[].type` and Type `pokemon[].pokemon`), declare **one forward** edge as plain `from_parent_get` and the **inverse** as `prefer_from_parent_get`. Runtime decode is **single-hop** (no nested embed decoders), so mutual pairs do not recurse on the stack. When the inverse API has no scoped list filter (PokéAPI has no “Pokémon by type” query), use a `hydrate_from_embed_path` fallback that GET-hydrates identities extracted from the parent wire JSON:
 
 ```yaml
@@ -329,7 +340,7 @@ In split `domain.yaml`, the **`type:`** on a **`values:`** row is either a **ker
 |----------|--------------|---------------|-------|
 | Presentation | `markdown`, `document`, `html`, `json_text` | Python string | Multiline or structured text — not `blob` |
 | Canned string | `uuid`, `digit_id`, `email`, `url`, `http_url`, `hostname`, `e164`, `ipv4`, `ipv6`, `hex`, `base64`, `base64url` | string | Validated string shapes. **`digit_id`** (RA-18): digit-string identity (PANs, similar wire keys) — exact ASCII digits, not a magnitude, not `integer` / IEEE float / JSON number. Taught literal is quoted digits (`"6419671322388907"`). Unquoted non-negative `i64` residual coerce is RA-8, not taught. |
-| Temporal | `rfc3339`, `iso8601_date`, `unix_ms`, `unix_sec` | string or integer per profile | Predicate inputs normalize to wire shape (UTC) |
+| Temporal | `rfc3339`, `iso8601_naive_datetime`, `iso8601_date`, `unix_ms`, `unix_sec` | string or integer per profile | Preserves calendar values, naive datetimes, or instants according to the declared profile |
 | Enum | `enum`, `multi_enum` | enum token(s) | Requires non-empty **`enum:`** list **or** token→gloss map |
 
 **`enum:` teaching glosses (optional map form):**
@@ -430,7 +441,7 @@ entities:
         required: true
 ```
 
-**Loader constraints:** the element `values:` row must not be `type: array` or `multi_enum`. For element `type: enum`, `enum:` on that row is required and non-empty. Temporal profiles (`rfc3339`, `iso8601_date`, `unix_ms`, `unix_sec`) are self-contained — no separate format key.
+**Loader constraints:** the element `values:` row must not be `type: array` or `multi_enum`. For element `type: enum`, `enum:` on that row is required and non-empty. Temporal profiles (`rfc3339`, `iso8601_naive_datetime`, `iso8601_date`, `unix_ms`, `unix_sec`) are self-contained — no separate format key.
 
 **`multi_enum`:** on the `values:` row itself, `enum:` is required and must be non-empty (distinct from `array` of `enum`).
 
@@ -682,10 +693,10 @@ Built-in filters (view templates only):
 | `urlencode` | `{{ s \| urlencode }}` | Form-style percent-encoding |
 | `json_encode` | `{{ v \| json_encode }}` | JSON text for a Plasm/JSON value |
 | `strip_trailing_slash` | `{{ base \| strip_trailing_slash }}` | Trim trailing `/` |
-| `wire_time` | `{{ from \| wire_time('unix_ms') }}` | Pass through `now`, `now-1h`, and all-digit strings unchanged; otherwise normalize via core temporal rules for the named wire format (`unix_ms`, `rfc3339`, …) |
+| `wire_time` | `{{ from \| wire_time('unix_ms') }}` | Encode an explicit date/instant using the named wire format (`unix_ms`, `rfc3339`, …); relative phrases and magnitude-based unit inference are rejected |
 | `wire_query_suffix` | `{{ query_params_json \| wire_query_suffix }}` | Parse a JSON object string; append `&k=v` pairs (empty string when absent/invalid) |
 
-**Temporal:** Predicate slots and `value_ref: temporal` still use `normalize_temporal_value` at plan/compile time. View scope params typed as plain strings (e.g. `nv_grafana_time_range`) should use **`wire_time`** in templates when the wire may be relative (`now-1h`) or already epoch milliseconds. Relative phrases resolve against the same evaluation clock the language card names as `evaluation_now` when temporal profiles are taught (PLP-9). Do not put that clock or harness dates into `values:` descriptions.
+**Temporal:** Python `date`/`datetime` values supply temporal inputs. Catalog profiles declare date-only, RFC3339, Unix seconds or milliseconds; transport codecs preserve that distinction and reject lossy conversions. `wire_time` formats explicit instants and does not interpret relative phrases. APIs with an independently declared relative-string protocol can receive literal strings directly; that protocol is not Plasm temporal syntax. Clock configuration belongs to the runtime host, not `values:` descriptions or teaching rows.
 
 **Authoring pitfalls:** Do not use `\| default('')` on JSON scope fields you pass to `wire_query_suffix` — use `{% if query_params_json %}…{% endif %}` instead. User-authored rendering uses typed Python compute methods; catalog view templates remain CML-owned.
 
@@ -1195,23 +1206,13 @@ output:
   entity_type: Branch
   idempotent: true
   reconcile:
-    on: resource_exists          # WorkflowConflictKind from conflict_rules
     via: branch_get              # get capability to fetch existing row
     bind_identity_from: params   # params | scope
 ```
 
 Live execute stamps `outcome: created | reused` on entity projections. Content divergence after key match surfaces `WorkflowConflict::IdentityMismatch` — never silent reuse.
 
-**Conflict taxonomy** — catalog-local HTTP rules in `mappings.yaml`:
-
-```yaml
-conflict_rules:
-  - when: { status: 422, body_json_path: message, contains: Reference already exists }
-    kind: resource_exists
-    extract:
-      entity: Branch
-      fields: { name: $.ref }
-```
+Service error status/body/message does not decide write effects. `conflict_rules` is rejected. On an opaque failure, an explicitly idempotent capability may observe its declared `reconcile.via` read with the original bound inputs. Reconciliation requires a complete singleton with every requested identity field present and equal; conflicting returned values reject reuse. The read bypasses pre-write cache state. It does not retry the write or prove that a missing row means no effect occurred.
 
 **Conditional write views** extend `views:` with mutator nodes and `when:` guards:
 
@@ -1225,7 +1226,7 @@ when:
 
 Use `write_created` / `write_reused` / `write_skipped` output bindings for `outcome`. PLT `verify_existence_flow` expands view DAGs at dry-run: non-idempotent inner creates without a dominating read or `when:` guard → `NeedsReview` (`unguarded mutation`).
 
-**Preflight** — `existence_check` for atomic mutators:
+**Preflight** — `existence_check` before mutators (not atomic with the service write):
 
 ```yaml
 preflight:
@@ -1235,7 +1236,9 @@ preflight:
     on_exists: fail   # fail | skip_write
 ```
 
-Matrix conformance: `fixtures/schemas/workflow_matrix` (not production `apis/`).
+For desired-state operations such as follow/like/download, acquire complete existing membership, deduplicate desired identities, and write the set difference. A declared `skip_write` preflight can additionally avoid already-satisfied targets; it must bind every identity key and observe authoritative state. This does not eliminate races: post-dispatch failures still require read-backed reconciliation or remain unknown.
+
+Matrix conformance: `cargo test -p plasm-e2e --test write_contract` and `fixtures/schemas/workflow_matrix` (not production `apis/`).
 
 ---
 
@@ -1786,17 +1789,19 @@ this closure does not expose mutations of the target entities.
 ### Explicit datetime wire layouts
 
 Keep semantic date inputs typed as dates. When an API requires a non-RFC3339 transport
-layout, map the resolved instant with CML `datetime_format`:
+layout, map the resolved temporal value with CML `datetime_format`:
 
 ```yaml
 type: datetime_format
+wire: iso8601_naive_datetime
 value: {type: var, name: scheduled_at}
 format: "%Y-%m-%d|%H:%M:%S"
 ```
 
-The format is validated at catalog decode. Encoding is UTC, consumes a resolved
-RFC3339 instant, preserves null, and never consults a clock or interprets natural
-language. Declare the backend's actual precision and timezone semantics; this is
+The format and required `wire` input encoding are validated at catalog decode.
+Naive datetimes retain calendar time; aware/Unix instants format in UTC; calendar
+dates remain dates. Encoding preserves null and never guesses an input encoding,
+consults a clock, or interprets natural language. Declare the backend's actual precision and timezone semantics; this is
 wire encoding, not a reason to weaken a date slot to an opaque string. Verify the
 compiled request body against the pinned backend, including offset equivalence
 and null omission. Operation coverage alone does not prove response-field,
@@ -1825,3 +1830,5 @@ exercise direct Get, scoped Get and summary hydration through catalogue/decoder 
 preserving identities, types, order, multiplicity, and the distinction between omitted
 relations and authoritative empty relations. Embedded-only targets remain Summary when
 no richer Get exists; observing them does not prove a complete entity projection.
+
+Timezone-free API datetimes must declare `iso8601_naive_datetime`; use `rfc3339` for timezone-aware instants. Python receives `datetime.datetime` with matching timezone awareness. Neither profile invents nor discards timezone information. Invalid present response values fail decoding; absent fields and explicit null remain distinct.

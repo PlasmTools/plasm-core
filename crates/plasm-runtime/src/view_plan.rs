@@ -9,9 +9,9 @@ use plasm_core::schema::{
     EntityDef, ViewDefinition, ViewNodeSpec, ViewParamBinding, ViewRelationBinding, ViewScopeInject,
 };
 use plasm_core::{
-    json_value_to_plasm_value as json_to_plasm_value, CapabilityKind, CapabilitySchema,
-    Cardinality, CreateExpr, GetExpr, Predicate, QueryExpr, Ref, TypedFieldValue, Value,
-    ViewNodeCondition, ViewNodeWhen, CGS,
+    json_value_to_plasm_value as json_to_plasm_value, CapabilityKind, CapabilitySchema, CreateExpr,
+    GetExpr, Predicate, QueryExpr, Ref, TypedFieldValue, Value, ViewNodeCondition, ViewNodeWhen,
+    CGS,
 };
 
 use crate::cache::CachedEntity;
@@ -187,10 +187,10 @@ fn eval_view_condition(
 ) -> bool {
     match condition {
         ViewNodeCondition::NodeRowCountPositive { node } => {
-            node_results.get(node).is_some_and(|r| r.count > 0)
+            node_results.get(node).is_some_and(|r| r.count() > 0)
         }
         ViewNodeCondition::NodeRowCountZero { node } => {
-            node_results.get(node).is_none_or(|r| r.count == 0)
+            node_results.get(node).is_none_or(|r| r.count() == 0)
         }
     }
 }
@@ -296,7 +296,7 @@ pub fn node_fields_from_results(
 ) -> ViewNodeFieldMap {
     node_results
         .iter()
-        .map(|(node_id, res)| (node_id.clone(), node_fields_for_row(res.entities.first())))
+        .map(|(node_id, res)| (node_id.clone(), node_fields_for_row(res.entities().first())))
         .collect()
 }
 
@@ -540,7 +540,7 @@ fn rows_for_binding<'a>(
                         .ok_or_else(|| RuntimeError::ConfigurationError {
                             message: format!("unknown identity union node `{node}`"),
                         })?;
-                for row in &result.entities {
+                for row in result.entities() {
                     if seen.insert(row.reference.clone()) {
                         rows.push(row);
                     }
@@ -564,7 +564,7 @@ fn rows_for_binding<'a>(
                     message: format!("view relation_output references unknown node `{node}`"),
                 })?;
             let matched: Vec<&CachedEntity> = r
-                .entities
+                .entities()
                 .iter()
                 .filter(|row| {
                     let v = row
@@ -583,7 +583,7 @@ fn rows_for_binding<'a>(
                 .ok_or_else(|| RuntimeError::ConfigurationError {
                     message: format!("view relation_output references unknown node `{node}`"),
                 })?;
-            Ok(r.entities.iter().collect())
+            Ok(r.entities().iter().collect())
         }
         ViewRelationBinding::NodeSingleRow { node } => {
             let r = node_results
@@ -591,7 +591,7 @@ fn rows_for_binding<'a>(
                 .ok_or_else(|| RuntimeError::ConfigurationError {
                     message: format!("view relation_output references unknown node `{node}`"),
                 })?;
-            Ok(r.entities.iter().collect::<Vec<_>>())
+            Ok(r.entities().iter().collect::<Vec<_>>())
         }
     }
 }
@@ -634,16 +634,16 @@ pub fn resolve_view_relation_maps(
                     .ok_or_else(|| RuntimeError::ConfigurationError {
                         message: format!("view relation_output references unknown node `{node}`"),
                     })?;
-                if r.count != 1 {
+                if r.count() != 1 {
                     return Err(RuntimeError::ConfigurationError {
                         message: format!(
                             "view relation_output node_single_row `{node}` expected exactly one entity (got {})",
-                            r.count
+                            r.count()
                         ),
                     });
                 }
                 let row = r
-                    .entities
+                    .entities()
                     .first()
                     .ok_or_else(|| RuntimeError::ConfigurationError {
                         message: format!("view relation_output node `{node}` missing row"),
@@ -651,16 +651,40 @@ pub fn resolve_view_relation_maps(
                 vec![cached_row_to_target_ref(target_ent, row)?]
             }
         };
-        match spec.cardinality {
-            Cardinality::Many => {
-                out.insert(spec.relation.to_string(), DecodedRelation::Specified(refs));
+        use plasm_core::collection_codec::{
+            CollectionCodec, CollectionIdentity, RecordingCodec, Transform,
+        };
+        let nodes: Vec<&str> = match &spec.binding {
+            ViewRelationBinding::NodeUnionRows { nodes } => {
+                nodes.iter().map(String::as_str).collect()
             }
-            Cardinality::One => {
-                if !refs.is_empty() {
-                    out.insert(spec.relation.to_string(), DecodedRelation::Specified(refs));
-                }
-            }
-        }
+            ViewRelationBinding::FirstNodeRowWhere { node, .. }
+            | ViewRelationBinding::NodeRowsWhere { node, .. }
+            | ViewRelationBinding::NodeAllRows { node }
+            | ViewRelationBinding::NodeSingleRow { node } => vec![node],
+        };
+        let inputs = nodes
+            .iter()
+            .map(|node| {
+                node_results
+                    .get(*node)
+                    .map(|result| result.collection.membership())
+                    .ok_or_else(|| RuntimeError::ConfigurationError {
+                        message: format!("missing view relation input {node}"),
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let record = RecordingCodec::new().derive(
+            CollectionIdentity::for_expression(cgs, &(view, spec), 0)?,
+            &inputs,
+            Transform::Evaluate { rows: refs },
+        )?;
+        out.insert(
+            spec.relation.to_string(),
+            DecodedRelation::Specified(plasm_core::row_contract::RelationMembership::from_record(
+                record,
+            )),
+        );
     }
     Ok(out)
 }

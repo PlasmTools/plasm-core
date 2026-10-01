@@ -52,7 +52,7 @@ impl ExecutePipeline {
         mcp_tool_hooks: Option<PlanRunTraceHooks>,
         execution_scope: Option<&crate::operation::ExecutionScope>,
         dry: Option<crate::plasm_plan_run::DryPlasmPlanEvaluation>,
-    ) -> Result<PlasmPlanRunResult, String> {
+    ) -> Result<PlasmPlanRunResult, plasm_runtime::ExecutionFailure> {
         crate::plasm_plan_run::run_plasm_comp_python(
             es,
             st,

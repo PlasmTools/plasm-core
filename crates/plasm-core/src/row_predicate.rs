@@ -43,10 +43,7 @@ pub fn parse_row_predicate_list(
     row_schema_fields: &[String],
     program_nodes: &std::collections::BTreeSet<String>,
 ) -> Result<RowPredicate, String> {
-    // Deterministic rewrite of Kusto / wire-shaped temporal RHS before parse
-    // (`now() - 7d` → `7d ago`, etc.). Wire slots still pass `now-7d` unchanged.
-    let rewritten = crate::temporal::rewrite_temporal_aliases_in_predicate_body(body);
-    let input = format!("{entity}{{{}}}", rewritten.trim());
+    let input = format!("{entity}{{{}}}", body.trim());
     let parsed = crate::expr_parser::parse_row_filter_body(
         &input,
         layers,

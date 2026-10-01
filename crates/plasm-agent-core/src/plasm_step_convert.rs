@@ -86,7 +86,11 @@ fn compute_to_map(node: &ValidatedComputeNode) -> Result<MapPayload, String> {
 fn derive_to_payload(node: &ValidatedDeriveNode) -> Result<DerivePayload, String> {
     Ok(DerivePayload {
         derive: DeriveTemplate {
-            kind: DeriveKind::Map,
+            kind: match node.kind {
+                crate::plasm_plan::DeriveKind::Cell => DeriveKind::Cell,
+                crate::plasm_plan::DeriveKind::Map => DeriveKind::Map,
+                crate::plasm_plan::DeriveKind::Data => DeriveKind::Data,
+            },
             source: Some(node.source.as_str().to_string()),
             item_binding: Some(binding_name(&node.item_binding)?),
             inputs: node
@@ -132,6 +136,8 @@ fn iterate_until_to_payload(
         item_binding: binding_name(&node.item_binding)?,
         effect_template: effect_template_to_core(&node.effect_template)?,
         until_predicates: convert_predicates(&node.until_predicates)?,
+        until_scope: node.until_scope.clone(),
+        step_scope: node.step_scope.clone(),
         take: node.take,
         seed_ir: node
             .seed_ir
@@ -216,6 +222,8 @@ fn validated_data_input_to_plan(input: &ValidatedPlanDataInput) -> PlanDataInput
         node: input.node.as_str().to_string(),
         alias: input.alias.as_str().to_string(),
         cardinality: match input.proof {
+            InputCardinalityProof::Acknowledgement => CoreInputCardinality::Acknowledgement,
+            InputCardinalityProof::Collection => CoreInputCardinality::Collection,
             InputCardinalityProof::StaticSingleton => CoreInputCardinality::Auto,
             InputCardinalityProof::RuntimeCheckedSingleton => CoreInputCardinality::Singleton,
         },
@@ -316,6 +324,7 @@ fn step_payload_to_validated_node(
             uses_result,
         })),
         PlasmStepPayload::Map(p) => Ok(ValidatedPlanNode::Compute(ValidatedComputeNode {
+            source_node: PlanNodeId::new(&p.compute.source)?,
             id,
             effect_class: plan_effect_class(p.effect_class),
             result_shape: plan_result_shape(p.result_shape),
@@ -326,6 +335,11 @@ fn step_payload_to_validated_node(
         PlasmStepPayload::Derive(p) => {
             let derive = &p.derive;
             Ok(ValidatedPlanNode::Derive(ValidatedDeriveNode {
+                kind: match derive.kind {
+                    DeriveKind::Cell => crate::plasm_plan::DeriveKind::Cell,
+                    DeriveKind::Map => crate::plasm_plan::DeriveKind::Map,
+                    DeriveKind::Data => crate::plasm_plan::DeriveKind::Data,
+                },
                 id,
                 effect_class: plan_effect_class(p.effect_class),
                 result_shape: plan_result_shape(p.result_shape),
@@ -386,6 +400,20 @@ fn step_payload_to_validated_node(
                 item_binding: BindingName::new(p.item_binding.as_str())?,
                 effect_template: effect_template_to_plan(&p.effect_template)?,
                 until_predicates: convert_predicates_back(&p.until_predicates)?,
+                until_scope: p.until_scope.clone(),
+                step_scope: p.step_scope.clone(),
+                until_plan: p
+                    .until_scope
+                    .as_deref()
+                    .map(crate::plasm_step_convert::lift_body)
+                    .transpose()?
+                    .map(Box::new),
+                step_plan: p
+                    .step_scope
+                    .as_deref()
+                    .map(crate::plasm_step_convert::lift_body)
+                    .transpose()?
+                    .map(Box::new),
                 take: p.take,
                 seed_ir: p
                     .seed_ir
@@ -449,6 +477,19 @@ fn validate_rehydrated_cardinality_proofs(
     for node in &plan.nodes {
         if let ValidatedPlanNode::Derive(derive) = node {
             for input in &derive.inputs {
+                if input.proof == InputCardinalityProof::Acknowledgement
+                    && plan
+                        .nodes
+                        .iter()
+                        .find(|node| node.id() == &input.node)
+                        .map(ValidatedPlanNode::result_shape)
+                        != Some(PlanResultShape::SideEffectAck)
+                {
+                    return Err(
+                        "acknowledgement input requires a side-effect acknowledgement source"
+                            .into(),
+                    );
+                }
                 if input.proof == InputCardinalityProof::StaticSingleton
                     && !crate::plasm_plan::validated_source_is_static_singleton(
                         plan,
@@ -553,6 +594,8 @@ fn plan_data_input_to_validated(input: &PlanDataInput) -> Result<ValidatedPlanDa
         node: PlanNodeId::new(input.node.clone())?,
         alias: InputAlias::new(input.alias.clone())?,
         proof: match input.cardinality {
+            CoreInputCardinality::Acknowledgement => InputCardinalityProof::Acknowledgement,
+            CoreInputCardinality::Collection => InputCardinalityProof::Collection,
             CoreInputCardinality::Auto => InputCardinalityProof::StaticSingleton,
             CoreInputCardinality::Singleton => InputCardinalityProof::RuntimeCheckedSingleton,
         },
@@ -566,7 +609,7 @@ fn plan_qualified_entity_key(q: &PlanQualifiedEntityKey) -> QualifiedEntityKey {
     }
 }
 
-fn surface_kind_to_plan(kind: SurfaceKind) -> Result<PlanNodeKind, String> {
+pub(crate) fn surface_kind_to_plan(kind: SurfaceKind) -> Result<PlanNodeKind, String> {
     Ok(match kind {
         SurfaceKind::Query => PlanNodeKind::Query,
         SurfaceKind::Search => PlanNodeKind::Search,
@@ -635,15 +678,35 @@ fn plan_result_shape(value: ResultShape) -> PlanResultShape {
 }
 
 /// Lift a closed body with an explicit input port. No fake read/data step enters its wire plan.
-fn lift_body(body: &plasm_core::plasm_monad::CorrelatedBody) -> Result<ValidatedPlan, String> {
+pub(crate) fn lift_body(
+    body: &plasm_core::plasm_monad::CorrelatedBody,
+) -> Result<ValidatedPlan, String> {
     let capture = PlanNodeId::new(body.parent.local.as_str())?;
     let mut nodes = vec![ValidatedPlanNode::Capture(
         crate::plasm_plan::ValidatedCaptureNode {
             id: capture.clone(),
             entity: plan_qualified_entity_key(&body.parent.entity),
+            schema: body.parent_schema.clone(),
+            value_contract: None,
+            singleton: true,
+            entity_authority: body.parent_entity_authority,
         },
     )];
     let mut topo = vec![capture];
+    for capture in &body.captures {
+        let id = PlanNodeId::new(capture.local.as_str())?;
+        nodes.push(ValidatedPlanNode::Capture(
+            crate::plasm_plan::ValidatedCaptureNode {
+                id: id.clone(),
+                entity: plan_qualified_entity_key(&capture.entity),
+                schema: Some(capture.schema.clone()),
+                value_contract: capture.value_contract.clone(),
+                singleton: capture.singleton,
+                entity_authority: capture.entity_authority,
+            },
+        ));
+        topo.push(id);
+    }
     for id in body.execution_layers()?.iter().flatten() {
         nodes.push(step_payload_to_validated_node(
             id,
@@ -689,6 +752,7 @@ mod tests {
         let mut column_aliases = BTreeMap::new();
         column_aliases.insert("p23".into(), OutputName::new("name").expect("name"));
         ValidatedPlanNode::Compute(ValidatedComputeNode {
+            source_node: PlanNodeId::new("items").unwrap(),
             id: PlanNodeId::new("render0").expect("id"),
             effect_class: EffectClass::Read,
             result_shape: ResultShape::Single,
@@ -701,6 +765,7 @@ mod tests {
                     render_bindings: vec![],
                 },
                 schema: SyntheticResultSchema {
+                    optional_fields: Default::default(),
                     entity: Some("PlanRender".into()),
                     fields: vec![SyntheticFieldSchema {
                         value_type: None,
@@ -793,6 +858,7 @@ mod tests {
                     uses_result: vec![],
                 }),
                 ValidatedPlanNode::Derive(ValidatedDeriveNode {
+                    kind: crate::plasm_plan::DeriveKind::Map,
                     id: mapped.clone(),
                     effect_class: EffectClass::ArtifactRead,
                     result_shape: ResultShape::Artifact,
@@ -819,5 +885,17 @@ mod tests {
         let error = validate_rehydrated_cardinality_proofs(&plan)
             .expect_err("untrusted wire proof must be recomputed");
         assert!(error.contains("not statically singleton"), "{error}");
+
+        let mut forged_ack = plan;
+        let ValidatedPlanNode::Derive(derive) = &mut forged_ack.nodes[1] else {
+            unreachable!();
+        };
+        derive.inputs[0].proof = InputCardinalityProof::Acknowledgement;
+        let error = validate_rehydrated_cardinality_proofs(&forged_ack)
+            .expect_err("a rowset cannot masquerade as an effect acknowledgement");
+        assert!(
+            error.contains("side-effect acknowledgement source"),
+            "{error}"
+        );
     }
 }

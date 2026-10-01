@@ -29,7 +29,7 @@ proptest::proptest! {
         let row = |ids: &[u8]| crate::CachedEntity::from_decoded(
             reference.clone(),
             [("access_token".into(), Value::String("test-token".into()))].into(),
-            [("items".into(), plasm_compile::DecodedRelation::Specified(ids.iter().map(|id| plasm_core::Ref::new("Item", format!("i{id}"))).collect()))].into(),
+            [("items".into(), plasm_compile::DecodedRelation::Specified(plasm_core::row_contract::RelationMembership::observe(None, &"relation_fixture", ids.iter().map(|id| plasm_core::Ref::new("Item", format!("i{id}"))).collect::<Vec<_>>(), None).unwrap()))].into(),
             0,
             crate::EntityCompleteness::Complete,
         );
@@ -163,9 +163,15 @@ async fn view_rowsets_live_traversal_union_identity_scope_and_order() {
             [("access_token".into(), Value::String("test-token".into()))].into(),
             [(
                 "items".into(),
-                plasm_compile::DecodedRelation::Specified(vec![plasm_core::Ref::new(
-                    "Item", "obsolete",
-                )]),
+                plasm_compile::DecodedRelation::Specified(
+                    plasm_core::row_contract::RelationMembership::observe(
+                        None,
+                        &"relation_fixture",
+                        vec![plasm_core::Ref::new("Item", "obsolete")],
+                        None,
+                    )
+                    .unwrap(),
+                ),
             )]
             .into(),
             0,
@@ -187,7 +193,7 @@ async fn view_rowsets_live_traversal_union_identity_scope_and_order() {
             .await
             .expect("composed traversal");
         let ids: std::collections::BTreeSet<_> = result
-            .entities
+            .entities()
             .iter()
             .map(|row| row.reference.primary_slot_str().to_string())
             .collect();
@@ -196,16 +202,16 @@ async fn view_rowsets_live_traversal_union_identity_scope_and_order() {
             std::collections::BTreeSet::from(["i1".into(), "i2".into(), "i3".into()])
         );
         assert_eq!(
-            result.entities.len(),
+            result.entities().len(),
             3,
             "union must remove overlapping identities"
         );
-        assert_eq!(result.coverage, ResultCoverage::Complete);
+        assert_eq!(result.coverage(), ResultCoverage::Complete);
         let parent = mat
             .get(&plasm_core::Ref::new("Library", "test-token"))
             .expect("query-produced view parent must be graph-bound");
         assert_eq!(parent.relations.get("items").unwrap().len(), 3);
-        for row in &result.entities {
+        for row in result.entities() {
             assert!(
                 matches!(row.fields.get("title"), Some(plasm_core::TypedFieldValue::String(title)) if !title.is_empty()),
                 "union child must retain hydrated details: {}",
@@ -406,10 +412,14 @@ async fn mutation_refreshes_collection_membership_inside_view() {
             .unwrap();
     }
     let parent = mat.get(&plasm_core::Ref::new("Collection", "c1")).unwrap();
-    assert_eq!(
-        parent.relations.get("items"),
-        Some(&Vec::new()),
-        "view refresh must publish the empty post-write membership"
+    let items = parent.relations.get("items").unwrap();
+    assert!(
+        items.is_empty(),
+        "view refresh must publish empty post-write membership"
+    );
+    assert!(
+        items.is_exhaustive(),
+        "declared exhaustive response must preserve its proof"
     );
     // c2 and directly saved items still contribute to the library.
     assert_eq!(

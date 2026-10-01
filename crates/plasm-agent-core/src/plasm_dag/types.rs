@@ -81,6 +81,10 @@ pub(in crate::plasm_dag) enum DagNodeSource {
         effect_class: EffectClass,
         result_shape: crate::plasm_plan::ResultShape,
     },
+    MapBody {
+        body: Box<plasm_core::plasm_monad::CorrelatedBody>,
+        schema: SyntheticResultSchema,
+    },
     Data(PlanValue),
     Compute {
         source: String,
@@ -89,6 +93,8 @@ pub(in crate::plasm_dag) enum DagNodeSource {
         collection_alias: Option<OutputName>,
     },
     Derive {
+        /// Inferred value contract, independent of source entity authority.
+        value_type: Option<plasm_core::value_contract::ValueContract>,
         source: String,
         value: PlanValue,
         inputs: Vec<crate::plasm_plan::PlanDataInput>,
@@ -120,11 +126,14 @@ pub(in crate::plasm_dag) enum DagNodeSource {
         qualified_entity: QualifiedEntityKey,
         until_body: String,
         until_predicates: Vec<crate::plasm_plan::PlanPredicate>,
+        until_scope: Option<Box<plasm_core::plasm_monad::CorrelatedBody>>,
+        step_scope: Option<Box<plasm_core::plasm_monad::CorrelatedBody>>,
         take: u32,
         uses_result: Vec<crate::plasm_plan::PlanResultUse>,
     },
 }
 
+#[derive(Clone)]
 pub(in crate::plasm_dag) struct CompileState<'a> {
     /// Shared node bodies — scratch overlays Arc-clone this vec instead of deep-copying DAG payloads.
     pub(in crate::plasm_dag) nodes: Vec<Arc<DagNode>>,

@@ -39,6 +39,7 @@
 use crate::RuntimeError;
 use indexmap::IndexMap;
 use plasm_compile::DecodedRelation;
+use plasm_core::row_contract::RelationMembership;
 use plasm_core::{EntityName, Ref, TypedFieldValue, Value};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
@@ -60,7 +61,7 @@ pub struct CachedEntity {
     pub reference: Ref,
     pub fields: IndexMap<String, TypedFieldValue>,
     /// Only relations that were **specified** on the wire (see [`DecodedRelation::Specified`]); omitted edges have no key here.
-    pub relations: IndexMap<String, Vec<Ref>>,
+    pub relations: IndexMap<String, RelationMembership>,
     /// Timestamp when this entity was last updated
     pub last_updated: u64,
     /// Version counter for optimistic concurrency
@@ -83,10 +84,10 @@ impl plasm_core::row_contract::EntityRow for CachedEntity {
             .iter()
             .map(|(key, value)| (key.as_str(), value.clone()))
     }
-    fn relations(&self) -> impl Iterator<Item = (&str, &[Ref])> {
+    fn relations(&self) -> impl Iterator<Item = (&str, &RelationMembership)> {
         self.relations
             .iter()
-            .map(|(key, references)| (key.as_str(), references.as_slice()))
+            .map(|(key, references)| (key.as_str(), references))
     }
     fn unavailable_fields(&self) -> impl Iterator<Item = &str> {
         self.unavailable_fields.iter().map(String::as_str)
@@ -150,7 +151,6 @@ impl CachedEntity {
             fields,
             relations,
             embedded_entities: Vec::new(),
-            field_diagnostics: Vec::new(),
         };
         Self::from_row(&decoded, timestamp, completeness)
     }
@@ -207,7 +207,7 @@ impl CachedEntity {
     }
 
     /// Get related entity references
-    pub fn get_relations(&self, relation: &str) -> Option<&Vec<Ref>> {
+    pub fn get_relations(&self, relation: &str) -> Option<&RelationMembership> {
         self.relations.get(relation)
     }
 
@@ -219,8 +219,13 @@ impl CachedEntity {
     }
 
     /// Update relations
-    pub fn update_relations(&mut self, relation: String, refs: Vec<Ref>, timestamp: u64) {
-        self.relations.insert(relation, refs);
+    pub fn update_relations(
+        &mut self,
+        relation: String,
+        membership: RelationMembership,
+        timestamp: u64,
+    ) {
+        self.relations.insert(relation, membership);
         self.last_updated = timestamp;
         self.version += 1;
     }
@@ -246,15 +251,25 @@ impl CachedEntity {
         row: &serde_json::Value,
         cgs: &plasm_core::CGS,
     ) -> Result<Self, RuntimeError> {
-        let obj = row.as_object().ok_or_else(|| RuntimeError::CacheError {
-            message: "row must be a JSON object".into(),
-        })?;
+        let value = plasm_core::json_value_to_plasm_value(row);
+        let row = plasm_core::ValueRow::try_from(value)
+            .map_err(|message| RuntimeError::CacheError { message })?;
+        Self::from_row_values(entity_type, &row, cgs)
+    }
+    pub fn to_row_values(&self, cgs: Option<&plasm_core::CGS>) -> plasm_core::ValueRow {
+        entity_to_row_values(self, cgs)
+    }
+    pub fn from_row_values(
+        entity_type: &str,
+        obj: &plasm_core::ValueRow,
+        cgs: &plasm_core::CGS,
+    ) -> Result<Self, RuntimeError> {
         let mut semantic = obj.clone();
         for field in ["_version", "_last_updated", "_completeness"] {
-            semantic.remove(field);
+            semantic.shift_remove(field);
         }
         let record = plasm_core::row_contract::RowCodec::new(Some(cgs))
-            .decode(entity_type, &serde_json::Value::Object(semantic))
+            .decode_values(entity_type, &semantic)
             .map_err(|message| RuntimeError::CacheError { message })?;
         let (reference, fields, relations, unavailable_fields) = record.into_parts();
         let completeness = obj
@@ -265,10 +280,13 @@ impl CachedEntity {
                 _ => EntityCompleteness::Complete,
             })
             .unwrap_or(EntityCompleteness::Summary);
-        let version = obj.get("_version").and_then(|v| v.as_u64()).unwrap_or(1);
+        let version = obj
+            .get("_version")
+            .and_then(|v| v.as_unsigned())
+            .unwrap_or(1);
         let last_updated = obj
             .get("_last_updated")
-            .and_then(|v| v.as_u64())
+            .and_then(|v| v.as_unsigned())
             .unwrap_or(1);
         Ok(Self {
             reference,
@@ -292,11 +310,18 @@ impl CachedEntity {
             });
         }
 
-        // Never let a list-shaped row replace a fully hydrated entity.
+        // Field hydration and relation membership are independent observations.
+        // A summary cannot replace hydrated fields, but it can carry new edges
+        // (including an exhaustive empty collection).
         if other.completeness == EntityCompleteness::Summary
             && self.completeness == EntityCompleteness::Complete
         {
-            return Ok(false);
+            let changed = Self::merge_relation_maps(&mut self.relations, &other.relations);
+            if changed {
+                self.last_updated = self.last_updated.max(other.last_updated);
+                self.version += 1;
+            }
+            return Ok(changed);
         }
 
         let upgrade_to_complete = self.completeness == EntityCompleteness::Summary
@@ -398,15 +423,20 @@ impl CachedEntity {
     }
 
     fn merge_relation_maps(
-        into: &mut IndexMap<String, Vec<Ref>>,
-        other: &IndexMap<String, Vec<Ref>>,
+        into: &mut IndexMap<String, RelationMembership>,
+        other: &IndexMap<String, RelationMembership>,
     ) -> bool {
         let mut changed = false;
         for (relation, refs) in other {
             match into.get(relation) {
                 Some(existing) => {
-                    let merged = crate::materialization_conflict::union_sorted_refs(existing, refs);
-                    if existing.as_slice() != merged.as_slice() {
+                    // Complete observations replace membership atomically, including
+                    // order, duplicates and an explicitly empty collection. Unproven
+                    // page unions cannot acquire exhaustive evidence.
+                    // Membership is an observation, not a set accumulator. Replace
+                    // atomically; merging uncertain lists would invent an expression.
+                    let merged = refs.clone();
+                    if existing != &merged {
                         into.insert(relation.clone(), merged);
                         changed = true;
                     }
@@ -460,27 +490,29 @@ pub fn entity_to_row_json(
     entity: &CachedEntity,
     cgs: Option<&plasm_core::CGS>,
 ) -> serde_json::Value {
-    let mut v = plasm_core::row_contract::RowCodec::new(cgs).encode(entity);
-    let obj = v.as_object_mut().expect("row object");
-    obj.insert(
-        "_version".to_string(),
-        serde_json::Value::Number(entity.version.into()),
-    );
-    obj.insert(
-        "_last_updated".to_string(),
-        serde_json::Value::Number(entity.last_updated.into()),
-    );
-    obj.insert(
-        "_completeness".to_string(),
-        serde_json::Value::String(
+    plasm_core::plasm_value_to_json(&entity_to_row_values(entity, cgs).into_value())
+}
+
+/// Native graph materialization; no serialization or parsing before compute.
+pub fn entity_to_row_values(
+    entity: &CachedEntity,
+    cgs: Option<&plasm_core::CGS>,
+) -> plasm_core::ValueRow {
+    use plasm_core::Value;
+    let mut row = plasm_core::row_contract::RowCodec::new(cgs).values(entity);
+    row.insert("_version".into(), Value::Unsigned(entity.version));
+    row.insert("_last_updated".into(), Value::Unsigned(entity.last_updated));
+    row.insert(
+        "_completeness".into(),
+        Value::String(
             match entity.completeness {
                 EntityCompleteness::Summary => "summary",
                 EntityCompleteness::Complete => "complete",
             }
-            .to_string(),
+            .into(),
         ),
     );
-    v
+    row
 }
 
 impl GraphCache {
@@ -992,7 +1024,15 @@ mod tests {
         let mut account_relations = IndexMap::new();
         account_relations.insert(
             "contacts".to_string(),
-            DecodedRelation::Specified(vec![contact1_ref.clone(), contact2_ref.clone()]),
+            DecodedRelation::Specified(
+                plasm_core::row_contract::RelationMembership::observe(
+                    None,
+                    &"relation_fixture",
+                    vec![contact1_ref.clone(), contact2_ref.clone()],
+                    None,
+                )
+                .unwrap(),
+            ),
         );
 
         let account = CachedEntity::from_decoded(
@@ -1079,7 +1119,15 @@ mod tests {
             IndexMap::from([("id".into(), Value::String("i1".into()))]),
             IndexMap::from([(
                 "children".into(),
-                DecodedRelation::Specified(vec![r1.clone()]),
+                DecodedRelation::Specified(
+                    plasm_core::row_contract::RelationMembership::observe(
+                        None,
+                        &"relation_fixture",
+                        vec![r1.clone()],
+                        None,
+                    )
+                    .unwrap(),
+                ),
             )]),
             1,
             EntityCompleteness::Complete,
@@ -1096,7 +1144,7 @@ mod tests {
         );
         assert!(full.merge(&partial).unwrap());
         let kids = full.get_relations("children").expect("children preserved");
-        assert_eq!(kids, &vec![r1.clone()]);
+        assert_eq!(kids.iter().collect::<Vec<_>>(), vec![&r1]);
     }
 
     #[test]
@@ -1340,9 +1388,9 @@ mod relation_wire_properties {
         ) {
             let cgs = plasm_core::load_schema_dir(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix")).unwrap();
             let mut parent = CachedEntity::new(Ref::new("LangItem", "parent"), 1);
-            parent.relations.insert("lines".into(), ids.iter().map(|id| Ref::new("LangLine",id.as_str())).collect());
-            parent.relations.insert("summary".into(), singleton.iter().map(|id| Ref::new("LangSummary",id.as_str())).collect());
-            parent.relations.insert("compound_branches".into(), ids.iter().map(|id| Ref::compound("CompoundBranch", [("owner".into(), "owner:literal".into()), ("item_id".into(), "parent".into()), ("name".into(),id.clone())].into())).collect());
+            parent.relations.insert("lines".into(), plasm_core::row_contract::RelationMembership::observe(None, &"relation_fixture", ids.iter().map(|id| Ref::new("LangLine",id.as_str())).collect::<Vec<_>>(), None).unwrap());
+            parent.relations.insert("summary".into(), plasm_core::row_contract::RelationMembership::observe(None, &"relation_fixture", singleton.iter().map(|id| Ref::new("LangSummary",id.as_str())).collect::<Vec<_>>(), None).unwrap());
+            parent.relations.insert("compound_branches".into(), plasm_core::row_contract::RelationMembership::observe(None, &"relation_fixture", ids.iter().map(|id| Ref::compound("CompoundBranch", [("owner".into(), "owner:literal".into()), ("item_id".into(), "parent".into()), ("name".into(),id.clone())].into())).collect::<Vec<_>>(), None).unwrap());
             // One law runs unchanged for decoded, cache and owned wire adapters.
             fn assert_row_laws(row: &impl plasm_core::row_contract::EntityRow, cgs: &plasm_core::CGS) -> serde_json::Value {
                 use plasm_core::row_contract::{EntityRow, RowCodec, RowRecord};
@@ -1352,7 +1400,13 @@ mod relation_wire_properties {
                 let wire = serde_json::from_slice(&serde_json::to_vec(&wire).unwrap()).unwrap();
                 let restored = codec.decode(row.identity().entity_type.as_str(), &wire).unwrap();
                 assert_eq!(restored.identity(), captured.identity());
-                assert_eq!(restored.relations().collect::<std::collections::BTreeMap<_,_>>(), captured.relations().collect::<std::collections::BTreeMap<_,_>>());
+                let restored_edges = restored.relations().collect::<std::collections::BTreeMap<_,_>>();
+                let captured_edges = captured.relations().collect::<std::collections::BTreeMap<_,_>>();
+                assert_eq!(restored_edges.keys().collect::<Vec<_>>(), captured_edges.keys().collect::<Vec<_>>());
+                for (key, edge) in restored_edges {
+                    assert_eq!(edge.references(), captured_edges[key].references());
+                    assert!(!edge.is_exhaustive(), "public row encoding cannot transfer producer authority");
+                }
                 assert_eq!(codec.encode(&restored), wire);
                 assert_eq!(codec.encode(&CachedEntity::from_row(&restored, 999, EntityCompleteness::Complete)), wire);
                 wire
@@ -1362,7 +1416,7 @@ mod relation_wire_properties {
                 reference: parent.reference.clone(),
                 fields: parent.fields.iter().map(|(key,value)|(key.clone(),value.to_value())).collect(),
                 relations: parent.relations.iter().map(|(key,refs)|(key.clone(),DecodedRelation::Specified(refs.clone()))).collect(),
-                embedded_entities: vec![], field_diagnostics: vec![],
+                embedded_entities: vec![],
             };
             let canonical = plasm_core::row_contract::RowRecord::capture(&decoded);
             let expected = assert_row_laws(&decoded, &cgs);
@@ -1371,11 +1425,151 @@ mod relation_wire_properties {
             let wire = entity_to_row_json(&parent, Some(&cgs));
             let wire = serde_json::from_slice(&serde_json::to_vec(&wire).unwrap()).unwrap();
             let restored = CachedEntity::from_row_json("LangItem", &wire, &cgs).unwrap();
-            prop_assert_eq!(&restored.relations, &parent.relations);
+            prop_assert_eq!(restored.relations.len(), parent.relations.len());
+            for (key, edge) in &restored.relations {
+                prop_assert_eq!(edge.references(), parent.relations[key].references());
+                prop_assert!(!edge.is_exhaustive());
+            }
             prop_assert_eq!(&wire, &entity_to_row_json(&restored, Some(&cgs)));
             for (row, id) in wire["lines"].as_array().unwrap().iter().zip(ids) {
                 prop_assert_eq!(row["id"].as_str(), Some(id.as_str()));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod membership_evidence_tests {
+    use super::*;
+
+    #[test]
+    fn membership_evidence_is_independent_of_field_hydration() {
+        let mut full = CachedEntity::new(Ref::new("Parent", "1"), 1);
+        full.fields
+            .insert("title".into(), Value::String("hydrated".into()).into());
+        full.relations.insert("children".into(), {
+            use plasm_core::collection_codec::{
+                CollectionCodec, CollectionIdentity, Observation, RecordingCodec,
+            };
+            let references = vec![Ref::new("Child", "old")];
+            let observation = Observation::ExactOutput {
+                decoded: references.len(),
+            };
+            plasm_core::row_contract::RelationMembership::from_record(
+                RecordingCodec::new()
+                    .record(
+                        CollectionIdentity::for_untyped_observation(&"relation_fixture").unwrap(),
+                        references,
+                        observation,
+                    )
+                    .unwrap(),
+            )
+        });
+        let mut summary = CachedEntity::new(full.reference.clone(), 2);
+        summary.completeness = EntityCompleteness::Summary;
+        summary
+            .fields
+            .insert("title".into(), Value::String("summary".into()).into());
+        summary.relations.insert("children".into(), {
+            use plasm_core::collection_codec::{
+                CollectionCodec, CollectionIdentity, Observation, RecordingCodec,
+            };
+            let references = vec![];
+            let observation = Observation::ExactOutput {
+                decoded: references.len(),
+            };
+            plasm_core::row_contract::RelationMembership::from_record(
+                RecordingCodec::new()
+                    .record(
+                        CollectionIdentity::for_untyped_observation(&"relation_fixture").unwrap(),
+                        references,
+                        observation,
+                    )
+                    .unwrap(),
+            )
+        });
+        assert!(full.merge(&summary).unwrap());
+        assert_eq!(
+            full.fields["title"],
+            TypedFieldValue::from(Value::String("hydrated".into()))
+        );
+        assert_eq!(full.completeness, EntityCompleteness::Complete);
+        assert!(full.relations["children"].is_exhaustive());
+        assert!(full.relations["children"].is_empty());
+    }
+
+    #[test]
+    fn membership_evidence_merge_preserves_empty_duplicate_and_replacement_observations() {
+        let mut parent = CachedEntity::new(Ref::new("Parent", "1"), 1);
+        let refs = vec![Ref::new("Child", "2"), Ref::new("Child", "2")];
+        parent.relations.insert("children".into(), {
+            use plasm_core::collection_codec::{
+                CollectionCodec, CollectionIdentity, Observation, RecordingCodec,
+            };
+            let references = refs.clone();
+            let observation = Observation::ExactOutput {
+                decoded: references.len(),
+            };
+            plasm_core::row_contract::RelationMembership::from_record(
+                RecordingCodec::new()
+                    .record(
+                        CollectionIdentity::for_untyped_observation(&"relation_fixture").unwrap(),
+                        references,
+                        observation,
+                    )
+                    .unwrap(),
+            )
+        });
+        let mut next = parent.clone();
+        next.fields
+            .insert("name".into(), Value::String("observed".into()).into());
+        parent.merge(&next).unwrap();
+        assert_eq!(
+            parent.relations["children"].iter().collect::<Vec<_>>(),
+            refs.iter().collect::<Vec<_>>()
+        );
+        assert!(parent.relations["children"].is_exhaustive());
+        next.relations.insert("children".into(), {
+            use plasm_core::collection_codec::{
+                CollectionCodec, CollectionIdentity, Observation, RecordingCodec,
+            };
+            let references = vec![];
+            let observation = Observation::ExactOutput {
+                decoded: references.len(),
+            };
+            plasm_core::row_contract::RelationMembership::from_record(
+                RecordingCodec::new()
+                    .record(
+                        CollectionIdentity::for_untyped_observation(&"relation_fixture").unwrap(),
+                        references,
+                        observation,
+                    )
+                    .unwrap(),
+            )
+        });
+        parent.merge(&next).unwrap();
+        assert!(parent.relations["children"].is_empty());
+        assert!(parent.relations["children"].is_exhaustive());
+        next.relations.clear();
+        parent.merge(&next).unwrap();
+        assert!(parent.relations["children"].is_exhaustive());
+        next.relations.insert("children".into(), {
+            use plasm_core::collection_codec::{
+                CollectionCodec, CollectionIdentity, Observation, RecordingCodec,
+            };
+            let references = refs;
+            let observation = Observation::UnprovenPage;
+            plasm_core::row_contract::RelationMembership::from_record(
+                RecordingCodec::new()
+                    .record(
+                        CollectionIdentity::for_untyped_observation(&"relation_fixture").unwrap(),
+                        references,
+                        observation,
+                    )
+                    .unwrap(),
+            )
+        });
+        parent.merge(&next).unwrap();
+        assert!(!parent.relations["children"].is_exhaustive());
     }
 }

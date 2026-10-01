@@ -714,6 +714,50 @@ pub enum RefWire {
 }
 
 impl RefWire {
+    pub fn to_value(&self) -> crate::Value {
+        use crate::Value as V;
+        V::Object(match self {
+            Self::Simple { entity, id } => [
+                ("kind".into(), V::String("simple".into())),
+                ("entity".into(), V::String(entity.clone())),
+                ("id".into(), V::String(id.clone())),
+            ]
+            .into(),
+            Self::Compound { entity, parts } => [
+                ("kind".into(), V::String("compound".into())),
+                ("entity".into(), V::String(entity.clone())),
+                (
+                    "parts".into(),
+                    V::Object(
+                        parts
+                            .iter()
+                            .map(|(k, v)| (k.clone(), V::String(v.clone())))
+                            .collect(),
+                    ),
+                ),
+            ]
+            .into(),
+        })
+    }
+    pub fn from_value(value: &crate::Value) -> Option<Self> {
+        let entity = value.get("entity")?.as_str()?.to_owned();
+        match value.get("kind")?.as_str()? {
+            "simple" => Some(Self::Simple {
+                entity,
+                id: value.get("id")?.as_str()?.to_owned(),
+            }),
+            "compound" => Some(Self::Compound {
+                entity,
+                parts: value
+                    .get("parts")?
+                    .as_object()?
+                    .iter()
+                    .map(|(k, v)| Some((k.clone(), v.as_str()?.to_owned())))
+                    .collect::<Option<_>>()?,
+            }),
+            _ => None,
+        }
+    }
     #[must_use]
     pub fn from_ref(reference: &Ref) -> Self {
         match &reference.key {

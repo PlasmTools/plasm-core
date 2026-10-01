@@ -83,7 +83,22 @@ impl TypedFieldValue {
 
     #[must_use]
     pub fn into_value(self) -> Value {
-        self.to_value()
+        match self {
+            Self::Null => Value::Null,
+            Self::Bool(v) => Value::Bool(v),
+            Self::Integer(v) => Value::Integer(v),
+            Self::Float(v) => Value::Float(v),
+            Self::String(v) => Value::String(v),
+            Self::StringTemplate(v) => Value::StringTemplate(v),
+            Self::Array(v) => Value::Array(v.into_iter().map(Self::into_value).collect()),
+            Self::Object(v) => {
+                Value::Object(v.into_iter().map(|(k, v)| (k, v.into_value())).collect())
+            }
+            Self::EntityRef(v) => v.to_value(),
+            Self::Money(v) => Value::Money(v),
+            Self::PlasmInputRef(v) => Value::PlasmInputRef(v),
+            Self::Json(v) => v,
+        }
     }
 }
 
@@ -92,7 +107,20 @@ impl Serialize for TypedFieldValue {
     where
         S: Serializer,
     {
-        self.to_value().serialize(serializer)
+        match self {
+            Self::Null => serializer.serialize_unit(),
+            Self::Bool(value) => value.serialize(serializer),
+            Self::Integer(value) => value.serialize(serializer),
+            Self::Float(value) => value.serialize(serializer),
+            Self::String(value) => value.serialize(serializer),
+            Self::StringTemplate(value) => value.serialize(serializer),
+            Self::Array(value) => value.serialize(serializer),
+            Self::Object(value) => value.serialize(serializer),
+            Self::EntityRef(value) => value.serialize(serializer),
+            Self::Money(value) => value.serialize(serializer),
+            Self::PlasmInputRef(value) => value.serialize(serializer),
+            Self::Json(value) => value.serialize(serializer),
+        }
     }
 }
 
@@ -114,6 +142,7 @@ impl From<Value> for TypedFieldValue {
             Value::Null => TypedFieldValue::Null,
             Value::Bool(b) => TypedFieldValue::Bool(b),
             Value::Integer(i) => TypedFieldValue::Integer(i),
+            Value::Unsigned(_) => TypedFieldValue::Json(v),
             Value::Float(f) => TypedFieldValue::Float(f),
             Value::StringTemplate(value) => TypedFieldValue::StringTemplate(value),
             Value::String(s) | Value::PhraseIdent(s) => TypedFieldValue::String(s),
@@ -128,7 +157,7 @@ impl From<Value> for TypedFieldValue {
 
 impl From<TypedFieldValue> for Value {
     fn from(tf: TypedFieldValue) -> Self {
-        tf.to_value()
+        tf.into_value()
     }
 }
 
@@ -172,6 +201,43 @@ impl From<&str> for TypedFieldValue {
 mod tests {
     use super::*;
     use indexmap::IndexMap;
+
+    #[test]
+    fn borrowed_serialization_matches_native_wire_shapes() {
+        let nested = Value::Object(IndexMap::from([
+            ("text".into(), Value::String("quoted \" text".into())),
+            (
+                "values".into(),
+                Value::Array(vec![
+                    Value::Null,
+                    Value::Bool(true),
+                    Value::Integer(-2),
+                    Value::Float(1.5),
+                    Value::Unsigned(u64::MAX),
+                ]),
+            ),
+            (
+                "money".into(),
+                Value::Money(crate::MoneyValue::new(
+                    "1.23".parse().unwrap(),
+                    Some("USD".into()),
+                )),
+            ),
+        ]));
+        let native = TypedFieldValue::from(nested.clone());
+        assert_eq!(
+            serde_json::to_vec(&native).unwrap(),
+            serde_json::to_vec(&nested).unwrap()
+        );
+        let reference = TypedFieldValue::EntityRef(EntityRefPayload::Compound(IndexMap::from([(
+            "scope".into(),
+            EntityRefPayload::Atom(crate::entity_ref_value::EntityRefAtom::String("abc".into())),
+        )])));
+        assert_eq!(
+            serde_json::to_vec(&reference).unwrap(),
+            serde_json::to_vec(&reference.to_value()).unwrap()
+        );
+    }
 
     #[test]
     fn structural_roundtrips_json_shapes() {

@@ -34,6 +34,7 @@ pub enum TypedLiteralError {
     UnionConstructor,
     /// Unquoted program phrase token — not a typed literal until lowered.
     PhraseIdent,
+    UnsignedJsonInteger,
     EntityRef(EntityRefValueError),
 }
 
@@ -63,6 +64,7 @@ impl TypedLiteral {
             Value::Null => Ok(TypedLiteral::Null),
             Value::Bool(b) => Ok(TypedLiteral::Bool(*b)),
             Value::Integer(i) => Ok(TypedLiteral::Integer(*i)),
+            Value::Unsigned(_) => Err(TypedLiteralError::UnsignedJsonInteger),
             Value::Float(f) => Ok(TypedLiteral::Float(*f)),
             Value::StringTemplate(value) => Ok(TypedLiteral::StringTemplate(value.clone())),
             Value::String(s) => Ok(TypedLiteral::String(s.clone())),
