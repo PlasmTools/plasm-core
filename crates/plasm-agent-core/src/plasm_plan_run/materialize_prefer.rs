@@ -53,14 +53,11 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
         relation.relation.ir.projection.as_deref(),
         Some(es),
     );
-    for (index, parent) in parents.iter().enumerate() {
+    let snapshot =
+        crate::graph_rehydrate::RelationEmbedSnapshot::capture(&scoped_es, &parents, rel_name)
+            .await;
+    for (index, (parent, cached)) in parents.iter().zip(snapshot.resident).enumerate() {
         if let Some(membership) = parent.relations.get(rel_name) {
-            let guard = scoped_es.lock_graph_cache().await;
-            let cached: Vec<_> = membership
-                .iter()
-                .filter_map(|reference| guard.materialization().get(reference).cloned())
-                .collect();
-            drop(guard);
             let all_present = cached.len() == membership.len();
             if all_present
                 || matches!(
@@ -69,7 +66,7 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
                 )
             {
                 embedded[index] = true;
-                resident[index] = cached.into();
+                resident[index] = cached;
                 children[index] = Some(ExecutionCollection::graph(membership.record().clone()));
                 if let plasm_core::RelationScopedFallback::HydrateFromEmbedPath {
                     get_capability,

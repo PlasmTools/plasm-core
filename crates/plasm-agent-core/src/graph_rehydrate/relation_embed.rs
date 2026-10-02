@@ -4,6 +4,46 @@ use indexmap::IndexMap;
 use plasm_core::{Cardinality, Ref, RelationMaterialization, CGS, MAX_FROM_PARENT_GET_EMBED_DEPTH};
 use plasm_runtime::{entity_to_row_values, CachedEntity, SessionMaterialization};
 
+/// Resident observations for all parent occurrences from one coherent graph read.
+/// Shared rows retain payloads after the lock is released, including across eviction.
+pub(crate) struct RelationEmbedSnapshot {
+    pub(crate) resident: Vec<plasm_core::collection_codec::SharedRows<CachedEntity>>,
+}
+
+impl RelationEmbedSnapshot {
+    pub(crate) async fn capture(
+        session: &crate::execute_session::ExecuteSession,
+        parents: &plasm_core::collection_codec::SharedRows<CachedEntity>,
+        relation_name: &str,
+    ) -> Self {
+        let guard = session.lock_graph_cache().await;
+        Self::from_graph(parents, relation_name, guard.materialization())
+    }
+
+    fn from_graph(
+        parents: &plasm_core::collection_codec::SharedRows<CachedEntity>,
+        relation_name: &str,
+        graph: &SessionMaterialization,
+    ) -> Self {
+        use plasm_core::collection_codec::SharedRows;
+        Self {
+            resident: parents
+                .iter()
+                .map(|parent| {
+                    let rows: Vec<_> = parent
+                        .relations
+                        .get(relation_name)
+                        .into_iter()
+                        .flat_map(|membership| membership.iter())
+                        .filter_map(|reference| graph.shared_row(reference))
+                        .collect();
+                    SharedRows::concat(rows.iter())
+                })
+                .collect(),
+        }
+    }
+}
+
 fn relation_is_embed_materialize(materialize: &Option<RelationMaterialization>) -> bool {
     matches!(
         materialize,
@@ -167,6 +207,45 @@ mod tests {
         partition_prefer_resolutions, EmbedOnMissPolicy, JsonPathSegment, RelationRowResolution,
         RelationScopedFallback,
     };
+
+    #[test]
+    fn prefer_snapshot_shares_occurrences_and_survives_graph_changes() {
+        let a = Ref::new("Child", "a");
+        let b = Ref::new("Child", "b");
+        let missing = Ref::new("Child", "missing");
+        let mut parent = identity_only_entity(&Ref::new("Parent", "p"));
+        parent.relations.insert(
+            "children".into(),
+            plasm_core::row_contract::RelationMembership::observe(
+                None,
+                &"snapshot_fixture",
+                vec![b.clone(), a.clone(), b.clone(), missing],
+                None,
+            )
+            .unwrap(),
+        );
+        let absent = identity_only_entity(&Ref::new("Parent", "absent"));
+        let parents = vec![parent, absent].into();
+        let mut graph = SessionMaterialization::new();
+        graph
+            .merge_graph(vec![identity_only_entity(&a), identity_only_entity(&b)])
+            .unwrap();
+        let snapshot = RelationEmbedSnapshot::from_graph(&parents, "children", &graph);
+        let rows = &snapshot.resident[0];
+        assert_eq!(
+            rows.iter().map(|row| &row.reference).collect::<Vec<_>>(),
+            vec![&b, &a, &b]
+        );
+        assert!(std::ptr::eq(&rows[0], &rows[2]));
+        assert!(std::ptr::eq(&rows[0], graph.get(&b).unwrap()));
+        assert!(snapshot.resident[1].is_empty());
+        let observed_update = rows[0].last_updated;
+        graph.get_mut(&b).unwrap().last_updated = observed_update + 42;
+        graph.remove(&a);
+        assert_eq!(rows[0].last_updated, observed_update);
+        assert_eq!(rows[1].reference, a);
+        assert_eq!(graph.get(&b).unwrap().last_updated, observed_update + 42);
+    }
 
     #[test]
     fn shuttle_relation_refs_survive_concurrent_child_eviction() {
