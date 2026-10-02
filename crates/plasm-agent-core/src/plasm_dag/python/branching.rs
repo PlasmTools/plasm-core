@@ -14,6 +14,19 @@ fn lambda(source: &str) -> Result<ruff_python_ast::ExprLambda, String> {
     Ok(lambda)
 }
 
+/// Python owns truth conversion; DAG consumers require its Boolean result.
+pub(super) fn truth_test(expression: &PyExpr) -> Result<PyExpr, String> {
+    let mut truth = *ruff_python_parser::parse_expression("bool(None)")
+        .map_err(|e| e.to_string())?
+        .into_syntax()
+        .body;
+    let PyExpr::Call(call) = &mut truth else {
+        unreachable!()
+    };
+    call.arguments.args = vec![expression.clone()].into();
+    Ok(truth)
+}
+
 impl Lower<'_> {
     pub(super) fn pure_branch_value(
         &mut self,
@@ -99,7 +112,8 @@ impl Lower<'_> {
         branch_condition: Option<&PyExpr>,
     ) -> Result<PlasmDataValue, String> {
         let mut condition_inputs = BTreeMap::new();
-        let condition_value = self.pure_branch_value(condition, &mut condition_inputs)?;
+        let condition_value =
+            self.pure_branch_value(&truth_test(condition)?, &mut condition_inputs)?;
         let condition_id = self.fresh();
         self.emit_value(
             PlasmDataValue::Object {

@@ -21,7 +21,15 @@ enum KeyKind<'a> {
     Native(&'a Value),
     Temporal(TemporalKind, bool, i128),
     Array(Vec<ValueKey<'a>>),
+    Set(UnorderedKeys<'a>),
     Record(Vec<(&'a str, ValueKey<'a>)>),
+}
+#[derive(Debug)]
+struct UnorderedKeys<'a>(Vec<ValueKey<'a>>);
+impl PartialEq for UnorderedKeys<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.len() == other.0.len() && self.0.iter().all(|key| other.0.contains(key))
+    }
 }
 impl Equatable for ValueContract {
     fn equality(&self) -> Result<ValueEquality<'_>, String> {
@@ -30,7 +38,14 @@ impl Equatable for ValueContract {
                 return Err("equality contract depth exceeded".into());
             }
             match &c.shape {
-                ValueShape::Array { element } => check(element, depth + 1)?,
+                ValueShape::Array { element } | ValueShape::Set { element } => {
+                    check(element, depth + 1)?
+                }
+                ValueShape::MappingRecord { record } => check(record, depth + 1)?,
+                ValueShape::Dictionary { key, value } => {
+                    check(key, depth + 1)?;
+                    check(value, depth + 1)?;
+                }
                 ValueShape::Record { fields } | ValueShape::ObservedRecord { fields, .. } => {
                     for c in fields.values() {
                         check(c, depth + 1)?;
@@ -66,6 +81,14 @@ fn key<'a>(c: &ValueContract, v: &'a Value, depth: usize) -> Result<ValueKey<'a>
         return Ok(ValueKey(KeyKind::Native(v)));
     }
     Ok(ValueKey(match &c.shape {
+        ValueShape::MappingRecord { record } => return key(record, v, depth + 1),
+        ValueShape::Set { element } => KeyKind::Set(UnorderedKeys(
+            v.as_array()
+                .ok_or("expected set encoding")?
+                .iter()
+                .map(|v| key(element, v, depth + 1))
+                .collect::<Result<_, _>>()?,
+        )),
         ValueShape::Temporal { kind, .. } => {
             let (aware, coordinate) = crate::value_order::temporal_key(c, v, *kind)?;
             KeyKind::Temporal(*kind, aware, coordinate)
@@ -77,6 +100,18 @@ fn key<'a>(c: &ValueContract, v: &'a Value, depth: usize) -> Result<ValueKey<'a>
                 .map(|v| key(element, v, depth + 1))
                 .collect::<Result<_, _>>()?,
         ),
+        ValueShape::Dictionary { value: element, .. } => {
+            let mut keys = v
+                .as_object()
+                .ok_or("expected dictionary key")?
+                .iter()
+                .map(|(name, value)| {
+                    key(element, value, depth + 1).map(|value| (name.as_str(), value))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            keys.sort_by_key(|(name, _)| *name);
+            KeyKind::Record(keys)
+        }
         ValueShape::Record { fields } | ValueShape::ObservedRecord { fields, .. } => {
             let values = v.as_object().ok_or("expected record key")?;
             let optional = match &c.shape {
@@ -151,6 +186,23 @@ impl ValueKey<'_> {
                 h.write_usize(items.len());
                 for item in items {
                     item.hash_into(h)?;
+                }
+            }
+            KeyKind::Set(items) => {
+                h.write_u8(4);
+                let mut hashes = items
+                    .0
+                    .iter()
+                    .map(|item| {
+                        let mut hash = std::collections::hash_map::DefaultHasher::new();
+                        item.hash_into(&mut hash)?;
+                        Ok(hash.finish())
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                hashes.sort_unstable();
+                h.write_usize(hashes.len());
+                for hash in hashes {
+                    h.write_u64(hash);
                 }
             }
             KeyKind::Record(fields) => {
@@ -319,5 +371,38 @@ mod union_presence_tests {
             union.equality().unwrap().key(&input).unwrap(),
             text.equality().unwrap().key(&input).unwrap()
         );
+    }
+    #[test]
+    fn sets_preserve_order_independent_equality_and_hashes() {
+        use std::hash::Hasher;
+        let contract = ValueContract {
+            shape: ValueShape::Set {
+                element: Box::new(ValueContract::scalar(FieldType::String)),
+            },
+            domain: None,
+            nullable: false,
+        };
+        let left = crate::fixture_value!(["a", "b"]);
+        let right = crate::fixture_value!(["b", "a"]);
+        let eq = contract.equality().unwrap();
+        assert!(contract
+            .validate(&left, &crate::CGS::default(), "fixture", "set")
+            .is_ok());
+        assert!(contract
+            .validate(
+                &crate::fixture_value!(["a", "a"]),
+                &crate::CGS::default(),
+                "fixture",
+                "set"
+            )
+            .is_err());
+        assert!(eq.equivalent(&left, &right).unwrap());
+        let mut hashes = Vec::new();
+        for value in [&left, &right] {
+            let mut hash = std::collections::hash_map::DefaultHasher::new();
+            eq.key(value).unwrap().hash_into(&mut hash).unwrap();
+            hashes.push(hash.finish());
+        }
+        assert_eq!(hashes[0], hashes[1]);
     }
 }

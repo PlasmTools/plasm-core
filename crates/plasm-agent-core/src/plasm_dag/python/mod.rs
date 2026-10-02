@@ -9,6 +9,7 @@ mod callbacks;
 pub(crate) mod catalog_operations;
 mod expression_captures;
 mod fanout;
+mod helpers;
 mod inputs;
 mod iteration;
 pub(crate) mod literal_operands;
@@ -34,54 +35,104 @@ use plasm_core::plasm_monad::*;
 use ruff_python_ast::{Expr as PyExpr, Stmt};
 use ruff_text_size::Ranged;
 
-fn lower_python_program(es: &ExecuteSession, source: &str) -> Result<PlasmCompBundle, String> {
-    if source.len() > 32_768 {
-        return Err("Python program exceeds 32 KiB source budget".into());
-    }
-    let ast = ruff_python_parser::parse_module(source).map_err(|e| format!("Python parse: {e}"))?;
-    let root = admission::Root::parse(source, ast.suite(), es)?;
+fn lower_python_program(
+    es: &ExecuteSession,
+    source: &str,
+    suite: &[Stmt],
+) -> Result<PlasmCompBundle, String> {
+    let root = admission::Root::parse(source, suite, es)?;
     let pipeline = PromptPipelineConfig::default();
     let mut lower = Lower {
         imports: &root.imports,
         es,
         program_source: source,
         methods: &root.methods,
+        helpers: &root.helpers,
+        used_methods: BTreeSet::new(),
         state: CompileState::new(&pipeline, None),
         callbacks: BTreeMap::new(),
         active_callbacks: Vec::new(),
+        return_check: None,
         serial: 0,
-        row_scope: None,
-        quantifier_names: BTreeMap::new(),
-        branch_types: Default::default(),
         value_depth: 0,
-        scope_depth: 0,
-        scope_row: None,
-        scope_names: BTreeMap::new(),
+        frame: LexicalFrame::default(),
         spans: BTreeMap::new(),
     };
-    let mut roots = None;
-    for stmt in &root.build.body {
-        if roots.is_some() {
-            return Err(at(stmt, "statements after return are not admitted"));
-        }
-        if let Some(s) = lower.statement(stmt)? {
-            let value = s
-                .value
-                .as_deref()
-                .ok_or_else(|| at(stmt, "return requires a rowset"))?;
-            if let PyExpr::Tuple(t) = value {
-                roots = Some(
-                    t.elts
-                        .iter()
-                        .map(|e| lower.expr(e, None))
-                        .collect::<Result<Vec<_>, _>>()?,
-                );
-            } else {
-                roots = Some(vec![lower.expr(value, None)?]);
-            }
+    // Upstream lexical scope includes declarations after return. Reserved host
+    // bindings cannot be shadowed even by an unreachable local assignment.
+    for local in monty_analysis::function_locals(
+        source,
+        monty_analysis::Span {
+            start: root.build.start().to_u32(),
+            end: root.build.end().to_u32(),
+        },
+    )? {
+        if local != "self"
+            && (root.imports.bindings.contains_key(&local)
+                || lower
+                    .state
+                    .sym_map_for(es)
+                    .resolve_session_entity(&local)
+                    .is_ok())
+        {
+            return Err("build local shadows a reserved host binding".into());
         }
     }
-    let roots = roots.ok_or("build requires an explicit return")?;
+    for parameter in root
+        .build
+        .parameters
+        .posonlyargs
+        .iter()
+        .chain(&root.build.parameters.args)
+        .chain(&root.build.parameters.kwonlyargs)
+    {
+        if parameter.parameter.name.as_str() != "self" {
+            let value = parameter
+                .default
+                .as_deref()
+                .ok_or("missing bound build default")?;
+            let binding = lower.fresh();
+            lower.expr(value, Some(&binding))?;
+            if let Some(annotation) = parameter.parameter.annotation.as_deref() {
+                let input = text::inferred_schema(es, &lower.state, &binding, 0)?.row_contract()?;
+                crate::python_compute::check_callback_closed_return(
+                    es,
+                    annotation,
+                    &input,
+                    value,
+                    &root.imports.source,
+                )?;
+            }
+            lower
+                .frame
+                .names
+                .insert(parameter.parameter.name.to_string(), binding);
+        }
+    }
+    let flow = monty_analysis::function_flow(
+        source,
+        monty_analysis::Span {
+            start: root.build.start().to_u32(),
+            end: root.build.end().to_u32(),
+        },
+    )?;
+    for stmt in &flow.statements {
+        lower.statement(stmt)?;
+    }
+    let value = match &flow.exit {
+        monty_analysis::FlowExit::Return(Some(value)) |
+        monty_analysis::FlowExit::Branch { source_expression: Some(value), .. } => value,
+        _ => return Err("build requires materialized return roots; branching roots have no DAG return representation".into()),
+    };
+    let roots = if let PyExpr::Tuple(tuple) = value {
+        tuple
+            .elts
+            .iter()
+            .map(|expression| lower.expr(expression, None))
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        vec![lower.expr(value, None)?]
+    };
     if roots.is_empty() {
         return Err("return must contain at least one rowset".into());
     }
@@ -114,25 +165,11 @@ fn lower_python_program(es: &ExecuteSession, source: &str) -> Result<PlasmCompBu
         .comp
         .metadata
         .insert("python_source_spans".into(), serde_json::json!(lower.spans));
-    // Every declared compute must have a typed DAG callsite. This prevents
-    // uninstantiated Row helpers from escaping admission without a source schema.
-    let mut used = std::collections::BTreeSet::new();
-    let mut comps = vec![&artifact.comp];
-    while let Some(comp) = comps.pop() {
-        for step in comp.steps.values() {
-            match step {
-                plasm_core::PlasmStepPayload::Map(map) => {
-                    if let ComputeOp::Python { source, .. } = &map.compute.op {
-                        used.insert(source.as_str());
-                    }
-                }
-                plasm_core::PlasmStepPayload::MapBody(body) => comps.push(&body.body),
-                _ => {}
-            }
-        }
-    }
-    for (name, source) in &root.methods {
-        if !used.contains(source.as_str()) {
+    // A declared compute is valid only after a typed callsite was emitted.
+    // The frontend records that witness where lowering succeeds; it never
+    // reparses serialized runtime steps to infer whether a declaration was used.
+    for name in root.methods.keys() {
+        if !lower.used_methods.contains(name) {
             return Err(format!("compute {name} requires a typed DAG callsite"));
         }
     }
@@ -159,11 +196,11 @@ pub(crate) fn compile_python_program_checked(
             span_offset: None,
         });
     }
-    ruff_python_parser::parse_module(source).map_err(|error| ProgramStageError::Parse {
+    let ast = ruff_python_parser::parse_module(source).map_err(|error| ProgramStageError::Parse {
         correction: format!("Python syntax: {error}. Submit one class derived from Program with an indented build(self) method and an explicit return."),
         span_offset: Some(u32::from(error.location.start()) as usize),
     })?;
-    let bundle = lower_python_program(es, source)
+    let bundle = lower_python_program(es, source, ast.suite())
         .map_err(|correction| ProgramStageError::Type { correction })?;
     crate::plasm_plan_run::evaluate_plasm_comp_dry(es, &bundle).map_err(|correction| {
         ProgramStageError::Plan {
@@ -173,25 +210,68 @@ pub(crate) fn compile_python_program_checked(
     Ok(bundle)
 }
 
+#[derive(Default)]
+struct LexicalFrame {
+    depth: usize,
+    row: Option<String>,
+    ports: BTreeSet<String>,
+    quantifiers: BTreeMap<String, String>,
+    facts: refinements::Facts,
+    names: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ExpressionPlacement {
+    /// The expression itself is a host DAG operation.
+    Host,
+    /// A Python lazy branch contains a host dependency and needs scoped lowering.
+    LazyHost,
+    /// Monty owns evaluation; captured DAG values are explicit inputs.
+    PythonValue,
+}
+
+impl LexicalFrame {
+    fn nested(&self, row: String, names: BTreeMap<String, String>) -> Self {
+        let mut ports = self.ports.clone();
+        ports.insert(row.clone());
+        Self {
+            depth: self.depth + 1,
+            row: Some(row),
+            ports,
+            quantifiers: BTreeMap::new(),
+            facts: self.facts.clone(),
+            names,
+        }
+    }
+}
+
 struct Lower<'a> {
     imports: &'a crate::python_datetime::Imports,
     es: &'a ExecuteSession,
     program_source: &'a str,
     methods: &'a BTreeMap<String, String>,
+    helpers: &'a BTreeMap<String, ruff_python_ast::StmtFunctionDef>,
+    used_methods: BTreeSet<String>,
     state: CompileState<'a>,
     callbacks: BTreeMap<String, callbacks::Callback>,
     active_callbacks: Vec<String>,
+    return_check: Option<(Box<PyExpr>, plasm_core::value_contract::ValueContract)>,
     serial: usize,
-    scope_depth: usize,
-    scope_row: Option<String>,
-    quantifier_names: BTreeMap<String, String>,
-    branch_types: refinements::Facts,
+    frame: LexicalFrame,
     value_depth: usize,
-    scope_names: BTreeMap<String, String>,
-    row_scope: Option<fanout::RowScope>,
     spans: BTreeMap<String, serde_json::Value>,
 }
 impl Lower<'_> {
+    fn expression_placement(&self, expression: &PyExpr) -> ExpressionPlacement {
+        if self.immediate_host_dependency(expression) {
+            ExpressionPlacement::Host
+        } else if self.lazy_host_dependency(expression) {
+            ExpressionPlacement::LazyHost
+        } else {
+            ExpressionPlacement::PythonValue
+        }
+    }
+
     fn fresh(&mut self) -> String {
         self.serial += 1;
         format!("__py{}", self.serial)
@@ -200,9 +280,9 @@ impl Lower<'_> {
         loop {
             let candidate = format!("{purpose}{}", self.fresh());
             if !self.state.contains(&candidate)
-                && !self.scope_names.contains_key(&candidate)
+                && !self.frame.names.contains_key(&candidate)
                 && !self.methods.contains_key(&candidate)
-                && !self.quantifier_names.contains_key(&candidate)
+                && !self.frame.quantifiers.contains_key(&candidate)
             {
                 return candidate;
             }
@@ -232,7 +312,7 @@ impl Lower<'_> {
             return Ok(target);
         }
         let id = label.map(str::to_owned).unwrap_or_else(|| self.fresh());
-        if !self.deferred_expression(e) {
+        if self.expression_placement(e) != ExpressionPlacement::Host {
             return self.record_value(e, &id);
         }
 
@@ -279,33 +359,32 @@ impl Lower<'_> {
                 .sym_map_for(self.es)
                 .resolve_session_entity(token)
             {
-                use catalog_operations::{CatalogOperation, CatalogReadKind};
-                let operation = if let Some(read) = CatalogReadKind::primary(attr.attr.as_str()) {
-                    CatalogOperation::Read(read)
-                } else {
-                    let symbols = self.state.sym_map_for(self.es);
-                    let method = symbols
-                        .resolve_session_method(attr.attr.as_str())
-                        .map_err(|error| at(e, &error.to_string()))?;
-                    let cgs = crate::catalog_ownership::resolve_cgs_for_entry_entity(
-                        self.es,
-                        method.entry_id.as_str(),
-                        method.domain.as_str(),
-                    )?;
-                    let cap = cgs
-                        .get_capability(method.capability.as_str())
-                        .ok_or("missing method capability")?;
-                    CatalogOperation::from_kind(cap.kind)
+                use catalog_operations::{
+                    resolve_taught_method, CatalogReadKind, ReadSelection, ResolvedCatalogMethod,
                 };
-                return match operation {
-                    CatalogOperation::Read(_) => self.read(e, call, attr.attr.as_str(), owner, &id),
-                    CatalogOperation::Write(_) => {
-                        self.write(e, call, attr.attr.as_str(), owner, None, &id)
+                if let Some(kind) = CatalogReadKind::primary(attr.attr.as_str()) {
+                    return self.read(e, call, ReadSelection::Primary(kind), owner, &id);
+                }
+                return match resolve_taught_method(
+                    self.es,
+                    &self.state,
+                    e,
+                    attr.attr.as_str(),
+                    &owner,
+                )? {
+                    ResolvedCatalogMethod::Read(read) => {
+                        self.read(e, call, ReadSelection::Taught(read), owner, &id)
+                    }
+                    ResolvedCatalogMethod::Write(write) => {
+                        self.write(e, call, owner, write, None, &id)
                     }
                 };
             }
         }
         if name(&attr.value) == Some("self") {
+            if self.helpers.contains_key(attr.attr.as_str()) {
+                return self.helper_call(e, call, attr.attr.as_str(), &id);
+            }
             return self.text_compute(e, call, attr.attr.as_str(), &id);
         }
         if self
@@ -329,7 +408,17 @@ impl Lower<'_> {
                 entry_id: contract.row_entity.entry_id.as_str().into(),
                 entity: contract.row_entity.entity.as_str().into(),
             };
-            return self.write(e, call, attr.attr.as_str(), owner, Some(&source), &id);
+            let resolved = catalog_operations::resolve_taught_method(
+                self.es,
+                &self.state,
+                e,
+                attr.attr.as_str(),
+                &owner,
+            )?;
+            let catalog_operations::ResolvedCatalogMethod::Write(write) = resolved else {
+                return Err(at(e, "method is not a mutation or action"));
+            };
+            return self.write(e, call, owner, write, Some(&source), &id);
         }
         let operation = row_operations::RowOperation::parse(attr.attr.as_str())
             .ok_or_else(|| at(e, "unsupported rowset operation"))?;

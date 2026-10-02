@@ -10,30 +10,6 @@ impl Lower<'_> {
         source: &str,
         id: &str,
     ) -> Result<String, String> {
-        use ruff_python_ast::visitor::transformer::{self, Transformer};
-        struct Rename<'a> {
-            from: &'a str,
-            to: &'a str,
-            shadows: std::cell::Cell<bool>,
-        }
-        impl Transformer for Rename<'_> {
-            fn visit_expr(&self, expr: &mut PyExpr) {
-                if let PyExpr::Name(name) = expr {
-                    if name.id.as_str() == self.from {
-                        if name.ctx != ruff_python_ast::ExprContext::Load {
-                            self.shadows.set(true);
-                        }
-                        name.id = self.to.into();
-                    }
-                }
-                if let PyExpr::Lambda(lambda) = expr {
-                    if projection_parameter(lambda).ok() == Some(self.from) {
-                        self.shadows.set(true);
-                    }
-                }
-                transformer::walk_expr(self, expr);
-            }
-        }
         let parameter = self.fresh_parameter("projection");
         let parsed = ruff_python_parser::parse_expression(&format!("lambda {parameter}: {{}}"))
             .map_err(|e| e.to_string())?;
@@ -63,39 +39,16 @@ impl Lower<'_> {
                 .as_ref()
                 .ok_or("projection unpacking is not admitted")?
                 .to_string();
-            let expression = if let PyExpr::Lambda(value) = &keyword.value {
-                let row = projection_parameter(value)?;
-                if self.state.contains(row) {
-                    return Err(at(
-                        site,
-                        "projection parameter must not shadow an outer binding",
-                    ));
-                }
-                let mut expression = *value.body.clone();
-                let rename = Rename {
-                    from: row,
-                    to: &parameter,
-                    shadows: std::cell::Cell::new(false),
-                };
-                rename.visit_expr(&mut expression);
-                if rename.shadows.get() {
-                    return Err(at(
-                        site,
-                        "projection parameter must not be shadowed in a nested scope",
-                    ));
-                }
-                expression
-            } else if name(&keyword.value).is_some_and(|n| self.callbacks.contains_key(n)) {
-                let mut expr =
-                    *ruff_python_parser::parse_expression(&format!("callback({parameter})"))
-                        .map_err(|e| e.to_string())?
-                        .into_syntax()
-                        .body;
-                let PyExpr::Call(call) = &mut expr else {
-                    unreachable!()
-                };
-                *call.func = keyword.value.clone();
-                expr
+            let expression = if matches!(&keyword.value, PyExpr::Lambda(_))
+                || name(&keyword.value).is_some_and(|n| self.callbacks.contains_key(n))
+            {
+                let callback = self.callback(&keyword.value)?;
+                let callable = self.fresh_parameter("projection_callback");
+                self.callbacks.insert(callable.clone(), callback);
+                *ruff_python_parser::parse_expression(&format!("{callable}({parameter})"))
+                    .map_err(|e| e.to_string())?
+                    .into_syntax()
+                    .body
             } else {
                 let field = string(&keyword.value)?;
                 let expr = ruff_python_parser::parse_expression(&format!("{parameter}.field"))
@@ -195,9 +148,9 @@ impl Lower<'_> {
                 return Err(at(site, "duplicate projection column"));
             }
         }
-        let previous = self.scope_row.replace(source.into());
+        let previous = self.frame.row.replace(source.into());
         let result = self.emit_value(PlasmDataValue::Object { fields }, vec![], id);
-        self.scope_row = previous;
+        self.frame.row = previous;
         result
     }
 }
@@ -207,19 +160,36 @@ pub(super) fn projection_parameter(lambda: &ruff_python_ast::ExprLambda) -> Resu
         .parameters
         .as_ref()
         .ok_or("projection requires one row parameter")?;
-    if p.args.len() != 1
-        || !p.posonlyargs.is_empty()
-        || !p.kwonlyargs.is_empty()
-        || p.vararg.is_some()
-        || p.kwarg.is_some()
-        || p.args[0].default.is_some()
-        || p.args[0].parameter.annotation.is_some()
-    {
-        return Err("projection requires one unannotated row parameter".into());
+    let binding = monty_analysis::bind_one_positional(&callable_signature(lambda)?)?;
+    if binding.variadic {
+        return Err("a variadic tuple cannot carry a direct DAG row receiver".into());
     }
-    let row = p.args[0].parameter.name.as_str();
+    let row = p
+        .posonlyargs
+        .iter()
+        .chain(&p.args)
+        .find(|p| p.parameter.name.as_str() == binding.parameter)
+        .ok_or("upstream row binding has no source parameter")?
+        .parameter
+        .name
+        .as_str();
     if row == "self" || row.starts_with("__") {
         return Err("reserved projection parameter".into());
     }
     Ok(row)
+}
+
+pub(super) fn callable_signature(lambda: &ruff_python_ast::ExprLambda) -> Result<String, String> {
+    let parameters = lambda
+        .parameters
+        .as_ref()
+        .ok_or("missing callback parameters")?;
+    let parsed = ruff_python_parser::parse_module("def callback(row):\n    pass\n")
+        .map_err(|e| e.to_string())?;
+    let mut statement = parsed.into_syntax().body.remove(0);
+    let Stmt::FunctionDef(def) = &mut statement else {
+        unreachable!()
+    };
+    def.parameters = parameters.clone().into();
+    Ok(monty::statement_source(&statement))
 }

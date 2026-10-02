@@ -55,7 +55,13 @@ function validateProbabilities(
   }
 }
 
+export const environmentSupportSchema = z.object({
+  choice: z.enum(["established", "not_established", "undetermined"]),
+  request_hash: z.string(),
+}).strict();
+
 const routingSchema = z.object({
+  environment_support: environmentSupportSchema.optional().nullable(),
   intent_provenance: intentProvenanceSchema,
   intent_analysis: z.string().optional(),
   intent: workflowIntentSchema,
@@ -129,4 +135,16 @@ export function routingRecoveryMarkdown(routing: RoutingPacket["routing"]): stri
   const recovery=routing.recovery;
   if (!recovery) return null;
   return [recovery.guidance,...[...recovery.candidates].sort((a,b)=>b.relevance_probability-a.relevance_probability).slice(0,3).map(c=>`- \`${c.reference.catalog}/${c.reference.capability}\`: ${c.choice} (relevance ${c.relevance_probability.toFixed(2)})`),...recovery.available_catalogs.map(c=>`- \`${c.entry_id}\`: ${c.description}`)].join("\n\n");
+}
+
+/** Advisory capability evidence; it never grants execution or recovery authority. */
+export function routingSupportMarkdown(routing: RoutingPacket["routing"]): string | null {
+  const support = routing.environment_support;
+  if (!support) return null;
+  const guidance: Record<z.infer<typeof environmentSupportSchema>["choice"], string> = {
+    established: "The supplied operation contracts establish capability-level support for the current intent. This is not a guarantee of matching data, successful execution or permission.",
+    not_established: "The supplied operation contracts do not establish a plan for the current intent. Relevant capabilities remain available. Inspect their inputs and outputs, then extend the same logical_session_ref for unresolved needs. This does not mean the task is impossible or that a capability is absent from the catalog.",
+    undetermined: "Support for the current intent remains undetermined from the supplied contracts. Relevant capabilities remain available. Inspect the evidence and extend the same logical_session_ref for unresolved needs; do not treat this as proof of impossibility.",
+  };
+  return guidance[support.choice];
 }

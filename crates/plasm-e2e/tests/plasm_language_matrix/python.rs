@@ -46,7 +46,7 @@ pub(super) const CASES: &[Case] = &[
     Case { id: "predicate_all_relation", python: "item = E.get(\"i1\")\nreturn {\"value\": all(child.note != \"missing\" for child in item.REL_COMPLETE_LINES)}", existing: None, expect_live_error: None },
 
 Case { id: "value_closure_scalar_method_format", python: "name = \"hello\"\nreturn f\"{name.upper()}\"", existing: None, expect_live_error: None },
-Case { id: "value_closure_nullable_collection", python: "class Closure(Program):\n    @compute\n    def calc(self, value: list[int] | None) -> int:\n        return 0 if value is None else sum(value)\n    def build(self):\n        return self.calc(E.query().take(2).select(\"score\"))\n", existing: None, expect_live_error: None },
+Case { id: "value_closure_nullable_collection", python: "class Closure(Program):\n    @compute\n    def calc(self, value: list[Row.score] | None) -> int:\n        return 0 if value is None else sum(item or 0 for item in value)\n    def build(self):\n        return self.calc(E.query().take(2).select(\"score\"))\n", existing: None, expect_live_error: None },
 Case { id: "value_closure_nested_projection", python: "record = E.query().take(2).select(header=lambda row: {\"n\": row.score})\nreturn record.select(n=lambda row: (row.header.n or 0) + 1)", existing: None, expect_live_error: None },
 Case { id: "value_closure_nested_read", python: "record = {\"header\": {\"id\": \"i1\"}}\nreturn E.get(record.header.id).select(\"title\")", existing: None, expect_live_error: None },
 Case { id: "value_closure_nested_write", python: "record = {\"header\": {\"title\": \"Changed\"}}\nreturn E.get(\"i1\").UPDATE(title=record.header.title, score=2, owner=\"alice\").select(\"title\")", existing: None, expect_live_error: None },
@@ -54,12 +54,12 @@ Case { id: "value_closure_nested_format", python: "record = {\"header\": {\"n\":
 Case { id: "value_closure_field_scalar", python: "class Closure(Program):\n    @compute\n    def calc(self, value: int) -> int:\n        return value + 1\n    def build(self):\n        item = E.get(\"i1\")\n        return self.calc((item.score or 0) + 2)\n", existing: None, expect_live_error: None },
 Case { id: "value_closure_bool_scalar", python: "class Closure(Program):\n    @compute\n    def calc(self, value: bool) -> bool:\n        return not value\n    def build(self):\n        return self.calc(False)\n", existing: None, expect_live_error: None },
 Case { id: "value_closure_nullable_scalar", python: "class Closure(Program):\n    @compute\n    def calc(self, value: int | None) -> int:\n        return 0 if value is None else value\n    def build(self):\n        return self.calc(None)\n", existing: None, expect_live_error: None },
-Case { id: "value_closure_empty_collection", python: "class Closure(Program):\n    @compute\n    def calc(self, value: list[int]) -> int:\n        return len(value)\n    def build(self):\n        return self.calc(E.query().where(lambda row: row.id == \"missing\").select(\"score\"))\n", existing: None, expect_live_error: None },
+Case { id: "value_closure_empty_collection", python: "class Closure(Program):\n    @compute\n    def calc(self, value: list[Row.score]) -> int:\n        return len(value)\n    def build(self):\n        return self.calc(E.query().where(lambda row: row.id == \"missing\").select(\"score\"))\n", existing: None, expect_live_error: None },
 Case { id: "value_closure_structural_collection", python: "class Closure(Program):\n    @compute\n    def calc(self, value: list[Row]) -> int:\n        return value[0].n\n    def build(self):\n        return self.calc({\"n\": 7})\n", existing: None, expect_live_error: None },
 Case { id: "value_closure_literal", python: "class Closure(Program):\n    @compute\n    def calc(self, value: int) -> int:\n        return value + 1\n    def build(self):\n        value = 42\n        return self.calc(value)\n", existing: None, expect_live_error: None },
-Case { id: "value_closure_column", python: "class Closure(Program):\n    @compute\n    def calc(self, value: int) -> int:\n        return value + 1\n    def build(self):\n        value = E.query().take(2).select(\"score\")\n        return self.calc(value)\n", existing: None, expect_live_error: None },
-Case { id: "value_closure_empty", python: "class Closure(Program):\n    @compute\n    def calc(self, value: int) -> int:\n        return value + 1\n    def build(self):\n        value = E.query().where(lambda row: row.id == \"missing\").select(\"score\")\n        return self.calc(value)\n", existing: None, expect_live_error: None },
-Case { id: "value_closure_collection", python: "class Closure(Program):\n    @compute\n    def calc(self, value: list[int]) -> int:\n        return sum(value)\n    def build(self):\n        value = E.query().take(2).select(\"score\")\n        return self.calc(value)\n", existing: None, expect_live_error: None },
+Case { id: "value_closure_column", python: "class Closure(Program):\n    @compute\n    def calc(self, value: int | None) -> int:\n        return (value or 0) + 1\n    def build(self):\n        value = E.query().take(2).select(\"score\")\n        return self.calc(value)\n", existing: None, expect_live_error: None },
+Case { id: "value_closure_empty", python: "class Closure(Program):\n    @compute\n    def calc(self, value: int | None) -> int:\n        return (value or 0) + 1\n    def build(self):\n        value = E.query().where(lambda row: row.id == \"missing\").select(\"score\")\n        return self.calc(value)\n", existing: None, expect_live_error: None },
+Case { id: "value_closure_collection", python: "class Closure(Program):\n    @compute\n    def calc(self, value: list[Row.score]) -> int:\n        return sum(item or 0 for item in value)\n    def build(self):\n        value = E.query().take(2).select(\"score\")\n        return self.calc(value)\n", existing: None, expect_live_error: None },
 Case { id: "value_closure_array", python: "class Closure(Program):\n    @compute\n    def calc(self, value: list[int]) -> int:\n        return sum(value)\n    def build(self):\n        value = [2, 3]\n        return self.calc(value)\n", existing: None, expect_live_error: None },
 Case { id: "value_closure_record", python: "class Closure(Program):\n    @compute\n    def calc(self, value: Row) -> int:\n        return value.header.n\n    def build(self):\n        value = {\"header\": {\"n\": 7}}\n        return self.calc(value)\n", existing: None, expect_live_error: None },
 Case { id: "value_closure_empty_record", python: "class Closure(Program):\n    @compute\n    def calc(self, value: Row) -> int:\n        return 7\n    def build(self):\n        value = {}\n        return self.calc(value)\n", existing: None, expect_live_error: None },
@@ -95,7 +95,7 @@ Case { id: "record_value_projection", python: "item = E.get(\"i1\")\nrecord = {\
 Case { id: "record_value_compute", python: "class Render(Program):\n    @compute\n    def text(self, row: Row) -> str:\n        return row.name\n    def build(self):\n        item = E.get(\"i1\")\n        record = {\"name\": item.title}\n        return self.text(record)\n", existing: None, expect_live_error: None },
 Case { id: "record_value_empty_singleton", python: "item = E.query().where(lambda row: row.id == \"missing\").take(1)\nreturn {\"name\": item.title}", existing: None, expect_live_error: Some("zero rows") },
 Case { id: "operand_recursive_literals", python: "return E.get(\"i1\").map(lambda row: {\"text\": \"a\" + \"b\", \"integer\": 9007199254740993, \"signed\": -9223372036854775808, \"ratio\": 1.25, \"flag\": False, \"nil\": None, \"nested\": [{\"text\": \"x\", \"nums\": [1, 2]}]}, max_parents=1)", existing: None, expect_live_error: None },
-Case { id: "root_build_statements", python: "class Documented(Program):\n    \"class documentation\"\n    def build(self):\n        \"workflow documentation\"\n        item = E.get(\"i1\")\n        item.PING()\n        return item.select(\"id\")\n", existing: None, expect_live_error: None },
+Case { id: "root_build_statements", python: "class Documented(Program):\n    \"class documentation\"\n    def _identify(self, item):\n        return item.select(\"id\")\n    def build(self):\n        \"workflow documentation\"\n        item = E.get(\"i1\")\n        item.PING()\n        return self._identify(item)\n", existing: None, expect_live_error: None },
 Case { id: "boolean_identity_false_keyword", python: "return E.get(identity=False).select(\"id\")", existing: Some("lang_boolean_identity_false"), expect_live_error: None },
 Case { id: "boolean_identity_true_keyword", python: "return E.get(identity=True).select(\"id\")", existing: Some("lang_boolean_identity_true"), expect_live_error: None },
 Case { id: "bound_get_field_keyword", python: "source = E.get(identity=\"i1\")\nout = E.get(identity=source.id)\nreturn source, out", existing: Some("lang_bound_get_field"), expect_live_error: None },
@@ -617,7 +617,6 @@ async fn python_lowering_matrix_rejects_invalid_semantics_at_compile() {
         "return E.query().select(\"title\").where(lambda row: row.score is not None and row.score > 0)", // RA-2 current grain.
         "return E.query().where(lambda row: row.absent == 0)",
         "return E.query().where(lambda row: row.score < \"invalid\")",
-        "items = E.query()\nitems = E.query()\nreturn items",
         "return E.query().take(4294967296)",
         "return E.query().take(-1)",
         "return E.query().take(True)",
@@ -1715,7 +1714,6 @@ async fn python_text_compute_seals_code_inputs_and_rejects_hidden_dependencies()
     for expression in [
         "f'{rows[0].absent}'",
         "f'{hidden.title}'",
-        "f'{rows[0].__class__}'",
         "f'{open(\"secret\")}'",
         "f'{rows[0].title:{hidden}}'",
     ] {
@@ -1726,7 +1724,11 @@ async fn python_text_compute_seals_code_inputs_and_rejects_hidden_dependencies()
             "accepted {expression}"
         );
     }
-    for expression in ["f'{rows}'", "'{}'.format(rows[0])"] {
+    for expression in [
+        "f'{rows}'",
+        "'{}'.format(rows[0])",
+        "f'{rows[0].__class__}'",
+    ] {
         assert!(compile_python_program(&es, &source(expression, &input))
             .await
             .is_ok());
@@ -2158,8 +2160,7 @@ async fn python_value_closure_rejects_ambiguous_and_forged_inputs() {
             "E.get('i1').select('title', 'score')",
             "exactly one value column",
         ),
-        ("'wrong'", "input type differs"),
-        ("True", "input type differs"),
+        ("'wrong'", "input differs from its annotation"),
         ("{'a': 1, 'b': 2}", "exactly one value column"),
     ] {
         let source = format!("class Invalid(Program):\n    @compute\n    def calc(self, value: int) -> int:\n        return value + 1\n    def build(self):\n        return self.calc({argument})\n");
@@ -2366,6 +2367,10 @@ async fn python_nominal_boolean_refinement_selects_only_matching_effects() {
         ("r.active is not True", "no"),
         ("r.active", "yes"),
     ] {
+        for body in [
+            format!("selected = E.query().where(lambda r: {predicate})\nreturn selected.flat_map(lambda r: r.PING())"),
+            format!("return E.query().flat_map(lambda r: r.PING() if {predicate} else None)"),
+        ] {
         writes.lock().unwrap().clear();
         let case = Case {
             id: "nominal_boolean_effects",
@@ -2374,7 +2379,7 @@ async fn python_nominal_boolean_refinement_selects_only_matching_effects() {
             expect_live_error: None,
         };
         let (es, host) = parity_context(&case, &base);
-        let body = format!("selected = E.query().where(lambda r: {predicate})\nreturn selected.flat_map(lambda r: r.PING())");
+
         let bundle = compile_fixture(&es, &body)
             .await
             .unwrap_or_else(|e| panic!("{predicate}: {e}"));
@@ -2402,6 +2407,82 @@ async fn python_nominal_boolean_refinement_selects_only_matching_effects() {
             vec![expected.to_string()],
             "{predicate}"
         );
+    }
+    }
+    server.abort();
+}
+
+#[tokio::test]
+async fn python_compute_independent_inputs_compile() {
+    let es = language_matrix::matrix_execute_session(language_matrix::load_language_matrix_cgs());
+    let source = "class Inputs(Program):\n    def build(self):\n        return self.count(E.query().take(2), E.get('i1'))\n    @compute\n    def count(self, left: list[Row], right: list[Row]) -> int:\n        return len(left) + len(right)\n";
+    compile_fixture(&es, source).await.unwrap();
+}
+
+#[tokio::test]
+async fn python_compute_dictionary_and_multiple_inputs_live() {
+    use axum::{extract::Path, routing::get, Json, Router};
+    let app = Router::new()
+        .route(
+            "/language/v1/items",
+            get(|| async {
+                Json(serde_json::json!([
+                    {"id":"i1", "title":"one"}, {"id":"i2", "title":"two"}
+                ]))
+            }),
+        )
+        .route(
+            "/language/v1/items/{id}",
+            get(|Path(id): Path<String>| async move {
+                Json(serde_json::json!({"id":id, "title":if id == "i1" { "one" } else { "two" }}))
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let cases = [
+        ("class P(Program):\n    def build(self):\n        return self.extract(E.query())\n    @compute\n    def extract(self, rows: list[Row]) -> list[dict]:\n        out = []\n        for row in rows:\n            out.append({'name': row.title})\n        return out\n", serde_json::json!([{"name":"one"},{"name":"two"}])),
+        ("class P(Program):\n    def build(self):\n        return self.count(E.query(), E.get('i1'))\n    @compute\n    def count(self, left: list[Row], right: list[Row]) -> dict:\n        out = {}\n        out['left'] = len(left)\n        out['right'] = len(right)\n        return out\n", serde_json::json!({"left":2,"right":1})),
+        ("class P(Program):\n    def build(self):\n        one = E.get('i1')\n        return self.count(one, one)\n    @compute\n    def count(self, row: Row, rows: list[Row]):\n        n = len(rows)\n        return {'name': row.title, 'count': n}\n", serde_json::json!({"name":"one","count":1})),
+        ("class P(Program):\n    def build(self):\n        value = self.make(E.query())\n        return self.read(value)\n    @compute\n    def make(self, rows: list[Row]):\n        result = {}\n        for row in rows:\n            result[str(row.id)] = str(row.title)\n        return result\n    @compute\n    def read(self, value: dict[str, str]) -> str:\n        return value['i1']\n", serde_json::json!("one")),
+        ("class P(Program):\n    def build(self):\n        return self.add(True)\n    @compute\n    def add(self, value: int) -> str:\n        return str(value)\n", serde_json::json!("True")),
+        ("class P(Program):\n    def build(self):\n        item = E.get(\"i1\")\n        first = item.title\n        item = E.get(\"i2\")\n        return f\"{first}/{item.title}\"\n", serde_json::json!("one/two")),
+        ("class P(Program):\n    def build(self):\n        return \"done\"\n        missing()\n", serde_json::json!("done")),
+        ("class P(Program):\n    def build(self):\n        def title(row: Row, /):\n            return {\"name\": row.title}\n        return self.names(E.query().map(title, max_parents=2))\n    @compute\n    def names(self, rows: list[Row]) -> str:\n        return \",\".join(str(row.name) for row in rows)\n", serde_json::json!("one,two")),
+        ("class P(Program):\n    def build(self):\n        return E.query().take(1).select(n=lambda row: sum(row for row in [1, 2])).n\n", serde_json::json!(3)),
+    ];
+    for (index, (source, expected)) in cases.iter().enumerate() {
+        let case = Case {
+            id: "compute_dictionary_inputs",
+            python: "",
+            existing: None,
+            expect_live_error: None,
+        };
+        let (es, host) = parity_context(&case, &base);
+        let bundle = compile_fixture(&es, source)
+            .await
+            .unwrap_or_else(|e| panic!("case {index}: {e:?}"));
+        // Roundtrip and independent dry validation exercise the serialized contracts.
+        let encoded = serde_json::to_value(&bundle.artifact().comp).unwrap();
+        let mut artifact = bundle.artifact().clone();
+        artifact.comp = serde_json::from_value(encoded).unwrap();
+        let bundle = plasm_agent::plasm_compile::PlasmCompBundle::new(artifact).unwrap();
+        let dry = evaluate_plasm_comp_dry(&es, &bundle).unwrap();
+        let run = Box::pin(run_plasm_comp(
+            &es,
+            &host,
+            &es.prompt_hash,
+            &format!("compute-inputs-{index}"),
+            &bundle,
+            true,
+            None,
+            None,
+            Some(dry),
+            None,
+        ))
+        .await
+        .unwrap_or_else(|e| panic!("case {index}: {e:?}"));
+        assert_eq!(outputs(&run)[0][0]["value"], *expected, "case {index}");
     }
     server.abort();
 }

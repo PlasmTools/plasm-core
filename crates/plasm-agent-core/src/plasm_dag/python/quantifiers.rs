@@ -61,8 +61,8 @@ impl Lower<'_> {
         // dependency and needlessly makes its enclosing position significant.
         let local_value = matches!(&clause.iter, PyExpr::Tuple(_))
             || (super::value_expressions::is_value_expression(&clause.iter)
-                && !self.deferred_expression(&clause.iter))
-            || root.is_some_and(|root| self.quantifier_names.contains_key(root));
+                && self.expression_placement(&clause.iter) != ExpressionPlacement::Host)
+            || root.is_some_and(|root| self.frame.quantifiers.contains_key(root));
         let source = if local_value {
             None
         } else {

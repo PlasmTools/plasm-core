@@ -190,6 +190,31 @@ fn record_contract_at(
         N::MapBody(map) => Some(output_schema(es, &map.body)?),
         N::Compute(c) => match &c.compute.op {
             ComputeOp::Python { output_type, .. } => return Ok(output_type.clone()),
+            ComputeOp::Limit { .. }
+            | ComputeOp::Filter { .. }
+            | ComputeOp::Sort { .. }
+            | ComputeOp::DedupeBy { .. }
+                if matches!(purpose, RecordUse::Value) =>
+            {
+                // Row-preserving operators retain navigation for subsequent DAG
+                // operations, but capturing their values must not invent fields
+                // for relations that have never been materialized.
+                let source = row_contract_at(es, nodes, c.compute.source.as_str(), depth + 1)?;
+                let fields = match source.shape {
+                    ValueShape::Record { fields } | ValueShape::ObservedRecord { fields, .. } => {
+                        fields
+                    }
+                    _ => return Err("row-preserving source has no record contract".into()),
+                };
+                let mut schema = c.compute.schema.clone();
+                schema
+                    .fields
+                    .retain(|field| fields.contains_key(field.name.as_str()));
+                schema
+                    .optional_fields
+                    .retain(|field| fields.contains_key(field));
+                Some(schema)
+            }
             _ => Some(c.compute.schema.clone()),
         },
         N::Capture(c) => {

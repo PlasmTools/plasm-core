@@ -47,7 +47,21 @@ fn python_card_initial_extension_and_retry() {
     assert_eq!(extension.language, None);
     assert!(extension.declarations.contains("e2:"));
     assert!(extension.declarations.contains("Many[e2]"));
-    assert!(extension.declarations.contains("Replace the complete e1"));
+    assert!(extension.declarations.contains("Add members to e1"));
+    assert!(!extension.declarations.contains("e1.get("));
+    assert!(!extension.declarations.contains("e1.query("));
+    assert_eq!(
+        extension,
+        prepare_python_teaching_wave(&exposure, &initial.next_state).unwrap()
+    );
+    let replay = prepare_python_teaching_wave(&exposure, &extension.next_state).unwrap();
+    assert!(replay.declarations.is_empty());
+    let restored: PythonTeachingState =
+        serde_json::from_str(&serde_json::to_string(&extension.next_state).unwrap()).unwrap();
+    assert!(prepare_python_teaching_wave(&exposure, &restored)
+        .unwrap()
+        .declarations
+        .is_empty());
     assert_eq!(extension.capabilities.len(), 6);
     assert!(extension
         .capabilities
@@ -422,4 +436,56 @@ fn payload_defaults_and_secondary_effects_survive_teaching() {
         );
     }
     assert!(!wave.declarations.contains("content default:"));
+}
+
+#[test]
+fn python_card_operation_extension_is_additive_and_complete() {
+    let cgs = fixture();
+    let select = |name: &str| {
+        crate::capability_exposure::selected_capability_surface(&cgs, "fixture", &[name.to_owned()])
+            .unwrap()
+    };
+    let mut exposure = TeachingExposureSession::new_with_intent_delta(
+        &cgs,
+        "fixture",
+        &["Item"],
+        select("item_query"),
+    );
+    let initial = prepare_python_teaching_wave(&exposure, &PythonTeachingState::default()).unwrap();
+    exposure.expose_surface(
+        &[&cgs],
+        std::sync::Arc::new(cgs.clone()),
+        "fixture",
+        &["Item"],
+        select("item_mark"),
+    );
+    let extension = prepare_python_teaching_wave(&exposure, &initial.next_state).unwrap();
+    assert!(extension.declarations.contains("Add members to e1"));
+    assert!(!extension.declarations.contains("e1.query("));
+    assert!(!extension.declarations.contains("    id:"));
+    assert!(extension.declarations.contains("-> EffectAck"));
+    assert_eq!(
+        extension.capabilities.len(),
+        2,
+        "coverage retains all selected operations"
+    );
+    assert!(extension.capabilities.iter().all(|c| c.signature.is_some()));
+    let complete = &extension.next_state.declarations["e1"];
+    assert!(complete.contains("e1.query("));
+    assert!(complete.contains("-> EffectAck"));
+    assert!(
+        extension.declarations.len() < complete.len(),
+        "extension must not resend the entity"
+    );
+    println!(
+        "member delta: {} bytes versus {} bytes for the full entity",
+        extension.declarations.len(),
+        complete.len()
+    );
+    assert!(
+        prepare_python_teaching_wave(&exposure, &extension.next_state)
+            .unwrap()
+            .declarations
+            .is_empty()
+    );
 }

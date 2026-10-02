@@ -2,7 +2,6 @@
 //! and capability policy, never expression inference.
 use super::*;
 use plasm_core::value_contract::{ValueContract as Type, ValueShape};
-use ruff_python_ast::visitor::{self, Visitor};
 
 #[cfg(test)]
 pub(super) fn stubs(fields: &BTreeMap<String, Type>, cgs: &CGS) -> Result<String, String> {
@@ -72,6 +71,11 @@ fn render(
     }
     let mut ty = match &t.shape {
         ValueShape::Temporal { kind, .. } => format!("PlasmDatetime.{}", kind.python_name()),
+        ValueShape::Dictionary { key, value } => format!(
+            "dict[{}, {}]",
+            render(key, cgs, catalogs, out, depth + 1)?,
+            render(value, cgs, catalogs, out, depth + 1)?
+        ),
         ValueShape::Never => "Never".into(),
         ValueShape::Null => "None".into(),
         ValueShape::Union { variants } => variants
@@ -79,6 +83,17 @@ fn render(
             .map(|v| render(v, cgs, catalogs, out, depth + 1))
             .collect::<Result<Vec<_>, _>>()?
             .join(" | "),
+        ValueShape::MappingRecord { record } => {
+            use sha2::{Digest, Sha256};
+            output_annotation(record, cgs, catalogs, out)?;
+            format!(
+                "PlasmOutput{:x}",
+                Sha256::digest(serde_json::to_vec(&record.shape).map_err(|e| e.to_string())?)
+            )
+        }
+        ValueShape::Set { element } => {
+            format!("set[{}]", render(element, cgs, catalogs, out, depth + 1)?)
+        }
         ValueShape::Array { element } => {
             format!("list[{}]", render(element, cgs, catalogs, out, depth + 1)?)
         }
@@ -169,37 +184,6 @@ fn render(
     } else {
         ty
     })
-}
-
-pub(super) fn validate_policy(source: &str) -> Result<(), String> {
-    struct Policy<'a>(Option<String>, &'a str);
-    impl<'a> Visitor<'a> for Policy<'_> {
-        fn visit_stmt(&mut self, stmt: &'a Stmt) {
-            if matches!(stmt, Stmt::Import(_) | Stmt::ImportFrom(_)) {
-                if let Err(error) = crate::python_datetime::Imports::default().add(stmt, self.1) {
-                    self.0 = Some(error);
-                }
-            } else if matches!(stmt, Stmt::Global(_) | Stmt::Nonlocal(_)) {
-                self.0 = Some("compute policy forbids ambient state".into());
-            }
-            visitor::walk_stmt(self, stmt);
-        }
-        fn visit_expr(&mut self, expr: &'a Expr) {
-            if matches!(expr, Expr::Name(n) if matches!(n.id.as_str(), "open" | "input" | "print" | "eval" | "exec" | "compile" | "globals" | "locals" | "vars" | "getattr" | "setattr" | "delattr" | "__import__"))
-                || matches!(expr, Expr::Attribute(a) if a.attr.as_str().starts_with("__"))
-            {
-                self.0 =
-                    Some("pure compute policy forbids host IO and reflective authority".into());
-            }
-            visitor::walk_expr(self, expr);
-        }
-    }
-    let ast = ruff_python_parser::parse_module(source).map_err(|e| e.to_string())?;
-    let mut policy = Policy(None, source);
-    for stmt in ast.suite() {
-        policy.visit_stmt(stmt);
-    }
-    policy.0.map_or(Ok(()), Err)
 }
 
 pub(crate) async fn admit_bundle(
@@ -303,7 +287,7 @@ mod tests {
         let revision = super::LANGUAGE_PROFILE
             .strip_prefix("monty-")
             .unwrap()
-            .strip_suffix("-typed-v9-money-v2-branches-v2")
+            .strip_suffix("-typed-v11-money-v2-branches-v2")
             .unwrap();
         assert!(include_str!("../../../../vendor/README.md")
             .contains(&format!("Initial vendored revision: `{revision}`")));
@@ -338,11 +322,16 @@ pub(super) fn input_type(
     declarations: &mut String,
 ) -> Result<String, String> {
     let ty = render(t, cgs, catalogs, declarations, 0)?;
-    declarations.push_str(&format!("PlasmArgument: TypeAlias = {ty}\n"));
-    Ok("PlasmArgument".into())
+    use sha2::{Digest, Sha256};
+    let alias = format!(
+        "PlasmArgument{:x}",
+        Sha256::digest(serde_json::to_vec(t).map_err(|e| e.to_string())?)
+    );
+    declarations.push_str(&format!("{alias}: TypeAlias = {ty}\n"));
+    Ok(alias)
 }
 
-pub(super) fn output_type(
+pub(super) fn output_annotation(
     t: &Type,
     cgs: &CGS,
     catalogs: &BTreeMap<String, std::sync::Arc<CGS>>,
@@ -386,6 +375,11 @@ pub(super) fn output_type(
                 }
                 format!("{class} | {name}")
             }
+            ValueShape::Dictionary { key, value } => format!(
+                "dict[{}, {}]",
+                render(key, cgs, catalogs, out, depth + 1)?,
+                output(value, cgs, catalogs, out, depth + 1)?
+            ),
             ValueShape::Array { element } => {
                 format!(
                     "{} | list[{}]",
@@ -407,7 +401,16 @@ pub(super) fn output_type(
         })
     }
     declarations.push_str("from typing import TypedDict, NotRequired\n");
-    let ty = output(t, cgs, catalogs, declarations, 0)?;
+    output(t, cgs, catalogs, declarations, 0)
+}
+
+pub(super) fn output_type(
+    t: &Type,
+    cgs: &CGS,
+    catalogs: &BTreeMap<String, std::sync::Arc<CGS>>,
+    declarations: &mut String,
+) -> Result<String, String> {
+    let ty = output_annotation(t, cgs, catalogs, declarations)?;
     declarations.push_str(&format!("PlasmOutput: TypeAlias = {ty}\n"));
     Ok("PlasmOutput".into())
 }

@@ -1,5 +1,5 @@
 //! Session-taught effects lowered into the same typed admission and ordering as Plasm.
-use super::catalog_operations::{CatalogOperation, CatalogWriteKind};
+use super::catalog_operations::{CatalogWriteKind, ResolvedCatalogCall};
 use super::*;
 use plasm_core::symbol_tuning::{CatalogScope, EntityBinding};
 use plasm_core::{CatalogEntryStamp, IdentitySlot, PlasmInputRef, Value};
@@ -10,32 +10,15 @@ impl Lower<'_> {
         &mut self,
         site: &PyExpr,
         call: &ExprCall,
-        token: &str,
         owner: EntityBinding,
+        resolved: ResolvedCatalogCall<'_, CatalogWriteKind>,
         receiver: Option<&str>,
         id: &str,
     ) -> Result<String, String> {
         let symbols = self.state.sym_map_for(self.es);
-        let method = symbols
-            .resolve_session_method(token)
-            .map_err(|e| at(site, &e.to_string()))?;
-        if method.entry_id != owner.entry_id || method.domain != owner.entity {
-            return Err(at(
-                site,
-                "method and receiver catalog/entity ownership differ",
-            ));
-        }
-        let cgs = crate::catalog_ownership::resolve_cgs_for_entry_entity(
-            self.es,
-            owner.entry_id.as_str(),
-            owner.entity.as_str(),
-        )?;
-        let cap = cgs
-            .get_capability(method.capability.as_str())
-            .ok_or("missing method capability")?;
-        let CatalogOperation::Write(kind) = CatalogOperation::from_kind(cap.kind) else {
-            return Err(at(site, "method is not a mutation or action"));
-        };
+        let kind = resolved.kind;
+        let cgs = resolved.cgs;
+        let cap = resolved.schema;
         if !call.arguments.args.is_empty() {
             return Err(at(
                 site,
@@ -58,7 +41,7 @@ impl Lower<'_> {
                     .resolve_cap_param(
                         CatalogScope::qualified(owner.entry_id.as_str()),
                         owner.entity.as_str(),
-                        method.capability.as_str(),
+                        resolved.capability.as_str(),
                         key.as_str(),
                         cap,
                     )
@@ -104,7 +87,7 @@ impl Lower<'_> {
         let expr = match kind {
             CatalogWriteKind::Create => {
                 let mut create =
-                    plasm_core::CreateExpr::new(method.capability, owner.entity, value);
+                    plasm_core::CreateExpr::new(resolved.capability, owner.entity, value);
                 create.catalog_entry_id = stamp;
                 if receiver.is_some() {
                     let mut get = plasm_core::GetExpr::from_ref(target);
@@ -114,14 +97,14 @@ impl Lower<'_> {
                 plasm_core::Expr::Create(create)
             }
             CatalogWriteKind::Delete => {
-                let mut delete = plasm_core::DeleteExpr::with_target(method.capability, target);
+                let mut delete = plasm_core::DeleteExpr::with_target(resolved.capability, target);
                 delete.catalog_entry_id = stamp;
                 delete.input = Some(value.into());
                 plasm_core::Expr::Delete(delete)
             }
             CatalogWriteKind::Update | CatalogWriteKind::Action => {
                 let mut invoke =
-                    plasm_core::InvokeExpr::with_target(method.capability, target, Some(value));
+                    plasm_core::InvokeExpr::with_target(resolved.capability, target, Some(value));
                 invoke.catalog_entry_id = stamp;
                 plasm_core::Expr::Invoke(invoke)
             }
@@ -130,13 +113,6 @@ impl Lower<'_> {
     }
 
     pub(super) fn write_value(&mut self, e: &PyExpr) -> Result<Value, String> {
-        if self
-            .row_scope
-            .as_ref()
-            .is_some_and(|scope| name(e) == Some(scope.parameter.as_str()))
-        {
-            return Err(at(e, "pass a row field, not the whole lambda row"));
-        }
         let mut inputs = BTreeMap::new();
         let value = self.scoped_value(e, &mut inputs)?;
         self.value_operand(value, &inputs.into_values().collect::<Vec<_>>())

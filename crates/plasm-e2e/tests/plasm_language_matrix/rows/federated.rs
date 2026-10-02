@@ -133,7 +133,7 @@ pub(crate) const ROWS: &[MatrixRow] = &[
         federated: false,
         features: &["effect_action"],
         min_node_results: 1,
-        expect_markdown_substrings: &["```tsv", "i1", "operations:", "capability=`langitem_ping`"],
+        expect_markdown_substrings: &["```tsv", "i1", "/langitem_ping`"],
         expect_live_error: None,
     },
     MatrixRow {
@@ -141,12 +141,7 @@ pub(crate) const ROWS: &[MatrixRow] = &[
         federated: false,
         features: &["effect_delete"],
         min_node_results: 1,
-        expect_markdown_substrings: &[
-            "(no results)",
-            "operations:",
-            "capability=`langitem_delete`",
-            "completed=1",
-        ],
+        expect_markdown_substrings: &["(no results)", "/langitem_delete`", "1 action completed"],
         expect_live_error: None,
     },
     MatrixRow {
@@ -154,12 +149,7 @@ pub(crate) const ROWS: &[MatrixRow] = &[
         federated: false,
         features: &["for_each_effect", "effect_action", "pipe_where"],
         min_node_results: 2,
-        expect_markdown_substrings: &[
-            "(no results)",
-            "operations:",
-            "capability=`langitem_ping`",
-            "invocations=0",
-        ],
+        expect_markdown_substrings: &["(no results)", "/langitem_ping`", "No actions invoked"],
         expect_live_error: None,
     },
     MatrixRow {
@@ -238,13 +228,7 @@ pub(crate) const ROWS: &[MatrixRow] = &[
             "dry_live_parity",
         ],
         min_node_results: 2,
-        expect_markdown_substrings: &[
-            "```tsv",
-            "c1",
-            "phase",
-            "operations:",
-            "capability=`langcursor_tick`",
-        ],
+        expect_markdown_substrings: &["```tsv", "c1", "phase", "/langcursor_tick`"],
         expect_live_error: None,
     },
     // PLP-8: until already true on seed — zero steps.

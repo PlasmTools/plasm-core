@@ -95,7 +95,7 @@ do not need identical generated compute source or identical IL nodes.
     "invalid": [
       {
         "body": "return E.get(\"i1\").map(lambda row: {\"value\": [*1]}, max_parents=1)",
-        "error": "Starred"
+        "error": "not-iterable"
       }
     ]
   },

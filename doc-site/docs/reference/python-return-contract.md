@@ -8,15 +8,17 @@ them to the DAG. Returning data never grants entity or effect authority.
 |---|---|
 | `bool`, `int`, `float`, `str`, `None` | Builtin scalar/null; int is signed 64-bit, float finite |
 | `vN` | Exact session domain, constraints, catalog identity and hash |
-| `Row` | Actual input row shape, including observed presence |
+| `Row` | Actual input row shape; in a multi-input return, the inferred returned record shape, including observed presence |
 | `Value[eN]` | Declared entity data fields, without methods or traversal authority |
 | `T.field` | Field contract of a record type, e.g. `Row.price` |
 | `list[T]` | Recursive array value |
 | `T | U` | Union; `T | None` preserves T with nullability |
 
-A `Program` compute method may omit its return annotation when its body is exactly
-one return expression. Structural inference checks that expression against the typed
-input, preserving declared field domains and inferring named record fields. For example:
+A `Program` compute method may omit its return annotation. Monty infers through
+the complete body against its typed inputs, preserving field domains and named
+record fields. In a multi-input return, `Row` refers to the inferred returned
+record, not the dependency packet or whichever input was declared first. The
+authored annotation remains checked; `list[Row]` cannot return scalars. For example:
 
 ```python
 class Summary(Program):
@@ -28,8 +30,8 @@ class Summary(Program):
         return self.describe(e1.query())
 ```
 
-This does not admit unconstrained `dict` or `list[dict]` annotations. Multi-statement
-bodies still require a declared return contract. A nested `def` in `build` is a scoped
+Bare `dict` and `list[dict]` require an inferred structural field contract; they
+do not authorize untyped output. A nested `def` in `build` is a scoped
 callback, not a compute method; declare `@compute` on the class and call `self.method`.
 
 These forms compose recursively. A record can be returned as an input record or

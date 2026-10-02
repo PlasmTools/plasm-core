@@ -3,8 +3,10 @@ use super::*;
 
 #[derive(Clone)]
 pub(super) struct Callback {
+    pub locals: BTreeSet<String>,
     pub lambda: ruff_python_ast::ExprLambda,
-    pub prelude: Vec<Stmt>,
+    pub flow: Option<monty_analysis::FunctionFlow>,
+    pub returns: Option<Box<PyExpr>>,
     pub closure: Option<BTreeMap<String, String>>,
     pub identity: Option<String>,
     pub binding: Option<String>,
@@ -28,9 +30,6 @@ impl Lower<'_> {
         {
             return Err(at(def, "reserved callback binding name"));
         }
-        if self.callbacks.contains_key(label) || self.state.contains(self.scoped_binding(label)) {
-            return Err(at(def, "rebinding is not admitted"));
-        }
         if def
             .decorator_list
             .iter()
@@ -38,12 +37,11 @@ impl Lower<'_> {
         {
             return Err(at(def, "@compute must be a Program class method with self and a typed input; call it as self.method(rows). A nested def is a scoped callback"));
         }
-        if def.is_async
-            || def.type_params.is_some()
-            || !def.decorator_list.is_empty()
-            || def.returns.is_some()
-        {
-            return Err(at(def, "scoped callbacks require an undecorated synchronous function with inferred return type"));
+        if def.is_async || def.type_params.is_some() || !def.decorator_list.is_empty() {
+            return Err(at(
+                def,
+                "DAG callbacks require a synchronous undecorated callable",
+            ));
         }
         let parsed =
             ruff_python_parser::parse_expression("lambda row: None").map_err(|e| e.to_string())?;
@@ -52,19 +50,50 @@ impl Lower<'_> {
         };
         lambda.parameters = Some(def.parameters.clone());
         super::projection::projection_parameter(&lambda)?;
-        let (prefix, result) = match def.body.split_last() {
-            Some((Stmt::Return(ret), prefix)) => (prefix.to_vec(), ret.value.clone()),
-            _ => (def.body.to_vec(), None),
-        };
-        if let Some(result) = result {
-            lambda.body = result;
+        let flow = monty_analysis::function_flow(
+            self.program_source,
+            monty_analysis::Span {
+                start: def.start().to_u32(),
+                end: def.end().to_u32(),
+            },
+        )?;
+        let mut closure = self.frame.names.clone();
+        for parameter in def
+            .parameters
+            .posonlyargs
+            .iter()
+            .chain(&def.parameters.args)
+            .chain(&def.parameters.kwonlyargs)
+        {
+            if let Some(default) = &parameter.default {
+                let binding = self.expr(default, None)?;
+                closure.insert(parameter.parameter.name.to_string(), binding);
+            }
         }
         self.callbacks.insert(
             label.to_string(),
             Callback {
+                locals: monty_analysis::function_locals(
+                    self.program_source,
+                    monty_analysis::Span {
+                        start: def.start().to_u32(),
+                        end: def.end().to_u32(),
+                    },
+                )?
+                .into_iter()
+                .filter(|name| {
+                    !def.parameters
+                        .posonlyargs
+                        .iter()
+                        .chain(&def.parameters.args)
+                        .chain(&def.parameters.kwonlyargs)
+                        .any(|p| p.parameter.name.as_str() == name)
+                })
+                .collect(),
                 lambda,
-                prelude: prefix,
-                closure: Some(self.scope_names.clone()),
+                flow: Some(flow),
+                returns: def.returns.clone(),
+                closure: Some(closure),
                 identity: Some(format!("{}:{}", label, def.start().to_u32())),
                 binding: Some(label.to_owned()),
                 lexical_callbacks: Some(std::sync::Arc::new(self.callbacks.clone())),
@@ -78,11 +107,33 @@ impl Lower<'_> {
         call: &ruff_python_ast::ExprCall,
         id: &str,
     ) -> Result<String, String> {
-        if call.arguments.args.len() != 1 || !call.arguments.keywords.is_empty() {
-            return Err(at(site, "callback invocation requires one row"));
-        }
         let callback = self.callback(&call.func)?;
-        let source = self.expr(&call.arguments.args[0], None)?;
+        let mut arguments = call
+            .arguments
+            .args
+            .iter()
+            .map(|expr| (None, expr))
+            .collect::<Vec<_>>();
+        for keyword in &call.arguments.keywords {
+            let name = keyword
+                .arg
+                .as_ref()
+                .ok_or("expanded callback arguments require a materialized mapping")?;
+            arguments.push((Some(name.to_string()), &keyword.value));
+        }
+        let shape = arguments
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect::<Vec<_>>();
+        let binding = monty_analysis::bind_arguments(
+            &projection::callable_signature(&callback.lambda)?,
+            &shape,
+        )?;
+        let row = projection::projection_parameter(&callback.lambda)?;
+        if binding.len() != 1 || binding[0].variadic || binding[0].parameter != row {
+            return Err(at(site, "callback value nodes have one row port; capture other dependencies in the callback closure"));
+        }
+        let source = self.expr(arguments[0].1, None)?;
         let contract = super::super::binding_contract(&self.state, &source)
             .ok_or("callback input contract missing")?;
         if !contract.row_cardinality.permits_scalar_field_extract() {
@@ -119,29 +170,48 @@ impl Lower<'_> {
                 schema,
             },
         })?;
-        let mut value = *ruff_python_parser::parse_expression("result.value")
-            .map_err(|e| e.to_string())?
-            .into_syntax()
-            .body;
-        let PyExpr::Attribute(attr) = &mut value else {
-            unreachable!()
-        };
-        let PyExpr::Name(name) = attr.value.as_mut() else {
-            unreachable!()
-        };
-        name.id = scope.into();
-        self.record_value(&value, id)
+        self.emit_value(
+            PlasmDataValue::NodeSymbol {
+                node: scope.clone(),
+                alias: scope.clone(),
+                path: vec!["value".into()],
+            },
+            vec![crate::plasm_plan::PlanDataInput {
+                node: scope.clone(),
+                alias: scope,
+                cardinality: crate::plasm_plan::InputCardinality::Singleton,
+            }],
+            id,
+        )
     }
-    pub(super) fn callback(&self, expression: &PyExpr) -> Result<Callback, String> {
+    pub(super) fn callback(&mut self, expression: &PyExpr) -> Result<Callback, String> {
         match expression {
-            PyExpr::Lambda(lambda) => Ok(Callback {
-                lambda: lambda.clone(),
-                prelude: vec![],
-                closure: None,
-                identity: None,
-                binding: None,
-                lexical_callbacks: None,
-            }),
+            PyExpr::Lambda(lambda) => {
+                let mut closure = self.frame.names.clone();
+                if let Some(parameters) = &lambda.parameters {
+                    for parameter in parameters
+                        .posonlyargs
+                        .iter()
+                        .chain(&parameters.args)
+                        .chain(&parameters.kwonlyargs)
+                    {
+                        if let Some(default) = &parameter.default {
+                            let binding = self.expr(default, None)?;
+                            closure.insert(parameter.parameter.name.to_string(), binding);
+                        }
+                    }
+                }
+                Ok(Callback {
+                    locals: BTreeSet::new(),
+                    lambda: lambda.clone(),
+                    flow: None,
+                    returns: None,
+                    closure: Some(closure),
+                    identity: None,
+                    binding: None,
+                    lexical_callbacks: None,
+                })
+            }
             PyExpr::Name(name) => self
                 .callbacks
                 .get(name.id.as_str())
@@ -156,18 +226,14 @@ impl Lower<'_> {
 }
 
 impl Callback {
-    pub fn statements(&self) -> Vec<Stmt> {
-        let mut statements = self.prelude.clone();
-        statements.push(Stmt::Return(ruff_python_ast::StmtReturn {
-            node_index: Default::default(),
-            range: self.lambda.body.range(),
-            value: Some(self.lambda.body.clone()),
-        }));
-        statements
+    pub fn flow(&self) -> monty_analysis::FunctionFlow {
+        self.flow
+            .clone()
+            .unwrap_or_else(|| monty_analysis::FunctionFlow::expression(*self.lambda.body.clone()))
     }
     pub fn branch(
         parameter: &str,
-        statements: Vec<Stmt>,
+        flow: monty_analysis::FunctionFlow,
         closure: BTreeMap<String, String>,
     ) -> Result<Self, String> {
         let parsed = ruff_python_parser::parse_expression(&format!("lambda {parameter}: None"))
@@ -176,35 +242,14 @@ impl Callback {
             unreachable!()
         };
         Ok(Self {
+            locals: BTreeSet::new(),
             lambda,
-            prelude: statements,
+            flow: Some(flow),
+            returns: None,
             closure: Some(closure),
             identity: None,
             binding: None,
             lexical_callbacks: None,
         })
-    }
-    pub fn returns_only_none(&self) -> bool {
-        fn paths(statements: &[Stmt]) -> bool {
-            for stmt in statements {
-                match stmt {
-                    Stmt::Return(ret) => {
-                        return ret
-                            .value
-                            .as_deref()
-                            .is_none_or(|v| matches!(v, PyExpr::NoneLiteral(_)))
-                    }
-                    Stmt::If(branch)
-                        if !paths(&branch.body)
-                            || branch.elif_else_clauses.iter().any(|c| !paths(&c.body)) =>
-                    {
-                        return false;
-                    }
-                    _ => {}
-                }
-            }
-            true
-        }
-        paths(&self.statements())
     }
 }

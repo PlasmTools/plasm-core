@@ -11,6 +11,17 @@ async fn callbacks_admit_lexical_bindings_at_rowset_consumers() {
     };
     let (es, _) = parity_context(&case, "http://127.0.0.1:1");
     for body in [
+        "class P(Program):\n    def build(self):\n        def choose(row) -> str:\n            return 'fixed'\n        return E.query().select(label=choose)",
+
+        "def choose(row) -> dict[str, str]:\n    return {'id': row.id}\nreturn E.query().map(choose, max_parents=8)",
+        "return E.query().select(label=lambda row, prefix='tag:': prefix + row.title)",
+
+        "def choose(row, /, *, prefix='label:') -> str:\n    return prefix + row.title\nreturn E.query().select(label=choose)",
+        "def choose(row, optional=1) -> str:\n    return row.title\nreturn E.query().where(choose)",
+        "def choose(row):\n    if True:\n        return {'id': row.id}\n    return {'wrong': row.absent}\nreturn E.query().map(choose, max_parents=8)",
+        "def act(row) -> None:\n    row.PING()\nreturn E.query().flat_map(act)",
+        "def act(row):\n    if row.active:\n        row.PING()\nreturn E.query().flat_map(act)",
+        "def act(row):\n    value = 1\n    value = 2\n    return {'value': value}\nreturn E.query().map(act, max_parents=8)",
         "def select_row(row):\n    value = row.score\n    return value is not None and value > 10\nreturn E.query().where(select_row)",
         "prefix = 'label:'\ndef render_row(row):\n    title = prefix + row.title\n    return {'title': title}\nreturn E.query().map(render_row, max_parents=8)",
         "def project(row):\n    record = {'id': row.id}\n    return record\nreturn E.query().map(project, max_parents=8)",
@@ -112,6 +123,9 @@ async fn callbacks_live_conditional_effects() {
     let base = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     for (body, expected, fails) in [
+        ("flag = False\ndef act(row, *, enabled: bool = flag):\n    if enabled:\n        row.PING()\nflag = True\nreturn E.query().flat_map(act)", vec![], false),
+        ("def act(row) -> None:\n    if row.active:\n        row.PING()\nreturn E.query().flat_map(act)", vec!["yes"], false),
+        ("def act(row):\n    if False:\n        row.PING()\n    row.PING()\nreturn E.query().flat_map(act)", vec!["yes", "no"], false),
         ("def act(row):\n    member = E.get(row.id)\n    if member.active:\n        return member.PING()\n    return None\nreturn E.query().flat_map(act)", vec!["yes"], false),
         ("def act(row):\n    if row.active:\n        return row.PING()\n    else:\n        return row.PING()\nreturn E.query().flat_map(act)", vec!["yes", "no"], false),
         ("def act(row):\n    if row.active:\n        return None\n    row.PING()\n    return None\nreturn E.query().flat_map(act)", vec!["no"], false),
@@ -187,11 +201,18 @@ async fn callbacks_reject_unbounded_or_unbound_forms() {
     };
     let (es, _) = parity_context(&case, "http://127.0.0.1:1");
     for body in [
+        "def act(row, self=1):\n    return row.title\nreturn E.query().where(act)",
+
+        "def act(row, *, n: int = 'bad'):\n    return row.title\nreturn E.query().where(act)",
+
+        "def act(row, required):\n    return row.title\nreturn E.query().where(act)",
+        "def act(row, *, required):\n    return row.title\nreturn E.query().where(act)",
+        "def act(row) -> int:\n    return row.title\nreturn E.query().where(act)",
+
         "def act(row):\n    row.PING()\n    return True\nreturn E.query().where(act)",
         "def act(row):\n    row.PING()\n    return row.id\nreturn E.query().select(id=act)",
         "def act(row):\n    return E.query().flat_map(act)\nreturn E.query().flat_map(act)",
         "value = 1\ndef act(row):\n    answer = value\n    value = 2\n    return {'answer': answer}\nreturn E.query().map(act, max_parents=8)",
-        "def act(row):\n    value = 1\n    value = 2\n    return {'value': value}\nreturn E.query().map(act, max_parents=8)",
         "def act(row):\n    if row.active:\n        value = 1\n    return {'value': value}\nreturn E.query().map(act, max_parents=8)",
     ] {
         assert!(compile_fixture(&es, body).await.is_err(), "unexpected admission: {body}");

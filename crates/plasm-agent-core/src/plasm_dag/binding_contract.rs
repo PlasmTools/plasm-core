@@ -1,7 +1,7 @@
 //! Γ binding contracts derived from DAG nodes.
 
 use super::prelude::*;
-use super::types::{BindingContractSource, CompileState, DagNode, DagNodeSource};
+use super::types::{CompileState, DagNode, DagNodeSource};
 use crate::program_binding::ContinuationCapability;
 
 pub(in crate::plasm_dag) fn binding_contract(
@@ -17,9 +17,8 @@ pub(in crate::plasm_dag) fn binding_contract_for_node(
     label: &str,
     node: &DagNode,
 ) -> ProgramBindingContract {
-    let mut contract = node
-        .source
-        .program_binding_contract(state, label, &node.expr);
+    let mut contract =
+        program_binding_contract_for_source(state, label, &node.expr, &node.source, node.singleton);
     if node.singleton {
         contract.row_cardinality = match contract.row_cardinality {
             RowCardinalityProof::StaticPlural | RowCardinalityProof::RuntimeChecked => {
@@ -34,22 +33,12 @@ pub(in crate::plasm_dag) fn binding_contract_for_node(
     contract
 }
 
-impl BindingContractSource for DagNodeSource {
-    fn program_binding_contract(
-        &self,
-        state: &CompileState<'_>,
-        label: &str,
-        node_expr: &str,
-    ) -> ProgramBindingContract {
-        program_binding_contract_for_source(state, label, node_expr, self)
-    }
-}
-
 pub(in crate::plasm_dag) fn program_binding_contract_for_source(
     state: &CompileState<'_>,
     label: &str,
     node_expr: &str,
     source: &DagNodeSource,
+    explicit_singleton: bool,
 ) -> ProgramBindingContract {
     let value_kind = binding_value_kind(source);
     match source {
@@ -157,7 +146,7 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
         }
         DagNodeSource::Compute {
             source,
-            op: ComputeOp::Project { .. },
+            op: op @ ComputeOp::Project { .. },
             schema,
             ..
         } => {
@@ -171,61 +160,55 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
                 }
                 _ => ContinuationAnchor::BindingLabel,
             };
-            inherit_row_preserving_contract(
+            let mut contract = inherit_row_preserving_contract(
                 label,
                 value_kind,
                 &parent,
-                parent.row_cardinality,
+                crate::plasm_plan::compute_cardinality_transfer(op, || parent.row_cardinality),
                 anchor,
-            )
+            );
+            contract.result_shape = crate::plasm_plan::compute_result_shape(op, explicit_singleton);
+            contract
         }
         DagNodeSource::Compute {
             source,
-            op: ComputeOp::Limit { count },
+            op: op @ ComputeOp::Limit { .. },
             schema,
             ..
         } => {
             let parent = binding_contract(state, source)
                 .unwrap_or_else(|| synthetic_row_contract(source, schema));
-            let from_plural = matches!(
-                parent.row_cardinality,
-                RowCardinalityProof::StaticPlural | RowCardinalityProof::RuntimeChecked
-            ) || *count > 1;
-            let row_cardinality = if *count <= 1 {
-                RowCardinalityProof::BoundedSingleton {
-                    kind: BoundedSingletonKind::LimitOne,
-                    from_plural_source: from_plural,
-                }
-            } else {
-                RowCardinalityProof::StaticPlural
-            };
-            inherit_row_preserving_contract(
+            let mut contract = inherit_row_preserving_contract(
                 label,
                 value_kind,
                 &parent,
-                row_cardinality,
+                crate::plasm_plan::compute_cardinality_transfer(op, || parent.row_cardinality),
                 ContinuationAnchor::BindingLabel,
-            )
+            );
+            contract.result_shape = crate::plasm_plan::compute_result_shape(op, explicit_singleton);
+            contract
         }
         DagNodeSource::Compute {
             source,
             op:
-                ComputeOp::Filter { .. }
+                op @ (ComputeOp::Filter { .. }
                 | ComputeOp::Sort { .. }
                 | ComputeOp::DedupeBy { .. }
-                | ComputeOp::With { .. },
+                | ComputeOp::With { .. }),
             schema,
             ..
         } => {
             let parent = binding_contract(state, source)
                 .unwrap_or_else(|| synthetic_row_contract(source, schema));
-            inherit_row_preserving_contract(
+            let mut contract = inherit_row_preserving_contract(
                 label,
                 value_kind,
                 &parent,
-                parent.row_cardinality,
+                crate::plasm_plan::compute_cardinality_transfer(op, || parent.row_cardinality),
                 ContinuationAnchor::BindingLabel,
-            )
+            );
+            contract.result_shape = crate::plasm_plan::compute_result_shape(op, explicit_singleton);
+            contract
         }
         DagNodeSource::Compute {
             source,
@@ -254,35 +237,42 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
                     label,
                     value_kind,
                     left_contract,
-                    RowCardinalityProof::StaticPlural,
+                    crate::plasm_plan::compute_cardinality_transfer(op, || {
+                        left_contract.row_cardinality
+                    }),
                     ContinuationAnchor::BindingLabel,
                 );
-                contract.result_shape = crate::plasm_plan::ResultShape::List;
+                contract.result_shape =
+                    crate::plasm_plan::compute_result_shape(op, explicit_singleton);
                 contract
             } else {
-                synthetic_terminal_contract(label, schema)
+                let mut contract = synthetic_terminal_contract(label, schema);
+                contract.row_cardinality =
+                    crate::plasm_plan::compute_cardinality_transfer(op, || {
+                        RowCardinalityProof::RuntimeChecked
+                    });
+                contract.result_shape =
+                    crate::plasm_plan::compute_result_shape(op, explicit_singleton);
+                contract
             }
         }
         DagNodeSource::Compute {
             source,
-            op: ComputeOp::Render { .. },
+            op: op @ ComputeOp::Render { .. },
             ..
         } => {
-            let parent_card = binding_contract(state, source)
-                .map(|p| p.row_cardinality)
-                .unwrap_or(RowCardinalityProof::RuntimeChecked);
-            let result_shape = if parent_card.permits_scalar_field_extract() {
-                crate::plasm_plan::ResultShape::Single
-            } else {
-                crate::plasm_plan::ResultShape::List
-            };
+            let parent_card = crate::plasm_plan::compute_cardinality_transfer(op, || {
+                binding_contract(state, source)
+                    .map(|p| p.row_cardinality)
+                    .unwrap_or(RowCardinalityProof::RuntimeChecked)
+            });
             ProgramBindingContract {
                 label: label.to_string(),
                 row_entity: QualifiedEntityKey {
                     entry_id: String::new(),
                     entity: String::new(),
                 },
-                result_shape,
+                result_shape: crate::plasm_plan::compute_result_shape(op, explicit_singleton),
                 row_cardinality: parent_card,
                 value_kind,
                 continuation: ContinuationCapability::Terminal,
@@ -290,22 +280,20 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
             }
         }
         DagNodeSource::Compute {
-            op: ComputeOp::MergeBranches { .. },
+            op: op @ ComputeOp::MergeBranches { .. },
             schema,
             ..
         } => {
             let mut contract = synthetic_terminal_contract(label, schema);
-            contract.row_cardinality = RowCardinalityProof::StaticSingleton;
+            contract.row_cardinality = crate::plasm_plan::compute_cardinality_transfer(op, || {
+                RowCardinalityProof::RuntimeChecked
+            });
+            contract.result_shape = crate::plasm_plan::compute_result_shape(op, explicit_singleton);
             contract
         }
         DagNodeSource::Compute {
             source,
-            op:
-                ComputeOp::Python {
-                    output_type,
-                    per_row,
-                    ..
-                },
+            op: op @ ComputeOp::Python { output_type, .. },
             schema,
             ..
         } => {
@@ -313,21 +301,26 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
             if !output_type.is_non_null_record() {
                 contract.value_kind = BindingValueKind::ScalarCell;
             }
-            contract.row_cardinality = if *per_row {
+            contract.row_cardinality = crate::plasm_plan::compute_cardinality_transfer(op, || {
                 binding_contract(state, source)
                     .map(|p| p.row_cardinality)
                     .unwrap_or(RowCardinalityProof::RuntimeChecked)
-            } else {
-                RowCardinalityProof::StaticSingleton
-            };
-            contract.result_shape = if contract.row_cardinality.permits_scalar_field_extract() {
-                crate::plasm_plan::ResultShape::Single
-            } else {
-                crate::plasm_plan::ResultShape::List
-            };
+            });
+            contract.result_shape = crate::plasm_plan::compute_result_shape(op, explicit_singleton);
             contract
         }
-        DagNodeSource::Compute { schema, .. } => synthetic_terminal_contract(label, schema),
+        DagNodeSource::Compute {
+            source, op, schema, ..
+        } => {
+            let mut contract = synthetic_terminal_contract(label, schema);
+            contract.row_cardinality = crate::plasm_plan::compute_cardinality_transfer(op, || {
+                binding_contract(state, source)
+                    .map(|parent| parent.row_cardinality)
+                    .unwrap_or(RowCardinalityProof::RuntimeChecked)
+            });
+            contract.result_shape = crate::plasm_plan::compute_result_shape(op, explicit_singleton);
+            contract
+        }
         DagNodeSource::Data(value) => {
             let shape = data_literal_shape(value);
             ProgramBindingContract {
@@ -525,8 +518,40 @@ pub(in crate::plasm_dag) fn synthetic_terminal_contract(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plasm_dag::types::DagNodeSource;
+    use crate::plasm_dag::types::{DagNode, DagNodeSource};
     use crate::plasm_plan::{ComputeOp, SyntheticResultSchema};
+
+    #[test]
+    fn compute_binding_shape_matches_emitted_plan_shape() {
+        let pipeline = PromptPipelineConfig::default();
+        let state = CompileState::new(&pipeline, None);
+        for singleton in [false, true] {
+            let node = DagNode {
+                id: "render".into(),
+                expr: "render".into(),
+                source: DagNodeSource::Compute {
+                    source: "rows".into(),
+                    op: ComputeOp::Render {
+                        columns: vec![],
+                        template: String::new(),
+                        column_aliases: Default::default(),
+                        render_bindings: vec![],
+                    },
+                    schema: SyntheticResultSchema {
+                        optional_fields: Default::default(),
+                        entity: None,
+                        fields: vec![],
+                    },
+                    collection_alias: None,
+                },
+                singleton,
+                page_size: None,
+            };
+            let binding = binding_contract_for_node(&state, "render", &node);
+            let emitted = super::super::plan_serialize::lower_plan_node(&node).expect("emit");
+            assert_eq!(binding.result_shape, emitted.result_shape);
+        }
+    }
 
     #[test]
     fn row_preserving_contract_never_creates_continuation_evidence() {
@@ -698,7 +723,7 @@ mod tests {
             uses_result: Vec::new(),
         };
         let create_c =
-            program_binding_contract_for_source(&state, "created", "e1.m1()", &create_src);
+            program_binding_contract_for_source(&state, "created", "e1.m1()", &create_src, false);
         assert!(matches!(
             create_c.row_cardinality,
             RowCardinalityProof::StaticSingleton
@@ -723,7 +748,7 @@ mod tests {
             result_shape: crate::plasm_plan::ResultShape::SideEffectAck,
             uses_result: Vec::new(),
         };
-        let ack_c = program_binding_contract_for_source(&state, "done", "e1.m2()", &ack_src);
+        let ack_c = program_binding_contract_for_source(&state, "done", "e1.m2()", &ack_src, false);
         assert!(matches!(
             ack_c.row_cardinality,
             RowCardinalityProof::RuntimeChecked

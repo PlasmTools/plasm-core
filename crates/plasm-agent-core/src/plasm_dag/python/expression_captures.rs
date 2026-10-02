@@ -85,7 +85,7 @@ impl Lower<'_> {
         }
     }
 
-    pub(super) fn deferred_expression(&self, expression: &PyExpr) -> bool {
+    pub(super) fn immediate_host_dependency(&self, expression: &PyExpr) -> bool {
         match expression {
             PyExpr::Call(call) => {
                 if name(&call.func).is_some_and(|n| self.callbacks.contains_key(n)) {
@@ -108,7 +108,7 @@ impl Lower<'_> {
                     .is_ok()
                     || (super::row_operations::RowOperation::parse(attr.attr.as_str()).is_some()
                         && (self.expression_owner(&attr.value).is_some()
-                            || self.deferred_expression(&attr.value)
+                            || self.immediate_host_dependency(&attr.value)
                             || name(&attr.value)
                                 .is_some_and(|n| self.state.contains(self.scoped_binding(n)))))
             }
@@ -123,14 +123,22 @@ impl Lower<'_> {
         inputs: &mut BTreeMap<String, PlanDataInput>,
     ) -> Result<CapturedExpression, String> {
         let before = self.state.nodes.len();
-        let mut expression = expression.clone();
+        let source = format!("({})", monty::expression_source(expression));
+        let external = monty_analysis::external_names(&source)?
+            .into_iter()
+            .map(|(span, _)| (span.start, span.end))
+            .collect();
+        let mut expression = *ruff_python_parser::parse_expression(&source)
+            .map_err(|e| e.to_string())?
+            .into_syntax()
+            .body;
         let capture = Capture {
             state: RefCell::new(State {
                 lower: self,
                 inputs,
                 fields: BTreeMap::new(),
                 references: BTreeMap::new(),
-                locals: Vec::new(),
+                external,
                 error: None,
             }),
         };
@@ -161,20 +169,20 @@ struct State<'a, 'b> {
     inputs: &'a mut BTreeMap<String, PlanDataInput>,
     fields: BTreeMap<String, PlasmDataValue>,
     references: BTreeMap<super::refinements::Reference, String>,
-    locals: Vec<String>,
+    external: BTreeSet<(u32, u32)>,
     error: Option<String>,
 }
 struct Capture<'a, 'b> {
     state: RefCell<State<'a, 'b>>,
 }
 
-fn bind(target: &PyExpr, names: &mut Vec<String>) {
-    match target {
-        PyExpr::Name(name) => names.push(name.id.to_string()),
-        PyExpr::Tuple(tuple) => tuple.elts.iter().for_each(|e| bind(e, names)),
-        PyExpr::List(list) => list.elts.iter().for_each(|e| bind(e, names)),
-        PyExpr::Starred(star) => bind(&star.value, names),
-        _ => {}
+fn root_name(expr: &PyExpr) -> Option<&ruff_python_ast::ExprName> {
+    match expr {
+        PyExpr::Name(name) => Some(name),
+        PyExpr::Attribute(attr) => root_name(&attr.value),
+        PyExpr::Call(call) => root_name(&call.func),
+        PyExpr::Subscript(subscript) => root_name(&subscript.value),
+        _ => None,
     }
 }
 impl Capture<'_, '_> {
@@ -198,8 +206,10 @@ impl Capture<'_, '_> {
         {
             return Ok(());
         }
-        for parameter in state.lower.scope_names.keys() {
-            super::membership::validate_closed_rhs(&original, parameter)?;
+        for (parameter, binding) in &state.lower.frame.names {
+            if state.lower.frame.row.as_deref() == Some(binding.as_str()) {
+                super::membership::validate_closed_rhs(&original, parameter)?;
+            }
         }
         let path =
             super::super::row_suffix::membership_rhs_column_path(&state.lower.state, &[], node)?;
@@ -216,37 +226,19 @@ impl Capture<'_, '_> {
             .body;
         Ok(())
     }
-    fn comprehensions(
-        &self,
-        clauses: &mut [ruff_python_ast::Comprehension],
-        result: &mut PyExpr,
-        key: Option<&mut PyExpr>,
-    ) {
-        let depth = self.state.borrow().locals.len();
-        for clause in clauses {
-            self.visit_expr(&mut clause.iter);
-            bind(&clause.target, &mut self.state.borrow_mut().locals);
-            for filter in &mut clause.ifs {
-                self.visit_expr(filter);
-            }
-        }
-        if let Some(key) = key {
-            self.visit_expr(key);
-        }
-        self.visit_expr(result);
-        self.state.borrow_mut().locals.truncate(depth);
-    }
     fn capture(&self, expr: &mut PyExpr) -> Result<bool, String> {
         let mut state = self.state.borrow_mut();
-        let local = super::quantifiers::expression_root(expr)
-            .is_some_and(|n| state.locals.iter().any(|local| local == n));
-        if local {
+        if root_name(expr).is_some_and(|name| {
+            !state
+                .external
+                .contains(&(name.start().to_u32(), name.end().to_u32()))
+        }) {
             return Ok(false);
         }
+        let placement = state.lower.expression_placement(expr);
         let field = matches!(expr, PyExpr::Attribute(attr) if state.lower.expression_owner(&attr.value).is_some())
-            && !state.lower.deferred_expression(expr);
-        let deferred =
-            state.lower.deferred_expression(expr) || state.lower.lazy_deferred_expression(expr);
+            && placement != ExpressionPlacement::Host;
+        let deferred = placement != ExpressionPlacement::PythonValue;
         let bound = matches!(expr, PyExpr::Name(name) if name.ctx == ruff_python_ast::ExprContext::Load && state.lower.state.contains(state.lower.scoped_binding(name.id.as_str())));
         if !field && !deferred && !bound {
             return Ok(false);
@@ -340,59 +332,6 @@ impl Transformer for Capture<'_, '_> {
                         }
                     }
                 }
-            }
-            PyExpr::Generator(value) => {
-                self.comprehensions(&mut value.generators, &mut value.elt, None);
-                return;
-            }
-            PyExpr::ListComp(value) => {
-                self.comprehensions(&mut value.generators, &mut value.elt, None);
-                return;
-            }
-            PyExpr::SetComp(value) => {
-                self.comprehensions(&mut value.generators, &mut value.elt, None);
-                return;
-            }
-            PyExpr::DictComp(value) => {
-                self.comprehensions(
-                    &mut value.generators,
-                    &mut value.value,
-                    value.key.as_deref_mut(),
-                );
-                return;
-            }
-            PyExpr::Lambda(value) => {
-                let depth = self.state.borrow().locals.len();
-                if let Some(parameters) = &mut value.parameters {
-                    for parameter in parameters
-                        .posonlyargs
-                        .iter_mut()
-                        .chain(parameters.args.iter_mut())
-                        .chain(parameters.kwonlyargs.iter_mut())
-                    {
-                        if let Some(default) = &mut parameter.default {
-                            self.visit_expr(default);
-                        }
-                    }
-                    let mut state = self.state.borrow_mut();
-                    state.locals.extend(
-                        parameters
-                            .posonlyargs
-                            .iter()
-                            .chain(parameters.args.iter())
-                            .chain(parameters.kwonlyargs.iter())
-                            .map(|p| p.parameter.name.to_string()),
-                    );
-                    if let Some(p) = &parameters.vararg {
-                        state.locals.push(p.name.to_string());
-                    }
-                    if let Some(p) = &parameters.kwarg {
-                        state.locals.push(p.name.to_string());
-                    }
-                }
-                self.visit_expr(&mut value.body);
-                self.state.borrow_mut().locals.truncate(depth);
-                return;
             }
             _ => {}
         }

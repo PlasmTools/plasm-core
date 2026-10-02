@@ -1,3 +1,4 @@
+import { AgentExecutionFailure, executionFailureSchema } from "./execution-failure.js";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -265,7 +266,12 @@ export class PlasmAgent {
         intent: prompt,
         session_mode: "new",
       }, { toolCallId: "host-initial-context", messages, context: {} })).then((result) => {
-        if (typeof result !== "string") throw new Error("Initial context must return discovery text");
+        if (typeof result !== "string") {
+          if (result && typeof result === "object" && "status" in result && result.status === "execution_failed" && "failure" in result) {
+            throw new AgentExecutionFailure(executionFailureSchema.parse(result.failure));
+          }
+          throw new Error("Initial context must return discovery text or a structured execution failure");
+        }
         return result;
       }).catch((error: unknown) => {
         this.initialContext = undefined;

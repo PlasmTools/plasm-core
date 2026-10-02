@@ -24,7 +24,16 @@ impl<'a> LiteralOperand<'a> {
             }
             PyExpr::BooleanLiteral(b) => Self::Boolean(b.value),
             PyExpr::NoneLiteral(_) => Self::Null(()),
-            PyExpr::List(list) => Self::Array(list),
+            // Expansion is Python expression semantics, not a literal-array port.
+            // Keep the whole expression intact for upstream checking/evaluation.
+            PyExpr::List(list)
+                if !list
+                    .elts
+                    .iter()
+                    .any(|item| matches!(item, PyExpr::Starred(_))) =>
+            {
+                Self::Array(list)
+            }
             PyExpr::Dict(dict) => Self::Record(dict),
             _ => return None,
         })

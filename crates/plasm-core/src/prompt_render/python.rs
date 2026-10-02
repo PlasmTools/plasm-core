@@ -2,7 +2,7 @@
 //!
 //! Delivery is explicit: prepare a wave, send it, then retain its returned state.
 //! Retrying against the same previous state produces exactly the same wave.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::symbol_tuning::{SymbolMap, TeachingExposureSession};
 use crate::value_contract::ValueContract;
@@ -10,12 +10,20 @@ use crate::{CapabilityKind, FieldType, InputFieldWire, OutputType, ValueDomainKe
 
 pub const LANGUAGE: &str = include_str!("assets/python-plasm-dag.txt");
 
+/// Catalog identity of a delivered member, independent of presentation layout.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+enum DeliveredMember {
+    Relation(String),
+    Capability(String),
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PythonTeachingState {
     language: String,
     #[serde(with = "domain_symbol_wire")]
     domain_symbols: BTreeMap<(String, String), String>,
     declarations: BTreeMap<String, String>,
+    delivered_members: BTreeMap<String, BTreeSet<DeliveredMember>>,
     catalog_hashes: BTreeMap<String, String>,
     revision: u64,
     entity_bindings: BTreeMap<String, (String, String)>,
@@ -27,7 +35,7 @@ pub struct PythonTeachingWave {
     pub revision: u64,
     /// Present only on first delivery. A changed language requires a new session.
     pub language: Option<&'static str>,
-    /// Complete definitions of new or changed entities; unchanged definitions absent.
+    /// New definitions and additive member declarations; delivered members are absent.
     pub declarations: String,
     /// Every selected capability is either declared or has an explicit reason.
     pub capabilities: Vec<PythonCapabilityCoverage>,
@@ -121,10 +129,12 @@ pub fn prepare_python_teaching_wave(
         exposure,
         symbols: &symbols,
         definitions: BTreeMap::new(),
+        delivered_members: BTreeMap::new(),
         coverage: Vec::new(),
         domain_symbols: previous.domain_symbols.clone(),
         value_contracts: BTreeMap::new(),
     };
+    let mut entity_deltas = BTreeMap::new();
     let mut hashes = BTreeMap::new();
     let mut entity_bindings = BTreeMap::new();
     for row in symbols.exposed_entity_symbol_rows() {
@@ -152,7 +162,26 @@ pub fn prepare_python_teaching_wave(
             ));
         }
         hashes.insert(row.entry_id.clone(), hash);
-        renderer.entity(cgs, &row.entry_id, &row.entity, &row.symbol)?;
+        let complete = renderer.entity(cgs, &row.entry_id, &row.entity, &row.symbol, None)?;
+        if let Some(delivered) = previous.delivered_members.get(&row.symbol) {
+            let current = &renderer.delivered_members[&row.symbol];
+            if !delivered.is_subset(current) {
+                return Err(format!("teaching removed members of {}", row.symbol));
+            }
+            if current != delivered {
+                entity_deltas.insert(
+                    row.symbol.clone(),
+                    renderer.entity(
+                        cgs,
+                        &row.entry_id,
+                        &row.entity,
+                        &row.symbol,
+                        Some(delivered),
+                    )?,
+                );
+            }
+        }
+        renderer.definitions.insert(row.symbol.clone(), complete);
     }
     for (symbol, old) in &previous.declarations {
         let new = renderer
@@ -169,9 +198,16 @@ pub fn prepare_python_teaching_wave(
         for (symbol, body) in &renderer.definitions {
             if symbol.starts_with(prefix) && previous.declarations.get(symbol) != Some(body) {
                 if previous.declarations.contains_key(symbol) {
-                    declarations.push_str(&format!("# Replace the complete {symbol} declaration; existing symbols retain meaning.\n"));
+                    if let Some(delta) = entity_deltas.get(symbol) {
+                        declarations.push_str(delta);
+                    } else {
+                        return Err(format!(
+                            "declaration {symbol} changed without added members"
+                        ));
+                    }
+                } else {
+                    declarations.push_str(body);
                 }
-                declarations.push_str(body);
             }
         }
     }
@@ -187,6 +223,7 @@ pub fn prepare_python_teaching_wave(
             language: LANGUAGE.into(),
             domain_symbols: renderer.domain_symbols,
             declarations: renderer.definitions,
+            delivered_members: renderer.delivered_members,
             catalog_hashes: hashes,
             revision,
             entity_bindings,
@@ -199,6 +236,7 @@ struct Renderer<'a> {
     exposure: &'a TeachingExposureSession,
     symbols: &'a SymbolMap,
     definitions: BTreeMap<String, String>,
+    delivered_members: BTreeMap<String, BTreeSet<DeliveredMember>>,
     coverage: Vec<PythonCapabilityCoverage>,
     value_contracts: BTreeMap<String, ValueContract>,
     domain_symbols: BTreeMap<(String, String), String>,
@@ -288,17 +326,31 @@ impl Renderer<'_> {
         Ok(symbol)
     }
 
-    fn entity(&mut self, cgs: &CGS, entry: &str, name: &str, symbol: &str) -> Result<(), String> {
+    fn entity(
+        &mut self,
+        cgs: &CGS,
+        entry: &str,
+        name: &str,
+        symbol: &str,
+        delivered: Option<&BTreeSet<DeliveredMember>>,
+    ) -> Result<String, String> {
         let entity = cgs.get_entity(name).ok_or("missing entity")?;
         let mut body = String::new();
-        comment(
-            &mut body,
-            "",
-            &format!("{entry}::{name} — {}", entity.description),
-        );
+        if delivered.is_some() {
+            body.push_str(&format!(
+                "# Add members to {symbol}; prior declarations remain valid.\n"
+            ));
+        } else {
+            comment(
+                &mut body,
+                "",
+                &format!("{entry}::{name} — {}", entity.description),
+            );
+        }
+        self.delivered_members.entry(symbol.into()).or_default();
         body.push_str(&format!("{symbol}:\n"));
         let mut previous_plain_field = false;
-        for (name, field) in &entity.fields {
+        for (name, field) in entity.fields.iter().filter(|_| delivered.is_none()) {
             identifier(name.as_str())?;
             let ty = self.domain(
                 cgs,
@@ -340,6 +392,14 @@ impl Renderer<'_> {
             else {
                 continue;
             };
+            let member = DeliveredMember::Relation(relation.wire.clone());
+            self.delivered_members
+                .entry(symbol.into())
+                .or_default()
+                .insert(member.clone());
+            if delivered.is_some_and(|members| members.contains(&member)) {
+                continue;
+            }
             comment(
                 &mut body,
                 "    ",
@@ -371,6 +431,14 @@ impl Renderer<'_> {
         let mut signatures = Vec::new();
         for key in &self.exposure.surface.capabilities {
             if key.entry_id != entry || key.domain.as_str() != name {
+                continue;
+            }
+            let member = DeliveredMember::Capability(key.capability.to_string());
+            self.delivered_members
+                .entry(symbol.into())
+                .or_default()
+                .insert(member.clone());
+            if delivered.is_some_and(|members| members.contains(&member)) {
                 continue;
             }
             let cap = cgs
@@ -443,12 +511,14 @@ impl Renderer<'_> {
                     Some(reason)
                 }
             };
-            self.coverage.push(PythonCapabilityCoverage {
-                entry_id: entry.into(),
-                capability: cap.name.to_string(),
-                unavailable,
-                signature,
-            });
+            if delivered.is_none() {
+                self.coverage.push(PythonCapabilityCoverage {
+                    entry_id: entry.into(),
+                    capability: cap.name.to_string(),
+                    unavailable,
+                    signature,
+                });
+            }
         }
         // Group identical CGS prose with explicit owners; no meaning is discarded.
         for (note, targets) in &mut operation_notes {
@@ -466,8 +536,7 @@ impl Renderer<'_> {
             }
             body.push_str(&signature);
         }
-        self.definitions.insert(symbol.into(), body);
-        Ok(())
+        Ok(body)
     }
 
     fn input_field(

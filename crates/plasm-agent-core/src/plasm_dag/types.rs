@@ -3,21 +3,6 @@
 use super::prelude::*;
 use crate::plasm_plan::ResultShape;
 
-/// Structural plan emission from a resolved DAG node.
-pub(in crate::plasm_dag) trait PlanNodeEmitter {
-    fn emit_plan_node(&self, node: &DagNode) -> Result<crate::plasm_plan::PlanNode, String>;
-}
-
-/// Γ binding contract derivation from a lowered node (`binding_contract_inner` match lives here).
-pub(in crate::plasm_dag) trait BindingContractSource {
-    fn program_binding_contract(
-        &self,
-        state: &CompileState<'_>,
-        label: &str,
-        node_expr: &str,
-    ) -> ProgramBindingContract;
-}
-
 /// Program RHS surface text for DAG lowering (opaque session symbols preserved).
 ///
 /// Symbol resolution happens in the parser and per-token field helpers — not via a textual
@@ -131,6 +116,24 @@ pub(in crate::plasm_dag) enum DagNodeSource {
         take: u32,
         uses_result: Vec<crate::plasm_plan::PlanResultUse>,
     },
+}
+
+impl DagNodeSource {
+    /// Effect evidence for both discarded statement admission and emitted plans.
+    /// Keeping this on the resolved node avoids a second syntactic allowlist.
+    pub(in crate::plasm_dag) fn effect_class(&self) -> EffectClass {
+        match self {
+            Self::Surface { effect_class, .. }
+            | Self::RelationTraversal { effect_class, .. }
+            | Self::ForEach { effect_class, .. }
+            | Self::IterateUntil { effect_class, .. } => *effect_class,
+            Self::MapBody { body, .. } => body.effect_class(),
+            Self::Data(_)
+            | Self::Compute { .. }
+            | Self::Derive { .. }
+            | Self::ScalarExtract { .. } => EffectClass::ArtifactRead,
+        }
+    }
 }
 
 #[derive(Clone)]

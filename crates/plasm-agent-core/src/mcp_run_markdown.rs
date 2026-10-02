@@ -7,37 +7,24 @@
 //! **`plasm://…` run URIs** are MCP **`resources/read`** resource identifiers — they are **not** Plasm
 //! path expressions and cannot be executed via the `plasm` tool alone.
 
-use crate::output::{
-    format_result_tsv_with_cgs, format_result_tsv_with_full_fidelity_cgs,
-    lossy_summary_field_names, summary_sensitive_string_bytes, InBandSummaryReport,
-    LossySummaryFieldNames,
-};
+use crate::output::{InBandSummaryReport, LossySummaryFieldNames};
 use crate::run_artifacts::RunArtifactHandle;
-use plasm_core::CGS;
 use plasm_runtime::ExecutionResult;
 use std::collections::BTreeSet;
 
-/// When MCP uses session meta compaction + adaptive preview; above this Unicode scalar count, markdown omits full tables.
-pub const MCP_PLASM_MARKDOWN_PREVIEW_THRESHOLD_CHARS: usize = 4_000;
+/// Target byte budget for each returned table; at least one bounded row stays visible.
+pub const MCP_INLINE_TEXT_BUDGET_BYTES: usize = 12 * 1024;
 
 /// Hard cap on entity rows rendered inline in MCP tool Markdown (TSV fence or ASCII table).
 /// Derived from the canonical host first-page size ([`crate::plan_read_bounds::DEFAULT_HOST_PAGE_SIZE`])
 /// so the first host page fits one MCP tool response; further pages use `run_ref` on `plasm_run`.
 pub const MCP_IN_BAND_ENTITY_ROW_CAP: usize = crate::plan_read_bounds::DEFAULT_HOST_PAGE_SIZE;
 
-/// Aggregate original UTF-8 bytes allowed for string cells that full-fidelity rendering restores
-/// (schema `ReferenceOnly`/`Lossy`, and default strings past the summary omit threshold) in a
-/// bounded MCP response. The TSV remains the authoritative result under this ceiling.
-pub const MCP_INLINE_FULL_FIDELITY_BYTE_BUDGET: usize = 12 * 1024;
-
-/// Above this row count, MCP may omit inline TSV and defer to snapshot-only preview (extreme results).
-pub const MCP_SNAPSHOT_ONLY_ROW_THRESHOLD: usize = 500;
-
 /// Unified transport policy for MCP `plasm` / `plasm_run` tool bodies and `_meta` preview rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct McpResultTransportPolicy {
     pub in_band_entity_rows: usize,
-    pub markdown_preview_chars: usize,
+    pub inline_text_budget_bytes: usize,
     pub artifact_access: ArtifactAccessMode,
 }
 
@@ -91,32 +78,11 @@ impl ArtifactAccessMode {
 
     pub fn snapshot_line(self, uri: &str) -> String {
         if self == Self::DagCompute {
-            return self.artifact_only_read_instruction();
+            return String::new();
         }
         format!(
             "\n\n_Snapshot ({}; not a Plasm expression):_ `{uri}`\n",
             self.artifact_read_instruction()
-        )
-    }
-
-    pub fn artifact_only_read_instruction(self) -> String {
-        if self == Self::DagCompute {
-            return "\n\nResult exceeds inline delivery bounds. Select, aggregate or use typed `@compute` in a Python `Program` to return only the needed result. Preserve selection criteria and inspect completed effects before issuing further writes.\n".to_owned();
-        }
-        format!(
-            "\n\n**Required:** fetch this step's rows via {} on the snapshot URI above — no inline TSV is sent when a snapshot is stored.\n",
-            self.artifact_read_instruction()
-        )
-    }
-
-    pub fn artifact_only_body(self, uri: &str) -> String {
-        if self == Self::DagCompute {
-            return self.artifact_only_read_instruction();
-        }
-        format!(
-            "{}{}",
-            self.snapshot_line(uri),
-            self.artifact_only_read_instruction()
         )
     }
 }
@@ -131,29 +97,17 @@ impl Default for McpResultTransportPolicy {
     fn default() -> Self {
         Self {
             in_band_entity_rows: MCP_IN_BAND_ENTITY_ROW_CAP,
-            markdown_preview_chars: MCP_PLASM_MARKDOWN_PREVIEW_THRESHOLD_CHARS,
+            inline_text_budget_bytes: MCP_INLINE_TEXT_BUDGET_BYTES,
             artifact_access: ArtifactAccessMode::default(),
         }
     }
 }
-
-/// Reserved after `## Result (preview)`; snapshot lines in the body carry the `resources/read` hint.
-pub(crate) const MCP_MARKDOWN_PREVIEW_SINGLE_PROLOGUE: &str = "";
-
-/// Reserved after `# Plasm run (preview)`; same as single preview.
-pub(crate) const MCP_MARKDOWN_PREVIEW_MULTI_LINE_PROLOGUE: &str = "";
 
 /// Sorted unique field names omitted from the in-band summary as `(in artifact)` (reference-only strings).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct OmittedReferenceOnlyFields(Vec<String>);
 
 impl OmittedReferenceOnlyFields {
-    pub(crate) fn from_vec_sorted_dedup(mut v: Vec<String>) -> Self {
-        v.sort();
-        v.dedup();
-        Self(v)
-    }
-
     pub(crate) fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -207,15 +161,6 @@ pub(crate) fn execute_expression_preview(expr: &str) -> String {
     format!("{truncated}… (truncated, total {n} chars)")
 }
 
-/// Compact preview when a stored snapshot backs an over-cap return, or the full body is huge.
-pub(crate) fn mcp_preview_markdown_needed(
-    artifact_backed_over_cap: bool,
-    full_char_count: usize,
-    policy: &McpResultTransportPolicy,
-) -> bool {
-    artifact_backed_over_cap || full_char_count > policy.markdown_preview_chars
-}
-
 pub(crate) fn mcp_coverage_preview_note(
     shown: usize,
     snapshot_rows: usize,
@@ -254,18 +199,17 @@ pub(crate) fn format_coverage_preview_note(
         "Showing {shown} of {snapshot_rows} snapshot rows. Result coverage: {}.",
         coverage.as_str()
     );
-    if artifact_access == ArtifactAccessMode::DagCompute {
-        if shown < snapshot_rows {
-            line.push_str(" Compute over the source rows in the DAG and return the needed result.");
-        }
-    } else if has_snapshot {
+    if shown < snapshot_rows {
+        line.push_str(" This is a display preview, not a selection or proof of a match. Compute over all source rows in the DAG; preserve the task criteria.");
+    }
+    if artifact_access != ArtifactAccessMode::DagCompute && has_snapshot {
         if let Some(uri) = snapshot_uri {
             line.push_str(&format!(
                 " Full snapshot: {} `{uri}`.",
                 artifact_access.artifact_read_instruction()
             ));
         }
-    } else if shown < snapshot_rows {
+    } else if !has_snapshot && shown < snapshot_rows {
         line.push_str(" (no run snapshot stored)");
     }
     if let Some(handle) = continue_handle {
@@ -299,43 +243,6 @@ pub(crate) fn merge_snapshot_column_hints(
     LossySummaryFieldNames::from_vec_sorted_dedup(v)
 }
 
-/// MCP `plasm` tool: use compact TSV. When summary would omit/truncate string cells, restore them
-/// in full iff the shared admission classifier fits the inline byte budget (one policy for score +
-/// render).
-pub(crate) fn mcp_format_execute_result_table_or_tsv(
-    result: &ExecutionResult,
-    cgs: Option<&CGS>,
-    max_entity_rows: Option<usize>,
-) -> McpFormattedExecuteResult {
-    let schema_lossy_summary_fields = lossy_summary_field_names(result, cgs);
-    let (tsv, omitted_vec, tsv_report) = format_result_tsv_with_cgs(result, cgs, max_entity_rows);
-    let reference_only_omitted = OmittedReferenceOnlyFields::from_vec_sorted_dedup(omitted_vec);
-    let restore_bytes = summary_sensitive_string_bytes(result, cgs, max_entity_rows);
-    let needs_restore = restore_bytes > 0
-        || !reference_only_omitted.is_empty()
-        || !schema_lossy_summary_fields.is_empty();
-    let full_fidelity_allowed = needs_restore
-        && result.count() <= MCP_IN_BAND_ENTITY_ROW_CAP
-        && restore_bytes <= MCP_INLINE_FULL_FIDELITY_BYTE_BUDGET;
-    if full_fidelity_allowed {
-        let (full_tsv, full_report) =
-            format_result_tsv_with_full_fidelity_cgs(result, cgs, max_entity_rows);
-        McpFormattedExecuteResult {
-            tsv_body: full_tsv,
-            reference_only_omitted: OmittedReferenceOnlyFields::default(),
-            lossy_summary_fields: LossySummaryFieldNames::default(),
-            in_band_report: full_report,
-        }
-    } else {
-        McpFormattedExecuteResult {
-            tsv_body: tsv,
-            reference_only_omitted,
-            lossy_summary_fields: schema_lossy_summary_fields,
-            in_band_report: tsv_report,
-        }
-    }
-}
-
 /// Return label for slim markdown headers (`name` from plan return, else binding node id).
 pub(crate) fn return_label_for_step(name: Option<&str>, node_id: Option<&str>) -> String {
     name.map(str::to_string)
@@ -355,96 +262,9 @@ pub(crate) fn slim_result_section_header_label(
     format!("{level}{label} ({count_label})\n\n")
 }
 
-pub(crate) fn mcp_compact_markdown_single(
-    label: &str,
-    count_label: &str,
-    omitted: &OmittedReferenceOnlyFields,
-    lossy_summary_fields: &LossySummaryFieldNames,
-) -> String {
-    let mut out =
-        slim_result_section_header_label("## ", &format!("{label} (preview)"), count_label);
-    out.push_str(MCP_MARKDOWN_PREVIEW_SINGLE_PROLOGUE);
-    if !omitted.is_empty() {
-        out.push_str("**Fidelity:** full values for ");
-        out.push_str(&omitted.join_comma());
-        out.push_str(" are in the snapshot.\n");
-    }
-    if !lossy_summary_fields.is_empty() {
-        out.push_str("**Fidelity:** abbreviated values for ");
-        out.push_str(&lossy_summary_fields.join_comma());
-        out.push_str(" are in the snapshot.\n");
-    }
-    out
-}
-
-pub(crate) fn mcp_compact_markdown_multi_line(
-    total_steps: usize,
-    total_entity_rows: usize,
-    per_step: &[(String, String)],
-    omitted: &OmittedReferenceOnlyFields,
-    lossy_summary_union: &LossySummaryFieldNames,
-    truncated_step_uris: &[(usize, &RunArtifactHandle)],
-    artifact_access: ArtifactAccessMode,
-) -> String {
-    let mut out = String::from("# Results (preview)\n\n");
-    out.push_str(MCP_MARKDOWN_PREVIEW_MULTI_LINE_PROLOGUE);
-    out.push_str("**Returns:** ");
-    out.push_str(&total_steps.to_string());
-    out.push('\n');
-    out.push_str("**Total entity rows (sum):** ");
-    out.push_str(&total_entity_rows.to_string());
-    out.push_str("\n\n");
-    for (i, (label, count_label)) in per_step.iter().enumerate() {
-        let step_no = i + 1;
-        out.push_str(&slim_result_section_header_label(
-            "### ",
-            label,
-            count_label,
-        ));
-        if let Some((_, h)) = truncated_step_uris.iter().find(|(s, _)| *s == step_no) {
-            out.push_str(&mcp_inline_run_snapshot_line(h, artifact_access));
-            out.push('\n');
-        }
-        out.push('\n');
-    }
-    if !omitted.is_empty() {
-        out.push_str("**Fidelity:** full values for ");
-        out.push_str(&omitted.join_comma());
-        out.push_str(" are in the snapshot.\n");
-    }
-    if !lossy_summary_union.is_empty() {
-        out.push_str("**Fidelity:** abbreviated values for ");
-        out.push_str(&lossy_summary_union.join_comma());
-        out.push_str(" are in the snapshot.\n");
-    }
-    out
-}
-
-/// Prepends a short note when `use_mcp_meta` is true and there are reference-only omissions but no
-/// inline snapshot row yet. Snapshot URIs elsewhere in the body remain the authoritative pointer to full JSON.
-pub(crate) fn mcp_prepend_artifact_followup_markdown(
-    markdown: String,
-    use_mcp_meta: bool,
-    truncated_snapshot_handles: &[RunArtifactHandle],
-    omitted: &OmittedReferenceOnlyFields,
-) -> String {
-    if !use_mcp_meta || (truncated_snapshot_handles.is_empty() && omitted.is_empty()) {
-        return markdown;
-    }
-    // Inline `_Snapshot (`resources/read`): …` rows already carry the hint; no extra banner.
-    if !truncated_snapshot_handles.is_empty() {
-        return markdown;
-    }
-    let mut p = String::from("**Reference-only fields omitted from this summary:** ");
-    p.push_str(&omitted.join_comma());
-    p.push_str(".\n\n");
-    format!("{p}{markdown}")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::output::LossySummaryFieldNames;
     use crate::run_artifacts::{artifact_http_path, plasm_run_resource_uri, RunArtifactId};
 
     #[test]
@@ -529,61 +349,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn mcp_preview_markdown_needed_on_row_cap_with_snapshot() {
-        let policy = McpResultTransportPolicy::default();
-        assert!(mcp_preview_markdown_needed(true, 100, &policy));
-        assert!(!mcp_preview_markdown_needed(false, 100, &policy));
-        assert!(mcp_preview_markdown_needed(false, 5_000, &policy));
-    }
-
-    #[test]
-    fn mcp_markdown_preview_prologues_are_empty() {
-        assert!(MCP_MARKDOWN_PREVIEW_SINGLE_PROLOGUE.is_empty());
-        assert!(MCP_MARKDOWN_PREVIEW_MULTI_LINE_PROLOGUE.is_empty());
-    }
-
-    #[test]
-    fn mcp_compact_markdown_single_preview_has_no_must_read_banner() {
-        let omitted = OmittedReferenceOnlyFields::from_vec_sorted_dedup(vec!["body".into()]);
-        let s = mcp_compact_markdown_single(
-            "sorted",
-            "2 rows",
-            &omitted,
-            &LossySummaryFieldNames::default(),
-        );
-        assert!(s.starts_with("## sorted (preview)"));
-        assert!(!s.contains("MUST"), "preview: {s}");
-        assert!(!s.contains("Optional full JSON"), "preview: {s}");
-        assert!(s.contains("body"), "omitted fields listed: {s}");
-    }
-
-    #[test]
-    fn mcp_compact_markdown_multi_line_preview_has_no_must_read_banner() {
-        let omitted = OmittedReferenceOnlyFields::from_vec_sorted_dedup(vec!["commentBody".into()]);
-        let h = sample_handle();
-        let s = mcp_compact_markdown_multi_line(
-            2,
-            5,
-            &[
-                ("first".into(), "3 rows".into()),
-                ("second".into(), "2 rows".into()),
-            ],
-            &omitted,
-            &LossySummaryFieldNames::default(),
-            &[(1, &h)],
-            ArtifactAccessMode::ResourcesRead,
-        );
-        assert!(s.starts_with("# Results (preview)"));
-        assert!(!s.contains("MUST"), "multi-line preview: {s}");
-        assert!(!s.contains("Optional full JSON"), "multi-line preview: {s}");
-        assert!(s.contains("commentBody"), "multi-line preview: {s}");
-        assert!(
-            s.contains(&h.canonical_plasm_uri),
-            "canonical truncated step URI inline: {s}"
-        );
-    }
-
     fn sample_handle() -> RunArtifactHandle {
         let run_id = RunArtifactId::from_bytes([0u8; 32]);
         RunArtifactHandle {
@@ -605,70 +370,6 @@ mod tests {
             line.contains("resources/read") && line.contains("not a Plasm expression"),
             "{line}"
         );
-    }
-
-    #[test]
-    fn mcp_prepend_artifact_followup_noop_without_mcp_meta() {
-        let h = sample_handle();
-        let omitted = OmittedReferenceOnlyFields::default();
-        let out =
-            mcp_prepend_artifact_followup_markdown("## Result\n".into(), false, &[h], &omitted);
-        assert_eq!(out, "## Result\n");
-    }
-
-    #[test]
-    fn mcp_prepend_artifact_followup_no_prefix_when_no_truncated_snapshots() {
-        let run_id = RunArtifactId::from_bytes([0x55; 32]);
-        let h = RunArtifactHandle {
-            run_id,
-            resource_index: 3,
-            plasm_uri: "plasm://r/3".into(),
-            canonical_plasm_uri: plasm_run_resource_uri("ph", "sess", &run_id),
-            http_path: artifact_http_path("ph", "sess", &run_id),
-            payload_len: 100,
-            request_fingerprints: vec!["abc".into()],
-        };
-        let omitted = OmittedReferenceOnlyFields::default();
-        let out = mcp_prepend_artifact_followup_markdown("## Result\n".into(), true, &[], &omitted);
-        assert_eq!(out, "## Result\n", "{out}");
-        let body = format!(
-            "## Result\n{}",
-            mcp_inline_run_snapshot_line(&h, ArtifactAccessMode::ResourcesRead)
-        );
-        let canonical_uri = h.canonical_plasm_uri.clone();
-        let out2 = mcp_prepend_artifact_followup_markdown(body.clone(), true, &[h], &omitted);
-        assert_eq!(out2, body, "{out2}");
-        assert!(!out2.contains("Optional full JSON"), "{out2}");
-        assert!(out2.contains(&canonical_uri), "{out2}");
-    }
-
-    #[test]
-    fn mcp_prepend_artifact_followup_with_handles_returns_body_unchanged() {
-        let run_id = RunArtifactId::from_bytes([0x66; 32]);
-        let h = RunArtifactHandle {
-            run_id,
-            resource_index: 2,
-            plasm_uri: "plasm://r/2".into(),
-            canonical_plasm_uri: plasm_run_resource_uri("ph", "sess", &run_id),
-            http_path: artifact_http_path("ph", "sess", &run_id),
-            payload_len: 100,
-            request_fingerprints: vec![],
-        };
-        let omitted = OmittedReferenceOnlyFields::from_vec_sorted_dedup(vec!["body".into()]);
-        let out =
-            mcp_prepend_artifact_followup_markdown("## Result\n".into(), true, &[h], &omitted);
-        assert_eq!(out, "## Result\n", "{out}");
-        assert!(!out.contains("MUST"), "{out}");
-    }
-
-    #[test]
-    fn mcp_prepend_artifact_followup_omitted_only_without_handles() {
-        let omitted = OmittedReferenceOnlyFields::from_vec_sorted_dedup(vec!["body".into()]);
-        let out = mcp_prepend_artifact_followup_markdown("table\n".into(), true, &[], &omitted);
-        assert!(out.contains("Reference-only fields omitted"), "{out}");
-        assert!(out.contains("body"), "{out}");
-        assert!(!out.contains("call **`resources/read`**"), "{out}");
-        assert!(out.ends_with("table\n"), "{out}");
     }
 
     #[test]
@@ -714,8 +415,8 @@ mod tests {
             request_fingerprints: vec![],
             operations: plasm_runtime::OperationLedger::empty(),
         };
-        let formatted = mcp_format_execute_result_table_or_tsv(&result, None, None);
-        let body = &formatted.tsv_body;
+        let formatted = crate::output::render_observation(&result, None, 25, 12 * 1024);
+        let body = &formatted.tsv;
         assert!(
             body.contains(&long),
             "default long string must restore in full under budget, got: {body}"
@@ -724,7 +425,7 @@ mod tests {
             !body.contains(REFERENCE_ONLY_PLACEHOLDER),
             "must not claim full fidelity while leaving placeholder: {body}"
         );
-        assert!(formatted.reference_only_omitted.is_empty());
+        assert!(!formatted.fidelity.any_loss());
     }
 }
 
@@ -735,17 +436,14 @@ mod dag_compute_delivery_tests {
     fn dag_delivery_keeps_snapshots_out_of_agent_tools() {
         let mode = ArtifactAccessMode::DagCompute;
         assert!(!mode.exposes_read_tool());
-        for text in [
-            mode.artifact_only_body("plasm://test"),
-            mode.snapshot_line("plasm://test"),
-            mode.coverage_preview_note(
-                0,
-                600,
-                plasm_runtime::ResultCoverage::Complete,
-                Some("plasm://test"),
-                None,
-            ),
-        ] {
+        assert!(mode.snapshot_line("plasm://test").is_empty());
+        for text in [mode.coverage_preview_note(
+            0,
+            600,
+            plasm_runtime::ResultCoverage::Complete,
+            Some("plasm://test"),
+            None,
+        )] {
             assert!(text.contains("DAG") || text.contains("@compute"));
             for absent in [
                 "plasm_read_run_artifact",

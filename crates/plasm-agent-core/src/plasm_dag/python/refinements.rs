@@ -29,7 +29,7 @@ pub(super) type Facts = BTreeMap<Reference, ValueContract>;
 
 impl Lower<'_> {
     fn canonical_reference(&self, mut reference: Reference) -> Reference {
-        if let Some(binding) = self.scope_names.get(&reference.root) {
+        if let Some(binding) = self.frame.names.get(&reference.root) {
             reference.root = binding.clone();
         }
         if let Some(node) = self.state.get(&reference.root) {
@@ -80,7 +80,8 @@ impl Lower<'_> {
             Ok(())
         }
         let mut facts = self
-            .branch_types
+            .frame
+            .facts
             .iter()
             .filter(|(observed, _)| {
                 observed.root == reference.root && observed.path.starts_with(&reference.path)
@@ -158,10 +159,10 @@ impl Lower<'_> {
         lower: impl FnOnce(&mut Self) -> Result<T, String>,
     ) -> Result<T, String> {
         let facts = self.branch_facts(condition, selected)?;
-        let previous = self.branch_types.clone();
-        self.branch_types.extend(facts);
+        let previous = self.frame.facts.clone();
+        self.frame.facts.extend(facts);
         let result = lower(self);
-        self.branch_types = previous;
+        self.frame.facts = previous;
         result
     }
 }

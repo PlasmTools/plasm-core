@@ -17,7 +17,7 @@ impl Lower<'_> {
         inputs: Vec<crate::plasm_plan::PlanDataInput>,
         id: &str,
     ) -> Result<String, String> {
-        let source = match &self.scope_row {
+        let source = match &self.frame.row {
             Some(source) => source.clone(),
             None => {
                 let unit = self.fresh();

@@ -232,7 +232,7 @@ pub(super) async fn materialize(
                 if has_effects {
                     for mut ack in outcome.mat.result.operations.entries().iter().cloned() {
                         // Nested scopes already carry their own invocation outcomes.
-                        if ack.outcomes.is_empty() {
+                        if ack.completed > 0 && ack.outcomes.is_empty() {
                             ack.outcomes
                                 .push(plasm_runtime::OperationInvocationOutcome {
                                     source_index: occurrence,

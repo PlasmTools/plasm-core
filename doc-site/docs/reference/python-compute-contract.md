@@ -277,10 +277,10 @@ differential evidence remains open in BC-04.
 | --- | --- |
 | Synchronous in-process checking and stubs | Monty analysis tests verify type evidence, source spans, request isolation and no execution; workers execute reviewed code only |
 | Typed output boundary | Recursive return contracts, owning-catalog validation, typed downstream inputs and rejection before dependent effects; [matrix evidence](python-return-contract.md) |
-| Replace local expression checker | Local inference removed; `python_compute/upstream.rs` generates declarations and policy only |
+| Replace local expression checker | Expression and annotation types come from Monty; host references are translated to sealed declarations. Callback locals and expression captures use the upstream semantic index. Outer DAG lowering remains structural; see the boundary ledger below. |
 | Asynchronous pre-review admission | Implemented through shared `compile_program`; HTTP/MCP/NAPI/evaluator and REPL migrated; cross-entry validation covers host admission, evaluator/REPL and language matrices |
 | Generated recursive stubs from authoritative source schemas | Implemented from recursive value contracts; checker, materializer and codec tests are mandatory |
-| Profile identity in reviewed plan and replay | Required typed-v9 profile field; replay readmits all nested nodes before IO |
+| Profile identity in reviewed plan and replay | Required typed-v11 profile field; replay readmits all nested nodes before IO |
 | Whole-input dependencies without heuristic field pruning | Whole declared schemas replace used-field inference; projection omission is checked |
 | Profile inventory and complete conformance classification | [Profile ledger](python-compute-profile.md); syntax families and every bundled module classified with policy/admission witnesses |
 | Existing rowset/identity/effect laws | Retained; original matrix remains mandatory |
@@ -308,7 +308,8 @@ A named projection may capture a field from a previously bound proven singleton:
 typed object derivation with explicit source and captured-input dependencies.
 Captured values retain their recursive value contracts, including domain identity
 and nullability. Plural captures reject before IO; an empty bounded singleton
-fails at materialization. A captured name may not be shadowed by the row lambda.
+fails at materialization. Lexical shadowing follows upstream binding; reserved
+host symbols cannot be rebound by the row lambda.
 The assembled rows preserve source order/count and combine dependency coverage.
 No environment is implicitly made available to Python, and no code runs during
 planning. The map-body assembly tests exercise these laws, including pre-effect rejection
@@ -346,7 +347,8 @@ and other tests are tracked separately until removal is complete.
 Scalar `where` comparisons may use a previously bound scalar cell or proven
 singleton field as their right operand. These are explicit typed DAG inputs,
 shared with write/iteration operand validation. Plural captures, unavailable
-projected fields and shadowed binding names are rejected before IO.
+projected fields and rebinding of reserved host symbols are rejected before IO.
+Ordinary lexical shadowing is resolved by the upstream semantic index.
 
 ## Collection acquisition and failed host continuations
 
@@ -391,8 +393,9 @@ Remaining contextual rules and annotation/domain products still need evidence.
 Temporal CGS profiles materialize as Python `date` (date-only) or `datetime`
 (RFC3339/Unix seconds/Unix milliseconds). `time`, `timedelta`, and `timezone`
 are also typed compute values. Recursive records, arrays and unions retain these
-types. Monty owns arithmetic, parsing and formatting; imports are restricted to
-its datetime module. Ordinary module imports and aliases are admitted.
+types. Monty owns arithmetic, parsing, formatting and module/member availability.
+Imports and aliases are retained for checking and execution. No filesystem,
+environment or network capability is installed by an import.
 
 Temporal outputs preserve components, offset and optional name in a tagged internal
 representation. Catalog argument coercion encodes the declared wire profile; it
@@ -493,3 +496,172 @@ on unrelated Python calls.
 ### Typed record indexing
 
 Input records support attribute access and string-key subscripting. Literal keys preserve exact field contracts; dynamic string keys return the union of declared field contracts. Absent keys raise `KeyError`; present nullable values remain `None`. Records do not thereby acquire dictionary methods, iteration, or entity authority. The worker protocol explicitly marks record access; ordinary host classes remain unsubscriptable.
+
+
+## Python authority boundary ledger (2026-10-02)
+
+Python parsing, annotation resolution, assignment compatibility and lexical binding
+are upstream facts, including within expressions that capture DAG values. The host
+must not reconstruct comprehension/lambda shadowing or maintain a primitive/type
+annotation grammar. `monty-analysis::function_locals` and `external_names` export
+semantic-index facts. These lexical APIs explicitly do **not** assert type admission;
+compute definitions pass checker and Monty compiler admission at each call site,
+where projected input contracts are known. Class extraction cannot check a body
+against a nominal entity alone: relations and derived fields require the actual
+input schema.
+
+Catalog type references (`Row[eN]`, `Value[eN]`, `vN` and record type-field
+projections) are host-owned evidence. Plasm translates these references into sealed
+upstream declarations. All remaining annotation syntax is passed to the checker.
+Incomplete annotations obtain concrete evidence from whole-function inference;
+upstream assignment checking verifies the annotated constraint. Unknown/Any is never
+published as a materialized value contract.
+
+Python dictionaries have a separate recursive `Dictionary { key, value }` contract.
+Only string keys materialize. Unlike fixed records they do not guarantee any key or
+attribute. Empty dictionaries are valid when their key/value contracts are known;
+mutated containers use upstream inference, not return-literal inspection. Dictionaries
+survive serialization and subsequent typed compute without gaining entity authority.
+
+Compute argument assignment follows Python typing, but runtime input validation
+retains the actual contract (for example, Boolean stays Boolean even when Python
+allows it as an `int` argument). Independent arguments are packed without a join or
+zip, with the existing total row and byte budgets. Returned values are validated
+before publication. Profile `typed-v11` identifies these boundary semantics.
+
+Purity is enforced at the host interaction boundary, not by a spelling blacklist.
+Local identifiers such as `open` grant no capability. Module support comes from
+Monty. The compute pool exposes only its declared input values and exact-money
+functions; undeclared host/OS interactions fail. Print output is discarded. Each
+invocation owns isolated execution state and successful workers are reset.
+
+Callback calls now obtain argument binding from the upstream Python call binder.
+Reachable blocks, branch successors, early returns and implicit `None` come from
+`monty-analysis::function_flow`, backed by the semantic index. Plasm consumes these
+facts to construct reviewed scopes; it does not reconstruct callback control flow.
+Return annotations are checked before consumer truth conversion. Definition-time
+default captures and positional-only parameters follow the same binding path for
+named callbacks and projection lambdas.
+
+The root Program ABI and available DAG constructors remain host interfaces:
+async/decorated execution, unbounded DAG loops and variadic entity-receiver tuples
+have no constructor. These are capability/representation limitations, not claims
+that the corresponding Python syntax is invalid. Materialized Python computations
+continue to run through Monty's full compute admission.
+
+### Final admission audit: callable and root flow
+
+Explicit compute-call arguments are bound by `monty-analysis::bind_arguments`.
+Positional-only and keyword-only parameters, duplicate keywords, missing arguments
+and default omission are interpreted by the upstream call binder. Plasm preserves
+argument evaluation order, then normalizes the bound signature to required typed
+materialization ports. The checks in `PreparedCompute` describe this internal port
+ABI; they no longer constrain the public compute signature.
+
+Static Program declarations have no runtime class closure. Method defaults must
+therefore be scalar constant metadata; they cannot resolve a name from a later build
+scope, defer a definition-time exception, or create shared mutable state. Computed
+and mutable defaults require a definition-time execution representation and are
+rejected even when the caller supplies an explicit argument. Variadic compute inputs still lack a typed packet-port representation. Compute
+invocations remain isolated; no persistent mutable default state is exposed.
+
+The host binds the build receiver through the same upstream binder and consumes
+`function_flow` for its reachable statements and return roots. Statement-level branching
+returns still lack a DAG return constructor; a conditional return expression stays
+intact in the upstream flow projection. Callback value calls also use upstream
+binding, followed by the one-row-port and singleton requirements of MapBody.
+
+The remaining AST matches are the following host interfaces, not a second Python
+parser or type checker:
+
+| Site | Owned evidence / responsibility |
+| --- | --- |
+| `python/admission.rs` | Static Program declaration, host receiver and compute marker; no executable class state |
+| `python/build_statements.rs`, `statements.rs` | Construct immutable DAG bindings, scoped callbacks and ordered effects |
+| `python/*operations.rs`, `projection.rs`, `reductions.rs` | Catalog and rowset API signatures; field, identity, cardinality and resource bounds |
+| `python_compute/returns.rs` | Translate catalog-owned annotation references into upstream declarations |
+| `python_compute.rs`, `multiple.rs` | Validate normalized materialization ports and checker-produced value contracts |
+| `python_program_diagnostic.rs` | Ruff parser recovery for an explicitly unexecuted, untyped prefix sketch |
+| AST templates in expression/callback lowering | Construct dependency substitutions; upstream checking still admits resulting Python |
+
+HTTP execute, MCP planning, Node and the evaluator route through `compile_program`.
+The internal native-language matrix oracle is not a production admission alternative.
+This audit establishes these specific ownership paths, not support for every Python
+statement as a DAG constructor. In particular async execution, runtime class state,
+variadic row receivers and unbounded effect loops remain unrepresented.
+
+Authored return checking shares the final worker admission declarations. Inferred
+nominal evidence is not reused as an incompatible return-construction ABI. A record
+may be returned unchanged or constructed as a dictionary; the complete authored
+annotation is checked for both representations so mutable containers remain
+invariant and Python `Literal` constraints are retained. Runtime refinement
+validation still precedes every dependent effect. List expansion stays inside a
+whole Monty expression rather than being lowered as a standalone starred operand.
+
+Lexical callback row ports retain singleton materialization when captured by a
+nested scope. This role is distinct from an ordinary singleton entity rowset,
+which still materializes as a collection unless explicitly consumed as a row.
+
+### Audit verification
+
+Final focused verification on 2026-10-02:
+
+- `cargo test --locked -p plasm-agent-core --lib python_`: 118 passed, one ignored.
+- `cargo test --locked --manifest-path plasm-oss/vendor/monty/Cargo.toml -p monty-analysis`: four unit, 20 integration and one documentation test passed.
+- Language-matrix filters `typed_return_structures_and_effect_gate`,
+  `outer_value_transfer_boundary`,
+  `datetime_nullable_guards_cover_scoped_and_recursive_consumers`,
+  `nullable_projection_callback_branch_ports`,
+  `python_predicate_value_position_closure`, `callback`, and `registry`: 27 passed.
+- Workspace formatting and parent/OSS/Monty whitespace checks passed.
+
+The preceding broad matrix run (excluding its duplicate composite property runner)
+passed 128 tests and exposed four failures. The final focused run covers all four:
+nested row-port capture, conditional root expression flow, retired annotation
+error wording, and preserved money-format metadata. The complete workspace suite
+and a fresh broad matrix were not rerun after these final corrections. No model
+or AppWorld evaluation was launched for this audit.
+
+
+### Reasonable program extensions (2026-10-02)
+
+- Structural `dict` and `list[dict]` inputs use a mapping view of the actual closed
+  record contract. Monty checks annotation compatibility and the body against
+  generated TypedDict fields. This does not admit untyped output, grant entity
+  authority, or erase missing/null distinctions. Independent compute inputs use
+  the same adaptation without joining collections.
+- Undecorated Program methods called with `self.method(...)` that reference Plasm
+  symbols or `self` elaborate through the existing scoped callback flow. Methods
+  with typed inputs and without those references execute as one pure Monty compute;
+  local mutable values stay inside Python and only the typed return crosses the
+  materialization boundary. Monty binds arguments and reports locals and
+  control flow; Plasm supplies independent DAG dependencies and ordered effects
+  for workflow methods.
+  Methods execute once per invocation. Recursive expansion and caller-local
+  capture are rejected; purity restrictions in value contexts remain in force.
+- `hasattr` is declared in Monty's bundled typeshed to match its existing runtime
+  implementation. It is not a Plasm-side builtin special case.
+- Sets have an explicit recursive boundary contract and restore as Python sets;
+  their wire arrays do not become Python lists. Equality and hashing ignore
+  element order. Domain output encoding traverses sets and mapping records.
+  The reviewed boundary profile is version 11.
+
+Abstract-fixture witnesses: `python_reasonable_structural_input_and_set_capture`,
+`python_program_helpers_preserve_independent_ports_and_effects`,
+`supported_attribute_presence_builtin_is_checked_upstream`, and
+`sets_preserve_order_independent_equality_and_hashes`.
+
+Verification for these extensions:
+
+- Agent-core `python_`: 121 passed, one manual viewer test ignored.
+- Final structural-input/set-capture witness after value-column precedence fix:
+  passed, including independent inputs and dictionary-valued column passthrough.
+- Core value tests: 74 passed. Broad core run: 1,077 passed, with the teaching-size
+  guard initially failing; after compacting teaching, all 142 prompt-render tests
+  passed. The card remains 4,491 bytes, below its unchanged 4,500-byte budget.
+- Final declaration matrix filter: three passed, including live helper execution
+  and complete-module negative examples.
+- Workspace formatting and OSS/Monty whitespace checks passed.
+
+No AppWorld/model run or dependency change was made for this extension. These are
+compiler/runtime fixture results, not measured task-success improvements.

@@ -2188,7 +2188,7 @@ fn python_reference_includes_composition_contract() {
         "iterate(",
         "max_steps",
         "one-column RHS",
-        "immutable locals",
+        "immutable DAG versions",
         "return result/record/tuple",
         "None",
         "completed/unknown effect receipts",
@@ -2357,10 +2357,10 @@ fn plasm_tool_teaches_semantic_operation_receivers() {
         "Entity rows/captures retain identity",
         "empty extraction fails",
         "records/compute do not",
-        "both arms already carry the same catalog/entity authority",
-        "single return expression may omit the return annotation",
+        "both arms carry the same catalog/entity authority",
+        "Monty infers bodies/loops/implicit None",
         "completed/unknown effect receipts",
-        "A new program may read or write in the same session",
+        "New programs may read/write in-session",
     ] {
         assert!(card.contains(law), "missing receiver law: {law}");
     }
@@ -3001,7 +3001,7 @@ fn static_grammar_includes_symbols_only_rule() {
     assert!(tool.contains("wire names"));
     assert!(reference.contains("session-local/append-only"));
     assert!(reference.contains("exact signatures"));
-    assert!(reference.contains("No imports, loops, statement if, mutation or rebinding in build"));
+    assert!(reference.contains("No imports, loops, statement if, mutation in build"));
     assert!(reference.contains("optional bound 1..65536"));
     assert!(reference.contains("required bound 1..256"));
     assert!(!reference.contains("inspection cannot authorize writes"));

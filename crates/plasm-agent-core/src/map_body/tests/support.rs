@@ -240,7 +240,7 @@ pub(super) fn program(es: &ExecuteSession) -> (PlasmCompBundle, CorrelatedBody) 
                     entry_id: "fixture".into(),
                     entity: Some("Tag".into()),
                     catalog_hash: es.cgs.catalog_cgs_hash_hex(),
-                    contract_version: 9,
+                    contract_version: crate::python_compute::CONTRACT_VERSION,
                     language_profile: crate::python_compute::LANGUAGE_PROFILE.into(),
                     input_schema: None,
                     output_type: plasm_core::value_contract::ValueContract::scalar(

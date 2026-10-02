@@ -6,7 +6,6 @@ use crate::mcp_plasm_meta::{
 };
 use crate::mcp_run_markdown::{merge_snapshot_column_hints, OmittedReferenceOnlyFields};
 use crate::run_artifacts::RunArtifactHandle;
-use plasm_runtime::entity_to_agent_row_json;
 
 pub(crate) fn plasm_meta_object(
     handles: &[RunArtifactHandle],
@@ -196,46 +195,16 @@ pub(crate) fn tool_meta_from_handles(
     Some(meta)
 }
 
-pub(crate) fn preview_entities_for_step(
-    step: &super::PublishedResultStep,
-    cgs: Option<&plasm_core::CGS>,
-    max_rows: usize,
-) -> Vec<serde_json::Value> {
-    let cgs = step.cgs.as_deref().or(cgs);
-    step.result
-        .entities()
-        .iter()
-        .take(max_rows)
-        .map(|e| {
-            let mut v = entity_to_agent_row_json(e, cgs);
-            strip_cache_keys_from_agent_preview_row(&mut v);
-            v
-        })
-        .collect()
-}
-
-fn strip_cache_keys_from_agent_preview_row(v: &mut serde_json::Value) {
-    if let Some(obj) = v.as_object_mut() {
-        for key in ["_ref", "_version", "_last_updated", "_completeness"] {
-            obj.remove(key);
-        }
-        // Keep `_unavailable_fields`: soft-fail honesty marker for agents.
-    }
-}
-
 pub(crate) fn build_ui_steps(
     steps: &[super::PublishedResultStep],
     plan: &super::policy::PublishPlan,
-    truncated_flags: &[bool],
     cgs: Option<&plasm_core::CGS>,
-    policy: &crate::mcp_run_markdown::McpResultTransportPolicy,
 ) -> Vec<RunUiStepFields> {
     steps
         .iter()
         .enumerate()
         .map(|(i, step)| {
             let resolved = &plan.resolved[i];
-            let truncated = truncated_flags[i];
             let fmt = resolved.format.as_ref();
             let step_cgs = step.cgs.as_deref().or(cgs);
             let column_schema = crate::run_ui_column_schema::build_run_step_column_schema(
@@ -254,15 +223,7 @@ pub(crate) fn build_ui_steps(
                 display: step.display.clone(),
                 row_count: resolved.row_count,
                 node_id: step.node_id.clone(),
-                preview_entities: if resolved.include_preview_entities(truncated, policy) {
-                    Some(preview_entities_for_step(
-                        step,
-                        cgs,
-                        policy.in_band_entity_rows,
-                    ))
-                } else {
-                    None
-                },
+                preview_entities: None, // Rows are already delivered in the Markdown.
                 artifact: resolved.artifact.clone(),
                 lossy_summary_fields: lossy,
                 column_schema,

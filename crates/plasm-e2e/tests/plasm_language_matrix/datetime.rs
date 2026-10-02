@@ -576,3 +576,16 @@ async fn datetime_query_consumers_encode_named_temporal_domains() {
         ])]
     );
 }
+
+#[tokio::test]
+async fn nullable_projection_callback_branch_ports() {
+    for present in [true, false] {
+        for body in [
+            "        row = {'stamp': stamp}\n        return row.select(value=lambda r: r.stamp.year if r.stamp is not None else -1)",
+            "        row = {'stamp': stamp}\n        def year(r):\n            if r.stamp is not None:\n                return r.stamp.year\n            return -1\n        return row.select(value=year)",
+        ] {
+            let source = nullable_program(present, body);
+            assert_eq!(run(&source).await.unwrap(), json!({"value": if present {2024} else {-1}}));
+        }
+    }
+}

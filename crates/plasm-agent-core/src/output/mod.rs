@@ -12,7 +12,9 @@ mod summary;
 
 pub use in_band_fidelity::{InBandSummaryReport, SummaryFidelityLoss};
 pub(crate) use presentation_fields::{lossy_summary_field_names, LossySummaryFieldNames};
-pub(crate) use summary::{format_result_tsv_with_cgs, format_result_tsv_with_full_fidelity_cgs};
+mod observation;
+pub(crate) use observation::{render_observation, RowObservation};
+pub(crate) use summary::format_result_tsv_with_cgs;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OutputFormat {
@@ -121,7 +123,7 @@ fn typed_field_value_at_dotted_path(
 }
 
 /// Empty row body. Operations are a sibling field — never substituted here.
-pub(crate) fn format_empty_result_body(_result: &ExecutionResult) -> String {
+pub(crate) fn format_empty_result_body(_result: &impl RowObservation) -> String {
     "(no results)".into()
 }
 
@@ -155,42 +157,55 @@ fn operation_ack_to_json(ack: &OperationAck) -> serde_json::Value {
     })
 }
 
-/// Derived presentation for nonempty ledgers. Does not say "applied".
+/// Action summaries use invocation evidence, never parent traversal outcomes.
+/// Detailed successful occurrences and provenance remain in the structured ledger.
 pub(crate) fn format_operations_block(result: &ExecutionResult) -> String {
     if result.operations.is_empty() {
         return String::new();
     }
-    let mut out = String::from("\noperations:\n");
+    let mut out = String::new();
     let mut any_failed = false;
     for ack in result.operations.entries() {
-        any_failed |= ack.failed > 0;
+        out.push_str(&format!("\n`{}/{}`: ", ack.entry_id, ack.capability));
+        if ack.logical_invocations == 0 {
+            out.push_str("No actions invoked.\n");
+            continue;
+        }
+        let recorded = !matches!(ack.source, plasm_runtime::ExecutionSource::Live);
+        if recorded {
+            out.push_str("Recorded outcome: ");
+        }
         out.push_str(&format!(
-            "- capability=`{}` entity=`{}` completed={} failed={} invocations={} source={} — {}\n",
-            ack.capability,
-            ack.entity,
+            "{} action{} completed",
             ack.completed,
-            ack.failed,
-            ack.logical_invocations,
-            ack.source.as_wire_str(),
-            ack.description,
+            if ack.completed == 1 { "" } else { "s" }
         ));
-        for outcome in &ack.outcomes {
-            let error = outcome
+        if ack.failed > 0 {
+            any_failed = true;
+            out.push_str(&format!("; {} failed", ack.failed));
+        }
+        out.push_str(".\n");
+        // Failure detail is actionable; successful parent identities are not
+        // evidence of dispatched effects and must not be rendered as successes.
+        for outcome in ack
+            .outcomes
+            .iter()
+            .filter(|o| o.status == plasm_runtime::OperationInvocationStatus::Failed)
+        {
+            let target = outcome
+                .source_identity
+                .as_deref()
+                .map(|id| format!(" for `{id}`"))
+                .unwrap_or_default();
+            let diagnostic = outcome
                 .error
                 .as_deref()
-                .map(|message| format!(" — {message}"))
-                .unwrap_or_default();
-            out.push_str(&format!(
-                "  - row={} identity=`{}` status={}{}\n",
-                outcome.source_index,
-                outcome.source_identity.as_deref().unwrap_or("unknown"),
-                outcome.status.as_wire_str(),
-                error
-            ));
+                .unwrap_or("No diagnostic available.");
+            out.push_str(&format!("Failed{target}: {diagnostic}\n"));
         }
     }
     if any_failed {
-        out.push_str("Completed operations are recorded; this result does not imply rollback.\n");
+        out.push_str("Failure does not imply rollback. Check completed actions before choosing the next execution.\n");
     }
     out
 }
@@ -248,16 +263,11 @@ fn field_type_is_blob(cgs: Option<&CGS>, entity_type: &EntityName, field: &str) 
 
 /// Column order for agent table/TSV: fields (blob → ref+mime) + relations — no cache metadata columns.
 pub(crate) fn union_entity_table_columns(
-    result: &ExecutionResult,
+    result: &impl RowObservation,
     cgs: Option<&CGS>,
     max_entity_rows: Option<usize>,
 ) -> Vec<String> {
-    let entities = || {
-        result
-            .entities()
-            .iter()
-            .take(max_entity_rows.unwrap_or(usize::MAX))
-    };
+    let entities = || result.rows().take(max_entity_rows.unwrap_or(usize::MAX));
     let mut columns: Vec<String> = Vec::new();
     let mut emitted: BTreeSet<String> = BTreeSet::new();
 
@@ -545,32 +555,6 @@ pub(crate) fn summary_string_needs_full_fidelity_restore(
             s.chars().count() > SUMMARY_DEFAULT_STRING_OMIT_CHARS
         }
     }
-}
-
-/// Encoded UTF-8 bytes of all string cells admitted by full-fidelity MCP rendering.
-/// Budget the actual escaped representation, including short strings and layout.
-pub(crate) fn summary_sensitive_string_bytes(
-    result: &ExecutionResult,
-    _cgs: Option<&CGS>,
-    max_entity_rows: Option<usize>,
-) -> usize {
-    result
-        .entities()
-        .iter()
-        .take(max_entity_rows.unwrap_or(usize::MAX))
-        .flat_map(|entity| {
-            entity.fields.iter().filter_map(|(_field, value)| {
-                let Value::String(s) = value.to_value() else {
-                    return None;
-                };
-                Some(
-                    serde_json::to_string(&s)
-                        .expect("string serialization")
-                        .len(),
-                )
-            })
-        })
-        .sum()
 }
 
 fn format_json(result: &ExecutionResult) -> String {
@@ -1554,9 +1538,9 @@ mod tests {
         );
         let empty_md = format_operations_block(&empty_loop);
         let done_md = format_operations_block(&completed);
-        assert!(empty_md.contains("invocations=0"), "{empty_md}");
-        assert!(empty_md.contains("completed=0"), "{empty_md}");
-        assert!(done_md.contains("completed=1"), "{done_md}");
+        assert!(empty_md.contains("No actions invoked."), "{empty_md}");
+        assert!(!empty_md.contains("completed"), "{empty_md}");
+        assert!(done_md.contains("1 action completed."), "{done_md}");
         assert!(!done_md.contains("applied"), "{done_md}");
         assert_eq!(
             http_execute_results_value(&empty_loop)["operations"][0]["logical_invocations"],
@@ -1566,6 +1550,27 @@ mod tests {
             http_execute_results_value(&completed)["operations"][0]["completed"],
             1
         );
+    }
+
+    #[test]
+    fn parent_completion_is_not_an_action_receipt() {
+        let mut acknowledgement = ack("langitem_ping", 0, 0, ExecutionSource::Cache);
+        acknowledgement
+            .outcomes
+            .push(plasm_runtime::OperationInvocationOutcome {
+                source_index: 0,
+                source_identity: Some("LangItem:1".into()),
+                status: plasm_runtime::OperationInvocationStatus::Completed,
+                error: None,
+            });
+        let result = result_with_operations(
+            plasm_runtime::OperationLedger::from_ack(acknowledgement),
+            ExecutionSource::Cache,
+        );
+        let text = format_operations_block(&result);
+        assert!(text.contains("No actions invoked."));
+        assert!(!text.contains("completed"));
+        assert!(!text.contains("LangItem:1"));
     }
 
     #[test]
@@ -1608,7 +1613,7 @@ mod tests {
         );
         let wire = http_execute_results_value(&result);
         assert_eq!(wire["operations"][0]["source"], "replay");
-        assert!(format_operations_block(&result).contains("source=replay"));
+        assert!(format_operations_block(&result).contains("Recorded outcome: 1 action completed."));
     }
 
     /// Soft-fail retained summary: unavailable detail must not render as a blank / empty cell.

@@ -25,7 +25,6 @@ async fn profile_syntax_families_check_and_execute() {
         ("raise_from", "try:\n        raise ValueError('x') from None\n    except ValueError as error:\n        return str(error)", "x"),
     ] {
         let definition = format!("def render() -> str:\n    {body}\n");
-        validate_policy(&definition).unwrap();
         super::super::admission::check_definition(&definition, "").unwrap_or_else(|e| panic!("{family} admission: {e}"));
         let result = pool.compute(format!("{definition}\nrender()"), vec![]).await
             .unwrap_or_else(|e| panic!("{family} execution: {e}"));
@@ -59,56 +58,34 @@ fn profile_upstream_rejections_are_pre_execution() {
 }
 
 #[test]
-fn profile_effect_policy_is_explicit() {
-    for module in [
-        "asyncio",
-        "base64",
-        "binascii",
-        "collections",
-        "copy",
-        "dataclasses",
-        "functools",
-        "itertools",
-        "json",
-        "math",
-        "os",
-        "pathlib",
-        "random",
-        "re",
-        "sys",
-        "time",
-        "typing",
-        "unicodedata",
-    ] {
-        assert!(validate_policy(&format!("def f():\n    import {module}\n")).is_err());
-    }
-    for body in [
-        "from math import sqrt",
-        "global x",
-        "nonlocal x",
-        "open('x')",
-        "print('x')",
-        "input()",
-        "eval('1')",
-        "exec('x=1')",
-        "compile('x', '', 'exec')",
-        "globals()",
-        "locals()",
-        "vars()",
-        "getattr(x, 'y')",
-        "setattr(x, 'y', 1)",
-        "delattr(x, 'y')",
-        "__import__('os')",
-        "x.__class__",
-    ] {
-        assert!(
-            validate_policy(&format!("def f():\n    {body}\n")).is_err(),
-            "accepted {body}"
-        );
-    }
+fn generated_boundary_members_remain_sealed() {
     for name in ["class", "x: str\n    injected", "__dict__", "a.b"] {
         assert!(validate_member(name).is_err(), "accepted {name}");
     }
+}
+
+#[tokio::test]
+async fn compute_capabilities_are_enforced_by_host_interactions() {
+    let pool = crate::python_pool::PythonPool::default();
+    // Valid Python spellings do not grant host authority. No environment value
+    // or file content is returned to the program.
+    for source in [
+        "import random\nstr(random.random())",
+        "import time\ntime.sleep(1)",
+        "import os\nos.getenv('PLASM_UNEXPOSED_TEST_VALUE')",
+        "from pathlib import Path\nPath('/tmp/plasm-unexposed').read_text()",
+    ] {
+        assert!(pool.compute(source.into(), vec![]).await.is_err());
+    }
+    for source in [
+        "def f():\n    open = 'local'\n    return open\nf()",
+        "import math\nstr(math.sqrt(9))",
+        "import random\nrandom.seed(123)\nstr(random.randint(1, 1))",
+    ] {
+        super::super::admission::check_definition(source, "").unwrap();
+        assert!(pool.compute(source.into(), vec![]).await.is_ok());
+    }
+    pool.close().await;
 }
 
 #[tokio::test]

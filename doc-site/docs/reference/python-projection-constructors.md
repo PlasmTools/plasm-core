@@ -26,16 +26,16 @@ do not need identical generated compute source or identical IL nodes.
   },
   {
     "operation": "literal",
-    "premise": "Literal operand",
-    "transfer": "Retain primitive scalar kind",
+    "premise": "Literal operand with a closed materialized value contract",
+    "transfer": "Retain its scalar or collection kind",
     "law": "BC-03",
     "witnesses": [
       "render_parity_lang_with_mul"
     ],
     "invalid": [
       {
-        "body": "return E.query().select(x=lambda row: {1, 2})",
-        "error": "materialized"
+        "body": "return E.query().select(x=lambda row: {1: 2})",
+        "error": "materialized dictionaries require string keys"
       }
     ]
   },

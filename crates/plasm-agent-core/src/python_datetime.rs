@@ -1,5 +1,5 @@
-//! Static resolution of the supported standard-library namespace, not Python execution.
-use ruff_python_ast::{Expr, Stmt};
+//! Host alias bookkeeping only. Monty owns import and member availability.
+use ruff_python_ast::Stmt;
 use ruff_text_size::Ranged;
 use std::collections::BTreeMap;
 
@@ -17,37 +17,31 @@ impl Imports {
                 .names
                 .iter()
                 .map(|a| {
-                    if a.name.as_str() != "datetime" {
-                        return Err("only the datetime module is admitted".to_string());
-                    }
-                    Ok((
-                        a.asname.as_ref().unwrap_or(&a.name).to_string(),
-                        "datetime".to_string(),
-                    ))
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-            Stmt::ImportFrom(i) => {
-                if i.level != 0 || i.module.as_ref().map(|m| m.as_str()) != Some("datetime") {
-                    return Err("only the datetime module is admitted".into());
-                }
-                i.names
-                    .iter()
-                    .map(|a| {
-                        if plasm_core::temporal_value::TemporalKind::parse(a.name.as_str())
-                            .is_none()
-                        {
-                            return Err(format!(
-                                "Monty does not expose datetime.{}; use timezone.utc for UTC",
-                                a.name
-                            ));
+                    let name = a.name.as_str();
+                    match &a.asname {
+                        Some(alias) => (alias.to_string(), name.to_owned()),
+                        None => {
+                            let root = name.split('.').next().unwrap_or(name);
+                            (root.to_owned(), root.to_owned())
                         }
-                        Ok((
-                            a.asname.as_ref().unwrap_or(&a.name).to_string(),
-                            format!("datetime.{}", a.name),
-                        ))
-                    })
-                    .collect::<Result<Vec<_>, String>>()?
-            }
+                    }
+                })
+                .collect::<Vec<_>>(),
+            Stmt::ImportFrom(i) => i
+                .names
+                .iter()
+                .filter(|a| a.name.as_str() != "*")
+                .map(|a| {
+                    (
+                        a.asname.as_ref().unwrap_or(&a.name).to_string(),
+                        format!(
+                            "{}.{}",
+                            i.module.as_ref().map(|m| m.as_str()).unwrap_or(""),
+                            a.name
+                        ),
+                    )
+                })
+                .collect(),
             _ => return Ok(false),
         };
         for (local, canonical) in bindings {
@@ -75,21 +69,14 @@ impl Imports {
                     .is_some_and(|c| b"emrvp".contains(c))
                     && local.len() > 1
                     && local.as_bytes()[1..].iter().all(u8::is_ascii_digit))
-                || self.bindings.insert(local, canonical).is_some()
             {
-                return Err("reserved or duplicate import binding".into());
+                return Err("import shadows a reserved Plasm binding".into());
             }
+            self.bindings.insert(local, canonical);
         }
         self.source.push_str(&source[stmt.range()]);
         self.source.push('\n');
         Ok(true)
-    }
-    pub fn path(&self, e: &Expr) -> Option<String> {
-        match e {
-            Expr::Name(n) => self.bindings.get(n.id.as_str()).cloned(),
-            Expr::Attribute(a) => self.path(&a.value).map(|base| format!("{base}.{}", a.attr)),
-            _ => None,
-        }
     }
     pub fn split<'a>(source: &str, suite: &'a [Stmt]) -> Result<(Self, &'a [Stmt]), String> {
         let mut imports = Self::default();

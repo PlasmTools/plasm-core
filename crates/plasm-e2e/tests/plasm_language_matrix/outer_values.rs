@@ -94,7 +94,7 @@ pub(super) async fn run() -> usize {
         ("row.text + row.text", json!("[1][1]")),
         (
             "money_mul(row.price, 2)",
-            json!({"__plasm_money":"24691357802469135780.24691356","currency":"USD"}),
+            json!({"__plasm_money":"24691357802469135780.24691356","currency":"USD","format":{"encoding":"decimal_string"}}),
         ),
         (
             "row.count if row.flag == True else 1 / 0",

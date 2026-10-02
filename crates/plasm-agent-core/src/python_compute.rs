@@ -2,6 +2,8 @@ mod admission;
 #[cfg(test)]
 mod analysis_tests;
 mod arguments;
+mod multiple;
+pub(crate) use arguments::is_row as is_row_annotation;
 mod inference;
 mod returns;
 mod upstream;
@@ -21,8 +23,122 @@ use ruff_python_ast::{Expr, Stmt};
 use ruff_text_size::Ranged;
 use std::collections::BTreeMap;
 
+/// A callback receives one materialized row. The checker judges any declared
+/// Python parameter type; the host supplies catalog references and provenance.
+pub(crate) fn check_row_parameter(
+    session: &crate::execute_session::ExecuteSession,
+    annotation: &Expr,
+    actual: &plasm_core::value_contract::ValueContract,
+    imports: &str,
+) -> Result<(), String> {
+    check_callback_return(session, annotation, actual, actual, imports)
+}
+
+pub(crate) fn check_callback_return(
+    session: &crate::execute_session::ExecuteSession,
+    annotation: &Expr,
+    input: &plasm_core::value_contract::ValueContract,
+    actual: &plasm_core::value_contract::ValueContract,
+    imports: &str,
+) -> Result<(), String> {
+    let context = session
+        .contexts_by_entry
+        .get(&session.entry_id)
+        .ok_or("callback context missing")?;
+    let symbols = crate::plasm_plan_run::symbol_map_for_plasm_surface_parse(session, None);
+    let domains = return_domains(session)?;
+    let annotation = returns::prepare(
+        annotation,
+        input,
+        &domains.types,
+        &domains.catalogs,
+        &context.cgs,
+        &session.entry_id,
+        symbols.as_ref(),
+        imports,
+    )?;
+    annotation.check(actual)
+}
+
+pub(crate) fn check_callback_closed_return(
+    session: &crate::execute_session::ExecuteSession,
+    annotation: &Expr,
+    input: &plasm_core::value_contract::ValueContract,
+    expression: &Expr,
+    imports: &str,
+) -> Result<(), String> {
+    let context = session
+        .contexts_by_entry
+        .get(&session.entry_id)
+        .ok_or("callback context missing")?;
+    let symbols = crate::plasm_plan_run::symbol_map_for_plasm_surface_parse(session, None);
+    let domains = return_domains(session)?;
+    let annotation = returns::prepare(
+        annotation,
+        input,
+        &domains.types,
+        &domains.catalogs,
+        &context.cgs,
+        &session.entry_id,
+        symbols.as_ref(),
+        imports,
+    )?;
+    annotation.check_body(
+        &format!("\n    return ({})\n", monty::expression_source(expression)),
+        &[],
+        &context.cgs,
+        &domains.catalogs,
+    )
+}
+
+/// A DAG record literal is a Python dictionary expression before its fields are
+/// published as named columns. Preserve that contextual typing for annotations.
+pub(crate) fn check_callback_record_return(
+    session: &crate::execute_session::ExecuteSession,
+    annotation: &Expr,
+    input: &plasm_core::value_contract::ValueContract,
+    actual: &plasm_core::value_contract::ValueContract,
+    imports: &str,
+) -> Result<(), String> {
+    let context = session
+        .contexts_by_entry
+        .get(&session.entry_id)
+        .ok_or("callback context missing")?;
+    let symbols = crate::plasm_plan_run::symbol_map_for_plasm_surface_parse(session, None);
+    let domains = return_domains(session)?;
+    let annotation = returns::prepare(
+        annotation,
+        input,
+        &domains.types,
+        &domains.catalogs,
+        &context.cgs,
+        &session.entry_id,
+        symbols.as_ref(),
+        imports,
+    )?;
+    let plasm_core::value_contract::ValueShape::Record { fields } = &actual.shape else {
+        return Err("record constructor contract missing".into());
+    };
+    let entries = fields
+        .keys()
+        .map(|name| {
+            let key = serde_json::to_string(name).map_err(|e| e.to_string())?;
+            Ok(format!("{key}: result[{key}]"))
+        })
+        .collect::<Result<Vec<_>, String>>()?
+        .join(", ");
+    annotation.check_body(
+        &format!("\n    return {{{entries}}}\n"),
+        &[("result", actual)],
+        &context.cgs,
+        &domains.catalogs,
+    )
+}
+
 pub(crate) const LANGUAGE_PROFILE: &str =
-    "monty-e007685fbb06494c13b9a7b3fede9f8e6a54a2be-typed-v9-money-v2-branches-v2";
+    "monty-e007685fbb06494c13b9a7b3fede9f8e6a54a2be-typed-v11-money-v2-branches-v2";
+
+pub(crate) const CONTRACT_VERSION: u32 = 11;
 
 pub(crate) const MAX_INPUT_ROWS: usize = 256;
 
@@ -262,7 +378,23 @@ pub(crate) fn definition_body(
     }
 }
 
+fn diagnostic_imports(
+    source: &str,
+    def: &ruff_python_ast::StmtFunctionDef,
+    imports: &str,
+) -> String {
+    let line = source[..def.name.start().to_usize()]
+        .bytes()
+        .filter(|b| *b == b'\n')
+        .count();
+    format!(
+        "{imports}{}",
+        "\n".repeat(line.saturating_sub(imports.lines().count() + 1))
+    )
+}
+
 pub struct PreparedCompute {
+    independent_inputs: bool,
     optional_fields: std::collections::BTreeSet<String>,
     pub contract: Option<ValueContract>,
     context: std::sync::Arc<CGS>,
@@ -319,6 +451,11 @@ impl PreparedCompute {
             || name(&def.decorator_list[0].expression) != Some("compute")
         {
             return Err("expected a synchronous @compute function".into());
+        }
+        if def.parameters.args.len() > 1 {
+            return Self::prepare_multiple(
+                source, def, &imports, cgs, entry, symbols, rows, domains,
+            );
         }
         let p = &def.parameters;
         if !p.posonlyargs.is_empty()
@@ -404,100 +541,84 @@ impl PreparedCompute {
             rows.map(|(s, _)| s.optional_fields.clone())
                 .unwrap_or_default(),
         );
-        let mut return_types = domains.types.clone();
-        for (local, canonical) in &imports.bindings {
-            if let Some(kind) = canonical
-                .strip_prefix("datetime.")
-                .and_then(plasm_core::temporal_value::TemporalKind::parse)
-            {
-                return_types.insert(local.clone(), kind.contract());
-            } else if canonical == "datetime" {
-                return_types.insert(
-                    local.clone(),
-                    plasm_core::value_contract::ValueContract::record(
-                        ["date", "datetime", "time", "timedelta", "timezone"]
-                            .into_iter()
-                            .map(|name| {
-                                (
-                                    name.into(),
-                                    plasm_core::temporal_value::TemporalKind::parse(name)
-                                        .unwrap()
-                                        .contract(),
-                                )
-                            })
-                            .collect(),
-                        Default::default(),
-                    ),
-                );
-            }
-        }
-        let resolved_domains = ReturnDomains {
-            types: return_types,
-            catalogs: domains.catalogs.clone(),
-        };
-        let argument =
-            arguments::resolve(ann, &input, &fields, &resolved_domains, cgs, entry, symbols)?;
+        let argument = arguments::resolve(
+            ann,
+            &input,
+            &fields,
+            domains,
+            cgs,
+            entry,
+            symbols,
+            &imports.source,
+        )?;
         let per_row = argument.per_row;
-        let inferred = if def.returns.is_none() {
-            let [Stmt::Return(ret)] = def.body.as_slice() else {
-                return Err("compute without an annotation requires one return expression".into());
-            };
-            let expr = ret
-                .value
-                .as_deref()
-                .ok_or("compute requires a returned value")?;
-            let input_type = if argument.field.is_some() {
-                argument.value_type.clone()
-            } else if per_row {
-                input.clone()
-            } else {
-                plasm_core::value_contract::ValueContract {
-                    shape: plasm_core::value_contract::ValueShape::Array {
-                        element: Box::new(input.clone()),
-                    },
-                    domain: None,
-                    nullable: false,
-                }
-            };
-            Some(inference::infer(
-                &source[expr.start().to_usize()..expr.end().to_usize()],
-                param.name.as_str(),
-                &input_type,
-                &imports.source,
+        let body_imports = diagnostic_imports(source, def, &imports.source);
+        let annotation = def
+            .returns
+            .as_deref()
+            .map(|a| {
+                returns::prepare(
+                    a,
+                    &input,
+                    &domains.types,
+                    &domains.catalogs,
+                    cgs,
+                    entry,
+                    symbols,
+                    &body_imports,
+                )
+            })
+            .transpose()?;
+        let declared_output = annotation
+            .as_ref()
+            .map(|a| a.contract())
+            .transpose()?
+            .flatten();
+        let input_type = if argument.field.is_some() || argument.mapping.is_some() {
+            argument.value_type.clone()
+        } else if per_row {
+            input.clone()
+        } else {
+            plasm_core::value_contract::ValueContract {
+                shape: plasm_core::value_contract::ValueShape::Array {
+                    element: Box::new(input.clone()),
+                },
+                domain: None,
+                nullable: false,
+            }
+        };
+        if let Some(annotation) = &annotation {
+            annotation.check_body(
+                &definition_body(source, def)?,
+                &[(param.name.as_str(), &input_type)],
+                cgs,
+                &domains.catalogs,
+            )?;
+        }
+        let inferred = if declared_output.is_none() {
+            Some(inference::infer_body(
+                &definition_body(source, def)?,
+                &[(param.name.as_str(), &input_type)],
+                &body_imports,
             )?)
         } else {
             None
         };
-        let output = if let Some(output) = inferred {
-            output
-        } else if let Some(kind) = def
-            .returns
-            .as_deref()
-            .and_then(|annotation| imports.path(annotation))
-            .and_then(|p| {
-                p.strip_prefix("datetime.")
-                    .and_then(plasm_core::temporal_value::TemporalKind::parse)
-            })
-        {
-            kind.contract()
-        } else {
-            returns::resolve(
-                def.returns
-                    .as_deref()
-                    .ok_or("compute requires a return annotation")?,
-                &input,
-                &resolved_domains.types,
-                &domains.catalogs,
-                cgs,
-                entry,
-                symbols,
-            )?
+        let output = match (declared_output, inferred) {
+            (Some(output), _) => output,
+            (None, Some(output)) => {
+                if let Some(annotation) = &annotation {
+                    annotation.check(&output)?;
+                }
+                output
+            }
+            _ => return Err("missing compute output contract".into()),
         };
         let mut stubs = upstream::stubs_in(&fields, cgs, &domains.catalogs)?;
         upstream::domain_aliases(&domains.types, cgs, &domains.catalogs, &mut stubs)?;
         let output_type = upstream::output_type(&output, cgs, &domains.catalogs, &mut stubs)?;
         let body = definition_body(source, def)?;
-        let argument_type = if argument.field.is_some() {
+        let argument_type = if argument.field.is_some() || argument.mapping.is_some() {
             upstream::input_type(&argument.value_type, cgs, &domains.catalogs, &mut stubs)?
         } else if per_row {
             "PlasmInput".into()
@@ -515,9 +636,9 @@ impl PreparedCompute {
             "import datetime as PlasmDatetime\n{}{padding}def {}({}: {}) -> {}:{}\n",
             imports.source, def.name, param.name, argument_type, output_type, body
         );
-        upstream::validate_policy(&definition)?;
         let executable = format!("{}\n{}({})", definition, def.name, argument.expression());
         Ok(Self {
+            independent_inputs: false,
             optional_fields: rows
                 .map(|(schema, _)| schema.optional_fields.clone())
                 .unwrap_or_default(),
@@ -572,6 +693,21 @@ impl PreparedCompute {
                 .ok_or("missing nominal input contract")?
                 .materialize(owner, membership, rows)?
         };
+        if self.independent_inputs {
+            input
+                .iter()
+                .flat_map(|row| row.values())
+                .try_fold(0usize, |count, value| {
+                    let rows = match value {
+                        Value::Array(rows) => rows.len(),
+                        _ => 1,
+                    };
+                    count
+                        .checked_add(rows)
+                        .filter(|count| *count <= MAX_INPUT_ROWS)
+                        .ok_or("compute input row budget exceeded")
+                })?;
+        }
         let types = match &self.row_fields {
             Some(fields) => fields.clone(),
             None => self
@@ -645,13 +781,24 @@ impl PreparedCompute {
                     });
                 plasm_core::temporal_value::encode(&value, wire)
             }
-            ValueShape::Array { element } => value
+            ValueShape::MappingRecord { record } => self.encode_domain_output(value, record),
+            ValueShape::Array { element } | ValueShape::Set { element } => value
                 .as_array()
                 .ok_or("expected array output")?
                 .iter()
                 .map(|v| self.encode_domain_output(v.clone(), element))
                 .collect::<Result<Vec<_>, _>>()
                 .map(Value::Array),
+            ValueShape::Dictionary { value: element, .. } => value
+                .as_object()
+                .ok_or("expected dictionary output")?
+                .iter()
+                .map(|(k, v)| {
+                    self.encode_domain_output(v.clone(), element)
+                        .map(|v| (k.clone(), v))
+                })
+                .collect::<Result<indexmap::IndexMap<_, _>, _>>()
+                .map(Value::Object),
             ValueShape::Record { fields } | ValueShape::ObservedRecord { fields, .. } => value
                 .as_object()
                 .ok_or("expected record output")?
@@ -729,7 +876,7 @@ pub(crate) fn check_op(
     else {
         return Err("expected Python compute".into());
     };
-    if *contract_version != 9 || language_profile != LANGUAGE_PROFILE {
+    if *contract_version != CONTRACT_VERSION || language_profile != LANGUAGE_PROFILE {
         return Err("unsupported Python compute contract version".into());
     }
     let ctx = es

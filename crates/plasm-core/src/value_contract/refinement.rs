@@ -13,7 +13,8 @@ impl T {
             }
             t.domain = None;
             match &mut t.shape {
-                S::Array { element } => erase(element, depth + 1)?,
+                S::Array { element } | S::Set { element } => erase(element, depth + 1)?,
+                S::MappingRecord { record } => erase(record, depth + 1)?,
                 S::Union { variants } => {
                     for value in variants {
                         erase(value, depth + 1)?;
@@ -71,6 +72,18 @@ fn meet(original: &T, evidence: &T, depth: usize) -> Result<T, String> {
         }
         (S::Scalar { field_type: a }, S::Scalar { field_type: b }) if a == b => original.clone(),
         (S::Temporal { kind: a, .. }, S::Temporal { kind: b, .. }) if a == b => original.clone(),
+        (S::Set { element: a }, S::Set { element: b }) => T {
+            shape: S::Set {
+                element: Box::new(meet(a, b, depth + 1)?),
+            },
+            ..original.clone()
+        },
+        (S::MappingRecord { record: a }, S::MappingRecord { record: b }) => T {
+            shape: S::MappingRecord {
+                record: Box::new(meet(a, b, depth + 1)?),
+            },
+            ..original.clone()
+        },
         (S::Array { element: a }, S::Array { element: b }) => T {
             shape: S::Array {
                 element: Box::new(meet(a, b, depth + 1)?),

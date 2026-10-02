@@ -1,4 +1,4 @@
-use super::catalog_operations::{CatalogOperation, CatalogReadKind};
+use super::catalog_operations::{CatalogReadKind, ReadSelection};
 use super::*;
 use ruff_python_ast::ExprCall;
 impl Lower<'_> {
@@ -6,37 +6,22 @@ impl Lower<'_> {
         &mut self,
         site: &PyExpr,
         call: &ExprCall,
-        method: &str,
+        selection: ReadSelection<'_>,
         owner: plasm_core::symbol_tuning::EntityBinding,
         id: &str,
     ) -> Result<String, String> {
-        let cgs = crate::catalog_ownership::resolve_cgs_for_entry_entity(
-            self.es,
-            owner.entry_id.as_str(),
-            owner.entity.as_str(),
-        )?;
-        let specific = if matches!(method, "query" | "get" | "search") {
-            None
-        } else {
-            let symbols = self.state.sym_map_for(self.es);
-            let binding = symbols
-                .resolve_session_method(method)
-                .map_err(|e| at(site, &e.to_string()))?;
-            if binding.entry_id != owner.entry_id || binding.domain != owner.entity {
-                return Err(at(site, "read method and entity ownership differ"));
-            }
-            Some(binding.capability.clone())
+        let kind = selection.kind();
+        let cgs = match &selection {
+            ReadSelection::Taught(resolved) => resolved.cgs,
+            ReadSelection::Primary(_) => crate::catalog_ownership::resolve_cgs_for_entry_entity(
+                self.es,
+                owner.entry_id.as_str(),
+                owner.entity.as_str(),
+            )?,
         };
-        let kind = if let Some(capability) = &specific {
-            let cap = cgs
-                .get_capability(capability.as_str())
-                .ok_or("missing method capability")?;
-            let CatalogOperation::Read(kind) = CatalogOperation::from_kind(cap.kind) else {
-                return Err(at(site, "method is not a catalog read"));
-            };
-            kind
-        } else {
-            CatalogReadKind::primary(method).ok_or("unknown primary read")?
+        let specific = match &selection {
+            ReadSelection::Taught(resolved) => Some(resolved.capability.clone()),
+            ReadSelection::Primary(_) => None,
         };
         let mut expr = match kind {
             CatalogReadKind::Query | CatalogReadKind::Search => {

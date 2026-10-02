@@ -20,10 +20,6 @@ impl LossySummaryFieldNames {
         self.0.is_empty()
     }
 
-    pub(crate) fn join_comma(&self) -> String {
-        self.0.join(", ")
-    }
-
     pub(crate) fn as_slice(&self) -> &[String] {
         &self.0
     }

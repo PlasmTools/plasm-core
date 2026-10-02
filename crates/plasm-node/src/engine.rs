@@ -1524,9 +1524,17 @@ mod tests {
                 .as_ref(),
             Some(&pin)
         );
-        engine
+        let extension = engine
             .expose_routing("fetch category", &route("category_get"))
             .unwrap();
+        assert!(!extension
+            .prompt
+            .contains(plasm_core::prompt_render::python::LANGUAGE));
+        assert!(!extension.prompt.contains("Replace the complete"));
+        assert!(
+            !extension.prompt.contains("e1.query("),
+            "extension must not repeat the delivered operation"
+        );
         assert!(engine
             .exposure
             .as_ref()

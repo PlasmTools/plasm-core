@@ -1,6 +1,6 @@
 //! Decode upstream Python inference into materialized Plasm contracts.
 //! Generated nominal declarations are a reversible map, not carrier-type proofs.
-use monty_analysis::{AnalysisLimits, AnalysisOutcome, AnalysisRequest, Graph, Node, Span, TypeId};
+use monty_analysis::{AnalysisLimits, AnalysisOutcome, AnalysisRequest, Graph, Node, TypeId};
 use plasm_core::{
     value_contract::{ValueContract as Type, ValueShape},
     FieldType,
@@ -13,23 +13,42 @@ mod declarations;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
 pub(super) fn infer(
     expression: &str,
     parameter: &str,
     argument: &Type,
     imports: &str,
 ) -> Result<Type, String> {
+    infer_body(
+        &format!("\n    return ({expression})"),
+        &[(parameter, argument)],
+        imports,
+    )
+}
+
+/// Infer return expressions in their complete upstream-checked lexical context.
+/// The final generated return annotation also checks fallthrough paths.
+pub(super) fn infer_body(
+    body: &str,
+    parameters: &[(&str, &Type)],
+    imports: &str,
+) -> Result<Type, String> {
     let mut declarations = declarations::Declarations::default();
-    let annotation = declarations.render(argument, 0)?;
-    let source = format!("{imports}\ndef __plasm_expression({parameter}: {annotation}):\n    return ({expression})\n");
+    let parameters = parameters
+        .iter()
+        .map(|(name, ty)| {
+            declarations
+                .render(ty, 0)
+                .map(|annotation| format!("{name}: {annotation}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?
+        .join(", ");
+    let source = format!("{imports}\ndef __plasm_expression({parameters}):{body}\n");
     let parsed = ruff_python_parser::parse_module(&source).map_err(|e| e.to_string())?;
     let Some(ruff_python_ast::Stmt::FunctionDef(function)) = parsed.suite().last() else {
-        return Err("missing generated expression function".into());
+        return Err("missing generated compute function".into());
     };
-    let [ruff_python_ast::Stmt::Return(ret)] = function.body.as_slice() else {
-        return Err("expression must not introduce statements".into());
-    };
-    let expr = ret.value.as_deref().ok_or("missing expression result")?;
     {
         use ruff_python_ast::visitor::{self, Visitor};
         struct Reserved(bool);
@@ -42,131 +61,208 @@ pub(super) fn infer(
             }
         }
         let mut reserved = Reserved(false);
-        reserved.visit_expr(expr);
+        reserved.visit_body(&function.body);
         if reserved.0 {
             return Err("analysis declaration names are not program capabilities".into());
         }
     }
-    let mut targets = Vec::new();
-    collect(expr, &mut targets, 0)?;
-    let result = monty_analysis::analyze(&AnalysisRequest {
-        source,
-        stubs: Some(declarations.source.clone()),
-        targets: targets
-            .iter()
-            .map(|e| Span {
-                start: e.start().to_u32(),
-                end: e.end().to_u32(),
-            })
-            .collect(),
-        limits: AnalysisLimits::default(),
-    })?;
+    let result = monty_analysis::analyze_function(
+        &AnalysisRequest {
+            source: source.clone(),
+            stubs: Some(declarations.source.clone()),
+            targets: Vec::new(),
+            limits: AnalysisLimits::default(),
+        },
+        "__plasm_expression",
+    )?;
     let AnalysisOutcome::Inferred(graph) = result.outcome else {
         let AnalysisOutcome::Rejected(errors) = result.outcome else {
             unreachable!()
         };
-        return Err(errors
-            .into_iter()
-            .map(|e| format!("{}: {}", e.code, e.message))
-            .collect::<Vec<_>>()
-            .join("\n"));
+        return Err(body_diagnostics(errors, &source));
     };
     let decoder = Decoder {
         graph: &graph,
         declarations: &declarations,
     };
-    elaborate(expr, &targets, &decoder, 0)
+    graph
+        .roots
+        .iter()
+        .map(|id| decoder.decode(*id, 0))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .reduce(Type::join)
+        .ok_or_else(|| "checker supplied no return contract".into())
 }
 
-// Preserve structural record keys at the materialization boundary. Python's
-// dict[str, T] alone does not prove a record's per-field contracts.
-fn collect<'a>(expr: &'a Expr, targets: &mut Vec<&'a Expr>, depth: usize) -> Result<(), String> {
-    if depth >= 64 {
-        return Err("expression result nesting exceeds 64".into());
+/// Check the original annotation before materialization widens Python literals.
+/// A materialized string contract must not erase a Literal return constraint.
+pub(super) fn check_annotated_body(
+    body: &str,
+    inputs: &[(&str, &Type)],
+    annotation: &str,
+    aliases: &BTreeMap<String, Type>,
+    imports: &str,
+    cgs: &plasm_core::CGS,
+    catalogs: &BTreeMap<String, std::sync::Arc<plasm_core::CGS>>,
+) -> Result<(), String> {
+    // Authored output contracts are validated refinements. Reuse the same
+    // output/input declarations as final worker admission; inference's nominal
+    // evidence declarations must not impose a second, incompatible return ABI.
+    let mut stubs = super::upstream::stubs_in(&BTreeMap::new(), cgs, catalogs)?;
+    for (name, contract) in aliases {
+        super::upstream::validate_member(name)?;
+        let rendered = super::upstream::output_annotation(contract, cgs, catalogs, &mut stubs)?;
+        stubs.push_str(&format!("{name}: TypeAlias = {rendered}\n"));
     }
-    targets.push(expr);
-    match expr {
-        Expr::Dict(dict) => {
-            for item in &dict.items {
-                collect(&item.value, targets, depth + 1)?;
-            }
-        }
-        Expr::List(list) => {
-            for item in &list.elts {
-                collect(item, targets, depth + 1)?;
-            }
-        }
-        Expr::ListComp(list) => collect(&list.elt, targets, depth + 1)?,
-        Expr::If(choice) => {
-            collect(&choice.body, targets, depth + 1)?;
-            collect(&choice.orelse, targets, depth + 1)?;
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-fn elaborate(
-    expr: &Expr,
-    targets: &[&Expr],
-    decoder: &Decoder<'_>,
-    depth: usize,
-) -> Result<Type, String> {
-    if depth >= 64 {
-        return Err("expression result nesting exceeds 64".into());
-    }
-    let recur = |expr| elaborate(expr, targets, decoder, depth + 1);
-    match expr {
-        Expr::Dict(dict) => {
-            let mut fields = BTreeMap::new();
-            for item in &dict.items {
-                let Some(Expr::StringLiteral(key)) = &item.key else {
-                    return Err("materialized records require explicit string keys".into());
-                };
-                if fields
-                    .insert(key.value.to_str().to_owned(), recur(&item.value)?)
-                    .is_some()
-                {
-                    return Err("duplicate materialized record field".into());
+    // An existing materialized container retains its concrete element type;
+    // Python mutable-container invariance must not reject that unchanged value
+    // merely because constructors also accept dictionaries. Preserve the entire
+    // authored annotation (including Literal constraints) in both alternatives.
+    struct ObservedAliases<'a>(&'a BTreeMap<String, Type>);
+    impl ruff_python_ast::visitor::transformer::Transformer for ObservedAliases<'_> {
+        fn visit_expr(&self, expression: &mut Expr) {
+            if let Expr::Name(name) = expression {
+                if self.0.contains_key(name.id.as_str()) {
+                    name.id = format!("PlasmObserved{}", name.id).into();
+                    return;
                 }
             }
-            Ok(Type::record(fields, Default::default()))
+            ruff_python_ast::visitor::transformer::walk_expr(self, expression);
         }
-        Expr::List(list) => Ok(array(
-            list.elts
+    }
+    for (name, contract) in aliases {
+        let observed = super::upstream::input_type(contract, cgs, catalogs, &mut stubs)?;
+        stubs.push_str(&format!("PlasmObserved{name}: TypeAlias = {observed}\n"));
+    }
+    let mut observed = *ruff_python_parser::parse_expression(annotation)
+        .map_err(|e| e.to_string())?
+        .into_syntax()
+        .body;
+    ruff_python_ast::visitor::transformer::Transformer::visit_expr(
+        &ObservedAliases(aliases),
+        &mut observed,
+    );
+    let annotation = format!("({annotation}) | ({})", monty::expression_source(&observed));
+    let parameters = inputs
+        .iter()
+        .map(|(name, ty)| {
+            super::upstream::input_type(ty, cgs, catalogs, &mut stubs)
+                .map(|ty| format!("{name}: {ty}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?
+        .join(", ");
+    let source = format!("{imports}\ndef __plasm_return({parameters}) -> {annotation}:{body}\n");
+    let result = monty_analysis::analyze(&AnalysisRequest {
+        source: source.clone(),
+        stubs: Some(stubs),
+        targets: vec![],
+        limits: AnalysisLimits::default(),
+    })?;
+    match result.outcome {
+        AnalysisOutcome::Inferred(_) => Ok(()),
+        AnalysisOutcome::Rejected(errors) => Err(body_diagnostics(errors, &source)),
+    }
+}
+
+fn body_diagnostics(errors: Vec<monty_analysis::AnalysisDiagnostic>, source: &str) -> String {
+    errors
+        .into_iter()
+        .map(|error| {
+            let location = error
+                .span
+                .and_then(|span| source.get(..span.start as usize))
+                .map(|prefix| {
+                    let line = prefix.bytes().filter(|b| *b == b'\n').count() + 1;
+                    let column = prefix
+                        .rsplit('\n')
+                        .next()
+                        .unwrap_or_default()
+                        .chars()
+                        .count()
+                        + 1;
+                    format!("plasm_compute.py:{line}:{column}: ")
+                })
+                .unwrap_or_default();
+            format!("{location}{}: {}", error.code, error.message)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Ask the authoritative checker about Python assignment compatibility. Plasm
+/// uses this only to select a value/collection boundary, never to infer operators.
+pub(super) fn assignable(actual: &Type, expected: &Type) -> Result<bool, String> {
+    let mut declarations = declarations::Declarations::default();
+    let actual = declarations.render(actual, 0)?;
+    let expected = declarations.render(expected, 0)?;
+    let result = monty_analysis::analyze(&AnalysisRequest {
+        source: format!("def expected(value: {expected}) -> None:\n    pass\ndef check(value: {actual}) -> None:\n    expected(value)\n"),
+        stubs: Some(declarations.source), targets: vec![], limits: AnalysisLimits::default(),
+    })?;
+    Ok(matches!(result.outcome, AnalysisOutcome::Inferred(_)))
+}
+
+/// Resolve a Python annotation through the same checker used for expression
+/// inference. Aliases carry only host-owned nominal/record contracts.
+#[cfg(test)]
+pub(super) fn annotation(source: &str, aliases: &BTreeMap<String, Type>) -> Result<Type, String> {
+    annotation_with_imports(source, aliases, "", None)?
+        .ok_or("annotation has unresolved value types".into())
+}
+
+pub(super) fn annotation_with_imports(
+    source: &str,
+    aliases: &BTreeMap<String, Type>,
+    imports: &str,
+    actual: Option<&Type>,
+) -> Result<Option<Type>, String> {
+    let mut declarations = declarations::Declarations::default();
+    for (name, contract) in aliases {
+        super::upstream::validate_member(name)?;
+        let rendered = declarations.render(contract, 0)?;
+        declarations
+            .source
+            .push_str(&format!("{name}: TypeAlias = {rendered}\n"));
+    }
+    let source = if let Some(actual) = actual {
+        let actual = declarations.render(actual, 0)?;
+        format!("{imports}\ndef __plasm_expected(value: {source}) -> None:\n    pass\ndef __plasm_annotation(value: {actual}):\n    __plasm_expected(value)\n    return value\n")
+    } else {
+        format!("{imports}\ndef __plasm_annotation(value: {source}):\n    return value\n")
+    };
+    let result = monty_analysis::analyze_function(
+        &AnalysisRequest {
+            source,
+            stubs: Some(declarations.source.clone()),
+            targets: vec![],
+            limits: AnalysisLimits::default(),
+        },
+        "__plasm_annotation",
+    )?;
+    match result.outcome {
+        AnalysisOutcome::Inferred(graph) => {
+            if graph
+                .nodes
                 .iter()
-                .map(recur)
-                .collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .reduce(Type::join)
-                .unwrap_or_else(never),
-        )),
-        Expr::ListComp(list) => Ok(array(recur(&list.elt)?)),
-        Expr::If(choice)
-            if matches!(
-                &*choice.body,
-                Expr::Dict(_) | Expr::List(_) | Expr::ListComp(_)
-            ) || matches!(
-                &*choice.orelse,
-                Expr::Dict(_) | Expr::List(_) | Expr::ListComp(_)
-            ) =>
-        {
-            Ok(Type::join(recur(&choice.body)?, recur(&choice.orelse)?))
+                .any(|node| matches!(node, Node::Any | Node::Unknown))
+            {
+                return Ok(None);
+            }
+            let decoder = Decoder {
+                graph: &graph,
+                declarations: &declarations,
+            };
+            let [root] = graph.roots.as_slice() else {
+                return Err("annotation must produce one contract".into());
+            };
+            decoder.decode(*root, 0).map(Some)
         }
-        _ => {
-            let index = targets
-                .iter()
-                .position(|target| std::ptr::eq(*target, expr))
-                .ok_or("missing analysis target")?;
-            decoder.decode(
-                *decoder
-                    .graph
-                    .roots
-                    .get(index)
-                    .ok_or("missing inferred expression type")?,
-                0,
-            )
-        }
+        AnalysisOutcome::Rejected(errors) => Err(errors
+            .into_iter()
+            .map(|e| format!("{}: {}", e.code, e.message))
+            .collect::<Vec<_>>()
+            .join("\n")),
     }
 }
 
@@ -220,7 +316,9 @@ impl Decoder<'_> {
                 .into_iter()
                 .reduce(Type::join)
                 .unwrap_or_else(never),
-            Node::NewType { identity, .. } | Node::Instance { identity, .. }
+            Node::Protocol { identity, .. }
+            | Node::NewType { identity, .. }
+            | Node::Instance { identity, .. }
                 if identity.source == "/analysis_stubs.pyi"
                     && (identity.path.len() == 1
                         || (identity.path.len() == 2 && identity.path[0] == "analysis_stubs")) =>
@@ -244,6 +342,30 @@ impl Decoder<'_> {
                         ("float", []) => Type::scalar(FieldType::Number),
                         ("str", []) => Type::scalar(FieldType::String),
                         ("list", [element]) => array(recur(*element)?),
+                        ("set", [element]) => Type {
+                            shape: ValueShape::Set {
+                                element: Box::new(recur(*element)?),
+                            },
+                            domain: None,
+                            nullable: false,
+                        },
+                        ("dict", [key, value]) => {
+                            let key = recur(*key)?;
+                            if !matches!(key.shape, ValueShape::Never)
+                                && (key.summary() != plasm_core::SyntheticValueKind::String
+                                    || key.nullable)
+                            {
+                                return Err("materialized dictionaries require string keys".into());
+                            }
+                            Type {
+                                shape: ValueShape::Dictionary {
+                                    key: Box::new(key),
+                                    value: Box::new(recur(*value)?),
+                                },
+                                domain: None,
+                                nullable: false,
+                            }
+                        }
                         _ => {
                             return Err(format!(
                                 "inferred Python {name} is not a materialized Plasm type"

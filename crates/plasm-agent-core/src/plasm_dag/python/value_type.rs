@@ -11,7 +11,7 @@ impl Lower<'_> {
         text::derive_contract(
             self.es,
             &self.state,
-            self.scope_row.as_deref().unwrap_or(""),
+            self.frame.row.as_deref().unwrap_or(""),
             value,
             &inputs.values().cloned().collect::<Vec<_>>(),
             0,

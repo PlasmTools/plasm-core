@@ -2,6 +2,53 @@ use super::*;
 use crate::plasm_compile::compile_python_program;
 
 #[test]
+fn declared_compute_requires_a_lowered_callsite() {
+    on_runtime(async {
+        let (es, _, calls) = fixture(1);
+        let item = es
+            .teaching_exposure
+            .as_ref()
+            .unwrap()
+            .to_symbol_map()
+            .entity_sym_for("fixture", "Item");
+        let error = compile_python_program(
+            &es,
+            &format!("class Unused(Program):\n    @compute\n    def unused(self, row: Row) -> str:\n        return row.title\n    def build(self):\n        return {item}.get(\"i1\")\n"),
+        )
+        .await
+        .expect_err("an unused declaration has no input contract witness");
+        assert!(error.to_string().contains("requires a typed DAG callsite"));
+        assert!(calls.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn discarded_statement_requires_resolved_write_evidence() {
+    on_runtime(async {
+        let (es, _, calls) = fixture(1);
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let item = symbols.entity_sym_for("fixture", "Item");
+        let publish = symbols.method_sym_for("fixture", "Item", "publish");
+        let write = format!(
+            "class Emit(Program):\n    def build(self):\n        {item}.{publish}(content=\"ok\")\n        return {item}.query()\n"
+        );
+        compile_python_program(&es, &write)
+            .await
+            .expect("a resolved write may be an expression statement");
+        let pure = format!(
+            "class Observe(Program):\n    def build(self):\n        {item}.query().select(\"title\")\n        return {item}.query()\n"
+        );
+        let error = compile_python_program(&es, &pure)
+            .await
+            .expect_err("discarding a pure rowset is not an effect");
+        assert!(error
+            .to_string()
+            .contains("unused expression statements must be writes"));
+        assert!(calls.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
 fn python_compute_result_is_a_value_without_a_content_wrapper() {
     on_runtime(async {
         let (es, _, calls) = fixture(1);
@@ -103,7 +150,7 @@ fn python_compact_teaching_example_compiles_and_reference_is_not_a_program() {
         let library = format!("{root}{library}");
         ruff_python_parser::parse_module(&library).unwrap();
         compile_python_program(&es, &library).await.unwrap();
-        assert!(LANGUAGE.contains("Cards: notation"));
+        assert!(LANGUAGE.contains("Cards: exact signatures"));
         assert!(
             compile_python_program(&es, &wave.declarations)
                 .await
@@ -241,13 +288,24 @@ fn python_lowering_rejects_invalid_roots_and_captures_without_io() {
             ("zero bound",valid.replace("max_parents=256","max_parents=0")),
             ("huge bound",valid.replace("max_parents=256","max_parents=257")),
             ("unused bad compute",valid.replace("    def build(self):","    @compute\n    def bad(self, rows):\n        return self.secret\n\n    def build(self):")),
-            ("after return",format!("{valid}        items = e1.query()\n")),
-            ("import",format!("import os\n{valid}")),
             ("dynamic control",valid.replace("        items = e1.query()","        if True:\n            items = e1.query()")),
         ] {
             assert!(compile_python_program(&es,&src).await.is_err(),"accepted {case}");
             assert!(calls.lock().unwrap().is_empty());
         }
+        let expected = compile_python_program(&es, &valid).await.unwrap();
+        let unreachable =
+            compile_python_program(&es, &format!("{valid}        items = e1.query()\n"))
+                .await
+                .unwrap();
+        assert!(plasm_core::plasm_monad::comp_semantic_eq(
+            &expected.artifact().comp,
+            &unreachable.artifact().comp
+        ));
+        compile_python_program(&es, &format!("import os\n{valid}"))
+            .await
+            .unwrap();
+        assert!(calls.lock().unwrap().is_empty());
     });
 }
 
@@ -971,10 +1029,8 @@ fn python_compute_infers_structural_return_at_public_admission() {
             json!({"value":[{"key":"i0","title":"Title 0"},{"key":"i1","title":"Title 1"},{"key":"i2","title":"Title 2"}]})
         );
         let bare_dict = source.replace("rows: list[Row]):", "rows: list[Row]) -> list[dict]:");
-        assert!(compile_python_program(&es, &bare_dict)
-            .await
-            .unwrap_err()
-            .contains("field contract"));
+        let inferred = compile_python_program(&es, &bare_dict).await.unwrap();
+        assert!(execute(&es, &host, &inferred).await.is_ok());
         let nested = format!("class Bad(Program):\n    def build(self):\n        @compute\n        def inner(row: Row) -> str:\n            return row.title\n        return {item}.query().map(inner, max_parents=3)\n");
         assert!(compile_python_program(&es, &nested)
             .await
@@ -984,9 +1040,200 @@ fn python_compute_infers_structural_return_at_public_admission() {
             "        return [",
             "        intermediate = 1\n        return [",
         );
-        assert!(compile_python_program(&es, &invalid)
-            .await
-            .unwrap_err()
-            .contains("one return expression"));
+        let multi_statement = compile_python_program(&es, &invalid).await.unwrap();
+        assert!(execute(&es, &host, &multi_statement).await.is_ok());
+    });
+}
+
+#[test]
+fn python_compute_uses_upstream_call_binding() {
+    on_runtime(async {
+        let (es, host, _) = fixture(3);
+        let source = r#"class Bound(Program):
+    @compute
+    def render(self, first: str, /, second: str, *, third: str = "C") -> str:
+        return first + second + third
+    def build(self):
+        return self.render("A", third="!", second="B")
+"#;
+        for (program, expected) in [
+            (source.to_string(), "AB!"),
+            (
+                source.replace("third=\"!\", second=\"B\"", "second=\"B\""),
+                "ABC",
+            ),
+            (
+                source
+                    .replace("def build(self):", "def build(self, /, *, prefix=\"A\"):")
+                    .replace("self.render(\"A\",", "self.render(prefix,"),
+                "AB!",
+            ),
+        ] {
+            let bundle = compile_python_program(&es, &program).await.unwrap();
+            let run = execute(&es, &host, &bundle).await.unwrap();
+            assert_eq!(
+                plasm_runtime::entity_to_agent_row_json(
+                    &run.return_steps[0].result.entities()[0],
+                    None
+                )["value"],
+                json!(expected)
+            );
+        }
+        for program in [
+            source.replace("\"A\", third", "first=\"A\", third"),
+            source.replace("third=\"!\", second=\"B\"", "\"B\", second=\"C\""),
+            source.replace("third=\"!\", second=\"B\"", "third=\"!\""),
+            source.replace("third: str = \"C\"", "third: str = local"),
+            source.replace("third: str = \"C\"", "third: str = (1 / 0)"),
+            source.replace(
+                "def build(self):",
+                "def build(self, wrong: int = \"text\"):",
+            ),
+        ] {
+            assert!(
+                compile_python_program(&es, &program).await.is_err(),
+                "{program}"
+            );
+        }
+    });
+}
+
+#[test]
+fn python_expanded_lists_are_upstream_expressions() {
+    on_runtime(async {
+        let (es, host, _) = fixture(0);
+        let source = "class Expand(Program):\n    def build(self):\n        values = [1, 2]\n        return {'values': [0, *values, 3]}\n";
+        let bundle = compile_python_program(&es, source).await.unwrap();
+        let run = execute(&es, &host, &bundle).await.unwrap();
+        assert_eq!(
+            plasm_runtime::entity_to_agent_row_json(
+                &run.return_steps[0].result.entities()[0],
+                None
+            )["values"],
+            json!([0, 1, 2, 3])
+        );
+    });
+}
+
+#[test]
+fn python_reasonable_structural_input_and_set_capture() {
+    on_runtime(async {
+        let (es, host, _) = fixture(1);
+        for (source, expected) in [
+            ("class P(Program):\n    @compute\n    def make(self, value: int) -> dict[str, int]:\n        return {'n': value}\n    @compute\n    def read(self, data: dict[str, int]) -> int:\n        return data['n']\n    def build(self):\n        return self.read(self.make(2))\n", json!({"value":2})),
+            ("class P(Program):\n    @compute\n    def show(self, rows: list[dict], suffix: str) -> str:\n        return rows[0].get('name', '') + suffix\n    def build(self):\n        return self.show([{'name': 'a', 'count': 2}], '!')\n", json!({"value":"a!"})),
+            ("class P(Program):\n    @compute\n    def show(self, rows: list[dict]) -> str:\n        return rows[0].get('name', '') + str(rows[0]['count'])\n    def build(self):\n        return self.show({'name': 'a', 'count': 2})\n", json!({"value":"a2"})),
+            ("class P(Program):\n    def build(self):\n        names = {'a', 'a', 'b'}\n        return {'count': len(names), 'member': 'a' in names}\n", json!({"count":2,"member":true})),
+        ] {
+            let bundle = compile_python_program(&es, source).await.unwrap();
+            let run = execute(&es, &host, &bundle).await.unwrap();
+            assert_eq!(serde_json::to_value(&run.return_steps[0].result.entities()[0].fields).unwrap(), expected);
+        }
+    });
+}
+
+#[test]
+fn python_program_helpers_preserve_independent_ports_and_effects() {
+    on_runtime(async {
+        let (es, host, calls) = fixture(1);
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let item = symbols.entity_sym_for("fixture", "Item");
+        let publish = symbols.method_sym_for("fixture", "Item", "publish");
+        let source = format!("class P(Program):\n    def _publish(self, row: Row, *, text: str='ok'):\n        if row.title is not None:\n            return {item}.{publish}(content=text)\n        return None\n    def build(self):\n        rows = {item}.query()\n        return rows.flat_map(lambda row: self._publish(row, text='done'))\n");
+        let bundle = compile_python_program(&es, &source).await.unwrap();
+        assert!(calls.lock().unwrap().is_empty());
+        execute(&es, &host, &bundle).await.unwrap();
+        assert_eq!(*calls.lock().unwrap(), vec!["/items", "/publish:done"]);
+        let independent = "class P(Program):\n    def _combine(self, left, right):\n        return {'left': left, 'right': right}\n    def build(self):\n        return self._combine([1, 2], [3])\n";
+        let bundle = compile_python_program(&es, independent).await.unwrap();
+        let run = execute(&es, &host, &bundle).await.unwrap();
+        assert_eq!(
+            serde_json::to_value(&run.return_steps[0].result.entities()[0].fields).unwrap(),
+            json!({"left":[1,2],"right":[3]})
+        );
+        for invalid in [
+            "class P(Program):\n    def _loop(self, value):\n        return self._loop(value)\n    def build(self):\n        return self._loop(1)\n",
+            "class P(Program):\n    def _leak(self, value):\n        return secret\n    def build(self):\n        secret = 'caller local'\n        return self._leak(1)\n",
+        ] { assert!(compile_python_program(&es, invalid).await.is_err()); }
+    });
+}
+
+#[test]
+fn python_unelected_effect_has_no_completed_invocation() {
+    on_runtime(async {
+        let (es, host, calls) = fixture(4);
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let item = symbols.entity_sym_for("fixture", "Item");
+        let publish = symbols.method_sym_for("fixture", "Item", "publish");
+        let source = format!("class P(Program):\n    def build(self):\n        rows = {item}.query()\n        def choose(row):\n            if row.title == 'never matches':\n                return {item}.{publish}(content='done')\n            return None\n        return rows.flat_map(choose)\n");
+        let bundle = compile_python_program(&es, &source).await.unwrap();
+        let run = execute(&es, &host, &bundle).await.unwrap();
+        assert_eq!(*calls.lock().unwrap(), vec!["/items"]);
+        for step in &run.return_steps {
+            for ack in step.result.operations.entries() {
+                assert_eq!(ack.logical_invocations, 0);
+                assert_eq!(ack.completed, 0);
+                assert!(
+                    ack.outcomes.is_empty(),
+                    "parent completion leaked into action receipts: {ack:?}"
+                );
+            }
+        }
+    });
+}
+
+#[test]
+fn python_flat_map_sequences_returned_effects_in_source_order() {
+    on_runtime(async {
+        let (es, host, calls) = fixture(1);
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let item = symbols.entity_sym_for("fixture", "Item");
+        let publish = symbols.method_sym_for("fixture", "Item", "publish");
+        let source = format!("class Effects(Program):\n    def build(self):\n        rows = {item}.query()\n        def sequence(row):\n            first = {item}.{publish}(content='first')\n            if row.title is not None:\n                second = {item}.{publish}(content='second')\n                return [first, second]\n            return [first]\n        return rows.flat_map(sequence)\n");
+        let bundle = compile_python_program(&es, &source).await.unwrap();
+        assert!(calls.lock().unwrap().is_empty());
+        let run = execute(&es, &host, &bundle).await.unwrap();
+        assert!(run
+            .return_steps
+            .iter()
+            .all(|step| step.result.entities().is_empty()));
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec!["/items", "/publish:first", "/publish:second"]
+        );
+        let completed: usize = run
+            .return_steps
+            .iter()
+            .flat_map(|step| step.result.operations.entries())
+            .map(|entry| entry.completed)
+            .sum();
+        assert_eq!(completed, 2);
+        let mixed = source.replace("return [first, second]", "return [first, row.title]");
+        assert!(compile_python_program(&es, &mixed).await.is_err());
+    });
+}
+
+#[test]
+fn python_typed_pure_helper_materializes_only_its_complete_set_result() {
+    on_runtime(async {
+        let (es, host, calls) = fixture(2);
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let item = symbols.entity_sym_for("fixture", "Item");
+        let source = format!("class Values(Program):\n    def titles(self, rows: list[Row]) -> set[str]:\n        names = set()\n        for row in rows:\n            if row.title is not None:\n                names.add(row.title)\n        return names\n    def build(self):\n        names = self.titles({item}.query())\n        return {{'has_title': 'Title 0' in names, 'count': len(names)}}\n");
+        let bundle = compile_python_program(&es, &source).await.unwrap();
+        assert!(calls.lock().unwrap().is_empty());
+        let run = execute(&es, &host, &bundle).await.unwrap();
+        assert_eq!(
+            serde_json::to_value(&run.return_steps[0].result.entities()[0].fields).unwrap(),
+            json!({"has_title":true,"count":2})
+        );
+        assert_eq!(*calls.lock().unwrap(), vec!["/items"]);
+        let constant = "class Values(Program):\n    def label(self) -> str:\n        return 'ready'\n    def build(self):\n        return self.label()\n";
+        let bundle = compile_python_program(&es, constant).await.unwrap();
+        let run = execute(&es, &host, &bundle).await.unwrap();
+        assert_eq!(
+            serde_json::to_value(&run.return_steps[0].result.entities()[0].fields).unwrap(),
+            json!({"value":"ready"})
+        );
     });
 }

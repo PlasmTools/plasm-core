@@ -6,9 +6,10 @@ pub(super) struct Argument {
     pub field: Option<String>,
     pub per_row: bool,
     pub value_type: Type,
+    pub mapping: Option<String>,
 }
 
-pub(super) fn is_row(expr: &Expr) -> bool {
+pub(crate) fn is_row(expr: &Expr) -> bool {
     name(expr) == Some("Row")
         || matches!(expr, Expr::Subscript(s) if name(&s.value).is_some_and(is_entity_record_type))
 }
@@ -21,9 +22,11 @@ pub(super) fn resolve(
     cgs: &CGS,
     entry: &str,
     symbols: &dyn SymbolResolve,
+    imports: &str,
 ) -> Result<Argument, String> {
     if is_row(annotation) {
         return Ok(Argument {
+            mapping: None,
             field: None,
             per_row: true,
             value_type: input.clone(),
@@ -32,12 +35,13 @@ pub(super) fn resolve(
     if matches!(annotation, Expr::Subscript(s) if name(&s.value) == Some("list") && is_row(&s.slice))
     {
         return Ok(Argument {
+            mapping: None,
             field: None,
             per_row: false,
             value_type: input.clone(),
         });
     }
-    let expected = returns::resolve(
+    let expected = returns::prepare(
         annotation,
         input,
         &domains.types,
@@ -45,84 +49,143 @@ pub(super) fn resolve(
         cgs,
         entry,
         symbols,
+        imports,
     )?;
+    // Preserve a declared value column when it already satisfies the input.
+    // A mapping view is an adaptation of a record, not a wrapper around an
+    // existing dictionary-valued column.
+    if fields.len() == 1 {
+        let (field, actual) = fields.iter().next().expect("one field");
+        let collection = Type {
+            shape: Shape::Array {
+                element: Box::new(actual.clone()),
+            },
+            domain: None,
+            nullable: false,
+        };
+        let per_row = if expected.check(actual).is_ok() {
+            Some(true)
+        } else if expected.check(&collection).is_ok() {
+            Some(false)
+        } else {
+            None
+        };
+        if let Some(per_row) = per_row {
+            return Ok(Argument {
+                mapping: None,
+                field: Some(field.clone()),
+                per_row,
+                value_type: if per_row { actual.clone() } else { collection },
+            });
+        }
+    }
+    // Ask Monty whether a typed record constructor satisfies the authored
+    // annotation. The body keeps the complete field contract, never Any.
+    let entries = fields
+        .keys()
+        .map(|key| {
+            let key = serde_json::to_string(key).expect("field name");
+            format!("{key}: row[{key}]")
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    for per_row in [true, false] {
+        let value = if per_row {
+            format!("{{{entries}}}")
+        } else {
+            format!("[{{{entries}}}]")
+        };
+        if expected
+            .check_body(
+                &format!("\n    return {value}\n"),
+                &[("row", input)],
+                cgs,
+                &domains.catalogs,
+            )
+            .is_ok()
+        {
+            let mapping = Type {
+                shape: Shape::MappingRecord {
+                    record: Box::new(input.clone()),
+                },
+                domain: None,
+                nullable: false,
+            };
+            return Ok(Argument {
+                field: None,
+                per_row,
+                mapping: Some({
+                    let keys =
+                        serde_json::to_string(&fields.keys().collect::<Vec<_>>()).expect("keys");
+                    let record =
+                        format!("{{key: row[key] for key in {keys} if hasattr(row, key)}}");
+                    if per_row {
+                        format!("[{record} for row in __input][0]")
+                    } else {
+                        format!("[{record} for row in __input]")
+                    }
+                }),
+                value_type: if per_row {
+                    mapping
+                } else {
+                    Type {
+                        shape: Shape::Array {
+                            element: Box::new(mapping),
+                        },
+                        domain: None,
+                        nullable: false,
+                    }
+                },
+            });
+        }
+    }
     let mut columns = fields.iter();
     let Some((field, actual)) = columns.next().filter(|_| fields.len() == 1) else {
         return Err(
             "value compute requires exactly one value column; project the intended field".into(),
         );
     };
-    // Prefer a value already having the annotated shape. Only a list annotation
-    // that does not match that value can collect the single column across rows.
-    let per_row = if compatible(actual, &expected) {
-        true
-    } else if let Shape::Array { element } = &expected.shape {
-        if !compatible(actual, element) {
-            return Err("compute input type differs from the value column".into());
+    // Try the two host materialization modes against the same upstream
+    // annotation. Do not decode container syntax or implement Python subtyping.
+    let collection = Type {
+        shape: Shape::Array {
+            element: Box::new(actual.clone()),
+        },
+        domain: None,
+        nullable: false,
+    };
+    let per_row = match expected.check(actual) {
+        Ok(()) => true,
+        Err(single_error) => {
+            expected.check(&collection).map_err(|collection_error| format!(
+                "compute input differs from its annotation; value: {single_error}; collection: {collection_error}"
+            ))?;
+            false
         }
-        false
-    } else {
-        return Err("compute input type differs from the value column".into());
     };
     Ok(Argument {
+        mapping: None,
         field: Some(field.clone()),
         per_row,
-        value_type: expected,
-    })
-}
-
-fn compatible(actual: &Type, expected: &Type) -> bool {
-    if let Shape::Union { variants } = &actual.shape {
-        return variants.iter().all(|v| compatible(v, expected));
-    }
-    if let Shape::Union { variants } = &expected.shape {
-        return variants.iter().any(|v| compatible(actual, v));
-    }
-    match (&actual.shape, &expected.shape) {
-        (Shape::Temporal { kind: a, .. }, Shape::Temporal { kind: b, .. }) => {
-            a == b && (!actual.nullable || expected.nullable)
-        }
-        (Shape::Never, _) => true,
-        (Shape::Null, _) => expected.nullable || expected.shape == Shape::Null,
-        (Shape::Array { element: a }, Shape::Array { element: b }) => compatible(a, b),
-        (
-            Shape::Record { fields: a } | Shape::ObservedRecord { fields: a, .. },
-            Shape::Record { fields: b } | Shape::ObservedRecord { fields: b, .. },
-        ) => b
-            .iter()
-            .all(|(k, b)| a.get(k).is_some_and(|a| compatible(a, b))),
-        (Shape::Scalar { field_type: a }, Shape::Scalar { field_type: b }) => {
-            if a == b {
-                return true;
+        value_type: if per_row {
+            actual.clone()
+        } else {
+            Type {
+                shape: Shape::Array {
+                    element: Box::new(actual.clone()),
+                },
+                domain: None,
+                nullable: false,
             }
-            use FieldType::*;
-            let string = |t: &FieldType| match t {
-                String | Uuid | DigitId | Select => true,
-                Boolean
-                | Integer
-                | Number
-                | Date
-                | Money
-                | MultiSelect
-                | EntityRef { .. }
-                | Json
-                | Blob
-                | Array => false,
-            };
-            (a == &Integer && b == &Number) || (string(a) && string(b))
-        }
-        (
-            Shape::Scalar {
-                field_type: FieldType::MultiSelect,
-            },
-            Shape::Array { element },
-        ) => compatible(&Type::scalar(FieldType::String), element),
-        _ => false,
-    }
+        },
+    })
 }
 
 impl Argument {
     pub fn expression(&self) -> String {
+        if let Some(expression) = &self.mapping {
+            return expression.clone();
+        }
         match (&self.field, self.per_row) {
             (None, true) => "__input[0]".into(),
             (None, false) => "__input".into(),
@@ -166,6 +229,9 @@ impl Argument {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn compatible(actual: &Type, expected: &Type) -> bool {
+        inference::assignable(actual, expected).unwrap()
+    }
     #[test]
     fn value_adaptation_keeps_boolean_numeric_union_and_array_distinctions() {
         let integer = Type::scalar(FieldType::Integer);
@@ -174,7 +240,7 @@ mod tests {
         let text = Type::scalar(FieldType::String);
         assert!(compatible(&integer, &number));
         assert!(!compatible(&number, &integer));
-        assert!(!compatible(&boolean, &integer));
+        assert!(compatible(&boolean, &integer));
         let union = Type::join(integer.clone(), text.clone());
         assert!(compatible(&integer, &union));
         assert!(!compatible(&union, &integer));
@@ -185,9 +251,10 @@ mod tests {
             domain: None,
             nullable: false,
         };
-        assert!(compatible(&array(integer.clone()), &array(number)));
+        assert!(!compatible(&array(integer.clone()), &array(number)));
         assert!(!compatible(&array(text), &array(integer.clone())));
         let argument = Argument {
+            mapping: None,
             field: Some("n".into()),
             per_row: true,
             value_type: integer,

@@ -699,3 +699,35 @@ admission negatives and existing lambda regressions. The production build
 constructor inventory includes callback declaration and rejects missing rule evidence.
 Unsupported forms and conservative refinement boundaries remain explicit in the
 contract; these witnesses do not claim arbitrary Python function support.
+
+
+Boundary cutover witnesses (2026-10-02):
+- `python_compute_dictionary_and_multiple_inputs_live`: mutated dictionaries,
+  independent collections, the same source at two cardinalities, downstream dictionary
+  indexing, local reassignment, positional-only typed callback parameters, nested
+  comprehension shadowing, serialized artifact roundtrip and native execution.
+- `python_nominal_boolean_refinement_selects_only_matching_effects`: both filtered
+  rows and conditional effect expressions, with independently observed HTTP writes.
+- Upstream scope-index, annotation, whole-body return and closed-host-interaction
+  tests live beside `python_compute`; these do not establish complete outer-builder
+  language coverage.
+
+Callback authority boundary: `callbacks_admit_lexical_bindings_at_rowset_consumers`
+covers upstream call binding, positional-only/keyword-only defaults, return
+annotations before truth conversion, dictionary constructor contextual typing,
+projection-lambda defaults and unreachable bodies. `callbacks_live_conditional_effects`
+witnesses implicit returns and dead branches with independent HTTP write logs.
+`monty-analysis::callable_evidence_tests` locks the underlying binder and reachability
+exports without any catalog or host effects.
+
+- Callable boundary: `map_body::tests::python_lowering::python_compute_uses_upstream_call_binding`
+  runs reordered keyword arguments, positional-only/keyword-only signatures, closed defaults,
+  and build defaults; rejects duplicate/missing arguments, positional-only keywords and
+  defaults that could otherwise capture a build-local binding. Upstream binder tests live
+  in `monty-analysis::argument_binding_tests`.
+
+Program declaration coverage now includes ordinary helper methods through
+`root_build_statements` and the declaration registry. Helper arguments retain
+independent dependencies; recursion remains rejected. Structural mapping inputs,
+set capture and ordered helper effects have abstract-fixture runtime witnesses in
+`map_body::tests::python_lowering` (no production catalog coupling).

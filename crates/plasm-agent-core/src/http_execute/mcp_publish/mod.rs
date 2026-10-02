@@ -10,7 +10,7 @@ pub(crate) use meta::{build_mcp_run_tool_meta, tool_meta_from_handles};
 
 use meta::build_ui_steps;
 use policy::PublishPlan;
-use render::{build_inline_bodies, format_resolved_steps, render_markdown, truncated_flags};
+use render::{build_inline_bodies, format_resolved_steps};
 use serde_json::json;
 
 use super::{ExecuteRunToolOutput, PublishedResultStep, *};
@@ -39,17 +39,8 @@ pub fn publish_plasm_result_steps_with_policy(
     let mut plan = PublishPlan::build(steps, policy);
     format_resolved_steps(steps, &mut plan, cgs);
     let inline = build_inline_bodies(steps, &plan, steps.len());
-    let preview_needed = plan.preview_needed(inline.char_count, policy);
-    let truncated = truncated_flags(&plan, preview_needed);
-    let use_mcp_meta = meta_index.is_some();
-    let markdown = render_markdown(
-        &plan,
-        preview_needed,
-        &inline,
-        &inline.omitted_union,
-        use_mcp_meta,
-    );
-    let all_ui_steps = build_ui_steps(steps, &plan, &truncated, cgs, policy);
+    let markdown = inline.sections.clone();
+    let all_ui_steps = build_ui_steps(steps, &plan, cgs);
     let paging_for_meta = (!inline.paging.is_empty()).then_some(inline.paging.as_slice());
     let mut tool_meta = build_mcp_run_tool_meta(
         meta_index,
@@ -59,10 +50,7 @@ pub fn publish_plasm_result_steps_with_policy(
     );
     if let Some(meta) = tool_meta.as_mut() {
         if let Some(plasm) = meta.get_mut("plasm").and_then(|v| v.as_object_mut()) {
-            plasm.insert(
-                "result_delivery".into(),
-                json!(plan.result_delivery(preview_needed)),
-            );
+            plasm.insert("result_delivery".into(), json!("inline"));
         }
     }
     ExecuteRunToolOutput {
@@ -208,13 +196,13 @@ mod tests {
             synthetic_published_result_step_with_paging(49, Some(handle.clone()), Some(paging));
         let out = publish_plasm_result_steps(None, None, std::slice::from_ref(&step));
         assert!(
-            !out.markdown.contains("```tsv"),
-            "must not duplicate inline TSV when snapshot stored: {}",
+            out.markdown.contains("```tsv"),
+            "must retain inline TSV when a snapshot is stored: {}",
             out.markdown
         );
         assert!(
-            !out.markdown.contains("Showing 25 of 49 rows"),
-            "must not emit row-limit note when artifact-only: {}",
+            out.markdown.contains("Showing 25 of 49 snapshot rows"),
+            "must report the actual displayed prefix: {}",
             out.markdown
         );
         assert!(
@@ -223,7 +211,7 @@ mod tests {
             out.markdown
         );
         assert!(
-            out.markdown.contains("Required:"),
+            out.markdown.contains("Showing 25 of 49"),
             "expected imperative artifact read instruction: {}",
             out.markdown
         );
@@ -266,7 +254,7 @@ mod tests {
     }
 
     #[test]
-    fn publish_extreme_row_count_with_snapshot_uses_metadata_preview() {
+    fn publish_extreme_row_count_with_snapshot_keeps_rows() {
         let run_id = RunArtifactId::from_wire(&format!("pr{}", "a".repeat(64))).expect("wire");
         let handle = RunArtifactHandle {
             run_id,
@@ -280,8 +268,8 @@ mod tests {
         let step = synthetic_published_result_step(937, Some(handle.clone()));
         let out = publish_plasm_result_steps(None, None, std::slice::from_ref(&step));
         assert!(
-            out.markdown.contains("(preview)"),
-            "expected compact preview markdown: {}",
+            out.markdown.contains("```tsv"),
+            "expected bounded row preview: {}",
             out.markdown
         );
         assert!(
@@ -300,7 +288,7 @@ mod tests {
             out.markdown
         );
         assert!(
-            !out.markdown.contains("```tsv"),
+            out.markdown.contains("```tsv"),
             "must not fence a giant TSV: {}",
             out.markdown
         );
@@ -399,17 +387,21 @@ mod tests {
         );
         assert!(out.markdown.contains("(no results)"), "{}", out.markdown);
         assert!(
-            out.markdown.contains("capability=`langitem_delete`"),
+            out.markdown.contains("`langmatrix/langitem_delete`"),
             "{}",
             out.markdown
         );
         assert!(
-            out.markdown.contains("capability=`langitem_ping`"),
+            out.markdown.contains("`langmatrix/langitem_ping`"),
             "{}",
             out.markdown
         );
-        assert!(out.markdown.contains("completed=2"), "{}", out.markdown);
-        assert!(out.markdown.contains("failed=1"), "{}", out.markdown);
+        assert!(
+            out.markdown.contains("2 actions completed"),
+            "{}",
+            out.markdown
+        );
+        assert!(out.markdown.contains("1 failed"), "{}", out.markdown);
         assert!(
             out.markdown.contains("does not imply rollback"),
             "{}",
@@ -422,7 +414,7 @@ mod tests {
     }
 
     #[test]
-    fn dag_compute_hidden_cell_defers_result_and_preserves_effect_receipt() {
+    fn dag_compute_hidden_cell_keeps_row_and_effect_receipt() {
         let mut step = synthetic_published_result_step(1, None);
         let result = Arc::make_mut(&mut step.result);
         let mut row = result.entities()[0].clone();
@@ -449,16 +441,98 @@ mod tests {
         let out = publish_plasm_result_steps_with_policy(None, None, &[step], &policy);
         assert!(!out.markdown.contains("(in artifact)"), "{}", out.markdown);
         assert!(!out.markdown.contains("resources/read"), "{}", out.markdown);
-        assert!(!out.markdown.contains("```tsv"), "{}", out.markdown);
+        assert!(out.markdown.contains("```tsv"), "{}", out.markdown);
+        assert!(out.markdown.contains("\"m0\""), "{}", out.markdown);
         assert!(out.markdown.contains("record_update"), "{}", out.markdown);
-        assert!(out.markdown.contains("completed=1"), "{}", out.markdown);
+        assert!(
+            out.markdown.contains("1 action completed"),
+            "{}",
+            out.markdown
+        );
         assert!(out.markdown.contains("compute"), "{}", out.markdown);
         let meta = serde_json::to_string(&out.tool_meta).unwrap();
         assert!(
             !meta.contains("preview_entities"),
-            "deferred values must stay out of metadata"
+            "inline rows must not be duplicated in metadata"
         );
-        assert!(meta.contains("snapshot_only"));
+        assert!(!meta.contains("snapshot_only"));
+    }
+
+    #[test]
+    fn dag_compute_large_result_keeps_bounded_rows() {
+        let policy = McpResultTransportPolicy {
+            artifact_access: crate::mcp_run_markdown::ArtifactAccessMode::DagCompute,
+            in_band_entity_rows: 10,
+            inline_text_budget_bytes: 12 * 1024,
+        };
+        let step = synthetic_published_result_step(600, None);
+        let out = publish_plasm_result_steps_with_policy(None, None, &[step], &policy);
+        assert!(out.markdown.contains("\"m0\""), "{}", out.markdown);
+        assert!(!out.markdown.contains("\"m10\""), "{}", out.markdown);
+        assert!(
+            out.markdown.contains("Showing 10 of 600"),
+            "{}",
+            out.markdown
+        );
+        assert!(out.markdown.contains("not a selection"), "{}", out.markdown);
+    }
+
+    #[test]
+    fn observations_survive_every_transport_artifact_and_multi_return_limit() {
+        let policy = McpResultTransportPolicy {
+            artifact_access: crate::mcp_run_markdown::ArtifactAccessMode::DagCompute,
+            ..McpResultTransportPolicy::default()
+        };
+        let handle = RunArtifactHandle {
+            run_id: RunArtifactId::from_bytes([7; 32]),
+            resource_index: 1,
+            plasm_uri: "plasm://r/1".into(),
+            canonical_plasm_uri: "plasm://test".into(),
+            http_path: "/test".into(),
+            payload_len: 1,
+            request_fingerprints: vec![],
+        };
+        for mode in [
+            crate::mcp_run_markdown::ArtifactAccessMode::DagCompute,
+            crate::mcp_run_markdown::ArtifactAccessMode::ResourcesRead,
+            crate::mcp_run_markdown::ArtifactAccessMode::ToolFallback,
+        ] {
+            let policy = McpResultTransportPolicy {
+                artifact_access: mode,
+                ..policy
+            };
+            for count in [0, 1, 40, 41, 600] {
+                for artifact in [None, Some(handle.clone())] {
+                    let mut step = synthetic_published_result_step(count, artifact);
+                    let result = Arc::make_mut(&mut step.result);
+                    for index in 0..count {
+                        let mut row = result.entities()[index].clone();
+                        row.fields.insert(
+                            "name".into(),
+                            plasm_core::Value::String("é".repeat(500)).into(),
+                        );
+                        result.collection = result.collection.replace(index, row).unwrap();
+                    }
+                    let out = publish_plasm_result_steps_with_policy(
+                        None,
+                        None,
+                        &[step.clone(), step],
+                        &policy,
+                    );
+                    if mode == crate::mcp_run_markdown::ArtifactAccessMode::DagCompute {
+                        assert!(!out.markdown.contains("resources/read"), "{}", out.markdown);
+                    }
+                    if count > 0 {
+                        assert_eq!(out.markdown.matches("\"m0\"").count(), 2);
+                        assert!(!out.markdown.contains(&format!("Showing 0 of {count}")));
+                        // A string that fits a cell is exact, even when the aggregate table is too large.
+                        assert!(out.markdown.contains(&"é".repeat(500)));
+                    } else {
+                        assert!(out.markdown.contains("Showing 0 of 0"));
+                    }
+                }
+            }
+        }
     }
 
     #[test]
@@ -549,7 +623,7 @@ mod tests {
     }
 
     #[test]
-    fn markdown_snapshot_only_mentions_coverage() {
+    fn markdown_snapshot_backed_preview_mentions_coverage() {
         let run_id = RunArtifactId::from_wire(&format!("pr{}", "d".repeat(64))).expect("wire");
         let handle = RunArtifactHandle {
             run_id,
@@ -676,16 +750,15 @@ mod tests {
     }
 
     #[test]
-    fn markdown_compact_preview_mentions_coverage() {
-        // Compact preview only fires when some step exceeds the in-band row cap (char
-        // threshold alone is ignored while every return fits inline).
+    fn markdown_bounded_preview_mentions_coverage() {
+        // Row limits preserve visible evidence and its acquisition coverage.
         let step = with_coverage(
             synthetic_published_result_step(10, None),
             plasm_runtime::ResultCoverage::Unknown,
         );
         let policy = McpResultTransportPolicy {
             in_band_entity_rows: 2,
-            markdown_preview_chars: 1,
+            inline_text_budget_bytes: 12 * 1024,
             ..McpResultTransportPolicy::default()
         };
         let out = publish_plasm_result_steps_with_policy(
@@ -696,12 +769,12 @@ mod tests {
         );
         assert!(
             out.markdown.contains("preview") || out.markdown.contains("(preview)"),
-            "expected compact preview body: {}",
+            "expected bounded preview body: {}",
             out.markdown
         );
         assert!(
             out.markdown.contains("Result coverage: unknown."),
-            "compact preview must still stamp coverage: {}",
+            "bounded preview must still stamp coverage: {}",
             out.markdown
         );
     }

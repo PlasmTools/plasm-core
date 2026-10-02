@@ -429,8 +429,7 @@ mod tests {
                 symbols.as_ref(),
                 Some((&schema, &token)),
             )
-            .unwrap()
-            .admit()
+            .and_then(|prepared| prepared.admit().map_err(|e| e.to_string()))
             .is_err());
         }
     }

@@ -24,6 +24,14 @@ pub struct ValueContract {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "shape", rename_all = "snake_case")]
 pub enum ValueShape {
+    /// A Python mapping view of a closed, typed record; no entity authority.
+    MappingRecord {
+        record: Box<ValueContract>,
+    },
+    /// Unordered, unique Python values; array is only the wire encoding.
+    Set {
+        element: Box<ValueContract>,
+    },
     Temporal {
         kind: crate::temporal_value::TemporalKind,
         wire: Option<crate::TemporalWireFormat>,
@@ -33,6 +41,12 @@ pub enum ValueShape {
     },
     Array {
         element: Box<ValueContract>,
+    },
+    /// Python dictionary data. Keys are strings at the materialization boundary;
+    /// no particular key is guaranteed present and no receiver authority is implied.
+    Dictionary {
+        key: Box<ValueContract>,
+        value: Box<ValueContract>,
     },
     Record {
         fields: BTreeMap<String, ValueContract>,
@@ -123,6 +137,9 @@ impl ValueContract {
         }
 
         match (&self.shape, value) {
+            (ValueShape::MappingRecord { record }, _) => {
+                record.observed_value_at(value, cgs, entry, depth + 1, catalogs)
+            }
             (
                 ValueShape::Scalar {
                     field_type: FieldType::EntityRef { entry_id, target },
@@ -150,7 +167,19 @@ impl ValueContract {
                 })
                 .collect::<Result<indexmap::IndexMap<_, _>, _>>()
                 .map(crate::Value::Object),
-            (ValueShape::Array { element }, crate::Value::Array(values)) => values
+            (ValueShape::Dictionary { value: element, .. }, crate::Value::Object(values)) => values
+                .iter()
+                .map(|(key, value)| {
+                    element
+                        .observed_value_at(value, cgs, entry, depth + 1, catalogs)
+                        .map(|v| (key.clone(), v))
+                })
+                .collect::<Result<indexmap::IndexMap<_, _>, _>>()
+                .map(crate::Value::Object),
+            (
+                ValueShape::Array { element } | ValueShape::Set { element },
+                crate::Value::Array(values),
+            ) => values
                 .iter()
                 .map(|value| element.observed_value_at(value, cgs, entry, depth + 1, catalogs))
                 .collect::<Result<Vec<_>, _>>()
@@ -385,8 +414,11 @@ impl ValueContract {
             ValueShape::Temporal { .. } => K::Temporal,
             ValueShape::Never | ValueShape::Union { .. } => K::Unknown,
             ValueShape::Null => K::Null,
-            ValueShape::Array { .. } => K::Array,
-            ValueShape::Record { .. } | ValueShape::ObservedRecord { .. } => K::Object,
+            ValueShape::Array { .. } | ValueShape::Set { .. } => K::Array,
+            ValueShape::MappingRecord { .. } => K::Object,
+            ValueShape::Record { .. }
+            | ValueShape::ObservedRecord { .. }
+            | ValueShape::Dictionary { .. } => K::Object,
             ValueShape::Scalar { field_type } => match field_type {
                 FieldType::Boolean => K::Boolean,
                 FieldType::Integer => K::Integer,
@@ -534,6 +566,10 @@ impl ValueContract {
             return Ok(());
         }
         let valid = match &self.shape {
+            ValueShape::MappingRecord { record } => {
+                record.validate_at(value, cgs, entry, path, depth + 1, catalogs, boundary)?;
+                true
+            }
             ValueShape::Temporal { kind, wire } => {
                 crate::temporal_value::components(value, *kind, *wire)?;
                 true
@@ -544,16 +580,57 @@ impl ValueContract {
                     .is_ok()
             }),
             ValueShape::Null => value.is_null(),
-            ValueShape::Array { element } => {
+            ValueShape::Array { element } | ValueShape::Set { element } => {
                 let values = value
                     .as_array()
                     .ok_or_else(|| format!("{path}: expected array"))?;
+                if matches!(self.shape, ValueShape::Set { .. }) {
+                    use crate::value_equality::Equatable;
+                    let equality = element.equality()?;
+                    let mut keys = Vec::with_capacity(values.len());
+                    for value in values {
+                        let key = equality.key(value)?;
+                        if keys.contains(&key) {
+                            return Err(format!("{path}: duplicate set element"));
+                        }
+                        keys.push(key);
+                    }
+                }
                 for (i, v) in values.iter().enumerate() {
                     element.validate_at(
                         v,
                         cgs,
                         entry,
                         &format!("{path}[{i}]"),
+                        depth + 1,
+                        catalogs,
+                        boundary,
+                    )?;
+                }
+                true
+            }
+            ValueShape::Dictionary {
+                key,
+                value: element,
+            } => {
+                let values = value
+                    .as_object()
+                    .ok_or_else(|| format!("{path}: expected dictionary"))?;
+                for (name, value) in values {
+                    key.validate_at(
+                        &crate::Value::String(name.clone()),
+                        cgs,
+                        entry,
+                        path,
+                        depth + 1,
+                        catalogs,
+                        boundary,
+                    )?;
+                    element.validate_at(
+                        value,
+                        cgs,
+                        entry,
+                        &format!("{path}[{name:?}]"),
                         depth + 1,
                         catalogs,
                         boundary,
@@ -745,6 +822,11 @@ impl ValueContract {
                 .join(" | "),
             ValueShape::Null => "None".into(),
             ValueShape::Array { element } => format!("list[{}]", element.python_type()),
+            ValueShape::Set { element } => format!("set[{}]", element.python_type()),
+            ValueShape::MappingRecord { record } => record.python_type(),
+            ValueShape::Dictionary { key, value } => {
+                format!("dict[{}, {}]", key.python_type(), value.python_type())
+            }
             ValueShape::Record { .. } | ValueShape::ObservedRecord { .. } => "Record".into(),
             ValueShape::Scalar { field_type } => match field_type {
                 FieldType::Boolean => "bool",
@@ -952,5 +1034,37 @@ mod presence_tests {
         assert!(union
             .observed_value(&json!({"id":true}), &cgs, "types")
             .is_err());
+    }
+}
+
+#[cfg(test)]
+mod dictionary_contract_tests {
+    use super::*;
+    #[test]
+    fn dictionary_is_typed_open_data_without_record_guarantees() {
+        let contract = ValueContract {
+            shape: ValueShape::Dictionary {
+                key: Box::new(ValueContract::scalar(FieldType::String)),
+                value: Box::new(ValueContract::scalar(FieldType::Integer)),
+            },
+            domain: None,
+            nullable: false,
+        };
+        assert!(!contract.is_non_null_record());
+        assert!(contract.field("arbitrary").is_err());
+        let validate = |json| {
+            let value: crate::Value = serde_json::from_value(json).unwrap();
+            contract.validate_in(&value, &CGS::default(), "fixture", "dictionary", &|_| None)
+        };
+        assert!(validate(serde_json::json!({})).is_ok());
+        assert!(validate(serde_json::json!({"a":1,"b":2})).is_ok());
+        assert!(validate(serde_json::json!({"a":true})).is_err());
+        assert!(validate(serde_json::json!({"a":null})).is_err());
+        assert!(validate(serde_json::json!({"a":"1"})).is_err());
+        assert_eq!(
+            serde_json::from_value::<ValueContract>(serde_json::to_value(&contract).unwrap())
+                .unwrap(),
+            contract
+        );
     }
 }

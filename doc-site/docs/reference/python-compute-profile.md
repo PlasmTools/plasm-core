@@ -1,4 +1,4 @@
-# Inner Python profile: Monty typed-v9
+# Inner Python profile: Monty typed-v11
 
 This ledger supplements the normative [compute contract](python-compute-contract.md).
 It describes inner `@compute`, not the declarative grammar of `Program.build`.
@@ -7,7 +7,7 @@ The vendored fork's upstream base is revision
 `e007685fbb06494c13b9a7b3fede9f8e6a54a2be`. Its checker includes the documented
 structured-analysis export extension; interpreter and typeshed semantics remain
 those of the upstream base. The reviewed Python node carries
-contract version 9 and profile `monty-e007685fbb06494c13b9a7b3fede9f8e6a54a2be-typed-v9-money-v2-branches-v2`.
+contract version 11 and profile `monty-e007685fbb06494c13b9a7b3fede9f8e6a54a2be-typed-v11-money-v2-branches-v2`.
 Deployment must build host and worker from the same vendored checkout. Changing
 interpreter, checker or typeshed semantics requires a profile upgrade.
 
@@ -36,8 +36,8 @@ Representative tests are `python_compute/upstream.rs`,
 | Yield/yield-from, match, del, exception groups, PEP 695 aliases, complex constants, class inheritance | Upstream unsupported | Pre-execution rejection witnesses |
 | Async with/for/comprehensions, template strings, method decorators | Upstream unsupported | Pre-execution rejection witnesses |
 | datetime imports | Allowed, including aliases; typed temporal IO | datetime matrix and codec tests |
-| Other imports, global/nonlocal | Prohibited by compute policy | Policy test |
-| Reflection, dynamic compilation, host IO, dunder attributes | Prohibited by pure-compute policy | Policy test and undeclared-suspension test |
+| Imports, global/nonlocal and lexical bindings | Upstream checked and compiled | Upstream scope and module witnesses |
+| Reflection and builtin availability | Upstream checked and compiled; names grant no host authority | Boundary and undeclared-interaction witnesses |
 
 The inventory classifies syntax families, not every possible Python program.
 The witnesses establish representative behavior within the pinned profile. New
@@ -46,19 +46,23 @@ rejected when the definition is compiled, before any DAG effects.
 
 ## Modules and host facilities
 
-Datetime imports are allowed in typed-v8. Other modules remain prohibited from the pinned
-[module inventory](https://github.com/pydantic/monty/blob/e007685fbb06494c13b9a7b3fede9f8e6a54a2be/docs/limitations/modules.md):
-`asyncio`, `base64`, `binascii`, `collections`, `copy`, `dataclasses`,
-`functools`, `itertools`, `json`, `math`, `os`, `pathlib`, `random`, `re`, `sys`,
-`time`, `typing`, `unicodedata`. The policy test enumerates these modules.
-Arbitrary installed Python libraries are not available. Host-generated checker
-declarations may use `typing`; those stubs are not runtime imports or capabilities.
+Module and member availability belongs to the pinned Monty checker and compiler.
+Plasm has no module, builtin-name or dunder-name whitelist. Arbitrary installed
+Python libraries are not available. Host-generated checker declarations are
+separate from runtime imports and capabilities.
 
-Pure compute receives no mounts, host functions, catalog methods or credentials.
-Any suspension fails. Declared host reads/writes continue through the separate
-typed host-call DAG contract and asynchronous Monty pool protocol. Print, file
-access, input, dynamic eval/exec/compile, globals/locals/vars and reflective attribute
-functions are prohibited by name. Unknown callables fail upstream admission.
+Pure compute receives materialized inputs and declared exact-money operations,
+not mounts, catalog methods or credentials. Undeclared host/OS interactions fail
+at the suspension boundary. Ambient random initialization and sleep request the
+host and are rejected; explicitly seeded local randomness needs no host authority.
+The existing configured clock policy governs datetime. Print output is discarded.
+Local names such as `open` grant no filesystem access. Unknown callables and
+unsupported dynamic operations fail upstream admission or compilation.
+
+The checker accepts `bool` as an `int` argument, while this pinned interpreter
+rejects direct `bool + int` arithmetic at runtime. Plasm preserves the Boolean
+input and reports that upstream runtime failure; it does not insert a coercion or
+reinstate a contradictory local subtype rule.
 
 ## Boundary and operational rules
 
@@ -67,13 +71,13 @@ reduce it. A catalog annotation cannot restore projected-away fields. Missing
 observations retain absent attributes in observed-record contracts; accessing one
 raises `AttributeError`, which compute can catch with `try`/`except`. Explicit
 projection and closed records still require their keys. Explicit nullable values
-remain `None`. The pinned checker does not define `hasattr`; it is not taught. Arrays, nested records,
+remain `None`. `hasattr` is supported by both the pinned checker and runtime. Arrays, sets, nested records,
 unions, enum tokens and semantic domain identities retain recursive contracts.
-Record values use attribute access; JSON dictionaries use subscripts. Invalid
+Records use attributes/subscripts; dict/list[dict] compute inputs expose typed mapping views with `.get()`. JSON dictionaries use subscripts. Invalid
 Python attribute identifiers fail explicitly. JSON has a recursive union type,
 not `Any`; dynamic JSON operations require upstream narrowing.
 
-Every helper requires a typed DAG callsite. Compute parameters have no defaults;
+Every compute requires a typed DAG callsite. Constant defaults use upstream argument binding;
 only the root `@compute` decorator and admitted boundary annotations are allowed.
 Admission rebuilds a definition using generated annotations, and never invokes
 its body. Nested definitions execute only when the outer compute runs.

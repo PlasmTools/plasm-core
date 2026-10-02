@@ -288,6 +288,11 @@ fn pool_config(binary: PathBuf) -> PoolConfig {
 fn repl_config() -> ReplConfig {
     ReplConfig {
         script_name: "plasm_compute.py".into(),
+        os_policy: monty_types::OsPolicy {
+            random_start: monty_types::RandomStart::CallHost,
+            sleep: monty_types::SleepMode::CallHost,
+            ..Default::default()
+        },
         limits: Some(ResourceLimits {
             max_memory: Some(16 * 1024 * 1024),
             max_feed_duration: Some(Duration::from_millis(100)),
@@ -351,6 +356,67 @@ fn value_object(
             fresh_uuid(),
             members,
         ));
+    }
+    if let (
+        Some(plasm_core::value_contract::ValueContract {
+            shape:
+                ValueShape::Dictionary {
+                    key,
+                    value: element,
+                },
+            ..
+        }),
+        plasm_core::Value::Object(values),
+    ) = (contract, &value)
+    {
+        return Ok(MontyObject::dict(
+            values
+                .iter()
+                .map(|(name, value)| {
+                    Ok((
+                        value_object(plasm_core::Value::String(name.clone()), Some(key))?,
+                        value_object(value.clone(), Some(element))?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, String>>()?,
+        ));
+    }
+    if let Some(t) = contract {
+        match &t.shape {
+            ValueShape::MappingRecord { record } => {
+                let fields = match &record.shape {
+                    ValueShape::Record { fields } | ValueShape::ObservedRecord { fields, .. } => {
+                        fields
+                    }
+                    _ => return Err("mapping input requires record".into()),
+                };
+                let values = value.as_object().ok_or("mapping value requires object")?;
+                return Ok(MontyObject::dict(
+                    values
+                        .iter()
+                        .map(|(k, v)| {
+                            Ok((
+                                MontyObject::string(k),
+                                value_object(
+                                    v.clone(),
+                                    Some(fields.get(k).ok_or("unknown mapping field")?),
+                                )?,
+                            ))
+                        })
+                        .collect::<Result<Vec<_>, String>>()?,
+                ));
+            }
+            ValueShape::Set { element } => {
+                let values = value.as_array().ok_or("set requires array wire encoding")?;
+                return Ok(MontyObject::set(
+                    values
+                        .iter()
+                        .map(|v| value_object(v.clone(), Some(element)))
+                        .collect::<Result<Vec<_>, String>>()?,
+                ));
+            }
+            _ => {}
+        }
     }
     Ok(match value {
         plasm_core::Value::String(s) => MontyObject::string(&s),
@@ -426,10 +492,20 @@ fn representation_matches(
         ValueShape::Temporal { kind, wire } => {
             plasm_core::temporal_value::components(value, *kind, *wire).is_ok()
         }
+        ValueShape::Dictionary {
+            key,
+            value: element,
+        } => value.as_object().is_some_and(|values| {
+            values.iter().all(|(name, value)| {
+                representation_matches(key, &plasm_core::Value::String(name.clone()))
+                    && representation_matches(element, value)
+            })
+        }),
         ValueShape::Never => false,
         ValueShape::Null => value.is_null(),
         ValueShape::Union { variants } => variants.iter().any(|v| representation_matches(v, value)),
-        ValueShape::Array { element } => value
+        ValueShape::MappingRecord { record } => representation_matches(record, value),
+        ValueShape::Array { element } | ValueShape::Set { element } => value
             .as_array()
             .is_some_and(|a| a.iter().all(|v| representation_matches(element, v))),
         ValueShape::ObservedRecord {
@@ -520,14 +596,14 @@ fn output_value(
             }
             Ok(V::Float(n))
         }
-        "list" => value
+        "list" | "set" => value
             .items()
             .ok_or("invalid list")?
             .into_iter()
             .map(|v| output_value(v, depth + 1, budget))
             .collect::<Result<Vec<_>, _>>()
             .map(V::Array),
-        "type" | "tuple" | "set" | "frozenset" => Err("Python output is not a Plasm value".into()),
+        "type" | "tuple" | "frozenset" => Err("Python output is not a Plasm value".into()),
         _ => {
             if !matches!(
                 monty_types::unstable::node(value),

@@ -296,9 +296,9 @@ async fn typed_return_structures_and_effect_gate() {
             "Return type does not match",
         ),
         ("Row.state", "'invalid'", "Return type does not match"),
-        ("Any", "row.text", "unknown Plasm return type"),
-        ("tuple[int]", "(1,)", "unsupported Plasm return annotation"),
-        ("v99999", "row.text", "unknown Plasm return type"),
+        ("Any", "row.text", "unresolved-reference"),
+        ("tuple[int]", "(1,)", "not a closed materialized contract"),
+        ("v99999", "row.text", "unresolved-reference"),
     ] {
         let (es, _, token) = super::recursive_values::fixture_context(base.clone());
         let source = format!("class Invalid(Program):\n    @compute\n    def produce(self, row: Row) -> {annotation}:\n        return {expression}\n    def build(self):\n        return self.produce({token}.get('000123'))\n");

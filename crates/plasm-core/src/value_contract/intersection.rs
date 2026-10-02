@@ -110,6 +110,12 @@ fn intersect(a: &T, b: &T, depth: usize) -> Result<T, String> {
                 wire: aw.or(*bw),
             }
         }
+        (S::Set { element: a }, S::Set { element: b }) => S::Set {
+            element: Box::new(recur(a, b)?),
+        },
+        (S::MappingRecord { record: a }, S::MappingRecord { record: b }) => S::MappingRecord {
+            record: Box::new(recur(a, b)?),
+        },
         (S::Array { element: a }, S::Array { element: b }) => S::Array {
             element: Box::new(recur(a, b)?),
         },

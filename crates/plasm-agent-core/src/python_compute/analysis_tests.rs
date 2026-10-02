@@ -161,3 +161,108 @@ fn row_entity_annotation_matches_value_contract_recursively() {
     let invalid = "@compute\ndef keep(row: Row[missing]) -> str:\n    return ''\n".to_string();
     assert!(PreparedCompute::prepare(&invalid, &cgs, "types", symbols.as_ref()).is_err());
 }
+
+#[test]
+fn upstream_mutated_dictionaries_have_explicit_generic_types() {
+    use monty_types::analysis::{AnalysisLimits, AnalysisRequest, Span};
+    for body in [
+        "    result = []\n    for row in rows:\n        result.append({'value': row.number})\n    return result\n",
+        "    result = {}\n    result['value'] = rows[0].number\n    return result\n",
+        "    value = rows[0].number\n    return {'value': value}\n",
+    ] {
+        let source = format!("def f(rows: list[Row]):\n{body}");
+        let start = source.rfind("return ").unwrap() + 7;
+        let end = source[start..].find('\n').unwrap() + start;
+        let result = monty_analysis::analyze(&AnalysisRequest {
+            source: source.clone(), stubs: Some("class Row:\n    number: int\n".into()),
+            targets: vec![Span { start: start as u32, end: end as u32 }],
+            limits: AnalysisLimits::default(),
+        }).unwrap();
+        let monty_types::analysis::AnalysisOutcome::Inferred(graph) = result.outcome else { panic!("{result:?}"); };
+        assert!(graph.nodes.iter().any(|node| matches!(node, monty_types::analysis::Node::Instance { identity, arguments } if identity.path.last().is_some_and(|name| name == "dict") && arguments.len() == 2)));
+        assert!(!graph.nodes.iter().any(|node| matches!(node, monty_types::analysis::Node::Unknown | monty_types::analysis::Node::Any)));
+    }
+}
+
+#[test]
+fn lexical_bindings_come_from_upstream_scope_index() {
+    use ruff_text_size::Ranged;
+    let source = "def callback(row):\n    declared: int\n    a, b = (1, 2)\n    for item in []:\n        pass\n    values = [inner for inner in []]\n    def nested():\n        nested_local = 1\n    return row\n";
+    let parsed = ruff_python_parser::parse_module(source).unwrap();
+    let ruff_python_ast::Stmt::FunctionDef(def) = &parsed.suite()[0] else {
+        panic!()
+    };
+    let locals = monty_analysis::function_locals(
+        source,
+        monty_analysis::Span {
+            start: def.start().to_u32(),
+            end: def.end().to_u32(),
+        },
+    )
+    .unwrap();
+    for expected in ["row", "declared", "a", "b", "item", "values", "nested"] {
+        assert!(locals.iter().any(|name| name == expected), "{locals:?}");
+    }
+    for excluded in ["inner", "nested_local"] {
+        assert!(!locals.iter().any(|name| name == excluded), "{locals:?}");
+    }
+}
+
+#[test]
+fn upstream_captures_respect_comprehension_and_default_scopes() {
+    for (source, expected) in [
+        ("[row.id for row in rows if row.active]", vec!["rows"]),
+        ("(lambda row=outer: row.id)(item)", vec!["outer", "item"]),
+        ("[(a, b) for a in rows for b in a.children]", vec!["rows"]),
+        (
+            "(lambda *args, **kwargs: args[0] + kwargs['x'])(outer)",
+            vec!["outer"],
+        ),
+    ] {
+        let names = monty_analysis::external_names(source)
+            .unwrap()
+            .into_iter()
+            .map(|(_, name)| name)
+            .collect::<Vec<_>>();
+        assert_eq!(names, expected, "{source}");
+    }
+}
+
+#[test]
+fn upstream_operator_diagnostics_include_operand_evidence() {
+    let request = monty_analysis::AnalysisRequest {
+        source:
+            "def f(first: str | None, last: str | None) -> str:\n    return first + ' ' + last\n"
+                .into(),
+        stubs: None,
+        targets: vec![],
+        limits: Default::default(),
+    };
+    let result = monty_analysis::analyze(&request).unwrap();
+    let monty_analysis::AnalysisOutcome::Rejected(errors) = result.outcome else {
+        panic!("nullable addition admitted")
+    };
+    let messages = errors
+        .iter()
+        .map(|error| error.message.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        messages.contains("None") && messages.contains("str"),
+        "{messages}"
+    );
+}
+
+#[test]
+fn supported_attribute_presence_builtin_is_checked_upstream() {
+    super::admission::check_definition(
+        "def f(value: str) -> bool:\n    return hasattr(value, 'upper')\n",
+        "",
+    )
+    .unwrap();
+    assert!(super::admission::check_definition(
+        "def f(value: str) -> bool:\n    return hasattr(value, 123)\n",
+        "",
+    )
+    .is_err());
+}

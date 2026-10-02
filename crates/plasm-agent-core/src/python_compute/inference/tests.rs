@@ -11,6 +11,17 @@ fn fields(items: &[(&str, Type)]) -> Type {
     )
 }
 
+fn dictionary(value: Type) -> Type {
+    Type {
+        shape: ValueShape::Dictionary {
+            key: Box::new(Type::scalar(FieldType::String)),
+            value: Box::new(value),
+        },
+        domain: None,
+        nullable: false,
+    }
+}
+
 #[test]
 fn upstream_expression_contracts_preserve_python_semantics() {
     let mut optional = Type::scalar(FieldType::String);
@@ -91,7 +102,7 @@ fn nominal_selection_and_record_presence_survive_inference() {
     );
     assert_eq!(
         infer("{'id': row.id, 'nested': [row.record]}", "row", &input, "").unwrap(),
-        fields(&[("id", id), ("nested", array(observed))])
+        dictionary(Type::join(id, array(observed)))
     );
     assert_eq!(
         infer("row.id.lower()", "row", &input, "").unwrap(),
@@ -102,7 +113,7 @@ fn nominal_selection_and_record_presence_survive_inference() {
 #[test]
 fn unsupported_result_shapes_do_not_become_json() {
     let input = fields(&[]);
-    for expression in ["(1, 2)", "{1, 2}", "lambda: 1", "{str(1): 2}"] {
+    for expression in ["(1, 2)", "lambda: 1", "{1: 2}"] {
         assert!(
             infer(expression, "row", &input, "").is_err(),
             "{expression}"
@@ -116,10 +127,10 @@ fn unsupported_result_shapes_do_not_become_json() {
             ""
         )
         .unwrap(),
-        array(fields(&[
-            ("n", Type::scalar(FieldType::Integer)),
-            ("s", Type::scalar(FieldType::String))
-        ]))
+        array(dictionary(Type::join(
+            Type::scalar(FieldType::Integer),
+            Type::scalar(FieldType::String)
+        )))
     );
 }
 
@@ -395,5 +406,141 @@ fn nominal_literal_branch_constraints_preserve_nested_domains() {
                 assert!(!selected.nullable, "{source}");
             }
         }
+    }
+}
+
+#[test]
+fn complete_body_inference_uses_upstream_locals_and_returns() {
+    let input = fields(&[("number", Type::scalar(FieldType::Integer))]);
+    let actual = infer_body("\n    n = row.number + 1\n    if n > 0:\n        return {'value': n}\n    return {'value': 0}\n", &[("row", &input)], "").unwrap();
+    assert_eq!(actual, dictionary(Type::scalar(FieldType::Integer)));
+}
+
+#[test]
+fn mutated_dictionary_inference_preserves_upstream_element_types() {
+    let input = array(fields(&[("number", Type::scalar(FieldType::Integer))]));
+    let result = infer_body("\n    result = []\n    for row in rows:\n        result.append({'value': row.number})\n    return result\n", &[("rows", &input)], "");
+    assert_eq!(
+        result.unwrap(),
+        array(dictionary(Type::scalar(FieldType::Integer)))
+    );
+}
+
+#[test]
+fn whole_function_returns_include_upstream_implicit_none() {
+    let input = Type::scalar(FieldType::Integer);
+    let output = infer_body(
+        "\n    if number > 0:\n        return number\n",
+        &[("number", &input)],
+        "",
+    )
+    .unwrap();
+    assert!(output.nullable || matches!(output.shape, ValueShape::Union { .. }));
+}
+
+#[test]
+fn annotation_resolution_is_upstream_owned() {
+    let aliases = BTreeMap::new();
+    let integer = Type::scalar(FieldType::Integer);
+    assert_eq!(super::annotation("'int'", &aliases).unwrap(), integer);
+    assert_eq!(
+        super::annotation("list['int']", &aliases).unwrap(),
+        array(integer)
+    );
+    assert!(super::annotation("dict[int, str]", &aliases)
+        .unwrap_err()
+        .contains("string keys"));
+    assert!(super::annotation("list[int, str]", &aliases).is_err());
+    assert!(super::annotation("NotAType", &aliases).is_err());
+}
+
+#[test]
+fn inferred_returns_follow_upstream_reachability() {
+    for body in [
+        "\n    return 1\n    return\n",
+        "\n    if False:\n        return\n    return 1\n",
+        "\n    if True:\n        return 1\n    return 'unreachable'\n",
+    ] {
+        assert_eq!(
+            infer_body(body, &[], "").unwrap(),
+            Type::scalar(FieldType::Integer)
+        );
+    }
+}
+
+#[test]
+fn annotated_returns_are_checked_before_literal_erasure() {
+    let aliases = BTreeMap::new();
+    for (annotation, body, expected) in [
+        ("Literal['yes']", "\n    return 'yes'\n", true),
+        ("Literal['yes']", "\n    return 'no'\n", false),
+        ("int", "\n    return 'wrong'\n", false),
+        ("dict[str, int]", "\n    return {'n': 1}\n", true),
+        ("dict[str, int]", "\n    return {'n': 'wrong'}\n", false),
+    ] {
+        assert_eq!(
+            check_annotated_body(
+                body,
+                &[],
+                annotation,
+                &aliases,
+                "from typing import Literal",
+                &plasm_core::loader::load_schema_dir(
+                    &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("../../fixtures/schemas/python_value_contract")
+                )
+                .unwrap(),
+                &BTreeMap::new(),
+            )
+            .is_ok(),
+            expected,
+            "{annotation}: {body}"
+        );
+    }
+}
+
+#[test]
+fn authored_record_returns_preserve_container_and_literal_constraints() {
+    let cgs = plasm_core::loader::load_schema_dir(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/python_value_contract"),
+    )
+    .unwrap();
+    let row = Type::record(
+        BTreeMap::from([("n".into(), Type::scalar(FieldType::Integer))]),
+        Default::default(),
+    );
+    let rows = Type {
+        shape: ValueShape::Array {
+            element: Box::new(row.clone()),
+        },
+        domain: None,
+        nullable: false,
+    };
+    let aliases = BTreeMap::from([("Row".into(), row)]);
+    for (annotation, body, accepted) in [
+        ("list[Row]", "\n    return rows\n", true),
+        ("list[Row]", "\n    return [{'n': 1}]\n", true),
+        (
+            "dict[Literal['fixed'], Row]",
+            "\n    return {'wrong': {'n': 1}}\n",
+            false,
+        ),
+        ("Literal['yes'] | Row", "\n    return 'no'\n", false),
+    ] {
+        assert_eq!(
+            check_annotated_body(
+                body,
+                &[("rows", &rows)],
+                annotation,
+                &aliases,
+                "from typing import Literal",
+                &cgs,
+                &BTreeMap::new()
+            )
+            .is_ok(),
+            accepted,
+            "{annotation}: {body}"
+        );
     }
 }

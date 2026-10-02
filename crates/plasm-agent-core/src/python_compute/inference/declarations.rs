@@ -8,7 +8,7 @@ impl Default for Declarations {
     fn default() -> Self {
         Self {
             source: format!(
-                "from typing import NewType, Never, Literal, overload\nimport datetime\n{}",
+                "from typing import NewType, Never, Literal, TypeAlias, Protocol, overload, TypedDict, NotRequired\nimport datetime\n{}",
                 crate::python_money::STUBS
             ),
             contracts: BTreeMap::from([("PlasmMoney".into(), Type::scalar(FieldType::Money))]),
@@ -32,6 +32,38 @@ impl Declarations {
         {
             return Ok(name.clone());
         }
+        if let ValueShape::MappingRecord { record } = &value.shape {
+            let fields = match &record.shape {
+                ValueShape::Record { fields } | ValueShape::ObservedRecord { fields, .. } => fields,
+                _ => return Err("mapping input requires a record contract".into()),
+            };
+            let name = format!("PlasmAnalysisType{}", self.contracts.len());
+            self.contracts.insert(name.clone(), value.clone());
+            let mut members = Vec::new();
+            for (key, ty) in fields {
+                let mut ty = self.render(ty, depth + 1)?;
+                if matches!(&record.shape, ValueShape::ObservedRecord { optional_fields, .. } if optional_fields.contains(key))
+                {
+                    ty = format!("NotRequired[{ty}]");
+                }
+                members.push(format!(
+                    "{}: {ty}",
+                    serde_json::to_string(key).map_err(|e| e.to_string())?
+                ));
+            }
+            self.source.push_str(&format!(
+                "{name} = TypedDict(\"{name}\", {{{}}})\n",
+                members.join(", ")
+            ));
+            return Ok(name);
+        }
+        if let ValueShape::Dictionary { key, value } = &value.shape {
+            return Ok(format!(
+                "dict[{}, {}]",
+                self.render(key, depth + 1)?,
+                self.render(value, depth + 1)?
+            ));
+        }
         if let ValueShape::Record { fields } | ValueShape::ObservedRecord { fields, .. } =
             &value.shape
         {
@@ -42,12 +74,14 @@ impl Declarations {
             for (field, contract) in fields {
                 super::super::upstream::validate_member(field)?;
                 let ty = self.render(contract, depth + 1)?;
-                members.push_str(&format!("    {field}: {ty}\n"));
+                members.push_str(&format!(
+                    "    @property\n    def {field}(self) -> {ty}: ...\n"
+                ));
                 indexed.push((field.clone(), ty));
             }
             members.push_str(&super::super::upstream::record_index_members(&indexed));
             self.source.push_str(&format!(
-                "class {name}:\n{}",
+                "class {name}(Protocol):\n{}",
                 if members.is_empty() {
                     "    pass\n"
                 } else {
@@ -60,6 +94,8 @@ impl Declarations {
             ValueShape::Null => "None".into(),
             ValueShape::Never => "Never".into(),
             ValueShape::Array { element } => format!("list[{}]", self.render(element, depth + 1)?),
+            ValueShape::Set { element } => format!("set[{}]", self.render(element, depth + 1)?),
+            ValueShape::MappingRecord { .. } => unreachable!(),
             ValueShape::Union { variants } => variants
                 .iter()
                 .map(|v| self.render(v, depth + 1))
@@ -79,7 +115,9 @@ impl Declarations {
                 _ => "str",
             }
             .into(),
-            ValueShape::Record { .. } | ValueShape::ObservedRecord { .. } => unreachable!(),
+            ValueShape::Record { .. }
+            | ValueShape::ObservedRecord { .. }
+            | ValueShape::Dictionary { .. } => unreachable!(),
         };
         let plain = value.domain.is_none()
             && match &value.shape {

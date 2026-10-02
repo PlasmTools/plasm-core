@@ -1,7 +1,7 @@
 //! Structural lowering from resolved DAG nodes to plan nodes.
 
 use super::super::prelude::*;
-use super::super::types::{DagNode, DagNodeSource, PlanNodeEmitter};
+use super::super::types::{DagNode, DagNodeSource};
 use super::template_uses::{relation_plan_uses_result, result_use};
 use crate::plasm_plan::{
     ComputeTemplate, DeriveKind, DeriveTemplate, EffectTemplate, PlanExprTemplate,
@@ -12,7 +12,7 @@ pub(in crate::plasm_dag) fn lower_plan_node(node: &DagNode) -> Result<PlanNode, 
     node.source.emit_plan_node(node)
 }
 
-impl PlanNodeEmitter for DagNodeSource {
+impl DagNodeSource {
     fn emit_plan_node(&self, node: &DagNode) -> Result<PlanNode, String> {
         // This is an untrusted structural plan node. Admission owns checked construction.
         let mut out = PlanNode {
@@ -24,7 +24,7 @@ impl PlanNodeEmitter for DagNodeSource {
             expr: None,
             ir: None,
             ir_template: None,
-            effect_class: EffectClass::ArtifactRead,
+            effect_class: self.effect_class(),
             result_shape: ResultShape::Artifact,
             projection: vec![],
             predicates: vec![],
@@ -49,15 +49,14 @@ impl PlanNodeEmitter for DagNodeSource {
                 parsed,
                 kind,
                 qualified_entity,
-                effect_class,
                 result_shape,
                 uses_result,
+                ..
             } => {
                 out.kind = *kind;
                 out.qualified_entity =
                     (*result_shape != ResultShape::Page).then(|| qualified_entity.clone());
                 out.expr = Some(node.expr.clone());
-                out.effect_class = *effect_class;
                 out.result_shape = *result_shape;
                 out.projection = parsed.projection.clone().unwrap_or_default();
                 out.uses_result = uses_result.clone();
@@ -82,13 +81,11 @@ impl PlanNodeEmitter for DagNodeSource {
                 parsed,
                 plan_relation,
                 qualified_entity,
-                effect_class,
                 result_shape,
                 ..
             } => {
                 out.kind = PlanNodeKind::Relation;
                 out.qualified_entity = Some(qualified_entity.clone());
-                out.effect_class = *effect_class;
                 out.result_shape = *result_shape;
                 out.projection = parsed.projection.clone().unwrap_or_default();
                 out.relation = Some(plan_relation.clone());
@@ -97,7 +94,6 @@ impl PlanNodeEmitter for DagNodeSource {
             }
             Self::MapBody { body, .. } => {
                 out.kind = PlanNodeKind::MapBody;
-                out.effect_class = body.effect_class();
                 out.result_shape = body.result_shape();
                 out.map_body = Some(body.clone());
                 out.uses_result =
@@ -126,16 +122,7 @@ impl PlanNodeEmitter for DagNodeSource {
                 collection_alias,
             } => {
                 out.kind = PlanNodeKind::Compute;
-                out.result_shape = if matches!(
-                    op,
-                    ComputeOp::Python { per_row: false, .. } | ComputeOp::MergeBranches { .. }
-                ) || (matches!(op, ComputeOp::Render { .. })
-                    && node.singleton)
-                {
-                    ResultShape::Single
-                } else {
-                    ResultShape::List
-                };
+                out.result_shape = crate::plasm_plan::compute_result_shape(op, node.singleton);
                 out.compute = Some(ComputeTemplate {
                     source: source.clone(),
                     op: op.clone(),
@@ -215,7 +202,6 @@ impl PlanNodeEmitter for DagNodeSource {
                 uses_result,
             } => {
                 out.kind = PlanNodeKind::ForEach;
-                out.effect_class = *effect_class;
                 out.result_shape = ResultShape::List;
                 out.source = Some(source.clone());
                 out.item_binding = Some("_".into());
@@ -247,7 +233,6 @@ impl PlanNodeEmitter for DagNodeSource {
                 uses_result,
             } => {
                 out.kind = PlanNodeKind::IterateUntil;
-                out.effect_class = *effect_class;
                 out.result_shape = ResultShape::Single;
                 out.source = Some(seed.clone());
                 out.item_binding = Some("_".into());

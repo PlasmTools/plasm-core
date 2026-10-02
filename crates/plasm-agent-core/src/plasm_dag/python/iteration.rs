@@ -11,7 +11,7 @@ impl Lower<'_> {
         seed: &str,
         id: &str,
     ) -> Result<String, String> {
-        if self.row_scope.is_some() || call.arguments.args.len() != 1 {
+        if call.arguments.args.len() != 1 {
             return Err(at(
                 site,
                 "iterate requires one step callback, until=predicate and max_steps=positive integer",

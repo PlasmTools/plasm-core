@@ -23,11 +23,11 @@ export const executionFailureSchema = z.object({
 }, "recovery authority must agree with cause and effect evidence");
 export type ExecutionFailure = z.infer<typeof executionFailureSchema>;
 export class AgentExecutionFailure extends Error {
-  constructor(readonly failure: ExecutionFailure) { super(failure.code); }
+  constructor(readonly failure: ExecutionFailure) { super(`${failure.code}: ${failure.diagnostic}`); }
 }
 export function failureObservation(error: unknown) {
   const failure: ExecutionFailure = error instanceof AgentExecutionFailure && executionFailureSchema.safeParse(error.failure).success ? error.failure : {
-    cause: "unclassified", recovery: "stop", code: "unclassified_execution_failure", diagnostic: "Unclassified host failure", node: null,
+    cause: "unclassified", recovery: "stop", code: "unclassified_execution_failure", diagnostic: error instanceof Error ? error.message : typeof error === "string" ? error : "Unclassified host failure", node: null,
     occurrence_path: [], catalog_digest: null, effects: [], dispatches: [], effects_unresolved: true,
   };
   return {

@@ -10,15 +10,177 @@ impl Lower<'_> {
         method: &str,
         id: &str,
     ) -> Result<String, String> {
-        if call.arguments.args.len() != 1 || !call.arguments.keywords.is_empty() {
-            return Err(at(site, "compute requires one explicit input dependency"));
-        }
         let code = self
             .methods
             .get(method)
             .ok_or_else(|| at(site, "unknown compute method"))?
             .clone();
-        let source = self.expr(&call.arguments.args[0], None)?;
+        let lowered = self.text_compute_source(site, call, code, id)?;
+        self.used_methods.insert(method.to_owned());
+        Ok(lowered)
+    }
+
+    pub(super) fn text_compute_source(
+        &mut self,
+        site: &PyExpr,
+        call: &ExprCall,
+        code: String,
+        id: &str,
+    ) -> Result<String, String> {
+        let parsed = ruff_python_parser::parse_module(&code).map_err(|e| e.to_string())?;
+        let Some(Stmt::FunctionDef(def)) = parsed.suite().last() else {
+            return Err("missing compute definition".into());
+        };
+        let mut expressions: Vec<_> = call
+            .arguments
+            .args
+            .iter()
+            .map(|expr| (None, expr))
+            .collect();
+        for keyword in &call.arguments.keywords {
+            let name = keyword.arg.as_ref().ok_or_else(|| at(site, "expanded keyword dependencies require a statically materialized argument mapping"))?;
+            expressions.push((Some(name.to_string()), &keyword.value));
+        }
+        let shape = expressions
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect::<Vec<_>>();
+        let mut callable = def.clone();
+        // @compute is a host declaration marker, not a Python wrapper callable.
+        callable.decorator_list.clear();
+        let bindings = monty_analysis::bind_arguments(
+            &monty::statement_source(&Stmt::FunctionDef(callable)),
+            &shape,
+        )?;
+        // Binding precedes normalization: the wire ABI has required named ports,
+        // while Python owns positional-only, keyword-only and default semantics.
+        let parameters = def
+            .parameters
+            .posonlyargs
+            .iter()
+            .chain(&def.parameters.args)
+            .chain(&def.parameters.kwonlyargs)
+            .collect::<Vec<_>>();
+        let mut bound = bindings
+            .iter()
+            .zip(&expressions)
+            .map(|(binding, (_, expression))| (binding.parameter.clone(), *expression))
+            .collect::<Vec<_>>();
+        for parameter in &parameters {
+            if !bound
+                .iter()
+                .any(|(name, _)| name == parameter.parameter.name.as_str())
+            {
+                let default = parameter
+                    .default
+                    .as_deref()
+                    .ok_or("binder omitted a required input")?;
+                bound.push((parameter.parameter.name.to_string(), default));
+            }
+        }
+        let mut normalized = def.clone();
+        normalized.parameters.args = parameters
+            .iter()
+            .map(|parameter| {
+                let mut parameter = (*parameter).clone();
+                parameter.default = None;
+                parameter
+            })
+            .collect();
+        normalized.parameters.posonlyargs.clear();
+        normalized.parameters.kwonlyargs.clear();
+        let code = admission::method_source(&self.imports.source, &code, def, normalized)?;
+        let source = if parameters.len() == 1 {
+            self.expr(bound[0].1, None)?
+        } else {
+            let mut inputs = BTreeMap::new();
+            let mut fields = BTreeMap::new();
+            for (name, expression) in &bound {
+                let parameter = parameters
+                    .iter()
+                    .find(|parameter| parameter.parameter.name.as_str() == name)
+                    .ok_or("bound compute parameter has no materialization port")?;
+                let mut argument_inputs = BTreeMap::new();
+                let value = self.scoped_value(expression, &mut argument_inputs)?;
+                let annotation = parameter
+                    .parameter
+                    .annotation
+                    .as_deref()
+                    .ok_or("missing input annotation")?;
+                if crate::python_compute::is_row_annotation(annotation) {
+                    if let PlasmDataValue::NodeSymbol { node, path, .. } = &value {
+                        if path.is_empty() {
+                            if !super::super::binding_contract(&self.state, node)
+                                .is_some_and(|c| c.row_cardinality.permits_scalar_field_extract())
+                            {
+                                return Err(at(expression, "Row compute input requires a singleton; use list[Row] for a collection"));
+                            }
+                            argument_inputs
+                                .get_mut(node)
+                                .ok_or("missing row input")?
+                                .cardinality = crate::plasm_plan::InputCardinality::Singleton;
+                        }
+                    }
+                }
+                // Give each argument its own value port, including repeated use
+                // of one source at different cardinalities.
+                let argument = self.fresh();
+                // A captured entity is a nested value, not the identity of the
+                // synthetic argument node. Keep its metadata under a value port.
+                self.emit_value(
+                    PlasmDataValue::Object {
+                        fields: BTreeMap::from([("argument".into(), value)]),
+                    },
+                    argument_inputs.into_values().collect(),
+                    &argument,
+                )?;
+                inputs.insert(
+                    argument.clone(),
+                    crate::plasm_plan::PlanDataInput {
+                        node: argument.clone(),
+                        alias: argument.clone(),
+                        cardinality: crate::plasm_plan::InputCardinality::Singleton,
+                    },
+                );
+                fields.insert(
+                    parameter.parameter.name.to_string(),
+                    PlasmDataValue::NodeSymbol {
+                        node: argument.clone(),
+                        alias: argument,
+                        path: vec!["argument".into()],
+                    },
+                );
+            }
+            let packet = self.fresh();
+            self.emit_value(
+                PlasmDataValue::Object { fields },
+                inputs.into_values().collect(),
+                &packet,
+            )?;
+            packet
+        };
+        let input = inferred_schema(self.es, &self.state, &source, 0)?.row_contract()?;
+        for parameter in &parameters {
+            if let Some(default) = parameter.default.as_deref() {
+                let annotation = parameter
+                    .parameter
+                    .annotation
+                    .as_deref()
+                    .ok_or("missing input annotation")?;
+                let argument = if parameters.len() == 1 {
+                    input.clone()
+                } else {
+                    input.field(parameter.parameter.name.as_str())?
+                };
+                crate::python_compute::check_callback_closed_return(
+                    self.es,
+                    annotation,
+                    &argument,
+                    default,
+                    &self.imports.source,
+                )?;
+            }
+        }
         self.emit_python_compute(source, &code, id)
     }
 
@@ -187,7 +349,13 @@ pub(super) fn prepare_op(
     source: &str,
     code: &str,
 ) -> Result<ComputeOp, String> {
-    let owner = compute_owner(state, source, 0);
+    let parsed = ruff_python_parser::parse_module(code).map_err(|e| e.to_string())?;
+    let multiple = matches!(parsed.suite().last(), Some(Stmt::FunctionDef(def)) if def.parameters.args.len() > 1);
+    let owner = if multiple {
+        None
+    } else {
+        compute_owner(state, source, 0)
+    };
     let entry = if let Some(owner) = &owner {
         owner.entry_id.clone()
     } else {
@@ -228,7 +396,7 @@ pub(super) fn prepare_op(
         entry_id: entry,
         entity: owner.map(|owner| owner.entity),
         catalog_hash: cgs.catalog_cgs_hash_hex(),
-        contract_version: 9,
+        contract_version: crate::python_compute::CONTRACT_VERSION,
         language_profile: crate::python_compute::LANGUAGE_PROFILE.into(),
         input_schema,
         output_type: checked.output,

@@ -1,4 +1,4 @@
-//! Shared immutable statement lowering for root and scoped callback bodies.
+//! Bind Python locals to immutable DAG versions; assignments never mutate nodes.
 use super::*;
 impl Lower<'_> {
     pub(super) fn statement<'s>(
@@ -11,20 +11,9 @@ impl Lower<'_> {
                 let id = self.expr(&s.value, None)?;
                 let node = self.state.get(&id).ok_or("missing statement node")?;
                 if !matches!(
-                    &node.source,
-                    super::super::types::DagNodeSource::Surface {
-                        effect_class: EffectClass::Write | EffectClass::SideEffect,
-                        ..
-                    } | super::super::types::DagNodeSource::IterateUntil {
-                        effect_class: EffectClass::Write | EffectClass::SideEffect,
-                        ..
-                    } | super::super::types::DagNodeSource::ForEach {
-                        effect_class: EffectClass::Write | EffectClass::SideEffect,
-                        ..
-                    }
-                ) && !matches!(&node.source, super::super::types::DagNodeSource::MapBody { body, .. }
-                    if matches!(body.effect_class(), EffectClass::Write | EffectClass::SideEffect))
-                {
+                    node.source.effect_class(),
+                    EffectClass::Write | EffectClass::SideEffect
+                ) {
                     return Err(at(stmt, "unused expression statements must be writes"));
                 }
             }
@@ -44,11 +33,18 @@ impl Lower<'_> {
                 {
                     return Err(at(stmt, "reserved binding name"));
                 }
-                let binding = self.scoped_binding(label).to_owned();
-                if self.state.contains(&binding) || self.callbacks.contains_key(label) {
-                    return Err(at(stmt, "rebinding is not admitted"));
-                }
+                let previous = self.scoped_binding(label).to_owned();
+                let binding =
+                    if self.state.contains(&previous) || self.callbacks.contains_key(label) {
+                        self.fresh()
+                    } else {
+                        previous
+                    };
+                // Resolve the RHS in the previous environment, then publish the
+                // new binding. Previously captured values retain their DAG id.
                 self.expr(&s.value, Some(&binding))?;
+                self.frame.names.insert(label.to_owned(), binding);
+                self.callbacks.remove(label);
             }
             build_statements::BuildStatement::Callback(def) => self.declare_callback(def)?,
             build_statements::BuildStatement::Return(s) => return Ok(Some(s)),

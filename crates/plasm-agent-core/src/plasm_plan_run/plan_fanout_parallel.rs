@@ -453,6 +453,9 @@ fn stamp_fanout_outcomes(
         let Some(ack) = result.result.operations.entries().first() else {
             continue;
         };
+        if ack.completed == 0 {
+            continue;
+        }
         let identity = ack.identity();
         if let Some(merged) = operations.get_mut(&identity) {
             merged.outcomes.push(OperationInvocationOutcome {

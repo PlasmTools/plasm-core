@@ -15,7 +15,7 @@ impl Lower<'_> {
     ) -> Result<Option<PlasmDataValue>, String> {
         if super::literal_operands::LiteralOperand::classify(expression).is_some()
             || matches!(expression, PyExpr::Name(_))
-            || self.deferred_expression(expression)
+            || self.expression_placement(expression) == ExpressionPlacement::Host
             || matches!(expression, PyExpr::Attribute(attr) if self.expression_owner(&attr.value).is_some())
         {
             return Ok(None);
@@ -26,7 +26,7 @@ impl Lower<'_> {
             {
                 if let [PyExpr::Generator(generator)] = call.arguments.args.as_ref() {
                     if generator.generators.first().is_some_and(|clause| {
-                        self.deferred_expression(&clause.iter)
+                        self.expression_placement(&clause.iter) == ExpressionPlacement::Host
                             || name(&clause.iter).is_some_and(|name| {
                                 super::super::binding_contract(
                                     &self.state,
@@ -49,7 +49,7 @@ impl Lower<'_> {
         }
         // Classify dependencies before lowering either successor. Speculative
         // lowering would type-check a guarded operand without its branch facts.
-        if self.lazy_deferred_expression(expression) {
+        if self.expression_placement(expression) == ExpressionPlacement::LazyHost {
             return match expression {
                 PyExpr::If(choice) => self
                     .conditional_value(
@@ -108,7 +108,7 @@ impl Lower<'_> {
             .map(Some)
     }
 
-    pub(super) fn lazy_deferred_expression(&self, expression: &PyExpr) -> bool {
+    pub(super) fn lazy_host_dependency(&self, expression: &PyExpr) -> bool {
         if !(matches!(expression, PyExpr::If(_) | PyExpr::BoolOp(_))
             || matches!(expression, PyExpr::Compare(c) if c.ops.len() > 1))
         {
@@ -121,7 +121,7 @@ impl Lower<'_> {
         }
         impl<'ast> Visitor<'ast> for Dependencies<'_, '_> {
             fn visit_expr(&mut self, expression: &'ast PyExpr) {
-                if self.found || self.lower.deferred_expression(expression) {
+                if self.found || self.lower.immediate_host_dependency(expression) {
                     self.found = true;
                     return;
                 }

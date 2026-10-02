@@ -28,11 +28,6 @@ annotation/domain combinations; those remain separate semantic obligations.
     ],
     "invalid": [
       {
-        "body": "import os\nclass Example(Program):\n    def build(self):\n        return E.get(\"i1\")\n",
-        "error": "only the datetime module is admitted",
-        "module": true
-      },
-      {
         "body": "class Example(Program):\n    def build(self):\n        return E.get(\"i1\")\nclass Other(Program):\n    def build(self):\n        return E.get(\"i1\")\n",
         "error": "expected exactly one Program subclass",
         "module": true
@@ -107,7 +102,7 @@ annotation/domain combinations; those remain separate semantic obligations.
   },
   {
     "operation": "build",
-    "premise": "Exactly one synchronous undecorated build(self), without return annotations, generics or additional/default/variadic parameters.",
+    "premise": "A synchronous build binds the Program receiver through upstream Python call binding. Additional parameters require scalar constant defaults; variadic ports and runtime decorators have no Program representation.",
     "transfer": "Supply its statement suite to the registered build-statement lowerer.",
     "law": "BC-03",
     "witnesses": [
@@ -142,37 +137,22 @@ annotation/domain combinations; those remain separate semantic obligations.
       },
       {
         "body": "class Example(Program):\n    def build(this):\n        return E.get(\"i1\")\n",
-        "error": "method requires self",
-        "module": true
-      },
-      {
-        "body": "class Example(Program):\n    def build(self, value=1):\n        return E.get(\"i1\")\n",
-        "error": "method requires self",
-        "module": true
-      },
-      {
-        "body": "class Example(Program):\n    def build(self, /):\n        return E.get(\"i1\")\n",
-        "error": "method requires self",
-        "module": true
-      },
-      {
-        "body": "class Example(Program):\n    def build(self: object):\n        return E.get(\"i1\")\n",
-        "error": "method requires self",
+        "error": "build requires the Program receiver",
         "module": true
       },
       {
         "body": "class Example(Program):\n    def build(self, *args):\n        return E.get(\"i1\")\n",
-        "error": "method requires self",
+        "error": "variadic build inputs",
         "module": true
       },
       {
         "body": "class Example(Program):\n    def build(self, **kwargs):\n        return E.get(\"i1\")\n",
-        "error": "method requires self",
+        "error": "variadic build inputs",
         "module": true
       },
       {
         "body": "class Example(Program):\n    def build(self, *, flag):\n        return E.get(\"i1\")\n",
-        "error": "method requires self",
+        "error": "Python arguments do not match",
         "module": true
       },
       {
@@ -184,7 +164,7 @@ annotation/domain combinations; those remain separate semantic obligations.
   },
   {
     "operation": "compute",
-    "premise": "A public synchronous method has exactly bare @compute, self and one required positional typed input, and either a supported return annotation or one return expression with an inferred structural contract. Canonical inputs are Row, Value[eN], list[Row] or list[Value[eN]]. Value annotations are checked against the unique input column at the callsite.",
+    "premise": "A public synchronous @compute method has a bound self receiver and typed materialization inputs. Upstream Python binding resolves positional-only, keyword-only and scalar constant defaults. Whole-body checking validates annotated or inferred return contracts against actual callsite inputs.",
     "transfer": "Extract source without evaluating decorators; resolve catalog-qualified annotations and prepare the sealed compute contract. Row contracts resolve at typed callsites.",
     "law": "BC-03",
     "witnesses": [
@@ -195,18 +175,13 @@ annotation/domain combinations; those remain separate semantic obligations.
     ],
     "invalid": [
       {
-        "body": "class Example(Program):\n    def text(self, row: Row) -> str:\n        return row.title\n    def build(self):\n        return self.text(E.get(\"i1\"))\n",
-        "error": "only build and @compute methods",
-        "module": true
-      },
-      {
         "body": "class Example(Program):\n    @compute()\n    def text(self, row: Row) -> str:\n        return row.title\n    def build(self):\n        return self.text(E.get(\"i1\"))\n",
-        "error": "only build and @compute methods",
+        "error": "method decorators require exactly @compute",
         "module": true
       },
       {
         "body": "class Example(Program):\n    @staticmethod\n    @compute\n    def text(self, row: Row) -> str:\n        return row.title\n    def build(self):\n        return self.text(E.get(\"i1\"))\n",
-        "error": "only build and @compute methods",
+        "error": "method decorators require exactly @compute",
         "module": true
       },
       {
@@ -216,12 +191,7 @@ annotation/domain combinations; those remain separate semantic obligations.
       },
       {
         "body": "class Example(Program):\n    @compute\n    def text(self, row) -> str:\n        return row.title\n    def build(self):\n        return self.text(E.get(\"i1\"))\n",
-        "error": "compute requires an input annotation",
-        "module": true
-      },
-      {
-        "body": "class Example(Program):\n    @compute\n    def text(self, row: Row):\n        title = row.title\n        return title\n    def build(self):\n        return self.text(E.get(\"i1\"))\n",
-        "error": "compute without an annotation requires one return expression",
+        "error": "every compute input requires an annotation",
         "module": true
       },
       {
@@ -231,17 +201,17 @@ annotation/domain combinations; those remain separate semantic obligations.
       },
       {
         "body": "class Example(Program):\n    @compute\n    def text(self, row: dict) -> str:\n        return row.title\n    def build(self):\n        return self.text(E.get(\"i1\"))\n",
-        "error": "dict has no declared field contract",
+        "error": "title",
         "module": true
       },
       {
         "body": "class Example(Program):\n    @compute\n    def _text(self, row: Row) -> str:\n        return row.title\n    def build(self):\n        return self.text(E.get(\"i1\"))\n",
-        "error": "only build and @compute methods",
+        "error": "method decorators require exactly @compute",
         "module": true
       },
       {
         "body": "class Example(Program):\n    @compute\n    def text(self, row: Row = None) -> str:\n        return row.title\n    def build(self):\n        return self.text(E.get(\"i1\"))\n",
-        "error": "method requires self",
+        "error": "Return type does not match returned value",
         "module": true
       },
       {
@@ -252,6 +222,22 @@ annotation/domain combinations; those remain separate semantic obligations.
       {
         "body": "class Example(Program):\n    @compute\n    def text[T](self, row: Row) -> str:\n        return row.title\n    def build(self):\n        return self.text(E.get(\"i1\"))\n",
         "error": "expected a synchronous method without type parameters",
+        "module": true
+      }
+    ]
+  },
+  {
+    "operation": "helper",
+    "premise": "An undecorated synchronous Program method binds self and independent typed DAG arguments.",
+    "transfer": "Elaborate one scoped invocation through Monty argument binding and control flow, preserving ordered effects and existing authority.",
+    "law": "BC-03",
+    "witnesses": [
+      "root_build_statements"
+    ],
+    "invalid": [
+      {
+        "body": "class Example(Program):\n    def _loop(self, row):\n        return self._loop(row)\n    def build(self):\n        return self._loop(E.get(\"i1\"))\n",
+        "error": "recursive DAG methods",
         "module": true
       }
     ]

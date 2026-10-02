@@ -38,7 +38,7 @@ pub(crate) const ROWS: &[MatrixRow] = &[
         federated: false,
         features: &["bound_iterate_identity", "dry_live_parity"],
         min_node_results: 2,
-        expect_markdown_substrings: &["```tsv", "phase", "operations:"],
+        expect_markdown_substrings: &["```tsv", "phase", "actions completed"],
         expect_live_error: None,
     },
     MatrixRow {

@@ -14,18 +14,28 @@ pub(super) enum ScopeMode {
     Quantify(bool),
 }
 
+impl ScopeMode {
+    fn parent_budget(self) -> u32 {
+        if self == Self::Rows {
+            65_536
+        } else {
+            256
+        }
+    }
+}
+
 impl Lower<'_> {
     pub(super) fn map(&mut self, e: &PyExpr) -> Result<CorrelatedBody, String> {
-        self.scope(e, false, None)
+        self.scope(e, ScopeMode::Record, None)
     }
 
     pub(super) fn scope(
         &mut self,
         e: &PyExpr,
-        flatten: bool,
+        mode: ScopeMode,
         source_override: Option<&str>,
     ) -> Result<CorrelatedBody, String> {
-        if self.scope_depth >= 16 {
+        if self.frame.depth >= 16 {
             return Err(at(e, "scoped composition exceeds 16 map levels"));
         }
         let PyExpr::Call(call) = e else {
@@ -36,7 +46,7 @@ impl Lower<'_> {
         };
         if call.arguments.args.len() != 1
             || call.arguments.keywords.len() > 1
-            || (!flatten && call.arguments.keywords.is_empty())
+            || (mode != ScopeMode::Rows && call.arguments.keywords.is_empty())
             || call
                 .arguments
                 .keywords
@@ -51,28 +61,18 @@ impl Lower<'_> {
             .first()
             .map(|k| integer(&k.value))
             .transpose()?
-            .unwrap_or(if flatten { 65_536 } else { 256 });
+            .unwrap_or(mode.parent_budget() as i64);
         let bound = u32::try_from(limit)
             .ok()
             .and_then(NonZeroU32::new)
-            .filter(|n| n.get() <= if flatten { 65_536 } else { 256 })
+            .filter(|n| n.get() <= mode.parent_budget())
             .ok_or("scope parent bound exceeds execution budget")?;
         let source = match source_override {
             Some(source) => source.to_owned(),
             None => self.expr(&attr.value, None)?,
         };
         let callback = self.callback(&call.arguments.args[0])?;
-        self.scoped_callback_body(
-            e,
-            &source,
-            &callback,
-            bound,
-            if flatten {
-                ScopeMode::Rows
-            } else {
-                ScopeMode::Record
-            },
-        )
+        self.scoped_callback_body(e, &source, &callback, bound, mode)
     }
 
     pub(super) fn scoped_body(
@@ -83,14 +83,7 @@ impl Lower<'_> {
         bound: NonZeroU32,
         mode: ScopeMode,
     ) -> Result<CorrelatedBody, String> {
-        let callback = super::callbacks::Callback {
-            lambda: lambda.clone(),
-            prelude: vec![],
-            closure: None,
-            identity: None,
-            binding: None,
-            lexical_callbacks: None,
-        };
+        let callback = self.callback(&PyExpr::Lambda(lambda.clone()))?;
         self.scoped_callback_body(e, source, &callback, bound, mode)
     }
 
@@ -102,7 +95,7 @@ impl Lower<'_> {
         bound: NonZeroU32,
         mode: ScopeMode,
     ) -> Result<CorrelatedBody, String> {
-        if self.scope_depth >= 16 {
+        if self.frame.depth >= 16 {
             return Err(at(e, "scoped composition exceeds 16 levels"));
         }
         let lambda = &callback.lambda;
@@ -129,6 +122,43 @@ impl Lower<'_> {
             })
         })
         .ok_or("map rows require typed catalog provenance")?;
+        if let Some(annotation) = lambda
+            .parameters
+            .as_ref()
+            .and_then(|p| p.posonlyargs.iter().chain(&p.args).next())
+            .and_then(|p| p.parameter.annotation.as_deref())
+        {
+            let schema = super::text::inferred_schema(self.es, &self.state, &source, 0)?;
+            crate::python_compute::check_row_parameter(
+                self.es,
+                annotation,
+                &schema.row_contract()?,
+                &self.imports.source,
+            )?;
+        }
+        if let Some(parameters) = &lambda.parameters {
+            for parameter in parameters
+                .posonlyargs
+                .iter()
+                .chain(&parameters.args)
+                .chain(&parameters.kwonlyargs)
+                .map(|p| &p.parameter)
+                .chain(parameters.vararg.iter().map(|p| p.as_ref()))
+                .chain(parameters.kwarg.iter().map(|p| p.as_ref()))
+            {
+                let label = parameter.name.as_str();
+                if label == "self"
+                    || label.starts_with("__")
+                    || self
+                        .state
+                        .sym_map_for(self.es)
+                        .resolve_session_entity(label)
+                        .is_ok()
+                {
+                    return Err(at(e, "callback parameter must not shadow a host binding"));
+                }
+            }
+        }
         let row = super::projection::projection_parameter(lambda)?;
         if row == "self"
             || row.starts_with("__")
@@ -143,8 +173,61 @@ impl Lower<'_> {
         let mut scope_names = callback
             .closure
             .clone()
-            .unwrap_or_else(|| self.scope_names.clone());
-        let local = format!("__scope{}", self.scope_depth);
+            .unwrap_or_else(|| self.frame.names.clone());
+        if callback.closure.is_none() {
+            if let Some(parameters) = &lambda.parameters {
+                for parameter in parameters
+                    .posonlyargs
+                    .iter()
+                    .chain(&parameters.args)
+                    .chain(&parameters.kwonlyargs)
+                {
+                    if let Some(default) = &parameter.default {
+                        let binding = self.expr(default, None)?;
+                        scope_names.insert(parameter.parameter.name.to_string(), binding);
+                    }
+                }
+            }
+        }
+        if let Some(parameters) = &lambda.parameters {
+            for parameter in parameters
+                .posonlyargs
+                .iter()
+                .chain(&parameters.args)
+                .chain(&parameters.kwonlyargs)
+            {
+                if parameter.parameter.name.as_str() == row {
+                    continue;
+                }
+                if let Some(annotation) = &parameter.parameter.annotation {
+                    let binding = scope_names
+                        .get(parameter.parameter.name.as_str())
+                        .ok_or("default dependency is absent")?;
+                    let schema = super::text::inferred_schema(self.es, &self.state, binding, 0)?;
+                    let actual = if super::super::binding_contract(&self.state, binding)
+                        .is_some_and(|c| c.value_kind == BindingValueKind::ScalarCell)
+                    {
+                        schema
+                            .fields
+                            .first()
+                            .and_then(|f| f.value_type.clone())
+                            .ok_or("default value contract missing")?
+                    } else {
+                        schema.row_contract()?
+                    };
+                    let input = super::text::inferred_schema(self.es, &self.state, &source, 0)?
+                        .row_contract()?;
+                    crate::python_compute::check_callback_return(
+                        self.es,
+                        annotation,
+                        &input,
+                        &actual,
+                        &self.imports.source,
+                    )?;
+                }
+            }
+        }
+        let local = format!("__scope{}", self.frame.depth);
         scope_names.insert(row.to_owned(), local.clone());
         let row = local.as_str();
         let row_node = super::super::row_suffix_to_compute(
@@ -168,67 +251,51 @@ impl Lower<'_> {
         if let Some(binding) = &callback.binding {
             callbacks.insert(binding.clone(), callback.clone());
         }
+        let frame = self.frame.nested(row.to_owned(), scope_names);
         let mut scoped = Lower {
             imports: self.imports,
             es: self.es,
             methods: self.methods,
+            helpers: self.helpers,
+            used_methods: self.used_methods.clone(),
             callbacks,
             active_callbacks: self.active_callbacks.clone(),
+            return_check: if let Some(annotation) = &callback.returns {
+                Some((
+                    annotation.clone(),
+                    super::text::inferred_schema(self.es, &self.state, &source, 0)?
+                        .row_contract()?,
+                ))
+            } else if callback.identity.is_none() && callback.flow.is_some() {
+                self.return_check.clone()
+            } else {
+                None
+            },
             program_source: self.program_source,
             state,
             serial: self.serial,
-            row_scope: None,
-            quantifier_names: BTreeMap::new(),
-            branch_types: self.branch_types.clone(),
             value_depth: 0,
             spans: BTreeMap::new(),
-            scope_depth: self.scope_depth + 1,
-            scope_row: Some(row.into()),
-            scope_names,
+            frame,
         };
         if let Some(identity) = &callback.identity {
             scoped.active_callbacks.push(identity.clone());
         }
-        // Allocate the lexical local namespace before elaborating any RHS, so a
-        // read-before-binding cannot accidentally resolve an enclosing variable.
-        fn collect_locals(statements: &[Stmt], locals: &mut BTreeSet<String>) {
-            for statement in statements {
-                match statement {
-                    Stmt::Assign(assign) => {
-                        for target in &assign.targets {
-                            if let Some(label) = name(target) {
-                                locals.insert(label.to_owned());
-                            }
-                        }
-                    }
-                    Stmt::If(branch) => {
-                        collect_locals(&branch.body, locals);
-                        for clause in &branch.elif_else_clauses {
-                            collect_locals(&clause.body, locals);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        let mut locals = BTreeSet::new();
-        collect_locals(&callback.prelude, &mut locals);
-        for label in locals {
-            if label == super::projection::projection_parameter(lambda)? {
-                return Err(at(e, "rebinding is not admitted"));
-            }
+        // Bindings come from the upstream semantic index. Structural branches
+        // reuse this namespace; they do not re-interpret assignment syntax.
+        for label in callback.locals.iter().cloned() {
             // Structural branches continue the same lexical function scope.
             // Named functions allocate fresh locals even when shadowing captures.
             if callback.identity.is_none()
                 && callback.closure.is_some()
-                && scoped.scope_names.contains_key(&label)
+                && scoped.frame.names.contains_key(&label)
             {
                 continue;
             }
             let local = scoped.fresh();
-            scoped.scope_names.insert(label, local);
+            scoped.frame.names.insert(label, local);
         }
-        let output = scoped.callback_sequence(&callback.statements(), row, mode)?;
+        let output = scoped.callback_sequence(&callback.flow(), row, mode)?;
         let (output, output_contract) = if flatten {
             let contract = super::super::binding_contract(&scoped.state, &output)
                 .ok_or("missing scoped output contract")?;
@@ -383,6 +450,7 @@ impl Lower<'_> {
             });
         }
         self.serial = scoped.serial;
+        self.used_methods = scoped.used_methods;
         let result = CorrelatedBody {
             output: output_contract,
             parent: ParentCapture {
@@ -421,10 +489,10 @@ impl Lower<'_> {
         let result = self.scoped_value_inner(e, inputs);
         self.value_depth -= 1;
         let value = result?;
-        if self.quantifier_names.is_empty() {
+        if self.frame.quantifiers.is_empty() {
             if let Some(evidence) = self
                 .reference(e)
-                .and_then(|reference| self.branch_types.get(&reference))
+                .and_then(|reference| self.frame.facts.get(&reference))
                 .cloned()
             {
                 let original = self.value_type(&value, inputs)?;
@@ -447,11 +515,11 @@ impl Lower<'_> {
         inputs: &mut BTreeMap<String, PlanDataInput>,
     ) -> Result<PlasmDataValue, String> {
         if super::quantifiers::expression_root(e)
-            .is_some_and(|name| self.quantifier_names.contains_key(name))
+            .is_some_and(|name| self.frame.quantifiers.contains_key(name))
         {
             return match e {
                 PyExpr::Name(name) => Ok(PlasmDataValue::BindingSymbol {
-                    binding: self.quantifier_names[name.id.as_str()].clone(),
+                    binding: self.frame.quantifiers[name.id.as_str()].clone(),
                     path: vec![],
                 }),
                 PyExpr::Attribute(attr) => Ok(PlasmDataValue::Expression {
@@ -525,7 +593,8 @@ impl Lower<'_> {
                         alias: node.clone(),
                         cardinality: if acknowledgement {
                             InputCardinality::Acknowledgement
-                        } else if self.scope_row.as_deref() == Some(node.as_str())
+                        } else if self.frame.ports.contains(&node)
+                            || self.frame.row.as_deref() == Some(node.as_str())
                             || record
                             || ((is_compute || scalar)
                                 && super::super::binding_contract(&self.state, &node).is_some_and(
@@ -559,11 +628,17 @@ impl Lower<'_> {
             LiteralOperand::Record(dict) => {
                 let mut fields = BTreeMap::new();
                 for item in &dict.items {
-                    let key = string(
-                        item.key
-                            .as_ref()
-                            .ok_or("dictionary unpacking is not admitted")?,
-                    )?;
+                    let key_expression = item
+                        .key
+                        .as_ref()
+                        .ok_or("dictionary unpacking is not admitted")?;
+                    // A materialized record needs a closed field contract.
+                    let key = string(key_expression).map_err(|_| {
+                        at(
+                            key_expression,
+                            "materialized dictionaries require string keys",
+                        )
+                    })?;
                     let value = self.scoped_value(&item.value, inputs)?;
                     if fields.insert(key, value).is_some() {
                         return Err(at(e, "duplicate output field"));

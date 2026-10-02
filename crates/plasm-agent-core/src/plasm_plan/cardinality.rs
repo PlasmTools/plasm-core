@@ -17,10 +17,12 @@
 use std::collections::HashMap;
 
 use super::{
-    ComputeOp, Plan, PlanNodeKind, PlanValue, RelationCardinality, RelationSourceCardinality,
+    Plan, PlanNodeKind, PlanValue, RelationCardinality, RelationSourceCardinality,
     ValidatedPlanNode, ValidatedPlanState,
 };
-use crate::program_binding::{BoundedSingletonKind, RowCardinalityProof};
+use crate::program_binding::RowCardinalityProof;
+
+use super::compute_transfer::compute_cardinality_transfer;
 
 /// Walk an unvalidated plan DAG and classify the row cardinality of `node_id`.
 pub(super) fn analyze_static_cardinality(
@@ -71,26 +73,10 @@ pub(super) fn analyze_static_cardinality(
             PlanNodeKind::Compute => node
                 .compute
                 .as_ref()
-                .map(|compute| match &compute.op {
-                    ComputeOp::MergeBranches { .. }
-                    | ComputeOp::Aggregate { .. }
-                    | ComputeOp::Python { per_row: false, .. } => {
-                        RowCardinalityProof::StaticSingleton
-                    }
-                    ComputeOp::Render { .. } | ComputeOp::Python { per_row: true, .. } => {
+                .map(|compute| {
+                    compute_cardinality_transfer(&compute.op, || {
                         inner(plan, by_id, &compute.source, memo)
-                    }
-                    ComputeOp::Project { .. }
-                    | ComputeOp::Filter { .. }
-                    | ComputeOp::Sort { .. }
-                    | ComputeOp::DedupeBy { .. }
-                    | ComputeOp::With { .. } => inner(plan, by_id, &compute.source, memo),
-                    ComputeOp::Limit { count } if *count <= 1 => {
-                        limit_one_bounded(inner(plan, by_id, &compute.source, memo))
-                    }
-                    ComputeOp::Limit { .. }
-                    | ComputeOp::GroupBy { .. }
-                    | ComputeOp::Union { .. } => RowCardinalityProof::StaticPlural,
+                    })
                 })
                 .unwrap_or(RowCardinalityProof::StaticPlural),
             PlanNodeKind::Relation => node
@@ -180,26 +166,9 @@ fn validated_analyze_static_cardinality(
                 _ => RowCardinalityProof::StaticSingleton,
             },
             ValidatedPlanNode::Derive(d) => inner(plan, by_id, d.source.as_str(), memo),
-            ValidatedPlanNode::Compute(c) => match &c.compute.op {
-                ComputeOp::MergeBranches { .. }
-                | ComputeOp::Aggregate { .. }
-                | ComputeOp::Render { .. }
-                | ComputeOp::Python { per_row: false, .. } => RowCardinalityProof::StaticSingleton,
-                ComputeOp::Python { per_row: true, .. } => {
-                    inner(plan, by_id, c.compute.source.as_str(), memo)
-                }
-                ComputeOp::Project { .. }
-                | ComputeOp::Filter { .. }
-                | ComputeOp::Sort { .. }
-                | ComputeOp::DedupeBy { .. }
-                | ComputeOp::With { .. } => inner(plan, by_id, c.compute.source.as_str(), memo),
-                ComputeOp::Limit { count } if *count <= 1 => {
-                    limit_one_bounded(inner(plan, by_id, c.compute.source.as_str(), memo))
-                }
-                ComputeOp::Limit { .. } | ComputeOp::GroupBy { .. } | ComputeOp::Union { .. } => {
-                    RowCardinalityProof::StaticPlural
-                }
-            },
+            ValidatedPlanNode::Compute(c) => compute_cardinality_transfer(&c.compute.op, || {
+                inner(plan, by_id, c.compute.source.as_str(), memo)
+            }),
             ValidatedPlanNode::RelationTraversal(r) => {
                 match (r.relation.cardinality, r.relation.source_cardinality) {
                     (RelationCardinality::One, RelationSourceCardinality::Single) => {
@@ -238,17 +207,6 @@ fn surface_is_singleton(kind: PlanNodeKind, shape: super::ResultShape) -> bool {
 
 /// Limit≤1 → BoundedSingleton; `from_plural_source` matches DAG binding_contract (StaticPlural /
 /// RuntimeChecked parents only).
-fn limit_one_bounded(source: RowCardinalityProof) -> RowCardinalityProof {
-    let from_plural_source = matches!(
-        source,
-        RowCardinalityProof::StaticPlural | RowCardinalityProof::RuntimeChecked
-    );
-    RowCardinalityProof::BoundedSingleton {
-        kind: BoundedSingletonKind::LimitOne,
-        from_plural_source,
-    }
-}
-
 /// Reuse the ordinary cardinality lattice when admitting an enclosing scope port.
 pub(crate) fn scoped_capture_permits_singleton(nodes: &[ValidatedPlanNode], source: &str) -> bool {
     let Ok(id) = super::PlanNodeId::new(source) else {
@@ -273,6 +231,7 @@ pub(crate) fn scoped_capture_permits_singleton(nodes: &[ValidatedPlanNode], sour
 mod tests {
     use super::*;
     use crate::plasm_plan::parse_plan_value;
+    use crate::program_binding::BoundedSingletonKind;
 
     fn render_plan(columns: serde_json::Value, template: serde_json::Value) -> serde_json::Value {
         serde_json::json!({
@@ -378,5 +337,29 @@ mod tests {
             proof.try_auto_broadcast_input_proof(),
             Some(crate::plasm_plan::InputCardinalityProof::StaticSingleton)
         );
+    }
+
+    #[test]
+    fn render_of_plural_source_is_plural_in_both_plan_states() {
+        let mut value = render_plan(serde_json::json!(["name"]), serde_json::json!("{{ name }}"));
+        value["nodes"][0]["data"]["value"] =
+            serde_json::json!([{ "name": "bolt" }, { "name": "nut" }]);
+        let plan = parse_plan_value(&value).expect("parse");
+        let by_id = plan
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(idx, node)| (node.id.clone(), idx))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(
+            analyze_static_cardinality(&plan, &by_id, "doc"),
+            RowCardinalityProof::StaticPlural
+        );
+
+        let validated = super::super::validate_plan_artifact(&plan).expect("validate");
+        assert!(!validated_source_is_static_singleton(
+            validated.artifact(),
+            "doc"
+        ));
     }
 }

@@ -12,12 +12,14 @@ use std::collections::BTreeSet;
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct TsvCellPolicy {
     pub max_scalars: usize,
+    pub preview: bool,
 }
 
 impl TsvCellPolicy {
     pub(crate) const fn mcp_default() -> Self {
         Self {
             max_scalars: 16_384,
+            preview: false,
         }
     }
 }
@@ -25,17 +27,34 @@ impl TsvCellPolicy {
 /// Encode a string as one JSON string literal, never as a lossy whitespace summary.
 /// Over-budget cells are explicitly withheld; they are not truncated valid-looking values.
 fn sanitize_tsv_cell_with_flag(s: &str, policy: &TsvCellPolicy) -> (String, bool) {
-    bounded_encoded_cell(
-        serde_json::to_string(s).expect("string serialization is infallible"),
-        policy,
-    )
+    let encoded = serde_json::to_string(s).expect("string serialization is infallible");
+    if policy.preview && encoded.chars().count() > policy.max_scalars {
+        let prefix: String = s.chars().take(policy.max_scalars / 6).collect();
+        return (
+            format!(
+                "(preview: {}; {} characters total)",
+                serde_json::to_string(&prefix).expect("string serialization"),
+                s.chars().count()
+            ),
+            true,
+        );
+    }
+    bounded_encoded_cell(encoded, policy)
 }
 
 fn bounded_encoded_cell(encoded: String, policy: &TsvCellPolicy) -> (String, bool) {
     if encoded.chars().count() <= policy.max_scalars {
         (encoded, false)
     } else {
-        (super::REFERENCE_ONLY_PLACEHOLDER.into(), true)
+        (
+            if policy.preview {
+                "(omitted: exceeds inline limit)"
+            } else {
+                super::REFERENCE_ONLY_PLACEHOLDER
+            }
+            .into(),
+            true,
+        )
     }
 }
 
@@ -62,20 +81,23 @@ pub(crate) fn format_result_tsv_with_cgs(
     (text, omitted.into_iter().collect(), report)
 }
 
-/// MCP-only TSV rendering that preserves schema `ReferenceOnly` and `Lossy` strings when the
-/// caller has already admitted them under a strict aggregate byte budget.
-pub(crate) fn format_result_tsv_with_full_fidelity_cgs(
-    result: &ExecutionResult,
+/// Source-independent bounded observations. Preview markers are not JSON values,
+/// so clipped strings cannot masquerade as exact values.
+pub(crate) fn format_result_tsv_observation(
+    result: &impl super::RowObservation,
     cgs: Option<&CGS>,
-    max_entity_rows: Option<usize>,
+    rows: usize,
 ) -> (String, InBandSummaryReport) {
-    let policy = TsvCellPolicy::mcp_default();
     let mut omitted = BTreeSet::new();
     let mut report = InBandSummaryReport::default();
+    let policy = TsvCellPolicy {
+        max_scalars: 1024,
+        preview: true,
+    };
     let text = format_tsv_inner(
         result,
         cgs,
-        max_entity_rows,
+        Some(rows),
         &mut omitted,
         &policy,
         &mut report,
@@ -85,7 +107,7 @@ pub(crate) fn format_result_tsv_with_full_fidelity_cgs(
 }
 
 fn format_tsv_inner(
-    result: &ExecutionResult,
+    result: &impl super::RowObservation,
     cgs: Option<&CGS>,
     max_entity_rows: Option<usize>,
     omitted: &mut BTreeSet<String>,
@@ -93,7 +115,7 @@ fn format_tsv_inner(
     report: &mut InBandSummaryReport,
     full_fidelity: bool,
 ) -> String {
-    if result.entities().is_empty() {
+    if result.rows().len() == 0 {
         return super::format_empty_result_body(result);
     }
 
@@ -104,7 +126,7 @@ fn format_tsv_inner(
     lines.push(header_cells.join("\t"));
 
     let row_limit = max_entity_rows.unwrap_or(usize::MAX);
-    for entity in result.entities().iter().take(row_limit) {
+    for entity in result.rows().take(row_limit) {
         let row: Vec<String> = columns
             .iter()
             .map(|col| {
@@ -150,7 +172,15 @@ fn format_tsv_inner(
                     _ if col == "_ref" => sanitize_tsv_cell_with_flag(&raw, policy),
                     _ if cell_report.any_loss() => {
                         omitted.insert(col.clone());
-                        (super::REFERENCE_ONLY_PLACEHOLDER.into(), false)
+                        (
+                            if policy.preview {
+                                "(omitted: non-inline value)"
+                            } else {
+                                super::REFERENCE_ONLY_PLACEHOLDER
+                            }
+                            .into(),
+                            false,
+                        )
                     }
                     _ if unavailable => (raw, false),
                     // Projected blob reference/MIME cells are textual values, not row fields.
@@ -272,7 +302,7 @@ mod tests {
             operations: OperationLedger::empty(),
         };
         let snapshot = super::super::entity_to_json(&result.entities()[0]);
-        let (body, report) = format_result_tsv_with_full_fidelity_cgs(&result, None, None);
+        let (body, report) = format_result_tsv_observation(&result, None, usize::MAX);
         assert!(!report.any_loss(), "{body}");
         let (summary, omitted, report) = format_result_tsv_with_cgs(&result, None, None);
         assert_eq!(summary, body);

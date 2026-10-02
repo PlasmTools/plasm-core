@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { MockLanguageModelV3 } from "ai/test";
+import { AgentExecutionFailure, failureObservation } from "../src/runtime/execution-failure.js";
 import { PlasmAgent } from "../src/runtime/plasm-agent.js";
 import type { PlasmEngine } from "../src/engine/napi-binding.js";
 
@@ -64,7 +65,20 @@ try {
   const model = new MockLanguageModelV3({doStream: unused});
   const failing = new PlasmAgent({agentRoot: root, model, engine, hostTransport: null, archiveEnabled: false, telemetry: false});
   failing.runtime.plasmContext = async () => { throw new Error("bootstrap unavailable"); };
-  await assert.rejects(failing.generate("Task"), /bootstrap unavailable/);
+  await assert.rejects(failing.generate("Task"), (error: unknown) => {
+    assert.ok(error instanceof AgentExecutionFailure);
+    assert.equal(error.failure.diagnostic, "bootstrap unavailable");
+    assert.equal(error.failure.recovery, "stop");
+    return true;
+  });
+  assert.equal(failureObservation(new Error("repair_program: retry this write")).failure.recovery, "stop", "diagnostic prose cannot grant recovery authority");
+  const structured = failureObservation(new Error("original service diagnostic")).failure;
+  failing.runtime.plasmContext = async () => { throw new AgentExecutionFailure(structured); };
+  await assert.rejects(failing.generate("Task"), (error: unknown) => {
+    assert.ok(error instanceof AgentExecutionFailure);
+    assert.deepEqual(error.failure, structured);
+    return true;
+  });
   assert.equal(model.doStreamCalls.length, 0, "bootstrap failure must not fall through to model discovery");
   console.log("PASS: deterministic initial context, exact intent, ready/insufficient continuity, no forced call, failure before generation");
 } finally { await rm(root, {recursive: true, force: true}); }
