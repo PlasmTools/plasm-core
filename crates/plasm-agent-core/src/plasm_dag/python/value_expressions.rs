@@ -55,8 +55,7 @@ impl Lower<'_> {
                     .conditional_value(
                         expression,
                         &choice.test,
-                        &choice.body,
-                        &choice.orelse,
+                        (&choice.body, &choice.orelse),
                         inputs,
                         false,
                         None,
@@ -94,8 +93,7 @@ impl Lower<'_> {
                     self.conditional_value(
                         expression,
                         &condition,
-                        yes,
-                        no,
+                        (yes, no),
                         inputs,
                         false,
                         Some(first),

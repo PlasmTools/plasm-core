@@ -22,7 +22,15 @@ fn main() {
     let mut account_relations = IndexMap::new();
     account_relations.insert(
         "contacts".to_string(),
-        DecodedRelation::Specified(vec![contact1_ref.clone(), contact2_ref.clone()].into()),
+        DecodedRelation::Specified(
+            plasm_core::row_contract::RelationMembership::observe(
+                None,
+                &"cache-demo-contacts",
+                vec![contact1_ref.clone(), contact2_ref.clone()],
+                None,
+            )
+            .expect("valid observed relation"),
+        ),
     );
 
     let account = CachedEntity::from_decoded(

@@ -190,6 +190,7 @@ Case { id: "union_rowset_alias_existing", python: "recv = E.query().where(lambda
 
 Case { id: "select_alias_where", python: "items = E.query()\nrenamed = items.select(\"owner\", handle=\"owner\").where(lambda row: row.handle == \"alice\")\nreturn renamed", existing: Some("lang_select_alias_where"), expect_live_error: None },
 Case { id: "prefix_serial_limit", python: "return E.query().take(5).take(3).take(1).select(\"score\")", existing: None, expect_live_error: None },
+Case { id: "prefix_union_single_relation", python: "a = E.get(\"i1\")\nb = E.get(\"i2\")\nreturn a.union(b).take(1).tags.select(\"id\")", existing: None, expect_live_error: None },
 Case { id: "prefix_zero_rows", python: "return E.query().take(0)", existing: None, expect_live_error: None },
 Case { id: "prefix_zero_extract", python: "return E.query().take(0).title", existing: None, expect_live_error: Some("zero rows") },
 Case { id: "prefix_zero_count", python: "return E.query().take(0).aggregate(n=agg.count())", existing: None, expect_live_error: None },
@@ -1198,8 +1199,7 @@ async fn python_quantified_predicate_rejects_unproven_collection() {
             None,
         ))
         .await
-        .err()
-        .expect("unproven relation must not establish a quantified result");
+        .expect_err("unproven relation must not establish a quantified result");
         assert_eq!(error.code, "collection_incomplete");
         assert_eq!(error.cause, plasm_runtime::FailureCause::ResponseContract);
     }
@@ -1894,7 +1894,7 @@ async fn python_teaching_card_signatures_compile_against_fixture() {
     );
     let exposure = plasm_core::TeachingExposureSession::new(&cgs, "fixture", &["Item", "Tag"]);
     let wave = prepare_python_teaching_wave(&exposure, &PythonTeachingState::default()).unwrap();
-    assert_eq!(wave.capabilities.len(), 5);
+    assert_eq!(wave.capabilities.len(), cgs.capabilities.len());
     assert!(wave.capabilities.iter().all(|c| c.unavailable.is_none()));
     let symbols = exposure.to_symbol_map();
     let item = symbols.entity_sym_for("fixture", "Item");
@@ -2309,6 +2309,7 @@ async fn prefix_and_record_access_regressions() {
         matches!(
             case.id,
             "prefix_serial_limit"
+                | "prefix_union_single_relation"
                 | "prefix_zero_rows"
                 | "prefix_zero_count"
                 | "prefix_zero_extract"

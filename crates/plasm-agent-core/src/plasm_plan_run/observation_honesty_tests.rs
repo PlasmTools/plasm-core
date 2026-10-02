@@ -343,29 +343,6 @@ async fn case(count: usize, fail_at: usize) {
         fail_at + 1,
         "production plan must stop at failure"
     );
-    let attempts_before_replay = store.lock().unwrap().attempts;
-    let blocked = Box::pin(ExecutePipeline::run_program(
-        &session,
-        &host,
-        &opened.prompt_hash,
-        &opened.session_id,
-        &bundle,
-        ExecutionIntent::Live,
-        None,
-        None,
-        None,
-    ))
-    .await
-    .expect_err("unresolved writes cannot be replayed");
-    assert_eq!(
-        blocked.recovery,
-        plasm_runtime::RecoveryDisposition::ReconcileEffects
-    );
-    assert_eq!(
-        store.lock().unwrap().attempts,
-        attempts_before_replay,
-        "rejected replay must not reach transport"
-    );
     let expected = store.lock().unwrap().rows.clone();
     assert_eq!(expected.len(), fail_at);
     for expression in ["e2(\"g1\").r1", "e1{group_id=\"g1\"}"] {
@@ -396,6 +373,31 @@ async fn case(count: usize, fail_at: usize) {
             result.coverage()
         );
     }
+    let attempts_before_next = store.lock().unwrap().attempts;
+    let next = Box::pin(ExecutePipeline::run_program(
+        &session,
+        &host,
+        &opened.prompt_hash,
+        &opened.session_id,
+        &bundle,
+        ExecutionIntent::Live,
+        None,
+        None,
+        None,
+    ))
+    .await
+    .expect("a subsequent execution dispatches independently");
+    assert_eq!(store.lock().unwrap().attempts, attempts_before_next + count);
+    assert_eq!(store.lock().unwrap().rows.len(), fail_at + count);
+    assert_eq!(
+        next.return_steps
+            .iter()
+            .flat_map(|step| step.result.operations.entries())
+            .map(|ack| ack.completed)
+            .sum::<usize>(),
+        count,
+        "the subsequent execution owns its own receipts"
+    );
 }
 proptest! {
  #![proptest_config(proptest::test_runner::Config::with_cases(12))]

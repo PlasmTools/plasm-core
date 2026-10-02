@@ -27,7 +27,7 @@ fn main() -> Result<()> {
         .into_iter()
         .map(|capability| CapabilityRef {
             catalog: catalog.clone(),
-            capability: capability.into(),
+            capability,
         })
         .collect();
     let intent = IntentProvenance::from_turns([input.intent])?;

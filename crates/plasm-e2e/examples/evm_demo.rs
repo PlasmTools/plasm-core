@@ -32,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ExecuteOptions::for_catalog(&cgs).unwrap(),
         )
         .await?;
-    assert_eq!(balance.count, 1, "expected one balance entity");
+    assert_eq!(balance.count(), 1, "expected one balance entity");
 
     println!();
     println!("Balance GET result:");
@@ -62,7 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ExecuteOptions::for_catalog(&cgs).unwrap(),
         )
         .await?;
-    assert_eq!(transfers.count, 2, "expected two transfer logs");
+    assert_eq!(transfers.count(), 2, "expected two transfer logs");
     assert!(
         transfers.stats.network_requests >= 2,
         "expected block-range pagination to span multiple requests"

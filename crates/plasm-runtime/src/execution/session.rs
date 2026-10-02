@@ -95,7 +95,7 @@ pub async fn collect_query_stream(
                 batches.push(entities);
             }
             ExecutionEvent::Complete(result) => {
-                complete = Some(result);
+                complete = Some(*result);
             }
         }
     }

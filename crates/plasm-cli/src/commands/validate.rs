@@ -178,7 +178,7 @@ pub async fn execute(
                     Err(_) => CheckResult::Pass(format!(
                         "query {entity_name} without required params → rejected"
                     )),
-                    Ok(r) if r.count == 0 => CheckResult::Pass(format!(
+                    Ok(r) if r.count() == 0 => CheckResult::Pass(format!(
                         "query {entity_name} without required params → empty (ok)"
                     )),
                     Ok(_) => CheckResult::Skip(format!(
@@ -461,7 +461,7 @@ async fn check_execution(
                     .into_iter()
                     .filter(|field| {
                         result
-                            .entities
+                            .entities()
                             .iter()
                             .any(|row| !row.fields.contains_key(field.as_str()))
                     })
@@ -483,7 +483,7 @@ async fn check_execution(
                     )
                 })
             });
-            if result.count == 0 && !matches!(expr, Expr::Delete(_)) && !side_effect {
+            if result.count() == 0 && !matches!(expr, Expr::Delete(_)) && !side_effect {
                 // Request succeeded but returned no entities — could be mock returning
                 // empty/wrong shape, or the capability is action-typed but returns nothing
                 CheckResult::Warn {

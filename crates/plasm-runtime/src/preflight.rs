@@ -635,7 +635,7 @@ async fn existence_check_step(
     // Membership must be observed live, including after a preceding sibling write.
     cache.poison_read_caches_after_mutation();
     let res = engine
-        .fetch_reconcile_row(qcap, cgs, cache, mode, &identity, env, qcap.domain.as_str())
+        .fetch_reconcile_row(qcap, cgs, cache, mode, &identity, env)
         .await?;
     res.collection
         .materialize(plasm_core::collection_codec::Demand::Whole)?;

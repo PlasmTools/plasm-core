@@ -391,9 +391,9 @@ mod tests {
                 entities: source.entities.select([2]).unwrap(),
                 stats: Default::default(),
             }),
-            Ok(ExecutionEvent::Complete(complete(
+            Ok(ExecutionEvent::Complete(Box::new(complete(
                 ExecutionCollection::graph(source.membership.clone()),
-            ))),
+            )))),
         ];
         let mut stream: QueryStream<'_> = Box::pin(futures_util::stream::iter(events));
         let result = collect_query_stream(&mut stream, &StreamConsumeOpts::default())
@@ -415,19 +415,19 @@ mod tests {
         for events in [
             vec![],
             vec![
-                Ok(ExecutionEvent::Complete(complete(source.clone()))),
-                Ok(ExecutionEvent::Complete(complete(source.clone()))),
+                Ok(ExecutionEvent::Complete(Box::new(complete(source.clone())))),
+                Ok(ExecutionEvent::Complete(Box::new(complete(source.clone())))),
             ],
             vec![
-                Ok(ExecutionEvent::Complete(complete(source.clone()))),
+                Ok(ExecutionEvent::Complete(Box::new(complete(source.clone())))),
                 Ok(ExecutionEvent::Page {
                     entities: vec![].into(),
                     stats: Default::default(),
                 }),
             ],
-            vec![Ok(ExecutionEvent::Complete(complete(
+            vec![Ok(ExecutionEvent::Complete(Box::new(complete(
                 ExecutionCollection::graph(source.membership.clone()),
-            )))],
+            ))))],
         ] {
             let mut stream: QueryStream<'_> = Box::pin(futures_util::stream::iter(events));
             assert!(

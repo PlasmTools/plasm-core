@@ -86,6 +86,19 @@ impl std::fmt::Display for OperationError {
     }
 }
 
+impl From<OperationError> for plasm_runtime::ExecutionFailure {
+    fn from(error: OperationError) -> Self {
+        match error {
+            OperationError::OperationFailed { error, .. } => error,
+            other => Self::new(
+                plasm_runtime::FailureCause::Runtime,
+                other.code(),
+                other.detail(),
+            ),
+        }
+    }
+}
+
 #[cfg(test)]
 mod operation_error_tests {
     use super::*;
@@ -113,18 +126,5 @@ mod operation_error_tests {
         let detail = err.detail();
         assert!(detail.contains("l_test_o9"));
         assert!(detail.contains("open in this session: l_test_o1, l_test_o2"));
-    }
-}
-
-impl From<OperationError> for plasm_runtime::ExecutionFailure {
-    fn from(error: OperationError) -> Self {
-        match error {
-            OperationError::OperationFailed { error, .. } => error,
-            other => Self::new(
-                plasm_runtime::FailureCause::Runtime,
-                other.code(),
-                other.detail(),
-            ),
-        }
     }
 }

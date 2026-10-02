@@ -94,7 +94,7 @@ impl Lower<'_> {
                 let PyExpr::Call(call) = &mut expr else {
                     unreachable!()
                 };
-                call.func = Box::new(keyword.value.clone());
+                *call.func = keyword.value.clone();
                 expr
             } else {
                 let field = string(&keyword.value)?;

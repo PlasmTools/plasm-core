@@ -152,8 +152,7 @@ fn apply_node(
                 .rows
                 .iter()
                 .map(|row| {
-                    let mut out = Row::default();
-                    out.1 = row.1;
+                    let mut out = Row(Default::default(), row.1);
                     for (name, path) in &spec.fields {
                         let source = path.dotted();
                         let cell = row
@@ -199,7 +198,7 @@ enum Predicate {
         name: String,
         op: PlanPredicateOp,
         rhs: plasm_core::Value,
-        contract: plasm_core::value_contract::ValueContract,
+        contract: Box<plasm_core::value_contract::ValueContract>,
     },
     And(Vec<Self>),
     Or(Vec<Self>),
@@ -247,7 +246,7 @@ impl Predicate {
                     name: p.field_path.dotted(),
                     op: p.op,
                     rhs,
-                    contract,
+                    contract: Box::new(contract),
                 }
             }
             BooleanExpr::And(xs) => Self::And(
@@ -278,7 +277,7 @@ impl Predicate {
                 } else if lhs.is_null() || rhs.is_null() {
                     None
                 } else if matches!(op, Lt | Lte | Gt | Gte) {
-                    let order = plasm_core::value_order::Orderable::ordering(contract)
+                    let order = plasm_core::value_order::Orderable::ordering(contract.as_ref())
                         .map_err(|e| e.to_string())?
                         .compare_literal(lhs, rhs)
                         .map_err(|e| e.to_string())?;

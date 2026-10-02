@@ -27,19 +27,14 @@ pub(crate) async fn eval_compute_with_row_source(
     input_contract: &plasm_core::value_contract::ValueContract,
     row_source: &MaterializedRowSource,
     cross_binding_rows: &BTreeMap<String, Vec<plasm_core::ValueRow>>,
-    es: &ExecuteSession,
-    st: &PlasmHostState,
-    session_id: &str,
-    cgs: &CGS,
+    rehydrator: &crate::graph_rehydrate::GraphSurfaceRehydrator<'_>,
 ) -> Result<ComputedRows, ExecutionFailure> {
     let cap = if matches!(&compute.op, ComputeOp::Render { .. }) {
         Some(crate::plasm_plan::PLAN_RENDER_MAX_ROWS)
     } else {
         None
     };
-    let rows = crate::graph_rehydrate::GraphSurfaceRehydrator::new(es, st, session_id, cgs)
-        .resolve_row_source_rows(row_source, cap)
-        .await?;
+    let rows = rehydrator.resolve_row_source_rows(row_source, cap).await?;
     eval_compute_from_rows(compute, &rows, cross_binding_rows, input_contract)
         .map_err(ExecutionFailure::from)
 }

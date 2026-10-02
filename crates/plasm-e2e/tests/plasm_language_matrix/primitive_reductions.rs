@@ -317,8 +317,7 @@ async fn unorderable_reductions_reject_before_execution() {
         let program=format!("class Unsupported(Program):\n    def build(self):\n        return {token}.get('000123').aggregate(value=agg.min('{field}'))\n");
         let error = compile_python_program(&es, &program)
             .await
-            .err()
-            .expect("unorderable contract admitted");
+            .expect_err("unorderable contract admitted");
         assert!(error.to_string().contains("ordering"), "{field}: {error}");
     }
 }

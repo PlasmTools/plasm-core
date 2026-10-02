@@ -38,7 +38,12 @@ pub struct EffectReceipt {
     pub occurrences: Vec<EffectOccurrence>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExecutionFailure {
+#[serde(transparent)]
+pub struct ExecutionFailure(Box<ExecutionFailureDetails>);
+
+/// Owned failure evidence, allocated only on the failure path.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionFailureDetails {
     pub cause: FailureCause,
     pub recovery: RecoveryDisposition,
     pub code: String,
@@ -51,6 +56,18 @@ pub struct ExecutionFailure {
     pub effects_unresolved: bool,
     /// Agent-visible diagnostic prose; never grants recovery authority.
     diagnostic: String,
+}
+
+impl std::ops::Deref for ExecutionFailure {
+    type Target = ExecutionFailureDetails;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for ExecutionFailure {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
 impl From<plasm_core::collection_codec::CollectionFault> for ExecutionFailure {
@@ -70,7 +87,7 @@ impl From<plasm_core::collection_codec::CollectionFault> for ExecutionFailure {
 }
 impl ExecutionFailure {
     pub fn new(cause: FailureCause, code: &str, diagnostic: impl Into<String>) -> Self {
-        Self {
+        Self(Box::new(ExecutionFailureDetails {
             cause,
             recovery: match cause {
                 FailureCause::Program => RecoveryDisposition::RepairProgram,
@@ -85,7 +102,7 @@ impl ExecutionFailure {
             dispatches: Vec::new(),
             effects_unresolved: false,
             diagnostic: diagnostic.into(),
-        }
+        }))
     }
     /// Guidance follows typed recovery authority, never a service diagnostic.
     pub fn recovery_instructions(&self) -> Option<&'static str> {
@@ -139,8 +156,8 @@ impl ExecutionFailure {
         {
             std::mem::swap(&mut self, &mut other);
         }
-        self.effects.extend(other.effects);
-        self.dispatches.extend(other.dispatches);
+        self.effects.append(&mut other.effects);
+        self.dispatches.append(&mut other.dispatches);
         self.effects_unresolved |= other.effects_unresolved;
         if self.effects_unresolved
             || !self.dispatches.is_empty()

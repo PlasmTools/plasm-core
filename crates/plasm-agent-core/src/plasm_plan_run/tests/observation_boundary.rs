@@ -226,22 +226,23 @@ fn check_observations_with_driver(
                             error.diagnostic().contains("fixture write rejected"),
                             "{error}"
                         );
-                        let observed = events.lock().unwrap();
-                        assert_eq!(
-                            observed.iter().filter(|&&e| e == Event::Advance).count(),
-                            committed
-                        );
-                        assert_eq!(
-                            observed.iter().filter(|&&e| e == Event::Rejected).count(),
-                            1,
-                            "failed writes are never retried"
-                        );
-                        assert_eq!(
-                            observed.last(),
-                            Some(&Event::Rejected),
-                            "no later read or write may execute"
-                        );
-                        drop(observed);
+                        {
+                            let observed = events.lock().unwrap();
+                            assert_eq!(
+                                observed.iter().filter(|&&e| e == Event::Advance).count(),
+                                committed
+                            );
+                            assert_eq!(
+                                observed.iter().filter(|&&e| e == Event::Rejected).count(),
+                                1,
+                                "failed writes are never retried"
+                            );
+                            assert_eq!(
+                                observed.last(),
+                                Some(&Event::Rejected),
+                                "no later read or write may execute"
+                            );
+                        }
                         // A new execution reaches the driver in the same session.
                         // The fixture still rejects, proving admission is not the
                         // previous execution's stored failure.

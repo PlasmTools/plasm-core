@@ -23,6 +23,35 @@ async fn callbacks_admit_lexical_bindings_at_rowset_consumers() {
 }
 
 #[tokio::test]
+async fn callbacks_resolve_callable_names_at_definition_site() {
+    let case = Case {
+        id: "callbacks",
+        python: "",
+        existing: None,
+        expect_live_error: None,
+    };
+    let (es, _) = parity_context(&case, "http://127.0.0.1:1");
+    let caller_only = "def outer(row):\n    return helper(row)\ndef caller(row):\n    def helper(member):\n        return member.id\n    return {'id': outer(row)}\nreturn E.query().map(caller, max_parents=8)";
+    assert!(
+        compile_fixture(&es, caller_only).await.is_err(),
+        "a caller-local helper must not satisfy an outer callback's free name"
+    );
+    for body in [
+        "def helper(row):\n    return row.id\ndef outer(row):\n    return helper(row)\ndef caller(row):\n    return {'id': outer(row)}\nreturn E.query().map(caller, max_parents=8)",
+        "def caller(row):\n    def helper(member):\n        return member.id\n    def outer(member):\n        return helper(member)\n    return {'id': outer(row)}\nreturn E.query().map(caller, max_parents=8)",
+        "def helper(row):\n    return row.id\ndef caller(row):\n    if row.active:\n        return {'id': helper(row)}\n    return {'id': helper(row)}\nreturn E.query().map(caller, max_parents=8)",
+    ] {
+        compile_fixture(&es, body)
+            .await
+            .unwrap_or_else(|error| panic!("{body}\n{error}"));
+    }
+    let recursive =
+        "def act(row):\n    return E.query().flat_map(act)\nreturn E.query().flat_map(act)";
+    let error = compile_fixture(&es, recursive).await.unwrap_err();
+    assert!(error.contains("recursive callbacks"), "{error}");
+}
+
+#[tokio::test]
 async fn callbacks_live_conditional_effects() {
     use super::evaluate_plasm_comp_dry;
     use axum::{

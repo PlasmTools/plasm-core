@@ -256,6 +256,7 @@ pub(super) fn assert_supplemental(id: &str, run: &PlasmPlanRunResult) {
         }
         "union_collapses_duplicates" => json!([{"owner":"alice"}]),
         "prefix_serial_limit" => json!([{"score":10}]),
+        "prefix_union_single_relation" => json!([{"id":"t1"},{"id":"t2"}]),
         "prefix_zero_rows" => json!([]),
         "prefix_zero_count" => json!([{"n":0}]),
         "record_literal_index" => json!([{"value":11}]),
@@ -340,6 +341,7 @@ pub(super) fn assert_coverage(id: &str, run: &PlasmPlanRunResult) {
     use plasm_runtime::ResultCoverage::{Complete, Unknown};
     let expected = match id {
         "cert_bind_limit1_continuation"
+        | "prefix_union_single_relation"
         | "cert_relation_opaque_r_symbol"
         | "relation_one_chain"
         | "relation_relation_lines"

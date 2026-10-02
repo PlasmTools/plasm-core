@@ -158,6 +158,6 @@ fn row_entity_annotation_matches_value_contract_recursively() {
         canonical.admit().unwrap();
         alternate.admit().unwrap();
     }
-    let invalid = format!("@compute\ndef keep(row: Row[missing]) -> str:\n    return ''\n");
+    let invalid = "@compute\ndef keep(row: Row[missing]) -> str:\n    return ''\n".to_string();
     assert!(PreparedCompute::prepare(&invalid, &cgs, "types", symbols.as_ref()).is_err());
 }

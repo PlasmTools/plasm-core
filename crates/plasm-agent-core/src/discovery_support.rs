@@ -115,63 +115,20 @@ pub fn issue(
     })
 }
 
-#[derive(Deserialize)]
-struct Envelope {
-    model: String,
-    provider: String,
-    #[serde(deserialize_with = "crate::decision_codec::unique_map")]
-    answers: BTreeMap<String, Answer>,
-}
-#[derive(Deserialize)]
-struct Answer {
-    #[serde(rename = "type")]
-    kind: String,
-    choice: SupportChoice,
-    confidence: f64,
-    #[serde(deserialize_with = "crate::decision_codec::unique_map")]
-    probabilities: BTreeMap<String, f64>,
-}
 pub fn decode(issued: &IssuedSupport, raw: &str) -> Result<EnvironmentSupport> {
-    let envelope: Envelope = serde_json::from_str(raw)?;
-    ensure!(
-        envelope.provider == "TypeSafe",
-        "unexpected support provider"
-    );
-    ensure!(
-        envelope.model == issued.model
-            || envelope
-                .model
-                .strip_prefix(&issued.model)
-                .is_some_and(|s| s.starts_with('-')),
-        "unexpected support model"
-    );
-    ensure!(envelope.answers.len() == 1, "support answer count mismatch");
-    let answer = envelope
-        .answers
-        .get("support")
-        .context("missing support answer")?;
-    ensure!(answer.kind == "choice", "invalid support answer type");
-    ensure!(
-        answer.probabilities.len() == 3
-            && CHOICES
-                .iter()
-                .all(|k| answer.probabilities.contains_key(*k)),
-        "support probability keys mismatch"
-    );
-    ensure!(
-        answer.confidence.is_finite() && (0.0..=1.0).contains(&answer.confidence),
-        "invalid support confidence"
-    );
-    ensure!(
-        answer
-            .probabilities
-            .values()
-            .all(|p| p.is_finite() && (0.0..=1.0).contains(p))
-            && (answer.probabilities.values().sum::<f64>() - 1.0).abs() <= 0.011,
-        "invalid support probabilities"
-    );
+    let mut answers =
+        crate::decision_codec::decode_jev_choices(&issued.model, ["support"], &CHOICES, raw)?;
+    let answer = answers
+        .remove("support")
+        .context("missing validated support answer")?;
+    let choice = match answer.choice.as_str() {
+        "established" => SupportChoice::Established,
+        "not_established" => SupportChoice::NotEstablished,
+        "undetermined" => SupportChoice::Undetermined,
+        _ => unreachable!("shared codec validated the issued choices"),
+    };
     Ok(EnvironmentSupport {
-        choice: answer.choice.clone(),
+        choice,
         request_hash: issued.cache_key.clone(),
     })
 }

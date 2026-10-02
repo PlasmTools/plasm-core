@@ -280,14 +280,13 @@ impl Decoder<'_> {
                     value = value.intersect_constraints(&evidence)?;
                 }
                 for id in negative {
-                    match self.graph.nodes[id.0 as usize] {
-                        Node::None => value.nullable = false,
+                    if matches!(self.graph.nodes[id.0 as usize], Node::None) {
+                        value.nullable = false;
                         // Materialized contracts abstract value-level exclusions.
                         // Keeping the positive type is a sound upper bound: for
                         // example str & ~Literal["x"] remains str, never Never.
                         // Union alternatives already eliminated by the checker
                         // remain eliminated in the exported graph.
-                        _ => {}
                     }
                 }
                 value

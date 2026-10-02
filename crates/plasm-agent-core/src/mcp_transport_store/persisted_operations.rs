@@ -99,7 +99,7 @@ pub struct OperationPersistSnapshot {
 
 #[derive(Clone, Debug)]
 pub enum OperationPersistPatch {
-    Upsert(PersistedOperationDescriptor),
+    Upsert(Box<PersistedOperationDescriptor>),
     Progress {
         handle: String,
         progress: PersistedOperationProgress,
@@ -177,9 +177,9 @@ pub fn merge_operation_patch(
                 *operation_handle_next = (*operation_handle_next).max(seq.saturating_add(1));
             }
             if let Some(existing) = operations.iter_mut().find(|o| o.handle == desc.handle) {
-                *existing = desc;
+                *existing = *desc;
             } else {
-                operations.push(desc);
+                operations.push(*desc);
             }
         }
         OperationPersistPatch::Progress {
@@ -212,7 +212,7 @@ mod tests {
             merge_operation_patch(
                 &mut ops,
                 &mut next,
-                OperationPersistPatch::Upsert(PersistedOperationDescriptor {
+                OperationPersistPatch::Upsert(Box::new(PersistedOperationDescriptor {
                     handle: format!("o{i}"),
                     phase: PersistedOperationPhase::Succeeded,
                     progress: PersistedOperationProgress::default(),
@@ -225,7 +225,7 @@ mod tests {
                     agent_seq: 0,
                     occurrences: Vec::new(),
                     agent_last_line: String::new(),
-                }),
+                })),
             );
         }
         assert!(ops.len() <= MAX_TERMINAL_OPS_PERSIST + 1);

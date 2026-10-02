@@ -116,21 +116,21 @@ fn assert_complete(
     evidence: &BTreeMap<String, BTreeSet<String>>,
     inventory: &[&str],
 ) {
-    validate(&rules, &evidence, inventory).unwrap();
+    validate(rules, evidence, inventory).unwrap();
     for index in 0..rules.len() {
         let mut changed = rules.to_vec();
         changed.remove(index);
-        assert!(validate(&changed, &evidence, inventory).is_err());
+        assert!(validate(&changed, evidence, inventory).is_err());
         let mut changed = rules.to_vec();
         changed[index].witnesses = vec!["missing".into()];
-        assert!(validate(&changed, &evidence, inventory).is_err());
+        assert!(validate(&changed, evidence, inventory).is_err());
         let mut changed = rules.to_vec();
         changed[index].invalid.clear();
-        assert!(validate(&changed, &evidence, inventory).is_err());
+        assert!(validate(&changed, evidence, inventory).is_err());
     }
     let mut changed = rules.to_vec();
     changed.push(rules[0].clone());
-    assert!(validate(&changed, &evidence, inventory).is_err());
+    assert!(validate(&changed, evidence, inventory).is_err());
     for rule in rules {
         for witness in &rule.witnesses {
             let mut false_evidence = evidence.clone();
@@ -138,7 +138,7 @@ fn assert_complete(
                 .get_mut(witness)
                 .unwrap()
                 .remove(&rule.operation);
-            assert!(validate(&rules, &false_evidence, inventory).is_err());
+            assert!(validate(rules, &false_evidence, inventory).is_err());
         }
     }
 }

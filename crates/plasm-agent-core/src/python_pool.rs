@@ -377,7 +377,7 @@ fn value_object(
             let mut fields = vec![
                 (
                     MontyObject::string("__plasm_money"),
-                    MontyObject::string(&m.amount().to_string()),
+                    MontyObject::string(m.amount().to_string()),
                 ),
                 (
                     MontyObject::string("currency"),

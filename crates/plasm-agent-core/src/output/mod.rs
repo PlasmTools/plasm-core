@@ -95,7 +95,7 @@ pub fn apply_projection(result: &mut ExecutionResult, fields: &[String]) {
             if let Some(v) = observed_fields.get(f.as_str()) {
                 next.insert(f.clone(), v.clone());
             } else if f.contains('.') {
-                if let Some(v) = typed_field_value_at_dotted_path(&observed_fields, f.as_str()) {
+                if let Some(v) = typed_field_value_at_dotted_path(observed_fields, f.as_str()) {
                     next.insert(f.clone(), v);
                 }
             }

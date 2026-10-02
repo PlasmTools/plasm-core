@@ -204,13 +204,12 @@ async fn run_source_case(
         None,
     ))
     .await
-    .map_err(|failure| {
+    .inspect_err(|failure| {
         eprintln!(
             "cold: {}; calls={:?}",
             failure.diagnostic(),
             calls.lock().unwrap()
         );
-        failure
     })?;
     let result = Box::pin(super::super::run_plasm_comp(
         &es,

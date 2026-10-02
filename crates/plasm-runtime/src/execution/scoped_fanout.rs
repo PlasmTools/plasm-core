@@ -146,7 +146,7 @@ pub(crate) fn partition_prefer_from_parent_get(
                         })?;
                 per_parent[i] = Some(ExecutionCollection::materialized(
                     membership.record().clone(),
-                    rows.into(),
+                    rows,
                 )?);
             }
             RelationRowResolution::ScopedQuery => {
@@ -172,7 +172,7 @@ pub(crate) fn resolve_cached_targets_from_relation_refs<'a>(
     mat: &SessionMaterialization,
     refs: impl IntoIterator<Item = &'a Ref>,
     expected_target: &str,
-) -> Result<Vec<CachedEntity>, RuntimeError> {
+) -> Result<plasm_core::collection_codec::SharedRows<CachedEntity>, RuntimeError> {
     let mut out = Vec::new();
     for r in refs {
         if r.entity_type.as_str() != expected_target {
@@ -183,14 +183,14 @@ pub(crate) fn resolve_cached_targets_from_relation_refs<'a>(
                 ),
             });
         }
-        let Some(e) = mat.get(r) else {
+        let Some(e) = mat.shared_row(r) else {
             return Err(RuntimeError::CacheError {
                 message: format!("missing embedded relation target in session graph: {r}"),
             });
         };
-        out.push(e.clone());
+        out.push(e);
     }
-    Ok(out)
+    Ok(plasm_core::collection_codec::SharedRows::concat(&out))
 }
 
 pub(crate) fn ref_from_materialize_bindings_for_get_chain(
@@ -273,5 +273,46 @@ pub(crate) fn chain_binding_value(
         Value::Float(f) => f.to_string(),
         Value::Bool(b) => b.to_string(),
         _ => entity.reference.primary_slot_str(),
+    }
+}
+
+#[cfg(test)]
+mod sharing_tests {
+    use super::*;
+
+    #[test]
+    fn cached_relation_occurrences_share_payloads_in_recorded_order() {
+        let mut mat = SessionMaterialization::new();
+        let refs = [Ref::new("Member", "a"), Ref::new("Member", "b")];
+        for reference in &refs {
+            mat.insert(CachedEntity::from_decoded(
+                reference.clone(),
+                IndexMap::new(),
+                IndexMap::new(),
+                0,
+                crate::cache::EntityCompleteness::Complete,
+            ))
+            .unwrap();
+        }
+        let occurrences = [&refs[1], &refs[0], &refs[1]];
+        let rows = resolve_cached_targets_from_relation_refs(&mat, occurrences, "Member").unwrap();
+        assert_eq!(
+            rows.iter().map(|row| &row.reference).collect::<Vec<_>>(),
+            occurrences
+        );
+        assert!(std::ptr::eq(&rows[0], &rows[2]));
+        for row in &rows {
+            assert!(std::ptr::eq(row, mat.get(&row.reference).unwrap()));
+        }
+        assert!(resolve_cached_targets_from_relation_refs(&mat, [&refs[0]], "Other").is_err());
+        assert!(resolve_cached_targets_from_relation_refs(
+            &mat,
+            [&Ref::new("Member", "missing")],
+            "Member"
+        )
+        .is_err());
+        drop(mat);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[2].reference, refs[1]);
     }
 }

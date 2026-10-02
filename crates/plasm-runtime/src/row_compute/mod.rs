@@ -105,7 +105,7 @@ mod contract_tests {
             },
         ] {
             assert!(eval_compute_ops(
-                &[op.clone()],
+                std::slice::from_ref(&op),
                 &[row!({"value":"not a datetime"})],
                 &temporal
             )

@@ -82,8 +82,7 @@ impl Lower<'_> {
         self.conditional_value(
             site,
             &PyExpr::Compare(first),
-            &PyExpr::Compare(tail),
-            &otherwise,
+            (&PyExpr::Compare(tail), &otherwise),
             inputs,
             true,
             None,
@@ -94,8 +93,7 @@ impl Lower<'_> {
         &mut self,
         site: &PyExpr,
         condition: &PyExpr,
-        yes: &PyExpr,
-        no: &PyExpr,
+        successors: (&PyExpr, &PyExpr),
         inputs: &mut BTreeMap<String, PlanDataInput>,
         predicate: bool,
         branch_condition: Option<&PyExpr>,
@@ -121,7 +119,7 @@ impl Lower<'_> {
         }
         let mut branches = Vec::new();
         let mut schemas = Vec::new();
-        for (selected, value) in [(true, yes), (false, no)] {
+        for (selected, value) in [(true, successors.0), (false, successors.1)] {
             let parameter = self.fresh_parameter("branch");
             let source = self.fresh();
             self.insert(DagNode {

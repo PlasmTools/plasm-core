@@ -28,6 +28,14 @@ failure combination. [Scalar field access](python-scalar-constructors.md) has it
     "law": "BC-03",
     "witnesses": [
       {
+        "id": "prefix_union_single_relation",
+        "relation": "tags",
+        "target": "LangTag",
+        "cardinality": "many",
+        "correlated": false,
+        "scoped": false
+      },
+      {
         "id": "relation_one_chain",
         "relation": "detail",
         "target": "LangDetail",
@@ -94,8 +102,8 @@ failure combination. [Scalar field access](python-scalar-constructors.md) has it
         "error": "relation dot requires a singleton"
       },
       {
-        "body": "a = E.get(\"i1\")\nb = E.get(\"i2\")\nreturn a.union(b).take(1).tags",
-        "error": "requires entity continuation evidence"
+        "body": "a = E.get(\"i1\")\nb = E.get(\"i2\")\nreturn a.union(b).tags",
+        "error": "relation dot requires a singleton"
       },
       {
         "body": "seed = E.get(\"i1\")\nreturn seed.iterate(lambda row: row.tags, until=lambda row: row.score is not None and row.score > 0, max_steps=2)",

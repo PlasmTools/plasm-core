@@ -146,7 +146,12 @@ async fn relation_dispatch_requires_recursive_typed_evidence_and_rejections() {
         match change {
             "missing" => witness.id = "missing".into(),
             "target" => witness.target = "Wrong".into(),
-            "cardinality" => witness.cardinality = RelationCardinality::Many,
+            "cardinality" => {
+                witness.cardinality = match witness.cardinality {
+                    RelationCardinality::One => RelationCardinality::Many,
+                    RelationCardinality::Many => RelationCardinality::One,
+                }
+            }
             "scope" => witness.scoped = true,
             "correlated" => witness.correlated = true,
             _ => unreachable!(),

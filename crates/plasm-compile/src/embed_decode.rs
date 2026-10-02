@@ -533,6 +533,13 @@ pub fn extract_id_from_source(
     }
 }
 
+fn field_decode_error(error: plasm_core::DecodeFieldDiagnostic) -> DecodeError {
+    DecodeError::FieldContract {
+        field: error.field,
+        reason: error.message,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -726,12 +733,5 @@ mod tests {
         });
         let err = decode_entities(&item, &body).unwrap_err();
         assert!(err.to_string().contains("leaf"), "{err}");
-    }
-}
-
-fn field_decode_error(error: plasm_core::DecodeFieldDiagnostic) -> DecodeError {
-    DecodeError::FieldContract {
-        field: error.field,
-        reason: error.message,
     }
 }

@@ -330,10 +330,7 @@ pub(crate) async fn finalize_typed_relation_materialized_node(
         _ => entity_rows,
     };
     mat.result = Arc::new(ExecutionResult {
-        collection: mat
-            .result
-            .collection
-            .with_materialization(hydrated.into())?,
+        collection: mat.result.collection.with_materialization(hydrated)?,
         has_more: mat.result.has_more,
         pagination_resume: mat.result.pagination_resume.clone(),
         paging_handle: mat.result.paging_handle.clone(),

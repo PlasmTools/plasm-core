@@ -48,7 +48,7 @@ entities:
     abstract: true
     id_field: participant_email
     key_vars: [group_id, participant_email]
-    description: One group member's incoming and outgoing debt totals.
+    description: Amounts owed by and owed to one group member, with separate counterparty breakdowns.
     fields:
       group_id: {required: true, value_ref: nv_group_id}
       participant_email: {required: true, value_ref: nv_email, path: [source, email]}

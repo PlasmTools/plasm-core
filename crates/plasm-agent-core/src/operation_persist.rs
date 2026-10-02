@@ -110,9 +110,9 @@ pub(crate) fn schedule_op_persist(
         return;
     };
     let patch = match urgency {
-        PersistUrgency::Immediate => OperationPersistPatch::Upsert(
+        PersistUrgency::Immediate => OperationPersistPatch::Upsert(Box::new(
             descriptor_from_operation_state(handle, op, started_at_unix),
-        ),
+        )),
         PersistUrgency::Coalesced => OperationPersistPatch::Progress {
             handle: handle.as_str().to_string(),
             progress: PersistedOperationProgress::from(&op.progress),
@@ -270,11 +270,11 @@ mod tests {
             &host,
             "ph",
             "sid",
-            OperationPersistPatch::Upsert(descriptor_from_operation_state(
+            OperationPersistPatch::Upsert(Box::new(descriptor_from_operation_state(
                 &handle,
                 &running_op_state(crate::operation::OperationPhase::Running),
                 0,
-            )),
+            ))),
             PersistUrgency::Immediate,
         );
         tokio::time::sleep(Duration::from_millis(30)).await;
@@ -336,11 +336,11 @@ mod tests {
             &host,
             "ph2",
             "sid2",
-            OperationPersistPatch::Upsert(descriptor_from_operation_state(
+            OperationPersistPatch::Upsert(Box::new(descriptor_from_operation_state(
                 &handle,
                 &running_op_state(crate::operation::OperationPhase::Running),
                 0,
-            )),
+            ))),
             PersistUrgency::Immediate,
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -367,11 +367,11 @@ mod tests {
             &host,
             "ph2",
             "sid2",
-            OperationPersistPatch::Upsert(descriptor_from_operation_state(
+            OperationPersistPatch::Upsert(Box::new(descriptor_from_operation_state(
                 &handle,
                 &running_op_state(crate::operation::OperationPhase::Succeeded),
                 0,
-            )),
+            ))),
             PersistUrgency::Immediate,
         );
         tokio::time::sleep(OP_PROGRESS_COALESCE + Duration::from_millis(100)).await;

@@ -95,7 +95,6 @@ impl ExecutionEngine {
                                 mat,
                                 mode,
                                 &Value::Object(env.clone()),
-                                create.entity.as_str(),
                             )
                             .await;
                     }
@@ -396,7 +395,6 @@ impl ExecutionEngine {
                                 mat,
                                 mode,
                                 &Value::Object(env.clone()),
-                                invoke.target.entity_type.as_str(),
                             )
                             .await;
                     }

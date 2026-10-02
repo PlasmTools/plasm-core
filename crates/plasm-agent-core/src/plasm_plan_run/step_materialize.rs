@@ -142,8 +142,7 @@ pub(crate) async fn materialize_executable_plan_step(
     {
         Ok(mat) => mat,
         Err(error) => {
-            let mut failure = ExecutionFailure::from(error)
-                .at(qualified_step.clone(), ctx.occurrence_path.clone());
+            let mut failure = error.at(qualified_step.clone(), ctx.occurrence_path.clone());
             failure = failure.with_dispatches(occurrence.mutation_journal().snapshot());
             failure = failure.with_catalog(&ctx.es.catalog_cgs_hash);
             occurrence.fail(failure.to_string());
@@ -366,10 +365,12 @@ async fn live_materialize_pure(
                 &input_contract,
                 &source_mat.row_source,
                 &binding_rows,
-                ctx.es,
-                ctx.st,
-                ctx.session_id,
-                ctx.es.cgs.as_ref(),
+                &crate::graph_rehydrate::GraphSurfaceRehydrator::new(
+                    ctx.es,
+                    ctx.st,
+                    ctx.session_id,
+                    ctx.es.cgs.as_ref(),
+                ),
             )
             .await?
         };

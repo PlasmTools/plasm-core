@@ -227,7 +227,7 @@ pub enum ExecutionEvent {
         entities: plasm_core::collection_codec::SharedRows<CachedEntity>,
         stats: ExecutionStats,
     },
-    Complete(ExecutionResult),
+    Complete(Box<ExecutionResult>),
 }
 
 pub type QueryStream<'a> =

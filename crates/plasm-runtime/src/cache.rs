@@ -27,7 +27,7 @@
 //! - **I5 (single writer).** [`GraphCache`] does **not** synchronize concurrent access. Safe use requires
 //!   **at most one** `&mut GraphCache` at a time (one task/thread holding exclusivity). Parallel tasks
 //!   must use separate cache instances, external locks, or a session facade that enforces ordering.
-//! - **I6 (clone).** [`GraphCache::clone`] is a deep copy of in-memory state; independent forks must be
+//! - **I6 (clone).** [`GraphCache::clone`] shares immutable observations with copy-on-write mutation; independent forks must be
 //!   merged back with an explicit policy when combining results into one session view.
 //!
 //! ## Merge semantics
@@ -79,10 +79,13 @@ impl plasm_core::row_contract::EntityRow for CachedEntity {
     fn identity(&self) -> &Ref {
         &self.reference
     }
-    fn fields(&self) -> impl Iterator<Item = (&str, TypedFieldValue)> {
-        self.fields
-            .iter()
-            .map(|(key, value)| (key.as_str(), value.clone()))
+    fn fields(&self) -> impl Iterator<Item = (&str, plasm_core::row_contract::EntityFieldRef<'_>)> {
+        self.fields.iter().map(|(key, value)| {
+            (
+                key.as_str(),
+                plasm_core::row_contract::EntityFieldRef::Typed(value),
+            )
+        })
     }
     fn relations(&self) -> impl Iterator<Item = (&str, &RelationMembership)> {
         self.relations
@@ -101,8 +104,8 @@ impl plasm_core::row_contract::EntityRow for CachedEntity {
 /// callers must provide external synchronization for concurrent use (*I5*).
 #[derive(Debug, Clone)]
 pub struct GraphCache {
-    /// Entity storage: Ref -> CachedEntity
-    entities: HashMap<Ref, CachedEntity>,
+    /// Each immutable observation is a singleton batch shared with result occurrences.
+    entities: HashMap<Ref, std::sync::Arc<[CachedEntity; 1]>>,
     /// Global version counter
     version_counter: u64,
     /// Entity type index for efficient queries
@@ -541,12 +544,23 @@ impl GraphCache {
 
     /// Get an entity by reference
     pub fn get(&self, reference: &Ref) -> Option<&CachedEntity> {
-        self.entities.get(reference)
+        self.entities.get(reference).map(|row| &row[0])
     }
 
     /// Get a mutable reference to an entity
     pub fn get_mut(&mut self, reference: &Ref) -> Option<&mut CachedEntity> {
-        self.entities.get_mut(reference)
+        self.entities
+            .get_mut(reference)
+            .map(|row| &mut std::sync::Arc::make_mut(row)[0])
+    }
+
+    /// Retain an observation without copying its payload. Later graph writes use COW.
+    pub fn shared_row(
+        &self,
+        reference: &Ref,
+    ) -> Option<plasm_core::collection_codec::SharedRows<CachedEntity>> {
+        let batch: std::sync::Arc<[CachedEntity]> = self.entities.get(reference)?.clone();
+        Some(batch.into())
     }
 
     fn index_ref_once(&mut self, reference: &Ref) {
@@ -570,11 +584,12 @@ impl GraphCache {
         if let Some(existing) = self.entities.get_mut(&reference) {
             let mut updated_entity = entity;
             updated_entity.last_updated = timestamp;
-            existing.merge(&updated_entity)
+            std::sync::Arc::make_mut(existing)[0].merge(&updated_entity)
         } else {
             let mut new_entity = entity;
             new_entity.last_updated = timestamp;
-            self.entities.insert(reference.clone(), new_entity);
+            self.entities
+                .insert(reference.clone(), std::sync::Arc::new([new_entity]));
             self.insertion_order.push(reference);
             Ok(true)
         }
@@ -592,7 +607,8 @@ impl GraphCache {
         let existed = self.entities.contains_key(&reference);
         let mut new_entity = entity;
         new_entity.last_updated = timestamp;
-        self.entities.insert(reference.clone(), new_entity);
+        self.entities
+            .insert(reference.clone(), std::sync::Arc::new([new_entity]));
         if !existed {
             self.insertion_order.push(reference);
         }
@@ -617,7 +633,8 @@ impl GraphCache {
     /// Sort order is deterministic for stable tests. When applying multiple forked caches (e.g. a
     /// parallel-safe query stage), merge **in invocation order** so later lines win on conflicting refs.
     pub fn merge_from_graph(&mut self, other: &GraphCache) -> Result<usize, RuntimeError> {
-        let mut entities: Vec<CachedEntity> = other.entities.values().cloned().collect();
+        let mut entities: Vec<CachedEntity> =
+            other.entities.values().map(|row| row[0].clone()).collect();
         entities.sort_by(|a, b| {
             a.reference
                 .entity_type
@@ -633,15 +650,21 @@ impl GraphCache {
     /// Get all entities of a specific type
     pub fn get_entities_by_type(&self, entity_type: &str) -> Vec<&CachedEntity> {
         if let Some(refs) = self.type_index.get(entity_type) {
-            refs.iter().filter_map(|r| self.entities.get(r)).collect()
+            refs.iter().filter_map(|r| self.get(r)).collect()
         } else {
             Vec::new()
         }
     }
 
-    /// Remove an entity from the cache
+    /// Remove an entity and return an owned observation.
     pub fn remove(&mut self, reference: &Ref) -> Option<CachedEntity> {
-        // Remove from type index
+        self.detach(reference).map(|row| {
+            let [entity] = std::sync::Arc::unwrap_or_clone(row);
+            entity
+        })
+    }
+
+    fn detach(&mut self, reference: &Ref) -> Option<std::sync::Arc<[CachedEntity; 1]>> {
         if let Some(refs) = self.type_index.get_mut(&reference.entity_type) {
             refs.retain(|r| r != reference);
         }
@@ -654,7 +677,7 @@ impl GraphCache {
         let mut evicted = 0usize;
         while self.entities.len() > max_hot && !self.insertion_order.is_empty() {
             let oldest = self.insertion_order.remove(0);
-            if self.remove(&oldest).is_some() {
+            if self.detach(&oldest).is_some() {
                 evicted += 1;
             }
         }
@@ -682,7 +705,7 @@ impl GraphCache {
     /// Capture pre-mutation entity state for branch fork-base tracking (CEP-14).
     pub(crate) fn capture_fork_base_before_mutate(&mut self, reference: &Ref) {
         if let Some(tracker) = self.branch_fork.as_mut() {
-            tracker.capture_if_needed(reference, self.entities.get(reference));
+            tracker.capture_if_needed(reference, self.entities.get(reference).map(|row| &row[0]));
         }
     }
 
@@ -712,7 +735,7 @@ impl GraphCache {
                 tracker
                     .lazy_base
                     .get(reference)
-                    .filter(|base| !base.content_equals(entity))
+                    .filter(|base| !base.content_equals(&entity[0]))
                     .map(|_| reference.clone())
             })
             .collect();
@@ -789,13 +812,13 @@ impl GraphCache {
         let to_remove: Vec<Ref> = self
             .entities
             .iter()
-            .filter(|(_, entity)| predicate(entity))
+            .filter(|(_, entity)| predicate(&entity[0]))
             .map(|(reference, _)| reference.clone())
             .collect();
 
         let count = to_remove.len();
         for reference in to_remove {
-            self.remove(&reference);
+            self.detach(&reference);
         }
 
         count
@@ -868,6 +891,40 @@ mod tests {
             1,
             EntityCompleteness::Complete,
         )
+    }
+
+    #[test]
+    fn shared_observations_isolate_fork_mutations_and_survive_eviction() {
+        let mut cache = GraphCache::new();
+        let entity = create_test_entity("a", "Berry");
+        let reference = entity.reference.clone();
+        cache.insert(entity).unwrap();
+        let retained = cache.shared_row(&reference).unwrap();
+        assert!(std::ptr::eq(&retained[0], cache.get(&reference).unwrap()));
+        let mut branch = cache.fork_for_branch();
+        assert!(std::ptr::eq(
+            cache.get(&reference).unwrap(),
+            branch.get(&reference).unwrap()
+        ));
+        let mut replacement = create_test_entity("a", "Berry");
+        replacement
+            .fields
+            .insert("value".into(), TypedFieldValue::from(Value::Integer(7)));
+        branch.insert(replacement).unwrap();
+        assert_eq!(branch.branch_write_set(), vec![reference.clone()]);
+        assert!(!std::ptr::eq(
+            cache.get(&reference).unwrap(),
+            branch.get(&reference).unwrap()
+        ));
+        assert_eq!(
+            retained[0].get_field("value").unwrap().to_value(),
+            Value::Float(100.0)
+        );
+        cache.get_mut(&reference).unwrap().version += 1;
+        assert_ne!(retained[0].version, cache.get(&reference).unwrap().version);
+        cache.evict_to_hot_limit(0);
+        assert!(cache.get(&reference).is_none());
+        assert_eq!(retained[0].reference, reference);
     }
 
     #[test]

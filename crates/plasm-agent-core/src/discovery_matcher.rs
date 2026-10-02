@@ -13,7 +13,6 @@ pub const JEV_MODEL: &str = "typesafe/jev-1.13";
 // Provider rejections drive further typed partitioning, including below this target.
 const TARGET_PAGE_BYTES: usize = 16_000;
 const ANSWERS: [&str; 3] = ["relevant", "unrelated", "uncertain"];
-const MAX_ROUNDED_PROBABILITY_DRIFT: f64 = 0.011;
 const CRITERIA: [(&str, &str); 3] = [
     (
         "relevant",
@@ -82,23 +81,6 @@ impl IssuedBatch {
     pub fn cache_key(&self) -> &str {
         &self.cache_key
     }
-}
-#[derive(Debug, Deserialize)]
-struct DecisionsResponse {
-    model: String,
-    provider: String,
-    #[serde(deserialize_with = "crate::decision_codec::unique_map")]
-    answers: BTreeMap<String, DecisionAnswer>,
-}
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DecisionAnswer {
-    #[serde(rename = "type")]
-    kind: String,
-    choice: String,
-    #[serde(deserialize_with = "crate::decision_codec::unique_map")]
-    probabilities: BTreeMap<String, f64>,
-    confidence: f64,
 }
 /// An issued question owns its exact semantic document and local result identity.
 /// Graph witnesses remain in the routing receipt, not the relevance wire contract.
@@ -396,78 +378,34 @@ pub fn decode_batch(issued: &IssuedBatch, raw: &str) -> Result<Vec<SelectionAnsw
     JevCodec::decode(issued, raw)
 }
 fn decode_jev(issued: &IssuedBatch, raw: &str) -> Result<Vec<SelectionAnswer>> {
-    let response: DecisionsResponse =
-        serde_json::from_str(raw).context("malformed Jev Decisions envelope")?;
-    ensure!(
-        resolved_model_matches(&issued.model, &response.model),
-        "unexpected Jev resolved model"
-    );
-    ensure!(response.provider == "TypeSafe", "unexpected Jev provider");
-    ensure!(
-        response.answers.len() == issued.bindings.len(),
-        "Jev response has missing or extra answers"
-    );
+    let mut answers = crate::decision_codec::decode_jev_choices(
+        &issued.model,
+        issued.bindings.keys().map(String::as_str),
+        &ANSWERS,
+        raw,
+    )?;
     let mut matches = Vec::new();
     for (question, capability_id) in &issued.bindings {
-        let answer = response
-            .answers
-            .get(question)
-            .context("Jev response omitted requested question")?;
-        ensure!(answer.kind == "choice", "Jev answer is not a choice");
-        ensure!(
-            ANSWERS.contains(&answer.choice.as_str()),
-            "Jev answer has unknown choice"
-        );
-        ensure!(
-            answer.probabilities.len() == ANSWERS.len()
-                && ANSWERS
-                    .iter()
-                    .all(|key| answer.probabilities.contains_key(*key)),
-            "Jev answer probability keys differ from requested choices"
-        );
-        let total: f64 = answer.probabilities.values().sum();
-        ensure!(
-            answer
-                .probabilities
-                .values()
-                .all(|p| p.is_finite() && (0.0..=1.0).contains(p))
-                && total > 0.0
-                && (total - 1.0).abs() <= MAX_ROUNDED_PROBABILITY_DRIFT,
-            "invalid Jev probability vector"
-        );
-        ensure!(
-            answer.confidence.is_finite() && (0.0..=1.0).contains(&answer.confidence),
-            "invalid Jev confidence"
-        );
+        let answer = answers
+            .remove(question)
+            .context("missing validated relevance answer")?;
         let choice = match answer.choice.as_str() {
             "relevant" => MatchChoice::Relevant,
             "unrelated" => MatchChoice::Unrelated,
             "uncertain" => MatchChoice::Uncertain,
             _ => unreachable!(),
         };
-        let probabilities = answer
-            .probabilities
-            .iter()
-            .map(|(key, probability)| (key.clone(), probability / total))
-            .collect();
         matches.push(SelectionAnswer {
             question: question_id(issued, question),
             matched: CapabilityIntentMatch {
                 capability_id: capability_id.clone(),
                 choice,
-                probabilities,
+                probabilities: answer.probabilities,
                 confidence: answer.confidence,
             },
         });
     }
     Ok(matches)
-}
-
-fn resolved_model_matches(requested: &str, resolved: &str) -> bool {
-    resolved == requested
-        || resolved
-            .strip_prefix(requested)
-            .is_some_and(|suffix| suffix.starts_with('-'))
 }
 
 /// Every candidate has exactly one complete question. Never fold conflicting

@@ -207,7 +207,7 @@ async fn cross_pod_wait_terminal_hydrates_run_artifact() {
     let op = sess.get_operation(&handle).expect("op");
     let desc = descriptor_from_operation_state(&handle, &op, 1_700_000_000);
     execute_registry
-        .patch_session_operations(&ph, &sid, OperationPersistPatch::Upsert(desc))
+        .patch_session_operations(&ph, &sid, OperationPersistPatch::Upsert(Box::new(desc)))
         .await;
     host_a.sessions.purge_all().await;
 
@@ -260,11 +260,11 @@ async fn cross_pod_wait_running_returns_not_on_replica() {
         .patch_session_operations(
             &ph,
             &sid,
-            OperationPersistPatch::Upsert(descriptor_from_operation_state(
+            OperationPersistPatch::Upsert(Box::new(descriptor_from_operation_state(
                 &handle,
                 &op,
                 1_700_000_000,
-            )),
+            ))),
         )
         .await;
     host_a.sessions.purge_all().await;
@@ -313,11 +313,11 @@ async fn cross_pod_cancel_running_returns_not_on_replica() {
         .patch_session_operations(
             &ph,
             &sid,
-            OperationPersistPatch::Upsert(descriptor_from_operation_state(
+            OperationPersistPatch::Upsert(Box::new(descriptor_from_operation_state(
                 &handle,
                 &op,
                 1_700_000_000,
-            )),
+            ))),
         )
         .await;
     host_a.sessions.purge_all().await;
@@ -354,7 +354,7 @@ async fn cross_pod_rehydrate_preserves_operation_handle_monotonicity() {
         .patch_session_operations(
             &ph,
             &sid,
-            OperationPersistPatch::Upsert(PersistedOperationDescriptor {
+            OperationPersistPatch::Upsert(Box::new(PersistedOperationDescriptor {
                 handle: h1.as_str().to_string(),
                 phase: PersistedOperationPhase::Succeeded,
                 progress: PersistedOperationProgress::default(),
@@ -367,7 +367,7 @@ async fn cross_pod_rehydrate_preserves_operation_handle_monotonicity() {
                 agent_seq: 0,
                 occurrences: Vec::new(),
                 agent_last_line: String::new(),
-            }),
+            })),
         )
         .await;
     host_a.sessions.purge_all().await;

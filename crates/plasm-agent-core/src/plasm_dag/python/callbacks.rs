@@ -7,6 +7,8 @@ pub(super) struct Callback {
     pub prelude: Vec<Stmt>,
     pub closure: Option<BTreeMap<String, String>>,
     pub identity: Option<String>,
+    pub binding: Option<String>,
+    pub lexical_callbacks: Option<std::sync::Arc<BTreeMap<String, Callback>>>,
 }
 impl Lower<'_> {
     pub(super) fn declare_callback(
@@ -64,6 +66,8 @@ impl Lower<'_> {
                 prelude: prefix,
                 closure: Some(self.scope_names.clone()),
                 identity: Some(format!("{}:{}", label, def.start().to_u32())),
+                binding: Some(label.to_owned()),
+                lexical_callbacks: Some(std::sync::Arc::new(self.callbacks.clone())),
             },
         );
         Ok(())
@@ -135,6 +139,8 @@ impl Lower<'_> {
                 prelude: vec![],
                 closure: None,
                 identity: None,
+                binding: None,
+                lexical_callbacks: None,
             }),
             PyExpr::Name(name) => self
                 .callbacks
@@ -174,6 +180,8 @@ impl Callback {
             prelude: statements,
             closure: Some(closure),
             identity: None,
+            binding: None,
+            lexical_callbacks: None,
         })
     }
     pub fn returns_only_none(&self) -> bool {
@@ -186,12 +194,11 @@ impl Callback {
                             .as_deref()
                             .is_none_or(|v| matches!(v, PyExpr::NoneLiteral(_)))
                     }
-                    Stmt::If(branch) => {
+                    Stmt::If(branch)
                         if !paths(&branch.body)
-                            || branch.elif_else_clauses.iter().any(|c| !paths(&c.body))
-                        {
-                            return false;
-                        }
+                            || branch.elif_else_clauses.iter().any(|c| !paths(&c.body)) =>
+                    {
+                        return false;
                     }
                     _ => {}
                 }

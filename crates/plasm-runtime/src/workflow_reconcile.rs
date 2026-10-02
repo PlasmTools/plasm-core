@@ -28,7 +28,6 @@ impl ExecutionEngine {
         mat: &mut SessionMaterialization,
         mode: ExecutionMode,
         env_input: &Value,
-        entity: &str,
     ) -> Result<ExecutionResult, RuntimeError> {
         // Even an opaque rejection may follow a commit. Reconciliation must not
         // consult a pre-dispatch observation, including when no contract exists.
@@ -73,7 +72,6 @@ impl ExecutionEngine {
                 mode,
                 &identity,
                 env_input.as_object().expect("identity object"),
-                entity,
             )
             .await?;
         if res.count() != 1
@@ -194,7 +192,6 @@ impl ExecutionEngine {
         mode: ExecutionMode,
         identity: &IndexMap<String, Value>,
         bindings: &IndexMap<String, Value>,
-        entity: &str,
     ) -> Result<ExecutionResult, RuntimeError> {
         match via_cap.kind {
             CapabilityKind::Get => {
@@ -213,7 +210,7 @@ impl ExecutionEngine {
                 }
                 let target_ent = cgs.get_entity(via_cap.domain.as_str()).ok_or_else(|| {
                     RuntimeError::ConfigurationError {
-                        message: format!("unknown entity {entity}"),
+                        message: format!("unknown entity {}", via_cap.domain),
                     }
                 })?;
                 let bound: std::collections::BTreeMap<String, String> = bound.into_iter().collect();

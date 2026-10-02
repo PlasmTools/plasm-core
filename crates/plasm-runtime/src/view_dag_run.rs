@@ -67,15 +67,14 @@ fn materialize_view_row(
 }
 
 fn execution_result_from_view_row(
-    output_fields: IndexMap<String, plasm_core::Value>,
-    row_ref: Ref,
-    relation_refs: IndexMap<String, DecodedRelation>,
+    row: MaterializedViewOutputs,
     stats: ExecutionStats,
     fingerprints: Vec<String>,
     any_live: bool,
     identity: plasm_core::collection_codec::CollectionIdentity,
     inputs: &[&ExecutionCollection],
 ) -> Result<ExecutionResult, RuntimeError> {
+    let (output_fields, row_ref, relation_refs) = row;
     let cached = CachedEntity::from_decoded(
         row_ref,
         output_fields,
@@ -122,9 +121,7 @@ fn finalize_view_dag_execution(
         cgs,
     )?;
     execution_result_from_view_row(
-        output_fields,
-        row_ref,
-        relation_refs,
+        (output_fields, row_ref, relation_refs),
         stats,
         fingerprints,
         any_live,
@@ -165,9 +162,7 @@ fn finalize_view_dag_with_proof(
         cgs,
     )?;
     let execution = execution_result_from_view_row(
-        output_fields,
-        row_ref.clone(),
-        relation_refs.clone(),
+        (output_fields, row_ref.clone(), relation_refs.clone()),
         stats,
         fingerprints,
         any_live,

@@ -184,7 +184,7 @@ annotation/domain combinations; those remain separate semantic obligations.
   },
   {
     "operation": "compute",
-    "premise": "A public synchronous method has exactly bare @compute, self and one required positional typed input, and a supported return annotation. Canonical inputs are Row, Value[eN], list[Row] or list[Value[eN]]. Value annotations are checked against the unique input column at the callsite.",
+    "premise": "A public synchronous method has exactly bare @compute, self and one required positional typed input, and either a supported return annotation or one return expression with an inferred structural contract. Canonical inputs are Row, Value[eN], list[Row] or list[Value[eN]]. Value annotations are checked against the unique input column at the callsite.",
     "transfer": "Extract source without evaluating decorators; resolve catalog-qualified annotations and prepare the sealed compute contract. Row contracts resolve at typed callsites.",
     "law": "BC-03",
     "witnesses": [
@@ -220,8 +220,8 @@ annotation/domain combinations; those remain separate semantic obligations.
         "module": true
       },
       {
-        "body": "class Example(Program):\n    @compute\n    def text(self, row: Row):\n        return row.title\n    def build(self):\n        return self.text(E.get(\"i1\"))\n",
-        "error": "compute requires a return annotation",
+        "body": "class Example(Program):\n    @compute\n    def text(self, row: Row):\n        title = row.title\n        return title\n    def build(self):\n        return self.text(E.get(\"i1\"))\n",
+        "error": "compute without an annotation requires one return expression",
         "module": true
       },
       {
@@ -231,7 +231,7 @@ annotation/domain combinations; those remain separate semantic obligations.
       },
       {
         "body": "class Example(Program):\n    @compute\n    def text(self, row: dict) -> str:\n        return row.title\n    def build(self):\n        return self.text(E.get(\"i1\"))\n",
-        "error": "unknown Plasm return type dict",
+        "error": "dict has no declared field contract",
         "module": true
       },
       {

@@ -88,6 +88,8 @@ impl Lower<'_> {
             prelude: vec![],
             closure: None,
             identity: None,
+            binding: None,
+            lexical_callbacks: None,
         };
         self.scoped_callback_body(e, source, &callback, bound, mode)
     }
@@ -156,11 +158,21 @@ impl Lower<'_> {
         )?;
         let state = super::super::row_suffix::compile_state_with_nodes(&self.state, &[row_node]);
         let initial = state.nodes.len();
+        let mut callbacks = callback
+            .lexical_callbacks
+            .as_deref()
+            .cloned()
+            .unwrap_or_else(|| self.callbacks.clone());
+        // Self remains visible solely so the active-identity check rejects recursion.
+        // Other callable names come from the definition site, never the caller.
+        if let Some(binding) = &callback.binding {
+            callbacks.insert(binding.clone(), callback.clone());
+        }
         let mut scoped = Lower {
             imports: self.imports,
             es: self.es,
             methods: self.methods,
-            callbacks: self.callbacks.clone(),
+            callbacks,
             active_callbacks: self.active_callbacks.clone(),
             program_source: self.program_source,
             state,

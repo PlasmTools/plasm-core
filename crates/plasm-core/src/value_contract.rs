@@ -795,6 +795,27 @@ fn validate_json(value: &crate::Value, depth: usize) -> Result<(), String> {
     Ok(())
 }
 
+impl ValueContract {
+    /// Structural value access, including every variant of a union. Presence
+    /// remains a runtime obligation; selecting a field creates no authority.
+    pub fn field(&self, name: &str) -> Result<Self, String> {
+        match &self.shape {
+            ValueShape::Record { fields } | ValueShape::ObservedRecord { fields, .. } => fields
+                .get(name)
+                .cloned()
+                .ok_or_else(|| format!("unknown value field {name}")),
+            ValueShape::Union { variants } => variants
+                .iter()
+                .map(|v| v.field(name))
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .reduce(Self::join)
+                .ok_or("empty record union".into()),
+            _ => Err(format!("field {name} requires a record value")),
+        }
+    }
+}
+
 #[cfg(test)]
 mod presence_tests {
     use super::*;
@@ -931,26 +952,5 @@ mod presence_tests {
         assert!(union
             .observed_value(&json!({"id":true}), &cgs, "types")
             .is_err());
-    }
-}
-
-impl ValueContract {
-    /// Structural value access, including every variant of a union. Presence
-    /// remains a runtime obligation; selecting a field creates no authority.
-    pub fn field(&self, name: &str) -> Result<Self, String> {
-        match &self.shape {
-            ValueShape::Record { fields } | ValueShape::ObservedRecord { fields, .. } => fields
-                .get(name)
-                .cloned()
-                .ok_or_else(|| format!("unknown value field {name}")),
-            ValueShape::Union { variants } => variants
-                .iter()
-                .map(|v| v.field(name))
-                .collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .reduce(Self::join)
-                .ok_or("empty record union".into()),
-            _ => Err(format!("field {name} requires a record value")),
-        }
     }
 }

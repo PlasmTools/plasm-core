@@ -2,6 +2,26 @@
 use super::*;
 
 #[cfg(test)]
+fn test_membership(
+    complete: bool,
+) -> plasm_core::collection_codec::RecordedCollection<plasm_core::Ref> {
+    use plasm_core::collection_codec::{
+        CollectionCodec, CollectionIdentity, Observation, RecordingCodec,
+    };
+    RecordingCodec::new()
+        .record(
+            CollectionIdentity::for_untyped_observation(&"compute_fixture").unwrap(),
+            vec![plasm_core::Ref::new("Row", "1")],
+            if complete {
+                Observation::ExactOutput { decoded: 1 }
+            } else {
+                Observation::UnprovenPage
+            },
+        )
+        .unwrap()
+}
+
+#[cfg(test)]
 pub(super) fn materialize_rows(
     fields: &BTreeMap<String, plasm_core::value_contract::ValueContract>,
     optional_fields: &std::collections::BTreeSet<String>,
@@ -26,7 +46,7 @@ pub(super) fn materialize_rows_in(
         .map(|row| {
             fields
                 .iter()
-                .filter(|(name, _)| row.get(*name).is_some() || !optional_fields.contains(*name))
+                .filter(|(name, _)| row.get(name).is_some() || !optional_fields.contains(*name))
                 .map(|(name, kind)| {
                     let value = row
                         .get(name)
@@ -707,24 +727,4 @@ mod tests {
         .is_err());
         assert!(validate_input_budget(&[json!({"s": "x".repeat(1_048_576)})]).is_err());
     }
-}
-
-#[cfg(test)]
-fn test_membership(
-    complete: bool,
-) -> plasm_core::collection_codec::RecordedCollection<plasm_core::Ref> {
-    use plasm_core::collection_codec::{
-        CollectionCodec, CollectionIdentity, Observation, RecordingCodec,
-    };
-    RecordingCodec::new()
-        .record(
-            CollectionIdentity::for_untyped_observation(&"compute_fixture").unwrap(),
-            vec![plasm_core::Ref::new("Row", "1")],
-            if complete {
-                Observation::ExactOutput { decoded: 1 }
-            } else {
-                Observation::UnprovenPage
-            },
-        )
-        .unwrap()
 }

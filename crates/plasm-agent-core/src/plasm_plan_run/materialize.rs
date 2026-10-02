@@ -605,7 +605,6 @@ pub(crate) async fn materialized_rows(
         .map_err(ExecutionFailure::from)
 }
 
-#[must_use]
 pub(crate) fn execution_result_from_fanout_fold(
     fold: super::plan_fanout_parallel::PlanLineExecutionFold,
     identity: plasm_core::collection_codec::CollectionIdentity,
@@ -943,7 +942,6 @@ pub(crate) async fn archive_materialize_iterate_until(
         observed
             .resolve_materialized_source_parents(&rehydrator)
             .await?
-            .into()
     } else {
         observed.result.entities().clone()
     };

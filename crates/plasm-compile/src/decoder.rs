@@ -672,10 +672,13 @@ impl plasm_core::row_contract::EntityRow for DecodedEntity {
     fn identity(&self) -> &Ref {
         &self.reference
     }
-    fn fields(&self) -> impl Iterator<Item = (&str, plasm_core::TypedFieldValue)> {
-        self.fields
-            .iter()
-            .map(|(key, value)| (key.as_str(), value.clone().into()))
+    fn fields(&self) -> impl Iterator<Item = (&str, plasm_core::row_contract::EntityFieldRef<'_>)> {
+        self.fields.iter().map(|(key, value)| {
+            (
+                key.as_str(),
+                plasm_core::row_contract::EntityFieldRef::Decoded(value),
+            )
+        })
     }
     fn relations(&self) -> impl Iterator<Item = (&str, &RelationMembership)> {
         self.relations

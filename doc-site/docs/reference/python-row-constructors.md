@@ -29,7 +29,7 @@ this registry does not claim automatic coverage of those paths or all compositio
     "invalid": [
       {
         "body": "return E.query().map(42, max_parents=1)",
-        "error": "map requires a lambda"
+        "error": "expected a lambda or a declared scoped callback"
       }
     ]
   },
@@ -44,7 +44,7 @@ this registry does not claim automatic coverage of those paths or all compositio
     "invalid": [
       {
         "body": "return E.query().flat_map(42)",
-        "error": "map requires a lambda"
+        "error": "expected a lambda or a declared scoped callback"
       }
     ]
   },
@@ -170,16 +170,21 @@ this registry does not claim automatic coverage of those paths or all compositio
   },
   {
     "operation": "take",
-    "premise": "Positive literal bound",
+    "premise": "Nonnegative literal bound; zero returns an empty selection",
     "transfer": "Bound K for requested prefix; no unique-identity inference",
     "law": "BC-03",
     "witnesses": [
-      "sort_limit"
+      "sort_limit",
+      "prefix_zero_rows"
     ],
     "invalid": [
       {
-        "body": "return E.query().take(0)",
-        "error": "take requires a positive u32"
+        "body": "return E.query().take(-1)",
+        "error": "expected an integer literal"
+      },
+      {
+        "body": "return E.query().take(4294967296)",
+        "error": "take requires a nonnegative u32"
       }
     ]
   },

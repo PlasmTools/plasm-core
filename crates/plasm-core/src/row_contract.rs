@@ -103,9 +103,35 @@ impl<'a> IntoIterator for &'a RelationMembership {
 /// mean unobserved; a present empty slice means an observed empty relation.
 pub trait EntityRow {
     fn identity(&self) -> &Ref;
-    fn fields(&self) -> impl Iterator<Item = (&str, TypedFieldValue)>;
+    fn fields(&self) -> impl Iterator<Item = (&str, EntityFieldRef<'_>)>;
     fn relations(&self) -> impl Iterator<Item = (&str, &RelationMembership)>;
     fn unavailable_fields(&self) -> impl Iterator<Item = &str>;
+}
+
+/// Borrowed field storage at the decoded-to-cached row boundary. Reading or
+/// serializing a field does not clone its payload; ownership is requested only
+/// when capturing a row or materializing execution values.
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[serde(untagged)]
+pub enum EntityFieldRef<'a> {
+    Decoded(&'a crate::Value),
+    Typed(&'a TypedFieldValue),
+}
+
+impl EntityFieldRef<'_> {
+    pub fn to_owned(self) -> TypedFieldValue {
+        match self {
+            Self::Decoded(value) => value.clone().into(),
+            Self::Typed(value) => value.clone(),
+        }
+    }
+
+    pub fn to_value(self) -> crate::Value {
+        match self {
+            Self::Decoded(value) => TypedFieldValue::from(value.clone()).into_value(),
+            Self::Typed(value) => value.to_value(),
+        }
+    }
 }
 
 /// Owned semantic row. Cache epochs, timestamps and transport state are not data.
@@ -121,10 +147,10 @@ impl EntityRow for RowRecord {
     fn identity(&self) -> &Ref {
         &self.identity
     }
-    fn fields(&self) -> impl Iterator<Item = (&str, TypedFieldValue)> {
+    fn fields(&self) -> impl Iterator<Item = (&str, EntityFieldRef<'_>)> {
         self.fields
             .iter()
-            .map(|(key, value)| (key.as_str(), value.clone()))
+            .map(|(key, value)| (key.as_str(), EntityFieldRef::Typed(value)))
     }
     fn relations(&self) -> impl Iterator<Item = (&str, &RelationMembership)> {
         self.relations
@@ -142,7 +168,7 @@ impl RowRecord {
             identity: row.identity().clone(),
             fields: row
                 .fields()
-                .map(|(key, value)| (key.to_string(), value))
+                .map(|(key, value)| (key.to_string(), value.to_owned()))
                 .collect(),
             relations: row
                 .relations()
@@ -242,7 +268,7 @@ impl<'a> RowCodec<'a> {
         use crate::Value;
         let mut object: ValueRow = row
             .fields()
-            .map(|(key, value)| (key.to_owned(), value.into_value()))
+            .map(|(key, value)| (key.to_owned(), value.to_value()))
             .collect();
         self.apply_identity(&mut object, row.identity());
         for (name, references) in row.relations() {
@@ -568,6 +594,48 @@ mod presence_tests {
 #[cfg(test)]
 mod relation_ownership_tests {
     use super::*;
+
+    #[test]
+    fn field_views_borrow_storage_and_preserve_wire_shape() {
+        let wire = serde_json::json!({"items": ["payload", null, 3, true]});
+        let decoded = crate::json_value_to_plasm_value(&wire);
+        let typed = TypedFieldValue::from(decoded.clone());
+        let decoded_view = EntityFieldRef::Decoded(&decoded);
+        let typed_view = EntityFieldRef::Typed(&typed);
+        assert!(
+            matches!(decoded_view, EntityFieldRef::Decoded(value) if std::ptr::eq(value, &decoded))
+        );
+        assert!(matches!(typed_view, EntityFieldRef::Typed(value) if std::ptr::eq(value, &typed)));
+        assert_eq!(serde_json::to_value(decoded_view).unwrap(), wire);
+        assert_eq!(serde_json::to_value(typed_view).unwrap(), wire);
+        assert_eq!(decoded_view.to_owned(), typed);
+        assert_eq!(typed_view.to_value(), decoded);
+        assert_eq!(
+            EntityFieldRef::Decoded(&crate::Value::PhraseIdent("label".into())).to_value(),
+            crate::Value::String("label".into()),
+        );
+    }
+
+    #[test]
+    fn captured_row_borrows_fields_until_explicit_ownership_boundary() {
+        let original = RowRecord {
+            identity: Ref::new("Item", "one"),
+            fields: IndexMap::from([("label".into(), TypedFieldValue::String("payload".into()))]),
+            relations: IndexMap::new(),
+            unavailable_fields: BTreeSet::new(),
+        };
+        let (_, EntityFieldRef::Typed(field)) = original.fields().next().unwrap() else {
+            panic!("row records expose typed field references");
+        };
+        assert!(std::ptr::eq(field, &original.fields["label"]));
+        let captured = RowRecord::capture(&original);
+        assert_eq!(captured, original);
+        assert!(!std::ptr::eq(&captured.fields["label"], field));
+        assert_eq!(
+            RowCodec::new(None).payload(&original),
+            serde_json::json!({"label": "payload"})
+        );
+    }
 
     #[test]
     fn cloning_membership_shares_ordered_occurrences() {

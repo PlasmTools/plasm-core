@@ -86,15 +86,15 @@ pub async fn execute(
     {
         Ok(result) => {
             println!("✓ Execution successful");
-            println!("  - Found {} entities", result.count);
+            println!("  - Found {} entities", result.count());
             println!("  - Source: {:?}", result.source);
             println!("  - Duration: {}ms", result.stats.duration_ms);
             println!("  - Network requests: {}", result.stats.network_requests);
             println!("  - Cache hits: {}", result.stats.cache_hits);
 
-            if !result.entities.is_empty() {
+            if !result.entities().is_empty() {
                 println!("\nEntities:");
-                for entity in &result.entities {
+                for entity in result.entities() {
                     println!("  - {}: {:?}", entity.reference, entity.fields);
                 }
             }

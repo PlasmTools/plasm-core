@@ -464,11 +464,11 @@ async fn cross_pod_wait_from_shared_session_registry() {
             .patch_session_operations(
                 &ph,
                 &sid,
-                OperationPersistPatch::Upsert(descriptor_from_operation_state(
+                OperationPersistPatch::Upsert(Box::new(descriptor_from_operation_state(
                     &plasm_core::OperationHandle::parse(&handle).unwrap(),
                     &op,
                     1_700_000_000,
-                )),
+                ))),
             )
             .await;
     }

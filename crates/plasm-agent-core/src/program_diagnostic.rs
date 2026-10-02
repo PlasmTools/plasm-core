@@ -596,6 +596,16 @@ pub fn plan_run_from_stage(
         .into_plan_run_result(logical_session_ref, session.domain_revision)
 }
 
+impl From<ProgramStageError> for plasm_runtime::ExecutionFailure {
+    fn from(error: ProgramStageError) -> Self {
+        Self::new(
+            plasm_runtime::FailureCause::Program,
+            "program_admission",
+            error.into_correction(),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -853,15 +863,5 @@ item"#;
             md.contains("This exact program was already rejected"),
             "from_stage is the insert+lookup: {md}"
         );
-    }
-}
-
-impl From<ProgramStageError> for plasm_runtime::ExecutionFailure {
-    fn from(error: ProgramStageError) -> Self {
-        Self::new(
-            plasm_runtime::FailureCause::Program,
-            "program_admission",
-            error.into_correction(),
-        )
     }
 }

@@ -70,7 +70,7 @@ pub async fn execute(action: ReplayAction) -> Result<(), Box<dyn std::error::Err
             {
                 Ok(result) => {
                     println!("✓ Execution recorded successfully");
-                    println!("  - Found {} entities", result.count);
+                    println!("  - Found {} entities", result.count());
                     println!("  - Duration: {}ms", result.stats.duration_ms);
                     // TODO: Actually store the replay entry to filesystem
                     println!("  - Recording saved to fixtures/replays/ (implementation pending)");

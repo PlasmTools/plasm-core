@@ -654,7 +654,7 @@ impl ExecutionEngine {
                 let ambient = view_ambient;
                 let stream = Box::pin(async_stream::try_stream! {
                     let res = Box::pin(self.execute_get(&get, cgs, mat, execution_mode, &ambient)).await?;
-                    yield ExecutionEvent::Complete(res);
+                    yield ExecutionEvent::Complete(Box::new(res));
                 });
                 Ok(stream)
             }
@@ -662,7 +662,7 @@ impl ExecutionEngine {
                 let create = create.clone();
                 let stream = Box::pin(async_stream::try_stream! {
                     let res = Box::pin(self.execute_create(&create, cgs, mat, execution_mode)).await?;
-                    yield ExecutionEvent::Complete(res);
+                    yield ExecutionEvent::Complete(Box::new(res));
                 });
                 Ok(stream)
             }
@@ -670,7 +670,7 @@ impl ExecutionEngine {
                 let delete = delete.clone();
                 let stream = Box::pin(async_stream::try_stream! {
                     let res = Box::pin(self.execute_delete(&delete, cgs, mat, execution_mode)).await?;
-                    yield ExecutionEvent::Complete(res);
+                    yield ExecutionEvent::Complete(Box::new(res));
                 });
                 Ok(stream)
             }
@@ -678,7 +678,7 @@ impl ExecutionEngine {
                 let invoke = invoke.clone();
                 let stream = Box::pin(async_stream::try_stream! {
                     let res = Box::pin(self.execute_invoke(&invoke, cgs, mat, execution_mode)).await?;
-                    yield ExecutionEvent::Complete(res);
+                    yield ExecutionEvent::Complete(Box::new(res));
                 });
                 Ok(stream)
             }
@@ -686,7 +686,7 @@ impl ExecutionEngine {
                 let chain = chain.clone();
                 let stream = Box::pin(async_stream::try_stream! {
                     let res = Box::pin(self.execute_chain(&chain, cgs, mat, execution_mode, chain_consume, opts.clone())).await?;
-                    yield ExecutionEvent::Complete(res);
+                    yield ExecutionEvent::Complete(Box::new(res));
                 });
                 Ok(stream)
             }

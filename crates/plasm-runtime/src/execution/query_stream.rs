@@ -107,7 +107,7 @@ impl ExecutionEngine {
                     &ambient,
                 )
                 .await?;
-                yield ExecutionEvent::Complete(res);
+                yield ExecutionEvent::Complete(Box::new(res));
             });
             return Ok(stream);
         }
@@ -147,7 +147,7 @@ impl ExecutionEngine {
             let res = self
                 .execute_query_cross_entity(&query, &crosses, cgs, mat, mode, consume, &ambient)
                 .await?;
-            yield ExecutionEvent::Complete(res);
+            yield ExecutionEvent::Complete(Box::new(res));
         });
         Ok(stream)
     }
@@ -182,12 +182,12 @@ impl ExecutionEngine {
                 let count = cached_entities.len();
                 let mut stats = ExecutionStats::from_telemetry(consult, 0);
                 stats.record_rows_materialized(count);
-                yield ExecutionEvent::Complete(ExecutionResult {
+                yield ExecutionEvent::Complete(Box::new(ExecutionResult {
                     collection: ExecutionCollection::materialized(membership, cached_entities.into())?,
                     has_more: false, pagination_resume: None, paging_handle: None,
                     source: ExecutionSource::Cache, stats, request_fingerprints: vec![],
                     operations: OperationLedger::empty(),
-                });
+                }));
                 return;
             }
             ExecutionCacheConsult::record_query_network(&mut consult);
@@ -260,11 +260,11 @@ impl ExecutionEngine {
             }
 
             let membership = ExecutionCacheConsult::index_query_result(mat, &query, cap_name, &res.entities, cgs, &env)?;
-            yield ExecutionEvent::Complete(ExecutionResult {
+            yield ExecutionEvent::Complete(Box::new(ExecutionResult {
                 collection: ExecutionCollection::materialized(membership, res.entities.into())?,
                 has_more: false, pagination_resume: None, paging_handle: None,
                 source, stats: res.stats, request_fingerprints: vec![], operations: OperationLedger::empty(),
-            });
+            }));
         });
         Ok(stream)
     }
@@ -503,16 +503,16 @@ impl ExecutionEngine {
                 if graph_backed {
                     if let Some(ref spill) = graph_page_spill { graph_spill_page_and_trim_hot(spill, mat, pages, &entities).await?; }
                 }
-                yield ExecutionEvent::Page { entities: if graph_backed { Vec::new().into() } else { entities.into() }, stats: ExecutionStats::default() };
+                yield ExecutionEvent::Page { entities: if graph_backed { Vec::new().into() } else { entities }, stats: ExecutionStats::default() };
             }
             let collection = ExecutionCollection::graph(membership);
             let mut stats = ExecutionStats::from_telemetry(CacheTelemetry::default(), total_network);
             stats.record_rows_materialized(collection.count());
-            yield ExecutionEvent::Complete(ExecutionResult {
+            yield ExecutionEvent::Complete(Box::new(ExecutionResult {
                 collection, has_more, pagination_resume, paging_handle: None,
                 source: if any_live { ExecutionSource::Live } else { ExecutionSource::Replay },
                 stats, request_fingerprints: vec![], operations: OperationLedger::empty(),
-            });
+            }));
         });
         Ok(stream)
     }

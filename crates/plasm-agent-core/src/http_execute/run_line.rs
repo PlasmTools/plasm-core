@@ -207,8 +207,8 @@ pub(crate) async fn run_parsed_plasm_line(
     if let Some(ref key) = page_storage_key {
         if let Some(cursor) = sess.peek_synthetic_paging_resume(key) {
             let entry_id = cursor.qualified_entity.entry_id.clone();
-            let result = synthetic_page_result(sess, key, cursor, trace)
-                .map_err(|e| RunLineError::Runtime(e))?;
+            let result =
+                synthetic_page_result(sess, key, cursor, trace).map_err(RunLineError::Runtime)?;
             let artifact = persist_execute_run(PersistExecuteRunInput {
                 st,
                 sess,

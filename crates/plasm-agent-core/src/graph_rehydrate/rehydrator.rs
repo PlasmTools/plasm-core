@@ -182,7 +182,7 @@ impl<'a> GraphSurfaceRehydrator<'a> {
         let available = plasm_core::collection_codec::SharedRows::concat([&hot.into(), &retained]);
         let rows = super::walk::collect_recorded_entities(
             &self.ctx,
-            available.into(),
+            available,
             entity_type,
             self.ctx.spill_enabled(),
             &membership,
