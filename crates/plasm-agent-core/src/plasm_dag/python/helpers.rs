@@ -61,34 +61,11 @@ impl Lower<'_> {
             // A typed helper without Plasm references is a whole Python value
             // function. Keep mutable locals inside Monty; materialize only its
             // result through the same checked boundary as explicit @compute.
-            let mut def = def;
-            let mut call = call.clone();
-            if def.parameters.posonlyargs.is_empty()
-                && def.parameters.args.is_empty()
-                && def.parameters.kwonlyargs.is_empty()
-            {
-                // Compute's wire ABI has one required input. A source helper
-                // with no inputs receives a private unit port, not a new user
-                // argument or a parse-time execution path.
-                let unit =
-                    ruff_python_parser::parse_module("def unit(__plasm_unit: int):\n    pass\n")
-                        .map_err(|error| error.to_string())?;
-                let Some(Stmt::FunctionDef(unit)) = unit.suite().first() else {
-                    unreachable!()
-                };
-                def.parameters.args.push(unit.parameters.args[0].clone());
-                call.arguments.args.push(
-                    *ruff_python_parser::parse_expression("0")
-                        .map_err(|error| error.to_string())?
-                        .into_syntax()
-                        .body,
-                );
-            }
             let code = format!(
                 "@compute\n{}",
                 monty::statement_source(&Stmt::FunctionDef(def))
             );
-            return self.text_compute_source(site, &call, code, id);
+            return self.text_compute_source(site, call, code, id);
         }
         let identity = format!("method:{name}");
         if self.active_callbacks.contains(&identity) {

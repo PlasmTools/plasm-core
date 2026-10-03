@@ -1237,3 +1237,27 @@ fn python_typed_pure_helper_materializes_only_its_complete_set_result() {
         );
     });
 }
+
+#[test]
+fn python_zero_input_compute_uses_private_unit_port() {
+    on_runtime(async {
+        let (es, host, calls) = fixture(1);
+        let source = "import datetime\nclass Values(Program):\n    @compute\n    def cutoff(self) -> datetime.datetime:\n        return datetime.datetime(2026, 10, 3) - datetime.timedelta(days=50)\n    def build(self):\n        return self.cutoff()\n";
+        let bundle = compile_python_program(&es, source).await.unwrap();
+        assert!(calls.lock().unwrap().is_empty());
+        let run = execute(&es, &host, &bundle).await.unwrap();
+        let value = serde_json::to_value(&run.return_steps[0].result.entities()[0].fields).unwrap();
+        assert_eq!(value["value"]["__plasm_temporal"], "datetime");
+        assert_eq!(value["value"]["components"]["year"], 2026);
+        assert_eq!(value["value"]["components"]["month"], 8);
+        assert_eq!(value["value"]["components"]["day"], 14);
+        let live_source =
+            source.replace("datetime.datetime(2026, 10, 3)", "datetime.datetime.now()");
+        let live_bundle = compile_python_program(&es, &live_source).await.unwrap();
+        let live = execute(&es, &host, &live_bundle).await.unwrap();
+        let live_value =
+            serde_json::to_value(&live.return_steps[0].result.entities()[0].fields).unwrap();
+        assert_eq!(live_value["value"]["__plasm_temporal"], "datetime");
+        assert!(calls.lock().unwrap().is_empty());
+    });
+}

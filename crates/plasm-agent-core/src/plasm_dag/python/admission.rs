@@ -227,9 +227,6 @@ impl<'a> Root<'a> {
                 .chain(&extracted.parameters.args)
                 .chain(&extracted.parameters.kwonlyargs)
                 .collect::<Vec<_>>();
-            if inputs.is_empty() {
-                return Err(at(def, "compute requires at least one typed input"));
-            }
             if inputs
                 .iter()
                 .any(|input| input.parameter.annotation.is_none())

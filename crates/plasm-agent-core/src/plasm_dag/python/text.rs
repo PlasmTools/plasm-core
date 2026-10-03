@@ -31,6 +31,28 @@ impl Lower<'_> {
         let Some(Stmt::FunctionDef(def)) = parsed.suite().last() else {
             return Err("missing compute definition".into());
         };
+        let mut def = def.clone();
+        let mut call = call.clone();
+        if def.parameters.posonlyargs.is_empty()
+            && def.parameters.args.is_empty()
+            && def.parameters.kwonlyargs.is_empty()
+        {
+            // The compute wire ABI needs an input even when the Python method
+            // does not. Use the same private unit port for declared computes
+            // and pure helpers; it is not a user-visible dependency.
+            let unit = ruff_python_parser::parse_module("def unit(__plasm_unit: int):\n    pass\n")
+                .map_err(|error| error.to_string())?;
+            let Some(Stmt::FunctionDef(unit)) = unit.suite().first() else {
+                unreachable!()
+            };
+            def.parameters.args.push(unit.parameters.args[0].clone());
+            call.arguments.args.push(
+                *ruff_python_parser::parse_expression("0")
+                    .map_err(|error| error.to_string())?
+                    .into_syntax()
+                    .body,
+            );
+        }
         let mut expressions: Vec<_> = call
             .arguments
             .args
@@ -89,7 +111,7 @@ impl Lower<'_> {
             .collect();
         normalized.parameters.posonlyargs.clear();
         normalized.parameters.kwonlyargs.clear();
-        let code = admission::method_source(&self.imports.source, &code, def, normalized)?;
+        let code = admission::method_source(&self.imports.source, &code, &def, normalized)?;
         let source = if parameters.len() == 1 {
             self.expr(bound[0].1, None)?
         } else {
