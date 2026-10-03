@@ -27,7 +27,7 @@ pub(super) const CASES: &[Case] = &[
     Case { id: "callback_lexical_record", python: "def project(row):\n    identifier = row.id\n    return {'id': identifier}\nreturn E.get('i1').map(project, max_parents=1)", existing: None, expect_live_error: None },
     Case { id: "predicate_truth_refinement", python: "return E.get(\"i1\").where(lambda r: r.score is not None).select(value=lambda r: r.score + 1)", existing: None, expect_live_error: None },
     Case { id: "repair_runtime_projection", python: "return E.get(\"i1\").select(value=lambda r: 1 // (len(r.title) - len(r.title)))", existing: None, expect_live_error: Some("division by zero") },
-    Case { id: "repair_runtime_compute", python: "class Repair(Program):\n    @compute\n    def fail(self, rows: list[Row]) -> str:\n        return str(1 // (len(rows) - 1))\n    def build(self):\n        return self.fail(E.get(\"i1\"))\n", existing: None, expect_live_error: Some("division by zero") },
+    Case { id: "repair_runtime_compute", python: "class Repair(Program):\n    @compute\n    def fail(self, row: Row) -> str:\n        return str(1 // (len(row.id) - len(row.id)))\n    def build(self):\n        return self.fail(E.get(\"i1\"))\n", existing: None, expect_live_error: Some("division by zero") },
     Case { id: "predicate_truth_string", python: "return E.get(\"i1\").where(lambda r: r.title).select(\"id\")", existing: None, expect_live_error: None },
     Case { id: "predicate_truth_and", python: "return E.get(\"i1\").where(lambda r: r.title and 3).select(\"id\")", existing: None, expect_live_error: None },
     Case { id: "predicate_truth_empty", python: "return E.get(\"i1\").where(lambda r: \"\").select(\"id\")", existing: None, expect_live_error: None },
@@ -46,6 +46,7 @@ pub(super) const CASES: &[Case] = &[
     Case { id: "predicate_all_relation", python: "item = E.get(\"i1\")\nreturn {\"value\": all(child.note != \"missing\" for child in item.REL_COMPLETE_LINES)}", existing: None, expect_live_error: None },
 
 Case { id: "value_closure_scalar_method_format", python: "name = \"hello\"\nreturn f\"{name.upper()}\"", existing: None, expect_live_error: None },
+Case { id: "compute_inferred_callsite_inputs", python: "class Inferred(Program):\n    @compute\n    def titles(self, rows):\n        return [row.title for row in rows]\n    @compute\n    def first(self, row):\n        return row.title\n    def build(self):\n        return {'titles': self.titles(E.query().take(2)), 'first': self.first(E.get('i1'))}\n", existing: None, expect_live_error: None },
 Case { id: "value_closure_nullable_collection", python: "class Closure(Program):\n    @compute\n    def calc(self, value: list[Row.score] | None) -> int:\n        return 0 if value is None else sum(item or 0 for item in value)\n    def build(self):\n        return self.calc(E.query().take(2).select(\"score\"))\n", existing: None, expect_live_error: None },
 Case { id: "value_closure_nested_projection", python: "record = E.query().take(2).select(header=lambda row: {\"n\": row.score})\nreturn record.select(n=lambda row: (row.header.n or 0) + 1)", existing: None, expect_live_error: None },
 Case { id: "value_closure_nested_read", python: "record = {\"header\": {\"id\": \"i1\"}}\nreturn E.get(record.header.id).select(\"title\")", existing: None, expect_live_error: None },
@@ -55,10 +56,10 @@ Case { id: "value_closure_field_scalar", python: "class Closure(Program):\n    @
 Case { id: "value_closure_bool_scalar", python: "class Closure(Program):\n    @compute\n    def calc(self, value: bool) -> bool:\n        return not value\n    def build(self):\n        return self.calc(False)\n", existing: None, expect_live_error: None },
 Case { id: "value_closure_nullable_scalar", python: "class Closure(Program):\n    @compute\n    def calc(self, value: int | None) -> int:\n        return 0 if value is None else value\n    def build(self):\n        return self.calc(None)\n", existing: None, expect_live_error: None },
 Case { id: "value_closure_empty_collection", python: "class Closure(Program):\n    @compute\n    def calc(self, value: list[Row.score]) -> int:\n        return len(value)\n    def build(self):\n        return self.calc(E.query().where(lambda row: row.id == \"missing\").select(\"score\"))\n", existing: None, expect_live_error: None },
-Case { id: "value_closure_structural_collection", python: "class Closure(Program):\n    @compute\n    def calc(self, value: list[Row]) -> int:\n        return value[0].n\n    def build(self):\n        return self.calc({\"n\": 7})\n", existing: None, expect_live_error: None },
+Case { id: "value_closure_structural_singleton", python: "class Closure(Program):\n    @compute\n    def calc(self, value: Row) -> int:\n        return value.n\n    def build(self):\n        return self.calc({\"n\": 7})\n", existing: None, expect_live_error: None },
 Case { id: "value_closure_literal", python: "class Closure(Program):\n    @compute\n    def calc(self, value: int) -> int:\n        return value + 1\n    def build(self):\n        value = 42\n        return self.calc(value)\n", existing: None, expect_live_error: None },
-Case { id: "value_closure_column", python: "class Closure(Program):\n    @compute\n    def calc(self, value: int | None) -> int:\n        return (value or 0) + 1\n    def build(self):\n        value = E.query().take(2).select(\"score\")\n        return self.calc(value)\n", existing: None, expect_live_error: None },
-Case { id: "value_closure_empty", python: "class Closure(Program):\n    @compute\n    def calc(self, value: int | None) -> int:\n        return (value or 0) + 1\n    def build(self):\n        value = E.query().where(lambda row: row.id == \"missing\").select(\"score\")\n        return self.calc(value)\n", existing: None, expect_live_error: None },
+Case { id: "value_closure_column", python: "class Closure(Program):\n    @compute\n    def calc(self, value: int | None) -> int:\n        return (value or 0) + 1\n    def build(self):\n        value = E.query().take(2).select(\"score\")\n        return value.map(lambda row: {\"value\": self.calc(row.score)}, max_parents=256)\n", existing: None, expect_live_error: None },
+Case { id: "value_closure_empty", python: "class Closure(Program):\n    @compute\n    def calc(self, value: int | None) -> int:\n        return (value or 0) + 1\n    def build(self):\n        value = E.query().where(lambda row: row.id == \"missing\").select(\"score\")\n        return value.map(lambda row: {\"value\": self.calc(row.score)}, max_parents=256)\n", existing: None, expect_live_error: None },
 Case { id: "value_closure_collection", python: "class Closure(Program):\n    @compute\n    def calc(self, value: list[Row.score]) -> int:\n        return sum(item or 0 for item in value)\n    def build(self):\n        value = E.query().take(2).select(\"score\")\n        return self.calc(value)\n", existing: None, expect_live_error: None },
 Case { id: "value_closure_array", python: "class Closure(Program):\n    @compute\n    def calc(self, value: list[int]) -> int:\n        return sum(value)\n    def build(self):\n        value = [2, 3]\n        return self.calc(value)\n", existing: None, expect_live_error: None },
 Case { id: "value_closure_record", python: "class Closure(Program):\n    @compute\n    def calc(self, value: Row) -> int:\n        return value.header.n\n    def build(self):\n        value = {\"header\": {\"n\": 7}}\n        return self.calc(value)\n", existing: None, expect_live_error: None },
@@ -105,7 +106,7 @@ Case { id: "bound_get_empty_keyword", python: "source = E.query().where(lambda r
 Case { id: "scoped_flat_map_format", python: "class Nested(Program):\n    def build(self):\n        return E.query().take(2).flat_map(lambda parent: E.query().take(1).map(lambda child: {\"parent\": parent.title, \"label\": f\"{child.title.lower()}:{parent.title.lower()}\"}, max_parents=1))\n", existing: None, expect_live_error: None },
 Case { id: "scoped_nested_records", python: "class NestedRecords(Program):\n    def build(self):\n        parents = E.query().take(2)\n        return parents.map(lambda parent: {\"id\": parent.id, \"children\": E.query().take(1).map(lambda child: {\"parent\": parent.title, \"child\": child.title}, max_parents=2)}, max_parents=2)\n", existing: None, expect_live_error: None },
 Case { id: "scoped_nested_effects", python: "class NestedEffects(Program):\n    def build(self):\n        parents = E.query().take(2)\n        return parents.map(lambda parent: {\"id\": parent.id, \"children\": E.query().take(1).map(lambda child: {\"child\": child.id, \"sent\": parent.PING()}, max_parents=2)}, max_parents=2)\n", existing: None, expect_live_error: None },
-Case { id: "assembly_row_compute", python: "class RowAssembly(Program):\n    @compute\n    def lower_title(self, row: Row) -> str:\n        return row.title.lower()\n    @compute\n    def report(self, row: Row) -> str:\n        return row.original + \"=\" + row.destination\n    def build(self):\n        items = E.query().select(\"id\", \"title\")\n        paired = items.map(lambda row: {\"original\": row.id, \"destination\": self.lower_title(row)}, max_parents=256)\n        return self.report(paired)\n", existing: None, expect_live_error: None },
+Case { id: "assembly_row_compute", python: "class RowAssembly(Program):\n    @compute\n    def lower_title(self, row: Row) -> str:\n        return row.title.lower()\n    @compute\n    def report(self, row: Row) -> str:\n        return row.original + \"=\" + row.destination\n    def build(self):\n        items = E.query().select(\"id\", \"title\")\n        paired = items.map(lambda row: {\"original\": row.id, \"destination\": self.lower_title(row)}, max_parents=256)\n        return paired.map(lambda row: {\"value\": self.report(row)}, max_parents=256)\n", existing: None, expect_live_error: None },
 Case { id: "assembly_singleton_capture", python: "class CapturedAssembly(Program):\n    def build(self):\n        header = E.get(\"i1\")\n        items = E.query()\n        return items.select(\"id\", heading=lambda row: header.title)\n", existing: None, expect_live_error: None },
 Case { id: "type_projected_integer", python: "class TypedText(Program):\n    @compute\n    def format_row(self, row: Row) -> str:\n        return str(row.score)\n    def build(self):\n        items = E.get(\"i1\").select(\"score\")\n        report = self.format_row(items)\n        return report\n", existing: None, expect_live_error: None },
 Case { id: "type_projected_enum", python: "class TypedText(Program):\n    @compute\n    def format_row(self, row: Row) -> str:\n        return str(row.status)\n    def build(self):\n        items = E.get(\"i1\").select(\"status\")\n        report = self.format_row(items)\n        return report\n", existing: None, expect_live_error: None },
@@ -116,16 +117,16 @@ Case { id: "text_derived_alias", python: "class RowText(Program):\n    @compute\
 Case { id: "text_bindings_row", python: "class RowText(Program):\n    @compute\n    def text(self, row: Value[ENTITY]) -> str:\n        return f\"# {row.title}\"\n\n    def build(self):\n        items = E.get(\"i1\").select(\"id\", \"title\")\n        hdr = self.text(items)\n        return hdr\n", existing: Some("lang_bindings_render"), expect_live_error: None },
 Case { id: "text_split_part", python: "class RowText(Program):\n    @compute\n    def text(self, row: Value[ENTITY]) -> str:\n        return \"split_part_ok=\" + row.id.split(\"1\")[0]\n\n    def build(self):\n        items = E.get(\"i1\").select(\"id\")\n        hdr = self.text(items)\n        return hdr\n", existing: Some("lang_render_split_part"), expect_live_error: None },
 Case { id: "text_conditional_membership", python: "class ConditionalText(Program):\n    @compute\n    def text(self, row: Row) -> str:\n        return row.id + (\":matched\" if \"i\" in row.id else \":absent\")\n    def build(self):\n        items = E.get(\"i1\").select(\"id\")\n        report = self.text(items)\n        return report\n", existing: None, expect_live_error: None },
-Case { id: "text_row_duplicates", python: "class RowText(Program):\n    @compute\n    def text(self, row: Row) -> str:\n        return row.title\n\n    def build(self):\n        items = E.query().take(2).select(\"title\")\n        repeated = items.union(items)\n        report = self.text(repeated)\n        return report\n", existing: None, expect_live_error: None },
-Case { id: "text_empty_aggregate", python: "class RowText(Program):\n    @compute\n    def text(self, row: list[Row]) -> str:\n        return f\"count={row[0].n}\"\n\n    def build(self):\n        items = E.query().where(lambda row: row.id == \"missing\")\n        counts = items.aggregate(n=agg.count())\n        report = self.text(counts)\n        return report\n", existing: None, expect_live_error: None },
+Case { id: "text_row_duplicates", python: "class RowText(Program):\n    @compute\n    def text(self, row: Row) -> str:\n        return row.title\n\n    def build(self):\n        items = E.query().take(2).select(\"title\")\n        repeated = items.union(items)\n        report = repeated.map(lambda row: {\"value\": self.text(row)}, max_parents=256)\n        return report\n", existing: None, expect_live_error: None },
+Case { id: "text_empty_aggregate", python: "class RowText(Program):\n    @compute\n    def text(self, row: Row) -> str:\n        return f\"count={row.n}\"\n\n    def build(self):\n        items = E.query().where(lambda row: row.id == \"missing\")\n        counts = items.aggregate(n=agg.count())\n        report = self.text(counts)\n        return report\n", existing: None, expect_live_error: None },
 
-Case { id: "text_per_row_zero", python: "class RowText(Program):\n    @compute\n    def text(self, row: Value[ENTITY]) -> str:\n        return f\"{row.title}\"\n\n    def build(self):\n        items = E.query().where(lambda row: row.id == \"missing\")\n        rendered = self.text(items)\n        return rendered\n", existing: Some("lang_per_row_render_zero"), expect_live_error: None },
-Case { id: "text_per_row_many", python: "class RowText(Program):\n    @compute\n    def text(self, row: Value[ENTITY]) -> str:\n        return f\"{row.title} — {row.code}\"\n\n    def build(self):\n        items = E.query().take(2).select(\"id\", \"title\", \"code\")\n        rendered = self.text(items)\n        return rendered\n", existing: Some("lang_per_row_render_many"), expect_live_error: None },
-Case { id: "text_synthetic_count", python: "class RowText(Program):\n    @compute\n    def text(self, row: list[Row]) -> str:\n        return f\"count={row[0].n}\"\n\n    def build(self):\n        items = E.query().take(2)\n        counts = items.aggregate(n=agg.count())\n        report = self.text(counts)\n        return report\n", existing: None, expect_live_error: None },
-Case { id: "text_synthetic_group", python: "class RowText(Program):\n    @compute\n    def text(self, row: Row) -> str:\n        return f\"{row.title}: {row.n}\"\n\n    def build(self):\n        items = E.query().take(2)\n        counts = items.group_by(\"title\", n=agg.count())\n        report = self.text(counts)\n        return report\n", existing: None, expect_live_error: None },
+Case { id: "text_per_row_zero", python: "class RowText(Program):\n    @compute\n    def text(self, row: Value[ENTITY]) -> str:\n        return f\"{row.title}\"\n\n    def build(self):\n        items = E.query().where(lambda row: row.id == \"missing\")\n        rendered = items.map(lambda row: {\"value\": self.text(row)}, max_parents=256)\n        return rendered\n", existing: Some("lang_per_row_render_zero"), expect_live_error: None },
+Case { id: "text_per_row_many", python: "class RowText(Program):\n    @compute\n    def text(self, row: Value[ENTITY]) -> str:\n        return f\"{row.title} — {row.code}\"\n\n    def build(self):\n        items = E.query().take(2).select(\"id\", \"title\", \"code\")\n        rendered = items.map(lambda row: {\"value\": self.text(row)}, max_parents=256)\n        return rendered\n", existing: Some("lang_per_row_render_many"), expect_live_error: None },
+Case { id: "text_synthetic_count", python: "class RowText(Program):\n    @compute\n    def text(self, row: Row) -> str:\n        return f\"count={row.n}\"\n\n    def build(self):\n        items = E.query().take(2)\n        counts = items.aggregate(n=agg.count())\n        report = self.text(counts)\n        return report\n", existing: None, expect_live_error: None },
+Case { id: "text_synthetic_group", python: "class RowText(Program):\n    @compute\n    def text(self, row: Row) -> str:\n        return f\"{row.title}: {row.n}\"\n\n    def build(self):\n        items = E.query().take(2)\n        counts = items.group_by(\"title\", n=agg.count())\n        report = counts.map(lambda row: {\"value\": self.text(row)}, max_parents=256)\n        return report\n", existing: None, expect_live_error: None },
 
-Case { id: "text_multiline_whitespace", python: "class Whitespace(Program):\n    @compute\n    def text(self, rows: list[Value[ENTITY]]) -> str:\n        return rf\"\"\"Header \\n\n            preserved\nid={rows[0].id}\n尾\n\"\"\"\n\n    def build(self):\n        one = E.get(\"i1\")\n        report = self.text(one.select(\"id\"))\n        return report\n", existing: None, expect_live_error: None },
-Case { id: "text_write_reuse", python: "class WriteText(Program):\n    @compute\n    def text(self, rows: list[Value[ENTITY]]) -> str:\n        return f\"rendered {rows[0].id}\"\n\n    def build(self):\n        one = E.get(\"i1\")\n        report = self.text(one.select(\"id\"))\n        changed = one.UPDATE(title=report, score=7, owner=\"alice\")\n        return changed.select(\"title\")\n", existing: None, expect_live_error: None },
+Case { id: "text_multiline_whitespace", python: "class Whitespace(Program):\n    @compute\n    def text(self, row: Value[ENTITY]) -> str:\n        return rf\"\"\"Header \\n\n            preserved\nid={row.id}\n尾\n\"\"\"\n\n    def build(self):\n        one = E.get(\"i1\")\n        report = self.text(one.select(\"id\"))\n        return report\n", existing: None, expect_live_error: None },
+Case { id: "text_write_reuse", python: "class WriteText(Program):\n    @compute\n    def text(self, row: Value[ENTITY]) -> str:\n        return f\"rendered {row.id}\"\n\n    def build(self):\n        one = E.get(\"i1\")\n        report = self.text(one.select(\"id\"))\n        changed = one.UPDATE(title=report, score=7, owner=\"alice\")\n        return changed.select(\"title\")\n", existing: None, expect_live_error: None },
 Case { id: "text_collection_report", python: "class TextReport(Program):\n    @compute\n    def format_rows(self, rows: list[Value[ENTITY]]) -> str:\n        return \"\".join(f\"\\n- {row.title}\\n\" for row in rows)\n\n    def build(self):\n        items = E.query().take(2).select(\"id\", \"title\")\n        report = self.format_rows(items)\n        return report\n", existing: Some("lang_plain_template_foreach"), expect_live_error: None },
 Case { id: "text_literal_binding", python: "class LiteralText(Program):\n    def build(self):\n        note = \"\"\"hello-matrix\n\"\"\"\n        one = E.query().take(1).select(\"title\")\n        return one, note\n", existing: Some("lang_heredoc_binding"), expect_live_error: None },
 Case { id: "text_literal_equals", python: "class LiteralText(Program):\n    def build(self):\n        body = \"\"\"key = value\n\"\"\"\n        one = E.query().take(1).select(\"title\")\n        return one, body\n", existing: Some("lang_heredoc_body_with_equals"), expect_live_error: None },
@@ -465,6 +466,34 @@ async fn python_lowering_matrix_live_semantic_contract() {
 #[tokio::test]
 async fn python_record_value_matrix() {
     run_python_cases(cases().filter(|case| case.id.starts_with("record_value_"))).await;
+}
+
+#[tokio::test]
+async fn python_compute_input_inference_live() {
+    run_python_cases(cases().filter(|case| case.id == "compute_inferred_callsite_inputs")).await;
+}
+
+#[tokio::test]
+async fn python_compute_input_mode_follows_source_cardinality_live() {
+    run_python_cases(cases().filter(|case| {
+        matches!(
+            case.id,
+            "assembly_row_compute"
+                | "repair_runtime_compute"
+                | "text_per_row_zero"
+                | "text_per_row_many"
+                | "text_row_duplicates"
+                | "text_empty_aggregate"
+                | "text_synthetic_count"
+                | "text_synthetic_group"
+                | "text_multiline_whitespace"
+                | "text_write_reuse"
+                | "value_closure_column"
+                | "value_closure_empty"
+                | "value_closure_structural_singleton"
+        )
+    }))
+    .await;
 }
 
 pub(super) async fn run_python_cases(selected: impl Iterator<Item = &'static Case>) {
@@ -1755,19 +1784,31 @@ async fn python_inferred_rows_check_types_and_preserve_plural_cardinality() {
     let entity = symbols.entity_sym_for(language_matrix::MATRIX_ENTRY_ID, "LangItem");
     let source = |expression: &str, input: &str, result: &str| {
         format!(
-        "class Text(Program):\n    @compute\n    def report(self, row: Row) -> str:\n        return {expression}\n    def build(self):\n        rows = {input}\n        text = self.report(rows)\n        return {result}\n"
+        "class Text(Program):\n    @compute\n    def report(self, rows: list[Row]) -> list[str]:\n        return {expression}\n    def build(self):\n        rows = {input}\n        text = self.report(rows)\n        return {result}\n"
     )
     };
     let input = format!("{entity}.query().group_by(\"title\", n=agg.count())");
-    let valid = source("f'{row.title}: {row.n:04d}'", &input, "text");
+    let scalar = source("f'{rows.title}: {rows.n:04d}'", &input, "text")
+        .replace("rows: list[Row]", "row: Row");
+    assert!(compile_python_program(&es, &scalar).await.is_err());
+    let scalar_value = format!("class Scalar(Program):\n    @compute\n    def double(self, value: int) -> int:\n        return value * 2\n    def build(self):\n        return self.double({entity}.query().select(\"score\"))\n");
+    assert!(
+        compile_python_program(&es, &scalar_value).await.is_err(),
+        "a scalar value annotation cannot turn plural values into row-wise work"
+    );
+    let valid = source(
+        "[f'{row.title}: {row.n:04d}' for row in rows]",
+        &input,
+        "text",
+    );
     let compiled = compile_python_program(&es, &valid).await.unwrap();
     let comp = serde_json::to_value(&compiled.artifact().comp).unwrap();
-    assert_eq!(comp["steps"]["text"]["compute"]["op"]["per_row"], true);
+    assert_eq!(comp["steps"]["text"]["compute"]["op"]["per_row"], false);
     for corruption in 0..5 {
         let mut wire = serde_json::to_value(&compiled.artifact().comp).unwrap();
         let steps = &mut wire["steps"];
         match corruption {
-            0 => steps["text"]["compute"]["op"]["per_row"] = serde_json::json!(false),
+            0 => steps["text"]["compute"]["op"]["per_row"] = serde_json::json!(true),
             1 => steps["text"]["compute"]["op"]["contract_version"] = serde_json::json!(1),
             2 => steps["text"]["compute"]["op"]["catalog_hash"] = serde_json::json!("wrong"),
             3 | 4 => {
@@ -1825,33 +1866,43 @@ async fn python_inferred_rows_check_types_and_preserve_plural_cardinality() {
         );
     }
     assert!(
-        compile_python_program(&es, &source("f'{row.n}'", &input, "text"))
+        compile_python_program(&es, &source("[str(row.n) for row in rows]", &input, "text"))
             .await
             .is_ok(),
         "plural compute values can be returned without scalar extraction"
     );
     assert!(
-        compile_python_program(&es, &source("str(row)", &input, "text"))
+        compile_python_program(&es, &source("[str(row) for row in rows]", &input, "text"))
             .await
             .is_ok()
     );
     let single = format!("{entity}.query().aggregate(n=agg.count())");
     assert!(
-        compile_python_program(&es, &source("f'{row.n}'", &single, "text"))
-            .await
-            .is_ok()
+        compile_python_program(
+            &es,
+            &source("[str(row.n) for row in rows]", &single, "text")
+        )
+        .await
+        .is_err(),
+        "singleton input must reject a collection annotation"
     );
+    let singleton_source = source("f'{row.n}'", &single, "text")
+        .replace("rows: list[Row]", "row: Row")
+        .replace("-> list[str]", "-> str");
+    assert!(compile_python_program(&es, &singleton_source).await.is_ok());
     let projected = format!("{entity}.query().take(2).select(renamed=\"title\")");
-    assert!(
-        compile_python_program(&es, &source("row.renamed", &projected, "text"))
-            .await
-            .is_ok()
-    );
-    assert!(
-        compile_python_program(&es, &source("row.title", &projected, "text"))
-            .await
-            .is_err()
-    );
+    assert!(compile_python_program(
+        &es,
+        &source("[row.renamed for row in rows]", &projected, "text")
+    )
+    .await
+    .is_ok());
+    assert!(compile_python_program(
+        &es,
+        &source("[row.title for row in rows]", &projected, "text")
+    )
+    .await
+    .is_err());
 }
 
 #[tokio::test]
@@ -2416,7 +2467,7 @@ async fn python_nominal_boolean_refinement_selects_only_matching_effects() {
 #[tokio::test]
 async fn python_compute_independent_inputs_compile() {
     let es = language_matrix::matrix_execute_session(language_matrix::load_language_matrix_cgs());
-    let source = "class Inputs(Program):\n    def build(self):\n        return self.count(E.query().take(2), E.get('i1'))\n    @compute\n    def count(self, left: list[Row], right: list[Row]) -> int:\n        return len(left) + len(right)\n";
+    let source = "class Inputs(Program):\n    def build(self):\n        return self.count(E.query().take(2), E.get('i1'))\n    @compute\n    def count(self, left: list[Row], right: Row) -> int:\n        return len(left) + len([right])\n";
     compile_fixture(&es, source).await.unwrap();
 }
 
@@ -2443,8 +2494,8 @@ async fn python_compute_dictionary_and_multiple_inputs_live() {
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let cases = [
         ("class P(Program):\n    def build(self):\n        return self.extract(E.query())\n    @compute\n    def extract(self, rows: list[Row]) -> list[dict]:\n        out = []\n        for row in rows:\n            out.append({'name': row.title})\n        return out\n", serde_json::json!([{"name":"one"},{"name":"two"}])),
-        ("class P(Program):\n    def build(self):\n        return self.count(E.query(), E.get('i1'))\n    @compute\n    def count(self, left: list[Row], right: list[Row]) -> dict:\n        out = {}\n        out['left'] = len(left)\n        out['right'] = len(right)\n        return out\n", serde_json::json!({"left":2,"right":1})),
-        ("class P(Program):\n    def build(self):\n        one = E.get('i1')\n        return self.count(one, one)\n    @compute\n    def count(self, row: Row, rows: list[Row]):\n        n = len(rows)\n        return {'name': row.title, 'count': n}\n", serde_json::json!({"name":"one","count":1})),
+        ("class P(Program):\n    def build(self):\n        return self.count(E.query(), E.get('i1'))\n    @compute\n    def count(self, left: list[Row], right: Row) -> dict:\n        out = {}\n        out['left'] = len(left)\n        out['right'] = len([right])\n        return out\n", serde_json::json!({"left":2,"right":1})),
+        ("class P(Program):\n    def build(self):\n        one = E.get('i1')\n        return self.count(one, one)\n    @compute\n    def count(self, row: Row, other: Row):\n        n = len([other])\n        return {'name': row.title, 'count': n}\n", serde_json::json!({"name":"one","count":1})),
         ("class P(Program):\n    def build(self):\n        value = self.make(E.query())\n        return self.read(value)\n    @compute\n    def make(self, rows: list[Row]):\n        result = {}\n        for row in rows:\n            result[str(row.id)] = str(row.title)\n        return result\n    @compute\n    def read(self, value: dict[str, str]) -> str:\n        return value['i1']\n", serde_json::json!("one")),
         ("class P(Program):\n    def build(self):\n        return self.add(True)\n    @compute\n    def add(self, value: int) -> str:\n        return str(value)\n", serde_json::json!("True")),
         ("class P(Program):\n    def build(self):\n        return self.pair(E.get('i1'))\n    @compute\n    def pair(self, row: Row):\n        return row.id, row.title\n", serde_json::json!(["i1", "one"])),

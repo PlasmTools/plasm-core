@@ -23,8 +23,15 @@ pub(super) fn resolve(
     entry: &str,
     symbols: &dyn SymbolResolve,
     imports: &str,
+    mode: ComputeInputMode,
 ) -> Result<Argument, String> {
     if is_row(annotation) {
+        if mode != ComputeInputMode::Singleton {
+            return Err(
+                "plural compute source supplies list[Row]; use a map callback for per-row work"
+                    .into(),
+            );
+        }
         return Ok(Argument {
             mapping: None,
             field: None,
@@ -34,6 +41,9 @@ pub(super) fn resolve(
     }
     if matches!(annotation, Expr::Subscript(s) if name(&s.value) == Some("list") && is_row(&s.slice))
     {
+        if mode != ComputeInputMode::Collection {
+            return Err("singleton compute source supplies Row, not list[Row]".into());
+        }
         return Ok(Argument {
             mapping: None,
             field: None,
@@ -63,19 +73,13 @@ pub(super) fn resolve(
             domain: None,
             nullable: false,
         };
-        let per_row = if expected.check(actual).is_ok() {
-            Some(true)
-        } else if expected.check(&collection).is_ok() {
-            Some(false)
-        } else {
-            None
-        };
-        if let Some(per_row) = per_row {
+        let selected = if mode.per_row() { actual } else { &collection };
+        if expected.check(selected).is_ok() {
             return Ok(Argument {
                 mapping: None,
                 field: Some(field.clone()),
-                per_row,
-                value_type: if per_row { actual.clone() } else { collection },
+                per_row: mode.per_row(),
+                value_type: selected.clone(),
             });
         }
     }
@@ -89,55 +93,52 @@ pub(super) fn resolve(
         })
         .collect::<Vec<_>>()
         .join(", ");
-    for per_row in [true, false] {
-        let value = if per_row {
-            format!("{{{entries}}}")
-        } else {
-            format!("[{{{entries}}}]")
+    let per_row = mode.per_row();
+    let value = if per_row {
+        format!("{{{entries}}}")
+    } else {
+        format!("[{{{entries}}}]")
+    };
+    if expected
+        .check_body(
+            &format!("\n    return {value}\n"),
+            &[("row", input)],
+            cgs,
+            &domains.catalogs,
+        )
+        .is_ok()
+    {
+        let mapping = Type {
+            shape: Shape::MappingRecord {
+                record: Box::new(input.clone()),
+            },
+            domain: None,
+            nullable: false,
         };
-        if expected
-            .check_body(
-                &format!("\n    return {value}\n"),
-                &[("row", input)],
-                cgs,
-                &domains.catalogs,
-            )
-            .is_ok()
-        {
-            let mapping = Type {
-                shape: Shape::MappingRecord {
-                    record: Box::new(input.clone()),
-                },
-                domain: None,
-                nullable: false,
-            };
-            return Ok(Argument {
-                field: None,
-                per_row,
-                mapping: Some({
-                    let keys =
-                        serde_json::to_string(&fields.keys().collect::<Vec<_>>()).expect("keys");
-                    let record =
-                        format!("{{key: row[key] for key in {keys} if hasattr(row, key)}}");
-                    if per_row {
-                        format!("[{record} for row in __input][0]")
-                    } else {
-                        format!("[{record} for row in __input]")
-                    }
-                }),
-                value_type: if per_row {
-                    mapping
+        return Ok(Argument {
+            field: None,
+            per_row,
+            mapping: Some({
+                let keys = serde_json::to_string(&fields.keys().collect::<Vec<_>>()).expect("keys");
+                let record = format!("{{key: row[key] for key in {keys} if hasattr(row, key)}}");
+                if per_row {
+                    format!("[{record} for row in __input][0]")
                 } else {
-                    Type {
-                        shape: Shape::Array {
-                            element: Box::new(mapping),
-                        },
-                        domain: None,
-                        nullable: false,
-                    }
-                },
-            });
-        }
+                    format!("[{record} for row in __input]")
+                }
+            }),
+            value_type: if per_row {
+                mapping
+            } else {
+                Type {
+                    shape: Shape::Array {
+                        element: Box::new(mapping),
+                    },
+                    domain: None,
+                    nullable: false,
+                }
+            },
+        });
     }
     let mut columns = fields.iter();
     let Some((field, actual)) = columns.next().filter(|_| fields.len() == 1) else {
@@ -145,8 +146,8 @@ pub(super) fn resolve(
             "value compute requires exactly one value column; project the intended field".into(),
         );
     };
-    // Try the two host materialization modes against the same upstream
-    // annotation. Do not decode container syntax or implement Python subtyping.
+    // Check only the source-selected materialization mode. Monty owns Python
+    // subtyping and annotation compatibility.
     let collection = Type {
         shape: Shape::Array {
             element: Box::new(actual.clone()),
@@ -154,15 +155,10 @@ pub(super) fn resolve(
         domain: None,
         nullable: false,
     };
-    let per_row = match expected.check(actual) {
-        Ok(()) => true,
-        Err(single_error) => {
-            expected.check(&collection).map_err(|collection_error| format!(
-                "compute input differs from its annotation; value: {single_error}; collection: {collection_error}"
-            ))?;
-            false
-        }
-    };
+    let per_row = mode.per_row();
+    expected
+        .check(if per_row { actual } else { &collection })
+        .map_err(|error| format!("compute source input differs from its annotation: {error}"))?;
     Ok(Argument {
         mapping: None,
         field: Some(field.clone()),

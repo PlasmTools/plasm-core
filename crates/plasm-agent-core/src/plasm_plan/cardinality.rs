@@ -119,16 +119,16 @@ pub(crate) fn validated_source_is_static_singleton(
         .enumerate()
         .map(|(i, n)| (n.id().as_str().to_string(), i))
         .collect();
-    validated_analyze_static_cardinality(plan, &by_id, source_id).is_static_singleton()
+    validated_analyze_static_cardinality(&plan.nodes, &by_id, source_id).is_static_singleton()
 }
 
 fn validated_analyze_static_cardinality(
-    plan: &Plan<ValidatedPlanState>,
+    nodes: &[ValidatedPlanNode],
     by_id: &HashMap<String, usize>,
     node_id: &str,
 ) -> RowCardinalityProof {
     fn inner(
-        plan: &Plan<ValidatedPlanState>,
+        nodes: &[ValidatedPlanNode],
         by_id: &HashMap<String, usize>,
         node_id: &str,
         memo: &mut HashMap<String, RowCardinalityProof>,
@@ -139,7 +139,7 @@ fn validated_analyze_static_cardinality(
         let Some(index) = by_id.get(node_id).copied() else {
             return RowCardinalityProof::StaticPlural;
         };
-        let node = &plan.nodes[index];
+        let node = &nodes[index];
         let proof = match node {
             ValidatedPlanNode::Capture(c) => {
                 if c.singleton {
@@ -165,14 +165,14 @@ fn validated_analyze_static_cardinality(
                 | PlanValue::EntityRefKey { .. } => RowCardinalityProof::StaticPlural,
                 _ => RowCardinalityProof::StaticSingleton,
             },
-            ValidatedPlanNode::Derive(d) => inner(plan, by_id, d.source.as_str(), memo),
+            ValidatedPlanNode::Derive(d) => inner(nodes, by_id, d.source.as_str(), memo),
             ValidatedPlanNode::Compute(c) => compute_cardinality_transfer(&c.compute.op, || {
-                inner(plan, by_id, c.compute.source.as_str(), memo)
+                inner(nodes, by_id, c.compute.source.as_str(), memo)
             }),
             ValidatedPlanNode::RelationTraversal(r) => {
                 match (r.relation.cardinality, r.relation.source_cardinality) {
                     (RelationCardinality::One, RelationSourceCardinality::Single) => {
-                        inner(plan, by_id, r.relation.source.as_str(), memo)
+                        inner(nodes, by_id, r.relation.source.as_str(), memo)
                     }
                     (
                         RelationCardinality::One,
@@ -189,7 +189,7 @@ fn validated_analyze_static_cardinality(
         memo.insert(node_id.to_string(), proof);
         proof
     }
-    inner(plan, by_id, node_id, &mut HashMap::new())
+    inner(nodes, by_id, node_id, &mut HashMap::new())
 }
 
 /// Catalog entity-returning mutations have the same singleton result contract
@@ -212,19 +212,13 @@ pub(crate) fn scoped_capture_permits_singleton(nodes: &[ValidatedPlanNode], sour
     let Ok(id) = super::PlanNodeId::new(source) else {
         return false;
     };
-    let plan = Plan::new_program(
-        plasm_core::plasm_monad::PLASM_COMP_WIRE_VERSION,
-        None,
-        nodes.to_vec(),
-        super::ValidatedPlanReturn::Node(id),
-        Default::default(),
-    );
+    let source = id.as_str();
     let by_id = nodes
         .iter()
         .enumerate()
         .map(|(i, n)| (n.id().to_string(), i))
         .collect();
-    validated_analyze_static_cardinality(&plan, &by_id, source).permits_scalar_field_extract()
+    validated_analyze_static_cardinality(nodes, &by_id, source).permits_scalar_field_extract()
 }
 
 #[cfg(test)]

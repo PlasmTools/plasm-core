@@ -212,7 +212,7 @@ pub(crate) fn check_callback_record_return(
 pub(crate) const LANGUAGE_PROFILE: &str =
     "monty-e007685fbb06494c13b9a7b3fede9f8e6a54a2be-typed-v11-money-v2-branches-v2";
 
-pub(crate) const CONTRACT_VERSION: u32 = 11;
+pub(crate) const CONTRACT_VERSION: u32 = 12;
 
 pub(crate) const MAX_INPUT_ROWS: usize = 256;
 
@@ -483,14 +483,28 @@ pub struct PreparedCompute {
     catalogs: BTreeMap<String, std::sync::Arc<CGS>>,
 }
 
+/// Materialization is chosen by the source DAG, never by Python annotation syntax.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ComputeInputMode {
+    Singleton,
+    Collection,
+}
+
+impl ComputeInputMode {
+    fn per_row(self) -> bool {
+        matches!(self, Self::Singleton)
+    }
+}
+
 impl PreparedCompute {
     pub fn prepare(
         source: &str,
         cgs: &CGS,
         entry: &str,
         symbols: &dyn SymbolResolve,
+        mode: ComputeInputMode,
     ) -> Result<Self, String> {
-        Self::prepare_input(source, cgs, entry, symbols, None)
+        Self::prepare_input(source, cgs, entry, symbols, None, mode)
     }
 
     pub(crate) fn prepare_input(
@@ -499,9 +513,18 @@ impl PreparedCompute {
         entry: &str,
         symbols: &dyn SymbolResolve,
         rows: Option<(&SyntheticResultSchema, &str)>,
+        mode: ComputeInputMode,
     ) -> Result<Self, String> {
-        Self::prepare_typed(source, cgs, entry, symbols, rows, &ReturnDomains::default())
-            .map_err(Into::into)
+        Self::prepare_typed(
+            source,
+            cgs,
+            entry,
+            symbols,
+            rows,
+            &ReturnDomains::default(),
+            mode,
+        )
+        .map_err(Into::into)
     }
 
     pub(crate) fn prepare_typed(
@@ -511,6 +534,7 @@ impl PreparedCompute {
         symbols: &dyn SymbolResolve,
         rows: Option<(&SyntheticResultSchema, &str)>,
         domains: &ReturnDomains,
+        mode: ComputeInputMode,
     ) -> Result<Self, PythonComputeRejection> {
         if source.len() > 4096 {
             return Err("compute source budget exceeded".into());
@@ -528,6 +552,9 @@ impl PreparedCompute {
             return Err("expected a synchronous @compute function".into());
         }
         if def.parameters.args.len() > 1 {
+            if mode != ComputeInputMode::Singleton {
+                return Err("compute dependency packet must be a singleton".into());
+            }
             return Self::prepare_multiple(
                 source, def, &imports, cgs, entry, symbols, rows, domains,
             )
@@ -626,6 +653,7 @@ impl PreparedCompute {
             entry,
             symbols,
             &imports.source,
+            mode,
         )?;
         let per_row = argument.per_row;
         let body_imports = diagnostic_imports(source, def, &imports.source);
@@ -978,12 +1006,17 @@ pub(crate) fn check_op(
         symbols.as_ref(),
         input_schema.as_ref().map(|s| (s, token.as_str())),
         &return_domains(es)?,
+        if *per_row {
+            ComputeInputMode::Singleton
+        } else {
+            ComputeInputMode::Collection
+        },
     )?;
     if checked.contract.as_ref().map(|c| c.owner.entity.as_str()) != entity.as_deref() {
         return Err("Python compute annotated entity does not match declared owner".into());
     }
     if checked.per_row != *per_row {
-        return Err("Python compute input mode differs from its annotation and schema".into());
+        return Err("Python compute input mode differs from its source".into());
     }
     if &checked.output != output_type {
         return Err("Python output type differs from checked return contract".into());
@@ -998,6 +1031,17 @@ pub(crate) fn validate_plan_compute(
 ) -> Result<(), PythonComputeRejection> {
     use crate::plasm_plan::ValidatedPlanNode;
     let checked = check_op(es, &compute.compute.op)?;
+    let source_mode = if crate::plasm_plan::scoped_capture_permits_singleton(
+        nodes,
+        compute.compute.source.as_str(),
+    ) {
+        ComputeInputMode::Singleton
+    } else {
+        ComputeInputMode::Collection
+    };
+    if checked.per_row != source_mode.per_row() {
+        return Err("Python compute input mode differs from source cardinality".into());
+    }
     if compute.compute.schema
         != plasm_core::plasm_monad::SyntheticResultSchema::for_value(checked.output.clone())?
     {

@@ -4317,7 +4317,7 @@ proptest::proptest! {
 #[test]
 fn scalar_compute_adaptation_is_not_taught() {
     let reference = include_str!("assets/python-plasm-dag.txt");
-    assert!(reference.contains("Row/Value[eN] per row; list[...] per collection."));
+    assert!(reference.contains("query -> list of rows; proven singleton -> one row"));
     assert!(reference.contains("return e1.query()") && reference.contains(".select(\"title\")"));
     for untaught in [
         "scalar compute",

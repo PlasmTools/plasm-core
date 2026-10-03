@@ -1,11 +1,6 @@
 //! Root text computations are reviewed DAG nodes, never evaluated during planning.
 use super::*;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum ComputeInputs {
-    Declared,
-    InferHelper,
-}
 use ruff_python_ast::ExprCall;
 
 impl Lower<'_> {
@@ -21,7 +16,7 @@ impl Lower<'_> {
             .get(method)
             .ok_or_else(|| at(site, "unknown compute method"))?
             .clone();
-        let lowered = self.text_compute_source(site, call, code, id, ComputeInputs::Declared)?;
+        let lowered = self.text_compute_source(site, call, code, id)?;
         self.used_methods.insert(method.to_owned());
         Ok(lowered)
     }
@@ -32,7 +27,6 @@ impl Lower<'_> {
         call: &ExprCall,
         code: String,
         id: &str,
-        input_policy: ComputeInputs,
     ) -> Result<String, PythonLoweringError> {
         let parsed = ruff_python_parser::parse_module(&code).map_err(|e| e.to_string())?;
         let Some(Stmt::FunctionDef(def)) = parsed.suite().last() else {
@@ -127,17 +121,16 @@ impl Lower<'_> {
                 let mut argument_inputs = BTreeMap::new();
                 let value = self.scoped_value(expression, &mut argument_inputs)?;
                 let annotation = parameter.parameter.annotation.as_deref();
-                if annotation.is_none() && input_policy == ComputeInputs::Declared {
-                    return Err("missing input annotation".into());
-                }
-                if annotation.is_some_and(crate::python_compute::is_row_annotation) {
-                    if let PlasmDataValue::NodeSymbol { node, path, .. } = &value {
-                        if path.is_empty() {
-                            if !super::super::binding_contract(&self.state, node)
-                                .is_some_and(|c| c.row_cardinality.permits_scalar_field_extract())
-                            {
-                                return Err(at(expression, "Row compute input requires a singleton; use list[Row] for a collection"));
-                            }
+                if let PlasmDataValue::NodeSymbol { node, path, .. } = &value {
+                    if path.is_empty() {
+                        let singleton = super::super::binding_contract(&self.state, node)
+                            .is_some_and(|c| c.row_cardinality.permits_scalar_field_extract());
+                        if annotation.is_some_and(crate::python_compute::is_row_annotation)
+                            && !singleton
+                        {
+                            return Err(at(expression, "Row compute input requires a singleton; use list[Row] for a collection"));
+                        }
+                        if singleton {
                             argument_inputs
                                 .get_mut(node)
                                 .ok_or("missing row input")?
@@ -185,50 +178,55 @@ impl Lower<'_> {
         let parameter_count = parameters.len();
         drop(parameters);
         let input = inferred_schema(self.es, &self.state, &source, 0)?.row_contract()?;
-        if input_policy == ComputeInputs::InferHelper {
-            let single_contract = if parameter_count == 1 {
-                Some(
-                    super::super::binding_contract(&self.state, &source)
-                        .ok_or("helper input contract missing")?,
-                )
-            } else {
-                None
-            };
-            for parameter in def
-                .parameters
-                .posonlyargs
-                .iter_mut()
-                .chain(&mut def.parameters.args)
-                .chain(&mut def.parameters.kwonlyargs)
-            {
-                if parameter.parameter.annotation.is_some() {
-                    continue;
-                }
-                let value = if parameter_count == 1 {
-                    input.clone()
-                } else {
-                    // The typed packet preserves each dependency separately;
-                    // inference never joins independent collections.
-                    input.field(parameter.parameter.name.as_str())?
-                };
-                let scalar_cell = single_contract
-                    .as_ref()
-                    .is_some_and(|contract| contract.value_kind == BindingValueKind::ScalarCell);
-                let collection = single_contract.as_ref().is_some_and(|contract| {
-                    !contract.row_cardinality.permits_scalar_field_extract()
-                });
-                let annotation = crate::python_compute::inferred_helper_input_annotation(
-                    &value,
-                    scalar_cell,
-                    collection,
-                )?;
-                parameter.parameter.annotation = Some(
-                    ruff_python_parser::parse_expression(&annotation)
-                        .map_err(|error| error.to_string())?
-                        .into_syntax()
-                        .body,
-                );
+        let needs_inference = def
+            .parameters
+            .posonlyargs
+            .iter()
+            .chain(&def.parameters.args)
+            .chain(&def.parameters.kwonlyargs)
+            .any(|parameter| parameter.parameter.annotation.is_none());
+        let single_contract = if parameter_count == 1 && needs_inference {
+            Some(
+                super::super::binding_contract(&self.state, &source)
+                    .ok_or("compute input contract missing")?,
+            )
+        } else {
+            None
+        };
+        for parameter in def
+            .parameters
+            .posonlyargs
+            .iter_mut()
+            .chain(&mut def.parameters.args)
+            .chain(&mut def.parameters.kwonlyargs)
+        {
+            if parameter.parameter.annotation.is_some() {
+                continue;
             }
+            let value = if parameter_count == 1 {
+                input.clone()
+            } else {
+                // The typed packet preserves each dependency separately;
+                // inference never joins independent collections.
+                input.field(parameter.parameter.name.as_str())?
+            };
+            let scalar_cell = single_contract
+                .as_ref()
+                .is_some_and(|contract| contract.value_kind == BindingValueKind::ScalarCell);
+            let collection = single_contract
+                .as_ref()
+                .is_some_and(|contract| !contract.row_cardinality.permits_scalar_field_extract());
+            let annotation = crate::python_compute::inferred_helper_input_annotation(
+                &value,
+                scalar_cell,
+                collection,
+            )?;
+            parameter.parameter.annotation = Some(
+                ruff_python_parser::parse_expression(&annotation)
+                    .map_err(|error| error.to_string())?
+                    .into_syntax()
+                    .body,
+            );
         }
         let parameters = def
             .parameters
@@ -243,7 +241,7 @@ impl Lower<'_> {
                     .parameter
                     .annotation
                     .as_deref()
-                    .ok_or("missing input annotation")?;
+                    .ok_or("internal compute input contract missing after inference")?;
                 let argument = if parameters.len() == 1 {
                     input.clone()
                 } else {
@@ -475,6 +473,14 @@ pub(super) fn prepare_op(
         symbols.as_ref(),
         input_schema.as_ref().map(|schema| (schema, token.as_str())),
         &crate::python_compute::return_domains(es)?,
+        if multiple
+            || super::super::binding_contract(state, source)
+                .is_some_and(|contract| contract.row_cardinality.permits_scalar_field_extract())
+        {
+            crate::python_compute::ComputeInputMode::Singleton
+        } else {
+            crate::python_compute::ComputeInputMode::Collection
+        },
     )?;
     if checked.contract.as_ref().map(|c| c.owner.entity.as_str())
         != owner.as_ref().map(|o| o.entity.as_str())

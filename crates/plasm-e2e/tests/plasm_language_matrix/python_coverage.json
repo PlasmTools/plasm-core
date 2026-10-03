@@ -2247,7 +2247,7 @@
     "value_closure_nullable_scalar",
     "value_closure_record",
     "value_closure_scalar_method_format",
-    "value_closure_structural_collection",
+    "value_closure_structural_singleton",
     "value_recursive_arithmetic",
     "value_recursive_bindings",
     "value_recursive_bound_write_argument",

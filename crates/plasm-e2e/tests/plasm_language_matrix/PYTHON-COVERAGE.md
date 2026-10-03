@@ -712,6 +712,12 @@ Boundary cutover witnesses (2026-10-02):
   tests live beside `python_compute`; these do not establish complete outer-builder
   language coverage.
 
+Compute-input inference (2026-10-03): `compute_inferred_callsite_inputs` runs a
+query collection and a proven-singleton Get through unannotated `@compute`
+parameters. `python_compute_infers_materialized_inputs_at_each_call` also checks
+independent named inputs, scalar fields, explicit cardinality mismatch and the
+pure-compute write boundary before I/O.
+
 Callback authority boundary: `callbacks_admit_lexical_bindings_at_rowset_consumers`
 covers upstream call binding, positional-only/keyword-only defaults, return
 annotations before truth conversion, dictionary constructor contextual typing,

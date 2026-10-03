@@ -186,11 +186,26 @@ async fn datetime_quantifiers_preserve_nested_scope_and_boolean_contracts() {
     }
 }
 
-#[tokio::test]
-async fn datetime_iteration_reobserves_temporal_stop_predicate() {
-    for enabled in [true, false] {
-        iteration_with_nullable_deadline(enabled).await;
-    }
+#[test]
+fn datetime_iteration_reobserves_temporal_stop_predicate() {
+    // Keep the generated row-protocol inference within the normal worker stack,
+    // even when the suite itself runs with a larger RUST_MIN_STACK.
+    std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    for enabled in [true, false] {
+                        iteration_with_nullable_deadline(enabled).await;
+                    }
+                });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }
 
 async fn iteration_with_nullable_deadline(enabled: bool) {

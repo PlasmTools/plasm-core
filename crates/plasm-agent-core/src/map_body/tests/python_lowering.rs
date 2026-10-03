@@ -1026,6 +1026,44 @@ fn python_per_row_values_compose_without_a_result_field() {
 }
 
 #[test]
+fn python_compute_infers_materialized_inputs_at_each_call() {
+    on_runtime(async {
+        let (es, host, calls) = fixture(3);
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let item = symbols.entity_sym_for("fixture", "Item");
+        let publish = symbols.method_sym_for("fixture", "Item", "publish");
+        let source = format!(
+            "class Values(Program):\n    @compute\n    def titles(self, rows):\n        return [row.title for row in rows]\n    @compute\n    def title(self, row):\n        return row.title\n    @compute\n    def uppercase(self, title):\n        return title.upper()\n    @compute\n    def summary(self, rows, row):\n        return {{'count': len(rows), 'first': row.title}}\n    def build(self):\n        return {{'titles': self.titles({item}.query()), 'title': self.title({item}.get('i0')), 'upper': self.uppercase({item}.get('i0').title), 'summary': self.summary(row={item}.get('i0'), rows={item}.query())}}\n"
+        );
+        let bundle = compile_python_program(&es, &source).await.unwrap();
+        assert!(calls.lock().unwrap().is_empty());
+        let run = execute(&es, &host, &bundle).await.unwrap();
+        assert_eq!(
+            serde_json::to_value(&run.return_steps[0].result.entities()[0].fields).unwrap(),
+            json!({
+                "titles": ["Title 0", "Title 1", "Title 2"],
+                "title": "Title 0",
+                "upper": "TITLE 0",
+                "summary": {"count": 3, "first": "Title 0"}
+            })
+        );
+        let calls_before_rejection = calls.lock().unwrap().len();
+        assert!(
+            compile_python_program(
+                &es,
+                &source.replace("def titles(self, rows):", "def titles(self, rows: Row):")
+            )
+            .await
+            .is_err(),
+            "an explicit scalar assertion cannot change collection cardinality"
+        );
+        let effectful = format!("class Bad(Program):\n    @compute\n    def write(self, row):\n        return row.{publish}(content='x')\n    def build(self):\n        return self.write({item}.get('i0'))\n");
+        assert!(compile_python_program(&es, &effectful).await.is_err());
+        assert_eq!(calls.lock().unwrap().len(), calls_before_rejection);
+    });
+}
+
+#[test]
 fn python_row_entity_annotation_runs_without_granting_authority() {
     on_runtime(async {
         let (es, host, _) = fixture(1);

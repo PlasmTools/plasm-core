@@ -1,5 +1,5 @@
 //! Executable research probe. These tests do not claim outer DSL/DAG integration.
-use boundary::{PreparedCompute, ValueContract};
+use boundary::{ComputeInputMode, PreparedCompute, ValueContract};
 use plasm_agent_core::python_compute as boundary;
 use plasm_core::symbol_tuning::{SymbolRender, SymbolResolve};
 use plasm_core::{TeachingExposureSession, CGS};
@@ -31,6 +31,7 @@ async fn real_monty_materialized_records_empty_singleton_plural() {
         &cgs,
         "first",
         symbols.as_ref(),
+        ComputeInputMode::Collection,
     )
     .unwrap();
     let owner = compute.contract.as_ref().unwrap().owner.clone();
@@ -81,15 +82,21 @@ async fn static_rejection_precedes_execution() {
             &cgs,
             "first",
             symbols.as_ref(),
+            ComputeInputMode::Collection,
         ) {
             Ok(prepared) => prepared.admit().is_err(),
             Err(_) => true,
         };
         assert!(rejected, "{expression}");
     }
-    assert!(
-        PreparedCompute::prepare(&source("e9999", "'x'"), &cgs, "first", symbols.as_ref()).is_err()
-    );
+    assert!(PreparedCompute::prepare(
+        &source("e9999", "'x'"),
+        &cgs,
+        "first",
+        symbols.as_ref(),
+        ComputeInputMode::Collection
+    )
+    .is_err());
 }
 #[tokio::test]
 async fn boundary_rejects_partial_unknown_missing_and_wrong_typed_values() {
@@ -102,6 +109,7 @@ async fn boundary_rejects_partial_unknown_missing_and_wrong_typed_values() {
         &cgs,
         "first",
         symbols.as_ref(),
+        ComputeInputMode::Collection,
     )
     .unwrap();
     let owner = compute.contract.as_ref().unwrap().owner.clone();
@@ -115,16 +123,22 @@ async fn boundary_rejects_partial_unknown_missing_and_wrong_typed_values() {
                 == "collection_incomplete"
         );
     }
-    for (row, expected) in [
+    for (row, expected, recovery) in [
         // An unobserved field survives materialization; accessing it fails in Python.
-        (json!({"item_id":"i1","id":"t"}), "AttributeError"),
+        (
+            json!({"item_id":"i1","id":"t"}),
+            "AttributeError",
+            plasm_runtime::RecoveryDisposition::RepairProgram,
+        ),
         (
             json!({"item_id":"i1","id":"t","label":null}),
             "materialized type",
+            plasm_runtime::RecoveryDisposition::Stop,
         ),
         (
             json!({"item_id":"i1","id":"t","label":7}),
             "materialized type",
+            plasm_runtime::RecoveryDisposition::Stop,
         ),
     ] {
         let failure = compute
@@ -137,7 +151,7 @@ async fn boundary_rejects_partial_unknown_missing_and_wrong_typed_values() {
             .await
             .unwrap_err();
         assert!(failure.diagnostic().contains(expected), "{failure:?}");
-        assert_eq!(failure.recovery, plasm_runtime::RecoveryDisposition::Stop);
+        assert_eq!(failure.recovery, recovery);
     }
     assert!(compute
         .run(
@@ -206,6 +220,7 @@ async fn cgs_enumeration_is_both_taught_and_enforced() {
         &cgs,
         "first",
         symbols.as_ref(),
+        ComputeInputMode::Collection,
     )
     .unwrap();
     let owner = compute.contract.as_ref().unwrap().owner.clone();
@@ -283,6 +298,7 @@ count={len(tags):02d}
             &cgs,
             "first",
             symbols.as_ref(),
+            ComputeInputMode::Collection,
         )
         .unwrap_or_else(|e| panic!("{expression}: {e}"));
         let rows = [json!({"item_id":"i1","id":"t1","label":"Ω"})];
@@ -311,6 +327,7 @@ async fn python_text_format_errors_are_execution_errors() {
             &cgs,
             "first",
             symbols.as_ref(),
+            ComputeInputMode::Collection,
         )
         .unwrap();
         assert!(
@@ -345,7 +362,14 @@ async fn local_mutation_and_nested_comprehensions_do_not_change_input_rows() {
     ] {
         let code =
             format!("@compute\ndef render(tags: list[Value[{symbol}]]) -> str:\n    {body}\n");
-        let compute = PreparedCompute::prepare(&code, &cgs, "first", symbols.as_ref()).unwrap();
+        let compute = PreparedCompute::prepare(
+            &code,
+            &cgs,
+            "first",
+            symbols.as_ref(),
+            ComputeInputMode::Collection,
+        )
+        .unwrap();
         assert_eq!(
             compute
                 .run(

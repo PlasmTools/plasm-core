@@ -209,13 +209,7 @@ impl Lower<'_> {
                 "@compute\n{}",
                 monty::statement_source(&Stmt::FunctionDef(def))
             );
-            return self.text_compute_source(
-                site,
-                call,
-                code,
-                id,
-                text::ComputeInputs::InferHelper,
-            );
+            return self.text_compute_source(site, call, code, id);
         }
         let identity = format!("method:{name}");
         if self.active_callbacks.contains(&identity) {

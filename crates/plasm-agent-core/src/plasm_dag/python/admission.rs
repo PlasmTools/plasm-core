@@ -231,28 +231,13 @@ impl<'a> Root<'a> {
                 .chain(&extracted.parameters.args)
                 .chain(&extracted.parameters.kwonlyargs)
                 .collect::<Vec<_>>();
-            if let Some(input) = inputs
-                .iter()
-                .find(|input| input.parameter.annotation.is_none())
-            {
-                return Err(at(
-                    &input.parameter,
-                    &format!(
-                        "@compute input `{}` requires a materialized type annotation; use the declared Row, list[Row], scalar, or nullable scalar contract for this dependency",
-                        input.parameter.name
-                    ),
-                ));
-            }
             for input in &inputs {
-                let annotation = input
-                    .parameter
-                    .annotation
-                    .as_deref()
-                    .expect("checked above");
-                if let Some(problem) =
-                    ComputeAnnotationProblem::recognize(annotation, symbols.as_ref())
-                {
-                    return Err(at(annotation, problem.correction()));
+                if let Some(annotation) = input.parameter.annotation.as_deref() {
+                    if let Some(problem) =
+                        ComputeAnnotationProblem::recognize(annotation, symbols.as_ref())
+                    {
+                        return Err(at(annotation, problem.correction()));
+                    }
                 }
             }
             for input in &inputs {
@@ -319,7 +304,7 @@ impl ComputeAnnotationProblem {
     fn correction(self) -> &'static str {
         match self {
             Self::DagRowHandle(shape) => shape.compute_input_correction(),
-            Self::EntityAsCollectionElement => "an eN symbol is a catalog binding, not a Python type; use `list[Row[eN]]` for entity rows",
+            Self::EntityAsCollectionElement => "an eN symbol is a catalog binding, not a Python type; omit the annotation and let @compute infer its input from the call",
         }
     }
 }

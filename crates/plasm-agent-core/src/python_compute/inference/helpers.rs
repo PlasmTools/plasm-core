@@ -40,7 +40,7 @@ fn literal_annotation(graph: &Graph, id: TypeId, depth: usize) -> Option<String>
             .iter()
             .map(|inner| literal_annotation(graph, *inner, depth + 1))
             .collect::<Option<Vec<_>>>()
-            .map(|items| items.join(" | ")),
+            .map(|items| super::super::upstream::balanced_union(&items)),
         _ => None,
     }
 }
@@ -114,7 +114,7 @@ fn checked_type(
         .copied()
         .map(|id| literal_annotation(&graph, id, 0))
         .collect::<Option<Vec<_>>>()
-        .map(|items| items.join(" | "));
+        .map(|items| super::super::upstream::balanced_union(&items));
     let contract = graph
         .roots
         .iter()

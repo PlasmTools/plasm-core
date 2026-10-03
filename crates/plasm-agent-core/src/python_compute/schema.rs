@@ -356,6 +356,7 @@ mod tests {
             "matrix",
             symbols.as_ref(),
             Some((&schema, &token)),
+            ComputeInputMode::Singleton,
         )
         .unwrap();
         let relation = &checked.contract.as_ref().unwrap().fields["lines"].value_type;
@@ -428,6 +429,7 @@ mod tests {
                 "matrix",
                 symbols.as_ref(),
                 Some((&schema, &token)),
+                ComputeInputMode::Singleton
             )
             .and_then(|prepared| prepared.admit().map_err(|e| e.to_string()))
             .is_err());
@@ -476,13 +478,14 @@ mod tests {
                 source: None,
             }],
         };
-        let checked = PreparedCompute::prepare_input("@compute\ndef render(row: Row) -> str:\n    return '|'.join(str(item.n) for item in row.records)\n", &cgs, "types", symbols.as_ref(), Some((&schema, &token)),).unwrap();
+        let checked = PreparedCompute::prepare_input("@compute\ndef render(row: Row) -> str:\n    return '|'.join(str(item.n) for item in row.records)\n", &cgs, "types", symbols.as_ref(), Some((&schema, &token)), ComputeInputMode::Singleton).unwrap();
         let indexed = PreparedCompute::prepare_input(
             "@compute\ndef render(row: Row) -> str:\n    return str(row.records[0]['n'])\n",
             &cgs,
             "types",
             symbols.as_ref(),
             Some((&schema, &token)),
+            ComputeInputMode::Singleton,
         );
         let pool = crate::python_pool::PythonPool::default();
         let indexed = indexed.unwrap();
@@ -515,7 +518,8 @@ mod tests {
             "types",
             symbols.as_ref(),
             Some((&json_schema, &token)),
-        ).unwrap();
+
+            ComputeInputMode::Singleton).unwrap();
         assert_eq!(
             json_access
                 .run(
@@ -598,6 +602,7 @@ mod tests {
             "types",
             symbols.as_ref(),
             Some((&schema, &token)),
+            ComputeInputMode::Singleton,
         )
         .unwrap();
         let pool = crate::python_pool::PythonPool::default();
@@ -636,6 +641,7 @@ mod tests {
             "types",
             symbols.as_ref(),
             Some((&schema, &token)),
+            ComputeInputMode::Singleton,
         )
         .unwrap();
         let error = unguarded

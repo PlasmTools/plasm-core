@@ -100,6 +100,9 @@ pub(super) fn assert_supplemental(id: &str, run: &PlasmPlanRunResult) {
         .collect();
     let titles = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon"];
     let expected = match id {
+        "compute_inferred_callsite_inputs" => {
+            json!([{"titles": ["Alpha", "Beta"], "first": "Alpha"}])
+        }
         "predicate_truth_string" | "predicate_truth_and" | "predicate_truth_iteration" => {
             json!([{ "id": "i1" }])
         }
@@ -134,7 +137,7 @@ pub(super) fn assert_supplemental(id: &str, run: &PlasmPlanRunResult) {
         "value_closure_bool_scalar" => json!([{"value": true}]),
         "value_closure_nullable_scalar" => json!([{"value": 0}]),
         "value_closure_empty_collection" => json!([{"value": 0}]),
-        "value_closure_structural_collection" => json!([{"value": 7}]),
+        "value_closure_structural_singleton" => json!([{"value": 7}]),
         "value_closure_nullable_collection" => json!([{"value":30}]),
         "value_closure_scalar_method_format" => json!([{"value":"HELLO"}]),
         "value_recursive_read_argument" => json!([{"title": "Alpha"}]),

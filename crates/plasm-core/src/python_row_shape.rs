@@ -1,7 +1,6 @@
-//! Python row handles in cards and their materialized compute-input counterparts.
+//! Python row handles in cards. Compute ports infer materialized inputs at call sites.
 
-/// A DAG result shape. These aliases name graph handles, not Python values that
-/// can be used as `@compute` parameter annotations.
+/// A DAG result shape. These aliases name graph handles, not Python values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PythonRowShape {
     Rows,
@@ -24,17 +23,10 @@ impl PythonRowShape {
         }
     }
 
-    pub fn materialized_annotation(self, entity: &str) -> String {
-        match self {
-            Self::Rows => format!("list[Row[{entity}]]"),
-            Self::Singleton => format!("Row[{entity}]"),
-        }
-    }
-
     pub fn compute_input_correction(self) -> &'static str {
         match self {
-            Self::Rows => "`Rows` is a DAG result, not a materialized input type; use `list[Row]` or `list[Row[eN]]` for a collection",
-            Self::Singleton => "`Singleton` is a DAG result, not a materialized input type; use `Row` or `Row[eN]` for a proven singleton",
+            Self::Rows => "`Rows` is a DAG handle; omit the annotation because @compute infers a Python collection from the call",
+            Self::Singleton => "`Singleton` is a DAG handle; omit the annotation because @compute infers a Python row from the call",
         }
     }
 }
@@ -44,24 +36,13 @@ mod tests {
     use super::PythonRowShape;
 
     #[test]
-    fn card_shapes_have_distinct_materialized_compute_types() {
+    fn card_shapes_are_dag_handles_with_inferred_compute_inputs() {
         for (shape, alias) in [
             (PythonRowShape::Rows, "Rows"),
             (PythonRowShape::Singleton, "Singleton"),
         ] {
             assert_eq!(PythonRowShape::from_card_alias(alias), Some(shape));
-            assert_ne!(
-                shape.card_annotation("e1"),
-                shape.materialized_annotation("e1")
-            );
+            assert!(shape.compute_input_correction().contains("infers"));
         }
-        assert_eq!(
-            PythonRowShape::Rows.materialized_annotation("e1"),
-            "list[Row[e1]]"
-        );
-        assert_eq!(
-            PythonRowShape::Singleton.materialized_annotation("e1"),
-            "Row[e1]"
-        );
     }
 }

@@ -1,5 +1,5 @@
 //! Type-boundary matrix: concrete CGS domains through the real checked Monty worker.
-use plasm_agent::python_compute::{PreparedCompute, ValueContract};
+use plasm_agent::python_compute::{ComputeInputMode, PreparedCompute, ValueContract};
 use plasm_core::symbol_tuning::SymbolRender;
 use plasm_core::{TeachingExposureSession, CGS};
 use serde_json::{json, Value};
@@ -230,7 +230,7 @@ async fn python_value_contract_matrix_real_monty() {
         let source = format!(
             "@compute\ndef render(rows: list[Value[{token}]]) -> str:\n    return {expression}\n"
         );
-        let checked = PreparedCompute::prepare(&source, &cgs, "types", symbols.as_ref())
+        let checked = PreparedCompute::prepare(&source, &cgs, "types", symbols.as_ref(), ComputeInputMode::Collection)
             .unwrap_or_else(|e| panic!("{expression}: {e}"));
         let result = checked
             .run(

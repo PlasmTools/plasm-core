@@ -48,15 +48,26 @@ pub(super) fn record_index_members(fields: &[(String, String)]) -> String {
             serde_json::to_string(key).expect("string")
         ));
     }
-    let types = fields
-        .iter()
-        .map(|(_, ty)| format!("({ty})"))
-        .collect::<Vec<_>>()
-        .join(" | ");
+    let types = fields.iter().map(|(_, ty)| ty.as_str()).collect::<Vec<_>>();
+    // `a | b | ...` parses left-deep. Wide row contracts made the upstream
+    // checker exhaust a normal worker stack while inferring an unrelated field.
+    let types = balanced_union(&types);
     out.push_str(&format!(
         "    @overload\n    def __getitem__(self, key: str) -> {types}: ...\n"
     ));
     out
+}
+
+/// Keep generated Python union syntax logarithmic in depth for the upstream checker.
+pub(super) fn balanced_union<T: AsRef<str>>(types: &[T]) -> String {
+    match types {
+        [] => "Never".into(),
+        [only] => format!("({})", only.as_ref()),
+        _ => {
+            let (left, right) = types.split_at(types.len() / 2);
+            format!("({}) | ({})", balanced_union(left), balanced_union(right))
+        }
+    }
 }
 
 fn render(
@@ -78,11 +89,12 @@ fn render(
         ),
         ValueShape::Never => "Never".into(),
         ValueShape::Null => "None".into(),
-        ValueShape::Union { variants } => variants
-            .iter()
-            .map(|v| render(v, cgs, catalogs, out, depth + 1))
-            .collect::<Result<Vec<_>, _>>()?
-            .join(" | "),
+        ValueShape::Union { variants } => balanced_union(
+            &variants
+                .iter()
+                .map(|v| render(v, cgs, catalogs, out, depth + 1))
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
         ValueShape::MappingRecord { record } => {
             use sha2::{Digest, Sha256};
             output_annotation(record, cgs, catalogs, out)?;
@@ -387,11 +399,12 @@ pub(super) fn output_annotation(
                     render(t, cgs, catalogs, out, depth)?,
                 )
             }
-            ValueShape::Union { variants } => variants
-                .iter()
-                .map(|v| output(v, cgs, catalogs, out, depth + 1))
-                .collect::<Result<Vec<_>, _>>()?
-                .join(" | "),
+            ValueShape::Union { variants } => balanced_union(
+                &variants
+                    .iter()
+                    .map(|v| output(v, cgs, catalogs, out, depth + 1))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
             _ => return render(t, cgs, catalogs, out, depth),
         };
         Ok(if t.nullable {

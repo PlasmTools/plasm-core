@@ -130,13 +130,9 @@ mod tests {
         );
     }
     #[tokio::test]
-    async fn compute_collection_annotations_name_the_actual_materialized_type() {
+    async fn compute_dag_handle_annotations_point_to_call_site_inference() {
         let session = session();
-        for (annotation, expected) in [
-            ("Rows[e1]", "list[Row[eN]]"),
-            ("Singleton[e1]", "Row[eN]"),
-            ("list[e1]", "list[Row[eN]]"),
-        ] {
+        for annotation in ["Rows[e1]", "Singleton[e1]", "list[e1]"] {
             let source = format!("class Read(Program):\n    @compute\n    def count(self, rows: {annotation}) -> int:\n        return len(rows)\n    def build(self):\n        return self.count(e1.query())\n");
             let error =
                 crate::compile_program(&Default::default(), None, &session, "test", &source)
@@ -147,7 +143,7 @@ mod tests {
             assert!(matches!(&error, ProgramStageError::PythonLowering { .. }));
             assert!(error.span_offset().is_some());
             assert!(
-                error.correction().contains(expected),
+                error.correction().contains("omit the annotation"),
                 "{annotation}: {}",
                 error.correction()
             );

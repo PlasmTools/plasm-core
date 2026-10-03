@@ -144,12 +144,19 @@ fn row_entity_annotation_matches_value_contract_recursively() {
     ] {
         let source = format!("@compute\ndef keep(row: {input}) -> {output}:\n    {body}\n")
             .replace("E", &token);
-        let canonical = PreparedCompute::prepare(&source, &cgs, "types", symbols.as_ref()).unwrap();
+        let mode = if input.starts_with("list[") {
+            ComputeInputMode::Collection
+        } else {
+            ComputeInputMode::Singleton
+        };
+        let canonical =
+            PreparedCompute::prepare(&source, &cgs, "types", symbols.as_ref(), mode).unwrap();
         let alternate = PreparedCompute::prepare(
             &source.replace("Value[", "Row["),
             &cgs,
             "types",
             symbols.as_ref(),
+            mode,
         )
         .unwrap();
         assert_eq!(canonical.output, alternate.output);
@@ -159,7 +166,14 @@ fn row_entity_annotation_matches_value_contract_recursively() {
         alternate.admit().unwrap();
     }
     let invalid = "@compute\ndef keep(row: Row[missing]) -> str:\n    return ''\n".to_string();
-    assert!(PreparedCompute::prepare(&invalid, &cgs, "types", symbols.as_ref()).is_err());
+    assert!(PreparedCompute::prepare(
+        &invalid,
+        &cgs,
+        "types",
+        symbols.as_ref(),
+        ComputeInputMode::Singleton
+    )
+    .is_err());
 }
 
 #[test]

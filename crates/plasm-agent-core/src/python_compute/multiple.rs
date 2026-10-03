@@ -115,6 +115,11 @@ impl PreparedCompute {
                         entry,
                         symbols,
                         &imports.source,
+                        if collection {
+                            ComputeInputMode::Collection
+                        } else {
+                            ComputeInputMode::Singleton
+                        },
                     )?;
                     if adapted.mapping.is_none() || adapted.per_row == collection {
                         return Err(original);
@@ -307,6 +312,7 @@ mod tests {
             "types",
             symbols.as_ref(),
             Some((&schema, "")),
+            ComputeInputMode::Singleton,
         )
         .unwrap();
         assert_eq!(prepared.output, collection(item.clone()));
@@ -322,6 +328,7 @@ mod tests {
             "types",
             symbols.as_ref(),
             Some((&schema, "")),
+            ComputeInputMode::Singleton,
         )
         .unwrap();
         assert_eq!(prepared.output, collection(item.clone()));
@@ -335,6 +342,7 @@ mod tests {
             "types",
             symbols.as_ref(),
             Some((&schema, "")),
+            ComputeInputMode::Singleton,
         )
         .unwrap();
         assert_eq!(prepared.output, item);
@@ -351,7 +359,8 @@ mod tests {
                     &cgs,
                     "types",
                     symbols.as_ref(),
-                    Some((&schema, ""))
+                    Some((&schema, "")),
+                    ComputeInputMode::Singleton,
                 )
                 .is_err(),
                 "accepted {invalid}"

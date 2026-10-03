@@ -102,11 +102,10 @@ fn python_query_card_advertises_only_source_call_inputs() {
 }
 
 #[test]
-fn python_language_distinguishes_dag_results_from_compute_inputs() {
-    for shape in [PythonRowShape::Rows, PythonRowShape::Singleton] {
-        assert!(LANGUAGE.contains(&shape.card_annotation("eN")));
-        assert!(LANGUAGE.contains(&shape.materialized_annotation("eN")));
-    }
+fn python_language_teaches_inferred_compute_inputs() {
+    assert!(LANGUAGE.contains("Input types inferred from each call"));
+    assert!(LANGUAGE.contains("annotations not required"));
+    assert!(!LANGUAGE.contains("list[Row[eN]]"));
 }
 
 #[test]

@@ -96,11 +96,12 @@ impl Declarations {
             ValueShape::Array { element } => format!("list[{}]", self.render(element, depth + 1)?),
             ValueShape::Set { element } => format!("set[{}]", self.render(element, depth + 1)?),
             ValueShape::MappingRecord { .. } => unreachable!(),
-            ValueShape::Union { variants } => variants
-                .iter()
-                .map(|v| self.render(v, depth + 1))
-                .collect::<Result<Vec<_>, _>>()?
-                .join(" | "),
+            ValueShape::Union { variants } => super::super::upstream::balanced_union(
+                &variants
+                    .iter()
+                    .map(|v| self.render(v, depth + 1))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
             ValueShape::Temporal { kind, .. } => format!("datetime.{}", kind.python_name()),
             ValueShape::Scalar { field_type } => match field_type {
                 FieldType::Boolean => "bool",
