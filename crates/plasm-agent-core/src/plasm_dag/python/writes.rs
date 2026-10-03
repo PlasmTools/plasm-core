@@ -14,7 +14,7 @@ impl Lower<'_> {
         resolved: ResolvedCatalogCall<'_, CatalogWriteKind>,
         receiver: Option<&str>,
         id: &str,
-    ) -> Result<String, String> {
+    ) -> Result<String, PythonLoweringError> {
         let symbols = self.state.sym_map_for(self.es);
         let kind = resolved.kind;
         let cgs = resolved.cgs;
@@ -112,7 +112,7 @@ impl Lower<'_> {
         self.emit_catalog(id, expr)
     }
 
-    pub(super) fn write_value(&mut self, e: &PyExpr) -> Result<Value, String> {
+    pub(super) fn write_value(&mut self, e: &PyExpr) -> Result<Value, PythonLoweringError> {
         let mut inputs = BTreeMap::new();
         let value = self.scoped_value(e, &mut inputs)?;
         self.value_operand(value, &inputs.into_values().collect::<Vec<_>>())
@@ -122,7 +122,7 @@ impl Lower<'_> {
         &mut self,
         value: PlasmDataValue,
         inputs: &[crate::plasm_plan::PlanDataInput],
-    ) -> Result<Value, String> {
+    ) -> Result<Value, PythonLoweringError> {
         Ok(match value {
             PlasmDataValue::Literal { value } => value.into_value(),
             PlasmDataValue::NodeSymbol { node, path, .. } => {
@@ -141,7 +141,7 @@ impl Lower<'_> {
                 fields
                     .into_iter()
                     .map(|(k, v)| Ok((k, self.value_operand(v, inputs)?)))
-                    .collect::<Result<_, String>>()?,
+                    .collect::<Result<_, PythonLoweringError>>()?,
             ),
             value => {
                 let id = self.fresh();
@@ -151,7 +151,7 @@ impl Lower<'_> {
         })
     }
 
-    pub(super) fn field_input(&mut self, e: &PyExpr) -> Result<PlasmInputRef, String> {
+    pub(super) fn field_input(&mut self, e: &PyExpr) -> Result<PlasmInputRef, PythonLoweringError> {
         let PyExpr::Attribute(a) = e else {
             return Err(at(e, "expected a field dependency"));
         };

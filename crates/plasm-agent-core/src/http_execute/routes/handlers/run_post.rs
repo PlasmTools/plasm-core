@@ -186,11 +186,7 @@ pub(crate) async fn post_run_execute_session_inner(
                 plan_commit_ref: None,
             },
         ) {
-            let diag = crate::program_diagnostic::ProgramDiagnostic::flow_denied(format!(
-                "plan denied by flow policy ({:?}): {} violation(s)",
-                denial.verdict,
-                denial.violations.len()
-            ));
+            let diag = crate::program_diagnostic::ProgramDiagnostic::flow_denied(&denial);
             return (
                 StatusCode::OK,
                 [(CONTENT_TYPE, "application/json; charset=utf-8")],
@@ -216,11 +212,7 @@ pub(crate) async fn post_run_execute_session_inner(
         ) {
             Ok(record) => record,
             Err(denial) => {
-                let diag = crate::program_diagnostic::ProgramDiagnostic::flow_denied(format!(
-                    "plan commit blocked by flow policy ({:?}): {} violation(s)",
-                    denial.verdict,
-                    denial.violations.len()
-                ));
+                let diag = crate::program_diagnostic::ProgramDiagnostic::flow_denied(&denial);
                 return (
                     StatusCode::OK,
                     [(CONTENT_TYPE, "application/json; charset=utf-8")],
@@ -369,11 +361,7 @@ pub(crate) async fn post_run_execute_session_inner(
                     Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
                 )
                 .with_title("Bad Request")
-                .with_detail(format!(
-                    "plan denied by flow policy ({:?}): {} violation(s)",
-                    denial.verdict,
-                    denial.violations.len()
-                )),
+                .with_detail(denial.agent_correction()),
             );
         }
     }

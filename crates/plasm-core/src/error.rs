@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-#[derive(Error, Debug, Clone)]
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum TypeError {
     #[error("Field '{field}' not found in entity '{entity}'")]
     FieldNotFound { field: String, entity: String },
@@ -73,6 +73,54 @@ pub enum TypeError {
     /// Surface query failed lane-typed [`crate::ResolvedRowset`] normalization (RA-1).
     #[error("rowset normalize: {message}")]
     RowsetNormalize { message: String },
+}
+
+impl TypeError {
+    /// Python Program correction owned by the rejected type-error variant.
+    /// Presentation layers must carry this text unchanged; they do not infer a
+    /// remedy from a broad error category or from the rendered error string.
+    pub fn python_correction(&self) -> String {
+        match self {
+            Self::FieldNotFound { field, entity } => format!(
+                "Field {field:?} is not declared on {entity:?}. Use a field declared on that row's entity."
+            ),
+            Self::RelationNotFound { relation, entity } => format!(
+                "Relation {relation:?} is not declared on {entity:?}. Use a relation declared on that entity."
+            ),
+            Self::EntityNotFound { entity } => format!(
+                "Entity {entity:?} is not in the current catalog. Use an exposed entity binding."
+            ),
+            Self::CapabilityNotFound { capability } => format!(
+                "Capability {capability:?} is not declared in the current catalog. Use a declared method on its entity."
+            ),
+            Self::RequiredParameterOmitted { parameter, .. } => format!(
+                "Supply the required keyword {parameter}=value on the declared Python method."
+            ),
+            Self::InputRequired { capability } => format!(
+                "Capability {capability:?} requires input. Supply its declared required arguments."
+            ),
+            Self::RefKeyMismatch { message, .. } => format!(
+                "Get identity mismatch: {message}. Follow the declared get identity signature."
+            ),
+            Self::DomainPlaceholderLiteral {
+                field,
+                expected_type,
+                ..
+            } => format!(
+                "Replace the teaching placeholder for {field:?} with an actual {expected_type} value."
+            ),
+            Self::RecursiveError { relation, source } => {
+                format!("Relation {relation:?}: {}", source.python_correction())
+            }
+            Self::ChainTargetMissingGet { target_entity, .. } => format!(
+                "The relation target {target_entity:?} has no Get capability. Use a declared materialized relation or source."
+            ),
+            Self::IncompatibleOperator { .. }
+            | Self::IncompatibleValue { .. }
+            | Self::CrossCurrencyCompare { .. } => self.to_string(),
+            Self::RowsetNormalize { message } => format!("Source input contract: {message}"),
+        }
+    }
 }
 
 impl From<crate::money::CrossCurrencyError> for TypeError {

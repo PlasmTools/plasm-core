@@ -254,7 +254,8 @@ async fn live_materialize_pure(
                 }
             };
             report(ExecutionStage::Materializing);
-            let checked = crate::python_compute::check_op(ctx.es, &compute.compute.op)?;
+            let checked = crate::python_compute::check_op(ctx.es, &compute.compute.op)
+                .map_err(|error| plasm_runtime::ExecutionFailure::from(String::from(error)))?;
             let owner = plasm_core::symbol_tuning::EntityBinding {
                 entry_id: source_mat.qualified_entity.entry_id.clone().into(),
                 entity: source_mat.qualified_entity.entity.clone().into(),

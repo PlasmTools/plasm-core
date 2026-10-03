@@ -27,13 +27,13 @@ impl Lower<'_> {
         method: &str,
         source: &str,
         id: &str,
-    ) -> Result<String, String> {
+    ) -> Result<String, PythonLoweringError> {
         let keys = call
             .arguments
             .args
             .iter()
-            .map(|arg| FieldPath::from_dotted(&string(arg)?))
-            .collect::<Result<Vec<_>, String>>()?;
+            .map(|arg| FieldPath::from_dotted(&string(arg)?).map_err(Into::into))
+            .collect::<Result<Vec<_>, PythonLoweringError>>()?;
         let node = if method == "distinct" {
             if !call.arguments.keywords.is_empty() {
                 return Err(at(site, "distinct accepts only literal field names"));

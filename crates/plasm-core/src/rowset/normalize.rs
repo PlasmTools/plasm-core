@@ -56,7 +56,7 @@ pub fn normalize_query_expr_to_rowset(
             for (field, op, value) in comparisons {
                 if control_names.contains(field.as_str()) {
                     return Err(format!(
-                        "RA-1: '{field}' is an invocation-control slot; source braces accept backend-selection (and root scope pivots) only — use pagination/hydrate controls, not braces"
+                        "RA-1: '{field}' is a capability control, not a query selection argument. Omit this control from the source call; use a declared selection/scope argument for backend filtering. If sorting returned rows is intended, apply `.order_by(field, descending=True)` to a complete rowset."
                     ));
                 }
                 if selection_names.contains(field.as_str()) || scope_names.contains(field.as_str())

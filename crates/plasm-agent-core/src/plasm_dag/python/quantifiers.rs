@@ -32,7 +32,7 @@ impl Lower<'_> {
         call: &ExprCall,
         all: bool,
         inputs: &mut BTreeMap<String, PlanDataInput>,
-    ) -> Result<PlasmDataValue, String> {
+    ) -> Result<PlasmDataValue, PythonLoweringError> {
         let [argument] = call.arguments.args.as_ref() else {
             return Err(at(site, "quantification requires one iterable"));
         };

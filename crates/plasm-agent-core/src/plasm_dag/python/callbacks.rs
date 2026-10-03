@@ -16,7 +16,7 @@ impl Lower<'_> {
     pub(super) fn declare_callback(
         &mut self,
         def: &ruff_python_ast::StmtFunctionDef,
-    ) -> Result<(), String> {
+    ) -> Result<(), PythonLoweringError> {
         let label = def.name.as_str();
         if label == "self"
             || label.starts_with("__")
@@ -106,7 +106,7 @@ impl Lower<'_> {
         site: &PyExpr,
         call: &ruff_python_ast::ExprCall,
         id: &str,
-    ) -> Result<String, String> {
+    ) -> Result<String, PythonLoweringError> {
         let callback = self.callback(&call.func)?;
         let mut arguments = call
             .arguments
@@ -184,7 +184,10 @@ impl Lower<'_> {
             id,
         )
     }
-    pub(super) fn callback(&mut self, expression: &PyExpr) -> Result<Callback, String> {
+    pub(super) fn callback(
+        &mut self,
+        expression: &PyExpr,
+    ) -> Result<Callback, PythonLoweringError> {
         match expression {
             PyExpr::Lambda(lambda) => {
                 let mut closure = self.frame.names.clone();
@@ -235,7 +238,7 @@ impl Callback {
         parameter: &str,
         flow: monty_analysis::FunctionFlow,
         closure: BTreeMap<String, String>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, PythonLoweringError> {
         let parsed = ruff_python_parser::parse_expression(&format!("lambda {parameter}: None"))
             .map_err(|e| e.to_string())?;
         let PyExpr::Lambda(lambda) = *parsed.into_syntax().body else {

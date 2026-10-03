@@ -38,7 +38,7 @@ impl<'a> LiteralOperand<'a> {
             _ => return None,
         })
     }
-    pub(super) fn scalar(self, e: &PyExpr) -> Result<plasm_core::Value, String> {
+    pub(super) fn scalar(self, e: &PyExpr) -> Result<plasm_core::Value, PythonLoweringError> {
         match self {
             Self::Signed(unary) => {
                 let PyExpr::NumberLiteral(number) = &*unary.operand else {

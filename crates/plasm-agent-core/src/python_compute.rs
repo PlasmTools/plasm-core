@@ -1,4 +1,5 @@
 mod admission;
+pub(crate) use admission::render_analysis_diagnostics;
 #[cfg(test)]
 mod analysis_tests;
 mod arguments;
@@ -23,6 +24,8 @@ use ruff_python_ast::{Expr, Stmt};
 use ruff_text_size::Ranged;
 use std::collections::BTreeMap;
 
+use crate::program_rejection::PythonComputeRejection;
+
 /// A callback receives one materialized row. The checker judges any declared
 /// Python parameter type; the host supplies catalog references and provenance.
 pub(crate) fn check_row_parameter(
@@ -30,7 +33,7 @@ pub(crate) fn check_row_parameter(
     annotation: &Expr,
     actual: &plasm_core::value_contract::ValueContract,
     imports: &str,
-) -> Result<(), String> {
+) -> Result<(), PythonComputeRejection> {
     check_callback_return(session, annotation, actual, actual, imports)
 }
 
@@ -40,7 +43,7 @@ pub(crate) fn check_callback_return(
     input: &plasm_core::value_contract::ValueContract,
     actual: &plasm_core::value_contract::ValueContract,
     imports: &str,
-) -> Result<(), String> {
+) -> Result<(), PythonComputeRejection> {
     let context = session
         .contexts_by_entry
         .get(&session.entry_id)
@@ -57,7 +60,7 @@ pub(crate) fn check_callback_return(
         symbols.as_ref(),
         imports,
     )?;
-    annotation.check(actual)
+    annotation.check(actual).map_err(Into::into)
 }
 
 pub(crate) fn check_callback_closed_return(
@@ -66,7 +69,7 @@ pub(crate) fn check_callback_closed_return(
     input: &plasm_core::value_contract::ValueContract,
     expression: &Expr,
     imports: &str,
-) -> Result<(), String> {
+) -> Result<(), PythonComputeRejection> {
     let context = session
         .contexts_by_entry
         .get(&session.entry_id)
@@ -83,12 +86,14 @@ pub(crate) fn check_callback_closed_return(
         symbols.as_ref(),
         imports,
     )?;
-    annotation.check_body(
-        &format!("\n    return ({})\n", monty::expression_source(expression)),
-        &[],
-        &context.cgs,
-        &domains.catalogs,
-    )
+    annotation
+        .check_body(
+            &format!("\n    return ({})\n", monty::expression_source(expression)),
+            &[],
+            &context.cgs,
+            &domains.catalogs,
+        )
+        .map_err(Into::into)
 }
 
 /// A DAG record literal is a Python dictionary expression before its fields are
@@ -99,7 +104,7 @@ pub(crate) fn check_callback_record_return(
     input: &plasm_core::value_contract::ValueContract,
     actual: &plasm_core::value_contract::ValueContract,
     imports: &str,
-) -> Result<(), String> {
+) -> Result<(), PythonComputeRejection> {
     let context = session
         .contexts_by_entry
         .get(&session.entry_id)
@@ -127,12 +132,14 @@ pub(crate) fn check_callback_record_return(
         })
         .collect::<Result<Vec<_>, String>>()?
         .join(", ");
-    annotation.check_body(
-        &format!("\n    return {{{entries}}}\n"),
-        &[("result", actual)],
-        &context.cgs,
-        &domains.catalogs,
-    )
+    annotation
+        .check_body(
+            &format!("\n    return {{{entries}}}\n"),
+            &[("result", actual)],
+            &context.cgs,
+            &domains.catalogs,
+        )
+        .map_err(Into::into)
 }
 
 pub(crate) const LANGUAGE_PROFILE: &str =
@@ -355,7 +362,7 @@ pub(crate) fn observed_relation_type(
 pub(crate) fn definition_body(
     source: &str,
     def: &ruff_python_ast::StmtFunctionDef,
-) -> Result<String, String> {
+) -> Result<String, PythonComputeRejection> {
     let start = def
         .body
         .first()
@@ -427,6 +434,7 @@ impl PreparedCompute {
         rows: Option<(&SyntheticResultSchema, &str)>,
     ) -> Result<Self, String> {
         Self::prepare_typed(source, cgs, entry, symbols, rows, &ReturnDomains::default())
+            .map_err(Into::into)
     }
 
     pub(crate) fn prepare_typed(
@@ -436,7 +444,7 @@ impl PreparedCompute {
         symbols: &dyn SymbolResolve,
         rows: Option<(&SyntheticResultSchema, &str)>,
         domains: &ReturnDomains,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, PythonComputeRejection> {
         if source.len() > 4096 {
             return Err("compute source budget exceeded".into());
         }
@@ -455,7 +463,8 @@ impl PreparedCompute {
         if def.parameters.args.len() > 1 {
             return Self::prepare_multiple(
                 source, def, &imports, cgs, entry, symbols, rows, domains,
-            );
+            )
+            .map_err(Into::into);
         }
         let p = &def.parameters;
         if !p.posonlyargs.is_empty()
@@ -861,7 +870,7 @@ fn entity_record_argument(expr: &Expr) -> Result<&Expr, String> {
 pub(crate) fn check_op(
     es: &crate::execute_session::ExecuteSession,
     op: &plasm_core::plasm_monad::ComputeOp,
-) -> Result<PreparedCompute, String> {
+) -> Result<PreparedCompute, PythonComputeRejection> {
     let plasm_core::plasm_monad::ComputeOp::Python {
         source,
         entry_id,
@@ -919,7 +928,7 @@ pub(crate) fn validate_plan_compute(
     es: &crate::execute_session::ExecuteSession,
     compute: &crate::plasm_plan::ValidatedComputeNode,
     nodes: &[crate::plasm_plan::ValidatedPlanNode],
-) -> Result<(), String> {
+) -> Result<(), PythonComputeRejection> {
     use crate::plasm_plan::ValidatedPlanNode;
     let checked = check_op(es, &compute.compute.op)?;
     if compute.compute.schema
@@ -986,9 +995,9 @@ pub(crate) fn validate_plan_compute(
                     .and_then(|f| f.get(field))
                     .cloned()
             {
-                return Err(format!(
-                    "Python input field {field} differs from its derived type"
-                ));
+                return Err(
+                    format!("Python input field {field} differs from its derived type").into(),
+                );
             }
         }
         return Ok(());
@@ -1153,7 +1162,7 @@ pub(crate) struct ReturnDomains {
 }
 pub(crate) fn return_domains(
     es: &crate::execute_session::ExecuteSession,
-) -> Result<ReturnDomains, String> {
+) -> Result<ReturnDomains, PythonComputeRejection> {
     let exposure = es
         .teaching_exposure
         .as_ref()

@@ -87,6 +87,17 @@ impl SymbolMap {
             return Ok(t.to_string());
         }
         let entry_id = catalog.entry_id().unwrap_or("");
+        if let Ok(relation) = self.resolve_session_relation(t) {
+            if relation.entry_id.as_str() == entry_id
+                && relation.source_entity.as_str() == entity
+                && ent.relations.contains_key(relation.relation_wire.as_str())
+            {
+                return Err(SymbolResolveError::RelationUsedAsRowField {
+                    entity: entity.to_string(),
+                    token: t.to_string(),
+                });
+            }
+        }
         Err(SymbolResolveError::NotARowField {
             entity: entity.to_string(),
             token: t.to_string(),

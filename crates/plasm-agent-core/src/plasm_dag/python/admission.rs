@@ -23,7 +23,7 @@ declarations! {
     Helper(&'a StmtFunctionDef) => "helper",
 }
 impl<'a> Declaration<'a> {
-    fn classify(stmt: &'a Stmt) -> Result<Self, String> {
+    fn classify(stmt: &'a Stmt) -> Result<Self, PythonLoweringError> {
         match stmt {
             Stmt::ClassDef(class) => Ok(Self::Program(class)),
             Stmt::Expr(s) if matches!(&*s.value, PyExpr::StringLiteral(_)) => {
@@ -41,7 +41,7 @@ impl<'a> Declaration<'a> {
 }
 impl DeclarationKind {
     /// Outer declaration candidates only; full admission remains session-aware.
-    pub fn inventory(source: &str) -> Result<Vec<Self>, String> {
+    pub fn inventory(source: &str) -> Result<Vec<Self>, PythonLoweringError> {
         let ast = ruff_python_parser::parse_module(source).map_err(|e| e.to_string())?;
         let (_, suite) = crate::python_datetime::Imports::split(source, ast.suite())?;
         let [stmt] = suite else {
@@ -67,7 +67,11 @@ pub(super) struct Root<'a> {
     pub helpers: BTreeMap<String, StmtFunctionDef>,
 }
 impl<'a> Root<'a> {
-    pub fn parse(source: &str, suite: &'a [Stmt], es: &ExecuteSession) -> Result<Self, String> {
+    pub fn parse(
+        source: &str,
+        suite: &'a [Stmt],
+        es: &ExecuteSession,
+    ) -> Result<Self, PythonLoweringError> {
         let (imports, suite) = crate::python_datetime::Imports::split(source, suite)?;
         let [stmt] = suite else {
             return Err("expected exactly one Program subclass".into());
@@ -227,17 +231,37 @@ impl<'a> Root<'a> {
                 .chain(&extracted.parameters.args)
                 .chain(&extracted.parameters.kwonlyargs)
                 .collect::<Vec<_>>();
-            if inputs
+            if let Some(input) = inputs
                 .iter()
-                .any(|input| input.parameter.annotation.is_none())
+                .find(|input| input.parameter.annotation.is_none())
             {
-                return Err(at(def, "every compute input requires an annotation"));
+                return Err(at(
+                    &input.parameter,
+                    &format!(
+                        "@compute input `{}` requires a materialized type annotation; use the declared Row, list[Row], scalar, or nullable scalar contract for this dependency",
+                        input.parameter.name
+                    ),
+                ));
+            }
+            for input in &inputs {
+                let annotation = input
+                    .parameter
+                    .annotation
+                    .as_deref()
+                    .expect("checked above");
+                if let Some(problem) =
+                    ComputeAnnotationProblem::recognize(annotation, symbols.as_ref())
+                {
+                    return Err(at(annotation, problem.correction()));
+                }
             }
             for input in &inputs {
                 if input.default.is_some() {
                     closed_default(input)?;
                 }
             }
+            reject_compute_boundary_violation(def, symbols.as_ref())
+                .map_err(|violation| violation.correction())?;
             let extracted = method_source(&imports.source, source, def, extracted)?;
             // A compute body is checked at its call site against the actual
             // projected input contract. The nominal entity alone cannot describe
@@ -257,7 +281,120 @@ impl<'a> Root<'a> {
         })
     }
 }
-fn synchronous(def: &StmtFunctionDef) -> Result<(), String> {
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ComputeAnnotationProblem {
+    RowsAlias,
+    SingletonAlias,
+    EntityAsCollectionElement,
+}
+
+impl ComputeAnnotationProblem {
+    fn recognize(
+        annotation: &PyExpr,
+        symbols: &dyn plasm_core::symbol_tuning::SymbolResolve,
+    ) -> Option<Self> {
+        let head = match annotation {
+            PyExpr::Subscript(subscript) => name(&subscript.value),
+            _ => name(annotation),
+        };
+        match head {
+            Some("Rows") => Some(Self::RowsAlias),
+            Some("Singleton") => Some(Self::SingletonAlias),
+            Some("list") => match annotation {
+                PyExpr::Subscript(subscript)
+                    if name(&subscript.slice)
+                        .is_some_and(|token| symbols.resolve_session_entity(token).is_ok()) =>
+                {
+                    Some(Self::EntityAsCollectionElement)
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn correction(self) -> &'static str {
+        match self {
+            Self::RowsAlias => "`Rows` is not a materialized input type; use `list[Row]` or `list[Row[eN]]` for a collection",
+            Self::SingletonAlias => "`Singleton` is not a materialized input type; use `Row` or `Row[eN]` for a proven singleton",
+            Self::EntityAsCollectionElement => "an eN symbol is a catalog binding, not a Python type; use `list[Row[eN]]` for entity rows",
+        }
+    }
+}
+
+enum ComputeBoundaryViolation<'a> {
+    Write(&'a ruff_python_ast::ExprCall),
+    Relation(&'a ruff_python_ast::ExprAttribute),
+}
+
+impl ComputeBoundaryViolation<'_> {
+    fn correction(&self) -> PythonLoweringError {
+        match self {
+            Self::Write(call) => at(call, "@compute is pure: materialized rows lose entity identity and cannot dispatch writes. Keep calculations in @compute; select original entity rows and invoke the declared write in build via flat_map."),
+            Self::Relation(attribute) => at(attribute, "@compute receives materialized values without entity relation authority. Navigate the taught relation on its original entity row in build or a scoped callback, then pass the resulting rows as a typed compute input."),
+        }
+    }
+}
+
+fn reject_compute_boundary_violation<'a>(
+    def: &'a StmtFunctionDef,
+    symbols: &dyn plasm_core::symbol_tuning::SymbolResolve,
+) -> Result<(), ComputeBoundaryViolation<'a>> {
+    use ruff_python_ast::visitor::{self, Visitor};
+
+    struct Boundary<'a, 'b> {
+        symbols: &'b dyn plasm_core::symbol_tuning::SymbolResolve,
+        violation: Option<ComputeBoundaryViolation<'a>>,
+    }
+    impl<'a> Visitor<'a> for Boundary<'a, '_> {
+        fn visit_expr(&mut self, expr: &'a PyExpr) {
+            if self.violation.is_none() {
+                if let PyExpr::Call(call) = expr {
+                    if let PyExpr::Attribute(attribute) = call.func.as_ref() {
+                        let taught_write = self
+                            .symbols
+                            .resolve_session_method(attribute.attr.as_str())
+                            .is_ok_and(|method| {
+                                matches!(
+                                    super::catalog_operations::CatalogOperation::from_kind(
+                                        method.kind
+                                    ),
+                                    super::catalog_operations::CatalogOperation::Write(_)
+                                )
+                            });
+                        if taught_write {
+                            self.violation = Some(ComputeBoundaryViolation::Write(call));
+                            return;
+                        }
+                    }
+                }
+                if let PyExpr::Attribute(attribute) = expr {
+                    if self
+                        .symbols
+                        .resolve_session_relation(attribute.attr.as_str())
+                        .is_ok()
+                    {
+                        self.violation = Some(ComputeBoundaryViolation::Relation(attribute));
+                        return;
+                    }
+                }
+            }
+            visitor::walk_expr(self, expr);
+        }
+    }
+
+    let mut boundary = Boundary {
+        symbols,
+        violation: None,
+    };
+    boundary.visit_body(&def.body);
+    if let Some(violation) = boundary.violation {
+        return Err(violation);
+    }
+    Ok(())
+}
+fn synchronous(def: &StmtFunctionDef) -> Result<(), PythonLoweringError> {
     if def.is_async || def.type_params.is_some() {
         return Err(at(
             def,
@@ -266,7 +403,9 @@ fn synchronous(def: &StmtFunctionDef) -> Result<(), String> {
     }
     Ok(())
 }
-fn closed_default(parameter: &ruff_python_ast::ParameterWithDefault) -> Result<(), String> {
+fn closed_default(
+    parameter: &ruff_python_ast::ParameterWithDefault,
+) -> Result<(), PythonLoweringError> {
     let default = parameter
         .default
         .as_deref()
@@ -285,7 +424,7 @@ pub(super) fn method_source(
     source: &str,
     original: &StmtFunctionDef,
     normalized: StmtFunctionDef,
-) -> Result<String, String> {
+) -> Result<String, PythonLoweringError> {
     let rendered = monty::statement_source(&Stmt::FunctionDef(normalized));
     let parsed = ruff_python_parser::parse_module(&rendered).map_err(|e| e.to_string())?;
     let Some(Stmt::FunctionDef(def)) = parsed.suite().last() else {

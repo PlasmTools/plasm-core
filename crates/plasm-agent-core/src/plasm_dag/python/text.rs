@@ -9,7 +9,7 @@ impl Lower<'_> {
         call: &ExprCall,
         method: &str,
         id: &str,
-    ) -> Result<String, String> {
+    ) -> Result<String, PythonLoweringError> {
         let code = self
             .methods
             .get(method)
@@ -26,7 +26,7 @@ impl Lower<'_> {
         call: &ExprCall,
         code: String,
         id: &str,
-    ) -> Result<String, String> {
+    ) -> Result<String, PythonLoweringError> {
         let parsed = ruff_python_parser::parse_module(&code).map_err(|e| e.to_string())?;
         let Some(Stmt::FunctionDef(def)) = parsed.suite().last() else {
             return Err("missing compute definition".into());
@@ -211,7 +211,7 @@ impl Lower<'_> {
         source: String,
         code: &str,
         id: &str,
-    ) -> Result<String, String> {
+    ) -> Result<String, PythonLoweringError> {
         let op = prepare_op(self.es, &self.state, &source, code)?;
         let ComputeOp::Python { per_row, .. } = &op else {
             unreachable!()
@@ -241,7 +241,7 @@ pub(super) fn inferred_schema(
     state: &super::super::types::CompileState<'_>,
     id: &str,
     depth: usize,
-) -> Result<SyntheticResultSchema, String> {
+) -> Result<SyntheticResultSchema, PythonLoweringError> {
     use super::super::types::DagNodeSource;
     if depth >= 64 {
         return Err("inferred row schema depth exceeded".into());
@@ -252,7 +252,7 @@ pub(super) fn inferred_schema(
         ..
     } = &node.source
     {
-        return SyntheticResultSchema::for_value(schema.clone());
+        return SyntheticResultSchema::for_value(schema.clone()).map_err(Into::into);
     }
     if let DagNodeSource::ScalarExtract { source, wire } = &node.source {
         let schema = inferred_schema(es, state, source, depth + 1)?;
@@ -270,7 +270,7 @@ pub(super) fn inferred_schema(
     }
     if let DagNodeSource::Data(PlanValue::Literal { value }) = &node.source {
         let value_type = plasm_core::value_contract::ValueContract::literal(value.value())?;
-        return SyntheticResultSchema::for_value(value_type);
+        return SyntheticResultSchema::for_value(value_type).map_err(Into::into);
     }
     if let DagNodeSource::Derive {
         value_type: _,
@@ -280,7 +280,7 @@ pub(super) fn inferred_schema(
     } = &node.source
     {
         let t = derive_contract(es, state, source, value, inputs, depth)?;
-        return SyntheticResultSchema::for_value(t);
+        return SyntheticResultSchema::for_value(t).map_err(Into::into);
     }
     let mut schema = super::super::schema_validate::compute_passthrough_or_fallback_schema(
         es,
@@ -318,7 +318,7 @@ pub(super) fn derive_contract(
     value: &PlasmDataValue,
     inputs: &[crate::plasm_plan::PlanDataInput],
     depth: usize,
-) -> Result<plasm_core::value_contract::ValueContract, String> {
+) -> Result<plasm_core::value_contract::ValueContract, PythonLoweringError> {
     plasm_core::value_contract::ValueContract::data_value(value, &mut |binding, path| {
         let dependency = if state.get(binding).is_some() {
             binding
@@ -362,6 +362,7 @@ pub(super) fn derive_contract(
         }
         Ok(value)
     })
+    .map_err(Into::into)
 }
 
 /// Shared recursive input admission for root and scoped row computations.
@@ -370,7 +371,7 @@ pub(super) fn prepare_op(
     state: &super::super::types::CompileState<'_>,
     source: &str,
     code: &str,
-) -> Result<ComputeOp, String> {
+) -> Result<ComputeOp, PythonLoweringError> {
     let parsed = ruff_python_parser::parse_module(code).map_err(|e| e.to_string())?;
     let multiple = matches!(parsed.suite().last(), Some(Stmt::FunctionDef(def)) if def.parameters.args.len() > 1);
     let owner = if multiple {
@@ -411,7 +412,7 @@ pub(super) fn prepare_op(
     if checked.contract.as_ref().map(|c| c.owner.entity.as_str())
         != owner.as_ref().map(|o| o.entity.as_str())
     {
-        return Err("compute annotation does not match source entity".to_string());
+        return Err("compute annotation does not match source entity".into());
     }
     Ok(ComputeOp::Python {
         source: code.to_owned(),

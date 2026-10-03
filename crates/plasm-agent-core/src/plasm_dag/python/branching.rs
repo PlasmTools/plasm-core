@@ -5,7 +5,7 @@ use super::*;
 use crate::plasm_plan::{InputCardinality, PlanDataInput};
 use std::num::NonZeroU32;
 
-fn lambda(source: &str) -> Result<ruff_python_ast::ExprLambda, String> {
+fn lambda(source: &str) -> Result<ruff_python_ast::ExprLambda, PythonLoweringError> {
     let parsed = ruff_python_parser::parse_expression(source)
         .map_err(|e| format!("internal branch expression: {e}"))?;
     let PyExpr::Lambda(lambda) = *parsed.into_syntax().body else {
@@ -15,7 +15,7 @@ fn lambda(source: &str) -> Result<ruff_python_ast::ExprLambda, String> {
 }
 
 /// Python owns truth conversion; DAG consumers require its Boolean result.
-pub(super) fn truth_test(expression: &PyExpr) -> Result<PyExpr, String> {
+pub(super) fn truth_test(expression: &PyExpr) -> Result<PyExpr, PythonLoweringError> {
     let mut truth = *ruff_python_parser::parse_expression("bool(None)")
         .map_err(|e| e.to_string())?
         .into_syntax()
@@ -32,7 +32,7 @@ impl Lower<'_> {
         &mut self,
         expression: &PyExpr,
         inputs: &mut BTreeMap<String, PlanDataInput>,
-    ) -> Result<PlasmDataValue, String> {
+    ) -> Result<PlasmDataValue, PythonLoweringError> {
         let start = self.state.nodes.len();
         let value = self.scoped_value(expression, inputs)?;
         for node in &self.state.nodes[start..] {
@@ -55,7 +55,7 @@ impl Lower<'_> {
         site: &PyExpr,
         chain: &ruff_python_ast::ExprCompare,
         inputs: &mut BTreeMap<String, PlanDataInput>,
-    ) -> Result<PlasmDataValue, String> {
+    ) -> Result<PlasmDataValue, PythonLoweringError> {
         let mut operands = Vec::new();
         for expression in &chain.operands[..2] {
             let mut dependencies = BTreeMap::new();
@@ -110,7 +110,7 @@ impl Lower<'_> {
         inputs: &mut BTreeMap<String, PlanDataInput>,
         predicate: bool,
         branch_condition: Option<&PyExpr>,
-    ) -> Result<PlasmDataValue, String> {
+    ) -> Result<PlasmDataValue, PythonLoweringError> {
         let mut condition_inputs = BTreeMap::new();
         let condition_value =
             self.pure_branch_value(&truth_test(condition)?, &mut condition_inputs)?;

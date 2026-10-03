@@ -10,7 +10,7 @@ impl Lower<'_> {
         flow: &monty_analysis::FunctionFlow,
         row: &str,
         mode: ScopeMode,
-    ) -> Result<String, String> {
+    ) -> Result<String, PythonLoweringError> {
         for statement in &flow.statements {
             self.statement(statement)?;
         }
@@ -49,7 +49,7 @@ impl Lower<'_> {
         expression: &PyExpr,
         row: &str,
         mode: ScopeMode,
-    ) -> Result<String, String> {
+    ) -> Result<String, PythonLoweringError> {
         if let Some((annotation, input)) = self.return_check.take() {
             // Check the Python return before predicate truth conversion or row
             // acknowledgement adaptation. This node is pure and evaluated once.
@@ -214,7 +214,7 @@ impl Lower<'_> {
         no: &monty_analysis::FunctionFlow,
         row: &str,
         mode: ScopeMode,
-    ) -> Result<String, String> {
+    ) -> Result<String, PythonLoweringError> {
         // A condition is materialized once before either gate; branch bodies only
         // consume the Boolean. Monty owns its truth conversion and refinements.
         let check = self.return_check.take();

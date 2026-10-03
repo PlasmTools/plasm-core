@@ -316,6 +316,27 @@ impl Decoder<'_> {
                 .into_iter()
                 .reduce(Type::join)
                 .unwrap_or_else(never),
+            // Monty tuples materialize as ordered JSON arrays. Preserve a
+            // closed element contract by joining every positional and variadic
+            // member; indexing remains conservative for heterogeneous tuples.
+            Node::Tuple {
+                prefix,
+                variable,
+                suffix,
+            } => {
+                let elements = prefix
+                    .iter()
+                    .chain(variable.iter())
+                    .chain(suffix.iter())
+                    .map(|id| recur(*id))
+                    .collect::<Result<Vec<_>, _>>()?;
+                array(
+                    elements
+                        .into_iter()
+                        .reduce(Type::join)
+                        .unwrap_or_else(never),
+                )
+            }
             Node::Protocol { identity, .. }
             | Node::NewType { identity, .. }
             | Node::Instance { identity, .. }

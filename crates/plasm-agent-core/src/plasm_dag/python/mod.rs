@@ -35,11 +35,13 @@ use plasm_core::plasm_monad::*;
 use ruff_python_ast::{Expr as PyExpr, Stmt};
 use ruff_text_size::Ranged;
 
+use crate::program_rejection::PythonLoweringError;
+
 fn lower_python_program(
     es: &ExecuteSession,
     source: &str,
     suite: &[Stmt],
-) -> Result<PlasmCompBundle, String> {
+) -> Result<PlasmCompBundle, PythonLoweringError> {
     let root = admission::Root::parse(source, suite, es)?;
     let pipeline = PromptPipelineConfig::default();
     let mut lower = Lower {
@@ -170,19 +172,12 @@ fn lower_python_program(
     // reparses serialized runtime steps to infer whether a declaration was used.
     for name in root.methods.keys() {
         if !lower.used_methods.contains(name) {
-            return Err(format!("compute {name} requires a typed DAG callsite"));
+            return Err(format!("compute {name} requires a typed DAG callsite").into());
         }
     }
     let bundle = PlasmCompBundle::new(artifact)?;
 
     Ok(bundle)
-}
-
-pub(crate) fn compile_python_program(
-    es: &ExecuteSession,
-    source: &str,
-) -> Result<PlasmCompBundle, String> {
-    compile_python_program_checked(es, source).map_err(String::from)
 }
 
 pub(crate) fn compile_python_program_checked(
@@ -196,12 +191,16 @@ pub(crate) fn compile_python_program_checked(
             span_offset: None,
         });
     }
-    let ast = ruff_python_parser::parse_module(source).map_err(|error| ProgramStageError::Parse {
-        correction: format!("Python syntax: {error}. Submit one class derived from Program with an indented build(self) method and an explicit return."),
-        span_offset: Some(u32::from(error.location.start()) as usize),
+    let ast =
+        ruff_python_parser::parse_module(source).map_err(|error| ProgramStageError::Parse {
+            correction: format!("Python syntax: {error}"),
+            span_offset: Some(u32::from(error.location.start()) as usize),
+        })?;
+    let bundle = lower_python_program(es, source, ast.suite()).map_err(|error| {
+        ProgramStageError::PythonLowering {
+            error: error.into(),
+        }
     })?;
-    let bundle = lower_python_program(es, source, ast.suite())
-        .map_err(|correction| ProgramStageError::Type { correction })?;
     crate::plasm_plan_run::evaluate_plasm_comp_dry(es, &bundle).map_err(|correction| {
         ProgramStageError::Plan {
             correction: format!("Python plan: {correction}"),
@@ -288,17 +287,21 @@ impl Lower<'_> {
             }
         }
     }
-    fn insert(&mut self, node: DagNode) -> Result<String, String> {
+    fn insert(&mut self, node: DagNode) -> Result<String, PythonLoweringError> {
         let id = node.id.clone();
         self.state.insert(node)?;
         Ok(id)
     }
-    fn expr(&mut self, e: &PyExpr, label: Option<&str>) -> Result<String, String> {
+    fn expr(&mut self, e: &PyExpr, label: Option<&str>) -> Result<String, PythonLoweringError> {
         let id = self.lower_expr(e, label)?;
         self.spans.entry(id.clone()).or_insert_with(|| span(e));
         Ok(id)
     }
-    fn lower_expr(&mut self, e: &PyExpr, label: Option<&str>) -> Result<String, String> {
+    fn lower_expr(
+        &mut self,
+        e: &PyExpr,
+        label: Option<&str>,
+    ) -> Result<String, PythonLoweringError> {
         if let Some(n) = name(e) {
             let n = self.scoped_binding(n).to_owned();
             if !self.state.contains(&n) {
@@ -432,7 +435,7 @@ fn name(e: &PyExpr) -> Option<&str> {
         None
     }
 }
-fn string(e: &PyExpr) -> Result<String, String> {
+fn string(e: &PyExpr) -> Result<String, PythonLoweringError> {
     match e {
         PyExpr::StringLiteral(value) => Ok(value.value.to_str().to_owned()),
         PyExpr::BinOp(binary) if binary.op == ruff_python_ast::Operator::Add => {
@@ -442,7 +445,7 @@ fn string(e: &PyExpr) -> Result<String, String> {
     }
 }
 
-fn integer(e: &PyExpr) -> Result<i64, String> {
+fn integer(e: &PyExpr) -> Result<i64, PythonLoweringError> {
     if let PyExpr::NumberLiteral(n) = e {
         if let ruff_python_ast::Number::Int(i) = &n.value {
             return i
@@ -453,7 +456,7 @@ fn integer(e: &PyExpr) -> Result<i64, String> {
     }
     Err(at(e, "expected an integer literal"))
 }
-fn literal(e: &PyExpr) -> Result<plasm_core::Value, String> {
+fn literal(e: &PyExpr) -> Result<plasm_core::Value, PythonLoweringError> {
     literal_operands::LiteralOperand::classify(e)
         .ok_or_else(|| {
             at(
@@ -464,12 +467,13 @@ fn literal(e: &PyExpr) -> Result<plasm_core::Value, String> {
         .scalar(e)
 }
 
-fn at(n: &impl Ranged, message: &str) -> String {
-    format!(
-        "Python bytes {}..{}: {message}",
-        u32::from(n.start()),
-        u32::from(n.end())
-    )
+fn at(n: &impl Ranged, message: &str) -> PythonLoweringError {
+    let start = u32::from(n.start());
+    let end = u32::from(n.end());
+    PythonLoweringError::Source {
+        message: format!("Python bytes {start}..{end}: {message}"),
+        span: Some((start, end)),
+    }
 }
 
 fn span(n: &impl Ranged) -> serde_json::Value {

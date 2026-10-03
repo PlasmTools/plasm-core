@@ -9,7 +9,7 @@ impl Lower<'_> {
         selection: ReadSelection<'_>,
         owner: plasm_core::symbol_tuning::EntityBinding,
         id: &str,
-    ) -> Result<String, String> {
+    ) -> Result<String, PythonLoweringError> {
         let kind = selection.kind();
         let cgs = match &selection {
             ReadSelection::Taught(resolved) => resolved.cgs,
@@ -160,7 +160,10 @@ impl Lower<'_> {
             .map_err(|e| e.to_string())?;
         self.emit_catalog(id, expr)
     }
-    fn identity_slot(&mut self, e: &PyExpr) -> Result<plasm_core::IdentitySlot, String> {
+    fn identity_slot(
+        &mut self,
+        e: &PyExpr,
+    ) -> Result<plasm_core::IdentitySlot, PythonLoweringError> {
         let value = if let PyExpr::UnaryOp(unary) = e {
             if unary.op != ruff_python_ast::UnaryOp::USub {
                 return Err(at(e, "unsupported identity expression"));
@@ -197,7 +200,7 @@ impl Lower<'_> {
         source: &str,
         id: &str,
         expression: &PyExpr,
-    ) -> Result<String, String> {
+    ) -> Result<String, PythonLoweringError> {
         let callback = self.callback(expression)?;
         let body = self.scoped_callback_body(
             site,

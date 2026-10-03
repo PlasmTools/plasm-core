@@ -21,11 +21,11 @@ mod python;
 pub use python::admission::DeclarationKind as PythonDeclaration;
 pub use python::build_statements::BuildStatementKind as PythonBuildStatement;
 pub use python::catalog_operations::CatalogOperation as PythonCatalogOperation;
+pub(crate) use python::compile_python_program_checked;
 pub use python::quantifiers::QuantifierOperation as PythonQuantifierOperation;
 pub use python::reductions::AggregateDescriptor as PythonAggregateDescriptor;
 pub use python::relation_operations::RelationOperation as PythonRelationOperation;
 pub use python::row_operations::RowOperation as PythonRowOperation;
-pub(crate) use python::{compile_python_program, compile_python_program_checked};
 
 // --- crate-visible entrypoints ---
 #[allow(unused_imports)]

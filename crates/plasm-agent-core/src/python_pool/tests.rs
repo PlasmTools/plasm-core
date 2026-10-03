@@ -433,6 +433,10 @@ fn typed_output_codec_is_lossless_and_bounded() {
             MontyObject::list([MontyObject::none(), MontyObject::string("0001")]),
             crate::fixture_value!([null, "0001"]),
         ),
+        (
+            MontyObject::tuple([MontyObject::int(1), MontyObject::string("two")]),
+            crate::fixture_value!([1, "two"]),
+        ),
     ] {
         assert_eq!(decode(object).unwrap(), expected);
     }
@@ -440,7 +444,6 @@ fn typed_output_codec_is_lossless_and_bounded() {
         MontyObject::float(f64::NAN),
         MontyObject::float(f64::INFINITY),
         MontyObject::bigint(u128::MAX.into()),
-        MontyObject::tuple([MontyObject::int(1)]),
         MontyObject::dict([(MontyObject::int(1), MontyObject::none())]),
         MontyObject::string("x".repeat(2048)),
         MontyObject::class_type("Counterfeit", super::fresh_uuid(), true, false, []),

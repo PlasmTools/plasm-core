@@ -5,7 +5,11 @@ impl Lower<'_> {
     /// A record is a value, not an implicit traversal of any of its inputs.
     /// Outside a row scope, derive over the unit row so empty embedded arrays
     /// still produce one record and missing singleton fields fail explicitly.
-    pub(super) fn record_value(&mut self, site: &PyExpr, id: &str) -> Result<String, String> {
+    pub(super) fn record_value(
+        &mut self,
+        site: &PyExpr,
+        id: &str,
+    ) -> Result<String, PythonLoweringError> {
         let mut inputs = BTreeMap::new();
         let value = self.scoped_value(site, &mut inputs)?;
         self.emit_value(value, inputs.into_values().collect(), id)
@@ -16,7 +20,7 @@ impl Lower<'_> {
         value: PlasmDataValue,
         inputs: Vec<crate::plasm_plan::PlanDataInput>,
         id: &str,
-    ) -> Result<String, String> {
+    ) -> Result<String, PythonLoweringError> {
         let source = match &self.frame.row {
             Some(source) => source.clone(),
             None => {

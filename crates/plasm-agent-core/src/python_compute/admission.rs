@@ -23,19 +23,17 @@ pub(super) fn check_definition(source: &str, stubs: &str) -> Result<(), Compilat
             )
             .map(|_| ())
             .map_err(|error| {
-                crate::python_program_diagnostic::admission_error(error.to_string()).into()
+                crate::program_diagnostic::ProgramStageError::PythonSyntax { error }.into()
             })
         }
-        AnalysisOutcome::Rejected(errors) => {
-            Err(crate::python_program_diagnostic::admission_error(
-                errors
-                    .into_iter()
-                    .map(|error| format_diagnostic(error, source, stubs))
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            )
-            .into())
-        }
+        AnalysisOutcome::Rejected(diagnostics) => Err(
+            crate::program_diagnostic::ProgramStageError::PythonAnalysis {
+                diagnostics,
+                source: source.into(),
+                stubs: stubs.into(),
+            }
+            .into(),
+        ),
     }
 }
 
@@ -62,8 +60,20 @@ pub(super) async fn check_definitions(
     .map_err(|e| host_error(e.to_string()))?
 }
 
+pub(crate) fn render_analysis_diagnostics(
+    diagnostics: &[monty_analysis::AnalysisDiagnostic],
+    source: &str,
+    stubs: &str,
+) -> String {
+    diagnostics
+        .iter()
+        .map(|error| format_diagnostic(error, source, stubs))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn format_diagnostic(
-    error: monty_analysis::AnalysisDiagnostic,
+    error: &monty_analysis::AnalysisDiagnostic,
     source: &str,
     stubs: &str,
 ) -> String {
@@ -83,6 +93,7 @@ fn format_diagnostic(
         .unwrap_or_else(|| {
             error
                 .source
+                .as_ref()
                 .map(|name| format!("{name}: "))
                 .unwrap_or_default()
         });
@@ -95,4 +106,22 @@ fn host_error(message: String) -> CompilationError {
         "python_checker_failure",
         message,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn analysis_rejection_retains_structured_diagnostic_until_render() {
+        let source = "def render(value: int) -> int:\n    return value.missing\n";
+        let failure = check_definition(source, "").expect_err("missing integer attribute");
+        let stage = failure.into_program().expect("authored program rejection");
+        assert!(matches!(
+            &stage,
+            crate::program_diagnostic::ProgramStageError::PythonAnalysis { diagnostics, .. }
+                if diagnostics.iter().any(|diagnostic| diagnostic.message.contains("missing"))
+        ));
+        assert!(stage.correction().contains("plasm_compute.py:2:"));
+    }
 }

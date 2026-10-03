@@ -62,6 +62,25 @@ fn upstream_expression_contracts_preserve_python_semantics() {
 }
 
 #[test]
+fn inferred_tuples_materialize_as_closed_ordered_arrays() {
+    let input = fields(&[
+        ("number", Type::scalar(FieldType::Integer)),
+        ("title", Type::scalar(FieldType::String)),
+    ]);
+    assert_eq!(
+        infer("(row.number, row.number + 1)", "row", &input, "").unwrap(),
+        array(Type::scalar(FieldType::Integer))
+    );
+    assert_eq!(
+        infer("(row.number, row.title)", "row", &input, "").unwrap(),
+        array(Type::join(
+            Type::scalar(FieldType::Integer),
+            Type::scalar(FieldType::String),
+        ))
+    );
+}
+
+#[test]
 fn nominal_selection_and_record_presence_survive_inference() {
     let mut id = Type::scalar(FieldType::String);
     id.domain = Some(DomainRef {
@@ -113,7 +132,7 @@ fn nominal_selection_and_record_presence_survive_inference() {
 #[test]
 fn unsupported_result_shapes_do_not_become_json() {
     let input = fields(&[]);
-    for expression in ["(1, 2)", "lambda: 1", "{1: 2}"] {
+    for expression in ["lambda: 1", "{1: 2}"] {
         assert!(
             infer(expression, "row", &input, "").is_err(),
             "{expression}"

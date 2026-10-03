@@ -21,7 +21,7 @@ impl RelationOperation {
         source: &str,
         relation: &str,
         id: &str,
-    ) -> Result<String, String> {
+    ) -> Result<String, PythonLoweringError> {
         match self {
             Self::Navigate => {
                 let contract = super::super::binding_contract(&lower.state, source)

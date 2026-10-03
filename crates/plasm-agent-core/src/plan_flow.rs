@@ -242,6 +242,21 @@ pub struct FlowDenial {
     pub violations: Vec<FlowViolation>,
 }
 
+impl FlowDenial {
+    /// Use the recorded violation reasons from flow analysis as the agent's
+    /// correction. Transport handlers must not replace them with a verdict count.
+    pub fn agent_correction(&self) -> String {
+        if self.violations.is_empty() {
+            return "Plan denied by flow policy.".into();
+        }
+        let mut correction = String::from("Plan denied by flow policy:");
+        for violation in &self.violations {
+            correction.push_str(&format!("\n- {}: {}", violation.node, violation.reason));
+        }
+        correction
+    }
+}
+
 pub fn verify_plan_flow(
     plan: &Plan<ValidatedPlanState>,
     topological_order: &[String],

@@ -121,7 +121,7 @@ impl Lower<'_> {
         &mut self,
         expression: &PyExpr,
         inputs: &mut BTreeMap<String, PlanDataInput>,
-    ) -> Result<CapturedExpression, String> {
+    ) -> Result<CapturedExpression, PythonLoweringError> {
         let before = self.state.nodes.len();
         let source = format!("({})", monty::expression_source(expression));
         let external = monty_analysis::external_names(&source)?
@@ -170,7 +170,7 @@ struct State<'a, 'b> {
     fields: BTreeMap<String, PlasmDataValue>,
     references: BTreeMap<super::refinements::Reference, String>,
     external: BTreeSet<(u32, u32)>,
-    error: Option<String>,
+    error: Option<PythonLoweringError>,
 }
 struct Capture<'a, 'b> {
     state: RefCell<State<'a, 'b>>,
@@ -186,7 +186,7 @@ fn root_name(expr: &PyExpr) -> Option<&ruff_python_ast::ExprName> {
     }
 }
 impl Capture<'_, '_> {
-    fn membership(&self, expression: &mut PyExpr) -> Result<(), String> {
+    fn membership(&self, expression: &mut PyExpr) -> Result<(), PythonLoweringError> {
         let original = expression.clone();
         if !self.capture(expression)? {
             return Ok(());
@@ -226,7 +226,7 @@ impl Capture<'_, '_> {
             .body;
         Ok(())
     }
-    fn capture(&self, expr: &mut PyExpr) -> Result<bool, String> {
+    fn capture(&self, expr: &mut PyExpr) -> Result<bool, PythonLoweringError> {
         let mut state = self.state.borrow_mut();
         if root_name(expr).is_some_and(|name| {
             !state

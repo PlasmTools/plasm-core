@@ -871,11 +871,8 @@ pub(crate) fn preflight_nodes(
                 projection: relation.relation.ir.projection.clone(),
                 field_dot_extract: None,
             };
-            typecheck_parsed_for_session(es, &pe).map_err(|e| ProgramStageError::Type {
-                correction: crate::program_diagnostic::format_session_symbolic_type_error(
-                    es, None, &e,
-                ),
-            })?;
+            typecheck_parsed_for_session(es, &pe)
+                .map_err(|error| ProgramStageError::CoreType { error })?;
             ensure_relation_expr_matches_plan(es, relation, &pe, step_idx)
                 .map_err(ProgramStageError::plan)?;
         }

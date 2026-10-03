@@ -7,7 +7,7 @@ impl Lower<'_> {
         &self,
         value: &PlasmDataValue,
         inputs: &BTreeMap<String, PlanDataInput>,
-    ) -> Result<T, String> {
+    ) -> Result<T, PythonLoweringError> {
         text::derive_contract(
             self.es,
             &self.state,

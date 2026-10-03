@@ -50,11 +50,8 @@ impl PlasmPreflight {
         session: &crate::execute_session::ExecuteSession,
         parsed: &ParsedExpr,
     ) -> Result<PreflightToken, ProgramStageError> {
-        typecheck_parsed_for_session(session, parsed).map_err(|e| ProgramStageError::Type {
-            correction: crate::program_diagnostic::format_session_symbolic_type_error(
-                session, None, &e,
-            ),
-        })?;
+        typecheck_parsed_for_session(session, parsed)
+            .map_err(|error| ProgramStageError::CoreType { error })?;
         Ok(PreflightToken::VERIFIED)
     }
 

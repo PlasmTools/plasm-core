@@ -1,4 +1,5 @@
 //! Python tagged records retain the selected CGS variant before wire lowering.
+use super::PythonLoweringError;
 use plasm_core::{CapabilitySchema, InputFieldWire, InputType, TypedInvokeInput, Value, CGS};
 
 pub(super) fn is_union_tag(cap: &CapabilitySchema, name: &str) -> bool {
@@ -15,7 +16,7 @@ pub(super) fn normalize(
     cap: &CapabilitySchema,
     mut object: indexmap::IndexMap<String, Value>,
     cgs: &CGS,
-) -> Result<Value, String> {
+) -> Result<Value, PythonLoweringError> {
     let mut scope = indexmap::IndexMap::new();
     for field in cap.scope_params() {
         if let Some(value) = object.shift_remove(&field.name) {
@@ -65,7 +66,7 @@ pub(super) fn normalize(
         };
         for (key, value) in part {
             if normalized.insert(key.clone(), value).is_some() {
-                return Err(format!("input lanes overlap at {key}"));
+                return Err(format!("input lanes overlap at {key}").into());
             }
         }
     }
@@ -74,7 +75,12 @@ pub(super) fn normalize(
     Ok(Value::Object(normalized))
 }
 
-fn normalize_type(value: Value, ty: &InputType, cgs: &CGS, depth: usize) -> Result<Value, String> {
+fn normalize_type(
+    value: Value,
+    ty: &InputType,
+    cgs: &CGS,
+    depth: usize,
+) -> Result<Value, PythonLoweringError> {
     if depth >= 64 {
         return Err("input type nesting exceeds 64".into());
     }
@@ -117,6 +123,7 @@ fn normalize_type(value: Value, ty: &InputType, cgs: &CGS, depth: usize) -> Resu
             )?;
             TypedInvokeInput::from_union_variant(variant, *index, logical, cgs)
                 .map(|typed| typed.to_value())
+                .map_err(Into::into)
         }
         (value, _) => Ok(value),
     }

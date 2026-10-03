@@ -67,9 +67,9 @@ fn flow_denied_with_dry(
     ctx: &PlasmDryRunContext<'_>,
     dry: &crate::plasm_plan_run::DryPlasmPlanEvaluation,
     comp: plasm_trace::TraceCompWire,
-    message: String,
+    denial: &crate::plan_flow::FlowDenial,
 ) -> PlasmPlanRunResult {
-    ProgramDiagnostic::flow_denied(message).into_plan_run_result_with_dry(
+    ProgramDiagnostic::flow_denied(denial).into_plan_run_result_with_dry(
         ctx.session_ref,
         ctx.es.domain_revision,
         dry,
@@ -146,16 +146,11 @@ async fn execute_plasm_tool_dry_run_inner(
     if let crate::PlanGateDecision::Denied(denial) = &gate_decision {
         record_mcp_plasm_dry_run_phase("prepare", phase.elapsed());
         record_mcp_plasm_dry_run_phase("total", total_started.elapsed());
-        let msg = format!(
-            "plan denied by flow policy ({:?}): {} violation(s)",
-            denial.verdict,
-            denial.violations.len()
-        );
         return Ok(flow_denied_with_dry(
             &ctx,
             &dry,
             comp_wire.as_ref().clone(),
-            msg,
+            denial,
         ));
     }
     let ux_ctx = crate::plan_ux_reflection::PlanUxBuildContext {
@@ -239,11 +234,7 @@ async fn execute_plasm_tool_dry_run_inner(
                 &ctx,
                 &dry,
                 comp_wire.as_ref().clone(),
-                format!(
-                    "plan commit blocked by flow policy ({:?}): {} violation(s)",
-                    denial.verdict,
-                    denial.violations.len()
-                ),
+                &denial,
             ));
         }
     };

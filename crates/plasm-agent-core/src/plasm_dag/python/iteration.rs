@@ -10,7 +10,7 @@ impl Lower<'_> {
         call: &ExprCall,
         seed: &str,
         id: &str,
-    ) -> Result<String, String> {
+    ) -> Result<String, PythonLoweringError> {
         if call.arguments.args.len() != 1 {
             return Err(at(
                 site,

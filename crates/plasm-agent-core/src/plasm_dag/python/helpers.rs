@@ -55,7 +55,7 @@ impl Lower<'_> {
         call: &ruff_python_ast::ExprCall,
         name: &str,
         id: &str,
-    ) -> Result<String, String> {
+    ) -> Result<String, PythonLoweringError> {
         let def = self.helpers.get(name).ok_or("missing helper")?.clone();
         if self.pure_typed_helper(&def) {
             // A typed helper without Plasm references is a whole Python value

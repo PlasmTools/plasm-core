@@ -3,9 +3,9 @@
 //! Category is carried by [`ProgramStageError`] at the failing stage — never re-sniffed from prose.
 
 use plasm_core::expr_parser::{collect_program_statement_lines, split_assignment_for_binding};
-use plasm_core::TypeError;
 use serde::Serialize;
 use serde_json::{json, Map, Value};
+use std::borrow::Cow;
 
 use crate::execute_session::ExecuteSession;
 use crate::mcp_agent_present::{AgentContent, PlanTokenRefs};
@@ -40,20 +40,37 @@ impl ProgramErrorCategory {
 }
 
 /// Typed failure from compile / dry-eval / flow gate — category is structural, not heuristic.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ProgramStageError {
     Parse {
         correction: String,
         span_offset: Option<usize>,
     },
-    Type {
-        correction: String,
+    PythonLowering {
+        error: crate::program_rejection::PythonLoweringError,
+    },
+    PythonCompute {
+        error: crate::program_rejection::PythonComputeRejection,
+    },
+    PythonAnalysis {
+        diagnostics: Vec<monty_analysis::AnalysisDiagnostic>,
+        source: String,
+        stubs: String,
+    },
+    PythonSyntax {
+        error: monty_types::MontyException,
+    },
+    CoreType {
+        error: plasm_core::TypeError,
+    },
+    RowCompute {
+        error: plasm_core::row_plan::RowComputeError,
     },
     Plan {
         correction: String,
     },
     Flow {
-        message: String,
+        denial: crate::plan_flow::FlowDenial,
     },
 }
 
@@ -66,34 +83,59 @@ impl ProgramStageError {
 
     pub fn category(&self) -> ProgramErrorCategory {
         match self {
-            Self::Parse { .. } => ProgramErrorCategory::Parse,
-            Self::Type { .. } => ProgramErrorCategory::Type,
+            Self::Parse { .. } | Self::PythonSyntax { .. } => ProgramErrorCategory::Parse,
+            Self::PythonLowering { .. }
+            | Self::PythonCompute { .. }
+            | Self::PythonAnalysis { .. }
+            | Self::CoreType { .. }
+            | Self::RowCompute { .. } => ProgramErrorCategory::Type,
             Self::Plan { .. } => ProgramErrorCategory::Plan,
             Self::Flow { .. } => ProgramErrorCategory::Flow,
         }
     }
 
-    pub fn correction(&self) -> &str {
+    pub fn correction(&self) -> Cow<'_, str> {
         match self {
-            Self::Parse { correction, .. }
-            | Self::Type { correction }
-            | Self::Plan { correction } => correction.as_str(),
-            Self::Flow { message } => message.as_str(),
+            Self::Parse { correction, .. } | Self::Plan { correction } => Cow::Borrowed(correction),
+            Self::PythonLowering { error } => Cow::Borrowed(error.message()),
+            Self::PythonCompute { error } => Cow::Borrowed(error.correction()),
+            Self::PythonAnalysis {
+                diagnostics,
+                source,
+                stubs,
+            } => Cow::Owned(crate::python_compute::render_analysis_diagnostics(
+                diagnostics,
+                source,
+                stubs,
+            )),
+            Self::PythonSyntax { error } => Cow::Owned(error.to_string()),
+            Self::CoreType { error } => Cow::Owned(error.python_correction()),
+            Self::RowCompute { error } => Cow::Owned(error.to_string()),
+            Self::Flow { denial } => Cow::Owned(denial.agent_correction()),
         }
     }
 
     pub fn into_correction(self) -> String {
         match self {
-            Self::Parse { correction, .. }
-            | Self::Type { correction }
-            | Self::Plan { correction } => correction,
-            Self::Flow { message } => message,
+            Self::Parse { correction, .. } | Self::Plan { correction } => correction,
+            Self::PythonLowering { error } => error.into_message(),
+            Self::PythonCompute { error } => error.into_correction(),
+            Self::PythonAnalysis {
+                diagnostics,
+                source,
+                stubs,
+            } => crate::python_compute::render_analysis_diagnostics(&diagnostics, &source, &stubs),
+            Self::PythonSyntax { error } => error.to_string(),
+            Self::CoreType { error } => error.python_correction(),
+            Self::RowCompute { error } => error.to_string(),
+            Self::Flow { denial } => denial.agent_correction(),
         }
     }
 
     pub fn span_offset(&self) -> Option<usize> {
         match self {
             Self::Parse { span_offset, .. } => *span_offset,
+            Self::PythonLowering { error } => error.span_offset(),
             _ => None,
         }
     }
@@ -108,7 +150,7 @@ impl ProgramStageError {
 
 impl std::fmt::Display for ProgramStageError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.correction())
+        f.write_str(&self.correction())
     }
 }
 
@@ -194,16 +236,6 @@ pub struct ProgramDiagnostic {
     pub replay: Option<RejectReplay>,
 }
 
-/// SymbolicLlm type-error correction for the active session map.
-pub fn format_session_symbolic_type_error(
-    session: &ExecuteSession,
-    symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
-    err: &TypeError,
-) -> String {
-    let _ = symbol_map_cross_cache;
-    crate::python_program_diagnostic::type_correction(session, err)
-}
-
 /// Classify a compile `String` via typed parse/typecheck — bridge until DAG returns staged errors.
 /// Prefer [`crate::plasm_compile::compile_plasm_expression`] which already returns [`ProgramStageError`].
 ///
@@ -261,13 +293,7 @@ pub(crate) fn diagnose_compile_failure(
         },
         Ok(parsed) => {
             if let Err(te) = typecheck_parsed_for_session(session, &parsed) {
-                ProgramStageError::Type {
-                    correction: format_session_symbolic_type_error(
-                        session,
-                        symbol_map_cross_cache,
-                        &te,
-                    ),
-                }
+                ProgramStageError::CoreType { error: te }
             } else {
                 ProgramStageError::Plan {
                     correction: compile_msg,
@@ -353,7 +379,7 @@ impl ProgramDiagnostic {
         self.stage.verdict()
     }
 
-    pub fn correction(&self) -> &str {
+    pub fn correction(&self) -> Cow<'_, str> {
         self.stage.correction()
     }
 
@@ -385,12 +411,15 @@ impl ProgramDiagnostic {
             understood,
             replay: None,
         };
-        diag.replay = session.note_program_reject(program, category.as_wire(), diag.correction());
+        diag.replay =
+            session.note_program_reject(program, category.as_wire(), diag.correction().as_ref());
         diag
     }
 
-    pub fn flow_denied(message: String) -> Self {
-        let stage = ProgramStageError::Flow { message };
+    pub fn flow_denied(denial: &crate::plan_flow::FlowDenial) -> Self {
+        let stage = ProgramStageError::Flow {
+            denial: denial.clone(),
+        };
         Self {
             score: ProgramScore::for_category(ProgramErrorCategory::Flow, 1.0),
             stage,
@@ -419,8 +448,6 @@ impl ProgramDiagnostic {
         if let Some(replay) = self.replay {
             out.push_str("\n\n");
             out.push_str(&replay.markdown_line());
-        } else {
-            out.push_str("\n\nrevise this program and retry");
         }
         out
     }
@@ -680,7 +707,21 @@ mod tests {
 
     #[test]
     fn flow_denied_uses_deny_verdict_and_score() {
-        let d = ProgramDiagnostic::flow_denied("plan denied by flow policy".into());
+        let denial = crate::plan_flow::FlowDenial {
+            verdict: crate::plan_flow::FlowVerdict::Denied,
+            violations: vec![crate::plan_flow::FlowViolation {
+                node: "n1".into(),
+                kind: Some(crate::plan_flow::FlowViolationKind::ForbiddenFlow),
+                sink_param: None,
+                labels: Default::default(),
+                reason: "restricted data cannot reach this sink".into(),
+            }],
+        };
+        let d = ProgramDiagnostic::flow_denied(&denial);
+        assert!(d
+            .correction()
+            .contains("n1: restricted data cannot reach this sink"));
+        assert!(!d.correction().contains("violation(s)"));
         assert_eq!(d.verdict(), PlanDryVerdict::Deny);
         assert!((d.score.overall - 0.7).abs() < f64::EPSILON);
         let out = d.into_plan_run_result("l_ref", 1);
@@ -696,11 +737,46 @@ mod tests {
 
     #[test]
     fn stage_error_does_not_require_string_sniff() {
-        let stage = ProgramStageError::Type {
-            correction: "expected entity e1".into(),
-        };
-        assert_eq!(stage.category(), ProgramErrorCategory::Type);
-        assert_eq!(stage.verdict(), PlanDryVerdict::NeedsFix);
+        let stages = [
+            ProgramStageError::PythonLowering {
+                error: crate::program_rejection::PythonLoweringError::Source {
+                    message: "Python bytes 5..8: use a typed input".into(),
+                    span: Some((5, 8)),
+                },
+            },
+            ProgramStageError::PythonCompute {
+                error: "expected entity e1".into(),
+            },
+            ProgramStageError::CoreType {
+                error: plasm_core::TypeError::RequiredParameterOmitted {
+                    parameter: "item_id".into(),
+                    expression: "e1{item_id=$}".into(),
+                },
+            },
+            ProgramStageError::RowCompute {
+                error: plasm_core::row_plan::RowComputeError::Fusion(
+                    plasm_core::row_plan::FusionError::PythonInPipeline,
+                ),
+            },
+        ];
+        for stage in stages {
+            assert_eq!(stage.category(), ProgramErrorCategory::Type);
+            assert_eq!(stage.verdict(), PlanDryVerdict::NeedsFix);
+            let expected = stage.correction().into_owned();
+            let diagnostic = ProgramDiagnostic::from_stage(
+                &PromptPipelineConfig::default(),
+                None,
+                &reject_memory_session(),
+                "class P(Program): pass",
+                stage,
+            );
+            assert_eq!(
+                needs_fix_http_payload(&diagnostic, None)["correction"],
+                expected
+            );
+            assert!(diagnostic.agent_markdown().contains(&expected));
+            assert!(!expected.contains("session_mode"));
+        }
     }
 
     fn reject_memory_session() -> ExecuteSession {
@@ -751,7 +827,7 @@ mod tests {
             ProgramDiagnostic::from_stage(&pipeline, None, &session, program, stage.clone());
         assert!(first.replay.is_none());
         let first_md = first.agent_markdown();
-        assert!(first_md.contains("revise this program and retry"));
+        assert!(!first_md.contains("revise this program and retry"));
         assert!(!first_md.contains("already rejected"));
 
         let second = ProgramDiagnostic::from_stage(&pipeline, None, &session, program, stage);

@@ -186,6 +186,29 @@ fn resolve_entity_field_projection_stable_after_exposure_extend() {
     );
 }
 
+#[test]
+fn taught_relation_in_field_position_has_relation_specific_correction() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/plasm_language_matrix");
+    let cgs = load_schema_dir(&dir).expect("matrix fixture");
+    let entry = "langmatrix";
+    let exp = TeachingExposureSession::new(&cgs, entry, &["LangItem", "LangLine"]);
+    let map = exp.symbol_map_arc();
+    let token = map.ident_sym_relation_for(entry, "LangItem", "lines");
+    let ent = cgs.get_entity("LangItem").expect("LangItem");
+    let error = map
+        .resolve_entity_field(CatalogScope::qualified(entry), "LangItem", ent, &token)
+        .expect_err("relation is not a scalar field");
+    assert!(matches!(
+        error,
+        SymbolResolveError::RelationUsedAsRowField { .. }
+    ));
+    let correction = error.to_agent_program_error();
+    assert!(correction.contains("relation"), "{correction}");
+    assert!(correction.contains("row."), "{correction}");
+    assert!(!correction.contains("field names from"), "{correction}");
+}
+
 /// Federated extend: colliding `name` wire on WaveLang vs WaveMon resolves by receiver entity.
 #[test]
 fn resolve_entity_field_federated_wire_name_by_receiver_after_extend() {

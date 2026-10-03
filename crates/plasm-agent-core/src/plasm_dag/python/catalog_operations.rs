@@ -2,7 +2,7 @@
 use plasm_core::symbol_tuning::EntityBinding;
 use plasm_core::CapabilityKind;
 
-use super::{at, CompileState, ExecuteSession, PyExpr};
+use super::{at, CompileState, ExecuteSession, PyExpr, PythonLoweringError};
 
 /// A taught method resolved against its owning catalog exactly once. Primary
 /// `get`/`query`/`search` entry points remain read-specific constructors.
@@ -38,7 +38,7 @@ pub(super) fn resolve_taught_method<'a>(
     site: &PyExpr,
     token: &str,
     owner: &EntityBinding,
-) -> Result<ResolvedCatalogMethod<'a>, String> {
+) -> Result<ResolvedCatalogMethod<'a>, PythonLoweringError> {
     let method = state
         .sym_map_for(session)
         .resolve_session_method(token)

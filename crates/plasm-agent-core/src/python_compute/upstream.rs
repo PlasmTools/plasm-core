@@ -234,8 +234,8 @@ pub(crate) async fn admit_bundle(
                         .and_then(|s| s.row_contract())
                         .map_err(crate::python_program_diagnostic::admission_error)?;
                     let operation = plasm_core::row_plan::plan_node_from_compute(&c.compute.op)
-                        .map_err(|e| {
-                            crate::python_program_diagnostic::admission_error(e.to_string())
+                        .map_err(|error| {
+                            crate::program_diagnostic::ProgramStageError::RowCompute { error }
                         })?;
                     plasm_core::row_plan::contracts::output_contract(&contract, &operation)
                         .map_err(crate::python_program_diagnostic::admission_error)?;
@@ -381,10 +381,10 @@ pub(super) fn output_annotation(
                 output(value, cgs, catalogs, out, depth + 1)?
             ),
             ValueShape::Array { element } => {
+                let element = output(element, cgs, catalogs, out, depth + 1)?;
                 format!(
-                    "{} | list[{}]",
+                    "{} | list[{element}] | tuple[{element}, ...]",
                     render(t, cgs, catalogs, out, depth)?,
-                    output(element, cgs, catalogs, out, depth + 1)?
                 )
             }
             ValueShape::Union { variants } => variants

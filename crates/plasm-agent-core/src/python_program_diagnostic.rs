@@ -8,15 +8,14 @@ pub(crate) fn compile(
     session: &ExecuteSession,
     source: &str,
 ) -> Result<PlasmCompBundle, ProgramStageError> {
-    crate::plasm_dag::compile_python_program_checked(session, source).map_err(|stage| match stage {
-        ProgramStageError::Type { correction } => admission_error(correction),
-        other => other,
-    })
+    crate::plasm_dag::compile_python_program_checked(session, source)
 }
 
-pub(crate) fn admission_error(correction: String) -> ProgramStageError {
-    ProgramStageError::Type {
-        correction: format!("{correction}\nRepair the Python Program using the current class and method declarations. Preserve selection criteria, domain types and completed-write evidence. Reuse the same logical session; obtain missing symbols through context extension."),
+pub(crate) fn admission_error(
+    error: impl Into<crate::program_rejection::PythonComputeRejection>,
+) -> ProgramStageError {
+    ProgramStageError::PythonCompute {
+        error: error.into(),
     }
 }
 
@@ -65,26 +64,6 @@ pub(crate) fn understood_prefix(
     })
 }
 
-pub(crate) fn type_correction(session: &ExecuteSession, error: &plasm_core::TypeError) -> String {
-    use plasm_core::TypeError;
-    match error {
-        TypeError::FieldNotFound { field, entity } => {
-            let fields = session.contexts_by_entry.values().filter_map(|context| context.cgs.get_entity(entity)).flat_map(|entity| entity.fields.keys().map(ToString::to_string)).collect::<std::collections::BTreeSet<_>>();
-            format!("Unknown field {field:?}. Use a declared row attribute or quoted projection name. Available fields: {}. Preserve the selection when repairing rows.where(lambda row: row.field == value).", fields.into_iter().collect::<Vec<_>>().join(", "))
-        }
-        TypeError::RelationNotFound { relation, .. } => format!("Unknown relation {relation:?}. Use a declared r# on a proven singleton; traverse plural rows with rows.flat_map(lambda row: row.rN). Obtain missing relation declarations by extending this session."),
-        TypeError::EntityNotFound { .. } | TypeError::CapabilityNotFound { .. } => "Use an exposed e# class and a method declared on it. Extend this logical session for missing capabilities; do not invent names or open a replacement session.".into(),
-        TypeError::RequiredParameterOmitted { parameter, .. } => format!("Supply the required keyword {parameter}=value on the declared Python method. The catalog has no default; use the intended literal or a typed singleton field and preserve its domain."),
-        TypeError::InputRequired { capability } => format!("Capability {capability:?} requires input. Fill the named arguments from its Python declaration; optional omission does not permit None."),
-        TypeError::RefKeyMismatch { message, .. } => format!("Get identity mismatch: {message}. Follow the declared eN.get signature: positional identity for a simple key, named arguments for a compound key."),
-        TypeError::DomainPlaceholderLiteral { field, expected_type, .. } => format!("Replace the placeholder for {field:?} with an actual {expected_type} value or compatible typed binding."),
-        TypeError::RecursiveError { relation, source } => format!("Relation {relation:?}: {}", type_correction(session, source)),
-        TypeError::ChainTargetMissingGet { target_entity, .. } => format!("The relation target {target_entity:?} has no Get capability. Use its declared materialized relation/source; a reference value alone grants no read authority."),
-        TypeError::IncompatibleOperator { .. } | TypeError::IncompatibleValue { .. } | TypeError::CrossCurrencyCompare { .. } => format!("{error}. Preserve the declared domain and use a compatible Python comparison; do not cast away constraints."),
-        TypeError::RowsetNormalize { message } => format!("Source input contract: {message}. Use the exact Python source-method keywords and separate backend selection from rows.where predicates."),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -106,7 +85,77 @@ mod tests {
         session
     }
     #[tokio::test]
-    async fn upstream_correction_preserves_original_body_line_and_session_repair() {
+    async fn compute_mutator_reports_effect_boundary_before_value_typing() {
+        let session = session();
+        let symbols = session.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let mark = symbols.method_sym_for("fixture", "Item", "mark");
+        let source = format!("class Mark(Program):\n    @compute\n    def render(self, rows: list[Row]) -> int:\n        for row in rows:\n            row.{mark}()\n        return len(rows)\n    def build(self):\n        return self.render(e1.query())\n");
+        let error = crate::compile_program(&Default::default(), None, &session, "test", &source)
+            .await
+            .unwrap_err()
+            .into_program()
+            .expect("program-owned failure");
+        assert_eq!(error.category(), ProgramErrorCategory::Type);
+        assert!(
+            error.correction().contains("@compute is pure"),
+            "{}",
+            error.correction()
+        );
+        assert!(
+            error.correction().contains("flat_map"),
+            "{}",
+            error.correction()
+        );
+        assert!(!error.correction().contains("unresolved-attribute"));
+    }
+    #[tokio::test]
+    async fn compute_relation_reports_materialization_boundary() {
+        let session = session();
+        let symbols = session.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let tags = symbols.ident_sym_relation_for("fixture", "Item", "tags");
+        let source = format!("class Read(Program):\n    @compute\n    def collect(self, row: Row[e1]) -> int:\n        return len(row.{tags})\n    def build(self):\n        return self.collect(e1.get('i1'))\n");
+        let error = crate::compile_program(&Default::default(), None, &session, "test", &source)
+            .await
+            .unwrap_err()
+            .into_program()
+            .expect("program-owned failure");
+        assert_eq!(error.category(), ProgramErrorCategory::Type);
+        let correction = error.correction();
+        assert!(correction.contains("materialized"), "{correction}");
+        assert!(correction.contains("build"), "{correction}");
+        assert!(!correction.contains("unresolved-attribute"), "{correction}");
+        assert!(
+            !correction.contains("obtain missing symbols"),
+            "{correction}"
+        );
+    }
+    #[tokio::test]
+    async fn compute_collection_annotations_name_the_actual_materialized_type() {
+        let session = session();
+        for (annotation, expected) in [
+            ("Rows[e1]", "list[Row[eN]]"),
+            ("Singleton[e1]", "Row[eN]"),
+            ("list[e1]", "list[Row[eN]]"),
+        ] {
+            let source = format!("class Read(Program):\n    @compute\n    def count(self, rows: {annotation}) -> int:\n        return len(rows)\n    def build(self):\n        return self.count(e1.query())\n");
+            let error =
+                crate::compile_program(&Default::default(), None, &session, "test", &source)
+                    .await
+                    .unwrap_err()
+                    .into_program()
+                    .expect("program-owned failure");
+            assert!(matches!(&error, ProgramStageError::PythonLowering { .. }));
+            assert!(error.span_offset().is_some());
+            assert!(
+                error.correction().contains(expected),
+                "{annotation}: {}",
+                error.correction()
+            );
+            assert!(!error.correction().contains("exactly one value column"));
+        }
+    }
+    #[tokio::test]
+    async fn upstream_correction_preserves_original_body_line_without_unrelated_repair() {
         let session = session();
         let source = "class Read(Program):\n    @compute\n    def render(self, rows: list[Row]) -> str:\n        return rows[0].missing\n    def build(self):\n        rows = e1.query()\n        return self.render(rows)\n";
         let error = crate::compile_program(&Default::default(), None, &session, "test", source)
@@ -115,11 +164,20 @@ mod tests {
             .into_program()
             .expect("program-owned failure");
         assert_eq!(error.category(), ProgramErrorCategory::Type);
+        assert!(
+            matches!(
+                &error,
+                ProgramStageError::PythonLowering {
+                    error: crate::program_rejection::PythonLoweringError::Compute(_)
+                }
+            ),
+            "{error:?}"
+        );
         let correction = error.correction();
         assert!(correction.contains("plasm_compute.py:4:"), "{correction}");
         assert!(correction.contains("missing"), "{correction}");
         assert!(
-            correction.contains("Reuse the same logical session"),
+            !correction.contains("Reuse the same logical session"),
             "{correction}"
         );
         for prefix in [
@@ -198,14 +256,11 @@ mod tests {
     }
     #[test]
     fn python_cutover_parameter_correction_does_not_echo_native_expression() {
-        let session = session();
-        let message = type_correction(
-            &session,
-            &plasm_core::TypeError::RequiredParameterOmitted {
-                parameter: "item_id".into(),
-                expression: "e2{item_id=$}".into(),
-            },
-        );
+        let message = plasm_core::TypeError::RequiredParameterOmitted {
+            parameter: "item_id".into(),
+            expression: "e2{item_id=$}".into(),
+        }
+        .python_correction();
         assert!(message.contains("item_id=value"));
         assert!(!message.contains("e2{"));
     }

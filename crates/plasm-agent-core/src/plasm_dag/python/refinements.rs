@@ -49,13 +49,13 @@ impl Lower<'_> {
         reference: &Reference,
         value: PlasmDataValue,
         inputs: &BTreeMap<String, crate::plasm_plan::PlanDataInput>,
-    ) -> Result<PlasmDataValue, String> {
+    ) -> Result<PlasmDataValue, PythonLoweringError> {
         fn refine_at(
             contract: &mut ValueContract,
             path: &[String],
             evidence: &ValueContract,
             depth: usize,
-        ) -> Result<(), String> {
+        ) -> Result<(), PythonLoweringError> {
             use plasm_core::value_contract::ValueShape;
             if depth >= 64 {
                 return Err("capture refinement exceeds 64 levels".into());
@@ -111,7 +111,11 @@ impl Lower<'_> {
         })
     }
 
-    fn branch_facts(&mut self, condition: &PyExpr, selected: bool) -> Result<Facts, String> {
+    fn branch_facts(
+        &mut self,
+        condition: &PyExpr,
+        selected: bool,
+    ) -> Result<Facts, PythonLoweringError> {
         let saved = (self.state.clone(), self.serial, self.spans.clone());
         let result = (|| {
             let mut inputs = BTreeMap::new();
@@ -156,8 +160,8 @@ impl Lower<'_> {
         &mut self,
         condition: &PyExpr,
         selected: bool,
-        lower: impl FnOnce(&mut Self) -> Result<T, String>,
-    ) -> Result<T, String> {
+        lower: impl FnOnce(&mut Self) -> Result<T, PythonLoweringError>,
+    ) -> Result<T, PythonLoweringError> {
         let facts = self.branch_facts(condition, selected)?;
         let previous = self.frame.facts.clone();
         self.frame.facts.extend(facts);

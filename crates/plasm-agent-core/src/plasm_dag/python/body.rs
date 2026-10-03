@@ -25,7 +25,7 @@ impl ScopeMode {
 }
 
 impl Lower<'_> {
-    pub(super) fn map(&mut self, e: &PyExpr) -> Result<CorrelatedBody, String> {
+    pub(super) fn map(&mut self, e: &PyExpr) -> Result<CorrelatedBody, PythonLoweringError> {
         self.scope(e, ScopeMode::Record, None)
     }
 
@@ -34,7 +34,7 @@ impl Lower<'_> {
         e: &PyExpr,
         mode: ScopeMode,
         source_override: Option<&str>,
-    ) -> Result<CorrelatedBody, String> {
+    ) -> Result<CorrelatedBody, PythonLoweringError> {
         if self.frame.depth >= 16 {
             return Err(at(e, "scoped composition exceeds 16 map levels"));
         }
@@ -82,7 +82,7 @@ impl Lower<'_> {
         lambda: &ruff_python_ast::ExprLambda,
         bound: NonZeroU32,
         mode: ScopeMode,
-    ) -> Result<CorrelatedBody, String> {
+    ) -> Result<CorrelatedBody, PythonLoweringError> {
         let callback = self.callback(&PyExpr::Lambda(lambda.clone()))?;
         self.scoped_callback_body(e, source, &callback, bound, mode)
     }
@@ -94,7 +94,7 @@ impl Lower<'_> {
         callback: &super::callbacks::Callback,
         bound: NonZeroU32,
         mode: ScopeMode,
-    ) -> Result<CorrelatedBody, String> {
+    ) -> Result<CorrelatedBody, PythonLoweringError> {
         if self.frame.depth >= 16 {
             return Err(at(e, "scoped composition exceeds 16 levels"));
         }
@@ -481,7 +481,7 @@ impl Lower<'_> {
         &mut self,
         e: &PyExpr,
         inputs: &mut BTreeMap<String, PlanDataInput>,
-    ) -> Result<PlasmDataValue, String> {
+    ) -> Result<PlasmDataValue, PythonLoweringError> {
         if self.value_depth >= 64 {
             return Err(at(e, "value expression depth exceeds 64"));
         }
@@ -513,7 +513,7 @@ impl Lower<'_> {
         &mut self,
         e: &PyExpr,
         inputs: &mut BTreeMap<String, PlanDataInput>,
-    ) -> Result<PlasmDataValue, String> {
+    ) -> Result<PlasmDataValue, PythonLoweringError> {
         if super::quantifiers::expression_root(e)
             .is_some_and(|name| self.frame.quantifiers.contains_key(name))
         {
@@ -539,6 +539,21 @@ impl Lower<'_> {
         }
         Ok(match e {
             PyExpr::Attribute(_) => {
+                if let PyExpr::Attribute(attr) = e {
+                    if let Some(owner) = self.expression_owner(&attr.value) {
+                        if super::super::relation::resolve_relation_wire_on_entity(
+                            self.es,
+                            self.state.cross_cache,
+                            &owner,
+                            attr.attr.as_str(),
+                            None,
+                        )
+                        .is_some()
+                        {
+                            return self.scoped_node_value(e, inputs);
+                        }
+                    }
+                }
                 let (node, path) = match self.field_input(e)? {
                     plasm_core::PlasmInputRef::NodeInput { node, path } => (node, path),
                     plasm_core::PlasmInputRef::RowBinding { binding, path } => {
@@ -562,60 +577,67 @@ impl Lower<'_> {
             // A bound rowset is a value dependency just like a rowset-producing
             // expression. Resolve it through the scope ports, never as a literal.
             PyExpr::Name(_) | PyExpr::Call(_) | PyExpr::FString(_) => {
-                let node = self.expr(e, None)?;
-                let is_compute = matches!(
-                    &self.state.get(&node).ok_or("missing scoped result")?.source,
-                    super::super::types::DagNodeSource::Compute {
-                        op: ComputeOp::Python { .. },
-                        ..
-                    }
-                );
-                let scalar = super::super::binding_contract(&self.state, &node)
-                    .is_some_and(|contract| contract.value_kind == BindingValueKind::ScalarCell);
-                let record = matches!(
-                    &self.state.get(&node).ok_or("missing value result")?.source,
-                    super::super::types::DagNodeSource::Derive {
-                        value_type: Some(_),
-                        ..
-                    }
-                ) && self.state.get(&node).is_some_and(|node| node.singleton);
-                let acknowledgement = matches!(
-                    &self.state.get(&node).ok_or("missing effect result")?.source,
-                    super::super::types::DagNodeSource::Surface {
-                        result_shape: ResultShape::SideEffectAck,
-                        ..
-                    }
-                );
-                inputs.insert(
-                    node.clone(),
-                    PlanDataInput {
-                        node: node.clone(),
-                        alias: node.clone(),
-                        cardinality: if acknowledgement {
-                            InputCardinality::Acknowledgement
-                        } else if self.frame.ports.contains(&node)
-                            || self.frame.row.as_deref() == Some(node.as_str())
-                            || record
-                            || ((is_compute || scalar)
-                                && super::super::binding_contract(&self.state, &node).is_some_and(
-                                    |c| c.row_cardinality.permits_scalar_field_extract(),
-                                ))
-                        {
-                            InputCardinality::Singleton
-                        } else {
-                            InputCardinality::Collection
-                        },
-                    },
-                );
-                PlasmDataValue::NodeSymbol {
-                    node: node.clone(),
-                    alias: node,
-                    path: vec![],
-                }
+                return self.scoped_node_value(e, inputs);
             }
             _ => PlasmDataValue::Literal {
                 value: plasm_core::operand_binding::ResolvedValue::new(literal(e)?)?,
             },
+        })
+    }
+
+    fn scoped_node_value(
+        &mut self,
+        e: &PyExpr,
+        inputs: &mut BTreeMap<String, PlanDataInput>,
+    ) -> Result<PlasmDataValue, PythonLoweringError> {
+        let node = self.expr(e, None)?;
+        let is_compute = matches!(
+            &self.state.get(&node).ok_or("missing scoped result")?.source,
+            super::super::types::DagNodeSource::Compute {
+                op: ComputeOp::Python { .. },
+                ..
+            }
+        );
+        let scalar = super::super::binding_contract(&self.state, &node)
+            .is_some_and(|contract| contract.value_kind == BindingValueKind::ScalarCell);
+        let record = matches!(
+            &self.state.get(&node).ok_or("missing value result")?.source,
+            super::super::types::DagNodeSource::Derive {
+                value_type: Some(_),
+                ..
+            }
+        ) && self.state.get(&node).is_some_and(|node| node.singleton);
+        let acknowledgement = matches!(
+            &self.state.get(&node).ok_or("missing effect result")?.source,
+            super::super::types::DagNodeSource::Surface {
+                result_shape: ResultShape::SideEffectAck,
+                ..
+            }
+        );
+        inputs.insert(
+            node.clone(),
+            PlanDataInput {
+                node: node.clone(),
+                alias: node.clone(),
+                cardinality: if acknowledgement {
+                    InputCardinality::Acknowledgement
+                } else if self.frame.ports.contains(&node)
+                    || self.frame.row.as_deref() == Some(node.as_str())
+                    || record
+                    || ((is_compute || scalar)
+                        && super::super::binding_contract(&self.state, &node)
+                            .is_some_and(|c| c.row_cardinality.permits_scalar_field_extract()))
+                {
+                    InputCardinality::Singleton
+                } else {
+                    InputCardinality::Collection
+                },
+            },
+        );
+        Ok(PlasmDataValue::NodeSymbol {
+            node: node.clone(),
+            alias: node,
+            path: vec![],
         })
     }
     fn scoped_literal(
@@ -623,7 +645,7 @@ impl Lower<'_> {
         e: &PyExpr,
         value: LiteralOperand<'_>,
         inputs: &mut BTreeMap<String, PlanDataInput>,
-    ) -> Result<PlasmDataValue, String> {
+    ) -> Result<PlasmDataValue, PythonLoweringError> {
         Ok(match value {
             LiteralOperand::Record(dict) => {
                 let mut fields = BTreeMap::new();

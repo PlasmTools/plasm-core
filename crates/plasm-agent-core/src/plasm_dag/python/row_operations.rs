@@ -26,7 +26,7 @@ impl Lower<'_> {
         call: &ruff_python_ast::ExprCall,
         receiver: &PyExpr,
         id: &str,
-    ) -> Result<String, String> {
+    ) -> Result<String, PythonLoweringError> {
         use RowOperation::*;
         // Both construction and execution coverage enumerate this same closed
         // vocabulary. No wildcard arm may silently admit a new operation.
@@ -80,7 +80,7 @@ impl Lower<'_> {
         call: &ruff_python_ast::ExprCall,
         source: &str,
         id: &str,
-    ) -> Result<String, String> {
+    ) -> Result<String, PythonLoweringError> {
         use RowOperation::*;
         let suffix = match operation {
             Map | PageSize => return Err(at(e, "row constructor entered transform dispatch")),

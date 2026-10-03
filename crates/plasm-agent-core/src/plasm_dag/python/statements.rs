@@ -4,8 +4,10 @@ impl Lower<'_> {
     pub(super) fn statement<'s>(
         &mut self,
         stmt: &'s Stmt,
-    ) -> Result<Option<&'s ruff_python_ast::StmtReturn>, String> {
-        match build_statements::BuildStatement::classify(stmt)? {
+    ) -> Result<Option<&'s ruff_python_ast::StmtReturn>, PythonLoweringError> {
+        match build_statements::BuildStatement::classify(stmt)
+            .map_err(|error| error.correction())?
+        {
             build_statements::BuildStatement::Documentation(()) => {}
             build_statements::BuildStatement::Effect(s) => {
                 let id = self.expr(&s.value, None)?;

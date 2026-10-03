@@ -16,7 +16,11 @@ impl Lower<'_> {
         PlasmInputRef::node_output(binding, path)
     }
 
-    pub(super) fn emit_catalog(&mut self, id: &str, expr: Expr) -> Result<String, String> {
+    pub(super) fn emit_catalog(
+        &mut self,
+        id: &str,
+        expr: Expr,
+    ) -> Result<String, PythonLoweringError> {
         let parsed = plasm_core::expr_parser::ParsedExpr::from_expr(expr);
         let nodes =
             super::super::pipeline::compile_parsed_nodes(self.es, &self.state, id, "", parsed)?;
@@ -32,7 +36,7 @@ impl Lower<'_> {
         _call: &ExprCall,
         _source: &str,
         id: &str,
-    ) -> Result<String, String> {
+    ) -> Result<String, PythonLoweringError> {
         let body = self.scope(site, super::body::ScopeMode::Rows, Some(_source))?;
         let schema = crate::map_body_schema::output_schema(self.es, &body)?;
         self.insert(DagNode {

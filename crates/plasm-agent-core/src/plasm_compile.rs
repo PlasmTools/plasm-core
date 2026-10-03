@@ -93,7 +93,8 @@ pub async fn compile_python_program(
     session: &ExecuteSession,
     source: &str,
 ) -> Result<PlasmCompBundle, String> {
-    let bundle = crate::plasm_dag::compile_python_program(session, source)?;
+    let bundle = crate::plasm_dag::compile_python_program_checked(session, source)
+        .map_err(|error| error.to_string())?;
     let admission = Box::pin(crate::python_compute::admit_bundle(session, &bundle)).await;
     admission.map_err(|error| error.to_string())?;
     Ok(bundle)

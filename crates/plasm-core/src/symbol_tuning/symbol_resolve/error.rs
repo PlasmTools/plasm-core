@@ -16,6 +16,10 @@ pub enum SymbolResolveError {
         /// When set, `token` is a query/search selection slot — use this `{wire=…}` form.
         query_selection_form: Option<String>,
     },
+    RelationUsedAsRowField {
+        entity: String,
+        token: String,
+    },
     UnknownQueryFilterPSym {
         entity: String,
         token: String,
@@ -66,12 +70,12 @@ pub enum SymbolResolveError {
 }
 
 impl SymbolResolveError {
-    const SESSION_RECOVERY_SUFFIX: &'static str =
-        "Use session_mode: \"extend\" with your logical_session_ref — do not call session_mode: \"new\" to recover.";
-
     /// Optional agent-facing hint appended after the primary error line.
     pub fn agent_program_hint(&self) -> Option<&'static str> {
         match self {
+            Self::RelationUsedAsRowField { .. } => Some(
+                "This is a taught relation. Navigate it as `row.rN` on an entity-bound row in `build` or a scoped callback; `@compute` receives materialized values without relation authority.",
+            ),
             Self::NotARowField { query_selection_form: Some(_), .. } => Some(
                 "That wire is a query/search selection slot — use the taught query selection form, not a row projection.",
             ),
@@ -108,8 +112,8 @@ impl SymbolResolveError {
     /// Primary error line plus optional `help:` suffix for agent program surfaces.
     pub fn to_agent_program_error(&self) -> String {
         match self.agent_program_hint() {
-            Some(hint) => format!("{self}\nhelp: {hint} {}", Self::SESSION_RECOVERY_SUFFIX),
-            None => format!("{self}\nhelp: {}", Self::SESSION_RECOVERY_SUFFIX),
+            Some(hint) => format!("{self}\nhelp: {hint}"),
+            None => self.to_string(),
         }
     }
 
@@ -145,6 +149,10 @@ impl std::fmt::Display for SymbolResolveError {
                     write!(f, "`{token}` is not a row field on `{entity}` for this binding")
                 }
             }
+            Self::RelationUsedAsRowField { entity, token } => write!(
+                f,
+                "`{token}` is a relation on `{entity}`, not a scalar row field"
+            ),
             Self::UnknownQueryFilterPSym {
                 entity,
                 token,

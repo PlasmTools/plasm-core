@@ -78,6 +78,7 @@ Case { id: "value_recursive_inline_field", python: "return {\"title\": E.get(\"i
 Case { id: "value_recursive_length", python: "xs = [1, 2]\nreturn {\"n\": len([xs, []])}", existing: None, expect_live_error: None },
 Case { id: "value_recursive_empty_record", python: "return {}", existing: None, expect_live_error: None },
 Case { id: "value_recursive_projection", python: "return E.query().take(2).select(value=lambda row: {\"n\": (row.score or 0) + 1, \"xs\": [row.title, len([row.score, 1])]})", existing: None, expect_live_error: None },
+Case { id: "value_recursive_scoped_relation", python: "return E.get(\"i1\").map(lambda row: {\"title\": row.title, \"lines\": row.REL_COMPLETE_LINES}, max_parents=1)", existing: None, expect_live_error: None },
 Case { id: "value_recursive_lazy_projection", python: "return E.get(\"i1\").select(value=lambda row: row.score if row.score is not None and row.score > 0 and True else 1 / 0)", existing: None, expect_live_error: None },
 Case { id: "value_recursive_root_scalar", python: "return 42", existing: None, expect_live_error: None },
 
@@ -2446,6 +2447,7 @@ async fn python_compute_dictionary_and_multiple_inputs_live() {
         ("class P(Program):\n    def build(self):\n        one = E.get('i1')\n        return self.count(one, one)\n    @compute\n    def count(self, row: Row, rows: list[Row]):\n        n = len(rows)\n        return {'name': row.title, 'count': n}\n", serde_json::json!({"name":"one","count":1})),
         ("class P(Program):\n    def build(self):\n        value = self.make(E.query())\n        return self.read(value)\n    @compute\n    def make(self, rows: list[Row]):\n        result = {}\n        for row in rows:\n            result[str(row.id)] = str(row.title)\n        return result\n    @compute\n    def read(self, value: dict[str, str]) -> str:\n        return value['i1']\n", serde_json::json!("one")),
         ("class P(Program):\n    def build(self):\n        return self.add(True)\n    @compute\n    def add(self, value: int) -> str:\n        return str(value)\n", serde_json::json!("True")),
+        ("class P(Program):\n    def build(self):\n        return self.pair(E.get('i1'))\n    @compute\n    def pair(self, row: Row):\n        return row.id, row.title\n", serde_json::json!(["i1", "one"])),
         ("class P(Program):\n    def build(self):\n        item = E.get(\"i1\")\n        first = item.title\n        item = E.get(\"i2\")\n        return f\"{first}/{item.title}\"\n", serde_json::json!("one/two")),
         ("class P(Program):\n    def build(self):\n        return \"done\"\n        missing()\n", serde_json::json!("done")),
         ("class P(Program):\n    def build(self):\n        def title(row: Row, /):\n            return {\"name\": row.title}\n        return self.names(E.query().map(title, max_parents=2))\n    @compute\n    def names(self, rows: list[Row]) -> str:\n        return \",\".join(str(row.name) for row in rows)\n", serde_json::json!("one,two")),

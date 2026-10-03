@@ -115,6 +115,7 @@ mod plan_dry_compact;
 mod plan_dry_display;
 pub mod program_diagnostic;
 pub(crate) mod program_reject_memory;
+pub mod program_rejection;
 mod python_program_diagnostic;
 pub mod release_version;
 mod session_credentials;

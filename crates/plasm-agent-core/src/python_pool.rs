@@ -596,14 +596,14 @@ fn output_value(
             }
             Ok(V::Float(n))
         }
-        "list" | "set" => value
+        "list" | "tuple" | "set" => value
             .items()
-            .ok_or("invalid list")?
+            .ok_or("invalid Python collection")?
             .into_iter()
             .map(|v| output_value(v, depth + 1, budget))
             .collect::<Result<Vec<_>, _>>()
             .map(V::Array),
-        "type" | "tuple" | "frozenset" => Err("Python output is not a Plasm value".into()),
+        "type" | "frozenset" => Err("Python output is not a Plasm value".into()),
         _ => {
             if !matches!(
                 monty_types::unstable::node(value),

@@ -5,7 +5,7 @@ fn parse(source: &str) -> Result<plasm_core::Value, String> {
     let [Stmt::Expr(expression)] = parsed.suite().as_slice() else {
         panic!("expected expression");
     };
-    literal(&expression.value)
+    literal(&expression.value).map_err(Into::into)
 }
 
 #[test]

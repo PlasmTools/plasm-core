@@ -12,7 +12,7 @@ impl Lower<'_> {
         &mut self,
         expression: &PyExpr,
         inputs: &mut BTreeMap<String, PlanDataInput>,
-    ) -> Result<Option<PlasmDataValue>, String> {
+    ) -> Result<Option<PlasmDataValue>, PythonLoweringError> {
         if super::literal_operands::LiteralOperand::classify(expression).is_some()
             || matches!(expression, PyExpr::Name(_))
             || self.expression_placement(expression) == ExpressionPlacement::Host
@@ -141,7 +141,7 @@ impl Lower<'_> {
         expression: PyExpr,
         fields: BTreeMap<String, PlasmDataValue>,
         inputs: &mut BTreeMap<String, PlanDataInput>,
-    ) -> Result<PlasmDataValue, String> {
+    ) -> Result<PlasmDataValue, PythonLoweringError> {
         let source_id = self.fresh();
         let source = self.emit_value(
             PlasmDataValue::Object { fields },
@@ -174,7 +174,7 @@ impl Lower<'_> {
         &mut self,
         expression: &PyExpr,
         inputs: &mut BTreeMap<String, PlanDataInput>,
-    ) -> Result<PlasmDataValue, String> {
+    ) -> Result<PlasmDataValue, PythonLoweringError> {
         let captured = self.capture_expression(expression, inputs)?;
         self.emit_inferred_expression(captured.expression, captured.fields, inputs)
     }

@@ -9,7 +9,7 @@ impl Lower<'_> {
         call: &ExprCall,
         source: &str,
         id: &str,
-    ) -> Result<String, String> {
+    ) -> Result<String, PythonLoweringError> {
         let parameter = self.fresh_parameter("projection");
         let parsed = ruff_python_parser::parse_expression(&format!("lambda {parameter}: {{}}"))
             .map_err(|e| e.to_string())?;
@@ -105,10 +105,10 @@ impl Lower<'_> {
         &self,
         source: &str,
         field: &str,
-    ) -> Result<PlasmDataValue, String> {
+    ) -> Result<PlasmDataValue, PythonLoweringError> {
         let schema = super::text::inferred_schema(self.es, &self.state, source, 0)?;
         if !schema.fields.iter().any(|f| f.name.as_str() == field) {
-            return Err(format!("unknown projected field {field}"));
+            return Err(format!("unknown projected field {field}").into());
         }
         Ok(PlasmDataValue::BindingSymbol {
             binding: "_".into(),
@@ -122,7 +122,7 @@ impl Lower<'_> {
         call: &ExprCall,
         source: &str,
         id: &str,
-    ) -> Result<String, String> {
+    ) -> Result<String, PythonLoweringError> {
         if call.arguments.keywords.iter().any(|k| {
             matches!(k.value, PyExpr::Lambda(_))
                 || name(&k.value).is_some_and(|n| self.callbacks.contains_key(n))
@@ -155,7 +155,9 @@ impl Lower<'_> {
     }
 }
 
-pub(super) fn projection_parameter(lambda: &ruff_python_ast::ExprLambda) -> Result<&str, String> {
+pub(super) fn projection_parameter(
+    lambda: &ruff_python_ast::ExprLambda,
+) -> Result<&str, PythonLoweringError> {
     let p = lambda
         .parameters
         .as_ref()
@@ -179,7 +181,9 @@ pub(super) fn projection_parameter(lambda: &ruff_python_ast::ExprLambda) -> Resu
     Ok(row)
 }
 
-pub(super) fn callable_signature(lambda: &ruff_python_ast::ExprLambda) -> Result<String, String> {
+pub(super) fn callable_signature(
+    lambda: &ruff_python_ast::ExprLambda,
+) -> Result<String, PythonLoweringError> {
     let parameters = lambda
         .parameters
         .as_ref()

@@ -152,6 +152,13 @@ pub(super) fn assert_supplemental(id: &str, run: &PlasmPlanRunResult) {
         "value_recursive_projection" => {
             json!([{"value": {"n": 11, "xs": ["Alpha", 2]}}, {"value": {"n": 21, "xs": ["Beta", 2]}}])
         }
+        "value_recursive_scoped_relation" => json!([{
+            "title": "Alpha",
+            "lines": [
+                {"id": "l1", "item_id": "i1", "note": "line-a"},
+                {"id": "l2", "item_id": "i1", "note": "line-b"}
+            ]
+        }]),
         "value_recursive_lazy_projection" => json!([{"value": 10}]),
         "value_recursive_root_scalar" => json!([{"value": 42}]),
         "record_value_singleton" => json!([{"id":"i1", "title":"Alpha"}]),
