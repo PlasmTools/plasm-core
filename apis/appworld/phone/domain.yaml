@@ -36,7 +36,7 @@ entities:
         value_ref: account_phone
   AuthSession:
     id_field: access_token
-    description: Authenticated session for Phone. Username is the task principal's e164 phone number from Supervisor — not an email.
+    description: Authenticated session for Phone. Username is the task principal's phone_number exactly as returned by Supervisor — not an email.
     discovery:
       names:
       - login
@@ -219,7 +219,7 @@ entities:
         description: Receiver phone number.
   Profile:
     id_field: phone_number
-    description: Public phone profile lookup.
+    description: Public profile of a registered Phone account, looked up by its exact stored phone number. This is not an address-book contact and does not provide a contact email.
     fields:
       first_name:
         required: false
@@ -429,7 +429,7 @@ capabilities:
       type: side_effect
       description: Ends the Phone session for this token.
   contact_query:
-    description: Select contacts by relationship; unfiltered results include every group.
+    description: Search the signed-in account's address book by name or phone number, optionally within a relationship. Text search ranks candidates and may include nonmatches; verify an exact phone_number before using the contact's email.
     kind: query
     entity: Contact
     discovery:
@@ -456,6 +456,7 @@ capabilities:
     - name: query
       value_ref: nv_str
       required: false
+      description: Search contact names and phone numbers; verify the candidate's exact phone_number because ranked results may include nonmatches.
     - name: relationship
       value_ref: nv_contact_relationship
       required: false
@@ -835,7 +836,7 @@ capabilities:
           value_ref: nv_access_token
           required: true
   profile_get:
-    description: Show phone profile by phone number.
+    description: Show a registered Phone account by its exact stored phone number; no country prefix is added. For an address-book person's email, search Contact instead.
     kind: get
     entity: Profile
     arguments:
@@ -906,7 +907,7 @@ values:
     description: Whether account ownership has been verified.
   account_phone:
     type: e164
-    description: Account owner phone number.
+    description: Account owner phone number in the service's stored spelling; exact lookups do not add a country prefix.
   nv_str:
     type: string
   nv_email:
@@ -923,7 +924,7 @@ values:
     description: Bearer access token from login.
   nv_phone:
     type: e164
-    description: Phone number.
+    description: Phone number in the service's stored spelling; exact lookups do not add a country prefix.
   nv_message:
     type: document
     description: Message body text.
