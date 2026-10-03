@@ -111,10 +111,6 @@ impl OmittedReferenceOnlyFields {
     pub(crate) fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
-
-    pub(crate) fn join_comma(&self) -> String {
-        self.0.join(", ")
-    }
 }
 
 impl From<BTreeSet<String>> for OmittedReferenceOnlyFields {
@@ -195,17 +191,25 @@ pub(crate) fn format_coverage_preview_note(
     continue_handle: Option<&str>,
     artifact_access: ArtifactAccessMode,
 ) -> String {
-    let mut line = format!(
-        "Showing {shown} of {snapshot_rows} snapshot rows. Result coverage: {}.",
-        coverage.as_str()
-    );
+    let mut line = if shown < snapshot_rows {
+        format!(
+            "{shown}/{snapshot_rows} rows shown · {} coverage.",
+            coverage.as_str()
+        )
+    } else {
+        format!("{snapshot_rows} rows · {} coverage.", coverage.as_str())
+    };
     if shown < snapshot_rows {
-        line.push_str(" This is a display preview, not a selection or proof of a match. Compute over all source rows in the DAG; preserve the task criteria.");
+        if artifact_access == ArtifactAccessMode::DagCompute {
+            line.push_str(" Preview only; use typed `@compute` over all rows before deciding.");
+        } else {
+            line.push_str(" Preview only; inspect the full result before deciding.");
+        }
     }
     if artifact_access != ArtifactAccessMode::DagCompute && has_snapshot {
         if let Some(uri) = snapshot_uri {
             line.push_str(&format!(
-                " Full snapshot: {} `{uri}`.",
+                " Details: {} `{uri}`.",
                 artifact_access.artifact_read_instruction()
             ));
         }
@@ -276,9 +280,11 @@ mod tests {
             Some("plasm://r/1"),
             Some("l_page1"),
         );
-        assert!(note.contains("Showing 10 of 25 snapshot rows"), "{note}");
-        assert!(note.contains("Result coverage: partial."), "{note}");
-        assert!(note.contains("Full snapshot:"), "{note}");
+        assert!(
+            note.contains("10/25 rows shown · partial coverage."),
+            "{note}"
+        );
+        assert!(note.contains("Details:"), "{note}");
         assert!(note.contains("plasm://r/1"), "{note}");
         assert!(note.contains("Continue: `l_page1`"), "{note}");
 
@@ -290,11 +296,7 @@ mod tests {
             None,
         );
         assert!(
-            complete.contains("Showing 10 of 80 snapshot rows"),
-            "{complete}"
-        );
-        assert!(
-            complete.contains("Result coverage: complete."),
+            complete.contains("10/80 rows shown · complete coverage."),
             "{complete}"
         );
         assert!(!complete.contains("Continue:"), "{complete}");
@@ -317,7 +319,7 @@ mod tests {
                 ArtifactAccessMode::ResourcesRead,
             );
             assert!(
-                full.contains(&format!("Result coverage: {}.", cov.as_str())),
+                full.contains(&format!("{} coverage.", cov.as_str())),
                 "Full/empty path missing coverage: {full}"
             );
             let capped = format_coverage_preview_note(
@@ -330,7 +332,7 @@ mod tests {
                 ArtifactAccessMode::ResourcesRead,
             );
             assert!(
-                capped.contains(&format!("Result coverage: {}.", cov.as_str())),
+                capped.contains(&format!("{} coverage.", cov.as_str())),
                 "Capped path missing coverage: {capped}"
             );
             let snap = format_coverage_preview_note(
@@ -343,7 +345,7 @@ mod tests {
                 ArtifactAccessMode::ResourcesRead,
             );
             assert!(
-                snap.contains(&format!("Result coverage: {}.", cov.as_str())),
+                snap.contains(&format!("{} coverage.", cov.as_str())),
                 "SnapshotOnly path missing coverage: {snap}"
             );
         }

@@ -163,23 +163,28 @@ pub(crate) fn format_operations_block(result: &ExecutionResult) -> String {
     if result.operations.is_empty() {
         return String::new();
     }
+    if result
+        .operations
+        .entries()
+        .iter()
+        .all(|ack| ack.logical_invocations == 0)
+    {
+        return "\nNo actions dispatched.\n".into();
+    }
     let mut out = String::new();
     let mut any_failed = false;
-    for ack in result.operations.entries() {
+    for ack in result
+        .operations
+        .entries()
+        .iter()
+        .filter(|ack| ack.logical_invocations > 0)
+    {
         out.push_str(&format!("\n`{}/{}`: ", ack.entry_id, ack.capability));
-        if ack.logical_invocations == 0 {
-            out.push_str("No actions invoked.\n");
-            continue;
-        }
         let recorded = !matches!(ack.source, plasm_runtime::ExecutionSource::Live);
         if recorded {
             out.push_str("Recorded outcome: ");
         }
-        out.push_str(&format!(
-            "{} action{} completed",
-            ack.completed,
-            if ack.completed == 1 { "" } else { "s" }
-        ));
+        out.push_str(&format!("{} completed", ack.completed));
         if ack.failed > 0 {
             any_failed = true;
             out.push_str(&format!("; {} failed", ack.failed));
@@ -1538,9 +1543,9 @@ mod tests {
         );
         let empty_md = format_operations_block(&empty_loop);
         let done_md = format_operations_block(&completed);
-        assert!(empty_md.contains("No actions invoked."), "{empty_md}");
+        assert!(empty_md.contains("No actions dispatched."), "{empty_md}");
         assert!(!empty_md.contains("completed"), "{empty_md}");
-        assert!(done_md.contains("1 action completed."), "{done_md}");
+        assert!(done_md.contains("1 completed."), "{done_md}");
         assert!(!done_md.contains("applied"), "{done_md}");
         assert_eq!(
             http_execute_results_value(&empty_loop)["operations"][0]["logical_invocations"],
@@ -1568,7 +1573,7 @@ mod tests {
             ExecutionSource::Cache,
         );
         let text = format_operations_block(&result);
-        assert!(text.contains("No actions invoked."));
+        assert!(text.contains("No actions dispatched."));
         assert!(!text.contains("completed"));
         assert!(!text.contains("LangItem:1"));
     }
@@ -1613,7 +1618,7 @@ mod tests {
         );
         let wire = http_execute_results_value(&result);
         assert_eq!(wire["operations"][0]["source"], "replay");
-        assert!(format_operations_block(&result).contains("Recorded outcome: 1 action completed."));
+        assert!(format_operations_block(&result).contains("Recorded outcome: 1 completed."));
     }
 
     /// Soft-fail retained summary: unavailable detail must not render as a blank / empty cell.

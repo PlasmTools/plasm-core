@@ -89,19 +89,12 @@ fn append_paging_if_needed(
 }
 
 fn append_coverage_note(sections: &mut String, resolved: &ResolvedStepPublish, plan: &PublishPlan) {
-    let uri = resolved.artifact.as_ref().map(|h| {
-        if h.canonical_plasm_uri.is_empty() {
-            h.plasm_uri.as_str()
-        } else {
-            h.canonical_plasm_uri.as_str()
-        }
-    });
     sections.push_str(&mcp_coverage_preview_note(
         shown_rows_for_mode(resolved.mode, resolved.row_count),
         resolved.row_count,
         resolved.coverage,
         resolved.artifact.is_some(),
-        uri,
+        None,
         resolved.continue_handle.as_deref(),
         plan.artifact_access,
     ));
@@ -156,6 +149,13 @@ pub(crate) fn build_inline_bodies(
         let resolved = &plan.resolved[i];
         if let Some(fmt) = &resolved.format {
             omitted_union.extend(fmt.omitted.as_ref().iter().cloned());
+        }
+        if step.result.entities().is_empty() && !step.result.operations.is_empty() {
+            if !sections.is_empty() {
+                sections.push('\n');
+            }
+            sections.push_str(format_operations_block(&step.result).trim());
+            continue;
         }
         if i > 0 {
             sections.push_str("\n\n");

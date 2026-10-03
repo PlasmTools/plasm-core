@@ -126,6 +126,7 @@ pub struct PlanDryCompactView {
 pub struct PlanDryStep {
     pub ordinal: u8,
     pub id: String,
+    pub synthetic: bool,
     pub op: PlanDryOp,
     pub uses: Vec<String>,
 }
@@ -260,6 +261,7 @@ pub fn build_plan_dry_compact_view(
             Some(PlanDryStep {
                 ordinal: (ordinal + 1).min(u8::MAX as usize) as u8,
                 id: display_id,
+                synthetic: is_synthetic_plan_node_id(id),
                 op,
                 uses,
             })
@@ -285,8 +287,11 @@ pub fn render_plan_dry_compact_text(
     let mut out = String::new();
     let verdict = view.verdict.as_wire();
     let mut header = format!(
-        "plan {verdict} · {}n {}r {}w",
-        view.node_count, view.read_count, view.write_count
+        "plan {verdict} · {} read{} · {} action{}",
+        view.read_count,
+        if view.read_count == 1 { "" } else { "s" },
+        view.write_count,
+        if view.write_count == 1 { "" } else { "s" },
     );
     let _ = write!(header, " → {}", view.return_label);
     if let Some(handle) = plan_handle {
@@ -300,26 +305,68 @@ pub fn render_plan_dry_compact_text(
         let _ = writeln!(out, "warn: {warn}");
     }
     let _ = writeln!(out);
-    for step in &view.steps {
-        let op = render_plan_dry_op(&step.op);
-        if step.uses.is_empty() {
-            let _ = writeln!(out, "{:02} {:<12} {}", step.ordinal, step.id, op);
+    let hidden = view
+        .steps
+        .iter()
+        .filter(|step| {
+            step.synthetic
+                && step.id != view.return_label
+                && matches!(
+                    step.op,
+                    PlanDryOp::Data { .. } | PlanDryOp::Derive { .. } | PlanDryOp::Python { .. }
+                )
+        })
+        .map(|step| step.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    let by_id = view
+        .steps
+        .iter()
+        .map(|step| (step.id.as_str(), step))
+        .collect::<HashMap<_, _>>();
+    fn visible_dependency(
+        id: &str,
+        hidden: &std::collections::HashSet<&str>,
+        by_id: &HashMap<&str, &PlanDryStep>,
+        seen: &mut std::collections::HashSet<String>,
+        result: &mut Vec<String>,
+    ) {
+        if !seen.insert(id.to_owned()) {
+            return;
+        }
+        if hidden.contains(id) {
+            if let Some(step) = by_id.get(id) {
+                for dependency in &step.uses {
+                    visible_dependency(dependency, hidden, by_id, seen, result);
+                }
+            }
         } else {
-            let _ = writeln!(
-                out,
-                "{:02} {:<12} {} ← {}",
-                step.ordinal,
-                step.id,
-                op,
-                step.uses.join(", ")
-            );
+            result.push(id.to_owned());
+        }
+    }
+    let shown = view
+        .steps
+        .iter()
+        .filter(|step| !hidden.contains(step.id.as_str()));
+    for step in shown {
+        let op = match &step.op {
+            PlanDryOp::Derive { .. } => "compute value".to_owned(),
+            PlanDryOp::Data { .. } => "value".to_owned(),
+            PlanDryOp::Python { .. } => "compute value".to_owned(),
+            other => render_plan_dry_op(other),
+        };
+        let mut uses = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for dependency in &step.uses {
+            visible_dependency(dependency, &hidden, &by_id, &mut seen, &mut uses);
+        }
+        if uses.is_empty() {
+            let _ = writeln!(out, "{}: {op}", step.id);
+        } else {
+            let _ = writeln!(out, "{}: {op} ← {}", step.id, uses.join(", "));
         }
     }
     if view.show_execution_order_footer {
-        let _ = writeln!(
-            out,
-            "execution: bind-ordered (writes are sequential; parallel return is shape only)"
-        );
+        let _ = writeln!(out, "Actions execute in source order.");
     }
     out
 }
@@ -610,6 +657,15 @@ fn compact_op_from_compute(
 }
 
 fn surface_compact_expr(surface: &ValidatedSurfaceNode, es: Option<&ExecuteSession>) -> String {
+    if es.is_none() {
+        if let Some(ir) = &surface.ir {
+            let mut summary = crate::expr_display::expr_display(&ir.expr);
+            if let Some(fields) = ir.projection.as_deref() {
+                summary.push_str(&format!(" fields {}", fields.join(", ")));
+            }
+            return summary;
+        }
+    }
     let raw = surface
         .ir
         .as_ref()
@@ -927,6 +983,8 @@ pub(crate) fn return_roots_include_unbounded_list_surface(plan: &Plan<ValidatedP
 
 fn is_synthetic_plan_node_id(id: &str) -> bool {
     id.starts_with("__plasm_")
+        || id.starts_with("__py")
+        || id.starts_with("__scope")
         || id
             .strip_prefix("return_")
             .and_then(|rest| rest.parse::<u32>().ok())

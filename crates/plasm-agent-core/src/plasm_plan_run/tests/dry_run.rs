@@ -1011,16 +1011,17 @@ fn dry_run_text_renders_dependency_dag_snapshot() {
     insta::assert_snapshot!(
         text,
         @"
-    plan review · 3n 1r 0w → returns: summary, cards · p7
+    plan review · 1 read · 0 actions → returns: summary, cards · p7
     warn: narrow before aggregate/limit
 
-    01 products     query {\"op\":\"query\",\"entity\":\"Product\"}
-    02 summary      project name, sku ← products
-    03 cards        derive map summary as product → {1} ← summary
+    products: query Query(Product all)
+    summary: project name, sku ← products
+    cards: compute value ← summary
     "
     );
     assert!(!text.contains("node_results"));
     assert!(!text.contains("\"dry_run\""));
+    assert!(!text.contains("{\"op\""));
 }
 
 #[test]

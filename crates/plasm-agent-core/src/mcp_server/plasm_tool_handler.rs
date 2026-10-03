@@ -368,7 +368,7 @@ impl PlasmMcpHandler {
                     "execute_failed",
                     started.elapsed(),
                 );
-                Ok(super::host_fault::HostFault(msg).into_tool_result())
+                Ok(super::host_fault::HostFault(msg).into_tool_result(delivery_profile))
             }
         }
     }

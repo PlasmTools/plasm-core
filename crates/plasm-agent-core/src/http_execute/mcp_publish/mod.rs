@@ -201,18 +201,13 @@ mod tests {
             out.markdown
         );
         assert!(
-            out.markdown.contains("Showing 25 of 49 snapshot rows"),
+            out.markdown.contains("25/49 rows shown"),
             "must report the actual displayed prefix: {}",
             out.markdown
         );
         assert!(
             out.markdown.contains("resources/read"),
             "expected snapshot URI hint: {}",
-            out.markdown
-        );
-        assert!(
-            out.markdown.contains("Showing 25 of 49"),
-            "expected imperative artifact read instruction: {}",
             out.markdown
         );
         assert!(
@@ -316,7 +311,7 @@ mod tests {
             out.markdown
         );
         assert!(
-            out.markdown.contains("Showing 25 of 40 snapshot rows"),
+            out.markdown.contains("25/40 rows shown"),
             "expected row-limit note: {}",
             out.markdown
         );
@@ -380,12 +375,8 @@ mod tests {
             artifact: None,
         };
         let out = publish_plasm_result_steps(None, None, std::slice::from_ref(&step));
-        assert!(
-            out.markdown.contains("## effects (0 rows)"),
-            "{}",
-            out.markdown
-        );
-        assert!(out.markdown.contains("(no results)"), "{}", out.markdown);
+        assert!(!out.markdown.contains("(no results)"), "{}", out.markdown);
+        assert!(!out.markdown.contains("0 rows"), "{}", out.markdown);
         assert!(
             out.markdown.contains("`langmatrix/langitem_delete`"),
             "{}",
@@ -396,11 +387,7 @@ mod tests {
             "{}",
             out.markdown
         );
-        assert!(
-            out.markdown.contains("2 actions completed"),
-            "{}",
-            out.markdown
-        );
+        assert!(out.markdown.contains("2 completed"), "{}", out.markdown);
         assert!(out.markdown.contains("1 failed"), "{}", out.markdown);
         assert!(
             out.markdown.contains("does not imply rollback"),
@@ -444,11 +431,7 @@ mod tests {
         assert!(out.markdown.contains("```tsv"), "{}", out.markdown);
         assert!(out.markdown.contains("\"m0\""), "{}", out.markdown);
         assert!(out.markdown.contains("record_update"), "{}", out.markdown);
-        assert!(
-            out.markdown.contains("1 action completed"),
-            "{}",
-            out.markdown
-        );
+        assert!(out.markdown.contains("1 completed"), "{}", out.markdown);
         assert!(out.markdown.contains("compute"), "{}", out.markdown);
         let meta = serde_json::to_string(&out.tool_meta).unwrap();
         assert!(
@@ -470,11 +453,11 @@ mod tests {
         assert!(out.markdown.contains("\"m0\""), "{}", out.markdown);
         assert!(!out.markdown.contains("\"m10\""), "{}", out.markdown);
         assert!(
-            out.markdown.contains("Showing 10 of 600"),
+            out.markdown.contains("10/600 rows shown"),
             "{}",
             out.markdown
         );
-        assert!(out.markdown.contains("not a selection"), "{}", out.markdown);
+        assert!(out.markdown.contains("Preview only"), "{}", out.markdown);
     }
 
     #[test]
@@ -524,11 +507,11 @@ mod tests {
                     }
                     if count > 0 {
                         assert_eq!(out.markdown.matches("\"m0\"").count(), 2);
-                        assert!(!out.markdown.contains(&format!("Showing 0 of {count}")));
+                        assert!(!out.markdown.contains(&format!("0/{count} rows shown")));
                         // A string that fits a cell is exact, even when the aggregate table is too large.
                         assert!(out.markdown.contains(&"é".repeat(500)));
                     } else {
-                        assert!(out.markdown.contains("Showing 0 of 0"));
+                        assert!(out.markdown.contains("0 rows"));
                     }
                 }
             }
@@ -588,7 +571,7 @@ mod tests {
         );
         let out = publish_plasm_result_steps(None, None, std::slice::from_ref(&step));
         assert!(
-            out.markdown.contains("Result coverage: complete."),
+            out.markdown.contains("complete coverage."),
             "Full mode must mention coverage: {}",
             out.markdown
         );
@@ -611,12 +594,12 @@ mod tests {
             &policy,
         );
         assert!(
-            out.markdown.contains("Result coverage: partial."),
+            out.markdown.contains("partial coverage."),
             "CappedInline must mention coverage: {}",
             out.markdown
         );
         assert!(
-            out.markdown.contains("Showing 2 of 10"),
+            out.markdown.contains("2/10 rows shown"),
             "CappedInline should report shown/total: {}",
             out.markdown
         );
@@ -640,7 +623,7 @@ mod tests {
         );
         let out = publish_plasm_result_steps(None, None, std::slice::from_ref(&step));
         assert!(
-            out.markdown.contains("Result coverage: partial."),
+            out.markdown.contains("partial coverage."),
             "SnapshotOnly must mention coverage: {}",
             out.markdown
         );
@@ -654,7 +637,7 @@ mod tests {
         );
         let out = publish_plasm_result_steps(None, None, std::slice::from_ref(&step));
         assert!(
-            out.markdown.contains("Result coverage: complete."),
+            out.markdown.contains("complete coverage."),
             "empty Full result must mention coverage: {}",
             out.markdown
         );
@@ -676,12 +659,12 @@ mod tests {
             out.markdown
         );
         assert!(
-            out.markdown.contains("Result coverage: unknown."),
+            out.markdown.contains("unknown coverage."),
             "exactly-full host page must stamp Unknown coverage: {}",
             out.markdown
         );
         assert!(
-            out.markdown.contains("Showing 25 of 25 snapshot rows"),
+            out.markdown.contains("25 rows ·"),
             "shown/total must remain even when equal: {}",
             out.markdown
         );
@@ -695,7 +678,7 @@ mod tests {
         );
         let out = publish_plasm_result_steps(None, None, std::slice::from_ref(&step));
         assert!(
-            out.markdown.contains("Result coverage: partial."),
+            out.markdown.contains("partial coverage."),
             "Partial host page must stamp coverage: {}",
             out.markdown
         );
@@ -735,8 +718,8 @@ mod tests {
             "morgan section missing: {}",
             out.markdown
         );
-        let unknown_hits = out.markdown.matches("Result coverage: unknown.").count();
-        let partial_hits = out.markdown.matches("Result coverage: partial.").count();
+        let unknown_hits = out.markdown.matches("unknown coverage.").count();
+        let partial_hits = out.markdown.matches("partial coverage.").count();
         assert_eq!(
             unknown_hits, 1,
             "expected one Unknown stamp: {}",
@@ -768,12 +751,12 @@ mod tests {
             &policy,
         );
         assert!(
-            out.markdown.contains("preview") || out.markdown.contains("(preview)"),
+            out.markdown.contains("Preview only"),
             "expected bounded preview body: {}",
             out.markdown
         );
         assert!(
-            out.markdown.contains("Result coverage: unknown."),
+            out.markdown.contains("unknown coverage."),
             "bounded preview must still stamp coverage: {}",
             out.markdown
         );
