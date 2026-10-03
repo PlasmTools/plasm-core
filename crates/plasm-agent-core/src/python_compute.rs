@@ -26,6 +26,73 @@ use std::collections::BTreeMap;
 
 use crate::program_rejection::PythonComputeRejection;
 
+/// Infer a pure helper's materialization port from the already typed DAG
+/// dependency. `Row` denotes the complete incoming record contract; Monty
+/// checks the helper body against that contract before the plan is admitted.
+pub(crate) fn inferred_helper_input_annotation(
+    row: &plasm_core::value_contract::ValueContract,
+    scalar_cell: bool,
+    collection: bool,
+) -> Result<String, String> {
+    let value = if scalar_cell {
+        row.field("value")?
+    } else {
+        row.clone()
+    };
+    fn annotation(value: &plasm_core::value_contract::ValueContract) -> Result<String, String> {
+        use plasm_core::value_contract::ValueShape;
+        let mut required = value.clone();
+        required.nullable = false;
+        let base = match &required.shape {
+            ValueShape::Record { .. } | ValueShape::ObservedRecord { .. } => "Row".into(),
+            ValueShape::Array { element } => format!("list[{}]", annotation(element)?),
+            ValueShape::Set { element } => format!("set[{}]", annotation(element)?),
+            ValueShape::Dictionary { key, value } => {
+                format!("dict[{}, {}]", annotation(key)?, annotation(value)?)
+            }
+            ValueShape::Scalar { field_type } => match field_type {
+                FieldType::Boolean => "bool",
+                FieldType::Integer => "int",
+                FieldType::Number => "float",
+                FieldType::MultiSelect => "list[str]",
+                FieldType::Money => "PlasmMoney",
+                FieldType::Date | FieldType::Array => {
+                    return Err("helper input needs a concrete temporal or array contract".into());
+                }
+                FieldType::EntityRef { .. } | FieldType::Json | FieldType::Blob => {
+                    return Err("helper input needs a concrete materialized value contract".into());
+                }
+                _ => "str",
+            }
+            .into(),
+            ValueShape::Temporal { kind, .. } => format!("datetime.{}", kind.python_name()),
+            ValueShape::Union { variants } => variants
+                .iter()
+                .map(annotation)
+                .collect::<Result<Vec<_>, _>>()?
+                .join(" | "),
+            ValueShape::Null => "None".into(),
+            ValueShape::Never => "Never".into(),
+            ValueShape::MappingRecord { .. } => {
+                return Err("helper input needs an explicit mapping annotation".into());
+            }
+        };
+        Ok(
+            if value.nullable && !matches!(value.shape, ValueShape::Null) {
+                format!("{base} | None")
+            } else {
+                base
+            },
+        )
+    }
+    let value = annotation(&value)?;
+    Ok(if collection {
+        format!("list[{value}]")
+    } else {
+        value
+    })
+}
+
 /// A callback receives one materialized row. The checker judges any declared
 /// Python parameter type; the host supplies catalog references and provenance.
 pub(crate) fn check_row_parameter(

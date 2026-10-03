@@ -23,6 +23,94 @@ fn dictionary(value: Type) -> Type {
 }
 
 #[test]
+fn annotated_nested_helper_closes_collection_return() {
+    let row = fields(&[
+        ("song_id", Type::scalar(FieldType::Integer)),
+        ("title", Type::scalar(FieldType::String)),
+    ]);
+    let body = "\n    def fmt(items: list) -> list[str]:\n        out = []\n        for item in items:\n            out.append(str(item.song_id) + ' | ' + item.title)\n        return out\n    return {'current': fmt(rows)}";
+    assert_eq!(
+        infer_body(body, &[("rows", &array(row))], "").unwrap(),
+        dictionary(array(Type::scalar(FieldType::String)))
+    );
+}
+
+#[test]
+fn unannotated_nested_helper_infers_materialized_return() {
+    let row = fields(&[("number", Type::scalar(FieldType::Integer))]);
+    let body = "\n    def doubled(items):\n        return [item.number * 2 for item in items]\n    return {'values': doubled(rows)}";
+    assert_eq!(
+        infer_body(body, &[("rows", &array(row))], "").unwrap(),
+        dictionary(array(Type::scalar(FieldType::Integer)))
+    );
+    let song = fields(&[
+        ("song_id", Type::scalar(FieldType::Integer)),
+        ("title", Type::scalar(FieldType::String)),
+    ]);
+    let body = "\n    def fmt(items):\n        out = []\n        for item in items:\n            out.append(str(item.song_id) + ' | ' + item.title)\n        return out\n    return {'current': fmt(rows)}";
+    assert_eq!(
+        infer_body(body, &[("rows", &array(song))], "").unwrap(),
+        dictionary(array(Type::scalar(FieldType::String)))
+    );
+}
+
+#[test]
+fn local_helper_inference_covers_loops_chains_closures_and_multiple_calls() {
+    let row = fields(&[("number", Type::scalar(FieldType::Integer))]);
+    let rows = array(row);
+    let integers = array(Type::scalar(FieldType::Integer));
+    for body in [
+        "\n    def numbers(items):\n        out = []\n        for item in items:\n            out.append(item.number)\n        return out\n    return numbers(rows)",
+        "\n    def first(items):\n        return second(items)\n    def second(items):\n        return [item.number for item in items]\n    return first(rows)",
+        "\n    def numbers():\n        return [item.number for item in rows]\n    return numbers()",
+        "\n    def numbers(items):\n        return [item.number for item in items]\n    return numbers(rows) + numbers(rows)",
+    ] {
+        assert_eq!(infer_body(body, &[("rows", &rows)], "").unwrap(), integers, "{body}");
+    }
+}
+
+#[test]
+fn local_helper_inference_does_not_admit_incompatible_calls() {
+    let body = "\n    def increment(value):\n        return value + 1\n    return increment(2) + increment('wrong')";
+    assert!(infer_body(body, &[], "").is_err());
+}
+
+#[test]
+fn local_helpers_preserve_set_and_optional_return_contracts() {
+    let row = fields(&[("number", Type::scalar(FieldType::Integer))]);
+    let rows = array(row);
+    let set_body = "\n    def unique(items):\n        values = set()\n        for item in items:\n            values.add(item.number)\n        return values\n    return unique(rows)";
+    assert_eq!(
+        infer_body(set_body, &[("rows", &rows)], "").unwrap(),
+        Type {
+            shape: ValueShape::Set {
+                element: Box::new(Type::scalar(FieldType::Integer))
+            },
+            domain: None,
+            nullable: false
+        }
+    );
+    let optional_body = "\n    def first(items):\n        if items:\n            return items[0].number\n        return None\n    return first(rows)";
+    let mut optional = Type::scalar(FieldType::Integer);
+    optional.nullable = true;
+    assert_eq!(
+        infer_body(optional_body, &[("rows", &rows)], "").unwrap(),
+        optional
+    );
+}
+
+#[test]
+fn local_helper_defaults_and_keyword_calls_share_one_input_contract() {
+    let row = fields(&[("number", Type::scalar(FieldType::Integer))]);
+    let rows = array(row);
+    let body = "\n    def shifted(items, amount=1):\n        return [item.number + amount for item in items]\n    return shifted(rows) + shifted(items=rows, amount=2)";
+    assert_eq!(
+        infer_body(body, &[("rows", &rows)], "").unwrap(),
+        array(Type::scalar(FieldType::Integer))
+    );
+}
+
+#[test]
 fn upstream_expression_contracts_preserve_python_semantics() {
     let mut optional = Type::scalar(FieldType::String);
     optional.nullable = true;
@@ -494,6 +582,21 @@ fn annotated_returns_are_checked_before_literal_erasure() {
         ("Literal['yes']", "\n    return 'yes'\n", true),
         ("Literal['yes']", "\n    return 'no'\n", false),
         ("int", "\n    return 'wrong'\n", false),
+        (
+            "int",
+            "\n    def helper():\n        return 'wrong'\n    return helper()\n",
+            false,
+        ),
+        (
+            "int",
+            "\n    def helper():\n        return 1\n    return helper()\n",
+            true,
+        ),
+        (
+            "Literal['yes']",
+            "\n    def helper():\n        return 'yes'\n    return helper()\n",
+            true,
+        ),
         ("dict[str, int]", "\n    return {'n': 1}\n", true),
         ("dict[str, int]", "\n    return {'n': 'wrong'}\n", false),
     ] {

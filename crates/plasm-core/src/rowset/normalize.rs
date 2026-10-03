@@ -6,14 +6,12 @@
 //!   [`InvocationControls`].
 //! - Entity-row fields in braces are rejected (RA-2); use `.filter` for row predicates.
 
-use std::collections::HashSet;
-
 use crate::cgs_federation::QualifiedEntityKey;
 use crate::expr::QueryExpr;
 use crate::identity::{CapabilityName, CapabilityParamName};
 use crate::plasm_monad::FieldPath;
 use crate::query_resolve::resolve_query_capability;
-use crate::schema::CGS;
+use crate::schema::{QuerySourceInputLane, CGS};
 use crate::{CompOp, Predicate, TypedComparisonValue};
 
 use super::{
@@ -32,18 +30,6 @@ pub fn normalize_query_expr_to_rowset(
 ) -> Result<ResolvedRowset, String> {
     let cap = resolve_query_capability(query, cgs).map_err(|e| e.to_string())?;
 
-    let selection_names: HashSet<&str> = cap
-        .selection_params()
-        .iter()
-        .map(|f| f.name.as_str())
-        .collect();
-    let scope_names: HashSet<&str> = cap.scope_params().iter().map(|f| f.name.as_str()).collect();
-    let control_names: HashSet<&str> = cap
-        .control_params()
-        .iter()
-        .map(|f| f.name.as_str())
-        .collect();
-
     // Root source braces bind wire slots only. Catalog `inputs.selection` and root
     // `inputs.scope` pivots both become [`BackendSelection`] on `ParentScope::Root`
     // (relation hops alone use [`ParentScope::Relation`]; RA-6). Capability
@@ -54,24 +40,26 @@ pub fn normalize_query_expr_to_rowset(
             let comparisons = collect_source_comparisons(pred)?;
             let mut bindings = Vec::with_capacity(comparisons.len());
             for (field, op, value) in comparisons {
-                if control_names.contains(field.as_str()) {
-                    return Err(format!(
-                        "RA-1: '{field}' is a capability control, not a query selection argument. Omit this control from the source call; use a declared selection/scope argument for backend filtering. If sorting returned rows is intended, apply `.order_by(field, descending=True)` to a complete rowset."
-                    ));
+                match cap.inputs.query_source_lane(field.as_str()) {
+                    Some(QuerySourceInputLane::Control) => {
+                        return Err(format!(
+                            "RA-1: '{field}' is a capability control, not a query selection argument. Omit this control from the source call; use a declared selection/scope argument for backend filtering. If sorting returned rows is intended, apply `.order_by(field, descending=True)` to a complete rowset."
+                        ));
+                    }
+                    Some(QuerySourceInputLane::Scope | QuerySourceInputLane::Selection) => {
+                        bindings.push(BackendSelectionBinding {
+                            slot: CapabilityParamName::from(field.as_str()),
+                            op,
+                            value,
+                        });
+                    }
+                    None => {
+                        return Err(format!(
+                            "RA-2: '{field}' is not a declared selection/scope parameter of capability '{}'; query/search calls bind backend-selection slots only (filter acquired rows with `.where(lambda row: ...)`)",
+                            cap.name
+                        ));
+                    }
                 }
-                if selection_names.contains(field.as_str()) || scope_names.contains(field.as_str())
-                {
-                    bindings.push(BackendSelectionBinding {
-                        slot: CapabilityParamName::from(field.as_str()),
-                        op,
-                        value,
-                    });
-                    continue;
-                }
-                return Err(format!(
-                    "RA-2: '{field}' is not a declared selection/scope parameter of capability '{}'; source braces bind backend-selection slots only (row predicates use `| where`)",
-                    cap.name
-                ));
             }
             BackendSelection(bindings)
         }
@@ -310,6 +298,7 @@ mod tests {
         let err = normalize_query_expr_to_rowset(&q, &cgs, "app").unwrap_err();
         assert!(err.contains("RA-2") || err.contains("selection"), "{err}");
         assert!(err.contains("name"), "{err}");
+        assert!(err.contains(".where(lambda row:"), "{err}");
     }
 
     #[test]

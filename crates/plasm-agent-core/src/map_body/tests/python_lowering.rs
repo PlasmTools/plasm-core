@@ -938,6 +938,42 @@ fn python_union_preserves_common_entity_receiver_authority() {
 }
 
 #[test]
+fn python_filtered_rows_keep_receiver_authority_for_effect_callbacks() {
+    on_runtime(async {
+        let (es, host, calls) = fixture(3);
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let item = symbols.entity_sym_for("fixture", "Item");
+        let mark = symbols.method_sym_for("fixture", "Item", "mark");
+        let source = format!(
+            "class Mark(Program):\n    def titles(self, rows):\n        return {{r.title for r in rows if r.title is not None}}\n    def build(self):\n        rows = {item}.query()\n        titles = self.titles(rows)\n        selected = rows.where(lambda r: r.title is not None and r.title in titles)\n        return selected.flat_map(lambda r: r.{mark}())\n"
+        );
+        let bundle = compile_python_program(&es, &source).await.unwrap();
+        execute(&es, &host, &bundle).await.unwrap();
+        let effects = calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|p| p.starts_with("/marks/"))
+            .count();
+        assert_eq!(effects, 3);
+    });
+}
+
+#[test]
+fn unannotated_materialized_helper_preserves_independent_input_collections() {
+    on_runtime(async {
+        let (es, host, _) = fixture(1);
+        let source = "class Values(Program):\n    def combine(self, left, right):\n        out = []\n        for value in left:\n            out.append(value)\n        for value in right:\n            out.append(value)\n        return out\n    def build(self):\n        return self.combine([1, 2], [3])\n";
+        let bundle = compile_python_program(&es, source).await.unwrap();
+        let run = execute(&es, &host, &bundle).await.unwrap();
+        assert_eq!(
+            serde_json::to_value(&run.return_steps[0].result.entities()[0].fields).unwrap(),
+            json!({"value": [1, 2, 3]})
+        );
+    });
+}
+
+#[test]
 fn python_union_catalog_rows_preserve_effect_arguments() {
     on_runtime(async {
         let (es, host, calls) = fixture(3);
@@ -1042,6 +1078,31 @@ fn python_compute_infers_structural_return_at_public_admission() {
         );
         let multi_statement = compile_python_program(&es, &invalid).await.unwrap();
         assert!(execute(&es, &host, &multi_statement).await.is_ok());
+    });
+}
+
+#[test]
+fn python_compute_closes_unannotated_local_helper_at_public_admission() {
+    on_runtime(async {
+        let (es, host, _) = fixture(2);
+        let item = es
+            .teaching_exposure
+            .as_ref()
+            .unwrap()
+            .to_symbol_map()
+            .entity_sym_for("fixture", "Item");
+        let source = format!("class Summary(Program):\n    @compute\n    def describe(self, rows: list[Row]):\n        def project(items):\n            result = []\n            for row in items:\n                result.append({{'key': row.id, 'title': row.title}})\n            return result\n        return project(rows)\n    def build(self):\n        return self.describe({item}.query())\n");
+        let bundle = compile_python_program(&es, &source).await.unwrap();
+        let run = execute(&es, &host, &bundle).await.unwrap();
+        assert_eq!(
+            serde_json::to_value(&run.return_steps[0].result.entities()[0].fields).unwrap(),
+            json!({"value":[{"key":"i0","title":"Title 0"},{"key":"i1","title":"Title 1"}]})
+        );
+        let wrong = source.replace(
+            "def describe(self, rows: list[Row]):",
+            "def describe(self, rows: list[Row]) -> list[int]:",
+        );
+        assert!(compile_python_program(&es, &wrong).await.is_err());
     });
 }
 
@@ -1155,6 +1216,32 @@ fn python_program_helpers_preserve_independent_ports_and_effects() {
             "class P(Program):\n    def _loop(self, value):\n        return self._loop(value)\n    def build(self):\n        return self._loop(1)\n",
             "class P(Program):\n    def _leak(self, value):\n        return secret\n    def build(self):\n        secret = 'caller local'\n        return self._leak(1)\n",
         ] { assert!(compile_python_program(&es, invalid).await.is_err()); }
+    });
+}
+
+#[test]
+fn multi_statement_helper_preserves_deferred_row_operations() {
+    on_runtime(async {
+        let (es, host, calls) = fixture(3);
+        let item = es
+            .teaching_exposure
+            .as_ref()
+            .unwrap()
+            .to_symbol_map()
+            .entity_sym_for("fixture", "Item");
+        let source = format!(
+            "class Filter(Program):\n    def selected(self, rows):\n        matches = rows.where(lambda row: row.title is not None)\n        return matches.take(1)\n    def build(self):\n        return self.selected({item}.query())\n"
+        );
+        let bundle = compile_python_program(&es, &source).await.unwrap();
+        let result = execute(&es, &host, &bundle).await.unwrap();
+        assert_eq!(rows(&result).len(), 1);
+        assert_eq!(*calls.lock().unwrap(), vec!["/items"]);
+        let typed = format!(
+            "class Filter(Program):\n    def selected(self, rows: Rows[{item}]) -> Rows[{item}]:\n        return rows.take(1)\n    def build(self):\n        return self.selected({item}.query())\n"
+        );
+        let bundle = compile_python_program(&es, &typed).await.unwrap();
+        let result = execute(&es, &host, &bundle).await.unwrap();
+        assert_eq!(rows(&result).len(), 1);
     });
 }
 

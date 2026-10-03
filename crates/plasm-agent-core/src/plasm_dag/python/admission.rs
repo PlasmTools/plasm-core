@@ -284,8 +284,7 @@ impl<'a> Root<'a> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ComputeAnnotationProblem {
-    RowsAlias,
-    SingletonAlias,
+    DagRowHandle(plasm_core::python_row_shape::PythonRowShape),
     EntityAsCollectionElement,
 }
 
@@ -298,9 +297,12 @@ impl ComputeAnnotationProblem {
             PyExpr::Subscript(subscript) => name(&subscript.value),
             _ => name(annotation),
         };
+        if let Some(shape) =
+            head.and_then(plasm_core::python_row_shape::PythonRowShape::from_card_alias)
+        {
+            return Some(Self::DagRowHandle(shape));
+        }
         match head {
-            Some("Rows") => Some(Self::RowsAlias),
-            Some("Singleton") => Some(Self::SingletonAlias),
             Some("list") => match annotation {
                 PyExpr::Subscript(subscript)
                     if name(&subscript.slice)
@@ -316,8 +318,7 @@ impl ComputeAnnotationProblem {
 
     fn correction(self) -> &'static str {
         match self {
-            Self::RowsAlias => "`Rows` is not a materialized input type; use `list[Row]` or `list[Row[eN]]` for a collection",
-            Self::SingletonAlias => "`Singleton` is not a materialized input type; use `Row` or `Row[eN]` for a proven singleton",
+            Self::DagRowHandle(shape) => shape.compute_input_correction(),
             Self::EntityAsCollectionElement => "an eN symbol is a catalog binding, not a Python type; use `list[Row[eN]]` for entity rows",
         }
     }

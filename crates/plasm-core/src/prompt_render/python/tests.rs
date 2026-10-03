@@ -75,6 +75,41 @@ fn python_card_initial_extension_and_retry() {
 }
 
 #[test]
+fn python_query_card_advertises_only_source_call_inputs() {
+    let cgs = crate::loader::load_schema_dir(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_prompt_matrix"),
+    )
+    .unwrap();
+    let exposure = TeachingExposureSession::new(&cgs, "matrix", &["Zone"]);
+    let wave = prepare_python_teaching_wave(&exposure, &PythonTeachingState::default()).unwrap();
+    let signature = wave
+        .capabilities
+        .iter()
+        .find(|cap| cap.capability == "zone_query")
+        .unwrap()
+        .signature
+        .as_deref()
+        .unwrap();
+    assert!(signature.contains("account_id:"), "{signature}");
+    assert!(!signature.contains("sort_by:"), "{signature}");
+    assert!(!signature.contains("page:"), "{signature}");
+
+    let mut source = crate::QueryExpr::filtered("Zone", crate::Predicate::eq("sort_by", "name"));
+    source.capability_name = Some("zone_query".into());
+    let rejection = crate::normalize_query_expr_to_rowset(&source, &cgs, "matrix").unwrap_err();
+    assert!(rejection.contains("RA-1"), "{rejection}");
+}
+
+#[test]
+fn python_language_distinguishes_dag_results_from_compute_inputs() {
+    for shape in [PythonRowShape::Rows, PythonRowShape::Singleton] {
+        assert!(LANGUAGE.contains(&shape.card_annotation("eN")));
+        assert!(LANGUAGE.contains(&shape.materialized_annotation("eN")));
+    }
+}
+
+#[test]
 fn python_card_federation_and_catalog_comments() {
     let mut cgs = fixture();
     cgs.entities.get_mut("Item").unwrap().description =

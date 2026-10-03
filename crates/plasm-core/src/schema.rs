@@ -15,7 +15,7 @@ use std::sync::{Arc, OnceLock};
 mod capability_inputs;
 pub use capability_inputs::{
     BackendSelectionSchema, CapabilityInputs, CapabilityReceiver, InvocationControlsSchema,
-    ParentScopeSchema,
+    ParentScopeSchema, QuerySourceInputLane,
 };
 
 /// Opaque CML mapping payload (HTTP or EVM); validated at load via `plasm_compile::parse_capability_template`.

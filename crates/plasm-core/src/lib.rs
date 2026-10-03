@@ -122,6 +122,7 @@ pub mod prerequisites;
 pub mod program_string_template;
 pub mod prompt_pipeline;
 pub mod prompt_render;
+pub mod python_row_shape;
 pub mod query_defaults;
 pub mod query_resolve;
 pub mod relation_nav;

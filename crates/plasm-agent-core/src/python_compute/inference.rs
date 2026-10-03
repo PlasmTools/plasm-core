@@ -10,6 +10,7 @@ use ruff_text_size::Ranged;
 use std::collections::BTreeMap;
 
 mod declarations;
+mod helpers;
 #[cfg(test)]
 mod tests;
 
@@ -66,33 +67,44 @@ pub(super) fn infer_body(
             return Err("analysis declaration names are not program capabilities".into());
         }
     }
-    let result = monty_analysis::analyze_function(
-        &AnalysisRequest {
-            source: source.clone(),
-            stubs: Some(declarations.source.clone()),
-            targets: Vec::new(),
-            limits: AnalysisLimits::default(),
-        },
-        "__plasm_expression",
-    )?;
-    let AnalysisOutcome::Inferred(graph) = result.outcome else {
-        let AnalysisOutcome::Rejected(errors) = result.outcome else {
-            unreachable!()
+    let mut source = source;
+    for pass in 0..2 {
+        let result = monty_analysis::analyze_function(
+            &AnalysisRequest {
+                source: source.clone(),
+                stubs: Some(declarations.source.clone()),
+                targets: Vec::new(),
+                limits: AnalysisLimits::default(),
+            },
+            "__plasm_expression",
+        )?;
+        let AnalysisOutcome::Inferred(graph) = result.outcome else {
+            let AnalysisOutcome::Rejected(errors) = result.outcome else {
+                unreachable!()
+            };
+            return Err(body_diagnostics(errors, &source));
         };
-        return Err(body_diagnostics(errors, &source));
-    };
-    let decoder = Decoder {
-        graph: &graph,
-        declarations: &declarations,
-    };
-    graph
-        .roots
-        .iter()
-        .map(|id| decoder.decode(*id, 0))
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .reduce(Type::join)
-        .ok_or_else(|| "checker supplied no return contract".into())
+        if pass == 0 && graph.nodes.contains(&Node::Unknown) {
+            let specialized = helpers::close_local_calls(&source, &mut declarations)?;
+            if specialized != source {
+                source = specialized;
+                continue;
+            }
+        }
+        let decoder = Decoder {
+            graph: &graph,
+            declarations: &declarations,
+        };
+        return graph
+            .roots
+            .iter()
+            .map(|id| decoder.decode(*id, 0))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .reduce(Type::join)
+            .ok_or_else(|| "checker supplied no return contract".into());
+    }
+    unreachable!("local helper inference uses at most two whole-body passes")
 }
 
 /// Check the original annotation before materialization widens Python literals.
@@ -152,7 +164,31 @@ pub(super) fn check_annotated_body(
         })
         .collect::<Result<Vec<_>, _>>()?
         .join(", ");
-    let source = format!("{imports}\ndef __plasm_return({parameters}) -> {annotation}:{body}\n");
+    let mut source =
+        format!("{imports}\ndef __plasm_return({parameters}) -> {annotation}:{body}\n");
+    if helpers::has_local_calls(&source)? {
+        let mut evidence = declarations::Declarations::default();
+        evidence.source =
+            format!("from typing import NewType, Protocol, TypedDict, NotRequired\n{stubs}");
+        source = helpers::close_local_calls(&source, &mut evidence)?;
+        stubs = evidence.source;
+        let inferred = monty_analysis::analyze_function(
+            &AnalysisRequest {
+                source: source.clone(),
+                stubs: Some(stubs.clone()),
+                targets: Vec::new(),
+                limits: AnalysisLimits::default(),
+            },
+            "__plasm_return",
+        )?;
+        match inferred.outcome {
+            AnalysisOutcome::Inferred(graph) if graph.nodes.contains(&Node::Unknown) => {
+                return Err("local helper return is not a closed materialized contract".into());
+            }
+            AnalysisOutcome::Rejected(errors) => return Err(body_diagnostics(errors, &source)),
+            AnalysisOutcome::Inferred(_) => {}
+        }
+    }
     let result = monty_analysis::analyze(&AnalysisRequest {
         source: source.clone(),
         stubs: Some(stubs),

@@ -4,6 +4,7 @@
 //! Retrying against the same previous state produces exactly the same wave.
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::python_row_shape::PythonRowShape;
 use crate::symbol_tuning::{SymbolMap, TeachingExposureSession};
 use crate::value_contract::ValueContract;
 use crate::{CapabilityKind, FieldType, InputFieldWire, OutputType, ValueDomainKey, CGS};
@@ -817,7 +818,13 @@ impl Renderer<'_> {
                     return Err("non-closed-object invocation requires a signature witness".into());
                 }
             }
-            for field in cap.input_fields() {
+            let source_call = matches!(cap.kind, CapabilityKind::Query | CapabilityKind::Search);
+            let fields: Vec<_> = if source_call {
+                cap.inputs.query_source_fields().collect()
+            } else {
+                cap.input_fields().collect()
+            };
+            for field in fields {
                 identifier(&field.name)?;
                 let ty = self.input_field(
                     cgs,
@@ -872,14 +879,21 @@ impl Renderer<'_> {
                     cap.output_schema.as_ref().map(|s| &s.output_type),
                     Some(OutputType::Collection { .. })
                 );
-                format!("{}[{target}]", if many { "Rows" } else { "Singleton" })
+                if many {
+                    PythonRowShape::Rows
+                } else {
+                    PythonRowShape::Singleton
+                }
+                .card_annotation(&target)
             }
             Some(_) => return Err("custom/status output requires a typed return witness".into()),
             None => match cap.kind {
-                CapabilityKind::Get => format!("Singleton[{owner}]"),
-                CapabilityKind::Query | CapabilityKind::Search => format!("Rows[{owner}]"),
-                CapabilityKind::Create => format!("Singleton[{owner}]"),
-                _ if !cap.provides.is_empty() => format!("Singleton[{owner}]"),
+                CapabilityKind::Get => PythonRowShape::Singleton.card_annotation(owner),
+                CapabilityKind::Query | CapabilityKind::Search => {
+                    PythonRowShape::Rows.card_annotation(owner)
+                }
+                CapabilityKind::Create => PythonRowShape::Singleton.card_annotation(owner),
+                _ if !cap.provides.is_empty() => PythonRowShape::Singleton.card_annotation(owner),
                 _ => "EffectAck".into(),
             },
         };

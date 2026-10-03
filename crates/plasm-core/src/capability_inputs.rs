@@ -30,6 +30,15 @@ pub struct BackendSelectionSchema(pub Vec<InputFieldSchema>);
 #[serde(transparent)]
 pub struct InvocationControlsSchema(pub Vec<InputFieldSchema>);
 
+/// Admission class for a named Python query/search source-call argument.
+/// Scope and selection bind the source; controls have a separate invocation lane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuerySourceInputLane {
+    Scope,
+    Selection,
+    Control,
+}
+
 /// Canonical, structurally disjoint capability-input algebra.
 ///
 /// Built in Rust from [`crate::loader::DomainCapability`] (not deserialized from
@@ -53,6 +62,26 @@ pub struct CapabilityInputs {
     /// Create/update/action body payload.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload: Option<InputSchema>,
+}
+
+impl CapabilityInputs {
+    /// Exactly the named inputs that a Python query/search source call can accept.
+    pub fn query_source_fields(&self) -> impl Iterator<Item = &InputFieldSchema> {
+        self.scope.0.iter().chain(&self.selection.0)
+    }
+
+    /// Classify against the same typed lanes used to render source-call signatures.
+    pub fn query_source_lane(&self, name: &str) -> Option<QuerySourceInputLane> {
+        if self.scope.0.iter().any(|field| field.name == name) {
+            Some(QuerySourceInputLane::Scope)
+        } else if self.selection.0.iter().any(|field| field.name == name) {
+            Some(QuerySourceInputLane::Selection)
+        } else if self.controls.0.iter().any(|field| field.name == name) {
+            Some(QuerySourceInputLane::Control)
+        } else {
+            None
+        }
+    }
 }
 
 fn parent_scope_is_empty(v: &ParentScopeSchema) -> bool {
