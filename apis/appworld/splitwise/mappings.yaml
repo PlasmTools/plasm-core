@@ -1119,7 +1119,12 @@ user_search:
         else_expr:
           type: const
           value: null
-  pagination: *appworld_page_index_limit
+  pagination:
+    params:
+      page_index: {counter: 0}
+      page_limit: {fixed: 20, role: page_size}
+    strategy: page_number
+    initial_only_query_params: [include_self]
 balance_get:
   method: GET
   path:

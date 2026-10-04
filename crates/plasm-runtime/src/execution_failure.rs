@@ -106,9 +106,14 @@ impl ExecutionFailure {
     }
     /// Guidance follows typed recovery authority, never a service diagnostic.
     pub fn recovery_instructions(&self) -> Option<&'static str> {
-        (self.recovery == RecoveryDisposition::ReconcileEffects).then_some(
-            "This execution stopped. Inspect its completed writes and unresolved dispatches before choosing the next program. Failed dispatches may have taken effect; service error bodies prove neither success nor absence. A new execution is permitted and does not resume or roll back this execution."
-        )
+        if self.recovery != RecoveryDisposition::ReconcileEffects {
+            return None;
+        }
+        if self.effects_unresolved || !self.dispatches.is_empty() {
+            Some("Some dispatched effects have an unknown outcome. Reconcile them before retrying; this execution did not roll back.")
+        } else {
+            Some("A prior effect completed. Check its receipt before retrying; this execution did not roll back.")
+        }
     }
     pub fn diagnostic(&self) -> &str {
         &self.diagnostic
@@ -200,6 +205,10 @@ impl From<crate::RuntimeError> for ExecutionFailure {
                 FailureCause::ResponseContract,
                 "response_contract_violation",
             ),
+            PaginationProgress { .. } => (
+                FailureCause::ResponseContract,
+                "pagination_progress_violation",
+            ),
             CompilationError { .. } | CmlError { .. } | CapabilityNotFound { .. } => {
                 (FailureCause::Catalog, "catalog_contract_violation")
             }
@@ -274,6 +283,10 @@ mod tests {
             Some("Item/a")
         );
         assert_eq!(failure.recovery, RecoveryDisposition::ReconcileEffects);
+        assert_eq!(
+            failure.recovery_instructions(),
+            Some("A prior effect completed. Check its receipt before retrying; this execution did not roll back.")
+        );
         assert!(!serde_json::to_string(&failure)
             .unwrap()
             .contains("private-password"));
@@ -330,6 +343,30 @@ mod tests {
         let decoded: ExecutionFailure = serde_json::from_str(&wire).unwrap();
         assert_eq!(decoded.recovery, RecoveryDisposition::Stop);
         assert_eq!(decoded.diagnostic(), failure.diagnostic());
+    }
+
+    #[test]
+    fn pagination_guard_failure_is_a_response_contract_violation() {
+        let failure = ExecutionFailure::from(crate::RuntimeError::PaginationProgress {
+            reason: crate::execution::PaginationTerminalReason::DuplicateIdentityOverlap,
+        });
+        assert_eq!(failure.cause, FailureCause::ResponseContract);
+        assert_eq!(failure.code, "pagination_progress_violation");
+        assert_eq!(failure.recovery, RecoveryDisposition::Stop);
+        assert!(failure.diagnostic().contains("DuplicateIdentityOverlap"));
+        assert_eq!(failure.recovery_instructions(), None);
+    }
+
+    #[test]
+    fn unresolved_dispatch_uses_unknown_outcome_guidance() {
+        let mut failure =
+            ExecutionFailure::new(FailureCause::Transport, "transport_failure", "lost reply");
+        failure.recovery = RecoveryDisposition::ReconcileEffects;
+        failure.effects_unresolved = true;
+        assert_eq!(
+            failure.recovery_instructions(),
+            Some("Some dispatched effects have an unknown outcome. Reconcile them before retrying; this execution did not roll back.")
+        );
     }
 }
 

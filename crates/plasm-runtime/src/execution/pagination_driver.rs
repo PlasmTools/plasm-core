@@ -271,9 +271,9 @@ impl PaginationDriver {
                 next_url_digest.as_deref(),
                 full_page,
             )
-            .map_err(|reason| RuntimeError::ConfigurationError {
-                message: format!("pagination progress guard: {reason:?}"),
-            })?;
+            .map_err(|reason| RuntimeError::PaginationProgress { reason })?;
+
+        self.state.record_page_observed();
 
         Ok(PageAudit {
             page_ordinal,
@@ -313,6 +313,7 @@ mod tests {
             body_merge_path: None,
             response_prefix: None,
             response_next_url_field: None,
+            initial_only_query_params: vec![],
             stop_when: None,
         }
     }
@@ -326,6 +327,7 @@ mod tests {
             body_merge_path: None,
             response_prefix: None,
             response_next_url_field: None,
+            initial_only_query_params: vec![],
             stop_when: None,
         }
         .validate();
@@ -345,5 +347,76 @@ mod tests {
             .unwrap();
         let err = g.observe_page("c1", &["b".into(), "c".into()], None, None, true);
         assert_eq!(err, Err(PaginationTerminalReason::DuplicateIdentityOverlap));
+    }
+
+    #[test]
+    fn first_only_pinned_identity_does_not_weaken_cross_page_guard() {
+        use plasm_compile::{CompiledRequest, HttpMethod};
+        use plasm_core::Value;
+
+        let mut config = page_number_config();
+        config.initial_only_query_params = vec!["include_self".into()];
+        let mut driver = PaginationDriver::try_from_config(
+            config,
+            &QueryPagination::default(),
+            &StreamConsumeOpts::default(),
+        )
+        .expect("driver");
+        let request = || {
+            CompiledOperation::Http(CompiledRequest {
+                credential: None,
+                method: HttpMethod::Get,
+                path: "/users".into(),
+                query: Some(Value::Object(indexmap::indexmap! {
+                    "include_self".into() => Value::Bool(true)
+                })),
+                body: None,
+                body_format: Default::default(),
+                multipart: None,
+                headers: None,
+            })
+        };
+
+        let mut first = request();
+        driver
+            .apply_request_params(&mut first)
+            .expect("first request");
+        let CompiledOperation::Http(first) = first else {
+            unreachable!()
+        };
+        assert_eq!(first.to_json()["query"]["include_self"], true);
+        let first_ids: Vec<String> = (0..20)
+            .map(|n| format!("user-{n}"))
+            .chain(["self".into()])
+            .collect();
+        driver
+            .record_page(0, &first_ids, 21, 21, None, None)
+            .expect("first page");
+        assert!(driver
+            .advance_after_page(&serde_json::json!({}), 21, None, None)
+            .expect("advance"));
+
+        let mut second = request();
+        driver
+            .apply_request_params(&mut second)
+            .expect("second request");
+        let CompiledOperation::Http(second) = &second else {
+            unreachable!()
+        };
+        assert!(second.to_json()["query"].get("include_self").is_none());
+        let second_ids: Vec<String> = (20..40).map(|n| format!("user-{n}")).collect();
+        driver
+            .record_page(1, &second_ids, 20, 20, None, None)
+            .expect("nonoverlapping second page");
+        assert!(driver
+            .advance_after_page(&serde_json::json!({}), 20, None, None)
+            .expect("advance"));
+        let overlap = (39..59).map(|n| format!("user-{n}")).collect::<Vec<_>>();
+        assert!(matches!(
+            driver.record_page(2, &overlap, 20, 20, None, None),
+            Err(RuntimeError::PaginationProgress {
+                reason: PaginationTerminalReason::DuplicateIdentityOverlap
+            })
+        ));
     }
 }

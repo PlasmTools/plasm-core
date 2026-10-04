@@ -103,6 +103,11 @@ pub enum RuntimeError {
     #[error("Runtime configuration error: {message}")]
     ConfigurationError { message: String },
 
+    #[error("pagination progress guard: {reason:?}")]
+    PaginationProgress {
+        reason: crate::execution::PaginationTerminalReason,
+    },
+
     #[error("Serialization error: {message}")]
     SerializationError { message: String },
 

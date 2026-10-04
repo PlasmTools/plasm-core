@@ -288,6 +288,11 @@ pub struct PaginationConfig {
     /// Parameters to inject into each request. Keys are the API parameter names.
     #[serde(default)]
     pub params: indexmap::IndexMap<String, PaginationParam>,
+    /// Query fields whose compiled values are sent on the initial request only.
+    /// Useful when an upstream list endpoint appends a caller-requested pinned row
+    /// after slicing each page, so repeating the field would repeat that row.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub initial_only_query_params: Vec<String>,
     /// Where the pagination params are injected. Default: query string.
     #[serde(default)]
     pub location: PaginationLocation,

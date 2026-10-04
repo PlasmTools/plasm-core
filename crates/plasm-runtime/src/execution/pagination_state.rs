@@ -74,6 +74,26 @@ fn compiled_query_insert(
     }
 }
 
+fn compiled_query_remove(compiled: &mut CompiledOperation, key: &str) -> Result<(), RuntimeError> {
+    match compiled {
+        CompiledOperation::Http(request) | CompiledOperation::GraphQl(request) => {
+            if let Some(query) = request.query.as_mut() {
+                let Value::Object(fields) = query else {
+                    return Err(RuntimeError::ConfigurationError {
+                        message: "initial-only pagination query must compile to an object"
+                            .to_string(),
+                    });
+                };
+                fields.shift_remove(key);
+            }
+            Ok(())
+        }
+        _ => Err(RuntimeError::ConfigurationError {
+            message: "initial-only pagination query requires HTTP transport".to_string(),
+        }),
+    }
+}
+
 fn compiled_block_range_set(
     compiled: &mut CompiledOperation,
     from_block: u64,
@@ -189,6 +209,7 @@ pub(crate) fn pagination_context_map<'a>(
 pub(crate) struct PaginationLoopState {
     /// Current value for each param. `None` = `FromResponse` not yet received.
     param_values: indexmap::IndexMap<String, Option<serde_json::Value>>,
+    pages_observed: u32,
     /// Next-page absolute URL (`LinkHeader` and `ResponseNextUrl` locations).
     pub(crate) next_absolute_url: Option<String>,
     /// Page size used on the last request (for short-page heuristic).
@@ -223,6 +244,7 @@ impl PaginationLoopState {
             }
             return Ok(Self {
                 param_values: indexmap::IndexMap::new(),
+                pages_observed: 0,
                 next_absolute_url: None,
                 last_requested_limit: 0,
                 from_block: user.from_block,
@@ -255,6 +277,7 @@ impl PaginationLoopState {
 
         Ok(Self {
             param_values,
+            pages_observed: 0,
             next_absolute_url: None,
             last_requested_limit: 0,
             from_block: user.from_block,
@@ -269,6 +292,12 @@ impl PaginationLoopState {
         pconf: &PaginationConfig,
     ) -> Result<(), RuntimeError> {
         let default_lim = pagination_default_limit(pconf);
+
+        if self.pages_observed > 0 {
+            for key in &pconf.initial_only_query_params {
+                compiled_query_remove(compiled, key)?;
+            }
+        }
 
         // BlockRange is handled separately.
         if pconf.location == plasm_compile::PaginationLocation::BlockRange {
@@ -373,6 +402,10 @@ impl PaginationLoopState {
         // host-shrunk remainder.
         self.last_requested_limit = default_lim;
         Ok(())
+    }
+
+    pub(crate) fn record_page_observed(&mut self) {
+        self.pages_observed = self.pages_observed.saturating_add(1);
     }
 
     pub(crate) fn advance_after_page(
@@ -516,6 +549,7 @@ impl From<&PaginationLoopState> for QueryPaginationState {
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
+            pages_observed: s.pages_observed,
             next_absolute_url: s.next_absolute_url.clone(),
             last_requested_limit: s.last_requested_limit,
             from_block: s.from_block,
@@ -531,6 +565,7 @@ impl TryFrom<QueryPaginationState> for PaginationLoopState {
     fn try_from(s: QueryPaginationState) -> Result<Self, Self::Error> {
         Ok(Self {
             param_values: s.param_values.into_iter().collect(),
+            pages_observed: s.pages_observed,
             next_absolute_url: s.next_absolute_url,
             last_requested_limit: s.last_requested_limit,
             from_block: s.from_block,
@@ -563,6 +598,7 @@ mod page_index_overlap_regressions {
             body_merge_path: None,
             response_prefix: None,
             response_next_url_field: None,
+            initial_only_query_params: vec![],
             stop_when: None,
         }
     }
@@ -596,6 +632,56 @@ mod page_index_overlap_regressions {
                 _ => None,
             })
             .unwrap_or_else(|| panic!("missing query key {key}"))
+    }
+
+    #[test]
+    fn initial_only_query_field_is_omitted_after_first_page_and_resume() {
+        let mut pconf = page_index_limit_config();
+        pconf.initial_only_query_params = vec!["include_self".into()];
+        let mut state = PaginationLoopState::new(
+            &pconf,
+            &QueryPagination::default(),
+            &StreamConsumeOpts::default(),
+        )
+        .expect("state");
+        let request = || {
+            let mut op = empty_http_op();
+            let CompiledOperation::Http(http) = &mut op else {
+                unreachable!()
+            };
+            http.query = Some(Value::Object(indexmap::indexmap! {
+                "include_self".into() => Value::Bool(true),
+                "query".into() => Value::String("Ada".into()),
+            }));
+            op
+        };
+
+        let mut first = request();
+        state
+            .apply_request_params(&mut first, &pconf)
+            .expect("first page");
+        let CompiledOperation::Http(http) = first else {
+            unreachable!()
+        };
+        assert_eq!(http.to_json()["query"]["include_self"], true);
+        state.record_page_observed();
+        state
+            .advance_after_page(&pconf, &serde_json::json!({}), 21, 20, None, None)
+            .expect("continuation");
+
+        let snapshot = QueryPaginationState::from(&state);
+        let mut resumed = PaginationLoopState::try_from(snapshot).expect("resume state");
+        let mut second = request();
+        resumed
+            .apply_request_params(&mut second, &pconf)
+            .expect("second page");
+        let CompiledOperation::Http(http) = &second else {
+            unreachable!()
+        };
+        assert!(http.to_json()["query"].get("include_self").is_none());
+        assert_eq!(http.to_json()["query"]["query"], "Ada");
+        assert_eq!(query_num(&second, "page_index"), 1);
+        assert_eq!(query_num(&second, "page_limit"), 20);
     }
 
     /// PLAR1 evidence: page_limit=20, host budget 25 → second page must NOT send page_limit=5.

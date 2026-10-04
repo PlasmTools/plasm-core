@@ -243,6 +243,28 @@ pub(crate) fn forbid_pagination_dual_wire(
             ),
         });
     }
+    if !pconf.initial_only_query_params.is_empty() {
+        let query_fields: std::collections::HashSet<&str> = match template {
+            CapabilityTemplate::Http(request) | CapabilityTemplate::GraphQl(request) => {
+                match request.query.as_ref() {
+                    Some(plasm_cml::CmlExpr::Object { fields }) => {
+                        fields.iter().map(|(field, _)| field.as_str()).collect()
+                    }
+                    _ => std::collections::HashSet::new(),
+                }
+            }
+            _ => std::collections::HashSet::new(),
+        };
+        for field in &pconf.initial_only_query_params {
+            if !query_fields.contains(field.as_str()) {
+                return Err(CmlError::InvalidTemplate {
+                    message: format!(
+                        "capability `{name}`: initial-only query key `{field}` must be a field of the CML query object"
+                    ),
+                });
+            }
+        }
+    }
     Ok(())
 }
 
@@ -856,6 +878,7 @@ mod tests {
             .expect("langitem_query");
         cap.inputs.selection.0.push(InputFieldSchema {
             name: "fabricated_filter".into(),
+            selection_effect: None,
             wire: InputFieldWire::Registry(
                 plasm_core::ValueDomainKey::new("nv_lang_item_title").expect("key"),
             ),
@@ -989,6 +1012,32 @@ mod tests {
         }))
         .expect("parse clean template");
         forbid_pagination_dual_wire("list_items", &template).expect("pagination-only ok");
+    }
+
+    #[test]
+    fn initial_only_query_key_must_be_declared_in_request_recipe() {
+        let recipe = |field: &str| {
+            parse_capability_template(&serde_json::json!({
+                "method": "GET",
+                "path": [{"type": "literal", "value": "items"}],
+                "query": {"type": "object", "fields": [[field, {"type": "const", "value": true}]]},
+                "pagination": {
+                    "strategy": "page_number",
+                    "params": {
+                        "page_index": {"counter": 0},
+                        "page_limit": {"fixed": 20, "role": "page_size"}
+                    },
+                    "initial_only_query_params": ["include_self"]
+                }
+            }))
+            .expect("parse recipe")
+        };
+        let err = forbid_pagination_dual_wire("list_items", &recipe("other"))
+            .expect_err("undeclared key");
+        assert!(err
+            .to_string()
+            .contains("initial-only query key `include_self`"));
+        forbid_pagination_dual_wire("list_items", &recipe("include_self")).expect("declared key");
     }
 
     #[test]

@@ -2485,11 +2485,13 @@ mod tests {
                 location: PaginationLocation::Query,
                 body_merge_path: None,
                 response_prefix: None,
+                initial_only_query_params: vec![],
                 stop_when: None,
                 response_next_url_field: None,
             },
             state: QueryPaginationState {
                 param_values: vec![("page".into(), Some(serde_json::json!(0)))],
+                pages_observed: 0,
                 next_absolute_url: None,
                 last_requested_limit: 10,
                 from_block: None,

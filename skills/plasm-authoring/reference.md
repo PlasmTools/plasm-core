@@ -1298,6 +1298,7 @@ Rust ground truth: [`PaginationConfig`](../../../crates/plasm-cml/src/cml.rs) in
 ```yaml
 pagination:
   location: query            # query | body | link_header | response_next_url | block_range
+  initial_only_query_params: [include_self] # optional; CML query field only on the first request
   response_next_url_field: "@odata.nextLink"   # optional; when location: response_next_url
   body_merge_path: [variables, o, paginate]   # optional; when location: body
   response_prefix: [data, issues, pageInfo]   # optional; scope for stop_when / from_response
@@ -1315,6 +1316,12 @@ pagination:
 ```
 
 Decode shape for list bodies remains on the mapping's `response:` / decoder.
+
+Use `initial_only_query_params` when an upstream query flag applies to the first
+page only, such as a pinned record that the API appends outside its paginated
+slice. Declare each name in the CML query object, but not in `pagination.params`.
+The runtime omits it on every continuation, including an opaque resumed page;
+ordinary duplicate-identity overlap across pages remains an error.
 
 #### `location` (summary)
 

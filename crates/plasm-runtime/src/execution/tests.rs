@@ -308,6 +308,7 @@ fn cgs_with_unary_entity_ref_scope_query() -> (CGS, CapabilitySchema) {
         inputs: plasm_core::CapabilityInputs {
             scope: plasm_core::ParentScopeSchema(vec![InputFieldSchema {
                 name: "workspace_id".to_string(),
+                selection_effect: None,
                 wire: InputFieldWire::Registry(
                     ValueDomainKey::new("rt_workspace_ref").expect("workspace ref key"),
                 ),
@@ -885,6 +886,7 @@ fn block_range_with_upper_bound_is_not_single_page() {
         body_merge_path: None,
         response_prefix: None,
         response_next_url_field: None,
+        initial_only_query_params: vec![],
         stop_when: None,
     };
     let user = QueryPagination {
@@ -923,6 +925,7 @@ fn block_range_without_upper_bound_stays_single_page_by_default() {
         body_merge_path: None,
         response_prefix: None,
         response_next_url_field: None,
+        initial_only_query_params: vec![],
         stop_when: None,
     };
     let user = QueryPagination {

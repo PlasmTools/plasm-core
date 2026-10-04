@@ -200,6 +200,8 @@ pub type RowsProgressFn = std::sync::Arc<dyn Fn(usize) + Send + Sync>;
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct QueryPaginationState {
     pub param_values: Vec<(String, Option<serde_json::Value>)>,
+    /// Number of successfully decoded pages, including pages before a resume.
+    pub pages_observed: u32,
     pub next_absolute_url: Option<String>,
     pub last_requested_limit: u32,
     pub from_block: Option<u64>,

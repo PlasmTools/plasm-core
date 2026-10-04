@@ -121,6 +121,9 @@ pub fn step_error_from_runtime(err: &RuntimeError, cgs: &CGS) -> StepError {
         RuntimeError::ConfigurationError { message } => {
             StepError::new(StepErrorCategory::Config, message.clone(), None)
         }
+        RuntimeError::PaginationProgress { .. } => {
+            StepError::new(StepErrorCategory::Runtime, err.to_string(), None)
+        }
         RuntimeError::SerializationError { message } => {
             StepError::new(StepErrorCategory::Runtime, message.clone(), None)
         }

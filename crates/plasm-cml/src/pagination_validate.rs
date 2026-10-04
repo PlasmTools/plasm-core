@@ -61,6 +61,35 @@ impl PaginationConfig {
             });
         };
 
+        if !self.initial_only_query_params.is_empty() {
+            if self.location != PaginationLocation::Query
+                || matches!(
+                    strategy,
+                    PaginationStrategyKind::NextUrl
+                        | PaginationStrategyKind::LinkHeader
+                        | PaginationStrategyKind::BlockRange
+                )
+            {
+                messages.push(
+                    "initial_only_query_params requires query-parameter pagination without an absolute-URL continuation"
+                        .to_string(),
+                );
+            }
+            let mut seen = std::collections::HashSet::new();
+            for name in &self.initial_only_query_params {
+                if name.is_empty() || !seen.insert(name) {
+                    messages.push(format!(
+                        "initial_only_query_params contains an empty or duplicate key `{name}`"
+                    ));
+                }
+                if self.params.contains_key(name) {
+                    messages.push(format!(
+                        "initial-only query key `{name}` must not also be a pagination parameter"
+                    ));
+                }
+            }
+        }
+
         let size_params: Vec<(&str, &PaginationParam)> = self
             .params
             .iter()
@@ -157,6 +186,7 @@ mod tests {
             body_merge_path: None,
             response_prefix: None,
             response_next_url_field: None,
+            initial_only_query_params: vec![],
             stop_when: None,
         };
         assert!(cfg.validate().is_err());
@@ -177,8 +207,49 @@ mod tests {
             body_merge_path: None,
             response_prefix: None,
             response_next_url_field: None,
+            initial_only_query_params: vec![],
             stop_when: None,
         };
         assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn initial_only_query_keys_are_distinct_from_driver_params_and_require_query_paging() {
+        let mut cfg = PaginationConfig {
+            strategy: Some(PaginationStrategyKind::PageNumber),
+            params: indexmap::indexmap! {
+                "page_index".into() => PaginationParam::Counter { counter: 0, step: 1, max: None },
+                "page_limit".into() => PaginationParam::Fixed {
+                    fixed: serde_json::json!(20),
+                    role: Some(PaginationParamRole::PageSize),
+                },
+            },
+            location: PaginationLocation::Query,
+            body_merge_path: None,
+            response_prefix: None,
+            response_next_url_field: None,
+            initial_only_query_params: vec!["include_self".into()],
+            stop_when: None,
+        };
+        cfg.validate().expect("valid initial-only query field");
+        cfg.initial_only_query_params.push("include_self".into());
+        assert!(cfg
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("duplicate"));
+        cfg.initial_only_query_params = vec!["page_index".into()];
+        assert!(cfg
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("must not also"));
+        cfg.initial_only_query_params = vec!["include_self".into()];
+        cfg.location = PaginationLocation::Body;
+        assert!(cfg
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("requires query-parameter"));
     }
 }
