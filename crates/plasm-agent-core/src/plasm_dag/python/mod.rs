@@ -24,6 +24,7 @@ mod refinements;
 pub(crate) mod relation_operations;
 pub(crate) mod row_operations;
 mod statements;
+mod static_iteration;
 pub(super) mod text;
 mod value_expressions;
 mod value_type;
@@ -57,7 +58,9 @@ fn lower_python_program(
         return_check: None,
         serial: 0,
         value_depth: 0,
+        static_expansions: 0,
         frame: LexicalFrame::default(),
+        static_sequences: BTreeMap::new(),
         spans: BTreeMap::new(),
     };
     // Upstream lexical scope includes declarations after return. Reserved host
@@ -95,6 +98,7 @@ fn lower_python_program(
                 .ok_or("missing bound build default")?;
             let binding = lower.fresh();
             lower.expr(value, Some(&binding))?;
+            lower.remember_static_sequence(&binding, value);
             if let Some(annotation) = parameter.parameter.annotation.as_deref() {
                 let input = text::inferred_schema(es, &lower.state, &binding, 0)?.row_contract()?;
                 crate::python_compute::check_callback_closed_return(
@@ -257,7 +261,9 @@ struct Lower<'a> {
     return_check: Option<(Box<PyExpr>, plasm_core::value_contract::ValueContract)>,
     serial: usize,
     frame: LexicalFrame,
+    static_sequences: BTreeMap<String, Vec<PyExpr>>,
     value_depth: usize,
+    static_expansions: usize,
     spans: BTreeMap<String, serde_json::Value>,
 }
 impl Lower<'_> {

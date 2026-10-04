@@ -20,6 +20,9 @@ pub(super) struct Case {
 }
 pub(super) const CASES: &[Case] = &[
     Case { id: "callback_iteration", python: "def step(row):\n    return row.PING()\ndef done(row):\n    return row.title\nreturn E.get('i1').iterate(step, until=done, max_steps=1).select('id')", existing: None, expect_live_error: None },
+    Case { id: "static_literal_for_effects", python: "for key in ['i1', 'i2']:\n    E.get(key).PING()\nreturn E.get('i1').select('id')", existing: None, expect_live_error: None },
+    Case { id: "static_literal_comprehension", python: "return {'ids': [E.get(key).id for key in ('i1', 'i2')]}", existing: None, expect_live_error: None },
+    Case { id: "static_literal_local_comprehension", python: "keys = ['i1', 'i2']\nalias = keys\nreturn {'ids': [E.get(key).id for key in alias]}", existing: None, expect_live_error: None },
     Case { id: "callback_projection", python: "def key(row):\n    value = row.id\n    return value\nreturn E.get('i1').select(id=key)", existing: None, expect_live_error: None },
     Case { id: "callback_lexical_capture", python: "value = 'i1'\ndef key(row):\n    return {'id': value}\ndef outer(row):\n    value = 'wrong'\n    return E.get('i1').map(key, max_parents=1)\nreturn E.get('i1').flat_map(outer)", existing: None, expect_live_error: None },
     Case { id: "callback_branch_record", python: "def project(row):\n    if row.id == 'i1':\n        result = {'id': row.id}\n    else:\n        result = {'id': row.title}\n    return result\nreturn E.get('i1').map(project, max_parents=1)", existing: None, expect_live_error: None },
@@ -2205,6 +2208,11 @@ async fn python_value_closure_matrix() {
 }
 
 #[tokio::test]
+async fn python_static_literal_iteration_live() {
+    run_python_cases(cases().filter(|case| case.id.starts_with("static_literal_"))).await;
+}
+
+#[tokio::test]
 async fn python_flat_map_delete_then_create_is_an_ordered_effect_collection() {
     let case = Case {
         id: "ordered_delete_create_effects",
@@ -2322,6 +2330,38 @@ async fn python_compute_chain_materializes_singleton_record_packet() {
         return self.render({"value": value})
 "#;
     compile_fixture(&es, source).await.unwrap();
+}
+
+#[tokio::test]
+async fn python_static_literal_iteration_rejects_dynamic_or_unbounded_forms() {
+    let es = language_matrix::matrix_execute_session(language_matrix::load_language_matrix_cgs());
+    for (body, diagnostic) in [
+        (
+            "keys = E.query()\nfor key in keys:\n    E.get(key).PING()\nreturn keys",
+            "literal list or tuple",
+        ),
+        (
+            "for key in ['i1']:\n    return E.get(key)",
+            "return inside build iteration",
+        ),
+        (
+            "return [E.get(key).id for key in ['i1'] if key]",
+            "does not admit async or filters",
+        ),
+    ] {
+        let source = format!(
+            "class P(Program):\n    def build(self):\n        {}\n",
+            body.replace('\n', "\n        ")
+        );
+        let error = compile_fixture(&es, &source).await.unwrap_err();
+        assert!(error.contains(diagnostic), "{body}: {error}");
+    }
+    let keys = std::iter::repeat_n("'i1'", 257)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let source = format!("class P(Program):\n    def build(self):\n        return [E.get(key).id for key in [{keys}]]\n");
+    let error = compile_fixture(&es, &source).await.unwrap_err();
+    assert!(error.contains("expansion exceeds 256"), "{error}");
 }
 
 #[tokio::test]

@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 pub(super) fn assert_supplemental(id: &str, run: &PlasmPlanRunResult) {
     let returns = match id {
-        "fanout_captured_created" => 3,
+        "fanout_captured_created" | "static_literal_for_effects" => 3,
         "root_build_statements"
         | "text_write_reuse"
         | "fanout_update"
@@ -66,6 +66,7 @@ pub(super) fn assert_supplemental(id: &str, run: &PlasmPlanRunResult) {
             invocations,
             match id {
                 "fanout_captured_created" => 3,
+                "static_literal_for_effects" => 2,
                 "fanout_update" | "fanout_captured_receiver" | "fanout_captured_bounded" => 2,
                 _ => 1,
             }
@@ -100,6 +101,9 @@ pub(super) fn assert_supplemental(id: &str, run: &PlasmPlanRunResult) {
         .collect();
     let titles = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon"];
     let expected = match id {
+        "static_literal_comprehension" | "static_literal_local_comprehension" => {
+            json!([{"ids": ["i1", "i2"]}])
+        }
         "compute_inferred_callsite_inputs" => {
             json!([{"titles": ["Alpha", "Beta"], "first": "Alpha"}])
         }
@@ -181,6 +185,7 @@ pub(super) fn assert_supplemental(id: &str, run: &PlasmPlanRunResult) {
             json!([{"text":"ab","integer":9007199254740993_i64,"signed":i64::MIN,"ratio":1.25,"flag":false,"nil":null,"nested":[{"text":"x","nums":[1,2]}]}])
         }
         "callback_iteration"
+        | "static_literal_for_effects"
         | "callback_projection"
         | "callback_lexical_capture"
         | "callback_branch_predicate"

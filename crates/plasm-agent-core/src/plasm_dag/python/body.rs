@@ -275,8 +275,10 @@ impl Lower<'_> {
             state,
             serial: self.serial,
             value_depth: 0,
+            static_expansions: self.static_expansions,
             spans: BTreeMap::new(),
             frame,
+            static_sequences: self.static_sequences.clone(),
         };
         if let Some(identity) = &callback.identity {
             scoped.active_callbacks.push(identity.clone());
@@ -450,6 +452,7 @@ impl Lower<'_> {
             });
         }
         self.serial = scoped.serial;
+        self.static_expansions = scoped.static_expansions;
         self.used_methods = scoped.used_methods;
         let result = CorrelatedBody {
             output: output_contract,
@@ -514,6 +517,9 @@ impl Lower<'_> {
         e: &PyExpr,
         inputs: &mut BTreeMap<String, PlanDataInput>,
     ) -> Result<PlasmDataValue, PythonLoweringError> {
+        if let PyExpr::ListComp(comprehension) = e {
+            return self.static_list_comprehension(e, comprehension, inputs);
+        }
         if super::quantifiers::expression_root(e)
             .is_some_and(|name| self.frame.quantifiers.contains_key(name))
         {

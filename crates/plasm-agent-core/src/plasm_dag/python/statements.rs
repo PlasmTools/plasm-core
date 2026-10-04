@@ -42,9 +42,11 @@ impl Lower<'_> {
                 // Resolve the RHS in the previous environment, then publish the
                 // new binding. Previously captured values retain their DAG id.
                 self.expr(&s.value, Some(&binding))?;
+                self.remember_static_sequence(&binding, &s.value);
                 self.frame.names.insert(label.to_owned(), binding);
                 self.callbacks.remove(label);
             }
+            build_statements::BuildStatement::For(s) => self.static_for(s)?,
             build_statements::BuildStatement::Callback(def) => self.declare_callback(def)?,
             build_statements::BuildStatement::Return(s) => return Ok(Some(s)),
         }

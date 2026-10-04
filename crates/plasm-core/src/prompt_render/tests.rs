@@ -3002,7 +3002,7 @@ fn static_grammar_includes_symbols_only_rule() {
     assert!(tool.contains("wire names"));
     assert!(reference.contains("session-local/append-only"));
     assert!(reference.contains("exact signatures"));
-    assert!(reference.contains("No imports, loops, statement if, mutation in build"));
+    assert!(reference.contains("Literal-ID for loops and one-clause list comprehensions"));
     assert!(reference.contains("optional bound 1..65536"));
     assert!(reference.contains("required bound 1..256"));
     assert!(!reference.contains("inspection cannot authorize writes"));

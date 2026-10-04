@@ -21,6 +21,7 @@ build_statements! {
     Documentation(()) => "documentation",
     Effect(&'a ruff_python_ast::StmtExpr) => "effect_statement",
     Binding(&'a ruff_python_ast::StmtAssign) => "binding",
+    For(&'a ruff_python_ast::StmtFor) => "finite_for",
     Callback(&'a ruff_python_ast::StmtFunctionDef) => "callback",
     Return(&'a ruff_python_ast::StmtReturn) => "return",
 }
@@ -28,7 +29,7 @@ build_statements! {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UnsupportedBuildStatement {
     Import,
-    Loop,
+    While,
     Branch,
     Other,
 }
@@ -37,7 +38,7 @@ impl UnsupportedBuildStatement {
     fn recognize(stmt: &Stmt) -> Self {
         match stmt {
             Stmt::Import(_) | Stmt::ImportFrom(_) => Self::Import,
-            Stmt::For(_) | Stmt::While(_) => Self::Loop,
+            Stmt::While(_) => Self::While,
             Stmt::If(_) | Stmt::Match(_) => Self::Branch,
             _ => Self::Other,
         }
@@ -46,7 +47,7 @@ impl UnsupportedBuildStatement {
     fn correction(self) -> &'static str {
         match self {
             Self::Import => "imports are not build statements; declare permitted imports at module scope or inside @compute",
-            Self::Loop => "build constructs a DAG and does not execute Python loops; use a bounded rowset map/flat_map callback for per-row work, or put pure iteration in @compute",
+            Self::While => "build cannot expand a while loop; use bounded iterate for re-observed effects or @compute for pure Python iteration",
             Self::Branch => "build does not execute Python branches; place a conditional in a scoped callback, or filter rows before applying effects",
             Self::Other => "unsupported build statement; build admits immutable assignments, declared callbacks, standalone effect calls and an explicit return",
         }
@@ -72,6 +73,7 @@ impl<'a> BuildStatement<'a> {
             }
             Stmt::Expr(s) if matches!(&*s.value, PyExpr::Call(_)) => Ok(Self::Effect(s)),
             Stmt::Assign(s) if s.targets.len() == 1 => Ok(Self::Binding(s)),
+            Stmt::For(s) => Ok(Self::For(s)),
             Stmt::Return(s) => Ok(Self::Return(s)),
             Stmt::FunctionDef(s) => Ok(Self::Callback(s)),
             _ => Err(BuildStatementError {
@@ -118,8 +120,8 @@ mod tests {
         for (statement, expected) in [
             ("import datetime", "module scope or inside @compute"),
             (
-                "for row in rows:\n            pass",
-                "bounded rowset map/flat_map",
+                "while True:\n            pass",
+                "cannot expand a while loop",
             ),
             (
                 "if flag:\n            return rows",
@@ -131,5 +133,14 @@ mod tests {
             assert!(error.contains(expected), "{statement}: {error}");
             assert!(!error.contains("unsupported build statement"), "{error}");
         }
+    }
+
+    #[test]
+    fn finite_for_has_an_explicit_build_statement_kind() {
+        let source = "class P(Program):\n    def build(self):\n        for key in ['i1']:\n            E.get(key).PING()\n        return E.get('i1')\n";
+        assert_eq!(
+            BuildStatementKind::inventory(source).unwrap(),
+            vec![BuildStatementKind::For, BuildStatementKind::Return]
+        );
     }
 }
