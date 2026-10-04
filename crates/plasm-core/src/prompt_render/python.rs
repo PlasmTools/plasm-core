@@ -804,7 +804,14 @@ impl Renderer<'_> {
                     field,
                     0,
                 )?;
-                comment(&mut body, "    ", &format!("session({}:{ty})", field.name));
+                comment(
+                    &mut body,
+                    "    ",
+                    &format!(
+                        "session({}:{ty}) before Get; not a get(...) argument",
+                        field.name
+                    ),
+                );
             }
         } else {
             for schema in cap.invocation_input_schemas() {
@@ -904,6 +911,27 @@ impl Renderer<'_> {
                 _ => "EffectAck".into(),
             },
         };
+        let write_returns_entity = matches!(
+            cap.kind,
+            CapabilityKind::Create
+                | CapabilityKind::Update
+                | CapabilityKind::Delete
+                | CapabilityKind::Action
+        ) && matches!(
+            cap.output_schema.as_ref().map(|schema| &schema.output_type),
+            Some(OutputType::Entity { .. } | OutputType::Collection { .. }) | None
+        );
+        let result_fields = cgs.effective_provides(cap);
+        if write_returns_entity && !result_fields.is_empty() {
+            comment(
+                &mut body,
+                "    ",
+                &format!(
+                    "Result fields available immediately: {}",
+                    result_fields.join(", ")
+                ),
+            );
+        }
         if cap.kind == CapabilityKind::Query
             && self
                 .exposure

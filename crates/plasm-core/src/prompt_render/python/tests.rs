@@ -422,6 +422,53 @@ fn compact_card_omits_internal_provides_metadata() {
 }
 
 #[test]
+fn partial_write_card_names_only_immediately_available_result_fields() {
+    let mut cgs = fixture();
+    let cap = cgs.capabilities.get_mut("item_touch").unwrap();
+    cap.output_schema.as_mut().unwrap().output_type = OutputType::Entity {
+        entity_type: "Item".into(),
+    };
+    cap.provides = vec!["id".into()];
+    let exposure = TeachingExposureSession::new(&cgs, "fixture", &["Item"]);
+    let wave = prepare_python_teaching_wave(&exposure, &PythonTeachingState::default()).unwrap();
+    assert!(
+        wave.declarations
+            .contains("Result fields available immediately: id\n  e1.m5() -> Singleton[e1]"),
+        "{}",
+        wave.declarations
+    );
+    assert!(!wave.declarations.contains("provides:"));
+}
+
+#[test]
+fn get_card_separates_session_prerequisite_from_call_arguments() {
+    let mut cgs = fixture();
+    let mut session = cgs.capabilities["item_publish"]
+        .inputs
+        .payload
+        .clone()
+        .unwrap();
+    let crate::InputType::Object { fields, .. } = &mut session.input_type else {
+        panic!("fixture payload must have named fields");
+    };
+    fields[0].name = "access_token".into();
+    cgs.capabilities
+        .get_mut("item_get")
+        .unwrap()
+        .inputs
+        .arguments = Some(session);
+    let exposure = TeachingExposureSession::new(&cgs, "fixture", &["Item"]);
+    let wave = prepare_python_teaching_wave(&exposure, &PythonTeachingState::default()).unwrap();
+    assert!(
+        wave.declarations.contains(
+            "session(access_token:v4) before Get; not a get(...) argument\n  e1.get(identity: v1)"
+        ),
+        "{}",
+        wave.declarations
+    );
+}
+
+#[test]
 fn compact_comments_preserve_prose_and_contain_catalog_control_characters() {
     assert_eq!(comment_text("say \"hello\""), "say \"hello\"");
     let escaped = comment_text("first\n```\tlast");
