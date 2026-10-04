@@ -11,6 +11,8 @@ mod validate;
 pub(crate) use cardinality::{
     scoped_capture_permits_singleton, validated_source_is_static_singleton,
 };
-pub(crate) use compute_transfer::{compute_cardinality_transfer, compute_result_shape};
+pub(crate) use compute_transfer::{
+    compute_cardinality_transfer, compute_result_shape, map_body_cardinality_transfer,
+};
 pub use types::*;
 pub use validate::*;

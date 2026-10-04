@@ -22,7 +22,7 @@ use super::{
 };
 use crate::program_binding::RowCardinalityProof;
 
-use super::compute_transfer::compute_cardinality_transfer;
+use super::compute_transfer::{compute_cardinality_transfer, map_body_cardinality_transfer};
 
 /// Walk an unvalidated plan DAG and classify the row cardinality of `node_id`.
 pub(super) fn analyze_static_cardinality(
@@ -76,6 +76,15 @@ pub(super) fn analyze_static_cardinality(
                 .map(|compute| {
                     compute_cardinality_transfer(&compute.op, || {
                         inner(plan, by_id, &compute.source, memo)
+                    })
+                })
+                .unwrap_or(RowCardinalityProof::StaticPlural),
+            PlanNodeKind::MapBody => node
+                .map_body
+                .as_ref()
+                .map(|body| {
+                    map_body_cardinality_transfer(&body.output, || {
+                        inner(plan, by_id, body.parent.source.as_str(), memo)
                     })
                 })
                 .unwrap_or(RowCardinalityProof::StaticPlural),
@@ -169,6 +178,11 @@ fn validated_analyze_static_cardinality(
             ValidatedPlanNode::Compute(c) => compute_cardinality_transfer(&c.compute.op, || {
                 inner(nodes, by_id, c.compute.source.as_str(), memo)
             }),
+            ValidatedPlanNode::MapBody(map) => {
+                map_body_cardinality_transfer(&map.body.output, || {
+                    inner(nodes, by_id, map.body.parent.source.as_str(), memo)
+                })
+            }
             ValidatedPlanNode::RelationTraversal(r) => {
                 match (r.relation.cardinality, r.relation.source_cardinality) {
                     (RelationCardinality::One, RelationSourceCardinality::Single) => {

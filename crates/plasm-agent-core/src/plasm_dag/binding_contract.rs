@@ -49,6 +49,12 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
             }
             let mut contract = synthetic_row_contract(label, schema);
             contract.result_shape = body.result_shape();
+            contract.row_cardinality =
+                crate::plasm_plan::map_body_cardinality_transfer(&body.output, || {
+                    binding_contract(state, body.parent.source.as_str())
+                        .map(|parent| parent.row_cardinality)
+                        .unwrap_or(RowCardinalityProof::RuntimeChecked)
+                });
             if let plasm_core::plasm_monad::ScopedOutput::Rows {
                 entity,
                 entity_authority,

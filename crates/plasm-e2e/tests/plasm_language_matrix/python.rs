@@ -2306,6 +2306,25 @@ async fn python_flat_map_effect_collection_rejects_read_values() {
 }
 
 #[tokio::test]
+async fn python_compute_chain_materializes_singleton_record_packet() {
+    let es = language_matrix::matrix_execute_session(language_matrix::load_language_matrix_cgs());
+    let source = r#"class TypedValue(Program):
+    @compute
+    def preserve(self, row: Row) -> Row.value:
+        return row.value
+    @compute
+    def render(self, row: Row) -> str:
+        return str(row.value)
+    def build(self):
+        item = E.get("typed-7")
+        choice = item.select(value=lambda row: row.score + 1 if row.score is not None and row.score > 0 else row.title)
+        value = self.preserve(choice)
+        return self.render({"value": value})
+"#;
+    compile_fixture(&es, source).await.unwrap();
+}
+
+#[tokio::test]
 async fn python_value_closure_rejects_ambiguous_and_forged_inputs() {
     let es = language_matrix::matrix_execute_session(language_matrix::load_language_matrix_cgs());
     for (argument, diagnostic) in [
