@@ -110,61 +110,7 @@ fn first_bracketed_executable_row(block: &EntityTeachingBlock) -> Option<&Entity
             && parse_trailing_projection_bracket(r.teaching_expr.expression.trim()).is_some()
     })
 }
-
-/// Primary-get projection bracket for the teaching table entity heading (when enabled); test-only helper.
-#[cfg(test)]
-#[allow(dead_code)] // Retained for debugging / synthesis parity checks; tests prefer [`domain_projection_bracket_from_final_bundle`].
-fn domain_heading_projection_bracket(
-    cgs: &CGS,
-    ename: &str,
-    map: Option<&SymbolMap>,
-    surface_filter: Option<&ExposureSurface>,
-) -> Option<String> {
-    let mut line_valid_cache = HashMap::new();
-    let mut gloss_emit_none = None;
-    let seed = prompt_line_valid_cache_seed_cgs(cgs);
-    let map_arc: Option<std::sync::Arc<SymbolMap>> = map.map(|m| std::sync::Arc::new(m.clone()));
-    let block = collect_entity_teaching_block(
-        cgs,
-        ename,
-        map_arc.as_ref(),
-        None,
-        false,
-        &mut line_valid_cache,
-        seed,
-        &mut gloss_emit_none,
-        surface_filter,
-        None,
-    );
-    let refs: Vec<&TeachingExprLine> = block
-        .teaching_rows
-        .iter()
-        .map(|r| &r.teaching_expr)
-        .collect();
-    projection_bracket_from_teaching_rows(&refs)
-}
-
-/// Full scalar projection list `[p#,…]` from the projection teaching row or a legacy get suffix.
-#[cfg(test)]
-#[allow(dead_code)] // Superseded by [`domain_projection_bracket_from_final_bundle`] for prompt-aligned assertions.
-fn domain_projection_bracket_exemplar(
-    cgs: &CGS,
-    ename: &str,
-    map: Option<&SymbolMap>,
-    surface_filter: Option<&ExposureSurface>,
-) -> Option<String> {
-    if let Some(b) = domain_heading_projection_bracket(cgs, ename, map, surface_filter) {
-        return Some(b);
-    }
-    for line in domain_example_lines(cgs, ename, map, surface_filter) {
-        if let Some(b) = parse_trailing_projection_bracket(line.trim()) {
-            return Some(b);
-        }
-    }
-    None
-}
-
-/// [`domain_projection_bracket_exemplar`] reads pre–post-pass teaching synthesis; this uses the same
+/// This uses the same
 /// [`render_teaching_prompt_bundle_for_exposure`] path as production prompts (opaque alias rewrite applied).
 #[cfg(test)]
 fn domain_projection_bracket_from_final_bundle(

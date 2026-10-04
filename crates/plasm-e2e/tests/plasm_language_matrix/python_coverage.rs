@@ -73,7 +73,13 @@ fn validate(ledger: &Ledger) -> Result<(), String> {
         || actual_cases.len() != ledger.cases.len()
         || expected_cases.len() != python::cases().count()
     {
-        return Err("Python evidence inventory changed or contains duplicate IDs".into());
+        return Err(format!(
+            "Python evidence inventory changed or contains duplicate IDs: missing {:?}, stale {:?}, expected {}, ledger {}",
+            expected_cases.difference(&actual_cases).collect::<Vec<_>>(),
+            actual_cases.difference(&expected_cases).collect::<Vec<_>>(),
+            expected_cases.len(),
+            ledger.cases.len(),
+        ));
     }
     for row in &rows {
         let entry = &ledger.rows[row.id];

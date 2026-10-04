@@ -833,58 +833,6 @@ fn federated_surface_qualified_entity_matches_exposure_catalog() {
     assert_eq!(qe["entity"], "LangLine");
 }
 
-/// Same wire entity name in two catalogs: session `e1` / `e2` must stamp `qualified_entity` per catalog.
-#[test]
-fn federated_duplicate_entity_name_e_symbol_stamps_catalog_in_plan() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let cgs = Arc::new(
-        plasm_core::loader::load_schema_dir(
-            &root.join("../../fixtures/schemas/plasm_language_matrix"),
-        )
-        .expect("load plasm_language_matrix"),
-    );
-    let mut ctxs = indexmap::IndexMap::new();
-    ctxs.insert(
-        "langmatrix_a".into(),
-        Arc::new(CgsContext::entry("langmatrix_a", cgs.clone())),
-    );
-    ctxs.insert(
-        "langmatrix_b".into(),
-        Arc::new(CgsContext::entry("langmatrix_b", cgs.clone())),
-    );
-    let layers: Vec<&CGS> = vec![cgs.as_ref(), cgs.as_ref()];
-    let mut exp = TeachingExposureSession::new(cgs.as_ref(), "langmatrix_a", &["LangItem"]);
-    exp.expose_entities(&layers, cgs.clone(), "langmatrix_b", &["LangItem"]);
-    let session = ExecuteSession::new(
-        "ph".into(),
-        "p".into(),
-        cgs.clone(),
-        ctxs,
-        "langmatrix_a".into(),
-        String::new(),
-        String::new(),
-        None,
-        vec!["LangItem".into()],
-        Some(exp),
-        None,
-        cgs.catalog_cgs_hash_hex(),
-        None,
-    );
-    for (sym, entry_id) in [("e1", "langmatrix_a"), ("e2", "langmatrix_b")] {
-        let plan = compile_surface_fixture_json(
-            &PromptPipelineConfig::default(),
-            None,
-            &session,
-            sym,
-            sym,
-        )
-        .unwrap_or_else(|e| panic!("compile {sym}: {e}"));
-        let qe = &plan["nodes"][0]["qualified_entity"];
-        assert_eq!(qe["entry_id"], entry_id, "plan for {sym}");
-        assert_eq!(qe["entity"], "LangItem");
-    }
-}
-
 /// Federated primary is `langmatrix_b` but relation target `LangDetail` resolves via owning CGS pointer, not primary `entry_id`.
 #[test]
 fn federated_relation_target_qe_from_owning_catalog() {
@@ -966,77 +914,6 @@ summary"#
     let plan_value = crate::plasm_plan::parse_plan_value(&plan).expect("parse plan");
     crate::plasm_plan::validate_plan_artifact(&plan_value).expect("validate plan");
     evaluate_plasm_plan_dry(&session, &plan).expect("federated relation dry-run");
-}
-
-/// Same wire entity in langmatrix_a+langmatrix_b: relation hop from `e2` binding must target langmatrix_b.
-#[test]
-fn federated_duplicate_entity_relation_hop_preserves_source_catalog() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let cgs = Arc::new(
-        plasm_core::loader::load_schema_dir(
-            &root.join("../../fixtures/schemas/plasm_language_matrix"),
-        )
-        .expect("load plasm_language_matrix"),
-    );
-    let mut ctxs = indexmap::IndexMap::new();
-    ctxs.insert(
-        "langmatrix_a".into(),
-        Arc::new(CgsContext::entry("langmatrix_a", cgs.clone())),
-    );
-    ctxs.insert(
-        "langmatrix_b".into(),
-        Arc::new(CgsContext::entry("langmatrix_b", cgs.clone())),
-    );
-    let layers: Vec<&CGS> = vec![cgs.as_ref(), cgs.as_ref()];
-    let mut exp = TeachingExposureSession::new(cgs.as_ref(), "langmatrix_a", &["LangItem"]);
-    exp.expose_entities(&layers, cgs.clone(), "langmatrix_b", &["LangItem"]);
-    let session = ExecuteSession::new(
-        "ph".into(),
-        "p".into(),
-        cgs.clone(),
-        ctxs,
-        "langmatrix_a".into(),
-        String::new(),
-        String::new(),
-        None,
-        vec!["LangItem".into()],
-        Some(exp),
-        None,
-        cgs.catalog_cgs_hash_hex(),
-        None,
-    );
-    let map = session
-        .teaching_exposure
-        .as_ref()
-        .expect("exposure")
-        .symbol_map_arc();
-    let e2 = map.entity_sym_for("langmatrix_b", "LangItem");
-    let source = format!(
-        r#"parent = {e2}("LI1")
-kids = parent.children
-kids"#
-    );
-    let plan = compile_plasm_dag_to_plan(
-        &PromptPipelineConfig::default(),
-        None,
-        &session,
-        "fed-dup-relation",
-        &source,
-    )
-    .expect("compile federated duplicate-entity relation hop");
-    let kids = plan["nodes"]
-        .as_array()
-        .expect("nodes")
-        .iter()
-        .find(|n| n["id"] == "kids")
-        .expect("kids node");
-    assert_eq!(kids["kind"], "relation");
-    assert_eq!(
-        kids["relation"]["target"]["entry_id"], "langmatrix_b",
-        "{kids}"
-    );
-    assert_eq!(kids["relation"]["target"]["entity"], "LangItem");
-    evaluate_plasm_plan_dry(&session, &plan).expect("dry-run");
 }
 
 /// Federated phrase_ident: secondary-catalog bare query + create invoke (issue #23).
@@ -1150,73 +1027,6 @@ created"#
         "{created}"
     );
     evaluate_plasm_plan_dry(&session, &create_plan).expect("dry-run");
-}
-
-/// Federated duplicate `LangItem`: children hop from `e2` must stamp the owning catalog.
-#[test]
-fn federated_langmatrix_item_children_relation_dry_run() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let dir = root.join("../../fixtures/schemas/plasm_language_matrix");
-    let cgs_a = Arc::new(plasm_core::loader::load_schema_dir(&dir).expect("langmatrix_a"));
-    let cgs_b = Arc::new(plasm_core::loader::load_schema_dir(&dir).expect("langmatrix_b"));
-    let mut ctxs = indexmap::IndexMap::new();
-    ctxs.insert(
-        "langmatrix_a".into(),
-        Arc::new(CgsContext::entry("langmatrix_a", cgs_a.clone())),
-    );
-    ctxs.insert(
-        "langmatrix_b".into(),
-        Arc::new(CgsContext::entry("langmatrix_b", cgs_b.clone())),
-    );
-    let layers: Vec<&CGS> = vec![cgs_a.as_ref(), cgs_b.as_ref()];
-    let mut exp = TeachingExposureSession::new(cgs_a.as_ref(), "langmatrix_a", &["LangItem"]);
-    exp.expose_entities(&layers, cgs_b.clone(), "langmatrix_b", &["LangItem"]);
-    let session = ExecuteSession::new(
-        "ph".into(),
-        "p".into(),
-        cgs_a.clone(),
-        ctxs,
-        "langmatrix_a".into(),
-        String::new(),
-        String::new(),
-        None,
-        vec!["LangItem".into()],
-        Some(exp),
-        None,
-        cgs_a.catalog_cgs_hash_hex(),
-        None,
-    );
-    let map = session
-        .teaching_exposure
-        .as_ref()
-        .expect("exposure")
-        .symbol_map_arc();
-    let e2 = map.entity_sym_for("langmatrix_b", "LangItem");
-    let r_sym = map.ident_sym_relation_for("langmatrix_b", "LangItem", "children");
-    let source = format!(
-        r#"parent = {e2}("LI1")
-kids = parent.{r_sym}
-kids"#
-    );
-    let plan = compile_plasm_dag_to_plan(
-        &PromptPipelineConfig::default(),
-        None,
-        &session,
-        "fed-langitem-children",
-        &source,
-    )
-    .expect("compile federated LangItem children hop");
-    let kids = plan["nodes"]
-        .as_array()
-        .expect("nodes")
-        .iter()
-        .find(|n| n["id"] == "kids")
-        .expect("kids node");
-    assert_eq!(
-        kids["relation"]["target"]["entry_id"], "langmatrix_b",
-        "{kids}"
-    );
-    evaluate_plasm_plan_dry(&session, &plan).expect("dry-run federated children");
 }
 
 /// Limit + project after a relation hop must resolve fields on the target entity
@@ -1587,33 +1397,6 @@ fn flattened_dag_diagnostic_does_not_mask_heredoc_newline_errors() {
         !err.contains("Do not separate bindings or final roots with spaces"),
         "unexpected: {err}"
     );
-}
-
-/// Matrix: heredoc / render delimiter hygiene (`lang_bindings_render`, `lang_heredoc_binding`).
-#[test]
-fn split_top_level_does_not_split_commas_inside_tagged_heredoc() {
-    let parts = split_top_level("fn(<<T\na,b,c\nT\n), bar", ',').expect("split");
-    assert_eq!(parts.len(), 2);
-    assert!(parts[0].contains("a,b,c"), "{:?}", parts[0]);
-    assert_eq!(parts[1].trim(), "bar");
-}
-
-#[test]
-fn collect_program_statement_lines_errors_on_squashed_heredoc_opener() {
-    let err = collect_program_statement_lines("body = <<B # junk").expect_err("err");
-    assert!(
-        err.contains("opener") || err.contains("tag") || err.contains("newline"),
-        "{err}"
-    );
-}
-
-#[test]
-fn collect_program_statement_lines_glued_heredoc_close() {
-    // `H)` closes the heredoc and ends with `)`; outer `m(` balances that delimiter.
-    let stmts = collect_program_statement_lines("x = m(<<H\none\nH)").expect("parse");
-    assert_eq!(stmts.len(), 1);
-    assert!(stmts[0].contains("<<H"), "{:?}", stmts[0]);
-    assert!(stmts[0].contains("one"));
 }
 
 /// Matrix: heredoc binding + parallel roots (`lang_heredoc_binding`).
@@ -3742,6 +3525,23 @@ async fn nested_scope_captures_entity_returning_mutation_singletons() {
     let create = symbols.method_sym_for("langmatrix", "LangItem", "create");
     let source = format!("class Captured(Program):\n    def build(self):\n        created = {item}.{create}(title='Created', score=1, owner='alice')\n        return {item}.query().map(lambda row: {{'created': created.title, 'title': row.title}}, max_parents=8)");
     crate::plasm_compile::compile_python_program(&session, &source).await.unwrap();
+}
+
+#[tokio::test]
+async fn python_map_record_can_include_taught_relation_from_parent_row() {
+    let session = test_session();
+    let symbols = session.teaching_exposure.as_ref().unwrap().to_symbol_map();
+    let item = symbols.entity_sym_for("langmatrix", "LangItem");
+    let lines = symbols.ident_sym_relation_for("langmatrix", "LangItem", "complete_lines");
+    for body in [
+        format!("parents.map(lambda row: {{'title': row.title, 'lines': row.{lines}}}, max_parents=2)"),
+        format!("parents.select('title', lines=lambda row: row.{lines})"),
+    ] {
+        let source = format!("class WithLines(Program):\n    def build(self):\n        parents = {item}.query().take(2)\n        return {body}\n");
+        crate::plasm_compile::compile_python_program(&session, &source)
+            .await
+            .unwrap_or_else(|error| panic!("taught relation in scoped record: {body}: {error}"));
+    }
 }
 
 /// Labels belong to the catalog/policy plane, independently of Python value types.

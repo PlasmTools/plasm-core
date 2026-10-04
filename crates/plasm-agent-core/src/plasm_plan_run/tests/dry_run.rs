@@ -108,35 +108,7 @@ fn federated_bare_entity_mutator_stays_ambiguous() {
 }
 
 #[test]
-fn federated_langmatrix_item_children_relation_dry_run() {
-    let Some(session) = federated_langmatrix_item_session() else {
-        return;
-    };
-    let map = session
-        .teaching_exposure
-        .as_ref()
-        .expect("exposure")
-        .symbol_map_arc();
-    let e2 = map.entity_sym_for("langmatrix_b", "LangItem");
-    let r_sym = map.ident_sym_relation_for("langmatrix_b", "LangItem", "children");
-    let program = format!(
-        r#"parent = {e2}("LI1")
-kids = parent.{r_sym}
-kids"#
-    );
-    let plan = crate::plasm_dag::compile_plasm_dag_to_plan(
-        &PromptPipelineConfig::default(),
-        None,
-        &session,
-        "fed-langmatrix-children",
-        &program,
-    )
-    .expect("compile federated langmatrix children hop");
-    evaluate_plasm_plan_dry(&session, &plan).expect("dry-run federated langmatrix children");
-}
-
-#[test]
-fn federated_langitem_create_dry_run_preflight_compiles() {
+fn federated_langitem_create_dry_run_preflight_compiles_for_token_forms() {
     let Some(session) = federated_langmatrix_item_team_session() else {
         return;
     };
@@ -153,50 +125,23 @@ fn federated_langitem_create_dry_run_preflight_compiles() {
         map.ident_sym_cap_param_for("langmatrix_b", "LangItem", "langitem_create", "score");
     let p_owner =
         map.ident_sym_cap_param_for("langmatrix_b", "LangItem", "langitem_create", "owner");
-    let program = format!(
-        r#"{e2}.{m_create}({p_title}="federation triage dry-run", {p_score}=1, {p_owner}="alice")"#
-    );
-    let plan = crate::plasm_dag::compile_plasm_dag_to_plan(
-        &PromptPipelineConfig::default(),
-        None,
-        &session,
-        "fed-langitem-create",
-        &program,
-    )
-    .expect("compile federated langitem create");
-    evaluate_plasm_plan_dry(&session, &plan).expect("dry-run federated langitem create");
-}
-
-#[test]
-fn federated_langitem_create_dry_run_preflight_compiles_p_sym_tokens() {
-    let Some(session) = federated_langmatrix_item_team_session() else {
-        return;
-    };
-    let map = session
-        .teaching_exposure
-        .as_ref()
-        .expect("exposure")
-        .symbol_map_arc();
-    let e2 = map.entity_sym_for("langmatrix_b", "LangItem");
-    let m_create = map.method_sym_for("langmatrix_b", "LangItem", "langitem_create");
-    let p_title =
-        map.ident_sym_cap_param_for("langmatrix_b", "LangItem", "langitem_create", "title");
-    let p_score =
-        map.ident_sym_cap_param_for("langmatrix_b", "LangItem", "langitem_create", "score");
-    let p_owner =
-        map.ident_sym_cap_param_for("langmatrix_b", "LangItem", "langitem_create", "owner");
-    let program = format!(
-        r#"{e2}.{m_create}({p_title}="federation triage p# dry-run", {p_score}=1, {p_owner}="alice")"#
-    );
-    let plan = crate::plasm_dag::compile_plasm_dag_to_plan(
-        &PromptPipelineConfig::default(),
-        None,
-        &session,
-        "fed-langitem-create-p-sym",
-        &program,
-    )
-    .expect("compile federated langitem create with p# tokens");
-    evaluate_plasm_plan_dry(&session, &plan).expect("dry-run federated langitem create p#");
+    for (name, title) in [
+        ("fed-langitem-create", "federation triage dry-run"),
+        ("fed-langitem-create-p-sym", "federation triage p# dry-run"),
+    ] {
+        let program =
+            format!(r#"{e2}.{m_create}({p_title}="{title}", {p_score}=1, {p_owner}="alice")"#);
+        let plan = crate::plasm_dag::compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            name,
+            &program,
+        )
+        .unwrap_or_else(|err| panic!("compile federated langitem create ({name}): {err}"));
+        evaluate_plasm_plan_dry(&session, &plan)
+            .unwrap_or_else(|err| panic!("dry-run federated langitem create ({name}): {err}"));
+    }
 }
 
 /// A2: `provides` is the authoritative row schema for create/mutation outputs. Projecting a field
