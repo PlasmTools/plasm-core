@@ -460,27 +460,35 @@ capabilities:
     entity: File
     selection:
     - name: q
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: false
     - name: corpora
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: driveId
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: spaces
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: includeItemsFromAllDrives
+      selection_effect: other
       value_ref: nv_wire_bool
       required: false
     - name: supportsAllDrives
+      selection_effect: other
       value_ref: nv_wire_bool
       required: false
     - name: includeLabels
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: false
     - name: includePermissionsForView
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: false
     controls:
@@ -612,9 +620,11 @@ capabilities:
     entity: DrivePermission
     selection:
     - name: supportsAllDrives
+      selection_effect: other
       value_ref: nv_wire_bool
       required: false
     - name: useDomainAdminAccess
+      selection_effect: access
       value_ref: nv_wire_bool
       required: false
     scope:
@@ -705,9 +715,11 @@ capabilities:
     entity: DriveComment
     selection:
     - name: includeDeleted
+      selection_effect: other
       value_ref: nv_wire_bool
       required: false
     - name: startModifiedTime
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     scope:
@@ -771,6 +783,7 @@ capabilities:
     entity: DriveReply
     selection:
     - name: includeDeleted
+      selection_effect: other
       value_ref: nv_wire_bool
       required: false
     scope:
@@ -860,9 +873,11 @@ capabilities:
     entity: SharedDrive
     selection:
     - name: q
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: false
     - name: useDomainAdminAccess
+      selection_effect: access
       value_ref: nv_wire_bool
       required: false
   drives_get:
@@ -946,33 +961,43 @@ capabilities:
     entity: DriveChange
     selection:
     - name: startPageToken
+      selection_effect: source
       value_ref: nv_wire_str_short
       required: true
     - name: driveId
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: includeCorpusRemovals
+      selection_effect: other
       value_ref: nv_wire_bool
       required: false
     - name: includeItemsFromAllDrives
+      selection_effect: other
       value_ref: nv_wire_bool
       required: false
     - name: includePermissionsForView
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: false
     - name: includeRemoved
+      selection_effect: other
       value_ref: nv_wire_bool
       required: false
     - name: restrictToMyDrive
+      selection_effect: filter
       value_ref: nv_wire_bool
       required: false
     - name: spaces
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: supportsAllDrives
+      selection_effect: other
       value_ref: nv_wire_bool
       required: false
     - name: teamDriveId
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
   channels_stop:
@@ -996,9 +1021,11 @@ capabilities:
     entity: TeamDrive
     selection:
     - name: q
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: false
     - name: useDomainAdminAccess
+      selection_effect: access
       value_ref: nv_wire_bool
       required: false
   teamdrives_get:

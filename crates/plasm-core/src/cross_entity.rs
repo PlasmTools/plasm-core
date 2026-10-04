@@ -344,7 +344,7 @@ mod tests {
                         "fx_pet_status",
                         "status",
                         false,
-                    ),
+                    ).with_selection_effect(crate::SelectionEffect::Filter),
                 ]),
                 ..CapabilityInputs::default()
             },
@@ -376,7 +376,7 @@ mod tests {
                         "fx_ref_pet",
                         "petId",
                         false,
-                    ),
+                    ).with_selection_effect(crate::SelectionEffect::Filter),
                 ]),
                 ..CapabilityInputs::default()
             },

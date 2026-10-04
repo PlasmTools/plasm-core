@@ -1110,6 +1110,40 @@ pub enum InputFieldWire {
     Inline(Box<InputType>),
 }
 
+/// Effect of a backend selection input on the rows returned by a read.
+///
+/// This is a catalog contract, not an inference from a parameter's spelling or
+/// transport position. Both teaching and plan review use this same value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SelectionEffect {
+    /// The backend excludes rows that do not satisfy this selector.
+    Filter,
+    /// The backend orders candidates by relevance and may retain nonmatches.
+    Rank,
+    /// The input chooses a corpus, endpoint, or list before other selectors run.
+    Source,
+    /// The input supplies authentication or access context, not a row predicate.
+    Access,
+    /// The input changes result ordering without excluding rows.
+    Order,
+    /// No row-restriction guarantee is asserted by the catalog.
+    Other,
+}
+
+impl SelectionEffect {
+    pub const fn semantic_gloss(self) -> &'static str {
+        match self {
+            Self::Filter => "filters rows",
+            Self::Rank => "ranks candidates; may retain nonmatches",
+            Self::Source => "chooses source",
+            Self::Access => "supplies access",
+            Self::Order => "orders rows",
+            Self::Other => "selects backend behavior; filtering unverified",
+        }
+    }
+}
+
 /// Field schema for object inputs
 #[derive(Debug, Clone, PartialEq)]
 pub struct InputFieldSchema {
@@ -1117,6 +1151,8 @@ pub struct InputFieldSchema {
     pub wire: InputFieldWire,
     pub required: bool,
     pub description: Option<String>,
+    /// Required on the `selection` lane; forbidden on other input lanes.
+    pub selection_effect: Option<SelectionEffect>,
     /// Default value if not provided
     pub default: Option<crate::Value>,
     /// Optional sink class for information-flow validation on this parameter.
@@ -1141,6 +1177,8 @@ struct InputFieldSchemaDeHelper {
     required: bool,
     #[serde(default)]
     description: Option<String>,
+    #[serde(default)]
+    selection_effect: Option<SelectionEffect>,
     #[serde(default)]
     default: Option<crate::Value>,
     #[serde(default)]
@@ -1175,6 +1213,7 @@ impl TryFrom<InputFieldSchemaDeHelper> for InputFieldSchema {
             wire,
             required: h.required,
             description: h.description,
+            selection_effect: h.selection_effect,
             default: h.default,
             sink_class: h.sink_class,
             wire_json_path: h.wire_json_path,
@@ -1185,7 +1224,7 @@ impl TryFrom<InputFieldSchemaDeHelper> for InputFieldSchema {
 
 impl Serialize for InputFieldSchema {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut state = serializer.serialize_struct("InputFieldSchema", 9)?;
+        let mut state = serializer.serialize_struct("InputFieldSchema", 10)?;
         state.serialize_field("name", &self.name)?;
         match &self.wire {
             InputFieldWire::Registry(k) => state.serialize_field("value_ref", k)?,
@@ -1194,6 +1233,9 @@ impl Serialize for InputFieldSchema {
         state.serialize_field("required", &self.required)?;
         if self.description.is_some() {
             state.serialize_field("description", &self.description)?;
+        }
+        if self.selection_effect.is_some() {
+            state.serialize_field("selection_effect", &self.selection_effect)?;
         }
         if self.default.is_some() {
             state.serialize_field("default", &self.default)?;
@@ -1341,6 +1383,11 @@ fn collect_registry_keys_from_input_field(
 }
 
 impl InputFieldSchema {
+    pub fn with_selection_effect(mut self, effect: SelectionEffect) -> Self {
+        self.selection_effect = Some(effect);
+        self
+    }
+
     #[inline]
     pub fn named_value<'a>(&self, cgs: &'a CGS) -> Result<&'a NamedValueSchema, SchemaError> {
         match &self.wire {
@@ -3670,12 +3717,27 @@ impl CGS {
             };
 
             for field in cap.scope_params() {
+                if field.selection_effect.is_some() {
+                    return Err(SchemaError::SchemaConstraint {
+                        message: format!("capability '{cap_name}': scope input '{}' cannot declare selection_effect", field.name),
+                    });
+                }
                 register(&field.name, "scope")?;
             }
             for field in cap.selection_params() {
+                if field.selection_effect.is_none() {
+                    return Err(SchemaError::SchemaConstraint {
+                        message: format!("capability '{cap_name}': selection input '{}' requires selection_effect", field.name),
+                    });
+                }
                 register(&field.name, "selection")?;
             }
             for field in cap.control_params() {
+                if field.selection_effect.is_some() {
+                    return Err(SchemaError::SchemaConstraint {
+                        message: format!("capability '{cap_name}': control input '{}' cannot declare selection_effect", field.name),
+                    });
+                }
                 register(&field.name, "controls")?;
             }
             for field in cap
@@ -6005,6 +6067,7 @@ pub mod registry_test_util {
         let _ = nv_or_panic(cgs, values_key);
         InputFieldSchema {
             name: param_name.to_string(),
+            selection_effect: None,
             wire: InputFieldWire::Registry(ValueDomainKey::new(values_key).expect("values key")),
             required,
             description: None,
@@ -6413,6 +6476,7 @@ mod list_capability_cardinality_tests {
             serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "s"}]});
         let q_field = InputFieldSchema {
             name: "q".to_string(),
+            selection_effect: Some(SelectionEffect::Other),
             wire: InputFieldWire::Registry(ValueDomainKey::new("fixture_str").expect("key")),
             required: true,
             description: None,
@@ -6447,6 +6511,81 @@ mod list_capability_cardinality_tests {
         .unwrap();
         cgs.validate()
             .expect("one query + one search must validate");
+    }
+
+    #[test]
+    fn selection_effect_is_required_only_on_selection_lane() {
+        let mut cgs = bare_query_cgs("Item", &["item_query"]);
+        let field = InputFieldSchema {
+            name: "q".into(),
+            wire: InputFieldWire::Registry(ValueDomainKey::new("fixture_str").unwrap()),
+            required: false,
+            description: None,
+            selection_effect: None,
+            default: None,
+            sink_class: None,
+            wire_json_path: None,
+            wire_array_element_key: None,
+        };
+        cgs.capabilities
+            .get_mut("item_query")
+            .unwrap()
+            .inputs
+            .selection
+            .0
+            .push(field.clone());
+        assert!(cgs
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("requires selection_effect"));
+
+        let cap = cgs.capabilities.get_mut("item_query").unwrap();
+        cap.inputs.selection.0[0].selection_effect = Some(SelectionEffect::Rank);
+        cgs.validate().expect("typed selection must validate");
+        let decoded: CGS = serde_json::from_slice(&serde_json::to_vec(&cgs).unwrap()).unwrap();
+        assert_eq!(
+            decoded.capabilities["item_query"].inputs.selection.0[0].selection_effect,
+            Some(SelectionEffect::Rank)
+        );
+
+        let cap = cgs.capabilities.get_mut("item_query").unwrap();
+        let mut scope_field = field.clone().with_selection_effect(SelectionEffect::Filter);
+        scope_field.name = "credential".into();
+        cap.inputs.scope.0.push(scope_field);
+        assert!(cgs
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("cannot declare selection_effect"));
+
+        let cap = cgs.capabilities.get_mut("item_query").unwrap();
+        cap.inputs.scope.0.clear();
+        cap.inputs
+            .controls
+            .0
+            .push(field.with_selection_effect(SelectionEffect::Order));
+        assert!(cgs
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("control input 'q' cannot declare selection_effect"));
+    }
+
+    #[test]
+    fn only_filter_selection_asserts_row_exclusion() {
+        for effect in [
+            SelectionEffect::Rank,
+            SelectionEffect::Source,
+            SelectionEffect::Access,
+            SelectionEffect::Order,
+            SelectionEffect::Other,
+        ] {
+            assert!(!effect.semantic_gloss().contains("filters rows"));
+            let round_trip: SelectionEffect =
+                serde_json::from_str(&serde_json::to_string(&effect).unwrap()).unwrap();
+            assert_eq!(round_trip, effect);
+        }
     }
 
     #[test]

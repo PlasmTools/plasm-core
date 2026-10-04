@@ -191,6 +191,7 @@ capabilities:
     description: Resolve up to 100 users by handle (username).
     selection:
     - name: usernames
+      selection_effect: filter
       value_ref: nv_user_query_usernames
       required: true
   tweet_get:
@@ -202,21 +203,27 @@ capabilities:
     description: Recent search over the last seven days of public posts.
     selection:
     - name: query
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: true
     - name: sort_order
+      selection_effect: order
       value_ref: nv_tweet_search_sort_order
       required: false
     - name: start_time
+      selection_effect: filter
       value_ref: nv_wire_date_rfc3339
       required: false
     - name: end_time
+      selection_effect: filter
       value_ref: nv_wire_date_rfc3339
       required: false
     - name: since_id
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: until_id
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
   tweet_timeline_query:
@@ -229,22 +236,28 @@ capabilities:
       required: false
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_tweet_query_shelf
       required: true
       description: tweet_lookup | tweet_timeline | tweet_mentions | user_liked_tweets | list_tweets
     - name: start_time
+      selection_effect: filter
       value_ref: nv_wire_date_rfc3339
       required: false
     - name: end_time
+      selection_effect: filter
       value_ref: nv_wire_date_rfc3339
       required: false
     - name: since_id
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: until_id
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: ids
+      selection_effect: filter
       value_ref: nv_tweet_lookup_query_ids
       required: false
     controls:

@@ -15,7 +15,7 @@ use super::line_validate::{
     domain_line_work_valid_cached, DomainLineValidCacheKey, DomainLineValidEntry,
 };
 use super::query_teaching::{
-    compound_get_expr_line, query_expr_filters_only, query_expr_maximal, query_expr_scope_only,
+    compound_get_expr_line, query_expr_maximal, query_expr_scope_only, query_expr_selection_only,
     unary_entity_id_teaching_expr_line,
 };
 #[cfg(test)]
@@ -61,7 +61,7 @@ pub(crate) fn nav_receiver_candidates(
         for qline in [
             query_expr_maximal(cap, es, cgs, map, catalog_entry_id),
             query_expr_scope_only(cap, es, cgs, map, catalog_entry_id),
-            query_expr_filters_only(cap, es, cgs, map, catalog_entry_id),
+            query_expr_selection_only(cap, es, cgs, map, catalog_entry_id),
         ]
         .into_iter()
         .flatten()
@@ -365,7 +365,7 @@ fn synthesized_list_query_head(
         for qline in [
             query_expr_maximal(cap, es, cgs, map, catalog_entry_id),
             query_expr_scope_only(cap, es, cgs, map, catalog_entry_id),
-            query_expr_filters_only(cap, es, cgs, map, catalog_entry_id),
+            query_expr_selection_only(cap, es, cgs, map, catalog_entry_id),
         ]
         .into_iter()
         .flatten()

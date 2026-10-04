@@ -904,11 +904,14 @@ capabilities:
     entity: Dashboard
     selection:
     - name: query
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: true
     - name: tag
+      selection_effect: filter
       value_ref: nv_wire_str_short
     - name: folder_uid
+      selection_effect: filter
       value_ref: nv_grafana_folder_uid
     controls:
     - name: limit
@@ -964,6 +967,7 @@ capabilities:
     entity: DashboardSummary
     selection:
     - name: dashboard_uid
+      selection_effect: filter
       value_ref: nv_grafana_dashboard_uid
       required: true
     provides:
@@ -1126,12 +1130,16 @@ capabilities:
     entity: Annotation
     selection:
     - name: from
+      selection_effect: filter
       value_ref: nv_wire_int
     - name: to
+      selection_effect: filter
       value_ref: nv_wire_int
     - name: dashboard_uid
+      selection_effect: filter
       value_ref: nv_grafana_dashboard_uid
     - name: tags
+      selection_effect: filter
       value_ref: nv_grafana_tags
     controls:
     - name: limit
@@ -1195,6 +1203,7 @@ capabilities:
     entity: AnnotationTag
     selection:
     - name: tag
+      selection_effect: filter
       value_ref: nv_wire_str_short
     provides:
     - tag
@@ -1469,8 +1478,10 @@ capabilities:
     entity: Team
     selection:
     - name: query
+      selection_effect: other
       value_ref: nv_wire_str_short
     - name: perpage
+      selection_effect: other
       value_ref: nv_wire_int
     controls:
     - name: page
@@ -1549,12 +1560,16 @@ capabilities:
     entity: LibraryElement
     selection:
     - name: searchString
+      selection_effect: other
       value_ref: nv_wire_str_short
     - name: kind
+      selection_effect: filter
       value_ref: nv_grafana_library_kind
     - name: folderUIDs
+      selection_effect: filter
       value_ref: nv_grafana_folder_uid
     - name: perPage
+      selection_effect: other
       value_ref: nv_wire_int
     provides:
     - uid
@@ -1621,15 +1636,19 @@ capabilities:
     scope: []
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_rbacrole_query_shelf
       required: true
       description: rbac_role | org_user_rbac_role | team_rbac_role
     - name: delegatable_only
+      selection_effect: filter
       value_ref: nv_wire_bool
     - name: user_id
+      selection_effect: filter
       value_ref: nv_grafana_user_ref
       required: false
     - name: team_id
+      selection_effect: filter
       value_ref: nv_grafana_team_ref
       required: false
     controls: []
@@ -1810,9 +1829,11 @@ capabilities:
     entity: ResourcePermission
     selection:
     - name: resource
+      selection_effect: filter
       value_ref: nv_grafana_resource_type
       required: true
     - name: resource_id
+      selection_effect: filter
       value_ref: nv_grafana_uid
       required: true
     provides:
@@ -2068,21 +2089,29 @@ capabilities:
     entity: NavigationLink
     selection:
     - name: resource_type
+      selection_effect: other
       value_ref: nv_grafana_deeplink_type
       required: true
     - name: dashboard_uid
+      selection_effect: filter
       value_ref: nv_grafana_dashboard_uid
     - name: panel_id
+      selection_effect: filter
       value_ref: nv_wire_int
     - name: datasource_uid
+      selection_effect: other
       value_ref: nv_grafana_datasource_uid
     - name: queries_json
+      selection_effect: filter
       value_ref: nv_grafana_json_text
     - name: query_params_json
+      selection_effect: other
       value_ref: nv_grafana_json_text
     - name: from
+      selection_effect: filter
       value_ref: nv_grafana_time_range
     - name: to
+      selection_effect: filter
       value_ref: nv_grafana_time_range
     provides:
     - resource_type
@@ -2101,19 +2130,26 @@ capabilities:
     entity: PanelRender
     selection:
     - name: dashboard_uid
+      selection_effect: filter
       value_ref: nv_grafana_dashboard_uid
       required: true
     - name: panel_id
+      selection_effect: filter
       value_ref: nv_wire_int
     - name: width
+      selection_effect: filter
       value_ref: nv_wire_int
     - name: height
+      selection_effect: filter
       value_ref: nv_wire_int
     - name: from
+      selection_effect: filter
       value_ref: nv_grafana_time_range
     - name: to
+      selection_effect: filter
       value_ref: nv_grafana_time_range
     - name: theme
+      selection_effect: filter
       value_ref: nv_wire_str_short
     provides:
     - dashboard_uid
@@ -2197,6 +2233,7 @@ capabilities:
     entity: SiftAnalysis
     selection:
     - name: investigation_id
+      selection_effect: filter
       value_ref: nv_grafana_investigation_ref
       required: true
     provides:
@@ -2210,6 +2247,7 @@ capabilities:
     entity: Incident
     selection:
     - name: query_string
+      selection_effect: other
       value_ref: nv_wire_str_short
     controls:
     - name: limit
@@ -2280,6 +2318,7 @@ capabilities:
     entity: OnCallSchedule
     selection:
     - name: team_id
+      selection_effect: filter
       value_ref: nv_grafana_oncall_id
     controls:
     - name: page
@@ -2302,6 +2341,7 @@ capabilities:
     entity: OnCallUser
     selection:
     - name: username
+      selection_effect: filter
       value_ref: nv_grafana_login
     controls:
     - name: page
@@ -2327,10 +2367,13 @@ capabilities:
     entity: OnCallAlertGroup
     selection:
     - name: state
+      selection_effect: filter
       value_ref: nv_grafana_oncall_state
     - name: team_id
+      selection_effect: filter
       value_ref: nv_grafana_oncall_id
     - name: name
+      selection_effect: filter
       value_ref: nv_wire_str_short
     controls:
     - name: page

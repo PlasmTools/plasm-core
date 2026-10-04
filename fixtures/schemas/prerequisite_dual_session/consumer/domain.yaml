@@ -68,7 +68,7 @@ capabilities:
     scope:
       - {name: id, value_ref: nv_id, required: true}
     selection:
-      - {name: access_token, value_ref: nv_access_token, required: true}
+      - {name: access_token, value_ref: nv_access_token, required: true, selection_effect: access}
     provides: [file_id, id]
   attach:
     receiver: {kind: entity, entity: Record}

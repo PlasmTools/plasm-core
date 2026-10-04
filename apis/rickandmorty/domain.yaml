@@ -114,18 +114,23 @@ capabilities:
     entity: Character
     selection:
     - name: name
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: status
+      selection_effect: filter
       value_ref: nv_character_query_status
       required: false
     - name: species
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: type
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: gender
+      selection_effect: filter
       value_ref: nv_character_query_gender
       required: false
   character_get:
@@ -148,12 +153,15 @@ capabilities:
     entity: Location
     selection:
     - name: name
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: type
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: dimension
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
   location_get:
@@ -173,9 +181,11 @@ capabilities:
     entity: Episode
     selection:
     - name: name
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: episode
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
   episode_get:

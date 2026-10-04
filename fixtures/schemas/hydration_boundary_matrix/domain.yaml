@@ -92,7 +92,7 @@ capabilities:
     kind: query
     entity: SavedNote
     selection:
-    - {name: access_token, value_ref: text, required: true}
+    - {name: access_token, value_ref: text, required: true, selection_effect: access}
     provides: [note_id]
   note_get:
     kind: get

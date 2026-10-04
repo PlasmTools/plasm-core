@@ -782,16 +782,20 @@ capabilities:
     scope: []
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_proficiency_query_shelf
       required: true
       description: proficiency | class_proficiencies | race_proficiencies | subrace_proficiencies
     - name: class_index
+      selection_effect: filter
       value_ref: nv_class_proficiencies_query_class_index
       required: false
     - name: race_index
+      selection_effect: filter
       value_ref: nv_race_proficiencies_query_race_index
       required: false
     - name: subrace_index
+      selection_effect: filter
       value_ref: nv_subrace_proficiencies_query_subrace_index
       required: false
     controls: []
@@ -845,9 +849,11 @@ capabilities:
     entity: ClassLevel
     selection:
     - name: class_index
+      selection_effect: filter
       value_ref: nv_class_level_query_class_index
       required: true
     - name: subclass
+      selection_effect: filter
       value_ref: nv_class_level_query_subclass
       required: false
   class_spellcasting_get:
@@ -873,6 +879,7 @@ capabilities:
     entity: SubclassLevel
     selection:
     - name: subclass_index
+      selection_effect: filter
       value_ref: nv_subclass_level_query_subclass_index
       required: true
   spell_get:
@@ -904,6 +911,7 @@ capabilities:
     entity: Monster
     selection:
     - name: challenge_rating
+      selection_effect: filter
       value_ref: nv_monster_query_challenge_rating
       required: false
   monster_get:
@@ -963,22 +971,28 @@ capabilities:
     entity: Spell
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_spell_query_shelf
       required: true
       description: class_spells_by_slot | spell | class_spells
     - name: level
+      selection_effect: filter
       value_ref: nv_wire_int
       required: false
     - name: spell_level
+      selection_effect: filter
       value_ref: nv_wire_int
       required: false
     - name: school
+      selection_effect: filter
       value_ref: nv_spell_query_school
       required: false
     - name: concentration
+      selection_effect: filter
       value_ref: nv_wire_bool
       required: false
     - name: ritual
+      selection_effect: filter
       value_ref: nv_wire_bool
       required: false
     scope:
@@ -992,13 +1006,16 @@ capabilities:
     entity: Feature
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_feature_query_shelf
       required: true
       description: class_level_features | subclass_features | class_features
     - name: class_level
+      selection_effect: filter
       value_ref: nv_wire_int
       required: false
     - name: subclass_index
+      selection_effect: filter
       value_ref: nv_subclass_features_query_subclass_index
       required: false
     scope:
@@ -1012,6 +1029,7 @@ capabilities:
     entity: Subclass
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_subclass_query_shelf
       required: true
       description: class_subclasses | subclass
@@ -1041,10 +1059,12 @@ capabilities:
     entity: Trait
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_trait_query_shelf
       required: true
       description: subrace_traits | race_traits | trait
     - name: subrace_index
+      selection_effect: filter
       value_ref: nv_subrace_traits_query_subrace_index
       required: false
     scope:

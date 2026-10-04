@@ -39,27 +39,35 @@ capabilities:
     entity: Game
     selection:
     - name: search
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: false
     - name: genres
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: platforms
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: developers
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: publishers
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: tags
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: dates
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: metacritic
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     controls:

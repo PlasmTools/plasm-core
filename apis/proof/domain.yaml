@@ -346,6 +346,7 @@ capabilities:
       description: DocumentAccess.reference for this document; omit to use configured host authentication.
     selection:
     - name: after
+      selection_effect: filter
       value_ref: nv_proof_event_id
       required: false
     controls:

@@ -46,9 +46,11 @@ capabilities:
     entity: SecuredNote
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: query
+      selection_effect: other
       value_ref: nv_query
       required: true
     provides:

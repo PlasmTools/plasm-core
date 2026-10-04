@@ -1667,6 +1667,7 @@ capabilities:
     entity: Repository
     selection:
     - name: q
+      selection_effect: other
       value_ref: nv_repo_search_q
       required: true
     controls:
@@ -1692,6 +1693,7 @@ capabilities:
       required: false
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_repository_query_shelf
       required: true
       description: user_repos | auth_user_repos | repo_forks | org_repos | org_public_repos
@@ -1748,6 +1750,7 @@ capabilities:
       required: false
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_user_query_shelf
       required: true
       description: repo_collaborators | org_members
@@ -1819,16 +1822,20 @@ capabilities:
       required: false
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_issue_query_shelf
       required: true
       description: issue | issue_sub_issue
     - name: assignee
+      selection_effect: filter
       value_ref: nv_issue_query_assignee
       required: false
     - name: labels
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: milestone
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     controls:
@@ -1858,6 +1865,7 @@ capabilities:
       - ticket
     selection:
     - name: q
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: true
     controls:
@@ -1934,10 +1942,12 @@ capabilities:
       required: false
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_pullrequest_search_shelf
       required: true
       description: pr | pr_touching_path
     - name: q
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: true
     controls:
@@ -1958,18 +1968,23 @@ capabilities:
       required: true
     selection:
     - name: sha
+      selection_effect: filter
       value_ref: nv_github_git_sha
       required: false
     - name: path
+      selection_effect: filter
       value_ref: nv_github_commit_path_filter
       required: false
     - name: by_author
+      selection_effect: filter
       value_ref: nv_github_commit_author_filter
       required: false
     - name: by_committer
+      selection_effect: filter
       value_ref: nv_github_commit_committer_filter
       required: false
     - name: until
+      selection_effect: filter
       value_ref: nv_wire_date_rfc3339
       required: false
     controls:
@@ -2106,12 +2121,15 @@ capabilities:
     entity: PullRequestContext
     selection:
     - name: owner
+      selection_effect: filter
       value_ref: nv_github_account_login
       required: true
     - name: repo
+      selection_effect: filter
       value_ref: nv_github_repository_name
       required: true
     - name: number
+      selection_effect: filter
       value_ref: nv_pull_request_number
       required: true
   pr_review_get:
@@ -2324,6 +2342,7 @@ capabilities:
       required: true
     selection:
     - name: anon
+      selection_effect: filter
       value_ref: nv_contributor_query_anon
       required: false
   workflow_query:
@@ -2387,10 +2406,12 @@ capabilities:
       required: false
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_workflowrun_query_shelf
       required: true
       description: workflow_run | workflow_run_by_workflow
     - name: head_sha
+      selection_effect: filter
       value_ref: nv_github_git_sha
       required: false
     controls:
@@ -2546,12 +2567,15 @@ capabilities:
     entity: WorkflowRunContext
     selection:
     - name: owner
+      selection_effect: filter
       value_ref: nv_github_account_login
       required: true
     - name: repo
+      selection_effect: filter
       value_ref: nv_github_repository_name
       required: true
     - name: run_id
+      selection_effect: filter
       value_ref: nv_wire_int
       required: true
   user_get:
@@ -2584,6 +2608,7 @@ capabilities:
     entity: User
     selection:
     - name: q
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: true
     controls:
@@ -2642,12 +2667,15 @@ capabilities:
     entity: Notification
     selection:
     - name: all
+      selection_effect: filter
       value_ref: nv_wire_bool
       required: false
     - name: participating
+      selection_effect: filter
       value_ref: nv_wire_bool
       required: false
     - name: before
+      selection_effect: filter
       value_ref: nv_notification_query_before
       required: false
     controls:
@@ -2694,6 +2722,7 @@ capabilities:
       required: false
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_label_query_shelf
       required: true
       description: label | issue_label
@@ -2968,6 +2997,7 @@ capabilities:
       required: false
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_issuecomment_query_shelf
       required: true
       description: issue_comment | repo_comment
@@ -2987,12 +3017,15 @@ capabilities:
     entity: IssueTriageContext
     selection:
     - name: owner
+      selection_effect: filter
       value_ref: nv_github_account_login
       required: true
     - name: repo
+      selection_effect: filter
       value_ref: nv_github_repository_name
       required: true
     - name: number
+      selection_effect: filter
       value_ref: nv_issue_number
       required: true
   issue_create:

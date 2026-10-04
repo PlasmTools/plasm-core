@@ -240,18 +240,23 @@ capabilities:
       required: true
     selection:
     - name: sha
+      selection_effect: filter
       value_ref: nv_github_git_sha
       required: false
     - name: path
+      selection_effect: filter
       value_ref: nv_github_commit_path_filter
       required: false
     - name: by_author
+      selection_effect: filter
       value_ref: nv_github_commit_author_filter
       required: false
     - name: by_committer
+      selection_effect: filter
       value_ref: nv_github_commit_committer_filter
       required: false
     - name: until
+      selection_effect: filter
       value_ref: nv_wire_date_rfc3339
       required: false
     controls:

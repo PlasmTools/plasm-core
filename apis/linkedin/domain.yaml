@@ -165,13 +165,16 @@ capabilities:
     - lifecycleState
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_ugcpost_query_shelf
       required: true
       description: ugc_post | ugc_post_query_for_member | ugc_post_query_for_member
     - name: sortBy
+      selection_effect: order
       value_ref: nv_wire_sel_8874eda015d84434
       required: false
     - name: authors
+      selection_effect: filter
       value_ref: nv_ugc_post_query_authors
       required: false
     scope:

@@ -308,6 +308,7 @@ capabilities:
       required: false
     selection:
     - name: query
+      selection_effect: other
       value_ref: nv_page_search_query
       required: false
     provides:
@@ -368,6 +369,7 @@ capabilities:
     entity: Database
     selection:
     - name: query
+      selection_effect: other
       value_ref: nv_database_search_query
       required: false
     controls:

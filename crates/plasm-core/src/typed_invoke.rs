@@ -565,6 +565,7 @@ mod tests {
         let input_type = InputType::Object {
             fields: vec![InputFieldSchema {
                 name: "title".into(),
+                selection_effect: None,
                 wire: InputFieldWire::Registry(
                     ValueDomainKey::new("typed_invoke_title").expect("key"),
                 ),

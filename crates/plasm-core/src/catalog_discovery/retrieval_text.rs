@@ -12,7 +12,6 @@ use std::collections::BTreeSet;
 #[derive(Clone, Copy)]
 enum InputRole {
     Scope,
-    Selection,
     Control,
     Arguments,
     Payload,
@@ -22,7 +21,6 @@ impl InputRole {
     fn phrase(self) -> &'static str {
         match self {
             Self::Scope => "The collection is scoped by",
-            Self::Selection => "Matching records are selected using",
             Self::Control => "Execution is controlled by",
             Self::Arguments => "The operation accepts",
             Self::Payload => "The requested change accepts",
@@ -80,7 +78,7 @@ impl SemanticView<'_> {
         prose.push(cap.description.clone());
         if cap.description.is_empty() {
             let verb = match cap.kind {
-                CapabilityKind::Query => "List matching",
+                CapabilityKind::Query => "List",
                 CapabilityKind::Search => "Search by text and rank matching",
                 CapabilityKind::Get => "Read an identified",
                 CapabilityKind::Create => "Create a",
@@ -99,7 +97,6 @@ impl SemanticView<'_> {
         }
         for (role, fields) in [
             (InputRole::Scope, &self.inputs.scope.0),
-            (InputRole::Selection, &self.inputs.selection.0),
             (InputRole::Control, &self.inputs.controls.0),
         ] {
             if !fields.is_empty() {
@@ -109,6 +106,19 @@ impl SemanticView<'_> {
                     input_fields(self.cgs, fields)?
                 ));
             }
+        }
+        for field in &self.inputs.selection.0 {
+            let effect = field.selection_effect.ok_or_else(|| {
+                format!(
+                    "selection input '{}' lacks its validated row effect",
+                    field.name
+                )
+            })?;
+            prose.push(format!(
+                "Backend selection {}: {}",
+                effect.semantic_gloss(),
+                input_field(self.cgs, field)?
+            ));
         }
         for (role, schema) in [
             (InputRole::Arguments, &self.inputs.arguments),
@@ -151,7 +161,10 @@ impl SemanticView<'_> {
                 prose.push("Returns a custom structured response".into())
             }
             Some(OutputType::SideEffect { description }) => prose.push(description.clone()),
-            None if matches!(cap.kind, CapabilityKind::Query | CapabilityKind::Search) => {
+            None if cap.kind == CapabilityKind::Query => {
+                prose.push(format!("Returns {} records", cap.domain))
+            }
+            None if cap.kind == CapabilityKind::Search => {
                 prose.push(format!("Returns matching {} records", cap.domain))
             }
             None if cap.kind == CapabilityKind::Get => {
@@ -550,7 +563,7 @@ mod tests {
             cap.inputs.controls.0[0].description = None;
             cap.kind = if search { CapabilityKind::Search } else { CapabilityKind::Query };
             let actual = render(&cgs, &cap, &cgs.entities["Record"]).unwrap();
-            let selection = "Matching records are selected using Recorded relationship";
+            let selection = "Backend selection filters rows: Recorded relationship";
             let control = format!("Execution is controlled by {description}");
             proptest::prop_assert!(actual.text.contains(selection));
             proptest::prop_assert!(actual.text.contains(&control));
@@ -599,9 +612,19 @@ mod tests {
         assert!(
             text.contains("Execution is controlled by Read consistency mode Allowed values: fresh, cached. (optional)")
         );
-        assert!(!text.contains("Matching records are selected using"));
+        assert!(!text.contains("Backend selection"));
         assert!(!text.contains("ascending"));
         assert!(!text.contains("descending"));
+    }
+
+    #[test]
+    fn rank_selection_never_claims_row_filtering_in_discovery() {
+        let cgs = fixture();
+        let mut cap = cgs.capabilities["record_query"].clone();
+        cap.inputs.selection.0[0].selection_effect = Some(crate::SelectionEffect::Rank);
+        let text = render(&cgs, &cap, &cgs.entities["Record"]).unwrap().text;
+        assert!(text.contains("ranks candidates; may retain nonmatches"));
+        assert!(!text.contains("filters rows"));
     }
 
     #[test]

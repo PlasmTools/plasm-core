@@ -1,4 +1,4 @@
-//! Query-cap teaching exemplars (`Entity{p#=…}`, search filters, entity-ref placeholders).
+//! Query-cap teaching exemplars (`Entity{p#=…}`, search selectors, entity-ref placeholders).
 
 use crate::schema::{EntityDef, InputFieldSchema};
 use crate::symbol_tuning::SymbolMap;
@@ -265,9 +265,9 @@ pub(crate) fn query_expr_maximal(
     Some(format!("{es}{{{}}}", inner.join(", ")))
 }
 
-/// Filter predicates only (no scope) — one `Entity{p#=…}` line per query cap so teaching table shows **filter**
-/// field symbols even when scope+filters are merged on the maximal line.
-pub(crate) fn query_expr_filters_only(
+/// Backend selectors only (no scope) — one `Entity{p#=…}` line per query cap so teaching shows
+/// selection symbols even when scope and selectors share the maximal line.
+pub(crate) fn query_expr_selection_only(
     cap: &crate::CapabilitySchema,
     es: &str,
     cgs: &CGS,
@@ -319,9 +319,9 @@ pub(crate) fn search_expr_primary(
     }
 }
 
-/// Optional-filter twin for `e#~"<query>"{p#=…}` — only when selection has optional non-text
+/// Optional-selection twin for `e#~"<query>"{p#=…}` — only when selection has optional non-text
 /// slots beyond the free-text `~` hole (and beyond required credentials already on the primary).
-pub(crate) fn search_expr_with_filters(
+pub(crate) fn search_expr_with_selection(
     cap: &crate::CapabilitySchema,
     es: &str,
     cgs: &CGS,
@@ -342,7 +342,7 @@ pub(crate) fn search_expr_with_filters(
     ))
 }
 
-/// Only scope predicates (for a distinct structural example when maximal adds filters).
+/// Only scope predicates (for a distinct structural example when maximal adds selectors).
 pub(crate) fn query_expr_scope_only(
     cap: &crate::CapabilitySchema,
     es: &str,

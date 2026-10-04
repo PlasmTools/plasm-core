@@ -323,12 +323,15 @@ capabilities:
     entity: Message
     selection:
     - name: q
+      selection_effect: other
       value_ref: nv_message_list_q
       required: false
     - name: labelIds
+      selection_effect: filter
       value_ref: nv_message_list_label_ids
       required: false
     - name: includeSpamTrash
+      selection_effect: other
       value_ref: nv_message_list_include_spam_trash
       required: false
     provides:
@@ -341,12 +344,15 @@ capabilities:
     entity: Message
     selection:
     - name: q
+      selection_effect: other
       value_ref: nv_message_search_q
       required: true
     - name: labelIds
+      selection_effect: filter
       value_ref: nv_message_search_label_ids
       required: false
     - name: includeSpamTrash
+      selection_effect: other
       value_ref: nv_message_search_include_spam_trash
       required: false
     provides:
@@ -506,12 +512,15 @@ capabilities:
       - rollout
     selection:
     - name: q
+      selection_effect: other
       value_ref: nv_thread_list_q
       required: false
     - name: labelIds
+      selection_effect: filter
       value_ref: nv_thread_list_label_ids
       required: false
     - name: includeSpamTrash
+      selection_effect: other
       value_ref: nv_thread_list_include_spam_trash
       required: false
     provides:
@@ -531,12 +540,15 @@ capabilities:
       - rollout
     selection:
     - name: q
+      selection_effect: other
       value_ref: nv_thread_search_q
       required: true
     - name: labelIds
+      selection_effect: filter
       value_ref: nv_thread_search_label_ids
       required: false
     - name: includeSpamTrash
+      selection_effect: other
       value_ref: nv_thread_search_include_spam_trash
       required: false
     provides:

@@ -15,6 +15,26 @@ struct State {
     calls: Vec<Call>,
     values: BTreeMap<String, usize>,
 }
+
+#[tokio::test]
+async fn map_body_plan_displays_its_typed_write_per_source_row() {
+    let es = session();
+    let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+    let wire = symbols.entity_sym_for("matrix", "Wire");
+    let counter = symbols.entity_sym_for("matrix", "Counter");
+    let advance = symbols.method_sym_for("matrix", "Counter", "advance");
+    let program = format!("class EffectReview(Program):\n    def build(self):\n        rows = {wire}.query()\n        effects = rows.flat_map(lambda row: [{counter}.{advance}(id=row.id), {counter}.{advance}(id=row.id)])\n        return effects\n");
+    let bundle = crate::plasm_compile::compile_python_program(&es, &program)
+        .await
+        .expect("compile");
+    let dry = super::super::super::evaluate_plasm_comp_dry(&es, &bundle).expect("dry plan");
+    let text = super::super::super::render_plasm_plan_dry_text(&dry, None);
+    assert!(
+        text.contains("for each row in rows: action matrix.Counter → action matrix.Counter"),
+        "{text}"
+    );
+    assert!(!text.contains("effects: value"), "{text}");
+}
 struct FanoutTransport {
     rows: usize,
     bad_response: bool,

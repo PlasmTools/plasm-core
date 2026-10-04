@@ -746,7 +746,7 @@ pub enum SchemaError {
     SearchMissingFreeText { capability: String },
 
     #[error(
-        "capability '{capability}' (kind: search): free-text selection param '{param}' must be required: true — optional free-text list filters use kind: query (avoids barren e~\"<query>\"{{query=…}} teaching twins)"
+        "capability '{capability}' (kind: search): free-text selection param '{param}' must be required: true — optional free-text selectors use kind: query (avoids barren e~\"<query>\"{{query=…}} teaching twins)"
     )]
     SearchOptionalFreeText { capability: String, param: String },
 

@@ -338,18 +338,23 @@ capabilities:
       - paths
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: directory_path
+      selection_effect: filter
       value_ref: nv_path
       required: false
     - name: substring
+      selection_effect: filter
       value_ref: nv_str
       required: false
     - name: entry_type
+      selection_effect: filter
       value_ref: nv_entry_type
       required: false
     - name: recursive
+      selection_effect: filter
       value_ref: nv_bool
       required: false
     provides:
@@ -519,15 +524,19 @@ capabilities:
       - document
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: directory_path
+      selection_effect: filter
       value_ref: nv_path
       required: false
     - name: substring
+      selection_effect: filter
       value_ref: nv_str
       required: false
     - name: recursive
+      selection_effect: filter
       value_ref: nv_bool
       required: false
     provides:
@@ -715,6 +724,7 @@ capabilities:
     entity: Profile
     selection:
     - name: email
+      selection_effect: filter
       value_ref: nv_email
       required: false
     provides:

@@ -961,9 +961,11 @@ capabilities:
     entity: Group
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: delete
+      selection_effect: filter
       value_ref: nv_bool
       required: false
     provides:
@@ -1149,30 +1151,38 @@ capabilities:
     entity: Expense
     selection:
     - name: max_created_at
+      selection_effect: filter
       value_ref: nv_datetime
       required: false
       description: Inclusive creation-date bound; the backend compares calendar dates.
     - name: min_created_at
+      selection_effect: filter
       value_ref: nv_datetime
       required: false
       description: Inclusive creation-date bound; the backend compares calendar dates.
     - name: deleted
+      selection_effect: filter
       value_ref: nv_bool
       required: false
       description: Select deleted or active records.
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: query
+      selection_effect: other
       value_ref: nv_str
       required: false
     - name: participant_email
+      selection_effect: filter
       value_ref: nv_email
       required: false
     - name: min_amount
+      selection_effect: filter
       value_ref: nv_number
       required: false
     - name: max_amount
+      selection_effect: filter
       value_ref: nv_number
       required: false
     controls:
@@ -1370,32 +1380,40 @@ capabilities:
     entity: Payment
     selection:
     - name: max_amount
+      selection_effect: filter
       value_ref: nv_number
       required: false
       description: Maximum settlement payment amount.
     - name: min_amount
+      selection_effect: filter
       value_ref: nv_number
       required: false
       description: Minimum settlement payment amount.
     - name: max_created_at
+      selection_effect: filter
       value_ref: nv_datetime
       required: false
       description: Inclusive creation-date bound; the backend compares calendar dates.
     - name: min_created_at
+      selection_effect: filter
       value_ref: nv_datetime
       required: false
       description: Inclusive creation-date bound; the backend compares calendar dates.
     - name: deleted
+      selection_effect: filter
       value_ref: nv_bool
       required: false
       description: Select deleted or active records.
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: query
+      selection_effect: other
       value_ref: nv_str
       required: false
     - name: participant_email
+      selection_effect: filter
       value_ref: nv_email
       required: false
     controls:
@@ -1607,6 +1625,7 @@ capabilities:
       required: true
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     provides:
@@ -1670,6 +1689,7 @@ capabilities:
       required: true
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     provides:
@@ -1729,9 +1749,11 @@ capabilities:
     entity: Notification
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: read
+      selection_effect: filter
       value_ref: nv_read
       required: false
     provides:
@@ -1747,12 +1769,15 @@ capabilities:
     entity: Activity
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: show_expenses
+      selection_effect: filter
       value_ref: nv_bool
       required: false
     - name: show_payments
+      selection_effect: filter
       value_ref: nv_bool
       required: false
     controls:
@@ -1834,6 +1859,7 @@ capabilities:
     entity: Profile
     selection:
     - name: email
+      selection_effect: filter
       value_ref: nv_email
       required: false
     provides:
@@ -1847,13 +1873,16 @@ capabilities:
     entity: User
     selection:
     - name: include_self
+      selection_effect: other
       value_ref: nv_bool
       required: false
       description: Include the signed-in account in user results.
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: query
+      selection_effect: other
       value_ref: nv_str
       required: false
     provides:
@@ -1907,6 +1936,7 @@ capabilities:
     entity: PeerBalance
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     provides: [email, name, direction, amount]

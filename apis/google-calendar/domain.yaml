@@ -212,12 +212,15 @@ capabilities:
     entity: Calendar
     selection:
     - name: showHidden
+      selection_effect: filter
       value_ref: nv_wire_bool
       required: false
     - name: showDeleted
+      selection_effect: filter
       value_ref: nv_wire_bool
       required: false
     - name: minAccessRole
+      selection_effect: filter
       value_ref: nv_calendar_list_min_access_role
       required: false
   event_get:
@@ -274,42 +277,55 @@ capabilities:
       required: true
     selection:
     - name: q
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: false
     - name: timeMin
+      selection_effect: filter
       value_ref: nv_wire_date_rfc3339
       required: false
     - name: timeMax
+      selection_effect: filter
       value_ref: nv_wire_date_rfc3339
       required: false
     - name: updatedMin
+      selection_effect: filter
       value_ref: nv_event_list_updated_min
       required: false
     - name: syncToken
+      selection_effect: source
       value_ref: nv_event_list_sync_token
       required: false
     - name: iCalUID
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: maxAttendees
+      selection_effect: filter
       value_ref: nv_wire_int
       required: false
     - name: showHiddenInvitations
+      selection_effect: filter
       value_ref: nv_wire_bool
       required: false
     - name: privateExtendedProperty
+      selection_effect: filter
       value_ref: nv_event_list_private_extended_property
       required: false
     - name: sharedExtendedProperty
+      selection_effect: filter
       value_ref: nv_event_list_shared_extended_property
       required: false
     - name: singleEvents
+      selection_effect: filter
       value_ref: nv_wire_bool
       required: false
     - name: showDeleted
+      selection_effect: filter
       value_ref: nv_wire_bool
       required: false
     - name: eventTypes
+      selection_effect: filter
       value_ref: nv_event_list_event_types
       required: false
     controls:

@@ -891,20 +891,25 @@ capabilities:
     entity: Project
     selection:
     - name: is_favorite
+      selection_effect: filter
       value_ref: nv_bool
       required: false
       description: Select favorite or non-favorite projects.
     - name: is_archived
+      selection_effect: filter
       value_ref: nv_bool
       required: false
       description: Select archived or active projects.
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: color
+      selection_effect: filter
       value_ref: nv_todoist_color
       required: false
     - name: query
+      selection_effect: other
       value_ref: nv_str
       required: false
     provides:
@@ -1008,44 +1013,55 @@ capabilities:
       required: true
     selection:
     - name: max_due_date
+      selection_effect: filter
       value_ref: nv_due_date
       required: false
       description: Latest due date to include.
     - name: min_due_date
+      selection_effect: filter
       value_ref: nv_due_date
       required: false
       description: Earliest due date to include.
     - name: section_id
+      selection_effect: filter
       value_ref: nv_section_id
       required: false
       description: Select tasks in this project section.
     - name: overdue
+      selection_effect: filter
       value_ref: nv_bool
       required: false
       description: Select overdue tasks.
     - name: label_id
+      selection_effect: filter
       value_ref: nv_label_id
       required: false
       description: Select tasks with this label.
     - name: is_completed
+      selection_effect: filter
       value_ref: nv_bool
       required: false
       description: Select completed or incomplete tasks.
     - name: due_today
+      selection_effect: filter
       value_ref: nv_bool
       required: false
       description: Select tasks due today.
     - name: assigner_email
+      selection_effect: filter
       value_ref: nv_email
       required: false
       description: Person who assigned the task.
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: priority
+      selection_effect: filter
       value_ref: nv_task_priority
       required: false
     - name: assignee_email
+      selection_effect: filter
       value_ref: nv_email
       required: false
     # Project and section IDs are scope context, not fields of shortened list rows.
@@ -1187,20 +1203,25 @@ capabilities:
     entity: Label
     selection:
     - name: task_id
+      selection_effect: filter
       value_ref: nv_task_id
       required: false
       description: Select labels attached to this task.
     - name: task_attached
+      selection_effect: filter
       value_ref: nv_bool
       required: false
       description: Select labels by whether they are attached to a task.
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: query
+      selection_effect: other
       value_ref: nv_str
       required: false
     - name: color
+      selection_effect: filter
       value_ref: nv_todoist_color
       required: false
   label_create:
@@ -1277,6 +1298,7 @@ capabilities:
       required: true
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
   section_create:
@@ -1322,6 +1344,7 @@ capabilities:
       required: true
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
   task_comment_get:
@@ -1465,6 +1488,7 @@ capabilities:
       required: true
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
   sub_task_create:
@@ -1525,9 +1549,11 @@ capabilities:
     entity: User
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: query
+      selection_effect: other
       value_ref: nv_str
       required: false
     provides:
@@ -1549,6 +1575,7 @@ capabilities:
     entity: Profile
     selection:
     - name: email
+      selection_effect: filter
       value_ref: nv_email
       required: false
     provides:
@@ -1613,9 +1640,11 @@ capabilities:
     entity: Notification
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: read
+      selection_effect: filter
       value_ref: nv_read
       required: false
     provides:

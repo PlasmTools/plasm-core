@@ -1654,9 +1654,11 @@ capabilities:
     entity: Plan
     selection:
     - name: type
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: os
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
   bare_metal_plan_query:
@@ -1670,6 +1672,7 @@ capabilities:
     entity: Application
     selection:
     - name: type
+      selection_effect: filter
       value_ref: nv_application_query_type
       required: false
   billingline_query:
@@ -1897,18 +1900,23 @@ capabilities:
     entity: Instance
     selection:
     - name: tag
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: label
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: main_ip
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: hostname
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: show_pending_charges
+      selection_effect: filter
       value_ref: nv_wire_bool
       required: false
     scope:

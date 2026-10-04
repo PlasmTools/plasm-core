@@ -191,12 +191,15 @@ capabilities:
     entity: AirborneTrack
     selection:
     - name: query
+      selection_effect: other
       value_ref: nv_aero_search_query
       required: true
     - name: max_pages
+      selection_effect: other
       value_ref: nv_aero_int
       required: false
     - name: cursor
+      selection_effect: other
       value_ref: nv_aero_string_short
       required: false
   airborne_predicate_match_search:
@@ -208,12 +211,15 @@ capabilities:
     entity: AirbornePredicateMatch
     selection:
     - name: query
+      selection_effect: other
       value_ref: nv_aero_predicate_query
       required: true
     - name: max_pages
+      selection_effect: other
       value_ref: nv_aero_int
       required: false
     - name: cursor
+      selection_effect: other
       value_ref: nv_aero_string_short
       required: false
   flight_summary_ident_query:
@@ -229,18 +235,23 @@ capabilities:
       required: true
     selection:
     - name: ident_type
+      selection_effect: filter
       value_ref: nv_aero_ident_type
       required: false
     - name: start
+      selection_effect: filter
       value_ref: nv_aero_string_short
       required: false
     - name: end
+      selection_effect: filter
       value_ref: nv_aero_string_short
       required: false
     - name: max_pages
+      selection_effect: other
       value_ref: nv_aero_int
       required: false
     - name: cursor
+      selection_effect: other
       value_ref: nv_aero_string_short
       required: false
 auth:

@@ -372,24 +372,31 @@ capabilities:
     description: List projects visible to the authenticated account.
     selection:
     - name: search
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: false
     - name: visibility
+      selection_effect: filter
       value_ref: nv_wire_sel_8807b75f968505fb
       required: false
     - name: owned
+      selection_effect: filter
       value_ref: nv_wire_bool
       required: false
     - name: membership
+      selection_effect: filter
       value_ref: nv_wire_bool
       required: false
     - name: starred
+      selection_effect: filter
       value_ref: nv_wire_bool
       required: false
     - name: simple
+      selection_effect: filter
       value_ref: nv_wire_bool
       required: false
     - name: statistics
+      selection_effect: filter
       value_ref: nv_wire_bool
       required: false
     controls:
@@ -434,16 +441,20 @@ capabilities:
     description: List Issue by shelf (issue | issue_for_project).
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_issue_query_shelf
       required: true
       description: issue | issue_for_project
     - name: state
+      selection_effect: filter
       value_ref: nv_wire_sel_c4015a1a98023521
       required: false
     - name: search
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: false
     - name: scope
+      selection_effect: source
       value_ref: nv_issue_query_scope
       required: false
     controls:
@@ -481,13 +492,16 @@ capabilities:
     description: List MergeRequest by shelf (merge_request | merge_request_for_project).
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_mergerequest_query_shelf
       required: true
       description: merge_request | merge_request_for_project
     - name: state
+      selection_effect: filter
       value_ref: nv_wire_sel_e25280eac2a90f88
       required: false
     - name: scope
+      selection_effect: source
       value_ref: nv_merge_request_query_scope
       required: false
     controls:
@@ -957,9 +971,11 @@ capabilities:
     description: List award emoji on an issue.
     selection:
     - name: project_id
+      selection_effect: filter
       value_ref: nv_issue_award_emoji_for_issue_query_project_id
       required: true
     - name: iid
+      selection_effect: filter
       value_ref: nv_wire_int
       required: true
   issue_award_emoji_get:
@@ -997,9 +1013,11 @@ capabilities:
     description: List award emoji on a merge request.
     selection:
     - name: project_id
+      selection_effect: filter
       value_ref: nv_merge_request_award_emoji_for_mr_query_project_id
       required: true
     - name: iid
+      selection_effect: filter
       value_ref: nv_wire_int
       required: true
   merge_request_award_emoji_get:

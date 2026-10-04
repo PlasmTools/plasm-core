@@ -606,16 +606,20 @@ capabilities:
     entity: Member
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_member_query_shelf
       required: true
       description: team_member | list_members | task_member
     - name: team_id
+      selection_effect: filter
       value_ref: nv_team_member_query_team_id
       required: true
     - name: list_id
+      selection_effect: filter
       value_ref: nv_list_members_list_id
       required: false
     - name: task_id
+      selection_effect: filter
       value_ref: nv_task_member_query_task_id
       required: false
     scope: []
@@ -782,6 +786,7 @@ capabilities:
     entity: Space
     selection:
     - name: archived
+      selection_effect: filter
       value_ref: nv_wire_bool
       required: false
     controls: []
@@ -860,16 +865,20 @@ capabilities:
     entity: View
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_view_query_shelf
       required: true
       description: space_views | folder_views | view
     - name: space_id
+      selection_effect: filter
       value_ref: nv_space_views_space_id
       required: true
     - name: folder_id
+      selection_effect: filter
       value_ref: nv_folder_views_folder_id
       required: false
     - name: team_id
+      selection_effect: filter
       value_ref: nv_view_query_team_id
       required: false
     scope: []
@@ -881,19 +890,24 @@ capabilities:
     entity: CustomField
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_customfield_query_shelf
       required: true
       description: space_fields | folder_fields | list_fields | custom_field
     - name: space_id
+      selection_effect: filter
       value_ref: nv_space_fields_space_id
       required: true
     - name: folder_id
+      selection_effect: filter
       value_ref: nv_folder_fields_folder_id
       required: false
     - name: list_id
+      selection_effect: filter
       value_ref: nv_list_fields_list_id
       required: false
     - name: team_id
+      selection_effect: filter
       value_ref: nv_space_fields_team_id
       required: false
     scope: []
@@ -904,6 +918,7 @@ capabilities:
     entity: Folder
     selection:
     - name: archived
+      selection_effect: filter
       value_ref: nv_wire_bool
       required: false
     controls: []
@@ -956,10 +971,12 @@ capabilities:
     entity: List
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_list_query_shelf
       required: true
       description: list | folder
     - name: archived
+      selection_effect: filter
       value_ref: nv_wire_bool
       required: false
     controls: []
@@ -1005,40 +1022,52 @@ capabilities:
       - clickup task
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_task_query_shelf
       required: true
       description: task | list_task | view_tasks
     - name: team_id
+      selection_effect: filter
       value_ref: nv_task_query_team_id
       required: false
     - name: date_created_gt
+      selection_effect: filter
       value_ref: nv_task_query_date_created_gt
       required: false
     - name: date_created_lt
+      selection_effect: filter
       value_ref: nv_task_query_date_created_lt
       required: false
     - name: date_updated_gt
+      selection_effect: filter
       value_ref: nv_task_query_date_updated_gt
       required: false
     - name: date_updated_lt
+      selection_effect: filter
       value_ref: nv_task_query_date_updated_lt
       required: false
     - name: due_date_gt
+      selection_effect: filter
       value_ref: nv_task_query_due_date_gt
       required: false
     - name: due_date_lt
+      selection_effect: filter
       value_ref: nv_task_query_due_date_lt
       required: false
     - name: view_id
+      selection_effect: filter
       value_ref: nv_view_tasks_view_id
       required: false
     - name: subtasks
+      selection_effect: filter
       value_ref: nv_wire_bool
       required: false
     - name: include_closed
+      selection_effect: other
       value_ref: nv_wire_bool
       required: false
     - name: archived
+      selection_effect: filter
       value_ref: nv_wire_bool
       required: false
     controls:
@@ -1241,6 +1270,7 @@ capabilities:
     entity: TimeInterval
     selection:
     - name: task_id
+      selection_effect: filter
       value_ref: nv_task_intervals_task_id
       required: true
   task_create_interval:
@@ -1341,6 +1371,7 @@ capabilities:
     entity: Goal
     selection:
     - name: team_id
+      selection_effect: filter
       value_ref: nv_goal_query_team_id
       required: true
   goal_get:
@@ -1427,13 +1458,16 @@ capabilities:
     entity: Comment
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_comment_query_shelf
       required: true
       description: list_comments | view_comments | comment
     - name: list_id
+      selection_effect: filter
       value_ref: nv_list_comments_list_id
       required: false
     - name: view_id
+      selection_effect: filter
       value_ref: nv_view_comments_view_id
       required: false
     scope:
@@ -1470,6 +1504,7 @@ capabilities:
     entity: CustomTaskType
     selection:
     - name: team_id
+      selection_effect: filter
       value_ref: nv_custom_task_type_query_team_id
       required: true
   tag_query:
@@ -1478,6 +1513,7 @@ capabilities:
     entity: Tag
     selection:
     - name: space_id
+      selection_effect: filter
       value_ref: nv_tag_query_space_id
       required: true
   role_query:
@@ -1486,6 +1522,7 @@ capabilities:
     entity: Role
     selection:
     - name: team_id
+      selection_effect: filter
       value_ref: nv_role_query_team_id
       required: true
   time_entry_query:
@@ -1494,6 +1531,7 @@ capabilities:
     entity: TimeEntry
     selection:
     - name: team_id
+      selection_effect: filter
       value_ref: nv_time_entry_query_team_id
       required: true
   template_query:
@@ -1502,6 +1540,7 @@ capabilities:
     entity: Template
     selection:
     - name: team_id
+      selection_effect: filter
       value_ref: nv_template_query_team_id
       required: true
     controls:
@@ -1514,6 +1553,7 @@ capabilities:
     entity: Webhook
     selection:
     - name: team_id
+      selection_effect: filter
       value_ref: nv_webhook_query_team_id
       required: true
   webhook_get:
@@ -1544,6 +1584,7 @@ capabilities:
     entity: Group
     selection:
     - name: team_id
+      selection_effect: filter
       value_ref: nv_group_query_team_id
       required: true
   group_update:

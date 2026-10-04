@@ -57,12 +57,15 @@ capabilities:
     entity: Movie
     selection:
     - name: query
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: true
     - name: y
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: type
+      selection_effect: filter
       value_ref: nv_movie_search_type
       required: false
   movie_get_by_title:
@@ -71,9 +74,11 @@ capabilities:
     entity: Movie
     selection:
     - name: t
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: true
     - name: y
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     controls:

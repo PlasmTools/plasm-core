@@ -18,8 +18,8 @@ use super::invoke_teaching::{
 use super::line_validate::{DomainLineValidCacheKey, DomainLineValidEntry};
 use super::query_teaching::{
     compound_get_expr_line, get_requires_identity_anchor, primary_get_identity_teaching_expr_line,
-    query_expr_filters_only, query_expr_maximal, query_expr_scope_only, search_expr_primary,
-    search_expr_with_filters,
+    query_expr_maximal, query_expr_scope_only, query_expr_selection_only, search_expr_primary,
+    search_expr_with_selection,
 };
 use super::relation_teaching::{receiver_for_dotted_suffix, try_emit_relation_nav_teaching_row};
 use super::row_producer::with_projection_bracket;
@@ -422,7 +422,7 @@ pub(crate) fn collect_entity_teaching_block(
                     }
                     if !added {
                         if let Some(line) =
-                            query_expr_filters_only(cap, &es, cgs, map, catalog_entry_id)
+                            query_expr_selection_only(cap, &es, cgs, map, catalog_entry_id)
                         {
                             if local_seen.insert(line.clone())
                                 && try_push_row_producer_teaching_example(
@@ -665,7 +665,7 @@ pub(crate) fn collect_entity_teaching_block(
         );
         if let (Some(cap), Some(filter_line)) = (
             scap,
-            scap.and_then(|cap| search_expr_with_filters(cap, &es, cgs, map, catalog_entry_id)),
+            scap.and_then(|cap| search_expr_with_selection(cap, &es, cgs, map, catalog_entry_id)),
         ) {
             try_push_row_producer_teaching_example(
                 gloss_emit,

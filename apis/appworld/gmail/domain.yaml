@@ -410,55 +410,69 @@ capabilities:
       - spam
     selection:
     - name: snoozed
+      selection_effect: filter
       value_ref: nv_bool
       required: false
       description: Select by snooze status in inbox, outbox or starred.
     - name: spam
+      selection_effect: filter
       value_ref: nv_bool
       required: false
       description: Select by spam status in inbox, outbox or starred.
     - name: archived
+      selection_effect: filter
       value_ref: nv_bool
       required: false
       description: Select by archive status in inbox, outbox or starred.
     - name: starred
+      selection_effect: filter
       value_ref: nv_bool
       required: false
       description: Select by starred status; supported in categories other than starred.
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: mailbox
+      selection_effect: filter
       value_ref: nv_email_thread_mailbox
       required: true
       description: inbox | outbox | archived | spam | starred | snoozed
     - name: query
+      selection_effect: other
       value_ref: nv_str
       required: false
     - name: label
+      selection_effect: filter
       value_ref: nv_str
       required: false
     - name: read
+      selection_effect: filter
       value_ref: nv_bool
       required: false
       description: Select threads by whether they have been marked read.
     - name: attachment
+      selection_effect: filter
       value_ref: nv_bool
       required: false
       description: Select threads by whether their messages have attachments.
     - name: from_email
+      selection_effect: filter
       value_ref: nv_email
       required: false
       description: Select threads containing messages from this sender address.
     - name: to_email
+      selection_effect: filter
       value_ref: nv_email
       required: false
       description: Select threads containing messages addressed to this recipient.
     - name: min_created_at
+      selection_effect: filter
       value_ref: nv_datetime
       required: false
       description: Earliest thread creation time to include.
     - name: max_created_at
+      selection_effect: filter
       value_ref: nv_datetime
       required: false
       description: Latest thread creation time to include.
@@ -705,38 +719,47 @@ capabilities:
     entity: Draft
     selection:
     - name: max_created_at
+      selection_effect: filter
       value_ref: nv_datetime
       required: false
       description: Inclusive creation-date bound; the backend compares calendar dates.
     - name: min_created_at
+      selection_effect: filter
       value_ref: nv_datetime
       required: false
       description: Inclusive creation-date bound; the backend compares calendar dates.
     - name: response_to_email_id
+      selection_effect: filter
       value_ref: nv_email_id
       required: false
       description: Select drafts replying to this message.
     - name: belongs_to_email_thread_id
+      selection_effect: filter
       value_ref: nv_thread_id
       required: false
       description: Select drafts belonging to this thread.
     - name: recipient_email
+      selection_effect: filter
       value_ref: nv_email
       required: false
       description: Select drafts addressed to this recipient.
     - name: scheduled
+      selection_effect: filter
       value_ref: nv_bool
       required: false
       description: Select scheduled or unscheduled drafts.
     - name: attachment
+      selection_effect: filter
       value_ref: nv_bool
       required: false
       description: Select drafts by presence of attachments.
     - name: query
+      selection_effect: rank
       value_ref: nv_str
       required: false
       description: Rank drafts by text relevance; verify exact identity in returned content.
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     provides:
@@ -1000,6 +1023,7 @@ capabilities:
     entity: User
     selection:
     - name: query
+      selection_effect: other
       value_ref: nv_str
       required: false
     provides:
@@ -1219,9 +1243,11 @@ capabilities:
     entity: Label
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: query
+      selection_effect: other
       value_ref: nv_str
       required: true
     provides: [name]

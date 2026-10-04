@@ -51,24 +51,31 @@ capabilities:
     entity: Brewery
     selection:
     - name: by_city
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: by_state
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: by_postal
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: by_country
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: by_type
+      selection_effect: filter
       value_ref: nv_brewery_query_by_type
       required: false
     - name: by_name
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: by_ids
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     controls:
@@ -81,10 +88,12 @@ capabilities:
     entity: Brewery
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_brewery_search_shelf
       required: true
       description: search | autocomplete
     - name: query
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: true
   brewery_get:

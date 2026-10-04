@@ -34,10 +34,10 @@ capabilities:
     entity: Sample
     description: Select typed temporal bounds at the HTTP query boundary.
     selection:
-    - {name: date, value_ref: date, required: false}
-    - {name: timestamp, value_ref: timestamp, required: false}
-    - {name: local_timestamp, value_ref: local_timestamp, required: false}
-    - {name: epoch, value_ref: epoch, required: false}
+    - {name: date, value_ref: date, required: false, selection_effect: filter}
+    - {name: timestamp, value_ref: timestamp, required: false, selection_effect: filter}
+    - {name: local_timestamp, value_ref: local_timestamp, required: false, selection_effect: filter}
+    - {name: epoch, value_ref: epoch, required: false, selection_effect: filter}
     provides: [id]
   sample_get:
     kind: get

@@ -195,6 +195,7 @@ mod tests {
         let input_type = InputType::Object {
             fields: vec![InputFieldSchema {
                 name: "p2".to_string(),
+                selection_effect: None,
                 wire: InputFieldWire::Registry(ValueDomainKey::new("unescape_p2_md").expect("key")),
                 required: false,
                 description: None,
@@ -240,6 +241,7 @@ mod tests {
         let input_type = InputType::Object {
             fields: vec![InputFieldSchema {
                 name: "p2".to_string(),
+                selection_effect: None,
                 wire: InputFieldWire::Registry(
                     ValueDomainKey::new("unescape_p2_short").expect("key"),
                 ),
@@ -287,6 +289,7 @@ mod tests {
         let input_type = InputType::Object {
             fields: vec![InputFieldSchema {
                 name: "p4".to_string(),
+                selection_effect: None,
                 wire: InputFieldWire::Registry(ValueDomainKey::new("json_p4").expect("key")),
                 required: false,
                 description: None,

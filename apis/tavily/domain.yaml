@@ -91,45 +91,59 @@ capabilities:
     description: AI-powered web search. Returns ranked results with optional LLM answer.
     selection:
     - name: query
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: true
     - name: search_depth
+      selection_effect: other
       value_ref: nv_web_search_search_depth
       required: false
     - name: chunks_per_source
+      selection_effect: other
       value_ref: nv_wire_int
       required: false
     - name: topic
+      selection_effect: filter
       value_ref: nv_web_search_topic
       required: false
     - name: time_range
+      selection_effect: filter
       value_ref: nv_web_search_time_range
       required: false
     - name: start_date
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: end_date
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: include_answer
+      selection_effect: other
       value_ref: nv_wire_bool
       required: false
     - name: include_raw_content
+      selection_effect: other
       value_ref: nv_wire_bool
       required: false
     - name: include_domains
+      selection_effect: other
       value_ref: nv_web_search_include_domains
       required: false
     - name: exclude_domains
+      selection_effect: filter
       value_ref: nv_web_search_exclude_domains
       required: false
     - name: country
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: auto_parameters
+      selection_effect: filter
       value_ref: nv_wire_bool
       required: false
     - name: exact_match
+      selection_effect: filter
       value_ref: nv_wire_bool
       required: false
     controls:
@@ -148,34 +162,44 @@ capabilities:
     description: List ExtractResult by shelf (url_extract | site_crawl).
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_extractresult_query_shelf
       required: true
       description: url_extract | site_crawl
     - name: urls
+      selection_effect: filter
       value_ref: nv_url_extract_urls
       required: true
     - name: query
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: false
     - name: extract_depth
+      selection_effect: filter
       value_ref: nv_url_extract_extract_depth
       required: false
     - name: format
+      selection_effect: filter
       value_ref: nv_url_extract_format
       required: false
     - name: chunks_per_source
+      selection_effect: other
       value_ref: nv_wire_int
       required: false
     - name: url
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: instructions
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: max_depth
+      selection_effect: filter
       value_ref: nv_wire_int
       required: false
     - name: max_breadth
+      selection_effect: filter
       value_ref: nv_wire_int
       required: false
     controls:

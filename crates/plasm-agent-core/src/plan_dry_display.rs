@@ -7,10 +7,11 @@ use crate::execute_session::ExecuteSession;
 use crate::plasm_plan::{
     AggregateFunction, AggregateSpec, ComputeOp, ComputeTemplate, EffectClass, FieldPath, Plan,
     PlanNodeKind, PlanPredicate, PlanPredicateOp, PlanValue, ValidatedEffectTemplate,
-    ValidatedPlanExprIr, ValidatedPlanExprTemplate, ValidatedPlanNode, ValidatedPlanReturn,
-    ValidatedPlanState, ValidatedSurfaceNode,
+    ValidatedPlan, ValidatedPlanExprIr, ValidatedPlanExprTemplate, ValidatedPlanNode,
+    ValidatedPlanReturn, ValidatedPlanState, ValidatedSurfaceNode,
 };
 
+use plasm_core::SelectionEffect;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -133,6 +134,10 @@ pub struct PlanDryStep {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanDryOp {
+    MapBody {
+        source: String,
+        effects: Vec<PlanDryEffect>,
+    },
     Python {
         entity: String,
         per_row: bool,
@@ -140,6 +145,7 @@ pub enum PlanDryOp {
     Surface {
         kind: PlanNodeKind,
         expr: String,
+        selections: Vec<PlanDrySelection>,
     },
     Project {
         fields: Vec<String>,
@@ -201,6 +207,85 @@ pub enum PlanDryOp {
         binding: String,
         summary: String,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanDryEffect {
+    pub kind: PlanNodeKind,
+    pub entity: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanDrySelection {
+    pub name: String,
+    pub effect: SelectionEffect,
+}
+
+fn render_selection_effects(selections: &[PlanDrySelection]) -> String {
+    if selections.is_empty() {
+        return String::new();
+    }
+    format!(
+        " · {}",
+        selections
+            .iter()
+            .map(|selection| format!("{} {}", selection.name, selection.effect.semantic_gloss()))
+            .collect::<Vec<_>>()
+            .join("; ")
+    )
+}
+
+fn map_body_effects(plan: &ValidatedPlan) -> Vec<PlanDryEffect> {
+    let mut effects = Vec::new();
+    for id in plan.topological_order() {
+        let Some(node) = plan.nodes().iter().find(|node| node.id() == id) else {
+            continue;
+        };
+        if let ValidatedPlanNode::Surface(surface) = node {
+            if matches!(
+                surface.effect_class,
+                EffectClass::Write | EffectClass::SideEffect
+            ) {
+                let entity = surface
+                    .qualified_entity
+                    .as_ref()
+                    .map(|key| format!("{}.{}", key.entry_id, key.entity))
+                    .unwrap_or_else(|| "resource".to_owned());
+                effects.push(PlanDryEffect {
+                    kind: surface.kind,
+                    entity,
+                });
+            }
+        }
+        if let ValidatedPlanNode::ForEach(fanout) = node {
+            if matches!(
+                fanout.effect_class,
+                EffectClass::Write | EffectClass::SideEffect
+            ) {
+                let target = &fanout.effect_template.qualified_entity;
+                effects.push(PlanDryEffect {
+                    kind: fanout.effect_template.kind,
+                    entity: format!("{}.{} per child row", target.entry_id, target.entity),
+                });
+            }
+        }
+        for nested in node.nested_plans() {
+            effects.extend(map_body_effects(nested));
+        }
+    }
+    effects
+}
+
+fn render_map_body(source: &str, effects: &[PlanDryEffect]) -> String {
+    let actions = effects
+        .iter()
+        .map(|effect| format!("{} {}", render_kind(effect.kind), effect.entity))
+        .collect::<Vec<_>>();
+    if actions.is_empty() {
+        format!("for each row in {source}")
+    } else {
+        format!("for each row in {source}: {}", actions.join(" → "))
+    }
 }
 
 pub fn build_plan_dry_compact_view(
@@ -374,6 +459,7 @@ pub fn render_plan_dry_compact_text(
 /// Operator-facing step title for synthetic IR nodes (not tuned `read_1`/`compute_2` labels).
 pub(crate) fn human_ux_headline_for_op(op: &PlanDryOp) -> String {
     match op {
+        PlanDryOp::MapBody { .. } => "For each row".into(),
         PlanDryOp::Python { entity, per_row } => format!(
             "Python {} of {entity}",
             if *per_row {
@@ -425,6 +511,7 @@ pub(crate) fn human_ux_headline_for_op(op: &PlanDryOp) -> String {
 /// Secondary line for plan UX — resolved wire names in predicate/field text.
 pub(crate) fn human_ux_summary_for_op(op: &PlanDryOp) -> String {
     match op {
+        PlanDryOp::MapBody { source, effects } => render_map_body(source, effects),
         PlanDryOp::Python { entity, per_row } => format!(
             "Python {} of {entity}",
             if *per_row {
@@ -438,10 +525,16 @@ pub(crate) fn human_ux_summary_for_op(op: &PlanDryOp) -> String {
         }
         PlanDryOp::Filter { .. } => "Filter rows".into(),
         PlanDryOp::Project { fields } => format!("Fields: {}", fields.join(", ")),
-        PlanDryOp::Surface { kind, expr } => match kind {
-            PlanNodeKind::Search => format!("Search · {expr}"),
+        PlanDryOp::Surface {
+            kind,
+            expr,
+            selections,
+        } => match kind {
+            PlanNodeKind::Search => {
+                format!("Search · {expr}{}", render_selection_effects(selections))
+            }
             PlanNodeKind::Get => format!("Get · {expr}"),
-            PlanNodeKind::Query => format!("Read · {expr}"),
+            PlanNodeKind::Query => format!("Read · {expr}{}", render_selection_effects(selections)),
             PlanNodeKind::Create => format!("Create · {expr}"),
             PlanNodeKind::Update => format!("Update · {expr}"),
             PlanNodeKind::Delete => format!("Delete · {expr}"),
@@ -485,6 +578,7 @@ pub(crate) fn human_ux_summary_for_op(op: &PlanDryOp) -> String {
 
 pub(crate) fn render_plan_dry_op(op: &PlanDryOp) -> String {
     match op {
+        PlanDryOp::MapBody { source, effects } => render_map_body(source, effects),
         PlanDryOp::Python { entity, per_row } => format!(
             "{} {entity} -> str",
             if *per_row {
@@ -493,7 +587,15 @@ pub(crate) fn render_plan_dry_op(op: &PlanDryOp) -> String {
                 "python_reduce"
             }
         ),
-        PlanDryOp::Surface { kind, expr } => format!("{} {expr}", render_kind(*kind)),
+        PlanDryOp::Surface {
+            kind,
+            expr,
+            selections,
+        } => format!(
+            "{} {expr}{}",
+            render_kind(*kind),
+            render_selection_effects(selections)
+        ),
         PlanDryOp::Project { fields } => format!("project {}", fields.join(", ")),
         PlanDryOp::Filter { predicates } => format!("filter {}", predicates.join(", ")),
         PlanDryOp::GroupBy { keys, aggregates } => {
@@ -553,12 +655,17 @@ fn compact_op_from_node(
     display_map: &HashMap<String, String>,
 ) -> PlanDryOp {
     match node {
-        ValidatedPlanNode::MapBody(_) | ValidatedPlanNode::Capture(_) => PlanDryOp::Data {
+        ValidatedPlanNode::MapBody(map) => PlanDryOp::MapBody {
+            source: map_display_id(map.body.parent.source.as_str(), display_map),
+            effects: map_body_effects(&map.plan),
+        },
+        ValidatedPlanNode::Capture(_) => PlanDryOp::Data {
             summary: crate::plasm_plan_run::render_node_operation(node),
         },
         ValidatedPlanNode::Surface(s) => PlanDryOp::Surface {
             kind: s.kind,
             expr: surface_compact_expr(s, es),
+            selections: surface_selection_effects(s, es),
         },
         ValidatedPlanNode::Data(n) => PlanDryOp::Data {
             summary: data_value_summary(&n.data),
@@ -678,6 +785,65 @@ fn surface_compact_expr(surface: &ValidatedSurfaceNode, es: Option<&ExecuteSessi
         })
         .unwrap_or_else(|| "<typed Plasm IR>".to_string());
     crate::plan_dry_compact::compact_agent_surface_expr(&raw)
+}
+
+fn surface_selection_effects(
+    surface: &ValidatedSurfaceNode,
+    es: Option<&ExecuteSession>,
+) -> Vec<PlanDrySelection> {
+    if !matches!(surface.kind, PlanNodeKind::Query | PlanNodeKind::Search) {
+        return Vec::new();
+    }
+    let Some(es) = es else { return Vec::new() };
+    let expr = surface
+        .ir
+        .as_ref()
+        .map(|ir| &ir.expr)
+        .or_else(|| surface.ir_template.as_ref().map(|ir| &ir.expr));
+    let Some(plasm_core::Expr::Query(query)) = expr else {
+        return Vec::new();
+    };
+    let entry = query
+        .catalog_entry_id
+        .as_ref()
+        .map(|entry| entry.as_str())
+        .or_else(|| {
+            surface
+                .qualified_entity
+                .as_ref()
+                .map(|key| key.entry_id.as_str())
+        })
+        .unwrap_or(es.entry_id.as_str());
+    let Some(cgs) = es
+        .contexts_by_entry
+        .get(entry)
+        .map(|context| context.cgs.as_ref())
+    else {
+        tracing::warn!(
+            entry,
+            "plan selection catalog is absent from execute session"
+        );
+        return Vec::new();
+    };
+    let Ok(cap) = plasm_core::resolve_query_capability(query, cgs) else {
+        tracing::warn!(entry, "plan selection capability could not be resolved");
+        return Vec::new();
+    };
+    let used = query
+        .predicate
+        .as_ref()
+        .map(|predicate| predicate.referenced_fields())
+        .unwrap_or_default();
+    cap.selection_params()
+        .iter()
+        .filter(|field| used.iter().any(|name| name == &field.name))
+        .filter_map(|field| {
+            field.selection_effect.map(|effect| PlanDrySelection {
+                name: field.name.clone(),
+                effect,
+            })
+        })
+        .collect()
 }
 
 fn render_plan_expr_ir_for_session(
@@ -1100,7 +1266,88 @@ fn build_plan_node_display_map(
 mod tests {
     use super::*;
     use crate::plasm_plan::{OutputName, SyntheticResultSchema};
+    use plasm_core::{CgsContext, TeachingExposureSession};
     use std::collections::BTreeMap;
+    use std::sync::Arc;
+
+    #[test]
+    fn plan_uses_the_catalogs_typed_selection_meaning() {
+        let op = PlanDryOp::Surface {
+            kind: PlanNodeKind::Query,
+            expr: "e1.query(query=..., status=...)".into(),
+            selections: vec![
+                PlanDrySelection {
+                    name: "query".into(),
+                    effect: SelectionEffect::Rank,
+                },
+                PlanDrySelection {
+                    name: "status".into(),
+                    effect: SelectionEffect::Filter,
+                },
+            ],
+        };
+        let rendered = render_plan_dry_op(&op);
+        assert!(rendered.contains("query ranks candidates; may retain nonmatches"));
+        assert!(rendered.contains("status filters rows"));
+        assert!(!rendered.contains("query filters rows"));
+    }
+
+    #[test]
+    fn plan_resolves_used_selection_effects_from_catalog() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_prompt_matrix");
+        let mut schema = plasm_core::load_schema_dir(&dir).unwrap();
+        schema.bind_registry_entry_id("matrix");
+        let cgs = Arc::new(schema);
+        let contexts = indexmap::IndexMap::from([(
+            "matrix".into(),
+            Arc::new(CgsContext::entry("matrix", cgs.clone())),
+        )]);
+        let es = ExecuteSession::new(
+            "ph".into(),
+            "p".into(),
+            cgs.clone(),
+            contexts,
+            "matrix".into(),
+            String::new(),
+            String::new(),
+            None,
+            vec!["Zone".into()],
+            Some(TeachingExposureSession::new(&cgs, "matrix", &["Zone"])),
+            None,
+            cgs.catalog_cgs_hash_hex(),
+            None,
+        );
+        let mut query =
+            plasm_core::QueryExpr::filtered("Zone", plasm_core::Predicate::eq("name", "news"));
+        query.capability_name = Some("zone_query".into());
+        let surface = ValidatedSurfaceNode {
+            id: crate::plasm_plan::PlanNodeId::new("read").unwrap(),
+            kind: PlanNodeKind::Query,
+            qualified_entity: None,
+            ir: Some(ValidatedPlanExprIr {
+                expr: plasm_core::Expr::Query(query),
+                projection: None,
+            }),
+            ir_template: None,
+            effect_class: EffectClass::Read,
+            result_shape: crate::plasm_plan::ResultShape::List,
+            projection: Vec::new(),
+            predicates: Vec::new(),
+            depends_on: Vec::new(),
+            uses_result: Vec::new(),
+            approval: None,
+            page_size: None,
+            pushed_read_budget: None,
+        };
+        assert_eq!(
+            surface_selection_effects(&surface, Some(&es)),
+            vec![PlanDrySelection {
+                name: "name".into(),
+                effect: SelectionEffect::Filter
+            }]
+        );
+    }
 
     #[test]
     fn project_op_uses_field_names_only() {

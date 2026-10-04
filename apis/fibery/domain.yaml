@@ -411,6 +411,7 @@ capabilities:
       required: true
     selection:
     - name: input
+      selection_effect: filter
       value_ref: nv_fibery_command_input_json
       required: false
   user_get_me:
@@ -427,6 +428,7 @@ capabilities:
       required: true
     selection:
     - name: input
+      selection_effect: filter
       value_ref: nv_fibery_command_input_json
       required: false
   entity_get:
@@ -510,9 +512,11 @@ capabilities:
     entity: SearchResult
     selection:
     - name: query
+      selection_effect: other
       value_ref: nv_fibery_search_query
       required: true
     - name: database
+      selection_effect: filter
       value_ref: nv_fibery_database_name
       required: false
     controls:
@@ -525,6 +529,7 @@ capabilities:
     entity: HistoryEvent
     selection:
     - name: input
+      selection_effect: filter
       value_ref: nv_fibery_command_input_json
       required: false
     controls:
@@ -817,6 +822,7 @@ capabilities:
     entity: View
     selection:
     - name: input
+      selection_effect: filter
       value_ref: nv_fibery_command_input_json
       required: false
   view_create:

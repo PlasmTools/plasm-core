@@ -1111,6 +1111,7 @@ mod tests {
     fn reg_field(name: &str, key: &str, required: bool) -> crate::InputFieldSchema {
         crate::InputFieldSchema {
             name: name.to_string(),
+            selection_effect: None,
             wire: crate::InputFieldWire::Registry(crate::ValueDomainKey::new(key).expect("key")),
             required,
             description: None,

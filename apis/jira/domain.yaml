@@ -883,12 +883,15 @@ capabilities:
       or enrich what comes back per issue.
     selection:
     - name: query
+      selection_effect: other
       value_ref: nv_issue_jql_jql
       required: true
     - name: fields
+      selection_effect: other
       value_ref: nv_issue_jql_fields
       required: false
     - name: expand
+      selection_effect: other
       value_ref: nv_issue_jql_expand
       required: false
   issue_create:
@@ -997,9 +1000,11 @@ capabilities:
     description: List and search projects.
     selection:
     - name: query
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: false
     - name: typeKey
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     controls:
@@ -1019,6 +1024,7 @@ capabilities:
       required: true
     selection:
     - name: query
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: false
     controls:
@@ -1056,6 +1062,7 @@ capabilities:
       required: false
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_user_query_shelf
       required: true
       description: user_myself | issue_watcher
@@ -1066,12 +1073,15 @@ capabilities:
     description: Search for users by display name or accountId.
     selection:
     - name: query
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: true
     - name: accountId
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: property
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
   comment_create:
@@ -1127,6 +1137,7 @@ capabilities:
     description: List issue priorities.
     selection:
     - name: priorityName
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
   priority_get:
@@ -1176,9 +1187,11 @@ capabilities:
       required: true
     selection:
     - name: startedAfter
+      selection_effect: filter
       value_ref: nv_wire_int
       required: false
     - name: startedBefore
+      selection_effect: filter
       value_ref: nv_wire_int
       required: false
   changelog_query:
@@ -1218,6 +1231,7 @@ capabilities:
       required: true
     selection:
     - name: query
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: false
     controls:
@@ -1302,6 +1316,7 @@ capabilities:
     description: Load several issues or id in one round-trip for dashboards or migration tools.
     selection:
     - name: issue_keys
+      selection_effect: filter
       value_ref: nv_issue_bulk_fetch_issue_keys
       required: true
   issue_watcher_add:
@@ -1340,6 +1355,7 @@ capabilities:
     description: Find groups by name for permission and membership tasks.
     selection:
     - name: query
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: false
   group_get:
@@ -1367,6 +1383,7 @@ capabilities:
     description: Search saved JQL filters you can use or share.
     selection:
     - name: filterName
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
   filter_get:
@@ -1385,6 +1402,7 @@ capabilities:
     description: Search dashboards available to you.
     selection:
     - name: dashboardName
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
   dashboard_get:
@@ -1401,6 +1419,7 @@ capabilities:
     description: Boards on the site, optionally narrowed to a project (Jira Software).
     selection:
     - name: projectKeyOrId
+      selection_effect: filter
       value_ref: nv_board_query_project_key_or_id
       required: false
   board_get:
@@ -1470,6 +1489,7 @@ capabilities:
     - has_transitions
     selection:
     - name: issue_key
+      selection_effect: filter
       value_ref: nv_jira_issue_transition_context_issue_key
       required: true
   issue_transition_context_get:
@@ -1493,6 +1513,7 @@ capabilities:
     - url
     selection:
     - name: issue_key
+      selection_effect: filter
       value_ref: nv_jira_issue_browse_link_issue_key
       required: true
   issue_browse_link_get:
@@ -1517,6 +1538,7 @@ capabilities:
     - issue_count
     selection:
     - name: sprint_id
+      selection_effect: filter
       value_ref: nv_jira_sprint_board_sprint_id
       required: true
   sprint_board_snapshot_get:

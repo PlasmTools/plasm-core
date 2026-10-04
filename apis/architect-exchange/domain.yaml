@@ -1476,15 +1476,19 @@ capabilities:
     description: Equity history for an account over a required time range and resolution.
     selection:
     - name: account_id
+      selection_effect: filter
       value_ref: nv_account_id
       required: false
     - name: start_timestamp_ns
+      selection_effect: filter
       value_ref: nv_timestamp_ns
       required: true
     - name: end_timestamp_ns
+      selection_effect: filter
       value_ref: nv_timestamp_ns
       required: true
     - name: resolution_seconds
+      selection_effect: filter
       value_ref: nv_resolution_seconds
       required: true
   deposit_address_query:
@@ -1493,12 +1497,15 @@ capabilities:
     description: Resolve the on-chain deposit address for an asset.
     selection:
     - name: account_id
+      selection_effect: filter
       value_ref: nv_account_id
       required: false
     - name: blockchain
+      selection_effect: filter
       value_ref: nv_blockchain
       required: true
     - name: asset
+      selection_effect: filter
       value_ref: nv_asset_symbol
       required: true
   sandbox_deposit:
@@ -1605,6 +1612,7 @@ capabilities:
     description: Depth snapshot for one symbol.
     selection:
     - name: level
+      selection_effect: filter
       value_ref: nv_book_level
       required: false
     scope:
@@ -1641,16 +1649,20 @@ capabilities:
     description: List Candle by shelf (candle | candle_current | candle_last).
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_candle_query_shelf
       required: true
       description: candle | candle_current | candle_last
     - name: start_timestamp_ns
+      selection_effect: filter
       value_ref: nv_timestamp_ns
       required: true
     - name: end_timestamp_ns
+      selection_effect: filter
       value_ref: nv_timestamp_ns
       required: true
     - name: candle_width
+      selection_effect: filter
       value_ref: nv_candle_width
       required: true
     scope:
@@ -1664,19 +1676,24 @@ capabilities:
     description: List BboCandle by shelf (bbo_candle | bbo_candle_current | bbo_candle_last).
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_bbocandle_query_shelf
       required: true
       description: bbo_candle | bbo_candle_current | bbo_candle_last
     - name: symbol
+      selection_effect: filter
       value_ref: nv_instrument_symbol
       required: true
     - name: start_timestamp_ns
+      selection_effect: filter
       value_ref: nv_timestamp_ns
       required: true
     - name: end_timestamp_ns
+      selection_effect: filter
       value_ref: nv_timestamp_ns
       required: true
     - name: candle_width
+      selection_effect: filter
       value_ref: nv_candle_width
       required: true
     scope: []
@@ -1687,12 +1704,15 @@ capabilities:
     description: Historical funding prints for a symbol.
     selection:
     - name: start_timestamp_ns
+      selection_effect: filter
       value_ref: nv_timestamp_ns
       required: false
     - name: end_timestamp_ns
+      selection_effect: filter
       value_ref: nv_timestamp_ns
       required: false
     - name: sort_ts
+      selection_effect: order
       value_ref: nv_sort_direction
       required: false
     scope:
@@ -1709,9 +1729,11 @@ capabilities:
     description: Funding slots and totals for a symbol on a calendar date.
     selection:
     - name: symbol
+      selection_effect: filter
       value_ref: nv_instrument_symbol
       required: true
     - name: date
+      selection_effect: filter
       value_ref: nv_calendar_date
       required: false
   underlying_price_query:
@@ -1720,15 +1742,19 @@ capabilities:
     description: Underlying benchmark prints for a symbol.
     selection:
     - name: symbol
+      selection_effect: filter
       value_ref: nv_instrument_symbol
       required: true
     - name: start_timestamp_ns
+      selection_effect: filter
       value_ref: nv_timestamp_ns
       required: false
     - name: end_timestamp_ns
+      selection_effect: filter
       value_ref: nv_timestamp_ns
       required: false
     - name: sort_ts
+      selection_effect: order
       value_ref: nv_sort_direction
       required: false
   special_settlement_query:
@@ -1737,6 +1763,7 @@ capabilities:
     description: Upcoming special settlements.
     selection:
     - name: days
+      selection_effect: filter
       value_ref: nv_wire_int
       required: false
   aggressive_limit_preview:
@@ -1772,28 +1799,36 @@ capabilities:
     description: List Order by shelf (order_open | order_history).
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_order_query_shelf
       required: true
       description: order_open | order_history
     - name: sort_ts
+      selection_effect: order
       value_ref: nv_sort_direction
       required: false
     - name: symbol
+      selection_effect: filter
       value_ref: nv_instrument_symbol
       required: false
     - name: start_timestamp_ns
+      selection_effect: filter
       value_ref: nv_timestamp_ns
       required: false
     - name: end_timestamp_ns
+      selection_effect: filter
       value_ref: nv_timestamp_ns
       required: false
     - name: order_states
+      selection_effect: filter
       value_ref: nv_order_state_list
       required: false
     - name: order_id
+      selection_effect: filter
       value_ref: nv_order_id
       required: false
     - name: order_ids
+      selection_effect: filter
       value_ref: nv_order_id_list
       required: false
     scope:
@@ -1807,12 +1842,15 @@ capabilities:
     description: Live status for one order by server id or client id.
     selection:
     - name: order_id
+      selection_effect: filter
       value_ref: nv_order_id
       required: false
     - name: client_order_id
+      selection_effect: filter
       value_ref: nv_client_order_id
       required: false
     - name: account_id
+      selection_effect: filter
       value_ref: nv_account_id
       required: false
   order_create:
@@ -2031,19 +2069,24 @@ capabilities:
     description: List Fill by shelf (fill | fill_for_order).
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_fill_query_shelf
       required: true
       description: fill | fill_for_order
     - name: symbol
+      selection_effect: filter
       value_ref: nv_instrument_symbol
       required: false
     - name: start_timestamp_ns
+      selection_effect: filter
       value_ref: nv_timestamp_ns
       required: true
     - name: end_timestamp_ns
+      selection_effect: filter
       value_ref: nv_timestamp_ns
       required: true
     - name: sort_ts
+      selection_effect: order
       value_ref: nv_sort_direction
       required: false
     scope:
@@ -2060,18 +2103,23 @@ capabilities:
     description: Ledger transactions in a time range, filtered by type.
     selection:
     - name: account_id
+      selection_effect: filter
       value_ref: nv_account_id
       required: false
     - name: transaction_types
+      selection_effect: filter
       value_ref: nv_transaction_type_list
       required: true
     - name: start_timestamp_ns
+      selection_effect: filter
       value_ref: nv_timestamp_ns
       required: true
     - name: end_timestamp_ns
+      selection_effect: filter
       value_ref: nv_timestamp_ns
       required: true
     - name: sort_ts
+      selection_effect: order
       value_ref: nv_sort_direction
       required: false
   funding_transaction_query:
@@ -2080,18 +2128,23 @@ capabilities:
     description: Funding and mark-to-market postings in a time range.
     selection:
     - name: account_id
+      selection_effect: filter
       value_ref: nv_account_id
       required: false
     - name: symbol
+      selection_effect: filter
       value_ref: nv_instrument_symbol
       required: false
     - name: start_timestamp_ns
+      selection_effect: filter
       value_ref: nv_timestamp_ns
       required: true
     - name: end_timestamp_ns
+      selection_effect: filter
       value_ref: nv_timestamp_ns
       required: true
     - name: sort_ts
+      selection_effect: order
       value_ref: nv_sort_direction
       required: false
   liquidation_query:
@@ -2100,18 +2153,23 @@ capabilities:
     description: Liquidation fills in a time range.
     selection:
     - name: account_id
+      selection_effect: filter
       value_ref: nv_account_id
       required: false
     - name: symbol
+      selection_effect: filter
       value_ref: nv_instrument_symbol
       required: false
     - name: start_timestamp_ns
+      selection_effect: filter
       value_ref: nv_timestamp_ns
       required: true
     - name: end_timestamp_ns
+      selection_effect: filter
       value_ref: nv_timestamp_ns
       required: true
     - name: sort_ts
+      selection_effect: order
       value_ref: nv_sort_direction
       required: false
   volume_stat_query:
@@ -2120,12 +2178,15 @@ capabilities:
     description: Contract volume over a required time range.
     selection:
     - name: start_timestamp_ns
+      selection_effect: filter
       value_ref: nv_timestamp_ns
       required: true
     - name: end_timestamp_ns
+      selection_effect: filter
       value_ref: nv_timestamp_ns
       required: true
     - name: account_id
+      selection_effect: filter
       value_ref: nv_account_id
       required: false
   portfolio_snapshot_query:
@@ -2134,6 +2195,7 @@ capabilities:
     description: Composed portfolio read for one account.
     selection:
     - name: account_id
+      selection_effect: filter
       value_ref: nv_account_id
       required: true
   instrument_context_query:
@@ -2142,6 +2204,7 @@ capabilities:
     description: Composed contract, ticker, and book read for one symbol.
     selection:
     - name: symbol
+      selection_effect: filter
       value_ref: nv_instrument_symbol
       required: true
   order_context_query:
@@ -2150,6 +2213,7 @@ capabilities:
     description: Composed status and fills for one order.
     selection:
     - name: order_id
+      selection_effect: filter
       value_ref: nv_order_id
       required: true
   ticker_query:
@@ -2158,6 +2222,7 @@ capabilities:
     description: List market tickers, ordered by symbol.
     selection:
     - name: sort
+      selection_effect: order
       value_ref: nv_wire_str_short
       required: false
 views:

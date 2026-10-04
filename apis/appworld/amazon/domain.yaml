@@ -893,9 +893,11 @@ capabilities:
     entity: User
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: email
+      selection_effect: filter
       value_ref: nv_email
       required: false
     provides:
@@ -1051,45 +1053,57 @@ capabilities:
     entity: Product
     selection:
     - name: max_seller_rating
+      selection_effect: filter
       value_ref: nv_seller_rating
       required: false
       description: Highest acceptable seller rating.
     - name: min_seller_rating
+      selection_effect: filter
       value_ref: nv_seller_rating
       required: false
       description: Lowest acceptable seller rating.
     - name: max_product_rating
+      selection_effect: filter
       value_ref: nv_product_rating
       required: false
       description: Highest acceptable product rating.
     - name: min_product_rating
+      selection_effect: filter
       value_ref: nv_product_rating
       required: false
       description: Lowest acceptable product rating.
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: query
+      selection_effect: other
       value_ref: nv_product_search_text
       required: false
     - name: product_type
+      selection_effect: filter
       value_ref: nv_product_type
       required: false
     - name: color
+      selection_effect: filter
       value_ref: nv_product_color
       required: false
     - name: relative_size
+      selection_effect: filter
       value_ref: nv_relative_size
       required: false
     - name: min_price
+      selection_effect: filter
       value_ref: nv_product_price
       required: false
       description: Lowest acceptable product price.
     - name: max_price
+      selection_effect: filter
       value_ref: nv_product_price
       required: false
       description: Highest acceptable product price.
     - name: seller_id
+      selection_effect: filter
       value_ref: nv_seller_id
       required: false
     controls:
@@ -1151,9 +1165,11 @@ capabilities:
     entity: Seller
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: query
+      selection_effect: other
       value_ref: nv_str
       required: false
     controls:
@@ -1195,9 +1211,11 @@ capabilities:
     entity: ProductType
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: query
+      selection_effect: other
       value_ref: nv_str
       required: false
     controls:
@@ -1258,6 +1276,7 @@ capabilities:
     entity: CartItem
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     provides:
@@ -1273,6 +1292,7 @@ capabilities:
     entity: WishListItem
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     provides:
@@ -1522,9 +1542,11 @@ capabilities:
     entity: Order
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: query
+      selection_effect: other
       value_ref: nv_str
       required: false
     controls:
@@ -1620,6 +1642,7 @@ capabilities:
     entity: Address
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     provides:
@@ -1707,6 +1730,7 @@ capabilities:
     entity: PaymentCard
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     provides:
@@ -1801,24 +1825,31 @@ capabilities:
     entity: ProductReview
     selection:
     - name: product_id
+      selection_effect: filter
       value_ref: nv_product_ref
       required: true
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: query
+      selection_effect: other
       value_ref: nv_str
       required: false
     - name: user_email
+      selection_effect: filter
       value_ref: nv_email
       required: false
     - name: min_rating
+      selection_effect: filter
       value_ref: nv_int
       required: false
     - name: max_rating
+      selection_effect: filter
       value_ref: nv_int
       required: false
     - name: is_verified
+      selection_effect: filter
       value_ref: nv_bool
       required: false
     controls:
@@ -1901,9 +1932,11 @@ capabilities:
     entity: ProductReturn
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: order_id
+      selection_effect: filter
       value_ref: nv_order_id
       required: false
     controls:
@@ -1982,6 +2015,7 @@ capabilities:
     entity: ReturnDeliverer
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     provides:
@@ -2007,6 +2041,7 @@ capabilities:
     entity: PrimeSubscription
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     controls:
@@ -2070,15 +2105,19 @@ capabilities:
     entity: ProductQuestion
     selection:
     - name: product_id
+      selection_effect: filter
       value_ref: nv_product_ref
       required: true
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: query
+      selection_effect: other
       value_ref: nv_str
       required: false
     - name: user_email
+      selection_effect: filter
       value_ref: nv_email
       required: false
     controls:
@@ -2146,18 +2185,23 @@ capabilities:
     entity: ProductQuestionAnswer
     selection:
     - name: question_id
+      selection_effect: filter
       value_ref: nv_question_id
       required: true
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: query
+      selection_effect: other
       value_ref: nv_str
       required: false
     - name: user_email
+      selection_effect: filter
       value_ref: nv_email
       required: false
     - name: is_verified
+      selection_effect: filter
       value_ref: nv_bool
       required: false
     controls:
@@ -2228,6 +2272,7 @@ capabilities:
     entity: RecommendedProduct
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     provides: [product_id, seller_id, product_type, name, description, price, rating, inventory_quantity]
@@ -2237,6 +2282,7 @@ capabilities:
     entity: ViewedProduct
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     provides: [product_id, seller_id, product_type, name, description, price, rating, inventory_quantity]
@@ -2246,6 +2292,7 @@ capabilities:
     entity: PurchasedProduct
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     provides: [product_id, seller_id, product_type, name, description, price, rating, inventory_quantity]

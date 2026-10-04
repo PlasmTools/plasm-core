@@ -900,6 +900,7 @@ mod tests {
             derived: None,
             inputs: plasm_core::CapabilityInputs { selection: plasm_core::BackendSelectionSchema(vec![InputFieldSchema {
                         name: "region".into(),
+                        selection_effect: None,
                         wire: InputFieldWire::Registry(
                             ValueDomainKey::new("cb_account_region").expect("key"),
                         ),
@@ -943,6 +944,7 @@ mod tests {
             derived: None,
             inputs: plasm_core::CapabilityInputs { selection: plasm_core::BackendSelectionSchema(vec![InputFieldSchema {
                         name: "role".into(),
+                        selection_effect: None,
                         wire: InputFieldWire::Registry(ValueDomainKey::new("cb_contact_role").expect("key")),
                         required: false,
                         description: Some("Filter by role".into()),
@@ -1394,6 +1396,7 @@ mod tests {
             derived: None,
             inputs: plasm_core::CapabilityInputs { selection: plasm_core::BackendSelectionSchema(vec![InputFieldSchema {
                         name: "petId".into(),
+                        selection_effect: None,
                         wire: InputFieldWire::Registry(ValueDomainKey::new("cb_order_pet_ref").expect("key")),
                         required: false,
                         description: None,

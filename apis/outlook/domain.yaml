@@ -316,10 +316,12 @@ capabilities:
     description: List MailFolder by shelf (mail_folder | mail_folder_child).
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_mailfolder_query_shelf
       required: true
       description: mail_folder | mail_folder_child
     - name: includeHiddenFolders
+      selection_effect: other
       value_ref: nv_mail_folder_child_query_include_hidden_folders
       required: false
     scope:
@@ -360,10 +362,12 @@ capabilities:
     - webLink
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_message_query_shelf
       required: true
       description: message | message_folder
     - name: filter
+      selection_effect: filter
       value_ref: nv_message_folder_query_filter
       required: false
     controls:
@@ -574,10 +578,12 @@ capabilities:
     - webLink
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_event_query_shelf
       required: true
       description: event | event_calendar
     - name: filter
+      selection_effect: filter
       value_ref: nv_event_calendar_query_filter
       required: false
     controls:

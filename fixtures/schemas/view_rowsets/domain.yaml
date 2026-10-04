@@ -37,7 +37,7 @@ capabilities:
   item_query:
     kind: query
     entity: Item
-    selection: [{name: access_token, required: true, value_ref: token}]
+    selection: [{name: access_token, required: true, value_ref: token, selection_effect: access}]
     provides: [id, title]
   item_get:
     kind: get
@@ -50,7 +50,7 @@ capabilities:
   collection_query:
     kind: query
     entity: Collection
-    selection: [{name: access_token, required: true, value_ref: token}]
+    selection: [{name: access_token, required: true, value_ref: token, selection_effect: access}]
     provides: [id]
   collection_get:
     kind: get
@@ -68,7 +68,7 @@ capabilities:
   library_query:
     kind: query
     entity: Library
-    selection: [{name: access_token, required: true, value_ref: token}]
+    selection: [{name: access_token, required: true, value_ref: token, selection_effect: access}]
     provides: [access_token]
 views:
   library:

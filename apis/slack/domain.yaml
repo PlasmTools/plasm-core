@@ -411,9 +411,11 @@ capabilities:
     - created
     selection:
     - name: exclude_archived
+      selection_effect: filter
       value_ref: nv_channel_list_exclude_archived
       required: false
     - name: types
+      selection_effect: filter
       value_ref: nv_channel_list_types
       required: false
   channel_info:
@@ -453,10 +455,12 @@ capabilities:
     - user
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_message_query_shelf
       required: true
       description: channel_history | channel_history
     - name: ts
+      selection_effect: filter
       value_ref: nv_channel_replies_ts
       required: false
     controls:
@@ -479,10 +483,12 @@ capabilities:
     entity: User
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_user_query_shelf
       required: true
       description: channel_members | user | usergroup_member
     - name: usergroup
+      selection_effect: filter
       value_ref: nv_usergroup_member_list_usergroup
       required: false
     scope:
@@ -632,12 +638,15 @@ capabilities:
       - rollout
     selection:
     - name: query
+      selection_effect: other
       value_ref: nv_message_search_query
       required: true
     - name: sort_dir
+      selection_effect: order
       value_ref: nv_message_search_sort_dir
       required: false
     - name: highlight
+      selection_effect: filter
       value_ref: nv_wire_bool
       required: false
     controls:
@@ -814,18 +823,23 @@ capabilities:
     - is_public
     selection:
     - name: user
+      selection_effect: filter
       value_ref: nv_file_list_user
       required: false
     - name: channel
+      selection_effect: filter
       value_ref: nv_file_list_channel
       required: false
     - name: types
+      selection_effect: filter
       value_ref: nv_file_list_types
       required: false
     - name: ts_from
+      selection_effect: filter
       value_ref: nv_wire_num
       required: false
     - name: ts_to
+      selection_effect: filter
       value_ref: nv_wire_num
       required: false
   file_info:
@@ -886,9 +900,11 @@ capabilities:
     - user_count
     selection:
     - name: include_users
+      selection_effect: other
       value_ref: nv_wire_bool
       required: false
     - name: include_count
+      selection_effect: other
       value_ref: nv_wire_bool
       required: false
     controls:

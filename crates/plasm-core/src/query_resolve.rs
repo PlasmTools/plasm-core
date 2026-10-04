@@ -816,7 +816,8 @@ mod tests {
                 selection: BackendSelectionSchema(vec![
                     registry_test_util::object_input_field_from_values(
                         &cgs, "fx_str", "status", false,
-                    ),
+                    )
+                    .with_selection_effect(crate::SelectionEffect::Filter),
                 ]),
                 ..CapabilityInputs::default()
             },

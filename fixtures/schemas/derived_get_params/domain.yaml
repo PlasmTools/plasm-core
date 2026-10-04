@@ -25,7 +25,7 @@ capabilities:
     kind: query
     entity: SecuredRecord
     selection:
-      - {name: access_token, value_ref: nv_token, required: true}
+      - {name: access_token, value_ref: nv_token, required: true, selection_effect: access}
     provides: [id, label]
 values:
   nv_id: {type: string}

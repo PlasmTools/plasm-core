@@ -32,7 +32,7 @@ capabilities:
     kind: query
     description: Read business records
     selection:
-      - {name: credential, value_ref: text, required: true}
+      - {name: credential, value_ref: text, required: true, selection_effect: access}
     provides: [id]
     output: {type: collection, entity_type: BusinessRecord}
   create:

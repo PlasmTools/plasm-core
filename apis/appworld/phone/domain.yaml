@@ -451,13 +451,16 @@ capabilities:
       - subordinates
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: query
+      selection_effect: rank
       value_ref: nv_str
       required: false
       description: Search contact names and phone numbers; verify the candidate's exact phone_number because ranked results may include nonmatches.
     - name: relationship
+      selection_effect: filter
       value_ref: nv_contact_relationship
       required: false
     provides:
@@ -560,6 +563,7 @@ capabilities:
     entity: Alarm
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     provides:
@@ -668,28 +672,35 @@ capabilities:
     entity: TextMessage
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: shelf
+      selection_effect: source
       value_ref: nv_message_shelf
       required: true
       description: list | window
     - name: query
+      selection_effect: rank
       value_ref: nv_str
       required: false
       description: List shelf only. Rank text matches first; nonmatches remain, so fetching all pages does not filter by this text.
     - name: phone_number
+      selection_effect: filter
       value_ref: nv_phone
       required: false
       description: Restrict messages to the conversation with this phone number.
     - name: only_latest_per_contact
+      selection_effect: filter
       value_ref: nv_bool
       required: false
       description: List shelf only. Keep only the newest message per contact before search; older conversation messages are excluded.
     - name: min_datetime
+      selection_effect: filter
       value_ref: nv_datetime
       required: false
     - name: max_datetime
+      selection_effect: filter
       value_ref: nv_datetime
       required: false
     controls:
@@ -764,28 +775,35 @@ capabilities:
     entity: VoiceMessage
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: shelf
+      selection_effect: source
       value_ref: nv_message_shelf
       required: true
       description: list | window
     - name: query
+      selection_effect: rank
       value_ref: nv_str
       required: false
       description: List shelf only. Rank text matches first; nonmatches remain, so fetching all pages does not filter by this text.
     - name: phone_number
+      selection_effect: filter
       value_ref: nv_phone
       required: false
       description: Restrict messages to the conversation with this phone number.
     - name: only_latest_per_contact
+      selection_effect: filter
       value_ref: nv_bool
       required: false
       description: List shelf only. Keep only the newest message per contact before search; older conversation messages are excluded.
     - name: min_datetime
+      selection_effect: filter
       value_ref: nv_datetime
       required: false
     - name: max_datetime
+      selection_effect: filter
       value_ref: nv_datetime
       required: false
     controls:
@@ -878,6 +896,7 @@ capabilities:
       - relationships
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     provides:

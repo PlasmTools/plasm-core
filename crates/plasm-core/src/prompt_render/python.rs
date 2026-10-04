@@ -846,6 +846,13 @@ impl Renderer<'_> {
                         " = ..."
                     }
                 ));
+                if let Some(effect) = field.selection_effect {
+                    comment(
+                        &mut body,
+                        "    ",
+                        &format!("{} {}", field.name, effect.semantic_gloss()),
+                    );
+                }
                 if let Some(description) = &field.description {
                     let shared = match &field.wire {
                         InputFieldWire::Registry(key) => cgs.values.get(key.as_str()),

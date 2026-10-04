@@ -29,7 +29,7 @@ capabilities:
     scope:
     - {name: owner_email, value_ref: owner, required: false, description: Select whose collection is read}
     selection:
-    - {name: relationship, value_ref: role, required: false}
+    - {name: relationship, value_ref: role, required: false, selection_effect: filter}
     controls:
     - {name: mode, value_ref: mode, required: false}
     provides: [id, roles]

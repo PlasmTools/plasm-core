@@ -464,10 +464,11 @@ capabilities:
       - name: <param>
         value_ref: <value_key>
         required: <bool>
-    selection:                # backend WHERE / search slots (brace predicates)
+    selection:                # backend selectors (brace inputs; row effect is explicit)
       - name: <param>
         value_ref: <value_key>
         required: <bool>
+        selection_effect: <filter|rank|source|access|order|other>
     controls:                 # sort, pagination, response shape — not WHERE
       - name: <param>
         value_ref: <value_key>
@@ -489,12 +490,14 @@ Lanes are **structurally disjoint** (RA-1). Legacy flat `parameters:` / `role:` 
 | Lane | Semantics | Agent surface |
 |------|-----------|---------------|
 | `scope` | Parent-entity pivots (often `entity_ref`) | Query `{wire=}` brace (required and optional). `required: false` is still a taught hole; `optional:` marks it omissible. Host `inject:` keys stay untaught |
-| `selection` | Backend pushdown WHERE / search predicates (and other required source scalars) | `e#{wire=…}` braces |
+| `selection` | Backend selectors with an explicit row effect | `e#{wire=…}` braces; typed effect appears in teaching and dry plan |
 | `controls` | Sort, page size, embed/shape — not predicates | Host/controls; not brace WHERE |
 | `arguments` | Named non-body args | Method / action args |
 | `payload` | Create/update/action body | Method payload fields |
 
 Transmission over HTTP is still controlled by CML `query:` / `path:` / body in `mappings.yaml`. **`validate_cgs_capability_templates` rejects slots that never appear as CML vars** (or pagination keys) — do not invent selection wires the vendor does not expose.
+
+Every `selection` field must declare `selection_effect`. `filter` guarantees that nonmatching rows are excluded; `rank` only changes relevance order and may retain nonmatches; `source` chooses a corpus/list; `access` supplies credentials or access context; `order` sorts without filtering. Use `other` when the backend's row effect is unverified, and describe the uncertainty. Neither teaching nor plan review may infer `filter` from a parameter name such as `query` or from its HTTP query-string position. The same typed value drives both surfaces. Scope and controls remain distinct lanes and must not carry `selection_effect`.
 
 ### Same-type list compression
 
@@ -1038,6 +1041,7 @@ capabilities:
       - name: status
         value_ref: pet_status
         required: true
+        selection_effect: filter
 ```
 
 ### Relations and Navigation

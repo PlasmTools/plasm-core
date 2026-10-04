@@ -109,6 +109,34 @@ fn python_language_teaches_inferred_compute_inputs() {
 }
 
 #[test]
+fn python_query_card_renders_typed_selection_meanings() {
+    let mut cgs = crate::loader::load_schema_dir(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_prompt_matrix"),
+    )
+    .unwrap();
+    let selection = &mut cgs
+        .capabilities
+        .get_mut("zone_query")
+        .unwrap()
+        .inputs
+        .selection
+        .0;
+    selection
+        .iter_mut()
+        .find(|field| field.name == "name")
+        .unwrap()
+        .selection_effect = Some(crate::SelectionEffect::Rank);
+    let exposure = TeachingExposureSession::new(&cgs, "matrix", &["Zone"]);
+    let wave = prepare_python_teaching_wave(&exposure, &PythonTeachingState::default()).unwrap();
+    assert!(wave
+        .declarations
+        .contains("name ranks candidates; may retain nonmatches"));
+    assert!(wave.declarations.contains("status filters rows"));
+    assert!(!wave.declarations.contains("name filters rows"));
+}
+
+#[test]
 fn python_card_federation_and_catalog_comments() {
     let mut cgs = fixture();
     cgs.entities.get_mut("Item").unwrap().description =

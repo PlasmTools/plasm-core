@@ -417,6 +417,7 @@ capabilities:
     entity: PaymentRequest
     selection:
     - name: status
+      selection_effect: filter
       value_ref: nv_status
       required: false
     provides:

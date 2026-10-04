@@ -934,9 +934,11 @@ capabilities:
     entity: User
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: query
+      selection_effect: other
       value_ref: nv_user_search_query
       required: true
     provides:
@@ -984,9 +986,11 @@ capabilities:
       value_ref: nv_friend_list_owner_email
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: query
+      selection_effect: other
       value_ref: nv_search_query
     provides:
     - email
@@ -1132,9 +1136,11 @@ capabilities:
     entity: BankTransfer
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: transfer_type
+      selection_effect: filter
       value_ref: nv_transfer_type
     provides:
     - bank_transfer_id
@@ -1180,49 +1186,61 @@ capabilities:
       - friends feed
     selection:
     - name: direction
+      selection_effect: other
       value_ref: transaction_direction
       required: false
       description: History shelf only; social_feed is unfiltered. Select sent or received payments.
     - name: private
+      selection_effect: other
       value_ref: nv_bool
       required: false
       description: History shelf only; social_feed is unfiltered. Select private or public transactions.
     - name: max_like_count
+      selection_effect: other
       value_ref: nv_int
       required: false
       description: History shelf only; social_feed is unfiltered. Maximum likes.
     - name: min_like_count
+      selection_effect: other
       value_ref: nv_int
       required: false
       description: History shelf only; social_feed is unfiltered. Minimum likes.
     - name: max_amount
+      selection_effect: other
       value_ref: nv_amount
       required: false
       description: History shelf only; social_feed is unfiltered. Maximum transaction amount.
     - name: min_amount
+      selection_effect: other
       value_ref: nv_amount
       required: false
       description: History shelf only; social_feed is unfiltered. Minimum transaction amount.
     - name: max_created_at
+      selection_effect: other
       value_ref: transaction_date
       required: false
       description: History shelf only; social_feed is unfiltered. Latest transaction creation date.
     - name: min_created_at
+      selection_effect: other
       value_ref: transaction_date
       required: false
       description: History shelf only; social_feed is unfiltered. Earliest transaction creation date.
     - name: user_email
+      selection_effect: other
       value_ref: nv_email
       required: false
       description: History shelf only; social_feed is unfiltered. Counterparty email.
     - name: query
+      selection_effect: rank
       value_ref: nv_search_query
       required: false
       description: History shelf only; social_feed is unfiltered. Rank transaction text matches.
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: shelf
+      selection_effect: source
       value_ref: nv_transaction_shelf
       required: true
       description: mine | social_feed
@@ -1323,19 +1341,23 @@ capabilities:
       - payment request
     selection:
     - name: query
+      selection_effect: rank
       value_ref: nv_search_query
       required: false
       description: Rank payment requests by text relevance; inspect returned rows for exact identity.
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: polarity
+      selection_effect: filter
       value_ref: nv_payment_request_polarity
       required: true
       description: >-
         received = inbound (others asked you to pay); sent = outbound asks you created.
         Allowed values are received and sent, not outgoing or incoming.
     - name: status
+      selection_effect: filter
       value_ref: nv_status
     provides:
     - payment_request_id
@@ -1568,6 +1590,7 @@ capabilities:
     entity: PaymentCard
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     provides:
@@ -1640,9 +1663,11 @@ capabilities:
     entity: Notification
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: read
+      selection_effect: filter
       value_ref: nv_read
       required: false
     provides:

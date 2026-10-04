@@ -36,15 +36,19 @@ capabilities:
     entity: Article
     selection:
     - name: q
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: false
     - name: fq
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: begin_date
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: end_date
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     controls:

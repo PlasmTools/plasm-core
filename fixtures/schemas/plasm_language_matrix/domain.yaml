@@ -354,9 +354,11 @@ capabilities:
     entity: LangItem
     selection:
     - name: tags
+      selection_effect: filter
       value_ref: nv_langitem_query_tags
       required: false
     - name: owner
+      selection_effect: filter
       value_ref: nv_langitem_query_owner_owner
       required: false
     provides:
@@ -370,9 +372,11 @@ capabilities:
     entity: LangItem
     selection:
     - name: q
+      selection_effect: other
       value_ref: nv_langitem_search_q
       required: true
     - name: team_key
+      selection_effect: filter
       value_ref: nv_langitem_search_team_key
       required: false
     provides:
@@ -520,9 +524,11 @@ capabilities:
     entity: LangSecuredNote
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_lang_auth_access_token
       required: true
     - name: query
+      selection_effect: other
       value_ref: nv_lang_secured_note_query
       required: true
     provides:
@@ -549,6 +555,7 @@ capabilities:
     entity: LangSecuredGroup
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_lang_auth_access_token
       required: true
     provides:
@@ -601,9 +608,11 @@ capabilities:
     entity: QueryOnlyRequest
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_lang_auth_access_token
       required: true
     - name: status
+      selection_effect: filter
       value_ref: nv_lang_item_status
       required: false
     provides:
@@ -798,6 +807,7 @@ capabilities:
     entity: LangLane
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_lang_lane_shelf
       required: true
     provides:
@@ -810,6 +820,7 @@ capabilities:
     entity: LangLaneStock
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_lang_lane_stock_shelf
       required: true
       default: mine

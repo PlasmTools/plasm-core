@@ -1051,12 +1051,15 @@ capabilities:
       - discord message
     selection:
     - name: around
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: before
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: after
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     controls:
@@ -1180,21 +1183,27 @@ capabilities:
     entity: Message
     selection:
     - name: query
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: true
     - name: content
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: author_id
+      selection_effect: filter
       value_ref: nv_message_search_in_guild_author_id
       required: false
     - name: channel_id
+      selection_effect: filter
       value_ref: nv_message_search_in_guild_channel_id
       required: false
     - name: mentions
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: pinned
+      selection_effect: filter
       value_ref: nv_wire_bool
       required: false
     controls:
@@ -1236,6 +1245,7 @@ capabilities:
     entity: GuildMember
     selection:
     - name: after
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     controls:
@@ -1374,6 +1384,7 @@ capabilities:
     entity: Ban
     selection:
     - name: after
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     controls:
@@ -1450,6 +1461,7 @@ capabilities:
     entity: ApplicationCommand
     selection:
     - name: with_localizations
+      selection_effect: filter
       value_ref: nv_wire_bool
       required: false
     scope:
@@ -1502,9 +1514,11 @@ capabilities:
     entity: GuildApplicationCommand
     selection:
     - name: application_id
+      selection_effect: filter
       value_ref: nv_guild_application_command_list_application_id
       required: true
     - name: guild_id
+      selection_effect: filter
       value_ref: nv_guild_application_command_list_guild_id
       required: true
   guild_application_command_get:
@@ -1544,18 +1558,23 @@ capabilities:
     entity: Entitlement
     selection:
     - name: user_id
+      selection_effect: filter
       value_ref: nv_entitlement_list_user_id
       required: false
     - name: sku_ids
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: guild_id
+      selection_effect: filter
       value_ref: nv_entitlement_list_guild_id
       required: false
     - name: after
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: exclude_ended
+      selection_effect: filter
       value_ref: nv_wire_bool
       required: false
     controls:
@@ -1606,6 +1625,7 @@ capabilities:
     entity: Webhook
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_webhook_query_shelf
       required: true
       description: guild_webhook | channel_webhook
@@ -1653,13 +1673,16 @@ capabilities:
     entity: Invite
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_invite_query_shelf
       required: true
       description: channel_invite | guild_invite
     - name: channel_id
+      selection_effect: filter
       value_ref: nv_channel_invite_list_channel_id
       required: true
     - name: guild_id
+      selection_effect: filter
       value_ref: nv_guild_invite_list_guild_id
       required: false
     scope: []
@@ -1705,6 +1728,7 @@ capabilities:
     entity: ScheduledEvent
     selection:
     - name: with_user_count
+      selection_effect: filter
       value_ref: nv_wire_bool
       required: false
     scope:
@@ -1923,10 +1947,12 @@ capabilities:
     entity: Thread
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_thread_query_shelf
       required: true
       description: guild_active_thread | channel_thread_archived_public
     - name: before
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     scope:
@@ -1954,6 +1980,7 @@ capabilities:
     entity: CustomEmoji
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_customemoji_query_shelf
       required: true
       description: guild_emoji | application_emoji

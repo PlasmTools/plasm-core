@@ -97,6 +97,7 @@ mod tests {
                         fields: vec![
                             InputFieldSchema {
                                 name: "name".into(),
+                                selection_effect: None,
                                 wire: InputFieldWire::Registry(
                                     ValueDomainKey::new("invoke_upd_name").expect("key"),
                                 ),
@@ -109,6 +110,7 @@ mod tests {
                             },
                             InputFieldSchema {
                                 name: "revenue".into(),
+                                selection_effect: None,
                                 wire: InputFieldWire::Registry(
                                     ValueDomainKey::new("invoke_upd_revenue").expect("key"),
                                 ),
@@ -121,6 +123,7 @@ mod tests {
                             },
                             InputFieldSchema {
                                 name: "priority".into(),
+                                selection_effect: None,
                                 wire: InputFieldWire::Registry(
                                     ValueDomainKey::new("invoke_upd_priority").expect("key"),
                                 ),

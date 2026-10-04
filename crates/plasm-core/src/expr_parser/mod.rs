@@ -4587,6 +4587,7 @@ mod tests {
                             constructor_symbol: Some("v111".into()),
                             fields: vec![InputFieldSchema {
                                 name: "content".into(),
+                                selection_effect: None,
                                 wire: InputFieldWire::Registry(
                                     crate::schema::ValueDomainKey::new("fx_str").unwrap(),
                                 ),
@@ -6733,6 +6734,7 @@ mod tests {
                     input_type: InputType::Object {
                         fields: vec![InputFieldSchema {
                             name: "message".into(),
+                            selection_effect: None,
                             wire: InputFieldWire::Registry(
                                 crate::schema::ValueDomainKey::new("fx_str").unwrap(),
                             ),
@@ -6796,6 +6798,7 @@ mod tests {
                     input_type: InputType::Object {
                         fields: vec![InputFieldSchema {
                             name: "message".into(),
+                            selection_effect: None,
                             wire: InputFieldWire::Registry(
                                 crate::schema::ValueDomainKey::new("fx_str").unwrap(),
                             ),

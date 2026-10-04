@@ -432,6 +432,9 @@ pub struct DomainParameter {
     /// Human-readable hint for prompts; teaching gloss uses `type · description`, else `type · name`.
     #[serde(default)]
     pub description: String,
+    /// Required for parameters in the `selection` lane.
+    #[serde(default)]
+    pub selection_effect: Option<crate::SelectionEffect>,
     /// Optional sink class for information-flow validation (must exist in top-level `data_classes:`).
     #[serde(default)]
     pub sink_class: Option<crate::SinkClassName>,
@@ -846,6 +849,7 @@ fn input_field_schema_from_domain_parameter(
                 wire: crate::InputFieldWire::Registry(vdk),
                 required: p.required,
                 description,
+                selection_effect: p.selection_effect,
                 default: p.default.clone(),
                 sink_class: p.sink_class.clone(),
                 wire_json_path: None,
@@ -861,6 +865,7 @@ fn input_field_schema_from_domain_parameter(
             } else {
                 Some(p.description.clone())
             },
+            selection_effect: p.selection_effect,
             default: p.default.clone(),
             sink_class: p.sink_class.clone(),
             wire_json_path: None,
@@ -1795,6 +1800,7 @@ capabilities:
     selection:
       - name: x
         value_ref: nv_x_bad
+        selection_effect: filter
         required: false
 "#,
         )
@@ -1898,6 +1904,7 @@ capabilities:
     selection:
       - name: s
         value_ref: nv_ms_bad
+        selection_effect: filter
         required: false
 "#,
         )
@@ -1971,6 +1978,7 @@ capabilities:
     selection:
       - name: x
         value_ref: nv_x
+        selection_effect: filter
         required: false
 "#,
         )
@@ -2006,6 +2014,7 @@ capabilities:
     selection:
       - name: filter_q
         value_ref: nv_filter_q
+        selection_effect: filter
         required: true
     controls:
       - name: page
@@ -2047,6 +2056,7 @@ capabilities:
     selection:
       - name: query
         value_ref: nv_query
+        selection_effect: filter
         required: false
 "#,
         )
@@ -2087,6 +2097,7 @@ capabilities:
     selection:
       - name: query
         value_ref: nv_query
+        selection_effect: filter
         required: true
 "#,
         )
@@ -2129,6 +2140,7 @@ capabilities:
     selection:
       - name: status
         value_ref: nv_status
+        selection_effect: filter
         required: false
 "#,
         )
@@ -2198,6 +2210,7 @@ capabilities:
     selection:
       - name: id
         value_ref: nv_id
+        selection_effect: filter
         required: true
 "#,
         )
@@ -2235,6 +2248,7 @@ capabilities:
     selection:
       - name: overlap
         value_ref: nv_overlap_str
+        selection_effect: filter
         required: true
     controls:
       - name: overlap
@@ -2326,6 +2340,7 @@ capabilities:
     selection:
       - name: id
         value_ref: nv_id
+        selection_effect: filter
         role: filter
 "#,
         )

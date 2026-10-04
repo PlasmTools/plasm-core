@@ -275,6 +275,7 @@ capabilities:
       required: true
     selection:
     - name: feed
+      selection_effect: source
       value_ref: nv_post_feed_query_feed
       required: true
     controls:
@@ -323,9 +324,11 @@ capabilities:
       - moderation
     selection:
     - name: q
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: true
     - name: subreddit
+      selection_effect: filter
       value_ref: nv_post_search_query_subreddit
       required: false
     controls:
@@ -343,6 +346,7 @@ capabilities:
     entity: Subreddit
     selection:
     - name: q
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: true
   comment_thread_query:

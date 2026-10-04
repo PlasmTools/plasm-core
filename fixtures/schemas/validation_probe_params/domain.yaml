@@ -13,8 +13,8 @@ capabilities:
     scope:
       - {name: owner_email, value_ref: nv_email, required: true}
     selection:
-      - {name: access_token, value_ref: nv_token, required: true}
-      - {name: phone_number, value_ref: nv_phone, required: false}
+      - {name: access_token, value_ref: nv_token, required: true, selection_effect: access}
+      - {name: phone_number, value_ref: nv_phone, required: false, selection_effect: filter}
     provides: [id]
 values:
   nv_id: {type: string}

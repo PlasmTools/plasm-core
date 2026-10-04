@@ -292,15 +292,19 @@ capabilities:
     entity: Note
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: query
+      selection_effect: other
       value_ref: nv_str
       required: false
     - name: tags
+      selection_effect: filter
       value_ref: nv_tags
       required: false
     - name: pinned
+      selection_effect: filter
       value_ref: nv_bool
       required: false
     controls:

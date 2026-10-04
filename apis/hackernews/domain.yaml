@@ -156,13 +156,16 @@ capabilities:
     - url
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_item_search_shelf
       required: true
       description: relevance | by_date
     - name: query
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: true
     - name: tags
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     controls:
@@ -190,6 +193,7 @@ capabilities:
     - id
     selection:
     - name: feed
+      selection_effect: source
       value_ref: nv_item_feed_query_feed
       required: true
   max_item_id_query:

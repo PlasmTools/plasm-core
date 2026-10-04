@@ -33,7 +33,7 @@ capabilities:
     kind: query
     entity: Record
     selection:
-      - {name: credential, value_ref: credential, required: true}
+      - {name: credential, value_ref: credential, required: true, selection_effect: access}
     provides: [id]
   detail:
     kind: get

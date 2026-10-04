@@ -503,6 +503,7 @@ mod tests {
         let op = crate::plan_dry_display::PlanDryOp::Surface {
             kind: PlanNodeKind::Query,
             expr: "e1.identifier".into(),
+            selections: vec![],
         };
         let rendered = crate::plan_dry_display::human_ux_summary_for_op(&op);
         assert!(rendered.contains("Read"));

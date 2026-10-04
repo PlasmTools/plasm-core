@@ -250,6 +250,7 @@ mod tests {
         let cgs = query_test_cgs();
         let cap = make_query_cap(vec![InputFieldSchema {
             name: "status".into(),
+            selection_effect: None,
             wire: InputFieldWire::Registry(ValueDomainKey::new("qa_status_req").expect("key")),
             required: true,
             description: None,
@@ -278,6 +279,7 @@ mod tests {
         let cgs = query_test_cgs();
         let cap = make_query_cap(vec![InputFieldSchema {
             name: "status".into(),
+            selection_effect: None,
             wire: InputFieldWire::Registry(ValueDomainKey::new("qa_status_rej").expect("key")),
             required: false,
             description: None,
@@ -300,6 +302,7 @@ mod tests {
         let cgs = query_test_cgs();
         let cap = make_query_cap(vec![InputFieldSchema {
             name: "team_id".into(),
+            selection_effect: None,
             wire: InputFieldWire::Registry(ValueDomainKey::new("qa_team_id").expect("key")),
             required: true,
             description: None,
@@ -321,6 +324,7 @@ mod tests {
         let cap = make_query_cap(vec![
             InputFieldSchema {
                 name: "archived".into(),
+                selection_effect: None,
                 wire: InputFieldWire::Registry(ValueDomainKey::new("qa_archived").expect("key")),
                 required: false,
                 description: None,
@@ -331,6 +335,7 @@ mod tests {
             },
             InputFieldSchema {
                 name: "team_id".into(),
+                selection_effect: None,
                 wire: InputFieldWire::Registry(
                     ValueDomainKey::new("qa_team_id_multi").expect("key"),
                 ),
@@ -352,6 +357,7 @@ mod tests {
         let cgs = query_test_cgs();
         let cap = make_query_cap(vec![InputFieldSchema {
             name: "status".into(),
+            selection_effect: None,
             wire: InputFieldWire::Registry(ValueDomainKey::new("qa_status_none").expect("key")),
             required: false,
             description: None,
@@ -369,6 +375,7 @@ mod tests {
         let cgs = query_test_cgs();
         let cap = make_query_cap(vec![InputFieldSchema {
             name: "region".into(),
+            selection_effect: None,
             wire: InputFieldWire::Registry(ValueDomainKey::new("qa_region_gen").expect("key")),
             required: false,
             description: None,
@@ -393,6 +400,7 @@ mod tests {
         let cgs = query_test_cgs();
         let cap = make_query_cap(vec![InputFieldSchema {
             name: "revenue".into(),
+            selection_effect: None,
             wire: InputFieldWire::Registry(ValueDomainKey::new("qa_revenue").expect("key")),
             required: false,
             description: None,
@@ -417,6 +425,7 @@ mod tests {
         let cgs = query_test_cgs();
         let cap = make_query_cap(vec![InputFieldSchema {
             name: "region".into(),
+            selection_effect: None,
             wire: InputFieldWire::Registry(ValueDomainKey::new("qa_region_nf").expect("key")),
             required: false,
             description: None,

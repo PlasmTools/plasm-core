@@ -28,12 +28,15 @@ capabilities:
     entity: Forecast
     selection:
     - name: latitude
+      selection_effect: filter
       value_ref: nv_wire_num
       required: true
     - name: longitude
+      selection_effect: filter
       value_ref: nv_wire_num
       required: true
     - name: past_days
+      selection_effect: filter
       value_ref: nv_weather_forecast_past_days
       required: false
     controls:

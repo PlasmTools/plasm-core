@@ -43,6 +43,7 @@ capabilities:
     entity: TokenFolder
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_tok
       required: true
     provides:
@@ -58,6 +59,7 @@ capabilities:
       required: true
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_tok
       required: true
     provides:

@@ -43,7 +43,7 @@ pub fn normalize_query_expr_to_rowset(
                 match cap.inputs.query_source_lane(field.as_str()) {
                     Some(QuerySourceInputLane::Control) => {
                         return Err(format!(
-                            "RA-1: '{field}' is a capability control, not a query selection argument. Omit this control from the source call; use a declared selection/scope argument for backend filtering. If sorting returned rows is intended, apply `.order_by(field, descending=True)` to a complete rowset."
+                            "RA-1: '{field}' is a capability control, not a query selection argument. Omit this control from the source call; use a declared selection/scope argument for backend selection. If sorting returned rows is intended, apply `.order_by(field, descending=True)` to a complete rowset."
                         ));
                     }
                     Some(QuerySourceInputLane::Scope | QuerySourceInputLane::Selection) => {
@@ -194,7 +194,8 @@ mod tests {
         let selection = if with_selection {
             BackendSelectionSchema(vec![registry_test_util::object_input_field_from_values(
                 &cgs, "fx_str", "status", false,
-            )])
+            )
+            .with_selection_effect(crate::SelectionEffect::Filter)])
         } else {
             BackendSelectionSchema::default()
         };

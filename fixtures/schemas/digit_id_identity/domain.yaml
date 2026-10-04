@@ -21,6 +21,7 @@ capabilities:
     entity: DigitAccount
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     provides:

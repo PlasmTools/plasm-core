@@ -2137,6 +2137,9 @@ mod tests {
             read.domain = "Derived".into();
             read.provides = vec!["value".into()];
             read.inputs.scope.0 = std::mem::take(&mut read.inputs.selection.0);
+            for field in &mut read.inputs.scope.0 {
+                field.selection_effect = None;
+            }
             read.output_schema.as_mut().unwrap().output_type = crate::schema::OutputType::Collection { entity_type: "Derived".into(), max_count: None };
             unrelated.capabilities.insert("derived_read".into(), read);
             let mut create = unrelated.capabilities["create"].clone();

@@ -1034,15 +1034,19 @@ capabilities:
       required: true
     selection:
     - name: query
+      selection_effect: other
       value_ref: nv_str
       required: false
     - name: user_email
+      selection_effect: filter
       value_ref: nv_email
       required: false
     - name: min_rating
+      selection_effect: filter
       value_ref: nv_rating
       required: false
     - name: max_rating
+      selection_effect: filter
       value_ref: nv_rating
       required: false
     controls:
@@ -1071,15 +1075,19 @@ capabilities:
       required: true
     selection:
     - name: query
+      selection_effect: other
       value_ref: nv_str
       required: false
     - name: user_email
+      selection_effect: filter
       value_ref: nv_email
       required: false
     - name: min_rating
+      selection_effect: filter
       value_ref: nv_rating
       required: false
     - name: max_rating
+      selection_effect: filter
       value_ref: nv_rating
       required: false
     controls:
@@ -1109,15 +1117,19 @@ capabilities:
       required: true
     selection:
     - name: query
+      selection_effect: other
       value_ref: nv_str
       required: false
     - name: user_email
+      selection_effect: filter
       value_ref: nv_email
       required: false
     - name: min_rating
+      selection_effect: filter
       value_ref: nv_rating
       required: false
     - name: max_rating
+      selection_effect: filter
       value_ref: nv_rating
       required: false
     controls:
@@ -1446,15 +1458,19 @@ capabilities:
     entity: DownloadedSong
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: query
+      selection_effect: other
       value_ref: nv_str
       required: false
     - name: min_downloaded_at
+      selection_effect: filter
       value_ref: nv_datetime
       required: false
     - name: max_downloaded_at
+      selection_effect: filter
       value_ref: nv_datetime
       required: false
     controls:
@@ -1878,6 +1894,7 @@ capabilities:
     entity: QueueEntry
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     provides:
@@ -2065,6 +2082,7 @@ capabilities:
       - favorites
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     controls:
@@ -2111,6 +2129,7 @@ capabilities:
       target_terms: [library, music library, saved songs, album library, playlist library]
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     provides: [access_token]
@@ -2134,65 +2153,81 @@ capabilities:
       - recommendations
     selection:
     - name: artist_id
+      selection_effect: filter
       value_ref: nv_artist_id
       required: false
       description: Catalog shelf only. Exact credited artist identifier.
     - name: max_play_count
+      selection_effect: filter
       value_ref: nv_int
       required: false
       description: Catalog shelf only. Maximum song play count.
     - name: min_play_count
+      selection_effect: filter
       value_ref: nv_int
       required: false
       description: Catalog shelf only. Minimum song play count.
     - name: max_duration
+      selection_effect: filter
       value_ref: nv_int
       required: false
       description: Catalog shelf only. Maximum song duration in seconds.
     - name: min_duration
+      selection_effect: filter
       value_ref: nv_int
       required: false
       description: Catalog shelf only. Minimum song duration in seconds.
     - name: album_id
+      selection_effect: filter
       value_ref: nv_album_id
       required: false
       description: Catalog shelf only. Album containing the songs.
     - name: max_like_count
+      selection_effect: filter
       value_ref: nv_int
       required: false
       description: Catalog shelf only. Maximum number of likes.
     - name: min_like_count
+      selection_effect: filter
       value_ref: nv_int
       required: false
       description: Catalog shelf only. Minimum number of likes.
     - name: max_rating
+      selection_effect: filter
       value_ref: nv_number
       required: false
       description: Catalog shelf only. Maximum average rating.
     - name: min_rating
+      selection_effect: filter
       value_ref: nv_number
       required: false
       description: Catalog shelf only. Minimum average rating.
     - name: max_release_date
+      selection_effect: filter
       value_ref: nv_release_date
       required: false
       description: Catalog shelf only. Latest release date.
     - name: min_release_date
+      selection_effect: filter
       value_ref: nv_release_date
       required: false
       description: Catalog shelf only. Earliest release date.
     - name: genre
+      selection_effect: filter
       value_ref: nv_genre
       required: false
       description: Catalog shelf only. Musical genre to select.
     - name: query
+      selection_effect: rank
       value_ref: nv_str
       required: false
       description: Rank text matches in the selected collection; not supported on recommendations.
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: shelf
+      selection_effect: source
       value_ref: nv_song_shelf
       required: true
       description: catalog | library | recommendations
@@ -2216,6 +2251,7 @@ capabilities:
     entity: Song
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     scope:
@@ -2274,41 +2310,51 @@ capabilities:
       - album library
     selection:
     - name: max_like_count
+      selection_effect: filter
       value_ref: nv_int
       required: false
       description: Catalog shelf only. Maximum number of likes.
     - name: min_like_count
+      selection_effect: filter
       value_ref: nv_int
       required: false
       description: Catalog shelf only. Minimum number of likes.
     - name: max_rating
+      selection_effect: filter
       value_ref: nv_number
       required: false
       description: Catalog shelf only. Maximum average rating.
     - name: min_rating
+      selection_effect: filter
       value_ref: nv_number
       required: false
       description: Catalog shelf only. Minimum average rating.
     - name: max_release_date
+      selection_effect: filter
       value_ref: nv_release_date
       required: false
       description: Catalog shelf only. Latest release date.
     - name: min_release_date
+      selection_effect: filter
       value_ref: nv_release_date
       required: false
       description: Catalog shelf only. Earliest release date.
     - name: genre
+      selection_effect: filter
       value_ref: nv_genre
       required: false
       description: Catalog shelf only. Musical genre to select.
     - name: query
+      selection_effect: rank
       value_ref: nv_str
       required: false
       description: Rank text matches in the selected collection; not supported on recommendations.
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: shelf
+      selection_effect: source
       value_ref: nv_album_shelf
       required: true
       description: catalog | library
@@ -2370,33 +2416,41 @@ capabilities:
       - playlist library
     selection:
     - name: max_like_count
+      selection_effect: filter
       value_ref: nv_int
       required: false
       description: Catalog shelf only. Maximum playlist likes.
     - name: min_like_count
+      selection_effect: filter
       value_ref: nv_int
       required: false
       description: Catalog shelf only. Minimum playlist likes.
     - name: max_rating
+      selection_effect: filter
       value_ref: nv_number
       required: false
       description: Catalog shelf only. Maximum playlist rating.
     - name: min_rating
+      selection_effect: filter
       value_ref: nv_number
       required: false
       description: Catalog shelf only. Minimum playlist rating.
     - name: owner_email
+      selection_effect: filter
       value_ref: nv_email
       required: false
       description: Catalog shelf only. Playlist owner email.
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: shelf
+      selection_effect: source
       value_ref: nv_playlist_shelf
       required: true
       description: catalog | library
     - name: query
+      selection_effect: other
       value_ref: nv_str
       required: false
     controls:
@@ -2424,6 +2478,7 @@ capabilities:
       - liked playlists
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     provides:
@@ -2448,6 +2503,7 @@ capabilities:
       - liked albums
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     provides:
@@ -2473,25 +2529,31 @@ capabilities:
       - following
     selection:
     - name: max_follower_count
+      selection_effect: filter
       value_ref: nv_int
       required: false
       description: Catalog shelf only. Maximum follower count.
     - name: min_follower_count
+      selection_effect: filter
       value_ref: nv_int
       required: false
       description: Catalog shelf only. Minimum follower count.
     - name: genre
+      selection_effect: filter
       value_ref: nv_genre
       required: false
       description: Catalog shelf only. Select artists by genre.
     - name: query
+      selection_effect: rank
       value_ref: nv_str
       required: false
       description: Rank text matches in the selected collection; not supported on recommendations.
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: shelf
+      selection_effect: source
       value_ref: nv_artist_shelf
       required: true
       description: catalog | following
@@ -2514,18 +2576,22 @@ capabilities:
       target_terms: [artist, artists]
     selection:
     - name: max_follower_count
+      selection_effect: filter
       value_ref: nv_int
       required: false
       description: Maximum follower count.
     - name: min_follower_count
+      selection_effect: filter
       value_ref: nv_int
       required: false
       description: Minimum follower count.
     - name: genre
+      selection_effect: filter
       value_ref: nv_genre
       required: false
       description: Select artists by genre.
     - name: q
+      selection_effect: other
       value_ref: nv_artist_search_text
       required: true
     provides: [artist_id, name, genre, follower_count]
@@ -2708,6 +2774,7 @@ capabilities:
     entity: PaymentCard
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     provides:
@@ -2791,6 +2858,7 @@ capabilities:
     entity: PremiumSubscription
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     provides:
@@ -2847,6 +2915,7 @@ capabilities:
     entity: Profile
     selection:
     - name: email
+      selection_effect: filter
       value_ref: nv_email
       required: false
     provides:
@@ -2876,9 +2945,11 @@ capabilities:
     entity: User
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_access_token
       required: true
     - name: query
+      selection_effect: other
       value_ref: nv_str
       required: true
     provides: [email, first_name, last_name, registered_at]

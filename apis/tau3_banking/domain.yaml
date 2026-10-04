@@ -627,13 +627,16 @@ capabilities:
     entity: User
     selection:
     - name: shelf
+      selection_effect: source
       value_ref: nv_user_lookup_shelf
       required: true
       description: by_email | by_name
     - name: email
+      selection_effect: filter
       value_ref: nv_str
       required: false
     - name: customer_name
+      selection_effect: filter
       value_ref: nv_str
       required: false
     provides:
@@ -657,6 +660,7 @@ capabilities:
     entity: CreditCardAccount
     selection:
     - name: credit_card_account_id
+      selection_effect: filter
       value_ref: nv_credit_card_account_id
       required: false
     provides:
@@ -967,6 +971,7 @@ capabilities:
     entity: DebitCardDispute
     selection:
     - name: user_id
+      selection_effect: filter
       value_ref: nv_str
       required: true
     provides:
@@ -1024,6 +1029,7 @@ capabilities:
     entity: CreditCardDispute
     selection:
     - name: user_id
+      selection_effect: filter
       value_ref: nv_str
       required: true
     provides:
@@ -1037,6 +1043,7 @@ capabilities:
     entity: CreditCardOrder
     selection:
     - name: credit_card_account_id
+      selection_effect: filter
       value_ref: nv_str
       required: true
     provides:
@@ -1086,6 +1093,7 @@ capabilities:
       - abuse prevention
     selection:
     - name: credit_card_account_id
+      selection_effect: filter
       value_ref: nv_str
       required: true
     provides:
@@ -1287,9 +1295,11 @@ capabilities:
     entity: CreditLimitRequest
     selection:
     - name: credit_card_account_id
+      selection_effect: filter
       value_ref: nv_credit_card_account_id
       required: true
     - name: status
+      selection_effect: filter
       value_ref: nv_cli_status
       required: false
     provides:
@@ -1316,9 +1326,11 @@ capabilities:
       - consecutive payment months
     selection:
     - name: credit_card_account_id
+      selection_effect: filter
       value_ref: nv_credit_card_account_id
       required: true
     - name: months
+      selection_effect: filter
       value_ref: nv_int
       required: true
     provides:
@@ -1443,9 +1455,11 @@ capabilities:
       - cooldown period
     selection:
     - name: credit_card_account_id
+      selection_effect: filter
       value_ref: nv_credit_card_account_id
       required: true
     - name: user_id
+      selection_effect: filter
       value_ref: nv_user_id
       required: true
     provides:
@@ -1493,9 +1507,11 @@ capabilities:
       - retention protocol
     selection:
     - name: credit_card_account_id
+      selection_effect: filter
       value_ref: nv_credit_card_account_id
       required: true
     - name: user_id
+      selection_effect: filter
       value_ref: nv_user_id
       required: true
     provides:
@@ -1556,6 +1572,7 @@ capabilities:
     entity: BankAccount
     selection:
     - name: user_id
+      selection_effect: filter
       value_ref: nv_str
       required: true
     provides:
@@ -1660,6 +1677,7 @@ capabilities:
     entity: BankTransaction
     selection:
     - name: account_id
+      selection_effect: filter
       value_ref: nv_str
       required: true
     provides:
@@ -1898,6 +1916,7 @@ capabilities:
     entity: DebitCard
     selection:
     - name: account_id
+      selection_effect: filter
       value_ref: nv_str
       required: true
     provides:

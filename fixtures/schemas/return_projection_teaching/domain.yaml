@@ -65,6 +65,7 @@ capabilities:
     entity: Notice
     selection:
     - name: query
+      selection_effect: other
       value_ref: nv_q
       required: true
     provides:

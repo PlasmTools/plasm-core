@@ -378,10 +378,10 @@ pub use schema::{
     InvocationControlsSchema, JsonPathSegment, NamedValueSchema, OauthDefaultScopeSet,
     OauthExtension, OauthRequirements, OauthScopeEntry, OutputSchema, OutputType,
     ParentScopeSchema, RelationMaterialization, RelationSchema, RelationScopedFallback,
-    ResourceSchema, ScopeAggregateKeyPolicy, ScopeRequirement, SinkClassName, ValueDomainKey,
-    ValueDomainSlot, ViewDefinition, ViewNodeSpec, ViewOutputBinding, ViewParamBinding,
-    ViewRelationBinding, ViewRelationOutputSpec, ViewScopeInject, ViewScopeParam, ViewTraversal,
-    WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
+    ResourceSchema, ScopeAggregateKeyPolicy, ScopeRequirement, SelectionEffect, SinkClassName,
+    ValueDomainKey, ValueDomainSlot, ViewDefinition, ViewNodeSpec, ViewOutputBinding,
+    ViewParamBinding, ViewRelationBinding, ViewRelationOutputSpec, ViewScopeInject, ViewScopeParam,
+    ViewTraversal, WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
 };
 pub use schema_overlay::{
     build_decode_scope_key, build_schema_overlay, overlay_bind_cache_suffix, overlay_collect_rows,

@@ -73,9 +73,11 @@ capabilities:
     entity: Artist
     selection:
     - name: query
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: true
     - name: f_artist_id
+      selection_effect: filter
       value_ref: nv_wire_int
       required: false
   artist_get:
@@ -93,6 +95,7 @@ capabilities:
     entity: Artist
     selection:
     - name: country
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
   track_get:
@@ -125,24 +128,31 @@ capabilities:
     entity: Track
     selection:
     - name: q_track
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: q_artist
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: f_artist_id
+      selection_effect: filter
       value_ref: nv_wire_int
       required: false
     - name: f_music_genre_id
+      selection_effect: filter
       value_ref: nv_wire_int
       required: false
     - name: f_has_lyrics
+      selection_effect: filter
       value_ref: nv_wire_int
       required: false
     - name: country
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: mode
+      selection_effect: source
       value_ref: nv_track_query_mode
       required: true
 auth:

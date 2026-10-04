@@ -220,15 +220,19 @@ capabilities:
     entity: Zone
     selection:
     - name: account_id
+      selection_effect: filter
       value_ref: nv_zone_query_account_id
       required: false
     - name: name
+      selection_effect: filter
       value_ref: nv_zone_query_name
       required: false
     - name: status
+      selection_effect: filter
       value_ref: nv_zone_query_status
       required: false
     - name: type
+      selection_effect: filter
       value_ref: nv_zone_query_type
       required: false
     controls:

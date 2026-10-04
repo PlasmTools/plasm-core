@@ -229,7 +229,7 @@ mod tests {
             .text
             .contains("Works with Record records. Relationship-classified record"));
         assert!(query.text.contains(
-            "Matching records are selected using Recorded relationship to the account holder"
+            "Backend selection filters rows: Recorded relationship to the account holder"
         ));
         assert!(query
             .text
@@ -340,7 +340,7 @@ mod tests {
             .find(|doc| doc.capability == "record_query")
             .unwrap();
         assert!(query.operation.contract.contains("The collection is scoped by Select whose collection is read Owner of the collection being read"));
-        assert!(query.operation.contract.contains("Matching records are selected using Recorded relationship to the account holder Allowed values: colleague, relative, neighbor."));
+        assert!(query.operation.contract.contains("Backend selection filters rows: Recorded relationship to the account holder Allowed values: colleague, relative, neighbor."));
         assert!(query.operation.contract.contains(
             "Execution is controlled by Read consistency mode Allowed values: fresh, cached."
         ));

@@ -149,33 +149,43 @@ capabilities:
     entity: RecordedContent
     selection:
     - name: q
+      selection_effect: other
       value_ref: nv_recorded_content_search_q
       required: true
     - name: content_type
+      selection_effect: filter
       value_ref: nv_recorded_content_search_content_type
       required: false
     - name: limit
+      selection_effect: other
       value_ref: nv_recorded_content_search_limit
       required: false
     - name: offset
+      selection_effect: other
       value_ref: nv_recorded_content_search_offset
       required: false
     - name: start_time
+      selection_effect: filter
       value_ref: nv_recorded_content_search_start_time
       required: false
     - name: end_time
+      selection_effect: filter
       value_ref: nv_recorded_content_search_end_time
       required: false
     - name: app_name
+      selection_effect: filter
       value_ref: nv_recorded_content_search_app_name
       required: false
     - name: window_name
+      selection_effect: filter
       value_ref: nv_recorded_content_search_window_name
       required: false
     - name: min_length
+      selection_effect: filter
       value_ref: nv_recorded_content_search_min_length
       required: false
     - name: max_length
+      selection_effect: filter
       value_ref: nv_recorded_content_search_max_length
       required: false
   recorded_content_query_by_profile:
@@ -188,12 +198,15 @@ capabilities:
       required: true
     selection:
     - name: query
+      selection_effect: other
       value_ref: nv_recorded_content_query_by_profile_query
       required: false
     - name: limit
+      selection_effect: other
       value_ref: nv_recorded_content_query_by_profile_limit
       required: false
     - name: mode
+      selection_effect: source
       value_ref: nv_recorded_content_query_by_profile_mode
       required: false
   detected_question_query:
@@ -201,24 +214,31 @@ capabilities:
     entity: DetectedQuestion
     selection:
     - name: unresolved_only
+      selection_effect: filter
       value_ref: nv_detected_question_query_unresolved_only
       required: false
     - name: app_name
+      selection_effect: filter
       value_ref: nv_detected_question_query_app_name
       required: false
     - name: speaker_id
+      selection_effect: filter
       value_ref: nv_detected_question_query_speaker_id
       required: false
     - name: include_answers
+      selection_effect: other
       value_ref: nv_detected_question_query_include_answers
       required: false
     - name: min_answer_similarity
+      selection_effect: filter
       value_ref: nv_detected_question_query_min_answer_similarity
       required: false
     - name: limit
+      selection_effect: other
       value_ref: nv_detected_question_query_limit
       required: false
     - name: offset
+      selection_effect: other
       value_ref: nv_detected_question_query_offset
       required: false
   meeting_query:
@@ -226,15 +246,19 @@ capabilities:
     entity: Meeting
     selection:
     - name: status
+      selection_effect: filter
       value_ref: nv_meeting_query_status
       required: false
     - name: start_date
+      selection_effect: filter
       value_ref: nv_meeting_query_start_date
       required: false
     - name: end_date
+      selection_effect: filter
       value_ref: nv_meeting_query_end_date
       required: false
     - name: limit
+      selection_effect: other
       value_ref: nv_meeting_query_limit
       required: false
   meeting_get:
@@ -270,9 +294,11 @@ capabilities:
     entity: Profile
     selection:
     - name: profile_type
+      selection_effect: filter
       value_ref: nv_profile_query_profile_type
       required: false
     - name: limit
+      selection_effect: other
       value_ref: nv_profile_query_limit
       required: false
   profile_get:
@@ -286,15 +312,19 @@ capabilities:
     entity: CaptureItem
     selection:
     - name: limit
+      selection_effect: other
       value_ref: nv_capture_item_query_limit
       required: false
     - name: app_name
+      selection_effect: filter
       value_ref: nv_capture_item_query_app_name
       required: false
     - name: start_time
+      selection_effect: filter
       value_ref: nv_capture_item_query_start_time
       required: false
     - name: end_time
+      selection_effect: filter
       value_ref: nv_capture_item_query_end_time
       required: false
   capture_item_get:
@@ -308,15 +338,19 @@ capabilities:
     entity: PipelineEvent
     selection:
     - name: names
+      selection_effect: filter
       value_ref: nv_pipeline_event_query_names
       required: false
     - name: sources
+      selection_effect: filter
       value_ref: nv_pipeline_event_query_sources
       required: false
     - name: min_severity
+      selection_effect: filter
       value_ref: nv_pipeline_event_query_min_severity
       required: false
     - name: limit
+      selection_effect: other
       value_ref: nv_pipeline_event_query_limit
       required: false
 values:

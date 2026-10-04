@@ -389,27 +389,35 @@ capabilities:
     entity: Issue
     selection:
     - name: q
+      selection_effect: other
       value_ref: nv_issue_search_q
       required: false
     - name: team_key
+      selection_effect: filter
       value_ref: nv_team_key
       required: false
     - name: state_name
+      selection_effect: filter
       value_ref: nv_state_name
       required: false
     - name: label_name
+      selection_effect: filter
       value_ref: nv_label_name
       required: false
     - name: assignee_name
+      selection_effect: filter
       value_ref: nv_assignee_name
       required: false
     - name: priority
+      selection_effect: filter
       value_ref: nv_issue_priority
       required: false
     - name: project_name
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: cycle
+      selection_effect: filter
       value_ref: nv_cycle_ref
       required: false
     provides:
@@ -448,6 +456,7 @@ capabilities:
     entity: User
     selection:
     - name: display_name
+      selection_effect: filter
       value_ref: nv_assignee_name
       required: true
     provides:
@@ -488,6 +497,7 @@ capabilities:
     entity: Project
     selection:
     - name: q
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: true
     provides:
@@ -552,6 +562,7 @@ capabilities:
     entity: Document
     selection:
     - name: q
+      selection_effect: other
       value_ref: nv_wire_str_short
       required: false
     provides:

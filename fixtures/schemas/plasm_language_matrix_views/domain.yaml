@@ -284,6 +284,7 @@ capabilities:
     entity: LangItem
     selection:
     - name: owner
+      selection_effect: filter
       value_ref: nv_langitem_query_owner_owner
       required: false
     provides:
@@ -297,6 +298,7 @@ capabilities:
     entity: LangItem
     selection:
     - name: q
+      selection_effect: other
       value_ref: nv_langitem_search_q
       required: true
     provides:
@@ -414,9 +416,11 @@ capabilities:
     entity: LangSecuredNote
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_lang_auth_access_token
       required: true
     - name: query
+      selection_effect: other
       value_ref: nv_lang_secured_note_query
       required: true
     provides:
@@ -443,6 +447,7 @@ capabilities:
     entity: LangSecuredGroup
     selection:
     - name: access_token
+      selection_effect: access
       value_ref: nv_lang_auth_access_token
       required: true
     provides:
@@ -473,6 +478,7 @@ capabilities:
       required: true
     selection:
     - name: label
+      selection_effect: filter
       value_ref: nv_lang_tag_label
       required: false
     provides:
@@ -505,6 +511,7 @@ capabilities:
     entity: LangDigest
     selection:
     - name: item_id
+      selection_effect: filter
       value_ref: nv_lang_digest_scope_item_id
       required: true
     provides:
@@ -529,6 +536,7 @@ capabilities:
     entity: LangTriageContext
     selection:
     - name: item_id
+      selection_effect: filter
       value_ref: nv_lang_digest_scope_item_id
       required: true
     provides:
@@ -555,6 +563,7 @@ capabilities:
     entity: LangItemLink
     selection:
     - name: item_id
+      selection_effect: filter
       value_ref: nv_lang_digest_scope_item_id
       required: true
     provides:
@@ -579,6 +588,7 @@ capabilities:
     entity: LangOwnerFilterDemo
     selection:
     - name: item_id
+      selection_effect: filter
       value_ref: nv_lang_digest_scope_item_id
       required: true
     provides:
@@ -603,6 +613,7 @@ capabilities:
     entity: LangTagFilterDemo
     selection:
     - name: item_id
+      selection_effect: filter
       value_ref: nv_lang_digest_scope_item_id
       required: true
     provides:
@@ -688,6 +699,7 @@ capabilities:
       required: false
     selection:
     - name: title
+      selection_effect: filter
       value_ref: nv_lang_pivot_row_title
       required: false
     provides:

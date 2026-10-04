@@ -1418,6 +1418,7 @@ mod tests {
         };
         let cap_params = [InputFieldSchema {
             name: "owner".to_string(),
+            selection_effect: None,
             wire: crate::InputFieldWire::Registry(
                 ValueDomainKey::new("tc_ph_owner_cap").expect("key"),
             ),
@@ -1506,6 +1507,7 @@ mod tests {
         };
         let cap_params = [InputFieldSchema {
             name: "state".to_string(),
+            selection_effect: None,
             wire: crate::InputFieldWire::Registry(
                 ValueDomainKey::new("tc_qs_state_cap").expect("key"),
             ),
@@ -1547,6 +1549,7 @@ mod tests {
         };
         let cap_params = [InputFieldSchema {
             name: "includeSpamTrash".to_string(),
+            selection_effect: None,
             wire: crate::InputFieldWire::Registry(ValueDomainKey::new("tc_cap_bool").expect("key")),
             required: false,
             description: None,
@@ -1603,6 +1606,7 @@ mod tests {
         };
         let cap_params = [InputFieldSchema {
             name: "q".to_string(),
+            selection_effect: None,
             wire: crate::InputFieldWire::Registry(
                 ValueDomainKey::new("tc_cap_q_str").expect("key"),
             ),
@@ -1659,6 +1663,7 @@ mod tests {
         };
         let cap_params = [InputFieldSchema {
             name: "limit".to_string(),
+            selection_effect: None,
             wire: crate::InputFieldWire::Registry(
                 ValueDomainKey::new("tc_cap_limit_int").expect("key"),
             ),
