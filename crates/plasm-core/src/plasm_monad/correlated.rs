@@ -5,8 +5,8 @@
 //! authority. The host must still validate CGS ownership, IR and output schemas.
 //! Carried by `PlasmStepPayload::MapBody`; capture ports are not executable reads.
 use super::{
-    comp_semantic_eq, ComputeOp, EffectClass, PlanQualifiedEntityKey, PlasmComp, PlasmReturn,
-    PlasmStepPayload, ResultShape, StepId, PLASM_COMP_WIRE_VERSION,
+    comp_semantic_eq, ComputeOp, EffectClass, EffectEvidence, PlanQualifiedEntityKey, PlasmComp,
+    PlasmReturn, PlasmStepPayload, ResultShape, StepId, PLASM_COMP_WIRE_VERSION,
 };
 mod scope;
 
@@ -307,12 +307,7 @@ pub fn iteration_step_effect(body: &CorrelatedBody) -> Result<super::EffectTempl
         .body
         .steps
         .values()
-        .filter(|p| {
-            matches!(
-                p.effect_class(),
-                EffectClass::Write | EffectClass::SideEffect
-            )
-        })
+        .filter(|p| p.is_write_or_side_effect())
         .collect::<Vec<_>>();
     let [PlasmStepPayload::Invoke(operation)] = effects.as_slice() else {
         return Err("iteration step requires exactly one explicit catalog mutation".into());

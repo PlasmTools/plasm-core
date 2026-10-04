@@ -1,12 +1,12 @@
 //! Build [`PlasmComp`] wire artifacts from validated plan nodes (single compile path).
 
-use crate::plasm_plan::{
-    EffectClass, PlanResultUse, ValidatedPlan, ValidatedPlanNode, ValidatedPlanReturn,
-};
+use crate::plasm_plan::{PlanResultUse, ValidatedPlan, ValidatedPlanNode, ValidatedPlanReturn};
 use crate::plasm_plan_run::{node_dependencies, DryPlasmPlanEvaluation};
 use crate::plasm_step_convert::validated_node_to_step_payload;
 pub use plasm_core::plasm_monad::PlasmCompArtifact;
-use plasm_core::plasm_monad::{PlasmBindGraph, PlasmComp, PlasmHoleUse, PlasmReturn, StepId};
+use plasm_core::plasm_monad::{
+    EffectEvidence, PlasmBindGraph, PlasmComp, PlasmHoleUse, PlasmReturn, StepId,
+};
 use plasm_trace::TraceCompWire;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -149,35 +149,51 @@ fn add_program_order_effect_deps(
         .iter()
         .map(|n| (n.id().as_str(), n))
         .collect();
-    let mut last_write: Option<StepId> = None;
-    let mut reads: BTreeSet<StepId> = BTreeSet::new();
+    let mut frontier = EffectOrderFrontier::default();
     let mut added = Vec::new();
     for id_str in validated.topological_order() {
         let Some(node) = by_id.get(id_str.as_str()) else {
             continue;
         };
         let id = StepId::new(id_str.as_str().to_string()).expect("validated step id");
+        frontier.admit(id, *node, deps, &mut added);
+    }
+    added
+}
+
+/// Typed effect frontier shared by plan serialization and its sequence law.
+/// Returned value shape has no authority to classify or order an operation.
+#[derive(Default)]
+struct EffectOrderFrontier {
+    last_effect: Option<StepId>,
+    reads: BTreeSet<StepId>,
+}
+
+impl EffectOrderFrontier {
+    fn admit(
+        &mut self,
+        id: StepId,
+        operation: &impl EffectEvidence,
+        deps: &mut BTreeMap<StepId, BTreeSet<StepId>>,
+        added: &mut Vec<[String; 2]>,
+    ) {
         let predecessors = deps.entry(id.clone()).or_default();
-        if let Some(previous) = &last_write {
+        if let Some(previous) = &self.last_effect {
             if predecessors.insert(previous.clone()) {
                 added.push([previous.as_str().to_owned(), id.as_str().to_owned()]);
             }
         }
-        if matches!(
-            node.effect_class(),
-            EffectClass::Write | EffectClass::SideEffect
-        ) {
-            for read in std::mem::take(&mut reads) {
+        if operation.is_write_or_side_effect() {
+            for read in std::mem::take(&mut self.reads) {
                 if predecessors.insert(read.clone()) {
                     added.push([read.as_str().to_owned(), id.as_str().to_owned()]);
                 }
             }
-            last_write = Some(id);
+            self.last_effect = Some(id);
         } else {
-            reads.insert(id);
+            self.reads.insert(id);
         }
     }
-    added
 }
 
 fn primary_predecessor(node: &ValidatedPlanNode) -> Option<String> {
@@ -234,7 +250,8 @@ pub fn plasm_comp_commit_canonical(comp: &PlasmComp) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plasm_plan::parse_and_validate_plan_json;
+    use crate::plasm_plan::{parse_and_validate_plan_json, EffectClass};
+    use proptest::prelude::*;
 
     #[test]
     fn comp_from_minimal_query_plan() {
@@ -259,5 +276,41 @@ mod tests {
         let artifact = plasm_comp_from_validated(&validated);
         assert!(artifact.comp.validate().is_ok());
         assert_eq!(artifact.comp.bind.topo.len(), 1);
+    }
+
+    proptest! {
+        #[test]
+        fn effect_frontier_orders_every_observation_across_writes(classes in proptest::collection::vec(0u8..4, 1..16)) {
+            let mut frontier = EffectOrderFrontier::default();
+            let mut deps = BTreeMap::new();
+            let mut added = Vec::new();
+            let mut topo = Vec::new();
+            let mut effects = Vec::new();
+            for (index, class) in classes.into_iter().enumerate() {
+                let id = StepId::new(format!("step_{index}")).unwrap();
+                let class = match class {
+                    0 => EffectClass::Read,
+                    1 => EffectClass::Write,
+                    2 => EffectClass::SideEffect,
+                    _ => EffectClass::ArtifactRead,
+                };
+                frontier.admit(id.clone(), &class, &mut deps, &mut added);
+                topo.push(id);
+                effects.push(class.is_write_or_side_effect());
+            }
+            let graph = PlasmBindGraph { topo: topo.clone(), deps, ..Default::default() };
+            let layers = graph.execution_layers(&BTreeSet::new()).unwrap();
+            let layer_of = |id: &StepId| layers.iter().position(|layer| layer.contains(id)).unwrap();
+            for earlier in 0..topo.len() {
+                for later in earlier + 1..topo.len() {
+                    if effects[earlier] || effects[later] {
+                        prop_assert!(
+                            layer_of(&topo[earlier]) < layer_of(&topo[later]),
+                            "effect boundary reordered {earlier} before {later}: {layers:?}"
+                        );
+                    }
+                }
+            }
+        }
     }
 }

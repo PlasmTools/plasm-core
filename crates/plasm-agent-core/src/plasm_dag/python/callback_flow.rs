@@ -4,6 +4,24 @@ use super::callbacks::Callback;
 use super::*;
 use std::num::NonZeroU32;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EffectSequence {
+    Empty,
+    Values,
+    Effects,
+    Mixed,
+}
+
+impl EffectSequence {
+    fn observe(&mut self, item: &impl EffectEvidence) {
+        *self = match (*self, item.is_write_or_side_effect()) {
+            (Self::Empty, true) | (Self::Effects, true) => Self::Effects,
+            (Self::Empty, false) | (Self::Values, false) => Self::Values,
+            _ => Self::Mixed,
+        };
+    }
+}
+
 impl Lower<'_> {
     pub(super) fn callback_sequence(
         &mut self,
@@ -123,20 +141,16 @@ impl Lower<'_> {
         }
         if mode == ScopeMode::Rows {
             if let PyExpr::List(items) = expression {
-                // A returned collection of effect acknowledgements is a program
-                // sequence. It is not a materialized scalar array. Each child is
-                // lowered in source order; the scope ledger records all writes.
-                let mut effects = 0usize;
+                // A returned collection of writes is a program sequence, even
+                // when a write returns a value (for example CREATE). Each child
+                // is lowered in source order; the scope ledger records the writes.
+                let mut sequence = EffectSequence::Empty;
                 for item in &items.elts {
                     let id = self.expr(item, None)?;
                     let node = self.state.get(&id).ok_or("missing effect sequence item")?;
-                    if super::super::plan_serialize::lower_plan_node(node)?.result_shape
-                        == ResultShape::SideEffectAck
-                    {
-                        effects += 1;
-                    }
+                    sequence.observe(&node.source);
                 }
-                if effects == items.elts.len() && effects > 0 {
+                if sequence == EffectSequence::Effects {
                     // Actions are already in the scope ledger. The list itself
                     // is neither a rowset nor another acknowledgement; returning
                     // it contributes no data rows.
@@ -146,7 +160,7 @@ impl Lower<'_> {
                         .body;
                     return self.callback_return(&none, row, mode);
                 }
-                if effects > 0 {
+                if sequence == EffectSequence::Mixed {
                     return Err(at(
                         expression,
                         "a callback result cannot mix effects and values",
@@ -395,5 +409,38 @@ impl Lower<'_> {
                 collection_alias: None,
             },
         })
+    }
+}
+
+#[cfg(test)]
+mod effect_sequence_properties {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn callback_effect_sequence_has_one_semantic_class(classes in proptest::collection::vec(0u8..4, 0..16)) {
+            let mut sequence = EffectSequence::Empty;
+            let mut any_effect = false;
+            let mut any_value = false;
+            for class in classes {
+                let class = match class {
+                    0 => EffectClass::Read,
+                    1 => EffectClass::Write,
+                    2 => EffectClass::SideEffect,
+                    _ => EffectClass::ArtifactRead,
+                };
+                sequence.observe(&class);
+                any_effect |= class.is_write_or_side_effect();
+                any_value |= !class.is_write_or_side_effect();
+            }
+            let expected = match (any_effect, any_value) {
+                (false, false) => EffectSequence::Empty,
+                (false, true) => EffectSequence::Values,
+                (true, false) => EffectSequence::Effects,
+                (true, true) => EffectSequence::Mixed,
+            };
+            prop_assert_eq!(sequence, expected);
+        }
     }
 }

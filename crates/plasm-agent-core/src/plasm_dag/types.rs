@@ -2,6 +2,7 @@
 
 use super::prelude::*;
 use crate::plasm_plan::ResultShape;
+use plasm_core::plasm_monad::EffectEvidence;
 
 /// Program RHS surface text for DAG lowering (opaque session symbols preserved).
 ///
@@ -133,6 +134,12 @@ impl DagNodeSource {
             | Self::Derive { .. }
             | Self::ScalarExtract { .. } => EffectClass::ArtifactRead,
         }
+    }
+}
+
+impl EffectEvidence for DagNodeSource {
+    fn effect_class(&self) -> EffectClass {
+        DagNodeSource::effect_class(self)
     }
 }
 

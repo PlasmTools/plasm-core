@@ -12,10 +12,7 @@ impl Lower<'_> {
             build_statements::BuildStatement::Effect(s) => {
                 let id = self.expr(&s.value, None)?;
                 let node = self.state.get(&id).ok_or("missing statement node")?;
-                if !matches!(
-                    node.source.effect_class(),
-                    EffectClass::Write | EffectClass::SideEffect
-                ) {
+                if !node.source.is_write_or_side_effect() {
                     return Err(at(stmt, "unused expression statements must be writes"));
                 }
             }

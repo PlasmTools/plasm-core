@@ -4,7 +4,9 @@ use super::expr::{PlanExprIr, PlanExprTemplate};
 use super::relation::PlanRelationTraversal;
 use super::templates::{DeriveTemplate, EffectTemplate};
 use super::value::{PlanPredicate, PlasmDataValue};
-use crate::plasm_monad::step::{EffectClass, PlasmStepKind, ResultShape, SurfaceKind};
+use crate::plasm_monad::step::{
+    EffectClass, EffectEvidence, PlasmStepKind, ResultShape, SurfaceKind,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -175,6 +177,12 @@ impl PlasmStepPayload {
     }
 }
 
+impl EffectEvidence for PlasmStepPayload {
+    fn effect_class(&self) -> EffectClass {
+        PlasmStepPayload::effect_class(self)
+    }
+}
+
 fn surface_label(k: SurfaceKind) -> String {
     match k {
         SurfaceKind::Query => "query".into(),
@@ -214,5 +222,40 @@ fn compute_op_label(op: &super::compute::ComputeOp) -> String {
             "python_reduce"
         }
         .into(),
+    }
+}
+
+#[cfg(test)]
+mod effect_evidence_properties {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn effect_evidence_follows_lawful_operation_class(
+            (kind, class, shape, expected) in prop::sample::select(vec![
+                (SurfaceKind::Query, EffectClass::Read, ResultShape::List, false),
+                (SurfaceKind::Get, EffectClass::Read, ResultShape::Single, false),
+                (SurfaceKind::Create, EffectClass::Write, ResultShape::MutationResult, true),
+                (SurfaceKind::Update, EffectClass::Write, ResultShape::MutationResult, true),
+                (SurfaceKind::Delete, EffectClass::Write, ResultShape::SideEffectAck, true),
+                (SurfaceKind::Action, EffectClass::SideEffect, ResultShape::SideEffectAck, true),
+            ])
+        ) {
+            let operation = PlasmStepPayload::Invoke(InvokePayload {
+                plan_kind: kind,
+                qualified_entity: None,
+                ir: None,
+                ir_template: None,
+                projection: vec![],
+                predicates: vec![],
+                page_size: None,
+                approval: None,
+                display_expr: None,
+                effect_class: class,
+                result_shape: shape,
+            });
+            prop_assert_eq!(operation.is_write_or_side_effect(), expected);
+        }
     }
 }

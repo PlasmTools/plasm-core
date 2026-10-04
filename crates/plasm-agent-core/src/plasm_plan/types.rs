@@ -639,6 +639,12 @@ impl ValidatedPlanNode {
     }
 }
 
+impl plasm_core::plasm_monad::EffectEvidence for ValidatedPlanNode {
+    fn effect_class(&self) -> EffectClass {
+        ValidatedPlanNode::effect_class(self)
+    }
+}
+
 impl ValidatedPlanArtifact {
     pub fn artifact(&self) -> &Plan<ValidatedPlanState> {
         &self.artifact

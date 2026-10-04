@@ -10,6 +10,25 @@ pub enum EffectClass {
     ArtifactRead,
 }
 
+/// Resolved effect provenance shared by frontend admission and the plan wire.
+/// A returned row or acknowledgement is a separate property of an operation.
+pub trait EffectEvidence {
+    fn effect_class(&self) -> EffectClass;
+
+    fn is_write_or_side_effect(&self) -> bool {
+        matches!(
+            self.effect_class(),
+            EffectClass::Write | EffectClass::SideEffect
+        )
+    }
+}
+
+impl EffectEvidence for EffectClass {
+    fn effect_class(&self) -> EffectClass {
+        *self
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResultShape {

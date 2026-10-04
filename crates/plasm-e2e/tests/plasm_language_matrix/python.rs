@@ -2205,6 +2205,107 @@ async fn python_value_closure_matrix() {
 }
 
 #[tokio::test]
+async fn python_flat_map_delete_then_create_is_an_ordered_effect_collection() {
+    let case = Case {
+        id: "ordered_delete_create_effects",
+        python: "return E.get('i1').flat_map(lambda row: [row.DELETE(), E.CREATE(title='replacement', score=7, owner='alice')])",
+        existing: None,
+        expect_live_error: None,
+    };
+    let base = hermit_lang_matrix::fresh_python_parity_hermit_base_url().await;
+    let (es, host) = parity_context(&case, &base);
+    let bundle = compile_fixture(&es, case.python)
+        .await
+        .unwrap_or_else(|error| panic!("{}: {error}", case.python));
+    use plasm_core::plasm_monad::{PlasmStepPayload, SurfaceKind};
+    let scope = bundle
+        .artifact()
+        .comp
+        .steps
+        .values()
+        .find_map(|step| match step {
+            PlasmStepPayload::MapBody(body) => Some(body.as_ref()),
+            _ => None,
+        })
+        .expect("correlated body");
+    let writes = scope
+        .body
+        .bind
+        .topo
+        .iter()
+        .filter_map(|id| match scope.body.steps.get(id.as_str()) {
+            Some(PlasmStepPayload::Invoke(operation))
+                if matches!(
+                    operation.plan_kind,
+                    SurfaceKind::Delete | SurfaceKind::Create
+                ) =>
+            {
+                Some((id, operation.plan_kind))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(writes.len(), 2, "one delete and one create in the scope");
+    assert_eq!(writes[0].1, SurfaceKind::Delete);
+    assert_eq!(writes[1].1, SurfaceKind::Create);
+    assert!(
+        scope
+            .body
+            .bind
+            .deps
+            .get(writes[1].0)
+            .is_some_and(|deps| deps.contains(writes[0].0)),
+        "create must depend on the preceding delete"
+    );
+    let dry = evaluate_plasm_comp_dry(&es, &bundle).unwrap();
+    assert_comp_witness(&dry).unwrap();
+    let run = Box::pin(run_plasm_comp(
+        &es,
+        &host,
+        &es.prompt_hash,
+        "python-matrix-ordered-delete-create",
+        &bundle,
+        true,
+        None,
+        None,
+        Some(dry),
+        None,
+    ))
+    .await
+    .unwrap();
+    let result = &run.return_steps[0].result;
+    assert!(
+        result.entities().is_empty(),
+        "an effect list emits no data rows"
+    );
+    assert_eq!(
+        result
+            .operations
+            .entries()
+            .iter()
+            .map(|ack| ack.completed)
+            .sum::<usize>(),
+        2,
+        "both ordered writes must dispatch"
+    );
+}
+
+#[tokio::test]
+async fn python_flat_map_effect_collection_rejects_read_values() {
+    let es = language_matrix::matrix_execute_session(language_matrix::load_language_matrix_cgs());
+    for source in [
+        "return E.get('i1').flat_map(lambda row: [row.DELETE(), E.get('i2')])",
+        "return E.get('i1').flat_map(lambda row: [E.CREATE(title='replacement', score=7, owner='alice'), E.get('i2')])",
+    ] {
+        let error = compile_fixture(&es, source).await.unwrap_err();
+        assert!(
+            error.contains("a callback result cannot mix effects and values"),
+            "{source}: {error}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn python_value_closure_rejects_ambiguous_and_forged_inputs() {
     let es = language_matrix::matrix_execute_session(language_matrix::load_language_matrix_cgs());
     for (argument, diagnostic) in [

@@ -32,4 +32,6 @@ pub use payload::{
     SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind, UnfoldUntilPayload,
     WithColumn, WithExpr, WithExprError, WithLiteral,
 };
-pub use step::{EffectBarrier, EffectClass, PlasmStep, PlasmStepKind, ResultShape, SurfaceKind};
+pub use step::{
+    EffectBarrier, EffectClass, EffectEvidence, PlasmStep, PlasmStepKind, ResultShape, SurfaceKind,
+};
