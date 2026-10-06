@@ -1,4 +1,4 @@
-//! Limit pushdown: `.limit(n)` on paginated queries bounds HTTP consumption (pokeapi_mini + Hermit).
+//! Limit pushdown: Python `.take(n)` bounds paginated queries (pokeapi_mini + Hermit).
 
 #![allow(dead_code)]
 
@@ -10,12 +10,12 @@ use std::sync::Arc;
 use plasm_agent::{
     execute_session::ExecuteSession,
     http::{build_plasm_host_state, PlasmHostBootstrap},
-    plasm_compile::compile_plasm_program,
+    plasm_compile::compile_python_program,
     plasm_plan_run::run_plasm_comp,
     run_artifacts::RunArtifactStore,
     server_state::CatalogBootstrap,
 };
-use plasm_core::{discovery::CgsRegistry, CgsContext, PromptPipelineConfig, CGS};
+use plasm_core::{discovery::CgsRegistry, CgsContext, TeachingExposureSession, CGS};
 
 use common::hermit;
 
@@ -43,6 +43,7 @@ fn pokeapi_session(cgs: Arc<CGS>) -> ExecuteSession {
         ENTRY_ID.into(),
         Arc::new(CgsContext::entry(ENTRY_ID, cgs.clone())),
     );
+    let exposure = TeachingExposureSession::new(&cgs, ENTRY_ID, &["Berry"]);
     ExecuteSession::new(
         PROMPT_HASH.into(),
         String::new(),
@@ -53,7 +54,7 @@ fn pokeapi_session(cgs: Arc<CGS>) -> ExecuteSession {
         String::new(),
         None,
         vec!["Berry".into()],
-        None,
+        Some(exposure),
         None,
         cgs.catalog_cgs_hash_hex(),
         None,
@@ -103,15 +104,12 @@ async fn limit_pushdown_bounds_paginated_berry_query_async() {
     .expect("valid catalog fixture");
     let es = pokeapi_session(cgs.clone());
 
-    let program = "all = Berry\nlimited = all.limit(5)\nlimited";
-    let bundle = compile_plasm_program(
-        &PromptPipelineConfig::default(),
-        None,
-        &es,
-        "limit_pushdown",
-        program,
-    )
-    .expect("compile plan");
+    let symbols = es.teaching_exposure.as_ref().unwrap().symbol_map_arc();
+    let berry = symbols.entity_sym_for(ENTRY_ID, "Berry");
+    let program = format!("class LimitPushdown(Program):\n    def build(self):\n        berries = {berry}.query()\n        limited = berries.take(5)\n        return limited\n");
+    let bundle = compile_python_program(&es, &program)
+        .await
+        .unwrap_or_else(|error| panic!("compile plan: {error}"));
 
     let live = run_plasm_comp(
         &es,
@@ -126,7 +124,7 @@ async fn limit_pushdown_bounds_paginated_berry_query_async() {
         None,
     )
     .await
-    .expect("live plan");
+    .unwrap_or_else(|error| panic!("live plan: {error}"));
 
     let limited = live
         .return_steps
