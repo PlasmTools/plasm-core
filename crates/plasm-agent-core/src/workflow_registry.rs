@@ -54,10 +54,12 @@ pub fn demo_workflow_manifests() -> Vec<WorkflowManifest> {
             title: "Specimen dossier → Linear comment".into(),
             description: "Cross-catalog read + template + write (demo shape)".into(),
             program_template: concat!(
-                "source = {{sym:pokeapi.Berry}}.limit(1)\n",
-                "target_id = {{param:linear_issue_id}}\n",
-                "body = {{param:dossier_body}}\n",
-                "source\n"
+                "class Dossier(Program):\n",
+                "    def build(self):\n",
+                "        source = {{sym:pokeapi.Berry}}.query().take(1)\n",
+                "        target_id = {{param:linear_issue_id}}\n",
+                "        body = {{param:dossier_body}}\n",
+                "        return source\n"
             )
             .into(),
             seeds: vec![
@@ -113,9 +115,11 @@ pub fn workflow_matrix_manifest() -> WorkflowManifest {
         title: "Workflow matrix parallel reads".into(),
         description: "Two-catalog parallel read fixture program".into(),
         program_template: concat!(
-            "a = {{sym:catalog_a.WorkItem}}.limit({{param:limit}})\n",
-            "b = {{sym:catalog_b.WorkItem}}.limit({{param:limit}})\n",
-            "a\n"
+            "class ParallelReads(Program):\n",
+            "    def build(self):\n",
+            "        a = {{sym:catalog_a.WorkItem}}.query().take({{param:limit}})\n",
+            "        b = {{sym:catalog_b.WorkItem}}.query().take({{param:limit}})\n",
+            "        return a\n"
         )
         .into(),
         seeds: vec![

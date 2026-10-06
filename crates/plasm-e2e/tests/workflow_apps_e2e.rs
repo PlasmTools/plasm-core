@@ -10,15 +10,19 @@ mod mcp_sse;
 mod workflow_matrix;
 
 use plasm_agent::http::{serve_discovery_execute_and_mcp_unified, DiscoveryHttpServeOpts};
+use plasm_agent::http_execute::{apply_capability_seeds, CapabilitySeed};
+use plasm_agent::mcp_logical_ref::format_logical_session_wire_ref;
 use plasm_runtime::{ExecutionConfig, ExecutionEngine};
 use reqwest::header::LOCATION;
 use reqwest::StatusCode;
 use serde_json::{json, Value};
 use std::time::Duration;
 use tokio::sync::OnceCell;
-use workflow_matrix::{load_workflow_matrix_cgs, workflow_federated_host_state, CATALOG_A};
+use workflow_matrix::{
+    load_workflow_matrix_cgs, workflow_federated_host_state, CATALOG_A, CATALOG_B,
+};
 
-async fn spawn_workflow_server() -> (String, tokio::task::JoinHandle<()>) {
+async fn spawn_workflow_server() -> (String, String, tokio::task::JoinHandle<()>) {
     let hermit = hermit_workflow_matrix::workflow_matrix_hermit_base_url()
         .await
         .clone();
@@ -29,6 +33,41 @@ async fn spawn_workflow_server() -> (String, tokio::task::JoinHandle<()>) {
     })
     .expect("engine");
     let st = workflow_federated_host_state(engine, cgs);
+    // Apps delivery is independent of semantic intent discovery.
+    let logical = st
+        .logical_sessions
+        .mint_session("", "workflow matrix reads")
+        .await
+        .expect("mint workflow logical session");
+    let opened = Box::pin(apply_capability_seeds(
+        &st,
+        None,
+        None,
+        vec![
+            CapabilitySeed {
+                entry_id: CATALOG_A.into(),
+                entity: "WorkItem".into(),
+            },
+            CapabilitySeed {
+                entry_id: CATALOG_B.into(),
+                entity: "WorkItem".into(),
+            },
+        ],
+        None,
+        None,
+        Some(logical.logical_session_id.as_uuid()),
+        &logical.accumulated_intent,
+    ))
+    .await
+    .expect("open federated workflow session");
+    st.logical_execute_bindings
+        .insert(
+            logical.logical_session_id.as_uuid(),
+            opened.prompt_hash,
+            opened.session_id,
+        )
+        .await;
+    let logical_session_ref = format_logical_session_wire_ref(logical.logical_session_id);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind");
@@ -45,81 +84,71 @@ async fn spawn_workflow_server() -> (String, tokio::task::JoinHandle<()>) {
         .ok();
     });
     tokio::time::sleep(Duration::from_millis(80)).await;
-    (base, handle)
+    (base, logical_session_ref, handle)
 }
 
-static SERVER: OnceCell<String> = OnceCell::const_new();
+static SERVER: OnceCell<(String, String)> = OnceCell::const_new();
 
-async fn base_url() -> String {
+async fn server_context() -> (String, String) {
     SERVER
         .get_or_init(|| async {
-            let (base, _handle) = spawn_workflow_server().await;
-            base
+            let (base, logical_session_ref, _handle) = Box::pin(spawn_workflow_server()).await;
+            (base, logical_session_ref)
         })
         .await
         .clone()
 }
 
-fn plan_ux_reflection_from_body(body: &Value) -> &Value {
-    body.pointer("/structuredContent/ui/plan_ux_reflection")
-        .or_else(|| body.pointer("/_meta/ui/plasm/plan_ux_reflection"))
-        .or_else(|| body.pointer("/_meta/plasm/plan_ux_reflection"))
-        .or_else(|| body.get("plan_ux_reflection"))
-        .or_else(|| body.pointer("/plan_ux_reflection"))
-        .unwrap_or_else(|| panic!("plan_ux_reflection missing in {body}"))
+fn receipt_token<'a>(body: &'a Value, key: &str) -> &'a str {
+    let text = body
+        .pointer("/mcp_result/content/0/text")
+        .and_then(Value::as_str)
+        .expect("agent receipt");
+    text.lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once('\t')?;
+            (name == key).then_some(value)
+        })
+        .unwrap_or_else(|| panic!("missing receipt {key}: {text}"))
 }
 
-fn assert_agent_mcp_tool_compact(body: &Value) {
+fn assert_agent_mcp_tool_compact(body: &Value, kind: &str) {
     assert!(
-        body.pointer("/structuredContent/plasm/comp").is_none(),
-        "agent structuredContent.plasm must omit comp: {body}"
+        !body
+            .pointer("/mcp_result/isError")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        "tool must succeed: {body}"
     );
     assert!(
-        body.pointer("/structuredContent/plasm/steps").is_none(),
-        "agent structuredContent.plasm must omit snapshot steps: {body}"
-    );
-    assert!(
-        body.pointer("/structuredContent/plasm/plan_ux_reflection")
-            .is_none(),
-        "agent structuredContent.plasm must omit plan_ux_reflection: {body}"
+        body.pointer("/structuredContent/plasm").is_none(),
+        "no agent structured-content lane: {body}"
     );
     assert_eq!(
         body.pointer("/structuredContent/ui/kind")
-            .and_then(|v| v.as_str()),
-        Some("plan_review"),
-        "structuredContent.ui must declare plan_review kind: {body}"
-    );
-    let ui_has_payload = body.pointer("/structuredContent/ui/comp").is_some()
-        || body
-            .pointer("/structuredContent/ui/plan_http_path")
-            .is_some()
-        || body.pointer("/structuredContent/ui/plan_uri").is_some();
-    assert!(
-        ui_has_payload,
-        "structuredContent.ui must carry inline comp or fetch refs: {body}"
+            .and_then(Value::as_str),
+        Some(kind)
     );
     assert!(
         body.pointer("/_meta/ui/plasm").is_none(),
-        "tool result must not embed UI DAG under _meta.ui.plasm: {body}"
+        "no UI DAG in agent metadata"
+    );
+    assert!(
+        body.pointer("/_meta/plasm/comp").is_none(),
+        "no comp DAG in agent metadata"
     );
     let text = body
-        .pointer("/content/0/text")
-        .or_else(|| body.pointer("/mcp_result/content/0/text"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    assert!(
-        !text.is_empty(),
-        "agent markdown content must be non-empty compact text: {body}"
-    );
+        .pointer("/mcp_result/content/0/text")
+        .and_then(Value::as_str)
+        .expect("compact agent text");
+    assert!(!text.is_empty());
 }
 
 async fn http_read_plan_json(client: &reqwest::Client, base: &str, body: &Value) -> Value {
     let path = body
         .pointer("/structuredContent/ui/plan_http_path")
-        .or_else(|| body.pointer("/structuredContent/plasm/plan_http_path"))
-        .or_else(|| body.pointer("/_meta/plasm/plan_http_path"))
-        .and_then(|v| v.as_str())
-        .expect("plan_http_path on dry-run MCP tool");
+        .and_then(Value::as_str)
+        .expect("Apps plan_http_path");
     let resp = client
         .get(format!("{base}{path}"))
         .header("accept", "application/json")
@@ -143,12 +172,9 @@ async fn assert_plan_archive_via_mcp_read(
     read_id: u64,
 ) {
     let plan_uri = body
-        .pointer("/structuredContent/plasm/plan_uri")
-        .or_else(|| body.pointer("/structuredContent/ui/plan_uri"))
-        .or_else(|| body.pointer("/structuredContent/ui/canonical_plan_uri"))
-        .or_else(|| body.pointer("/_meta/plasm/plan_uri"))
-        .and_then(|v| v.as_str())
-        .expect("canonical plan_uri on dry-run MCP tool");
+        .pointer("/structuredContent/ui/plan_uri")
+        .and_then(Value::as_str)
+        .expect("canonical Apps plan_uri");
     assert!(
         plan_uri.starts_with("plasm://execute/"),
         "plan_uri must be canonical execute URI for MCP read: {plan_uri}"
@@ -165,7 +191,7 @@ async fn assert_plan_ux_from_mcp_tool(
     body: &Value,
     read_id: u64,
 ) {
-    assert_agent_mcp_tool_compact(body);
+    assert_agent_mcp_tool_compact(body, "plan_review");
     let archive = http_read_plan_json(client, base, body).await;
     assert_plan_ux_reflection(&archive);
     assert_plan_archive_via_mcp_read(client, base, mcp_session, body, read_id + 1000).await;
@@ -192,7 +218,7 @@ fn assert_comp_human_ops_from_value(comp: &Value, reflection: &Value) {
 }
 
 fn assert_plan_ux_reflection(body: &Value) {
-    let reflection = plan_ux_reflection_from_body(body);
+    let reflection = body.get("plan_ux_reflection").expect("plan reflection");
     plasm_agent::plan_ux_reflection::validate_plan_ux_reflection_wire(reflection)
         .unwrap_or_else(|e| panic!("invalid plan_ux_reflection wire: {e}; got {reflection:?}"));
     for step in reflection["steps"].as_array().into_iter().flatten() {
@@ -205,12 +231,10 @@ fn assert_plan_ux_reflection(body: &Value) {
 }
 
 fn assert_comp_human_ops(body: &Value) {
-    let comp = body
-        .pointer("/_meta/ui/plasm/comp")
-        .or_else(|| body.pointer("/_meta/plasm/comp"))
-        .or_else(|| body.get("comp"))
-        .expect("comp missing in _meta.ui.plasm, legacy _meta.plasm, or top-level comp");
-    let reflection = plan_ux_reflection_from_body(body);
+    let comp = body.pointer("/_meta/plasm/comp").expect("HTTP plan comp");
+    let reflection = body
+        .get("plan_ux_reflection")
+        .expect("HTTP plan reflection");
     assert_comp_human_ops_from_value(comp, reflection);
 }
 
@@ -290,7 +314,7 @@ fn workflow_apps_e2e() {
 }
 
 async fn workflow_apps_e2e_async() {
-    let base = base_url().await;
+    let (base, ls) = server_context().await;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()
@@ -321,13 +345,19 @@ async fn workflow_apps_e2e_async() {
     let inst_body: Value = inst.json().await.expect("json");
     let program = inst_body["program"].as_str().expect("program");
     assert!(program.contains("e1") && program.contains('3'));
+    assert!(
+        program.contains("(Program):") && program.contains("def build(self):"),
+        "the workflow registry must instantiate production Python, not native source: {program}"
+    );
 
     let (ph, sid) = http_open_workflow_session(&client, &base).await;
     let dry = client
         .post(format!("{base}/execute/{ph}/{sid}?mode=plan"))
         .header("accept", "application/json")
         .header("content-type", "text/plain")
-        .body("items = WorkItem.limit(3)\nitems")
+        .body(
+            "class ReadItems(Program):\n    def build(self):\n        return e1.query().take(3)\n",
+        )
         .send()
         .await
         .expect("http dry");
@@ -359,7 +389,9 @@ async fn workflow_apps_e2e_async() {
             "method": "initialize",
             "params": {
                 "protocolVersion": "2025-11-25",
-                "capabilities": {},
+                "capabilities": {"extensions": {"io.modelcontextprotocol/ui": {
+                    "mimeTypes": ["text/html;profile=mcp-app"]
+                }}},
                 "clientInfo": { "name": "workflow-e2e", "version": "0" }
             }
         }))
@@ -368,32 +400,10 @@ async fn workflow_apps_e2e_async() {
         .expect("mcp init");
     let mcp_session = init
         .headers()
-        .get("mcp-session-id")
-        .or_else(|| init.headers().get("MCP-Session-Id"))
+        .get("MCP-Session-Id")
         .and_then(|v| v.to_str().ok())
         .expect("mcp session id")
         .to_string();
-
-    let ctx = mcp_tool_meta(
-        &client,
-        &base,
-        &mcp_session,
-        "plasm_context",
-        json!({
-            "session_mode": "new",
-            "intent": "workflow matrix reads",
-            "seeds": [
-                { "api": "catalog_a", "entity": "WorkItem" },
-                { "api": "catalog_b", "entity": "WorkItem" }
-            ]
-        }),
-        2,
-    )
-    .await;
-    let ls = ctx
-        .pointer("/_meta/plasm/logical_session_ref")
-        .and_then(|v| v.as_str())
-        .expect("logical_session_ref from plasm_context");
 
     let dry_mcp = mcp_tool_meta(
         &client,
@@ -402,7 +412,7 @@ async fn workflow_apps_e2e_async() {
         "plasm",
         json!({
             "logical_session_ref": ls,
-            "program": "a = e1.limit(1)\nb = e2.limit(1)\na"
+            "program": "class ParallelReads(Program):\n    def build(self):\n        a = e1.query().take(1)\n        b = e2.query().take(1)\n        return a\n"
         }),
         3,
     )
@@ -445,6 +455,8 @@ async fn workflow_apps_e2e_async() {
     .await;
     assert_plan_ux_from_mcp_tool(&client, &base, &mcp_session, &dry_wf, 11).await;
     assert_comp_human_ops_from_mcp_plan_archive(&client, &base, &mcp_session, &dry_wf, 12).await;
+    assert_eq!(receipt_token(&dry_wf, "logical_session_ref"), ls_wf);
+    assert!(receipt_token(&dry_wf, "run_ref").starts_with("pc"));
 
     let plan_shell = client
         .get(format!("{base}/v1/plan/ui"))
@@ -515,63 +527,51 @@ async fn workflow_apps_e2e_async() {
         "plasm dry-run must attach plan review ui meta: {dry_mcp}"
     );
 
-    let dry_structured_plasm = dry_mcp
-        .pointer("/structuredContent/plasm")
-        .or_else(|| dry_mcp.pointer("/mcp_result/structuredContent/plasm"));
+    assert!(dry_mcp.pointer("/structuredContent/plasm").is_none());
+    assert!(dry_mcp
+        .pointer("/structuredContent/ui/plan_uri")
+        .and_then(Value::as_str)
+        .is_some_and(|uri| uri.starts_with("plasm://execute/")));
+    assert!(dry_mcp
+        .pointer("/structuredContent/ui/plan_http_path")
+        .and_then(Value::as_str)
+        .is_some_and(|path| path.starts_with("/execute/")));
+    assert!(dry_mcp.pointer("/_meta/plasm/plan_text").is_none());
+    let run_ref = receipt_token(&dry_mcp, "run_ref");
     assert!(
-        dry_structured_plasm.and_then(|p| p.get("comp")).is_none(),
-        "agent structuredContent.plasm must omit comp DAG: {dry_mcp}"
+        run_ref.starts_with("pc"),
+        "reviewed commit receipt: {run_ref}"
     );
-    assert!(
-        dry_structured_plasm
-            .and_then(|p| p.get("plan_uri"))
-            .and_then(|v| v.as_str())
-            .is_some_and(|s| s.starts_with("plasm://execute/")),
-        "structuredContent.plasm must carry canonical plan_uri: {dry_mcp}"
-    );
-    assert!(
-        dry_mcp
-            .pointer("/structuredContent/plasm/plan_http_path")
-            .is_none(),
-        "structuredContent.plasm must omit plan_http_path (UI channel only): {dry_mcp}"
-    );
-    assert!(
-        dry_mcp
-            .pointer("/structuredContent/ui/plan_http_path")
-            .and_then(|v| v.as_str())
-            .is_some_and(|s| s.starts_with("/execute/")),
-        "structuredContent.ui must carry plan_http_path ref: {dry_mcp}"
-    );
-    assert!(
-        dry_mcp.pointer("/structuredContent/ui/comp").is_none(),
-        "structuredContent.ui must not include comp DAG: {dry_mcp}"
-    );
-    assert!(
-        dry_mcp.pointer("/_meta/plasm/comp").is_none(),
-        "agent _meta.plasm must omit comp: {dry_mcp}"
-    );
-    assert!(
-        dry_mcp.pointer("/_meta/ui/plasm").is_none(),
-        "dry-run must not embed comp under _meta.ui.plasm: {dry_mcp}"
-    );
-    assert!(
-        dry_mcp.pointer("/_meta/plasm/plan_text").is_none(),
-        "agent _meta.plasm must omit plan_text (structuredContent only): {dry_mcp}"
-    );
-    assert!(
-        dry_structured_plasm
-            .and_then(|p| p.get("plan_text"))
-            .and_then(|v| v.as_str())
-            .is_some_and(|s| !s.is_empty()),
-        "structuredContent.plasm must carry compact plan_text: {dry_mcp}"
-    );
+    assert_eq!(receipt_token(&dry_mcp, "logical_session_ref"), ls);
 
-    let run_ref = dry_mcp
-        .pointer("/_meta/plasm/run_ref")
-        .or_else(|| dry_mcp.pointer("/structuredContent/plasm/run_ref"))
-        .and_then(|v| v.as_str())
-        .expect("run_ref from dry-run");
-    let _ = run_ref;
+    let hydrated_plan = mcp_tool_meta(
+        &client,
+        &base,
+        &mcp_session,
+        "plasm_ui_read_plan",
+        json!({"logical_session_ref": ls, "run_ref": run_ref}),
+        20,
+    )
+    .await;
+    assert_eq!(
+        hydrated_plan
+            .pointer("/structuredContent/ui/kind")
+            .and_then(Value::as_str),
+        Some("plan_review")
+    );
+    assert!(hydrated_plan.pointer("/structuredContent/plasm").is_none());
+    assert_eq!(
+        hydrated_plan.pointer("/mcp_result/content"),
+        Some(&json!([])),
+        "app-only hydration must not duplicate its DAG into agent text"
+    );
+    let hydrated_comp = hydrated_plan
+        .pointer("/structuredContent/ui/comp")
+        .expect("app-only plan hydration comp");
+    let hydrated_reflection = hydrated_plan
+        .pointer("/structuredContent/ui/plan_ux_reflection")
+        .expect("app-only plan hydration reflection");
+    assert_comp_human_ops_from_value(hydrated_comp, hydrated_reflection);
 
     let run_mcp = mcp_tool_meta(
         &client,
@@ -594,9 +594,9 @@ async fn workflow_apps_e2e_async() {
     );
 
     let small_steps = run_mcp
-        .pointer("/_meta/plasm/steps")
+        .pointer("/structuredContent/ui/steps")
         .and_then(|v| v.as_array())
-        .expect("small plasm_run must emit _meta.plasm.steps");
+        .expect("small plasm_run must emit Apps steps");
     assert!(
         !small_steps.is_empty(),
         "small plasm_run steps must be non-empty: {run_mcp}"
@@ -655,17 +655,10 @@ async fn workflow_apps_e2e_async() {
         "plasm_run step must include column_schema: {first_small}"
     );
 
-    assert_agent_mcp_tool_compact(&run_mcp);
-    let run_structured_steps = run_mcp
-        .pointer("/structuredContent/plasm/steps")
-        .or_else(|| run_mcp.pointer("/mcp_result/structuredContent/plasm/steps"));
-    assert!(
-        run_structured_steps.is_none(),
-        "agent structuredContent.plasm must omit snapshot steps: {run_mcp}"
-    );
+    assert_agent_mcp_tool_compact(&run_mcp, "run_explorer");
+    assert!(run_mcp.pointer("/structuredContent/plasm").is_none());
     let markdown = run_mcp
-        .pointer("/content/0/text")
-        .or_else(|| run_mcp.pointer("/mcp_result/content/0/text"))
+        .pointer("/mcp_result/content/0/text")
         .and_then(|v| v.as_str())
         .unwrap_or("");
     assert!(
@@ -680,15 +673,13 @@ async fn workflow_apps_e2e_async() {
         "plasm",
         json!({
             "logical_session_ref": ls,
-            "program": "items = e1.limit(5)[id,title]\nwide = <<PLASM_RUN_UI_E2E_WIDE\n{% for r in items %}{% for i in range(500) %}w{% endfor %}\n{% endfor %}\nPLASM_RUN_UI_E2E_WIDE\nwide",
+            "program": "class WideRows(Program):\n    @compute\n    def wide(self, row: Row) -> str:\n        return row.title + \"w\" * 20000\n    def build(self):\n        items = e1.query().take(5).select(\"id\", \"title\")\n        return items.map(lambda row: {\"wide\": self.wide(row)}, max_parents=5)\n",
         }),
         10,
     )
     .await;
-    let large_run_ref = dry_large
-        .pointer("/_meta/plasm/run_ref")
-        .and_then(|v| v.as_str())
-        .expect("run_ref from large dry-run");
+    assert_agent_mcp_tool_compact(&dry_large, "plan_review");
+    let large_run_ref = receipt_token(&dry_large, "run_ref");
 
     let run_large_mcp = mcp_tool_meta(
         &client,
@@ -710,11 +701,11 @@ async fn workflow_apps_e2e_async() {
         "plasm_run multi-return should succeed: {run_large_mcp}"
     );
     let run_steps = run_large_mcp
-        .pointer("/_meta/plasm/steps")
+        .pointer("/structuredContent/ui/steps")
         .and_then(|v| v.as_array());
     assert!(
         run_steps.is_some_and(|s| !s.is_empty()),
-        "multi-return plasm_run must emit truncated _meta.plasm.steps: {run_large_mcp}"
+        "large plasm_run must emit Apps artifact steps: {run_large_mcp}"
     );
     assert_eq!(
         run_large_mcp
