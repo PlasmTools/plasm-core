@@ -13,6 +13,40 @@ use proptest::prelude::*;
 use proptest::test_runner::Config as ProptestConfig;
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+enum PartialWriteCheckError {
+    #[error("execution setup failed: {source}")]
+    Setup {
+        #[source]
+        source: crate::RuntimeError,
+    },
+    #[error("create execution failed at index {index}: {source}")]
+    Create {
+        index: usize,
+        #[source]
+        source: crate::RuntimeError,
+    },
+    #[error("relation read after partial writes failed: {source}")]
+    RelationRead {
+        #[source]
+        source: crate::RuntimeError,
+    },
+    #[error("expense query after partial writes failed: {source}")]
+    QueryRead {
+        #[source]
+        source: crate::RuntimeError,
+    },
+    #[error(transparent)]
+    Observation(#[from] ObservationHonestyError),
+    #[error("expected create at index {index} to fail, but it succeeded")]
+    ExpectedCreateFailureSucceeded { index: usize },
+    #[error("create at index {index} ran after the first scripted failure")]
+    CreateRanAfterFailure { index: usize },
+    #[error("successful create acknowledgment had completed={completed}, failed={failed}")]
+    InvalidCreateAcknowledgment { completed: usize, failed: usize },
+}
 
 fn load_pw_cgs() -> plasm_core::CGS {
     load_schema_dir(
@@ -71,7 +105,7 @@ fn run_individual_create_sequence(
     descriptions: &[String],
     fail_at: Option<usize>,
     group_id: &str,
-) -> Result<(), String> {
+) -> Result<(), PartialWriteCheckError> {
     let harness = HonestyHarness::new();
     let mut script: Vec<CreateScript> = descriptions.iter().map(|_| CreateScript::Ok).collect();
     if let Some(i) = fail_at {
@@ -93,7 +127,8 @@ fn run_individual_create_sequence(
         None,
     );
     let mut mat = SessionMaterialization::new();
-    let opts = ExecuteOptions::for_catalog(&cgs).map_err(|e| e.to_string())?;
+    let opts = ExecuteOptions::for_catalog(&cgs)
+        .map_err(|source| PartialWriteCheckError::Setup { source })?;
 
     let mut plan_failed = false;
     let mut first_fail_seen = false;
@@ -115,11 +150,11 @@ fn run_individual_create_sequence(
                 // Lone create Err carries no OperationAck; OPH-6 keys off prior completed acks.
             }
             (true, Ok(_)) => {
-                return Err(format!("expected create[{i}] to fail, but it succeeded"));
+                return Err(PartialWriteCheckError::ExpectedCreateFailureSucceeded { index: i });
             }
             (false, Ok(result)) => {
                 if first_fail_seen {
-                    return Err("create after failure should not run in this harness".into());
+                    return Err(PartialWriteCheckError::CreateRanAfterFailure { index: i });
                 }
                 let completed = result
                     .operations
@@ -136,16 +171,20 @@ fn run_individual_create_sequence(
                     .map(|a| a.failed)
                     .sum::<usize>();
                 if completed != 1 || failed != 0 {
-                    return Err(format!(
-                        "successful create ack: completed={completed} failed={failed}"
-                    ));
+                    return Err(PartialWriteCheckError::InvalidCreateAcknowledgment {
+                        completed,
+                        failed,
+                    });
                 }
                 harness.with_model_mut(|m| {
                     m.record_reported("pwexpense_create", completed, failed);
                 });
             }
             (false, Err(e)) => {
-                return Err(format!("create[{i}] unexpectedly failed: {e}"));
+                return Err(PartialWriteCheckError::Create {
+                    index: i,
+                    source: e,
+                });
             }
         }
         if should_fail {
@@ -168,7 +207,7 @@ fn run_individual_create_sequence(
         StreamConsumeOpts::default(),
         opts.clone(),
     ))
-    .map_err(|e| format!("relation read after partial writes: {e}"))?;
+    .map_err(|source| PartialWriteCheckError::RelationRead { source })?;
 
     let rel_ids = expense_ids_from_result(&rel);
     harness.with_model(|m| {
@@ -187,7 +226,7 @@ fn run_individual_create_sequence(
         StreamConsumeOpts::default(),
         opts,
     ))
-    .map_err(|e| format!("expense query after partial writes: {e}"))?;
+    .map_err(|source| PartialWriteCheckError::QueryRead { source })?;
 
     let q_ids = expense_ids_from_result(&listed);
     harness.with_model(|m| {

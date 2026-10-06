@@ -86,7 +86,7 @@ impl SymbolResolveError {
             Self::UnknownEntityPSym { .. }
             | Self::NotARowField { .. }
             | Self::AmbiguousEntityRowFieldPSym { .. } => Some(
-                "Use catalog wire field names from the language-card left column for this binding (e.g. `.sort(height)`, `[title,…]`).",
+                "Use fields and relations taught for this binding; a relation symbol on another entity does not transfer here.",
             ),
             Self::UnknownQueryFilterPSym { .. } | Self::AmbiguousQueryFilterPSym { .. } => Some(
                 "Use wire names from the language card for query/search filters on this entity (e.g. `{team_key=\"…\"}`).",
@@ -146,7 +146,7 @@ impl std::fmt::Display for SymbolResolveError {
                 } else if let Some(form) = method_invoke_form {
                     write!(f, "`{token}` is not a row field on `{entity}` for this binding; it is a method parameter — use `{form}`")
                 } else {
-                    write!(f, "`{token}` is not a row field on `{entity}` for this binding")
+                    write!(f, "`{token}` is not a row field on `{entity}` for this binding; use a field wire name or its teaching symbol")
                 }
             }
             Self::RelationUsedAsRowField { entity, token } => write!(
@@ -232,3 +232,5 @@ impl std::fmt::Display for SymbolResolveError {
         }
     }
 }
+
+impl std::error::Error for SymbolResolveError {}

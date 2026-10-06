@@ -7,12 +7,36 @@ use thiserror::Error;
 
 use crate::value_contract::ValueContract;
 
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[derive(Debug, Clone, Error)]
 pub enum RowComputeError {
-    #[error("row contract: {0}")]
-    Contract(String),
-    #[error("row engine execution: {0}")]
-    Execution(String),
+    #[error(transparent)]
+    Contract(#[from] crate::row_plan::contracts::RowContractError),
+    #[error(transparent)]
+    ArithmeticContract(#[from] crate::value_arithmetic::ArithmeticContractError),
+    #[error(transparent)]
+    Correspondence(#[from] RowCorrespondenceError),
+    #[error("field `{field}` is unobserved (not null)")]
+    MissingField { field: String },
+    #[error("row count exceeds the supported integer range")]
+    RowCountOverflow,
+    #[error("money sum requires a money contract")]
+    MoneySumRequiresMoney,
+    #[error("contains requires two string values")]
+    ContainsRequiresStrings,
+    #[error("membership requires a string or array on the right")]
+    MembershipRequiresCollection,
+    #[error("string membership requires a string on the left")]
+    StringMembershipRequiresString,
+    #[error("membership values cannot be compared in their declared value domain")]
+    MembershipComparison,
+    #[error(transparent)]
+    Arithmetic(#[from] crate::value_expression::ArithmeticError),
+    #[error(transparent)]
+    Comparison(#[from] crate::value_expression::ComparisonError),
+    #[error("numeric literal in a row expression is invalid")]
+    InvalidExpressionNumber,
+    #[error("length requires a string, array or record")]
+    InvalidExpressionLengthOperand,
     #[error(transparent)]
     Type(Box<RowTypeError>),
     #[error(transparent)]
@@ -28,9 +52,31 @@ pub enum RowComputeError {
     #[error(transparent)]
     Predicate(#[from] RowFilterError),
     #[error(transparent)]
+    PredicateCompile(#[from] PredicateCompileError),
+    #[error(transparent)]
+    Equality(#[from] crate::value_equality::ValueEqualityError),
+    #[error(transparent)]
+    ValueHash(#[from] crate::value_hash::ValueHashError),
+    #[error(transparent)]
+    Ordering(#[from] crate::value_order::OrderingError),
+    #[error(transparent)]
+    Atom(#[from] crate::plasm_monad::PlanAtomError),
+    #[error(transparent)]
+    StepId(#[from] crate::plasm_monad::StepIdError),
+    #[error(transparent)]
     Scan(#[from] ScanError),
     #[error(transparent)]
     Fusion(#[from] FusionError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum PredicateCompileError {
+    #[error(transparent)]
+    Contract(#[from] crate::row_plan::contracts::RowContractError),
+    #[error(transparent)]
+    DataValue(#[from] crate::plasm_monad::payload::PlasmDataValueError),
+    #[error(transparent)]
+    Coercion(#[from] crate::wire_coercion::CoercionError),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -56,6 +102,8 @@ pub enum RowTypeError {
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum FrameSchemaError {
+    #[error("frame requires a record contract")]
+    RequiresRecord,
     #[error("unknown column `{0}`")]
     UnknownColumn(String),
     #[error("empty pipeline is illegal")]
@@ -64,6 +112,14 @@ pub enum FrameSchemaError {
     EmptyGroupKeys,
     #[error("with requires at least one column")]
     EmptyWith,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum RowCorrespondenceError {
+    #[error("row correspondence length does not match output rows")]
+    LengthMismatch,
+    #[error("row correspondence index is outside the input batch")]
+    InputIndexOutOfBounds,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]

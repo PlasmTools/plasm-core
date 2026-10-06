@@ -194,7 +194,13 @@ fn spawn_live_plan_run(
         accept,
         spawn.dry,
     )
-    .map_err(|e| LiveRunError::Failed(e.into()))?;
+    .map_err(|diagnostic| {
+        LiveRunError::Failed(plasm_runtime::ExecutionFailure::new(
+            plasm_runtime::FailureCause::Runtime,
+            "async_plan_run_start_failed",
+            diagnostic.to_string(),
+        ))
+    })?;
     Ok(handle)
 }
 

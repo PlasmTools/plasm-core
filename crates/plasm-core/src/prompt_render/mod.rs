@@ -99,7 +99,7 @@ mod teaching_gloss_emit;
 mod teaching_legend;
 mod teaching_push;
 mod teaching_util;
-pub use prerequisites::render_prerequisite_bindings;
+pub use prerequisites::{render_prerequisite_bindings, PrerequisiteBindingRenderError};
 mod tsv_emit;
 mod types;
 

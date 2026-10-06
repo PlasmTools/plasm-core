@@ -30,12 +30,12 @@ pub fn dry_stub_entity_rows(
     cgs: &CGS,
     ent: &EntityDef,
     count: usize,
-) -> Result<Vec<crate::ValueRow>, String> {
+) -> Result<Vec<crate::ValueRow>, crate::SchemaError> {
     let mut rows = Vec::with_capacity(count);
     for i in 0..count {
         let mut obj = IndexMap::new();
         for (field_name, field) in &ent.fields {
-            let nv = field.named_value(cgs).map_err(|e| e.to_string())?;
+            let nv = field.named_value(cgs)?;
             obj.insert(
                 field_name.as_str().to_string(),
                 dry_stub_value_for_named_value(nv, i),
@@ -43,7 +43,7 @@ pub fn dry_stub_entity_rows(
         }
         let id_name = ent.id_field.as_str();
         if let Some(id_field) = ent.fields.get(id_name) {
-            let nv = id_field.named_value(cgs).map_err(|e| e.to_string())?;
+            let nv = id_field.named_value(cgs)?;
             obj.insert(id_name.to_string(), dry_stub_value_for_named_value(nv, i));
         } else {
             obj.insert(id_name.to_string(), Value::String(format!("dry-{i}")));

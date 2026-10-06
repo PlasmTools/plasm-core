@@ -88,39 +88,45 @@ pub fn parse_capability_template(
                 .remove("transport");
             serde_json::from_value::<crate::CredentialBindTemplate>(declaration)
                 .map(CapabilityTemplate::CredentialBind)
-                .map_err(|_| CmlError::InvalidTemplate {
-                    message: "invalid credential binding template".into(),
+                .map_err(|source| CmlError::InvalidTransportTemplate {
+                    transport: crate::error::TransportKind::CredentialBind,
+                    source: std::sync::Arc::new(source),
                 })
         }
         "http" => serde_json::from_value::<CmlRequest>(template.clone())
             .map(CapabilityTemplate::Http)
-            .map_err(|e| CmlError::InvalidTemplate {
-                message: format!("invalid HTTP template: {e}"),
+            .map_err(|source| CmlError::InvalidTransportTemplate {
+                transport: crate::error::TransportKind::Http,
+                source: std::sync::Arc::new(source),
             }),
         "graphql" => serde_json::from_value::<CmlRequest>(template.clone())
             .map(CapabilityTemplate::GraphQl)
-            .map_err(|e| CmlError::InvalidTemplate {
-                message: format!("invalid GraphQL template: {e}"),
+            .map_err(|source| CmlError::InvalidTransportTemplate {
+                transport: crate::error::TransportKind::GraphQl,
+                source: std::sync::Arc::new(source),
             }),
         "view" => serde_json::from_value::<ViewTemplate>(template.clone())
             .map(CapabilityTemplate::View)
-            .map_err(|e| CmlError::InvalidTemplate {
-                message: format!("invalid view template: {e}"),
+            .map_err(|source| CmlError::InvalidTransportTemplate {
+                transport: crate::error::TransportKind::View,
+                source: std::sync::Arc::new(source),
             }),
         #[cfg(feature = "evm")]
         "evm_call" => serde_json::from_value::<EvmCallTemplate>(template.clone())
             .map(CapabilityTemplate::EvmCall)
-            .map_err(|e| CmlError::InvalidTemplate {
-                message: format!("invalid evm_call template: {e}"),
+            .map_err(|source| CmlError::InvalidTransportTemplate {
+                transport: crate::error::TransportKind::EvmCall,
+                source: std::sync::Arc::new(source),
             }),
         #[cfg(feature = "evm")]
         "evm_logs" => serde_json::from_value::<EvmLogsTemplate>(template.clone())
             .map(CapabilityTemplate::EvmLogs)
-            .map_err(|e| CmlError::InvalidTemplate {
-                message: format!("invalid evm_logs template: {e}"),
+            .map_err(|source| CmlError::InvalidTransportTemplate {
+                transport: crate::error::TransportKind::EvmLogs,
+                source: std::sync::Arc::new(source),
             }),
-        other => Err(CmlError::InvalidTemplate {
-            message: format!("unsupported transport '{other}'"),
+        other => Err(CmlError::UnsupportedTransport {
+            transport: other.to_owned(),
         }),
     }?;
     crate::expression_validation::validate_template(&parsed)?;

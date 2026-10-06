@@ -19,6 +19,43 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum CatalogRuntimeError {
+    #[error(transparent)]
+    Template(#[from] plasm_compile::CatalogTemplateError),
+    #[error(transparent)]
+    CatalogLoad(#[from] crate::catalog_data::CatalogLoadError),
+    #[error(transparent)]
+    CatalogIl(#[from] plasm_core::catalog_il::CatalogIlError),
+    #[error(transparent)]
+    CompiledCatalog(#[from] plasm_compile::CmlError),
+    #[error(transparent)]
+    Discovery(#[from] plasm_core::discovery::DiscoveryError),
+    #[error(transparent)]
+    DiscoveryStore(#[from] crate::discovery_store::DiscoveryStoreError),
+    #[error(transparent)]
+    Prerequisite(#[from] plasm_core::prerequisites::PrerequisiteError),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+    #[error("discovery requires PLASM_DISCOVERY_DATABASE_URL or DATABASE_URL")]
+    MissingDiscoveryDatabaseUrl,
+    #[error("discovery requires a packed format-3 catalog directory")]
+    RequiresCatalogDirectory,
+    #[error("no activated discovery generation")]
+    NoActivatedGeneration,
+    #[error("no compiled request recipes for catalog `{entry_id}`")]
+    CompiledCatalogUnavailable { entry_id: String },
+    #[error("invalid deployment bindings at {path}: {source}")]
+    DeploymentBindingsJson {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
+}
 
 /// How the catalog was bootstrapped — drives whether control-plane hot reload is allowed.
 #[derive(Clone, Debug)]
@@ -46,66 +83,62 @@ struct CatalogGeneration {
     prerequisite_deployments: plasm_core::prerequisites::DeploymentBindings,
 }
 
-fn compile_fixed_generation(registry: Arc<CgsRegistry>) -> CatalogGeneration {
+fn compile_fixed_generation(
+    registry: Arc<CgsRegistry>,
+) -> Result<CatalogGeneration, CatalogRuntimeError> {
     let compiled_by_entry = registry
         .list_entries()
         .into_iter()
         .map(|meta| {
-            let context = registry
-                .load_context(&meta.entry_id)
-                .unwrap_or_else(|error| panic!("cannot load catalog `{}`: {error}", meta.entry_id));
-            let compiled = plasm_compile::compile_cgs_capability_templates(&context.cgs)
-                .unwrap_or_else(|error| {
-                    panic!("cannot compile catalog `{}`: {error}", meta.entry_id)
-                });
-            (meta.entry_id, Arc::new(compiled))
+            let context = registry.load_context(&meta.entry_id)?;
+            let compiled = plasm_compile::compile_cgs_capability_templates(&context.cgs)?;
+            Ok((meta.entry_id, Arc::new(compiled)))
         })
-        .collect();
-    CatalogGeneration {
+        .collect::<Result<HashMap<_, _>, CatalogRuntimeError>>()?;
+    Ok(CatalogGeneration {
         registry,
         compiled_by_entry: Arc::new(compiled_by_entry),
         prerequisite_deployments: plasm_core::prerequisites::DeploymentBindings::default(),
-    }
+    })
 }
 
 impl CatalogRuntime {
-    pub fn new(initial: Arc<CgsRegistry>, bootstrap: CatalogBootstrap) -> Self {
+    pub fn new(
+        initial: Arc<CgsRegistry>,
+        bootstrap: CatalogBootstrap,
+    ) -> Result<Self, CatalogRuntimeError> {
         let generation = match &bootstrap {
             CatalogBootstrap::CatalogDir { path } => {
                 let loaded = crate::catalog_data::load_catalog_set_from_dir_with_progress(
                     path,
                     &mut |_: &str| {},
-                )
-                .unwrap_or_else(|error| panic!("cannot load compiled catalog generation: {error}"));
+                )?;
                 CatalogGeneration {
                     registry: loaded.registry,
                     compiled_by_entry: loaded.compiled_by_entry,
-                    prerequisite_deployments: read_optional_deployment_bindings(path)
-                        .unwrap_or_else(|error| panic!("cannot load deployment bindings: {error}")),
+                    prerequisite_deployments: read_optional_deployment_bindings(path)?,
                 }
             }
-            CatalogBootstrap::Fixed => compile_fixed_generation(initial),
+            CatalogBootstrap::Fixed => compile_fixed_generation(initial)?,
         };
-        Self {
+        Ok(Self {
             swap: Arc::new(ArcSwap::new(Arc::new(generation))),
             bootstrap,
             reload_generation: Arc::new(AtomicU64::new(0)),
             discovery: Arc::new(tokio::sync::OnceCell::new()),
             generation: Arc::new(arc_swap::ArcSwapOption::empty()),
-        }
+        })
     }
 
     /// Connect once. Explicit compilation and execution never call this method.
-    pub async fn discovery_store(&self) -> anyhow::Result<&crate::discovery_store::DiscoveryStore> {
+    pub async fn discovery_store(
+        &self,
+    ) -> Result<&crate::discovery_store::DiscoveryStore, CatalogRuntimeError> {
         self.discovery
             .get_or_try_init(|| async {
                 let url = std::env::var("PLASM_DISCOVERY_DATABASE_URL")
                     .or_else(|_| std::env::var("DATABASE_URL"))
-                    .map_err(|_| {
-                        anyhow::anyhow!(
-                            "discovery requires PLASM_DISCOVERY_DATABASE_URL or DATABASE_URL"
-                        )
-                    })?;
+                    .map_err(|_| CatalogRuntimeError::MissingDiscoveryDatabaseUrl)?;
                 let store = crate::discovery_store::DiscoveryStore::connect(&url).await?;
                 store.migrate().await?;
                 Ok(store)
@@ -114,16 +147,15 @@ impl CatalogRuntime {
     }
 
     /// Import one complete manifest set and its explicit deployment bindings.
-    pub async fn activate_discovery(&self) -> anyhow::Result<String> {
-        let path = self.catalog_dir_path().ok_or_else(|| {
-            anyhow::anyhow!("discovery requires a packed format-3 catalog directory")
-        })?;
-        let manifests =
-            plasm_core::catalog_il::read_catalog_set(path).map_err(anyhow::Error::msg)?;
+    pub async fn activate_discovery(&self) -> Result<String, CatalogRuntimeError> {
+        let path = self
+            .catalog_dir_path()
+            .ok_or_else(|| CatalogRuntimeError::RequiresCatalogDirectory)?;
+        let manifests = plasm_core::catalog_il::read_catalog_set(path)?;
         let prepared = manifests
             .iter()
             .map(|manifest| crate::discovery_store::PreparedCatalog::load(manifest))
-            .collect::<anyhow::Result<Vec<_>>>()?;
+            .collect::<Result<Vec<_>, _>>()?;
         let binding_path = std::env::var_os("PLASM_DISCOVERY_BINDINGS_PATH")
             .map(PathBuf::from)
             .unwrap_or_else(|| path.join("deployment-bindings.json"));
@@ -142,7 +174,7 @@ impl CatalogRuntime {
     }
 
     /// Request-local catalog view. Shared execution stores stay attached to the host.
-    pub async fn pinned_view(&self, generation: &str) -> anyhow::Result<Self> {
+    pub async fn pinned_view(&self, generation: &str) -> Result<Self, CatalogRuntimeError> {
         let (catalogs, compiled_catalogs, prerequisite_deployments) = self
             .discovery_store()
             .await?
@@ -166,10 +198,10 @@ impl CatalogRuntime {
         Ok(view)
     }
 
-    pub fn discovery_generation(&self) -> anyhow::Result<Arc<String>> {
+    pub fn discovery_generation(&self) -> Result<Arc<String>, CatalogRuntimeError> {
         self.generation
             .load_full()
-            .ok_or_else(|| anyhow::anyhow!("no activated discovery generation"))
+            .ok_or(CatalogRuntimeError::NoActivatedGeneration)
     }
 
     /// Current catalog snapshot (may change after a successful catalog-dir reload).
@@ -182,19 +214,22 @@ impl CatalogRuntime {
     pub fn compiled_catalog(
         &self,
         entry_id: &str,
-    ) -> Result<Arc<plasm_compile::CompiledCatalog>, String> {
+    ) -> Result<Arc<plasm_compile::CompiledCatalog>, CatalogRuntimeError> {
         self.swap
             .load_full()
             .compiled_by_entry
             .get(entry_id)
             .cloned()
-            .ok_or_else(|| format!("no compiled request recipes for catalog `{entry_id}`"))
+            .ok_or_else(|| CatalogRuntimeError::CompiledCatalogUnavailable {
+                entry_id: entry_id.to_owned(),
+            })
     }
 
     /// Publish a validated registry after load (used at startup and by reload handler).
     #[inline]
-    pub fn publish_catalog(&self, reg: Arc<CgsRegistry>) {
-        self.swap.store(Arc::new(compile_fixed_generation(reg)));
+    pub fn publish_catalog(&self, reg: Arc<CgsRegistry>) -> Result<(), CatalogRuntimeError> {
+        self.swap.store(Arc::new(compile_fixed_generation(reg)?));
+        Ok(())
     }
 
     /// Increments on each successful `POST /internal/catalog-registry/v1/reload` (first success → 1).
@@ -217,11 +252,12 @@ impl CatalogRuntime {
 
 fn read_optional_deployment_bindings(
     dir: &Path,
-) -> Result<plasm_core::prerequisites::DeploymentBindings, String> {
+) -> Result<plasm_core::prerequisites::DeploymentBindings, CatalogRuntimeError> {
     let path = dir.join("deployment-bindings.json");
     if !path.is_file() {
         return Ok(plasm_core::prerequisites::DeploymentBindings::default());
     }
-    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
-    serde_json::from_slice(&bytes).map_err(|e| format!("invalid deployment-bindings.json: {e}"))
+    let bytes = std::fs::read(&path)?;
+    serde_json::from_slice(&bytes)
+        .map_err(|source| CatalogRuntimeError::DeploymentBindingsJson { path, source })
 }

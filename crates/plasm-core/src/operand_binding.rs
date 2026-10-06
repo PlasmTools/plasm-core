@@ -4,6 +4,62 @@ mod data;
 
 use crate::expr::{ChainStep, EntityKey, Expr, IdentitySlot};
 use crate::{EntityId, EntityName, InvokeInputPayload, PlasmInputRef, Predicate, Value};
+use thiserror::Error;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum ResolvedValueError {
+    #[error("resolved data contains an unresolved operand")]
+    UnresolvedOperand,
+    #[error("resolved data contains a non-finite number")]
+    NonFiniteNumber,
+    #[error("literal integer exceeds the signed 64-bit domain")]
+    IntegerOutOfRange,
+    #[error("wire number is not representable as a finite float")]
+    InvalidFloat,
+    #[error("could not serialize resolved value")]
+    Serialization,
+}
+
+#[derive(Debug, Clone, Error)]
+pub enum IdentityCodecError {
+    #[error("unknown identity target entity `{entity}`")]
+    TargetEntityNotFound { entity: String },
+    #[error("entity `{entity}` has no declared identity slot `{field}`")]
+    SlotNotDeclared { entity: String, field: String },
+    #[error("entity `{entity}` requires a compound identity")]
+    CompoundIdentityRequired { entity: String },
+    #[error("could not resolve identity field type for `{entity}.{field}`")]
+    FieldTypeResolution {
+        entity: String,
+        field: String,
+        #[source]
+        source: crate::ParentFieldTypeError,
+    },
+    #[error("identity field `{entity}.{field}` has unsupported type {field_type:?}")]
+    UnsupportedFieldType {
+        entity: String,
+        field: String,
+        field_type: crate::FieldType,
+    },
+    #[error("identity number must be finite")]
+    NonFiniteNumber,
+    #[error("identity is not a declared integer")]
+    InvalidInteger,
+    #[error("identity integer is outside the declared i64 domain")]
+    IntegerOutOfRange,
+    #[error("identity is not a declared number")]
+    InvalidNumber,
+    #[error("identity is not a declared boolean")]
+    InvalidBoolean,
+    #[error("identity operand must be a declared scalar")]
+    ExpectedScalar,
+    #[error("identity operand does not match declared {field_type:?} scalar domain")]
+    ScalarDomainMismatch { field_type: crate::FieldType },
+    #[error(transparent)]
+    DigitId(#[from] crate::wire_coercion::DigitIdCoercionError),
+    #[error("dry identity row is missing declared identity field `{field}`")]
+    MissingIdentityValue { field: String },
+}
 
 /// Declared destination of an identity operand; compound slots retain their field name.
 #[derive(Clone, Copy)]
@@ -14,10 +70,10 @@ pub struct IdentityTarget<'a> {
 
 /// Serialize a floating identity scalar using the transport's canonical numeric spelling.
 /// This is the identity-key encoding boundary, not a materialized row conversion.
-pub fn encode_float_identity(value: f64) -> Result<String, String> {
+pub fn encode_float_identity(value: f64) -> Result<String, IdentityCodecError> {
     serde_json::Number::from_f64(value)
         .map(|number| number.to_string())
-        .ok_or_else(|| "identity number must be finite".into())
+        .ok_or(IdentityCodecError::NonFiniteNumber)
 }
 
 /// Target-directed identity encoder. Construction resolves the catalog identity slot;
@@ -46,37 +102,53 @@ impl IdentityCodec {
         )
     }
 
-    pub fn compile(cgs: &crate::CGS, target: IdentityTarget<'_>) -> Result<Self, String> {
-        let entity = cgs
-            .get_entity(target.entity.as_str())
-            .ok_or_else(|| format!("unknown identity target {}", target.entity))?;
+    pub fn compile(
+        cgs: &crate::CGS,
+        target: IdentityTarget<'_>,
+    ) -> Result<Self, IdentityCodecError> {
+        let entity = cgs.get_entity(target.entity.as_str()).ok_or_else(|| {
+            IdentityCodecError::TargetEntityNotFound {
+                entity: target.entity.to_string(),
+            }
+        })?;
         let field = match target.field {
             Some(field) if entity.key_vars.iter().any(|key| key.as_str() == field) => field,
             Some(field) => {
-                return Err(format!(
-                    "{} has no declared identity slot {field}",
-                    target.entity
-                ))
+                return Err(IdentityCodecError::SlotNotDeclared {
+                    entity: target.entity.to_string(),
+                    field: field.to_owned(),
+                });
             }
             None if entity.key_vars.len() > 1 => {
-                return Err(format!("{} requires a compound identity", target.entity))
+                return Err(IdentityCodecError::CompoundIdentityRequired {
+                    entity: target.entity.to_string(),
+                });
             }
             None => entity.key_vars.first().unwrap_or(&entity.id_field).as_str(),
         };
-        let field_type = crate::parent_entity_field_type(cgs, entity, field)?;
+        let field_type = crate::parent_entity_field_type(cgs, entity, field).map_err(|source| {
+            IdentityCodecError::FieldTypeResolution {
+                entity: target.entity.to_string(),
+                field: field.to_owned(),
+                source,
+            }
+        })?;
         if !Self::is_lawful_identity_type(&field_type) {
-            return Err(format!(
-                "{}.{field} has unsupported identity type {field_type:?}",
-                target.entity
-            ));
+            return Err(IdentityCodecError::UnsupportedFieldType {
+                entity: target.entity.to_string(),
+                field: field.to_owned(),
+                field_type,
+            });
         }
         Ok(Self { field_type })
     }
 
-    pub fn encode(&self, value: &Value) -> Result<EntityId, String> {
+    pub fn encode(&self, value: &Value) -> Result<EntityId, IdentityCodecError> {
         use crate::FieldType;
         if matches!(self.field_type, FieldType::DigitId) {
-            return crate::wire_coercion::encode_digit_id_identity(value).map(EntityId::from);
+            return crate::wire_coercion::encode_digit_id_identity(value)
+                .map(EntityId::from)
+                .map_err(IdentityCodecError::from);
         }
         let numeric = || match value {
             Value::Integer(value) => Some(value.to_string()),
@@ -91,11 +163,11 @@ impl IdentityCodec {
             ) => value.clone(),
             (FieldType::Integer, Value::String(value)) => value
                 .parse::<i64>()
-                .map_err(|_| "identity is not a declared i64 integer".to_string())?
+                .map_err(|_| IdentityCodecError::InvalidInteger)?
                 .to_string(),
             (FieldType::Integer, value) => value
                 .as_integer()
-                .ok_or_else(|| "identity integer is outside the declared i64 domain".to_string())?
+                .ok_or(IdentityCodecError::IntegerOutOfRange)?
                 .to_string(),
             (FieldType::Number, Value::String(value)) => {
                 if let Ok(number) = value.parse::<i64>() {
@@ -105,9 +177,9 @@ impl IdentityCodec {
                 } else {
                     let number = value
                         .parse::<f64>()
-                        .map_err(|_| "identity is not a declared number")?;
+                        .map_err(|_| IdentityCodecError::InvalidNumber)?;
                     if !number.is_finite() {
-                        return Err("identity number must be finite".into());
+                        return Err(IdentityCodecError::NonFiniteNumber);
                     }
                     encode_float_identity(number)?
                 }
@@ -115,16 +187,15 @@ impl IdentityCodec {
             (FieldType::Boolean, Value::Bool(value)) => value.to_string(),
             (FieldType::Boolean, Value::String(value)) => value
                 .parse::<bool>()
-                .map_err(|_| "identity is not a declared boolean".to_string())?
+                .map_err(|_| IdentityCodecError::InvalidBoolean)?
                 .to_string(),
             (FieldType::String | FieldType::Select | FieldType::Number | FieldType::Date, _) => {
-                numeric().ok_or_else(|| "identity operand must be a declared scalar".to_string())?
+                numeric().ok_or(IdentityCodecError::ExpectedScalar)?
             }
             _ => {
-                return Err(format!(
-                    "identity operand does not match declared {:?} scalar domain",
-                    self.field_type
-                ))
+                return Err(IdentityCodecError::ScalarDomainMismatch {
+                    field_type: self.field_type.clone(),
+                });
             }
         };
         Ok(EntityId::from(text))
@@ -152,7 +223,7 @@ impl<'de> serde::Deserialize<'de> for ResolvedValue {
 impl Eq for ResolvedValue {}
 
 impl TryFrom<Value> for ResolvedValue {
-    type Error = &'static str;
+    type Error = ResolvedValueError;
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         Self::new(value)
     }
@@ -164,33 +235,44 @@ impl From<ResolvedValue> for Value {
 }
 
 impl ResolvedValue {
+    /// Construct a resolved string, which cannot contain executable operands or invalid numbers.
+    #[must_use]
+    pub fn string(value: impl Into<String>) -> Self {
+        Self(Value::String(value.into()))
+    }
+
+    #[must_use]
+    pub fn boolean(value: bool) -> Self {
+        Self(Value::Bool(value))
+    }
+
     pub fn null() -> Self {
         Self(Value::Null)
     }
-    pub fn new(value: Value) -> Result<Self, &'static str> {
-        fn check(value: &Value) -> bool {
+    pub fn new(value: Value) -> Result<Self, ResolvedValueError> {
+        fn check(value: &Value) -> Result<(), ResolvedValueError> {
             match value {
                 Value::PlasmInputRef(_)
                 | Value::GetScalarExtract(_)
                 | Value::PhraseIdent(_)
-                | Value::StringTemplate(_) => false,
-                Value::Array(items) => items.iter().all(check),
-                Value::Object(fields) => fields.values().all(check),
-                Value::UnionCtor { .. } => false,
-                Value::Float(value) => value.is_finite(),
+                | Value::StringTemplate(_)
+                | Value::UnionCtor { .. } => Err(ResolvedValueError::UnresolvedOperand),
+                Value::Array(items) => items.iter().try_for_each(check),
+                Value::Object(fields) => fields.values().try_for_each(check),
+                Value::Float(value) if !value.is_finite() => {
+                    Err(ResolvedValueError::NonFiniteNumber)
+                }
                 Value::Null
                 | Value::Bool(_)
                 | Value::Unsigned(_)
                 | Value::Integer(_)
                 | Value::String(_)
-                | Value::Money(_) => true,
+                | Value::Money(_)
+                | Value::Float(_) => Ok(()),
             }
         }
-        if check(&value) {
-            Ok(Self(value))
-        } else {
-            Err("resolved data contains an unresolved operand")
-        }
+        check(&value)?;
+        Ok(Self(value))
     }
     pub fn as_array(&self) -> Option<&[Value]> {
         if let Value::Array(items) = &self.0 {
@@ -209,11 +291,11 @@ impl ResolvedValue {
     pub fn value(&self) -> &Value {
         &self.0
     }
-    pub fn to_wire(&self) -> serde_json::Value {
-        serde_json::to_value(&self.0).expect("resolved data is serializable")
+    pub fn to_wire(&self) -> Result<serde_json::Value, ResolvedValueError> {
+        serde_json::to_value(&self.0).map_err(|_| ResolvedValueError::Serialization)
     }
-    pub fn from_wire(value: serde_json::Value) -> Result<Self, String> {
-        fn decode(value: serde_json::Value) -> Result<Value, String> {
+    pub fn from_wire(value: serde_json::Value) -> Result<Self, ResolvedValueError> {
+        fn decode(value: serde_json::Value) -> Result<Value, ResolvedValueError> {
             use serde_json::Value as J;
             Ok(match value {
                 J::Null => Value::Null,
@@ -224,9 +306,9 @@ impl ResolvedValue {
                     } else if let Some(i) = v.as_u64() {
                         Value::Unsigned(i)
                     } else if v.is_f64() {
-                        Value::Float(v.as_f64().ok_or("invalid float")?)
+                        Value::Float(v.as_f64().ok_or(ResolvedValueError::InvalidFloat)?)
                     } else {
-                        return Err("literal integer exceeds the signed 64-bit domain".into());
+                        return Err(ResolvedValueError::IntegerOutOfRange);
                     }
                 }
                 J::String(v) => Value::String(v),
@@ -241,13 +323,13 @@ impl ResolvedValue {
                             fields
                                 .into_iter()
                                 .map(|(k, v)| Ok((k, decode(v)?)))
-                                .collect::<Result<_, String>>()?,
+                                .collect::<Result<_, ResolvedValueError>>()?,
                         )
                     }
                 }
             })
         }
-        Self::new(decode(value)?).map_err(str::to_owned)
+        Self::new(decode(value)?)
     }
     pub fn into_value(self) -> Value {
         self.0
@@ -617,24 +699,33 @@ mod tests {
 
     #[test]
     fn literal_strings_are_not_executable_templates() {
+        #[derive(Debug, thiserror::Error)]
+        enum UnexpectedResolution {
+            #[error("unexpected reference")]
+            Reference,
+            #[error("unexpected identity")]
+            Identity,
+            #[error("unexpected template")]
+            Template,
+        }
         struct Reject;
         impl OperandResolver for Reject {
-            type Error = String;
-            fn resolve(&mut self, _: &PlasmInputRef) -> Result<ResolvedValue, String> {
-                Err("unexpected reference".into())
+            type Error = UnexpectedResolution;
+            fn resolve(&mut self, _: &PlasmInputRef) -> Result<ResolvedValue, Self::Error> {
+                Err(UnexpectedResolution::Reference)
             }
             fn identity(
                 &mut self,
                 _: IdentityTarget<'_>,
                 _: &PlasmInputRef,
-            ) -> Result<EntityId, String> {
-                Err("unexpected identity".into())
+            ) -> Result<EntityId, Self::Error> {
+                Err(UnexpectedResolution::Identity)
             }
             fn string(
                 &mut self,
                 _: &crate::program_string_template::CompiledProgramString,
-            ) -> Result<String, String> {
-                Err("unexpected template".into())
+            ) -> Result<String, Self::Error> {
+                Err(UnexpectedResolution::Template)
             }
         }
         let literal = Value::String("{{ missing }} ${ordinary data}".into());
@@ -769,10 +860,13 @@ mod tests {
             },
         )
         .expect_err("entity_ref id_field is not a lawful identity scalar");
-        assert!(
-            err.contains("unsupported identity type") && err.contains("EntityRef"),
-            "expected EntityRef identity rejection, got: {err}"
-        );
+        assert!(matches!(
+            err,
+            IdentityCodecError::UnsupportedFieldType {
+                field_type: crate::FieldType::EntityRef { .. },
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -816,10 +910,14 @@ mod tests {
                 .as_str(),
             "6419671322388907"
         );
-        assert!(codec
-            .encode(&crate::fixture_value!(9_007_199_254_740_993i64 as f64))
-            .unwrap_err()
-            .contains("IEEE"));
+        assert!(matches!(
+            codec
+                .encode(&crate::fixture_value!(9_007_199_254_740_993i64 as f64))
+                .unwrap_err(),
+            IdentityCodecError::DigitId(
+                crate::wire_coercion::DigitIdCoercionError::InexactFloatIdentity
+            )
+        ));
     }
 
     #[test]
@@ -917,7 +1015,21 @@ mod tests {
     #[test]
     fn resolved_values_reject_nested_executable_references() {
         let reference = Value::PlasmInputRef(PlasmInputRef::node_output("source", vec![]));
-        assert!(ResolvedValue::new(Value::Array(vec![reference])).is_err());
+        assert!(matches!(
+            ResolvedValue::new(Value::Array(vec![reference])),
+            Err(ResolvedValueError::UnresolvedOperand)
+        ));
+        assert!(matches!(
+            ResolvedValue::new(Value::Float(f64::NAN)),
+            Err(ResolvedValueError::NonFiniteNumber)
+        ));
+        assert_eq!(
+            ResolvedValue::new(Value::String("resolved".into()))
+                .expect("string is resolved")
+                .to_wire()
+                .expect("resolved values serialize"),
+            serde_json::json!("resolved")
+        );
     }
 
     #[test]

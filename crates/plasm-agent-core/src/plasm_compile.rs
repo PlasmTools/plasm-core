@@ -12,9 +12,19 @@ use crate::plasm_dag::{
     compile_plasm_dag_to_plan_inner, compile_plasm_surface_line_to_plan, is_plasm_dag_source,
 };
 use crate::plasm_plan::validate_plan_artifact;
-use crate::program_diagnostic::{diagnose_compile_failure, ProgramStageError};
+use crate::program_diagnostic::ProgramStageError;
 use plasm_core::plasm_monad::PlasmCompArtifact;
 use plasm_core::{PromptPipelineConfig, SymbolMapCrossRequestCache};
+
+#[derive(Debug, thiserror::Error)]
+enum CompileSourceError {
+    #[error(transparent)]
+    Dag(#[from] crate::plasm_dag::error::DagCompilationError),
+    #[error(transparent)]
+    Plan(#[from] crate::plasm_plan::PlanValidationError),
+    #[error(transparent)]
+    SessionProvision(#[from] crate::plan_session_provisions::SessionProvisionError),
+}
 
 /// Lower surface/DAG source to a validated comp artifact (no plan wire exposure).
 fn compile_source_to_artifact(
@@ -23,7 +33,7 @@ fn compile_source_to_artifact(
     session: &ExecuteSession,
     name: &str,
     source: &str,
-) -> Result<PlasmCompArtifact, String> {
+) -> Result<PlasmCompArtifact, CompileSourceError> {
     let plan = if is_plasm_dag_source(source.trim()) {
         compile_plasm_dag_to_plan_inner(pipeline, symbol_map_cross_cache, session, name, source)?
     } else {
@@ -44,13 +54,29 @@ fn compile_to_bundle(
 ) -> Result<PlasmCompBundle, ProgramStageError> {
     match compile_source_to_artifact(pipeline, symbol_map_cross_cache, session, name, source) {
         Ok(artifact) => PlasmCompBundle::new(artifact).map_err(ProgramStageError::plan),
-        Err(msg) => Err(diagnose_compile_failure(
-            pipeline,
-            symbol_map_cross_cache,
-            session,
-            source,
-            msg,
-        )),
+        Err(CompileSourceError::SessionProvision(error)) => {
+            Err(ProgramStageError::SessionProvision { error })
+        }
+        Err(CompileSourceError::Dag(crate::error::DagCompilationError::SurfaceParse(
+            crate::plasm_plan_run::ProgramSurfaceParseError::Parse(error),
+        ))) => {
+            let correction = crate::plasm_plan_run::format_session_symbolic_parse_error(
+                session,
+                symbol_map_cross_cache,
+                pipeline,
+                source,
+                &error,
+            );
+            Err(ProgramStageError::Parse {
+                correction,
+                span_offset: Some(error.offset),
+                error: std::sync::Arc::new(crate::program_diagnostic::ProgramParseError::Surface(
+                    error,
+                )),
+            })
+        }
+        Err(CompileSourceError::Dag(error)) => Err(error.into()),
+        Err(CompileSourceError::Plan(error)) => Err(ProgramStageError::plan(error)),
     }
 }
 
@@ -92,11 +118,10 @@ pub fn compile_plasm_surface_line_to_comp(
 pub async fn compile_python_program(
     session: &ExecuteSession,
     source: &str,
-) -> Result<PlasmCompBundle, String> {
-    let bundle = crate::plasm_dag::compile_python_program_checked(session, source)
-        .map_err(|error| error.to_string())?;
+) -> Result<PlasmCompBundle, crate::compilation_error::CompilationError> {
+    let bundle = crate::plasm_dag::compile_python_program_checked(session, source)?;
     let admission = Box::pin(crate::python_compute::admit_bundle(session, &bundle)).await;
-    admission.map_err(|error| error.to_string())?;
+    admission?;
     Ok(bundle)
 }
 

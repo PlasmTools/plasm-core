@@ -250,10 +250,9 @@ pub(crate) fn validate_concrete_named_value(
                 nv.array_items.as_ref(),
                 value.clone(),
             )
-            .map_err(|message| TypeError::IncompatibleValue {
+            .map_err(|source| TypeError::CoercionFailure {
                 field: field_path.to_string(),
-                value_type: format!("{} ({message})", value.type_name()),
-                field_type: "array".to_string(),
+                source,
             })?;
             validate_typed_array_value(&coerced, spec, field_path, cgs)
         }
@@ -265,10 +264,9 @@ pub(crate) fn validate_concrete_named_value(
                 nv.array_items.as_ref(),
                 value.clone(),
             )
-            .map_err(|message| TypeError::IncompatibleValue {
+            .map_err(|source| TypeError::CoercionFailure {
                 field: field_path.to_string(),
-                value_type: format!("{} ({message})", value.type_name()),
-                field_type: "multi_select".to_string(),
+                source,
             })?;
             validate_multiselect_value(&coerced, allowed, field_path)
         }
@@ -280,15 +278,18 @@ pub(crate) fn validate_concrete_named_value(
                 value.clone(),
             ) {
                 Ok(v) => v,
-                Err(message) => {
+                Err(source) => {
                     return Err(match &nv.field_type {
                         FieldType::EntityRef { target, .. } => {
-                            entity_ref_incompatible_value(field_path, target.as_str(), value, cgs)
+                            TypeError::EntityRefCoercionFailure {
+                                field: field_path.to_string(),
+                                target: target.to_string(),
+                                source,
+                            }
                         }
-                        _ => TypeError::IncompatibleValue {
+                        _ => TypeError::CoercionFailure {
                             field: field_path.to_string(),
-                            value_type: format!("{} ({message})", value.type_name()),
-                            field_type: format!("{:?}", nv.field_type),
+                            source,
                         },
                     });
                 }
@@ -851,13 +852,13 @@ pub(crate) fn validate_input_type(
                                         &stripped, variant,
                                     ) {
                                         Ok(v) => v,
-                                        Err(()) => {
+                                        Err(error) => {
                                             return Err(TypeError::IncompatibleValue {
                                                 field: path.to_string(),
                                                 value_type: "object".into(),
                                                 field_type: format!(
-                                                    "union variant `{}` wire body decode failed",
-                                                    variant.name
+                                                    "union variant `{}` wire body decode failed: {error}",
+                                                    variant.name,
                                                 ),
                                             });
                                         }
@@ -886,14 +887,22 @@ pub(crate) fn validate_input_type(
 pub(crate) fn validate_named_value_domain_value(
     value: &Value,
     nv: &crate::NamedValueSchema,
-) -> Result<(), String> {
+) -> Result<(), crate::ValueDomainViolation> {
     if value.is_domain_example_placeholder() {
         return Ok(());
     }
     if let Some(s) = value.as_str() {
-        nv.domain.validate_string_value(s)
+        nv.domain.validate_string_value(s).map_err(|error| {
+            error
+                .violation()
+                .unwrap_or(crate::ValueDomainViolation::PatternConfiguration)
+        })
     } else if let Some(n) = value.as_number() {
-        nv.domain.validate_number_value(n)
+        nv.domain.validate_number_value(n).map_err(|error| {
+            error
+                .violation()
+                .unwrap_or(crate::ValueDomainViolation::PatternConfiguration)
+        })
     } else {
         Ok(())
     }
@@ -905,7 +914,7 @@ pub(crate) fn validate_named_value_domain(
     nv: &crate::NamedValueSchema,
     field_path: &str,
 ) -> Result<(), TypeError> {
-    validate_named_value_domain_value(value, nv).map_err(|msg| {
+    validate_named_value_domain_value(value, nv).map_err(|violation| {
         let value_type = if let Some(s) = value.as_str() {
             format!("'{s}'")
         } else if let Some(n) = value.as_number() {
@@ -913,10 +922,10 @@ pub(crate) fn validate_named_value_domain(
         } else {
             value.type_name().to_string()
         };
-        TypeError::IncompatibleValue {
+        TypeError::ValueDomainViolation {
             field: field_path.to_string(),
             value_type,
-            field_type: msg,
+            violation,
         }
     })
 }
@@ -1047,8 +1056,15 @@ mod tests {
     #[test]
     fn value_domain_on_concrete_violation_still_fails() {
         let nv = revenue_nv_min_zero();
-        validate_named_value_domain(&Value::Integer(-5), &nv, "revenue")
+        let error = validate_named_value_domain(&Value::Integer(-5), &nv, "revenue")
             .expect_err("a real negative revenue must still fail min constraint");
+        assert!(matches!(
+            error,
+            TypeError::ValueDomainViolation {
+                violation: crate::ValueDomainViolation::BelowMinimum,
+                ..
+            }
+        ));
     }
 
     /// Fixture `account_update` AtLeastOne(name, revenue, priority) — empty must fail; `$` vacates.
@@ -1227,8 +1243,8 @@ mod tests {
         )
         .expect_err("arguments lane integer must reject string");
         assert!(
-            matches!(err, TypeError::IncompatibleValue { ref field, .. } if field == "limit"),
-            "expected limit IncompatibleValue, got {err:?}"
+            matches!(err, TypeError::CoercionFailure { ref field, .. } if field == "limit"),
+            "expected typed limit coercion failure, got {err:?}"
         );
 
         let err = validate_capability_invocation_input(

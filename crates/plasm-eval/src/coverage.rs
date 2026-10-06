@@ -7,8 +7,49 @@ use plasm_core::predicate::Predicate;
 use plasm_core::schema::CapabilityKind;
 use plasm_core::{Value, CGS};
 use serde::Deserialize;
+use thiserror::Error;
 
 type UnionCaseEntitiesResult = (HashSet<String>, HashMap<String, Vec<String>>);
+
+#[derive(Debug, Error)]
+pub enum CoverageError {
+    #[error("unknown required_extra coverage form `{form}`")]
+    UnknownRequiredForm { form: String },
+    #[error("invalid expected entities: {issues:?}")]
+    InvalidExpectedEntities { issues: Vec<CoverageIssue> },
+    #[error("invalid covers declarations: {issues:?}")]
+    InvalidCovers { issues: Vec<CoverageIssue> },
+    #[error("reference coverage differs from declared covers: {issues:?}")]
+    ReferenceCoverageMismatch { issues: Vec<CoverageIssue> },
+    #[error("case `{case_id}` reference expression failed: {source}")]
+    CaseReference {
+        case_id: String,
+        #[source]
+        source: crate::ProgramReferenceError,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CoverageIssue {
+    UnknownExpectedEntity {
+        case_id: String,
+        entity: String,
+    },
+    UnknownCoverToken {
+        case_id: String,
+        token: String,
+    },
+    CoverNotAllowed {
+        case_id: String,
+        token: String,
+    },
+    ReferenceCoverMismatch {
+        case_id: String,
+        derived: String,
+        claimed: String,
+        subset_ok: bool,
+    },
+}
 
 /// Closed vocabulary for `covers:` in eval YAML (snake_case).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -285,10 +326,10 @@ pub fn required_form_buckets(cgs: &CGS) -> HashMap<EvalFormId, String> {
 pub fn apply_coverage_override(
     mut base: HashMap<EvalFormId, String>,
     o: &CoverageOverride,
-) -> anyhow::Result<HashMap<EvalFormId, String>> {
+) -> Result<HashMap<EvalFormId, String>, CoverageError> {
     for ex in &o.required_extra {
         let Some(id) = EvalFormId::parse(ex) else {
-            anyhow::bail!("unknown required_extra form {:?}", ex);
+            return Err(CoverageError::UnknownRequiredForm { form: ex.clone() });
         };
         base.entry(id)
             .or_insert_with(|| "from eval/coverage override".into());
@@ -310,26 +351,26 @@ pub fn validate_case_entities_against_schema(
     cases: &[crate::EvalCase],
     schema_key: &str,
     cgs: &CGS,
-) -> anyhow::Result<()> {
-    let mut errors = Vec::new();
+) -> Result<(), CoverageError> {
+    let mut issues = Vec::new();
     for c in cases {
         if c.schema != schema_key {
             continue;
         }
         for e in &c.expect.entities_any {
             if !cgs.entities.contains_key(e.as_str()) {
-                errors.push(format!(
-                    "case {}: unknown entity {:?} in expect.entities_any (not in CGS)",
-                    c.id, e
-                ));
+                issues.push(CoverageIssue::UnknownExpectedEntity {
+                    case_id: c.id.clone(),
+                    entity: e.clone(),
+                });
             }
         }
     }
-    if errors.is_empty() {
+    if issues.is_empty() {
         Ok(())
     } else {
-        errors.sort();
-        anyhow::bail!("invalid expect.entities_any:\n{}", errors.join("\n"))
+        issues.sort_by_key(|issue| format!("{issue:?}"));
+        Err(CoverageError::InvalidExpectedEntities { issues })
     }
 }
 
@@ -340,7 +381,7 @@ pub async fn union_case_entities(
     schema_key: &str,
     cgs: &CGS,
     source: CoversSource,
-) -> anyhow::Result<UnionCaseEntitiesResult> {
+) -> Result<UnionCaseEntitiesResult, CoverageError> {
     let mut union = HashSet::new();
     let mut by_case: HashMap<String, Vec<String>> = HashMap::new();
 
@@ -355,9 +396,12 @@ pub async fn union_case_entities(
                 if let Some(ref re) = c.reference_expr {
                     let re = re.trim();
                     if !re.is_empty() {
-                        let derived = crate::entities_from_reference_expr(re, cgs)
-                            .await
-                            .map_err(|e| anyhow::anyhow!("case {} reference_expr: {}", c.id, e))?;
+                        let derived = crate::entities_from_reference_expr(re, cgs).await.map_err(
+                            |source| CoverageError::CaseReference {
+                                case_id: c.id.clone(),
+                                source,
+                            },
+                        )?;
                         if matches!(source, CoversSource::Reference) {
                             derived
                         } else {
@@ -401,11 +445,11 @@ pub enum CoversSource {
 pub async fn derive_eval_form_ids_from_reference(
     reference_expr: &str,
     cgs: &CGS,
-) -> Result<HashSet<EvalFormId>, String> {
+) -> Result<HashSet<EvalFormId>, crate::ProgramReferenceError> {
     let program = crate::ProgramSession::new(cgs, None)?
         .compile(reference_expr)
         .await
-        .map_err(|e| e.agent_markdown())?;
+        .map_err(crate::ProgramReferenceError::Compilation)?;
     let mut facts = crate::program_facts::ProgramFacts::default();
     facts.visit(&program.artifact().comp);
     let mut out = HashSet::new();
@@ -518,7 +562,7 @@ pub async fn cases_with_effective_covers(
     cases: &[crate::EvalCase],
     cgs: &CGS,
     source: CoversSource,
-) -> anyhow::Result<Vec<crate::EvalCase>> {
+) -> Result<Vec<crate::EvalCase>, CoverageError> {
     match source {
         CoversSource::Yaml => Ok(cases.to_vec()),
         CoversSource::Reference | CoversSource::Merge => {
@@ -528,9 +572,12 @@ pub async fn cases_with_effective_covers(
                 if let Some(ref re) = c.reference_expr {
                     let re = re.trim();
                     if !re.is_empty() {
-                        let derived = derive_eval_form_ids_from_reference(re, cgs)
-                            .await
-                            .map_err(|e| anyhow::anyhow!("case {} reference_expr: {}", c.id, e))?;
+                        let derived = derive_eval_form_ids_from_reference(re, cgs).await.map_err(
+                            |source| CoverageError::CaseReference {
+                                case_id: c.id.clone(),
+                                source,
+                            },
+                        )?;
                         if matches!(source, CoversSource::Reference) {
                             row.covers = sorted_form_id_strings(&derived);
                         } else {
@@ -564,8 +611,8 @@ pub async fn compare_case_covers_to_derived(
     schema_key: &str,
     cgs: &CGS,
     allow_extra_claims: bool,
-) -> anyhow::Result<()> {
-    let mut failures: Vec<String> = Vec::new();
+) -> Result<(), CoverageError> {
+    let mut failures: Vec<CoverageIssue> = Vec::new();
     for c in cases {
         if c.schema != schema_key {
             continue;
@@ -579,7 +626,10 @@ pub async fn compare_case_covers_to_derived(
         }
         let derived = derive_eval_form_ids_from_reference(re, cgs)
             .await
-            .map_err(|e| anyhow::anyhow!("case {} reference_expr: {}", c.id, e))?;
+            .map_err(|source| CoverageError::CaseReference {
+                case_id: c.id.clone(),
+                source,
+            })?;
         let claimed: HashSet<EvalFormId> = c
             .covers
             .iter()
@@ -591,23 +641,19 @@ pub async fn compare_case_covers_to_derived(
             derived == claimed
         };
         if !ok {
-            failures.push(format!(
-                "case {}: derived [{}] vs claimed [{}] (subset_ok={})",
-                c.id,
-                format_form_set(&derived),
-                format_form_set(&claimed),
-                allow_extra_claims
-            ));
+            failures.push(CoverageIssue::ReferenceCoverMismatch {
+                case_id: c.id.clone(),
+                derived: format_form_set(&derived),
+                claimed: format_form_set(&claimed),
+                subset_ok: allow_extra_claims,
+            });
         }
     }
     if failures.is_empty() {
         Ok(())
     } else {
-        failures.sort();
-        anyhow::bail!(
-            "reference_expr vs covers mismatch:\n{}",
-            failures.join("\n")
-        )
+        failures.sort_by_key(|issue| format!("{issue:?}"));
+        Err(CoverageError::ReferenceCoverageMismatch { issues: failures })
     }
 }
 
@@ -625,31 +671,31 @@ pub fn validate_case_covers_against_allowed(
     cases: &[crate::EvalCase],
     schema_key: &str,
     allowed: &HashSet<EvalFormId>,
-) -> anyhow::Result<()> {
-    let mut errors: Vec<String> = Vec::new();
+) -> Result<(), CoverageError> {
+    let mut issues: Vec<CoverageIssue> = Vec::new();
     for c in cases {
         if c.schema != schema_key {
             continue;
         }
         for s in &c.covers {
             match EvalFormId::parse(s) {
-                None => errors.push(format!(
-                    "case {}: unknown covers token {:?}",
-                    c.id, s
-                )),
-                Some(id) if !allowed.contains(&id) => errors.push(format!(
-                    "case {}: covers token {:?} is not in the CGS-derived allowed set for this schema",
-                    c.id, s
-                )),
+                None => issues.push(CoverageIssue::UnknownCoverToken {
+                    case_id: c.id.clone(),
+                    token: s.clone(),
+                }),
+                Some(id) if !allowed.contains(&id) => issues.push(CoverageIssue::CoverNotAllowed {
+                    case_id: c.id.clone(),
+                    token: id.as_str().to_string(),
+                }),
                 Some(_) => {}
             }
         }
     }
-    if errors.is_empty() {
+    if issues.is_empty() {
         Ok(())
     } else {
-        errors.sort();
-        anyhow::bail!("invalid covers:\n{}", errors.join("\n"))
+        issues.sort_by_key(|issue| format!("{issue:?}"));
+        Err(CoverageError::InvalidCovers { issues })
     }
 }
 
@@ -1070,8 +1116,14 @@ mod tests {
         }];
         let allowed = HashSet::from([EvalFormId::Get]);
         let e = validate_case_covers_against_allowed(&cases, "x", &allowed).unwrap_err();
-        let msg = format!("{e:#}");
-        assert!(msg.contains("unknown covers token"));
+        assert!(matches!(
+            e,
+            CoverageError::InvalidCovers { issues }
+                if issues == vec![CoverageIssue::UnknownCoverToken {
+                    case_id: "bad".into(),
+                    token: "not_a_real_bucket".into(),
+                }]
+        ));
     }
 
     #[test]
@@ -1087,8 +1139,14 @@ mod tests {
         }];
         let allowed = HashSet::from([EvalFormId::QueryAll]);
         let e = validate_case_covers_against_allowed(&cases, "x", &allowed).unwrap_err();
-        let msg = format!("{e:#}");
-        assert!(msg.contains("not in the CGS-derived allowed set"));
+        assert!(matches!(
+            e,
+            CoverageError::InvalidCovers { issues }
+                if issues == vec![CoverageIssue::CoverNotAllowed {
+                    case_id: "bad".into(),
+                    token: "get".into(),
+                }]
+        ));
     }
 
     #[test]

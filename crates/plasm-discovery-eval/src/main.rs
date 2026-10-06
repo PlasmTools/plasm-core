@@ -10,14 +10,14 @@ struct Args {
     output: PathBuf,
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let cases: Vec<plasm_discovery_eval::FrozenCase> =
         serde_json::from_slice(&std::fs::read(args.receipts)?)?;
     let scores = cases
         .into_iter()
         .map(plasm_discovery_eval::score)
-        .collect::<anyhow::Result<Vec<_>>>()?;
+        .collect::<Result<Vec<_>, _>>()?;
     let output = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)

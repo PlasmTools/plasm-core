@@ -8,10 +8,10 @@ mod value;
 mod with_expr;
 
 pub use crate::identity::RelationName;
-pub use atoms::{BindingName, FieldPath, OutputName, PlanQualifiedEntityKey};
+pub use atoms::{BindingName, FieldPath, OutputName, PlanAtomError, PlanQualifiedEntityKey};
 pub use compute::{
     AggregateFunction, AggregateSpec, ComputeOp, ComputeTemplate, SyntheticFieldSchema,
-    SyntheticResultSchema, SyntheticValueKind,
+    SyntheticResultSchema, SyntheticResultSchemaError, SyntheticValueKind,
 };
 pub use expr::{PlanExprIr, PlanExprTemplate};
 pub use relation::{PlanRelationTraversal, RelationCardinality, RelationSourceCardinality};
@@ -22,6 +22,6 @@ pub use step_payload::{
 pub use templates::{DeriveKind, DeriveTemplate, EffectTemplate};
 pub use value::{
     InputCardinality, PlanDataInput, PlanInputBinding, PlanPredicate, PlanPredicateOp,
-    PlanResultUse, PlasmDataValue,
+    PlanResultUse, PlasmDataValue, PlasmDataValueError, PlasmDataValueEvaluationError,
 };
 pub use with_expr::{ArithOp, WithColumn, WithExpr, WithExprError, WithLiteral};

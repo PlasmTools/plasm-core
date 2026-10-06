@@ -23,7 +23,7 @@ fn render(
     cols: &RenderColumns,
     template: &str,
     collection_alias: Option<&OutputName>,
-) -> Result<Vec<plasm_core::ValueRow>, String> {
+) -> Result<Vec<plasm_core::ValueRow>, super::super::compute_eval::RenderComputeError> {
     render_compute(&RenderComputeInput {
         output_name: "content",
         primary_rows: rows,
@@ -142,9 +142,14 @@ fn render_compute_propagates_minijinja_errors_with_row_position() {
     let cols = empty_cols(&["name"]);
     let err = render(&rows, &cols, "{{ missing }}", None).expect_err("strict undefined");
 
-    assert!(err.contains("template render failed on binding"), "{err}");
-    assert!(err.contains("at row 0"), "{err}");
-    assert!(!err.contains("\"a\""), "must not expose row values: {err}");
+    assert!(matches!(
+        &err,
+        super::super::compute_eval::RenderComputeError::Template { row_index: 0, .. }
+    ));
+    assert!(
+        !err.to_string().contains("\"a\""),
+        "must not expose row values: {err}"
+    );
 }
 
 #[test]
@@ -155,7 +160,10 @@ fn render_compute_fails_closed_on_first_row_error() {
     ];
     let cols = empty_cols(&[]);
     let err = render(&rows, &cols, "{{ name }}", None).expect_err("row 1 missing name");
-    assert!(err.contains("at row 1"), "{err}");
+    assert!(matches!(
+        err,
+        super::super::compute_eval::RenderComputeError::Template { row_index: 1, .. }
+    ));
 }
 
 #[test]
@@ -178,7 +186,10 @@ fn render_compute_no_implicit_rows_variable() {
     let rows = vec![crate::fixture_row!({ "name": "a" })];
     let cols = empty_cols(&["name"]);
     let err = render(&rows, &cols, "{{ rows | length }}", None).expect_err("implicit rows is gone");
-    assert!(err.contains("at row 0"), "{err}");
+    assert!(matches!(
+        err,
+        super::super::compute_eval::RenderComputeError::Template { row_index: 0, .. }
+    ));
 }
 
 #[test]

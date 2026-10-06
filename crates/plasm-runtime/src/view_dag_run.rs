@@ -388,8 +388,8 @@ fn walk_view_nodes_sync<R: ViewNodeRunner>(
         }
         if let Some(traverse) = &node.traverse {
             let source = walk.node_results.get(&traverse.node).ok_or_else(|| {
-                RuntimeError::ConfigurationError {
-                    message: format!("missing traversal source `{}`", traverse.node),
+                RuntimeError::ViewNodeMissing {
+                    node: traverse.node.clone(),
                 }
             })?;
             let result = runner.run_traversal_node(&run_ctx, node, source)?;
@@ -418,8 +418,8 @@ async fn walk_view_nodes_async<R: ViewNodeRunnerAsync + ?Sized>(
         }
         if let Some(traverse) = &node.traverse {
             let source = walk.node_results.get(&traverse.node).ok_or_else(|| {
-                RuntimeError::ConfigurationError {
-                    message: format!("missing traversal source `{}`", traverse.node),
+                RuntimeError::ViewNodeMissing {
+                    node: traverse.node.clone(),
                 }
             })?;
             let result = runner.run_traversal_node(&run_ctx, node, source).await?;

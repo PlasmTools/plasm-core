@@ -197,7 +197,7 @@ pub fn from_parent_get_embed_edges(cgs: &crate::CGS) -> Vec<(String, String, Str
 ///
 /// [`RelationMaterialization::PreferFromParentGet`] inverse edges are excluded — mutual embed
 /// pairs are allowed when runtime decode uses leaf embed decoders (CEP-10).
-pub fn validate_from_parent_get_embed_acyclic(cgs: &crate::CGS) -> Result<(), String> {
+pub fn validate_from_parent_get_embed_acyclic(cgs: &crate::CGS) -> Result<(), EntityCycle> {
     let edges = from_parent_get_embed_edges(cgs);
     let mut adj: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
     for (from, _rel, to) in &edges {
@@ -209,10 +209,23 @@ pub fn validate_from_parent_get_embed_acyclic(cgs: &crate::CGS) -> Result<(), St
     }
     for start in adj.keys().cloned().collect::<Vec<_>>() {
         if let Some(cycle) = find_entity_cycle(&adj, &start) {
-            return Err(cycle.join(" → "));
+            return Err(EntityCycle { entities: cycle });
         }
     }
     Ok(())
+}
+
+/// Ordered entity path that closes a `from_parent_get` materialization cycle.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{}", .entities.join(" → "))]
+pub struct EntityCycle {
+    entities: Vec<String>,
+}
+
+impl EntityCycle {
+    pub fn entities(&self) -> &[String] {
+        &self.entities
+    }
 }
 
 pub(crate) fn find_entity_cycle(

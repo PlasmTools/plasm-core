@@ -162,7 +162,9 @@ pub fn render_query_resolve_error_for_feedback(
                     entity,
                 } => {
                     let es = map.entity_sym_for("", entity);
-                    format!("named query capability not found for entity {es} (check the query example lines in the prompt for `{es}`).")
+                    format!(
+                        "named query capability not found for entity {es} (check the query example lines in the prompt for `{es}`)."
+                    )
                 }
                 QueryCapabilityResolveError::Ambiguous { entity, names: _ } => {
                     let es = map.entity_sym_for("", entity);
@@ -170,17 +172,17 @@ pub fn render_query_resolve_error_for_feedback(
                         "ambiguous query for entity {es}: predicate matches more than one capability; narrow filters or scope per the `;;` lines in the prompt."
                     )
                 }
-                QueryCapabilityResolveError::NoMatchingCapability { entity, message } => {
+                QueryCapabilityResolveError::NoMatchingCapability { entity, source } => {
                     let es = map.entity_sym_for("", entity);
                     // Avoid listing raw capability keys (`list_query`, …) in LLM-facing text; examples teach shape.
-                    let msg = message
-                        .split("Available:")
-                        .next()
-                        .unwrap_or(message.as_str())
-                        .trim()
-                        .trim_end_matches(['.', ' '])
-                        .to_string();
-                    let scope_hint = if msg.contains("scope") {
+                    let msg = match source {
+                        crate::QueryMatchError::MissingScope { .. } => "every query capability for this entity requires scope parameters in the predicate; include every required scope field so one query row can match (partial scope is not enough)".to_owned(),
+                        _ => source.to_string(),
+                    };
+                    let scope_hint = if matches!(
+                        source,
+                        crate::QueryMatchError::MissingScope { .. }
+                    ) {
                         "\n\nIf the predicate already supplies some scope fields but resolution still fails, add each remaining scope key listed on that entity's query line in the TSV teaching table, or use another entity whose query rows match the result shape you need."
                     } else {
                         ""
@@ -189,9 +191,9 @@ pub fn render_query_resolve_error_for_feedback(
                         "{msg}. See the query example lines in the prompt for `{es}` for which scope and filter wire names apply.{scope_hint}"
                     )
                 }
-                QueryCapabilityResolveError::RowsetNormalize { entity, message } => {
+                QueryCapabilityResolveError::RowsetNormalize { entity, source } => {
                     let es = map.entity_sym_for("", entity);
-                    format!("rowset normalize failed for `{es}`: {message}")
+                    format!("rowset normalize failed for `{es}`: {source}")
                 }
             };
             format!("{PREFIX}{body}")
@@ -410,7 +412,7 @@ pub fn render_parse_error_with_feedback(
             "Delete everything after the first complete path expression on this line. Only one expression per step."
                 .into()
         }
-        ParseErrorKind::InvalidTemporalValue { .. } => {
+        ParseErrorKind::ValueCoercion { field_type: FieldType::Date, .. } => {
             let slot = infer_param_lhs_name(work, err.offset)
                 .map(|n| resolve_wire_param_name_for_feedback(n, &style))
                 .filter(|s| !s.is_empty());
@@ -575,10 +577,62 @@ pub fn render_parse_error_with_feedback(
                 "This prompt does not support bare many-relation navigation to `{target}` for `{relation}`: use a list/query form from the `{target}` block in the teaching table, or the schema must declare materialization for that edge."
             ),
         },
-        ParseErrorKind::IdentityBraceGetFailed { message } => message.clone(),
-        ParseErrorKind::InvalidProgramString { message } => format!("Invalid program string template: {message}"),
+
+        ParseErrorKind::InvalidProgramString { source } => format!("Invalid program string template: {source}"),
         ParseErrorKind::UnfilledTeachingHole { .. } => err.message(),
-        ParseErrorKind::Other { message } => message.clone(),
+        ParseErrorKind::QueryResolution { source } => {
+            render_query_resolve_error_for_feedback(source, style)
+        }
+        ParseErrorKind::ValueCoercion { .. } | ParseErrorKind::PhraseIdentifier { .. } => err.kind.to_string(),
+        ParseErrorKind::IdentityBraceLowering { .. }
+        | ParseErrorKind::EmptyCatalogLayers
+        | ParseErrorKind::TrailingSyntax { .. }
+        | ParseErrorKind::QueryBracesAfterGet { .. }
+        | ParseErrorKind::InvokeCatalogOwnership { .. }
+        | ParseErrorKind::InvokeArgumentResolution { .. }
+        | ParseErrorKind::UnknownInvokeArgument { .. }
+        | ParseErrorKind::DuplicateInvokeArgument { .. }
+        | ParseErrorKind::DuplicateNestedUnionField { .. }
+        | ParseErrorKind::DuplicateUnionField { .. }
+        | ParseErrorKind::DuplicateCompoundKey { .. }
+        | ParseErrorKind::ExpectedCompoundKeySeparator
+        | ParseErrorKind::CompoundKeySetMismatch { .. }
+        | ParseErrorKind::InvalidNamedIdentityKey { .. }
+        | ParseErrorKind::FloatIdentity
+        | ParseErrorKind::IdentitySlotSerialization { .. }
+        | ParseErrorKind::BindingUsedAsLiteral { .. }
+        | ParseErrorKind::ExpectedRestArgumentClose
+        | ParseErrorKind::ExpectedTrailingRestArgumentClose
+        | ParseErrorKind::ExpectedArgumentSeparator
+        | ParseErrorKind::ParameterValueResolution { .. }
+        | ParseErrorKind::ReadCapabilityInvoked { .. }
+        | ParseErrorKind::MissingInvokePayloadSchema
+        | ParseErrorKind::UnexpectedUnionPayload
+        | ParseErrorKind::ExpectedUnionPayload
+        | ParseErrorKind::UnsupportedDottedCapabilityKind { .. }
+        | ParseErrorKind::UnionPayloadRequiresUnionInput
+        | ParseErrorKind::UnionPayloadNotSoleArgument
+        | ParseErrorKind::CatalogEntityMissing { .. }
+        | ParseErrorKind::AmbiguousScopedQuery { .. }
+        | ParseErrorKind::ScopedQueryMissingScopeField { .. }
+        | ParseErrorKind::PagingHandle { .. }
+        | ParseErrorKind::UnexpectedPagingArgument { .. }
+        | ParseErrorKind::OperationHandle { .. }
+        | ParseErrorKind::GetWrapper
+        | ParseErrorKind::CompoundIdentityRequiresNamedKeys { .. }
+        | ParseErrorKind::SimpleIdentityRequiresPositional { .. }
+        | ParseErrorKind::AmbiguousSearch { .. }
+        | ParseErrorKind::SearchMissingSelectionParameter { .. }
+        | ParseErrorKind::RelationQueryBraces { .. }
+        | ParseErrorKind::InvalidUnicodeEscape { .. }
+        | ParseErrorKind::MissingLowSurrogate { .. }
+        | ParseErrorKind::InvalidLowSurrogate { .. }
+        | ParseErrorKind::InvalidUnicodeCodepoint { .. }
+        | ParseErrorKind::UnknownValueConstructor { .. }
+        | ParseErrorKind::DuplicateConstructorKey { .. }
+        | ParseErrorKind::UnquotedValueCharacter { .. } => err.kind.to_string(),
+        ParseErrorKind::SymbolResolution { source }
+        | ParseErrorKind::CompoundKeyResolution { source, .. } => source.to_agent_program_error(),
     };
 
     StepError::parse_correction(correction, error, Some(err.offset))
@@ -1266,7 +1320,9 @@ fn correction_unknown_entity(
         let eg = example_two_names(&sorted_disp);
         return format!("{head}\n\nFor example: {eg}.");
     }
-    format!("{head}\n\nFor example: use the same spelling as in the expression examples (case-sensitive).")
+    format!(
+        "{head}\n\nFor example: use the same spelling as in the expression examples (case-sensitive)."
+    )
 }
 
 fn correction_predicate_field(
@@ -2034,6 +2090,29 @@ pub fn render_type_error_with_feedback(
     let error = err.to_string();
 
     match err {
+        TypeError::CoercionFailure { field, source } => {
+            let field = ident_label_for_feedback(field, &style);
+            StepError::type_correction(
+                format!(
+                    "The value for `{field}` cannot be coerced to its declared wire type: {source}. Use a value matching the field's declared type and format."
+                ),
+                error,
+            )
+        }
+        TypeError::EntityRefCoercionFailure {
+            field,
+            target,
+            source,
+        } => {
+            let field = ident_label_for_feedback(field, &style);
+            let target = entity_label_for_feedback(target, &style);
+            StepError::type_correction(
+                format!(
+                    "The value for `{field}` cannot be coerced to an entity reference for `{target}`: {source}. Supply a valid identity for that target."
+                ),
+                error,
+            )
+        }
         TypeError::FieldNotFound { field, entity } => {
             let names = field_names_list(cgs, entity);
             let mut extra = Vec::new();
@@ -2117,9 +2196,9 @@ pub fn render_type_error_with_feedback(
             );
             StepError::type_correction(correction, error)
         }
-        TypeError::RefKeyMismatch { entity, message } => {
+        TypeError::RefKeyMismatch { entity, source } => {
             let ent = entity_label_for_feedback(entity, &style);
-            let correction = format!("Get on `{ent}`: {message}");
+            let correction = format!("Get on `{ent}`: {source}");
             StepError::type_correction(correction, error)
         }
         TypeError::ChainTargetMissingGet {
@@ -2158,6 +2237,19 @@ For example: `{te}(<id>)` when you already know the id, instead of relying on `{
                 "Change the value for `{fd}` to match `{field_type}` (you used something like {value_type}).\n\nFor example: a quoted string for text, or a number for numeric fields."
             );
             StepError::type_correction(correction, error)
+        }
+        TypeError::ValueDomainViolation {
+            field,
+            value_type,
+            violation,
+        } => {
+            let field = ident_label_for_feedback(field, &style);
+            StepError::type_correction(
+                format!(
+                    "The value {value_type} for `{field}` violates its declared domain: {violation}."
+                ),
+                error,
+            )
         }
         TypeError::DomainPlaceholderLiteral {
             field,
@@ -2210,8 +2302,8 @@ For example: `{te}(<id>)` when you already know the id, instead of relying on `{
             );
             StepError::type_correction(correction, nested)
         }
-        TypeError::RowsetNormalize { message } => {
-            let correction = format!("Fix the rowset normalize failure: {message}");
+        TypeError::RowsetNormalize { source } => {
+            let correction = format!("Fix the rowset normalize failure: {source}");
             StepError::type_correction(correction, error)
         }
     }
@@ -2464,7 +2556,12 @@ mod tests {
         let map = SymbolMap::build(&cgs, &["Pet"]);
         let err = QueryCapabilityResolveError::NoMatchingCapability {
             entity: "Pet".to_string(),
-            message: "every query capability for this entity requires scope parameters in the predicate; include every required scope field so one query row can match (partial scope is not enough). Available: list_query".to_string(),
+            source: crate::QueryMatchError::MissingScope {
+                requirements: vec![crate::QueryScopeRequirement {
+                    capability: "list_query".into(),
+                    missing: vec!["scope".into()],
+                }],
+            },
         };
         let s =
             render_query_resolve_error_for_feedback(&err, FeedbackStyle::SymbolicLlm { map: &map });

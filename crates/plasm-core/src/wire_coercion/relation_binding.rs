@@ -9,6 +9,31 @@ use crate::{
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum RelationBindingProofError {
+    #[error("relation `{relation}` has no materialization")]
+    MissingMaterialization { relation: String },
+    #[error("relation `{relation}` requires scoped-binding materialization")]
+    UnsupportedMaterialization { relation: String },
+    #[error("relation materialization bindings are invalid: {source}")]
+    InvalidBindings {
+        #[source]
+        source: Box<crate::SchemaError>,
+    },
+}
+
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum ParentFieldTypeError {
+    #[error("unknown parent field `{field}` on entity `{entity}`")]
+    UnknownParentField { entity: String, field: String },
+    #[error("parent field `{entity}.{field}` references unknown named value `{value_ref}`")]
+    UnknownNamedValue {
+        entity: String,
+        field: String,
+        value_ref: String,
+    },
+}
+
 /// Static witness for a `query_scoped_bindings` / `get_scoped_bindings` materialize map entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelationBindingProof {
@@ -21,19 +46,19 @@ pub fn collect_relation_binding_proofs(
     cgs: &CGS,
     entity: &EntityDef,
     relation: &RelationSchema,
-) -> Result<Vec<RelationBindingProof>, String> {
-    let mat = relation
-        .materialize
-        .as_ref()
-        .ok_or_else(|| format!("relation `{}` has no materialize", relation.name))?;
+) -> Result<Vec<RelationBindingProof>, RelationBindingProofError> {
+    let mat = relation.materialize.as_ref().ok_or_else(|| {
+        RelationBindingProofError::MissingMaterialization {
+            relation: relation.name.to_string(),
+        }
+    })?;
     let bindings = match mat {
         RelationMaterialization::QueryScopedBindings { bindings, .. }
         | RelationMaterialization::GetScopedBindings { bindings, .. } => bindings,
         _ => {
-            return Err(format!(
-                "relation `{}` materialize is not query_scoped_bindings",
-                relation.name
-            ));
+            return Err(RelationBindingProofError::UnsupportedMaterialization {
+                relation: relation.name.to_string(),
+            });
         }
     };
     let mut out = Vec::with_capacity(bindings.len());
@@ -54,7 +79,9 @@ pub fn collect_relation_binding_proofs(
         },
         bindings,
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|source| RelationBindingProofError::InvalidBindings {
+        source: Box::new(source),
+    })?;
     Ok(out)
 }
 
@@ -269,36 +296,35 @@ pub fn parent_entity_field_type(
     cgs: &CGS,
     entity: &EntityDef,
     parent_field: &str,
-) -> Result<FieldType, String> {
+) -> Result<FieldType, ParentFieldTypeError> {
+    let field_type = |fs: &crate::schema::FieldSchema| {
+        let value_ref = crate::schema::ValueDomainSlot::value_domain_key(fs);
+        cgs.values
+            .get(value_ref.as_str())
+            .map(|value| value.field_type.clone())
+            .ok_or_else(|| ParentFieldTypeError::UnknownNamedValue {
+                entity: entity.name.to_string(),
+                field: parent_field.to_owned(),
+                value_ref: value_ref.to_string(),
+            })
+    };
     if parent_field == entity.id_field.as_str() {
         if let Some(fs) = entity.fields.get(parent_field) {
-            return Ok(fs
-                .named_value(cgs)
-                .map_err(|e| e.to_string())?
-                .field_type
-                .clone());
+            return field_type(fs);
         }
         return Ok(FieldType::String);
     }
     if let Some(fs) = entity.fields.get(parent_field) {
-        return Ok(fs
-            .named_value(cgs)
-            .map_err(|e| e.to_string())?
-            .field_type
-            .clone());
+        return field_type(fs);
     }
     if entity.key_vars.iter().any(|k| k.as_str() == parent_field) {
         if let Some(fs) = entity.fields.get(parent_field) {
-            return Ok(fs
-                .named_value(cgs)
-                .map_err(|e| e.to_string())?
-                .field_type
-                .clone());
+            return field_type(fs);
         }
         return Ok(FieldType::String);
     }
-    Err(format!(
-        "unknown parent field `{parent_field}` on entity `{}`",
-        entity.name
-    ))
+    Err(ParentFieldTypeError::UnknownParentField {
+        entity: entity.name.to_string(),
+        field: parent_field.to_owned(),
+    })
 }

@@ -1,4 +1,4 @@
-use crate::commands::common;
+use crate::commands::{common, CommandError, InputKind};
 use crate::ReplayAction;
 use plasm_core::{Expr, Predicate, QueryExpr, CGS};
 use plasm_runtime::{
@@ -7,14 +7,13 @@ use plasm_runtime::{
 };
 use std::path::{Path, PathBuf};
 
-pub async fn execute(action: ReplayAction) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn execute(action: ReplayAction) -> Result<(), CommandError> {
     match action {
         ReplayAction::Record { schema, predicate } => {
             println!("Recording execution of predicate with schema...");
 
             // Load schema and predicate
-            let cgs: CGS = common::load_cgs(Path::new(&schema))
-                .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+            let cgs: CGS = common::load_cgs(Path::new(&schema))?;
 
             let predicate_data = if Path::new(&predicate).exists() {
                 std::fs::read_to_string(&predicate)?
@@ -42,7 +41,11 @@ pub async fn execute(action: ReplayAction) -> Result<(), Box<dyn std::error::Err
                 }
             }
 
-            let entity_name = target_entity_name.ok_or("No compatible entity found")?;
+            let entity_name =
+                target_entity_name.ok_or_else(|| CommandError::NoCompatibleEntity {
+                    fields: referenced_fields,
+                    relations: referenced_relations,
+                })?;
 
             // Execute in Live mode with recording
             let query = QueryExpr::filtered(&entity_name, pred);
@@ -88,7 +91,10 @@ pub async fn execute(action: ReplayAction) -> Result<(), Box<dyn std::error::Err
 
             if !Path::new(&dir).exists() {
                 eprintln!("Error: Replay directory '{}' does not exist", dir);
-                return Err("Replay directory not found".into());
+                return Err(CommandError::InputMissing {
+                    kind: InputKind::ReplayDirectory,
+                    path: dir.into(),
+                });
             }
 
             // Create replay store
@@ -127,7 +133,7 @@ pub async fn execute(action: ReplayAction) -> Result<(), Box<dyn std::error::Err
             );
 
             if failed > 0 {
-                return Err(format!("{} replay tests failed", failed).into());
+                return Err(CommandError::ReplayTestsFailed { failed });
             }
 
             Ok(())

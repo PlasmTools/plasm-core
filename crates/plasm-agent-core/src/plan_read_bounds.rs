@@ -538,14 +538,16 @@ fn budget_from_chain(chain: &[ComputeOp]) -> Option<PushedReadBudget> {
 
 pub fn lower_plan_predicates(
     predicates: &[PlanPredicate],
-) -> Result<Vec<BoundRowPredicate>, String> {
+) -> Result<Vec<BoundRowPredicate>, plasm_core::PlasmDataValueError> {
     predicates
         .iter()
         .map(bind_row_predicate)
         .collect::<Result<Vec<_>, _>>()
 }
 
-pub fn bind_row_predicate(pred: &PlanPredicate) -> Result<BoundRowPredicate, String> {
+pub fn bind_row_predicate(
+    pred: &PlanPredicate,
+) -> Result<BoundRowPredicate, plasm_core::PlasmDataValueError> {
     Ok(BoundRowPredicate {
         field_path: pred.field_path.clone(),
         op: pred.op,
@@ -555,16 +557,16 @@ pub fn bind_row_predicate(pred: &PlanPredicate) -> Result<BoundRowPredicate, Str
 
 pub fn pushed_budget_to_stream_fields(
     budget: &PushedReadBudget,
-) -> Result<(Option<RowMatchBudget>, Option<TopKSpec>), String> {
+) -> (Option<RowMatchBudget>, Option<TopKSpec>) {
     match budget {
-        PushedReadBudget::Limit(_) | PushedReadBudget::Complete => Ok((None, None)),
-        PushedReadBudget::FilterLimit { count, predicates } => Ok((
+        PushedReadBudget::Limit(_) | PushedReadBudget::Complete => (None, None),
+        PushedReadBudget::FilterLimit { count, predicates } => (
             Some(RowMatchBudget {
                 count: *count,
                 predicates: predicates.clone(),
             }),
             None,
-        )),
+        ),
         PushedReadBudget::TopK {
             count,
             key,
@@ -572,7 +574,7 @@ pub fn pushed_budget_to_stream_fields(
             filter,
         } => {
             let row_filter = filter.clone().unwrap_or_default();
-            Ok((
+            (
                 None,
                 Some(TopKSpec {
                     count: *count,
@@ -580,7 +582,7 @@ pub fn pushed_budget_to_stream_fields(
                     descending: *descending,
                     row_filter,
                 }),
-            ))
+            )
         }
     }
 }

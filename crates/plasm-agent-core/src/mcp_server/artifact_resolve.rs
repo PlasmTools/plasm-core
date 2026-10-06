@@ -29,11 +29,11 @@ pub(crate) enum RunArtifactResolveError {
     )]
     LegacyResourceIndexUri(u64),
     #[error("artifact integrity check failed: {0}")]
-    Integrity(String),
+    Integrity(#[source] crate::run_artifacts::RunArtifactError),
     #[error("unsupported resource URI: {0}")]
     UnsupportedUri(String),
     #[error("run artifact decode failed: {0}")]
-    DecodeFailed(String),
+    DecodeFailed(#[source] crate::run_artifacts::RunArtifactError),
     #[error("artifact URI session does not match logical_session_ref")]
     SessionMismatch,
 }
@@ -167,7 +167,7 @@ async fn fetch_payload_by_run_id(
             .await
         {
             Ok(v) => v,
-            Err(e) => return Err(RunArtifactResolveError::DecodeFailed(e.to_string())),
+            Err(e) => return Err(RunArtifactResolveError::DecodeFailed(e)),
         }
     } else {
         None
@@ -182,11 +182,12 @@ async fn fetch_payload_by_run_id(
         return Err(RunArtifactResolveError::UnknownRunId);
     };
 
-    verify_payload_run_id(&payload, run_id).map_err(|e| match e {
-        crate::run_artifacts::RunArtifactError::Integrity(msg) => {
-            RunArtifactResolveError::Integrity(msg)
+    verify_payload_run_id(&payload, run_id).map_err(|error| match error {
+        crate::run_artifacts::RunArtifactError::InvalidDocumentRunId { .. }
+        | crate::run_artifacts::RunArtifactError::RunIdMismatch { .. } => {
+            RunArtifactResolveError::Integrity(error)
         }
-        other => RunArtifactResolveError::DecodeFailed(other.to_string()),
+        other => RunArtifactResolveError::DecodeFailed(other),
     })?;
 
     Ok((payload, resource_index))
@@ -280,7 +281,7 @@ pub(crate) async fn resolve_code_plan_for_binding(
                 plan_index,
             )
             .await
-            .map_err(|e| RunArtifactResolveError::DecodeFailed(e.to_string()))?,
+            .map_err(RunArtifactResolveError::DecodeFailed)?,
         CodePlanLookup::Id(plan_id) => plasm
             .run_artifacts
             .get_code_plan_payload_result(
@@ -289,7 +290,7 @@ pub(crate) async fn resolve_code_plan_for_binding(
                 plan_id,
             )
             .await
-            .map_err(|e| RunArtifactResolveError::DecodeFailed(e.to_string()))?,
+            .map_err(RunArtifactResolveError::DecodeFailed)?,
     };
     let Some(payload) = payload else {
         resource_read_trace::McpResourceReadTrace::error(
@@ -337,6 +338,23 @@ mod tests {
 
     fn sample_run_id(byte: u8) -> RunArtifactId {
         RunArtifactId::from_bytes([byte; 32])
+    }
+
+    #[test]
+    fn artifact_decode_retains_json_source() {
+        let json = serde_json::from_str::<serde_json::Value>("{").unwrap_err();
+        let failure = RunArtifactResolveError::DecodeFailed(
+            crate::run_artifacts::RunArtifactError::Serialization(json),
+        );
+        let source = std::error::Error::source(&failure).unwrap();
+        assert!(source
+            .downcast_ref::<crate::run_artifacts::RunArtifactError>()
+            .is_some());
+        assert!(source
+            .source()
+            .unwrap()
+            .downcast_ref::<serde_json::Error>()
+            .is_some());
     }
 
     #[test]

@@ -1,6 +1,5 @@
 //! In-process agent engine: catalog load, agent-global symbol exposure, dry-run.
 
-use anyhow::{anyhow, Result};
 use indexmap::IndexMap;
 use plasm_agent_core::discovery_store::DiscoverySessionPin;
 use plasm_agent_core::execute_session::ExecuteSession;
@@ -29,9 +28,84 @@ use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode, HttpTranspo
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
+use thiserror::Error;
 
 /// Stable execute-session wire ids for in-process agent runs (run artifact store keys).
 const AGENT_PROMPT_HASH: &str = "plasm_node";
+
+type Result<T> = std::result::Result<T, AgentEngineError>;
+
+#[derive(Debug, Error)]
+pub enum AgentEngineError {
+    #[error(transparent)]
+    CatalogTemplate(#[from] plasm_compile::CatalogTemplateError),
+    #[error("catalog `{entry_id}` is not loaded")]
+    CatalogNotLoaded { entry_id: String },
+    #[error("catalog manifest path has no containing directory")]
+    ManifestDirectoryMissing,
+    #[error("catalog loading requires a format-3 packed manifest")]
+    PackedManifestRequired,
+    #[error("catalog digest changed for `{entry_id}`; a new symbol space is required")]
+    CatalogDigestChanged { entry_id: String },
+    #[error("catalog `{entry_id}` is missing from the pinned generation")]
+    PinnedCatalogMissing { entry_id: String },
+    #[error("routing completed without a teaching exposure")]
+    RoutingExposureMissing,
+    #[error("catalog `{entry_id}` is not loaded")]
+    SeedCatalogMissing { entry_id: String },
+    #[error("entity `{entity}` is absent from catalog `{entry_id}`")]
+    SeedEntityMissing { entry_id: String, entity: String },
+    #[error("flow policy denied plan commit ({verdict:?}) with {violations} violation(s)")]
+    PlanCommitDenied { verdict: String, violations: usize },
+    #[error("plan commit reference is missing")]
+    MissingPlanCommitRef,
+    #[error("plan commit reference `{value}` is invalid")]
+    InvalidPlanCommitRef { value: String },
+    #[error("plan commit reference is unknown or expired")]
+    PlanCommitUnavailable(#[source] plasm_agent_core::plan_commit_store::PlanCommitVerifyError),
+    #[error("run reference is unknown or expired")]
+    RunReferenceUnavailable(#[source] plasm_agent_core::plan_commit_store::PlanCommitVerifyError),
+    #[error("committed plan artifact is invalid: {0}")]
+    CommittedPlanArtifact(#[source] plasm_agent_core::error::PlasmCompBundleError),
+    #[error("dry evaluation of committed plan failed: {0}")]
+    CommittedPlanDry(#[source] plasm_agent_core::plan_commit_store::PlanCommitVerifyError),
+    #[error("dry evaluation of paging plan failed: {0}")]
+    PagingPlanDry(#[source] plasm_agent_core::program_diagnostic::ProgramStageError),
+    #[error("paging continuation compilation failed")]
+    PagingContinuation(#[source] plasm_runtime::ExecutionFailure),
+    #[error("run reference `{value}` is neither a commit reference nor a paging handle")]
+    InvalidRunReference { value: String },
+    #[error("canonical run artifact identifier is invalid")]
+    InvalidRunArtifactId,
+    #[error("canonical run artifact is missing")]
+    RunArtifactMissing,
+    #[error("no catalogs are loaded")]
+    NoCatalogsLoaded,
+    #[error("teaching exposure is unavailable")]
+    TeachingExposureMissing,
+    #[error("primary catalog `{entry_id}` is missing")]
+    PrimaryCatalogMissing { entry_id: String },
+    #[error("NAPI host state construction failed")]
+    HostBootstrap(#[from] plasm_agent_core::http::HostBootstrapError),
+    #[error("run artifact lookup failed")]
+    RunArtifact(#[source] plasm_agent_core::run_artifacts::RunArtifactError),
+    #[error("serialization failed")]
+    Json(#[from] serde_json::Error),
+    #[error("catalog interchange failed")]
+    CatalogIl(#[from] plasm_core::catalog_il::CatalogIlError),
+    #[error("catalog compilation failed")]
+    Compile(#[from] plasm_compile::CmlError),
+    #[error("teaching surface construction failed")]
+    CapabilityExposure(#[from] plasm_core::capability_exposure::CapabilityExposureError),
+    #[error("Python teaching preparation failed")]
+    PythonTeaching(#[from] plasm_core::prompt_render::python::PythonTeachingError),
+    #[error("prerequisite binding rendering failed")]
+    PrerequisiteBinding(#[from] plasm_core::prompt_render::PrerequisiteBindingRenderError),
+    #[error(
+        "plan commit flow policy rejected the plan ({verdict}) with {violations} violation(s)"
+    )]
+    FlowDenial { verdict: String, violations: usize },
+}
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct EntityFieldIntrospection {
@@ -197,10 +271,12 @@ impl AgentEngine {
     }
 
     pub fn introspect_catalog(&self, entry_id: &str) -> Result<CatalogIntrospection> {
-        let cgs = self
-            .catalogs
-            .get(entry_id)
-            .ok_or_else(|| anyhow!("catalog `{entry_id}` not loaded — call loadCatalog first"))?;
+        let cgs =
+            self.catalogs
+                .get(entry_id)
+                .ok_or_else(|| AgentEngineError::CatalogNotLoaded {
+                    entry_id: entry_id.to_owned(),
+                })?;
         let digest = self
             .catalog_digests
             .get(entry_id)
@@ -242,8 +318,7 @@ impl AgentEngine {
         let wave = plasm_core::prompt_render::python::prepare_python_teaching_wave(
             &exposure,
             &Default::default(),
-        )
-        .map_err(anyhow::Error::msg)?;
+        )?;
         let mut capabilities: Vec<CapabilityIntrospection> = cgs
             .capabilities
             .values()
@@ -310,34 +385,29 @@ impl AgentEngine {
 
     pub fn load_catalog(&mut self, catalog_path: &Path) -> Result<CatalogInfo> {
         if !plasm_core::catalog_il::is_catalog_manifest_path(catalog_path) {
-            return Err(anyhow!(
-                "loadCatalog requires a format-3 packed manifest; repack raw YAML first"
-            ));
+            return Err(AgentEngineError::PackedManifestRequired);
         }
-        let manifest = plasm_core::catalog_il::read_catalog_manifest(catalog_path)
-            .map_err(anyhow::Error::msg)?;
+        let manifest = plasm_core::catalog_il::read_catalog_manifest(catalog_path)?;
         let cgs = plasm_core::catalog_il::load_catalog_artifact(
             catalog_path
                 .parent()
-                .ok_or_else(|| anyhow!("manifest directory missing"))?,
+                .ok_or(AgentEngineError::ManifestDirectoryMissing)?,
             &manifest,
-        )
-        .map_err(anyhow::Error::msg)?;
+        )?;
         let compiled = plasm_compile::load_compiled_catalog_artifact(
             catalog_path
                 .parent()
-                .ok_or_else(|| anyhow!("manifest directory missing"))?,
+                .ok_or(AgentEngineError::ManifestDirectoryMissing)?,
             &manifest,
             &cgs,
-        )
-        .map_err(anyhow::Error::msg)?;
+        )?;
         let entry_id = manifest.entry_id;
         let digest = cgs.catalog_cgs_hash_hex();
         if let Some(existing) = self.catalog_digests.get(&entry_id) {
             if existing != &digest {
-                return Err(anyhow!(
-                    "catalog digest changed for `{entry_id}` — start a fresh agent symbol space"
-                ));
+                return Err(AgentEngineError::CatalogDigestChanged {
+                    entry_id: entry_id.clone(),
+                });
             }
             return Ok(CatalogInfo {
                 entry_id,
@@ -438,14 +508,15 @@ impl AgentEngine {
             let cgs = self
                 .catalogs
                 .get(&entry)
-                .ok_or_else(|| anyhow!("missing pinned catalog {entry}"))?
+                .ok_or_else(|| AgentEngineError::PinnedCatalogMissing {
+                    entry_id: entry.clone(),
+                })?
                 .clone();
             let delta = plasm_core::capability_exposure::selected_capability_surface(
                 &cgs,
                 &entry,
                 &capabilities,
-            )
-            .map_err(anyhow::Error::msg)?;
+            )?;
             let entities: Vec<_> = delta
                 .required
                 .entities
@@ -472,7 +543,7 @@ impl AgentEngine {
             .exposure
             .as_ref()
             .cloned()
-            .ok_or_else(|| anyhow!("ready routing has no teaching exposure"))?;
+            .ok_or(AgentEngineError::RoutingExposureMissing)?;
         if let Some(session) = &mut self.execute_session {
             // Keep graph state and reviewed plans while appending symbols.
             session.entities = exposure.entities.clone();
@@ -491,8 +562,7 @@ impl AgentEngine {
             closure,
             &catalogs,
             symbols.as_ref(),
-        )
-        .map_err(anyhow::Error::msg)?;
+        )?;
         if !guidance.is_empty() {
             prompt.push_str("\n\n");
             prompt.push_str(&guidance);
@@ -515,12 +585,16 @@ impl AgentEngine {
     ) -> Result<TeachingExposureResult> {
         let mut business = Vec::new();
         for seed in seeds {
-            let cgs = self
-                .catalogs
-                .get(&seed.entry_id)
-                .ok_or_else(|| anyhow!("unknown catalog {}", seed.entry_id))?;
+            let cgs = self.catalogs.get(&seed.entry_id).ok_or_else(|| {
+                AgentEngineError::SeedCatalogMissing {
+                    entry_id: seed.entry_id.clone(),
+                }
+            })?;
             if !cgs.entities.contains_key(seed.entity.as_str()) {
-                return Err(anyhow!("unknown entity {}", seed.entity));
+                return Err(AgentEngineError::SeedEntityMissing {
+                    entry_id: seed.entry_id.clone(),
+                    entity: seed.entity.clone(),
+                });
             }
             business.extend(
                 cgs.capabilities
@@ -578,6 +652,9 @@ impl AgentEngine {
                 ProgramStageError::Parse {
                     correction: "Submit a Python Program subclass with build(self).".into(),
                     span_offset: None,
+                    error: std::sync::Arc::new(
+                        plasm_agent_core::program_diagnostic::ProgramParseError::EmptyProgram,
+                    ),
                 },
             ));
         }
@@ -594,7 +671,11 @@ impl AgentEngine {
             Err(plasm_agent_core::compilation_error::CompilationError::Program(stage)) => {
                 return Ok(self.reject_from_stage(&es, trimmed, stage))
             }
-            Err(plasm_agent_core::compilation_error::CompilationError::Host(failure)) => {
+            Err(
+                error @ (plasm_agent_core::compilation_error::CompilationError::Host(_)
+                | plasm_agent_core::compilation_error::CompilationError::Checker(_)),
+            ) => {
+                let failure: plasm_runtime::ExecutionFailure = error.into();
                 return Ok(DryRunResult {
                     write_count: 0,
                     failure_json: Some(serde_json::to_string(&failure)?),
@@ -602,7 +683,7 @@ impl AgentEngine {
                     summary: failure.to_string(),
                     comp_json: serde_json::Value::Null,
                     fused_clean_read: false,
-                })
+                });
             }
         };
         let dry = match evaluate_plasm_comp_dry(&es, &bundle) {
@@ -622,12 +703,9 @@ impl AgentEngine {
             compact.verdict,
             Instant::now() + PLAN_COMMIT_TTL,
         )
-        .map_err(|denial| {
-            anyhow!(
-                "plan commit blocked by flow policy ({:?}): {} violation(s)",
-                denial.verdict,
-                denial.violations.len()
-            )
+        .map_err(|denial| AgentEngineError::FlowDenial {
+            verdict: format!("{:?}", denial.verdict),
+            violations: denial.violations.len(),
         })?;
         es.register_plan_commit(record);
         self.execute_session = Some(es);
@@ -648,16 +726,16 @@ impl AgentEngine {
     pub fn run_plan(&mut self, plan_commit_ref: &str) -> Result<RunPlanResult> {
         let trimmed = plan_commit_ref.trim();
         if trimmed.is_empty() {
-            return Err(anyhow!("missing `plan_commit_ref`"));
+            return Err(AgentEngineError::MissingPlanCommitRef);
         }
-        let commit_ref = PlanCommitRef::parse(trimmed)
-            .ok_or_else(|| anyhow!("invalid plan_commit_ref `{trimmed}`"))?;
-        let es = self.ensure_execute_session()?;
-        resolve_committed_plan(&es, &commit_ref).map_err(|e| {
-            anyhow!(
-                "unknown or expired plan_commit_ref `{trimmed}` — call `plasm` (dry-run) first: {e:?}"
-            )
+        let commit_ref = PlanCommitRef::parse(trimmed).ok_or_else(|| {
+            AgentEngineError::InvalidPlanCommitRef {
+                value: trimmed.to_owned(),
+            }
         })?;
+        let es = self.ensure_execute_session()?;
+        resolve_committed_plan(&es, &commit_ref)
+            .map_err(AgentEngineError::PlanCommitUnavailable)?;
         Ok(RunPlanResult {
             ok: false,
             message: format!("Plan `{trimmed}` validated. Pass a HostTransportFn to execute live."),
@@ -677,28 +755,27 @@ impl AgentEngine {
     ) -> Result<RunPlanResult> {
         let trimmed = plan_commit_ref.trim();
         if trimmed.is_empty() {
-            return Err(anyhow!("missing `plan_commit_ref`"));
+            return Err(AgentEngineError::MissingPlanCommitRef);
         }
         let es = self.ensure_execute_session()?;
         let (bundle, dry) = if let Some(commit_ref) = PlanCommitRef::parse(trimmed) {
-            let committed = resolve_committed_plan(&es, &commit_ref).map_err(|e| {
-                anyhow!("unknown or expired run_ref `{trimmed}` — call `plasm` first: {e:?}")
-            })?;
+            let committed = resolve_committed_plan(&es, &commit_ref)
+                .map_err(AgentEngineError::RunReferenceUnavailable)?;
             let bundle = PlasmCompBundle::new(committed.artifact.clone())
-                .map_err(|e| anyhow!("invalid committed plan artifact: {e}"))?;
+                .map_err(AgentEngineError::CommittedPlanArtifact)?;
             let dry = dry_for_committed_plasm_run(&es, &bundle, &committed)
-                .map_err(|e| anyhow!("dry evaluation for committed plan: {e}"))?;
+                .map_err(AgentEngineError::CommittedPlanDry)?;
             (bundle, dry)
         } else if let Ok(handle) = PagingHandle::parse(trimmed) {
             let bundle = plasm_agent_core::mcp_server::compile_page_continuation(&es, &handle, 0)
-                .map_err(|e| anyhow!("paging plan: {e}"))?;
-            let dry = evaluate_plasm_comp_dry(&es, &bundle)
-                .map_err(|e| anyhow!("dry evaluation for paging: {e}"))?;
+                .map_err(AgentEngineError::PagingContinuation)?;
+            let dry =
+                evaluate_plasm_comp_dry(&es, &bundle).map_err(AgentEngineError::PagingPlanDry)?;
             (bundle, dry)
         } else {
-            return Err(anyhow!(
-                "invalid run_ref `{trimmed}`: expected a returned commit ref or paging handle"
-            ));
+            return Err(AgentEngineError::InvalidRunReference {
+                value: trimmed.to_owned(),
+            });
         };
 
         let host = self.build_host_state(transport)?;
@@ -741,13 +818,13 @@ impl AgentEngine {
             for artifact in &live.code_plan_run_artifacts {
                 let id =
                     plasm_agent_core::run_artifacts::RunArtifactId::from_wire(&artifact.run_id)
-                        .ok_or_else(|| anyhow!("invalid canonical run id"))?;
+                        .ok_or(AgentEngineError::InvalidRunArtifactId)?;
                 let payload = host
                     .run_artifacts
                     .get_payload_result(AGENT_PROMPT_HASH, &self.session_id, id)
                     .await
-                    .map_err(|error| anyhow!("reading canonical run artifact: {error}"))?
-                    .ok_or_else(|| anyhow!("canonical run artifact missing"))?;
+                    .map_err(AgentEngineError::RunArtifact)?
+                    .ok_or(AgentEngineError::RunArtifactMissing)?;
                 artifacts.push(serde_json::json!({
                     "run_id": artifact.run_id,
                     "snapshot": serde_json::from_slice::<serde_json::Value>(&payload.bytes)?,
@@ -766,7 +843,11 @@ impl AgentEngine {
         match publication {
             Ok(result) => Ok(result),
             Err(error) => {
-                let mut failure = plasm_runtime::ExecutionFailure::from(error.to_string());
+                let mut failure = plasm_runtime::ExecutionFailure::new(
+                    plasm_runtime::FailureCause::Runtime,
+                    "run_publication_failed",
+                    error.to_string(),
+                );
                 for step in &live.return_steps {
                     failure = failure.with_effects(&step.result.operations);
                 }
@@ -792,7 +873,7 @@ impl AgentEngine {
             .map(|(id, cgs)| (id.clone(), id.clone(), Vec::new(), cgs.clone()))
             .collect();
         if pairs.is_empty() {
-            return Err(anyhow!("no catalogs loaded — call loadCatalog first"));
+            return Err(AgentEngineError::NoCatalogsLoaded);
         }
         let registry = CgsRegistry::from_pairs(pairs);
         let base_url = self
@@ -815,7 +896,7 @@ impl AgentEngine {
             run_artifacts: Arc::new(RunArtifactStore::memory()),
             session_graph_persistence: None,
             oss_local_filesystem_defaults: false,
-        });
+        })?;
         state.oss.python_pool = self.python_pool.clone();
         Ok(state)
     }
@@ -850,12 +931,11 @@ impl AgentEngine {
         let exposure = self
             .exposure
             .as_ref()
-            .ok_or_else(|| anyhow!("exposure missing for render"))?;
+            .ok_or(AgentEngineError::TeachingExposureMissing)?;
         let wave = plasm_core::prompt_render::python::prepare_python_teaching_wave(
             exposure,
             &self.python_teaching,
-        )
-        .map_err(anyhow::Error::msg)?;
+        )?;
         let text = if wave.language.is_none() && wave.declarations.is_empty() {
             String::new()
         } else {
@@ -885,19 +965,23 @@ impl AgentEngine {
             })
             .collect();
         let primary_api =
-            primary_entry_id_from_seeds(&seeds).ok_or_else(|| anyhow!("no catalogs loaded"))?;
+            primary_entry_id_from_seeds(&seeds).ok_or(AgentEngineError::NoCatalogsLoaded)?;
         if !self.catalogs.contains_key(&primary_api) {
-            return Err(anyhow!("missing primary catalog `{primary_api}`"));
+            return Err(AgentEngineError::PrimaryCatalogMissing {
+                entry_id: primary_api,
+            });
         }
         let cgs = self
             .catalogs
             .get(&primary_api)
-            .ok_or_else(|| anyhow!("missing primary catalog `{primary_api}`"))?
+            .ok_or_else(|| AgentEngineError::PrimaryCatalogMissing {
+                entry_id: primary_api.clone(),
+            })?
             .clone();
         let exposure = self
             .exposure
             .clone()
-            .ok_or_else(|| anyhow!("no symbol exposure — call exposeSeeds first"))?;
+            .ok_or(AgentEngineError::TeachingExposureMissing)?;
         let entities = exposure.entities.clone();
         let catalog_cgs_hash = cgs.catalog_cgs_hash_hex();
         let mut session = ExecuteSession::new_with_bindings(
@@ -1356,9 +1440,7 @@ mod tests {
             (serde_json::Value, Option<String>),
             plasm_runtime::error::RuntimeError,
         > {
-            Err(plasm_runtime::error::RuntimeError::ConfigurationError {
-                message: "not used".into(),
-            })
+            Err(plasm_runtime::error::RuntimeError::LiveAbsolutePaginationRequired)
         }
     }
 
@@ -1638,7 +1720,7 @@ mod tests {
                 base_url: &str,
                 request: &CompiledRequest,
                 _: Option<plasm_runtime::auth::ResolvedAuth>,
-            ) -> Result<(serde_json::Value, Option<String>), plasm_runtime::RuntimeError>
+            ) -> std::result::Result<(serde_json::Value, Option<String>), plasm_runtime::RuntimeError>
             {
                 assert_eq!(
                     base_url.trim_end_matches('/'),
@@ -1661,7 +1743,7 @@ mod tests {
                 &self,
                 _: &str,
                 _: Option<plasm_runtime::auth::ResolvedAuth>,
-            ) -> Result<(serde_json::Value, Option<String>), plasm_runtime::RuntimeError>
+            ) -> std::result::Result<(serde_json::Value, Option<String>), plasm_runtime::RuntimeError>
             {
                 panic!("unexpected absolute GET")
             }

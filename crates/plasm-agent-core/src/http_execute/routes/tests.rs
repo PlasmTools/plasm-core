@@ -199,6 +199,7 @@ fn test_host_state_from_registry(reg: CgsRegistry) -> PlasmHostState {
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
     })
+    .expect("valid catalog fixture")
 }
 
 fn test_state_with_registry() -> PlasmHostState {
@@ -855,7 +856,10 @@ fn execute_session_open_rejects_removed_caller_rankings() {
 fn parse_execute_program_body_rejects_lines_array() {
     let err = parse_execute_program_body(Some("application/json"), br#"{"lines":["a","b"]}"#)
         .expect_err("lines");
-    assert!(err.contains("lines"), "{err}");
+    assert!(matches!(
+        err,
+        crate::http_execute::ingress::ExecuteProgramBodyError::LinesArray
+    ));
 }
 
 #[test]

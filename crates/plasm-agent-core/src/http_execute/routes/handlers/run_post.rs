@@ -57,7 +57,7 @@ pub(crate) async fn post_run_execute_session_inner(
     if !session_allows_principal(&sess, principal.as_ref()) {
         return incoming_auth_problem(
             crate::incoming_auth::IncomingAuthFailure::Invalid(
-                "execute session tenant does not match caller".into(),
+                crate::incoming_auth::IncomingAuthError::SessionTenantMismatch,
             ),
             true,
         );
@@ -72,8 +72,11 @@ pub(crate) async fn post_run_execute_session_inner(
 
     let program = match parse_execute_program_body(content_type, &body) {
         Ok(v) => v,
-        Err(msg) => {
-            let type_uri = if msg.starts_with("invalid UTF-8:") {
+        Err(error) => {
+            let type_uri = if matches!(
+                error,
+                super::super::super::ingress::ExecuteProgramBodyError::Utf8(_)
+            ) {
                 problem_types::EXECUTE_INVALID_BODY_ENCODING
             } else {
                 problem_types::EXECUTE_INVALID_REQUEST_BODY
@@ -81,7 +84,7 @@ pub(crate) async fn post_run_execute_session_inner(
             return problem_response(
                 Problem::custom(ProblemStatus::BAD_REQUEST, Uri::from_static(type_uri))
                     .with_title("Bad Request")
-                    .with_detail(msg),
+                    .with_detail(error.to_string()),
             );
         }
     };
@@ -117,6 +120,9 @@ pub(crate) async fn post_run_execute_session_inner(
         Ok(b) => b,
         Err(crate::compilation_error::CompilationError::Host(failure)) => {
             return crate::http_execute::execution_failure_response(failure)
+        }
+        Err(error @ crate::compilation_error::CompilationError::Checker(_)) => {
+            return crate::http_execute::execution_failure_response(error.into())
         }
         Err(crate::compilation_error::CompilationError::Program(stage)) => {
             if plan_only {

@@ -9,6 +9,14 @@ use uuid::Uuid;
 const OBJECT_SUFFIX: &str = ".psl";
 const DEFAULT_PREFIX: &str = "symbol_ledgers";
 
+#[derive(Debug, thiserror::Error)]
+pub enum SymbolLedgerArchiveError {
+    #[error("symbol ledger object-store URL is invalid")]
+    Url(#[source] url::ParseError),
+    #[error("symbol ledger object store could not be opened")]
+    Open(#[source] object_store::Error),
+}
+
 #[derive(Clone)]
 pub struct SymbolLedgerArchive {
     store: Arc<dyn ObjectStore>,
@@ -21,7 +29,7 @@ impl SymbolLedgerArchive {
     }
 
     /// `PLASM_SYMBOL_LEDGER_URL` when set; otherwise reuse `PLASM_RUN_ARTIFACTS_URL` bucket/prefix.
-    pub fn from_env() -> Result<Option<Self>, String> {
+    pub fn from_env() -> Result<Option<Self>, SymbolLedgerArchiveError> {
         if let Ok(url_raw) = std::env::var("PLASM_SYMBOL_LEDGER_URL") {
             if !url_raw.trim().is_empty() {
                 return Self::from_url(&url_raw, None);
@@ -35,11 +43,13 @@ impl SymbolLedgerArchive {
         Ok(None)
     }
 
-    pub(crate) fn from_url(url_raw: &str, subprefix: Option<&str>) -> Result<Option<Self>, String> {
-        let url = url::Url::parse(url_raw.trim())
-            .map_err(|e| format!("symbol ledger object store URL invalid: {e}"))?;
+    pub(crate) fn from_url(
+        url_raw: &str,
+        subprefix: Option<&str>,
+    ) -> Result<Option<Self>, SymbolLedgerArchiveError> {
+        let url = url::Url::parse(url_raw.trim()).map_err(SymbolLedgerArchiveError::Url)?;
         let (boxed, mut prefix) = object_store::parse_url_opts(&url, std::env::vars())
-            .map_err(|e| format!("symbol ledger object store open failed: {e}"))?;
+            .map_err(SymbolLedgerArchiveError::Open)?;
         if let Some(sub) = subprefix {
             prefix = prefix.join(sub);
         }

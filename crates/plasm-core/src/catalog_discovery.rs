@@ -9,12 +9,42 @@ use sha2::{Digest, Sha256};
 mod input_projection;
 mod relation_use;
 mod retrieval_text;
+pub use input_projection::{InputProjectionError, InputProjectionFault};
+pub use retrieval_text::RetrievalTextError;
 pub mod semantic_wire;
 pub mod structured;
 
 pub const DISCOVERY_RENDERER_VERSION: u32 = 18;
 pub const EMBEDDING_DIMENSIONS: usize = 1536;
 pub const EMBEDDING_MODEL: &str = "openai/text-embedding-3-small";
+
+#[derive(Debug, thiserror::Error)]
+pub enum CatalogDiscoveryError {
+    #[error("embedding profile is unsupported")]
+    UnsupportedEmbeddingProfile,
+    #[error("discovery renderer version is unsupported")]
+    UnsupportedRendererVersion,
+    #[error("discovery artifact does not match its catalog revision")]
+    CatalogRevisionMismatch,
+    #[error("discovery prerequisite declarations differ from the catalog")]
+    PrerequisiteDeclarationsMismatch,
+    #[error("discovery artifact does not contain every capability exactly once")]
+    CapabilityCoverageMismatch,
+    #[error("discovery document differs from canonical catalog semantics")]
+    DocumentMismatch,
+    #[error("capability `{capability}` references missing entity `{entity}`")]
+    CapabilityEntityMissing { capability: String, entity: String },
+    #[error("embedding dimensionality differs from its profile")]
+    EmbeddingDimensionMismatch,
+    #[error("embedding contains a non-finite value")]
+    NonFiniteEmbedding,
+    #[error("embedding vector is zero")]
+    ZeroEmbedding,
+    #[error(transparent)]
+    Prerequisite(#[from] crate::prerequisites::PrerequisiteError),
+    #[error(transparent)]
+    RetrievalText(#[from] retrieval_text::RetrievalTextError),
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -35,9 +65,9 @@ impl Default for EmbeddingProfile {
 }
 
 impl EmbeddingProfile {
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), CatalogDiscoveryError> {
         if self != &Self::default() {
-            return Err("unsupported embedding profile; repack with the active profile".into());
+            return Err(CatalogDiscoveryError::UnsupportedEmbeddingProfile);
         }
         Ok(())
     }
@@ -100,30 +130,27 @@ pub fn embedding_cache_key(document: &CapabilityDocument, profile: &EmbeddingPro
 }
 
 impl CatalogDiscoveryArtifact {
-    pub fn validate(&self, cgs: &crate::CGS) -> Result<(), String> {
+    pub fn validate(&self, cgs: &crate::CGS) -> Result<(), CatalogDiscoveryError> {
         self.profile.validate()?;
         if self.renderer_version != DISCOVERY_RENDERER_VERSION {
-            return Err("unsupported discovery renderer version".into());
+            return Err(CatalogDiscoveryError::UnsupportedRendererVersion);
         }
         if cgs.entry_id.as_deref() != Some(&self.entry_id)
             || self.cgs_hash != cgs.catalog_cgs_hash_hex()
         {
-            return Err("discovery artifact does not match its CGS revision".into());
+            return Err(CatalogDiscoveryError::CatalogRevisionMismatch);
         }
         if self.prerequisites != cgs.prerequisites {
-            return Err("compiled prerequisite declarations disagree with CGS".into());
+            return Err(CatalogDiscoveryError::PrerequisiteDeclarationsMismatch);
         }
         self.prerequisites.validate(cgs)?;
         let expected = capability_documents(cgs)?;
         if expected.len() != self.capabilities.len() {
-            return Err("discovery artifact must contain every capability exactly once".into());
+            return Err(CatalogDiscoveryError::CapabilityCoverageMismatch);
         }
         for (document, embedded) in expected.iter().zip(&self.capabilities) {
             if document != &embedded.document {
-                return Err(format!(
-                    "discovery document mismatch for {}",
-                    document.capability
-                ));
+                return Err(CatalogDiscoveryError::DocumentMismatch);
             }
             validate_embedding(&embedded.embedding, self.profile.dimensions)?;
         }
@@ -131,34 +158,38 @@ impl CatalogDiscoveryArtifact {
     }
 }
 
-pub fn validate_embedding(embedding: &[f32], dimensions: usize) -> Result<(), String> {
+pub fn validate_embedding(
+    embedding: &[f32],
+    dimensions: usize,
+) -> Result<(), CatalogDiscoveryError> {
     if embedding.len() != dimensions {
-        return Err(format!(
-            "embedding dimension mismatch: expected {dimensions}, got {}",
-            embedding.len()
-        ));
+        return Err(CatalogDiscoveryError::EmbeddingDimensionMismatch);
     }
     if embedding.iter().any(|v| !v.is_finite()) {
-        return Err("embedding contains a non-finite value".into());
+        return Err(CatalogDiscoveryError::NonFiniteEmbedding);
     }
     if !embedding.iter().any(|v| *v != 0.0) {
-        return Err("zero embedding has undefined cosine distance".into());
+        return Err(CatalogDiscoveryError::ZeroEmbedding);
     }
     Ok(())
 }
 
 /// Render only catalog semantics: never mappings, runtime values, or examples.
-pub fn capability_documents(cgs: &crate::CGS) -> Result<Vec<CapabilityDocument>, String> {
+pub fn capability_documents(
+    cgs: &crate::CGS,
+) -> Result<Vec<CapabilityDocument>, CatalogDiscoveryError> {
     cgs.prerequisites.validate(cgs)?;
     let mut capabilities: Vec<_> = cgs.capabilities.values().collect();
     capabilities.sort_by(|a, b| a.name.cmp(&b.name));
     capabilities
         .into_iter()
         .map(|cap| {
-            let entity = cgs
-                .entities
-                .get(&cap.domain)
-                .ok_or_else(|| format!("missing entity {}", cap.domain))?;
+            let entity = cgs.entities.get(&cap.domain).ok_or_else(|| {
+                CatalogDiscoveryError::CapabilityEntityMissing {
+                    capability: cap.name.to_string(),
+                    entity: cap.domain.to_string(),
+                }
+            })?;
             let rendered = retrieval_text::render(cgs, cap, entity)?;
             let operation = OperationEvidence {
                 kind: cap.kind,
@@ -397,10 +428,10 @@ mod tests {
             capabilities: vec![],
             prerequisites: cgs.prerequisites.clone(),
         };
-        assert_eq!(
-            artifact.validate(&cgs).unwrap_err(),
-            "unsupported discovery renderer version"
-        );
+        assert!(matches!(
+            artifact.validate(&cgs),
+            Err(CatalogDiscoveryError::UnsupportedRendererVersion)
+        ));
     }
 
     #[test]

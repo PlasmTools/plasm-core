@@ -192,6 +192,7 @@ pub fn matrix_federated_duplicate_entity_host_state(
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
     })
+    .expect("valid catalog fixture")
 }
 
 #[allow(dead_code)]
@@ -259,6 +260,7 @@ pub fn matrix_federated_host_state(
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
     })
+    .expect("valid catalog fixture")
 }
 
 pub fn matrix_host_state(
@@ -281,4 +283,5 @@ pub fn matrix_host_state(
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
     })
+    .expect("valid catalog fixture")
 }

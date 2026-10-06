@@ -2,13 +2,67 @@
 
 use async_trait::async_trait;
 use plasm_runtime::credentials::{
-    credential_error, CredentialReference, CredentialScope, SessionCredentialStore,
-    StoredCredential,
+    CredentialReference, CredentialScope, SessionCredentialStore, StoredCredential,
 };
 use plasm_runtime::RuntimeError;
 use sha2::{Digest, Sha256};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum CredentialPersistenceError {
+    #[error("cannot encode credential effect: {source}")]
+    EffectEncoding {
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("invalid credential lifetime: {seconds} seconds")]
+    InvalidLifetime { seconds: u64 },
+    #[error("credential commit does not match the requested effect")]
+    CommitEffectMismatch,
+    #[error("credential reference is unavailable")]
+    ReferenceUnavailable,
+    #[error("credential reference scope or lifetime does not permit this request")]
+    ReferenceScopeOrLifetime,
+    #[error("cannot serialize credential record: {source}")]
+    RecordEncoding {
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("durable credential commit failed: {source}")]
+    DurableCommit {
+        #[source]
+        source: redis::RedisError,
+    },
+    #[error("invalid stored credential operation: {source}")]
+    StoredOperation {
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("invalid credential commit acknowledgement: {source}")]
+    CommitAcknowledgement {
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("durable credential lookup failed: {source}")]
+    DurableLookup {
+        #[source]
+        source: redis::RedisError,
+    },
+    #[error("invalid stored credential record: {source}")]
+    StoredRecord {
+        #[source]
+        source: serde_json::Error,
+    },
+}
+
+impl CredentialPersistenceError {
+    pub(crate) fn into_runtime(self) -> RuntimeError {
+        RuntimeError::CredentialProvider {
+            source: Box::new(self),
+        }
+    }
+}
 
 #[derive(Default)]
 pub struct CredentialMemory(pub(crate) RwLock<HashMap<String, String>>);
@@ -54,8 +108,9 @@ impl SessionCredentialStore for HostCredentialStore {
         lifetime_seconds: u64,
     ) -> Result<CredentialReference, RuntimeError> {
         // This digest is an internal idempotency lookup key, never a public receipt/fingerprint.
-        let input = serde_json::to_vec(&(&scope, source, lifetime_seconds))
-            .map_err(|_| credential_error("cannot encode credential effect"))?;
+        let input = serde_json::to_vec(&(&scope, source, lifetime_seconds)).map_err(|source| {
+            CredentialPersistenceError::EffectEncoding { source }.into_runtime()
+        })?;
         let digest = hex::encode(Sha256::digest(input));
         let operation_key = format!(
             "mcp:execute:session:{{{}}}:credential-operation:{digest}",
@@ -70,7 +125,12 @@ impl SessionCredentialStore for HostCredentialStore {
             expires_at_unix: now()
                 .checked_add(lifetime_seconds)
                 .filter(|expires| *expires > now())
-                .ok_or_else(|| credential_error("invalid credential lifetime"))?,
+                .ok_or_else(|| {
+                    CredentialPersistenceError::InvalidLifetime {
+                        seconds: lifetime_seconds,
+                    }
+                    .into_runtime()
+                })?,
         };
         let committed = self
             .registry
@@ -80,14 +140,13 @@ impl SessionCredentialStore for HostCredentialStore {
                 &reference_key(&record.scope, &record.reference),
                 &record,
             )
-            .await?;
+            .await
+            .map_err(CredentialPersistenceError::into_runtime)?;
         if committed.scope != record.scope
             || committed.source != record.source
             || committed.expires_at_unix <= now()
         {
-            return Err(credential_error(
-                "credential commit does not match the requested effect",
-            ));
+            return Err(CredentialPersistenceError::CommitEffectMismatch.into_runtime());
         }
         Ok(committed.reference)
     }
@@ -100,15 +159,14 @@ impl SessionCredentialStore for HostCredentialStore {
         let record = self
             .registry
             .load_credential_record(&self.memory, &reference_key(scope, reference))
-            .await?
-            .ok_or_else(|| credential_error("credential reference is unavailable"))?;
+            .await
+            .map_err(CredentialPersistenceError::into_runtime)?
+            .ok_or_else(|| CredentialPersistenceError::ReferenceUnavailable.into_runtime())?;
         if record.reference != *reference
             || record.scope != *scope
             || record.expires_at_unix <= now()
         {
-            return Err(credential_error(
-                "credential reference scope or lifetime does not permit this request",
-            ));
+            return Err(CredentialPersistenceError::ReferenceScopeOrLifetime.into_runtime());
         }
         Ok(record.source)
     }
@@ -128,6 +186,74 @@ mod tests {
             slot: "read".into(),
             resource: serde_json::json!({"record":"a"}),
         }
+    }
+
+    #[tokio::test]
+    async fn corrupt_record_preserves_json_cause_at_runtime_boundary() {
+        use std::error::Error;
+        let (registry, json) = ExecuteSessionRegistry::with_test_json_store();
+        let reference =
+            CredentialReference::parse(&format!("cr{}", uuid::Uuid::new_v4().simple())).unwrap();
+        json.write()
+            .await
+            .insert(reference_key(&scope(), &reference), "{".into());
+        let store = HostCredentialStore {
+            registry,
+            memory: Default::default(),
+        };
+        let error = store.resolve(&reference, &scope()).await.unwrap_err();
+        let cause = error
+            .source()
+            .unwrap()
+            .downcast_ref::<CredentialPersistenceError>()
+            .unwrap();
+        assert!(matches!(
+            cause,
+            CredentialPersistenceError::StoredRecord { .. }
+        ));
+        assert!(cause
+            .source()
+            .unwrap()
+            .downcast_ref::<serde_json::Error>()
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn invalid_lifetime_is_semantic_and_never_committed() {
+        use std::error::Error;
+        let store = HostCredentialStore {
+            registry: ExecuteSessionRegistry::new_in_memory(),
+            memory: Default::default(),
+        };
+        let error = store
+            .bind(scope(), CredentialSource::Host {}, 0)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error
+                .source()
+                .unwrap()
+                .downcast_ref::<CredentialPersistenceError>(),
+            Some(CredentialPersistenceError::InvalidLifetime { seconds: 0 })
+        ));
+        assert!(store.memory.0.read().await.is_empty());
+    }
+
+    #[test]
+    fn redis_cause_survives_provider_boundary() {
+        use std::error::Error;
+        let source = redis::RedisError::from((redis::ErrorKind::IoError, "synthetic timeout"));
+        let error = CredentialPersistenceError::DurableCommit { source }.into_runtime();
+        let cause = error
+            .source()
+            .unwrap()
+            .downcast_ref::<CredentialPersistenceError>()
+            .unwrap();
+        assert!(cause
+            .source()
+            .unwrap()
+            .downcast_ref::<redis::RedisError>()
+            .is_some());
     }
 
     #[tokio::test]

@@ -1,15 +1,61 @@
 use super::*;
+use thiserror::Error;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum ValueValidationKind {
+    #[error("predicate field path must be non-empty")]
+    EmptyPredicateFieldPath,
+    #[error("quantifier binding must be a non-empty root alias")]
+    InvalidQuantifierBinding,
+    #[error("template requires non-empty root binding aliases")]
+    InvalidTemplateBinding,
+    #[error("entity_ref_key api and entity must be non-empty")]
+    EmptyEntityReferenceOwner,
+    #[error("entity_ref_key compound object must not be empty")]
+    EmptyEntityReferenceKey,
+    #[error("entity_ref_key compound object contains an empty key")]
+    EmptyEntityReferenceKeyField,
+    #[error("entity_ref_key compound values must be literals, symbols, or templates")]
+    InvalidEntityReferenceKeyValue,
+    #[error("entity_ref_key must be a literal, symbol, template, or non-empty compound object")]
+    InvalidEntityReferenceKey,
+    #[error("value contains an unnormalized entity_ref wrapper")]
+    UnnormalizedEntityReference,
+    #[error("object contains an empty key")]
+    EmptyObjectKey,
+    #[error("string contains JavaScript object string coercion ([object Object])")]
+    JavaScriptObjectCoercion,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[error("plan node {node_index} {path}: {kind}")]
+pub struct ValueValidationError {
+    pub node_index: usize,
+    pub path: String,
+    #[source]
+    pub kind: ValueValidationKind,
+}
+
+fn invalid(node_index: usize, path: &str, kind: ValueValidationKind) -> ValueValidationError {
+    ValueValidationError {
+        node_index,
+        path: path.to_owned(),
+        kind,
+    }
+}
 
 pub(super) fn validate_predicate(
     p: &PlanPredicate,
     node_index: usize,
     pred_index: usize,
-) -> Result<(), String> {
+) -> Result<(), ValueValidationError> {
     if p.field_path.segments().is_empty()
         || p.field_path.segments().iter().any(|s| s.trim().is_empty())
     {
-        return Err(format!(
-            "plan.nodes[{node_index}].predicates[{pred_index}].field_path must be non-empty"
+        return Err(invalid(
+            node_index,
+            &format!("predicates[{pred_index}].field_path"),
+            ValueValidationKind::EmptyPredicateFieldPath,
         ));
     }
     validate_plan_value_expr(
@@ -24,7 +70,7 @@ pub(super) fn validate_plan_value_expr(
     value: &PlanValue,
     node_index: usize,
     path: &str,
-) -> Result<(), String> {
+) -> Result<(), ValueValidationError> {
     match value {
         PlanValue::Quantified {
             binding,
@@ -33,7 +79,11 @@ pub(super) fn validate_plan_value_expr(
             ..
         } => {
             if binding.is_empty() || binding.contains('.') {
-                return Err("invalid quantifier binding".into());
+                return Err(invalid(
+                    node_index,
+                    path,
+                    ValueValidationKind::InvalidQuantifierBinding,
+                ));
             }
             validate_plan_value_expr(collection, node_index, path)?;
             validate_plan_value_expr(predicate, node_index, path)
@@ -80,8 +130,10 @@ pub(super) fn validate_plan_value_expr(
                     || b.from.contains('.')
                     || b.to.contains('.')
                 {
-                    return Err(format!(
-                        "plan.nodes[{node_index}].{path} requires non-empty root binding aliases"
+                    return Err(invalid(
+                        node_index,
+                        path,
+                        ValueValidationKind::InvalidTemplateBinding,
                     ));
                 }
             }
@@ -91,8 +143,10 @@ pub(super) fn validate_plan_value_expr(
             validate_no_js_object_coercion(api, node_index, path)?;
             validate_no_js_object_coercion(entity, node_index, path)?;
             if api.trim().is_empty() || entity.trim().is_empty() {
-                return Err(format!(
-                    "plan.nodes[{node_index}].{path} entity_ref_key api and entity must be non-empty"
+                return Err(invalid(
+                    node_index,
+                    path,
+                    ValueValidationKind::EmptyEntityReferenceOwner,
                 ));
             }
             validate_entity_ref_key_value(key, node_index, &format!("{path}.key"))
@@ -105,14 +159,18 @@ pub(super) fn validate_plan_value_expr(
         }
         PlanValue::Object { fields } => {
             if looks_like_unnormalized_entity_ref_wrapper(fields) {
-                return Err(format!(
-                    "plan.nodes[{node_index}].{path} contains an unnormalized entity_ref wrapper; lower {{api, entity, key}} to its key payload before validation"
+                return Err(invalid(
+                    node_index,
+                    path,
+                    ValueValidationKind::UnnormalizedEntityReference,
                 ));
             }
             for (k, field) in fields {
                 if k.trim().is_empty() {
-                    return Err(format!(
-                        "plan.nodes[{node_index}].{path} contains an empty object key"
+                    return Err(invalid(
+                        node_index,
+                        path,
+                        ValueValidationKind::EmptyObjectKey,
                     ));
                 }
                 validate_plan_value_expr(field, node_index, &format!("{path}.{k}"))?;
@@ -126,7 +184,7 @@ fn validate_entity_ref_key_value(
     value: &PlanValue,
     node_index: usize,
     path: &str,
-) -> Result<(), String> {
+) -> Result<(), ValueValidationError> {
     match value {
         PlanValue::Literal { .. }
         | PlanValue::BindingSymbol { .. }
@@ -134,19 +192,25 @@ fn validate_entity_ref_key_value(
         | PlanValue::Template { .. } => validate_plan_value_expr(value, node_index, path),
         PlanValue::Object { fields } => {
             if fields.is_empty() {
-                return Err(format!(
-                    "plan.nodes[{node_index}].{path} compound entity_ref_key object must not be empty"
+                return Err(invalid(
+                    node_index,
+                    path,
+                    ValueValidationKind::EmptyEntityReferenceKey,
                 ));
             }
             if looks_like_unnormalized_entity_ref_wrapper(fields) {
-                return Err(format!(
-                    "plan.nodes[{node_index}].{path} contains an unnormalized entity_ref wrapper; entity_ref_key.key must contain only key fields"
+                return Err(invalid(
+                    node_index,
+                    path,
+                    ValueValidationKind::UnnormalizedEntityReference,
                 ));
             }
             for (field, child) in fields {
                 if field.trim().is_empty() {
-                    return Err(format!(
-                        "plan.nodes[{node_index}].{path} compound entity_ref_key object contains an empty key"
+                    return Err(invalid(
+                        node_index,
+                        path,
+                        ValueValidationKind::EmptyEntityReferenceKeyField,
                     ));
                 }
                 match child {
@@ -157,16 +221,21 @@ fn validate_entity_ref_key_value(
                         validate_plan_value_expr(child, node_index, &format!("{path}.{field}"))?
                     }
                     other => {
-                        return Err(format!(
-                            "plan.nodes[{node_index}].{path}.{field} must be a literal, binding symbol, node symbol, or template for compound entity_ref_key (got {other:?})"
+                        let _ = other;
+                        return Err(invalid(
+                            node_index,
+                            &format!("{path}.{field}"),
+                            ValueValidationKind::InvalidEntityReferenceKeyValue,
                         ));
                     }
                 }
             }
             Ok(())
         }
-        other => Err(format!(
-            "plan.nodes[{node_index}].{path} must be a literal, binding symbol, node symbol, template, or non-empty compound object for entity_ref_key (got {other:?})"
+        _ => Err(invalid(
+            node_index,
+            path,
+            ValueValidationKind::InvalidEntityReferenceKey,
         )),
     }
 }
@@ -196,7 +265,7 @@ fn validate_data_no_js_object_coercion(
     value: &plasm_core::Value,
     node_index: usize,
     path: &str,
-) -> Result<(), String> {
+) -> Result<(), ValueValidationError> {
     match value {
         plasm_core::Value::String(s) => validate_no_js_object_coercion(s, node_index, path),
         plasm_core::Value::Array(items) => {
@@ -219,10 +288,12 @@ pub(super) fn validate_no_js_object_coercion(
     text: &str,
     node_index: usize,
     path: &str,
-) -> Result<(), String> {
+) -> Result<(), ValueValidationError> {
     if text.contains("[object Object]") {
-        return Err(format!(
-            "plan.nodes[{node_index}].{path} contains JavaScript object string coercion ([object Object]); use a symbolic field/template value instead"
+        return Err(invalid(
+            node_index,
+            path,
+            ValueValidationKind::JavaScriptObjectCoercion,
         ));
     }
     Ok(())

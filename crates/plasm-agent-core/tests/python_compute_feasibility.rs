@@ -181,6 +181,7 @@ fn incremental_symbols_do_not_erase_catalog_ownership() {
     assert!(first
         .materialize(&second, &membership(0, ResultCoverage::Complete), &[])
         .unwrap_err()
+        .to_string()
         .contains("ownership"));
     assert!(ValueContract::from_cgs(&cgs, "first", symbols.as_ref(), &second_symbol).is_err());
     assert_eq!(

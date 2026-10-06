@@ -4,6 +4,43 @@ use plasm_core::Expr;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::marker::PhantomData;
+use thiserror::Error;
+
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum PlanAtomError {
+    #[error("{kind} must be non-empty")]
+    Empty { kind: &'static str },
+    #[error("{kind} contains JavaScript object string coercion ([object Object])")]
+    ObjectCoercion { kind: &'static str },
+}
+
+impl From<PlanAtomError> for plasm_runtime::ExecutionFailure {
+    fn from(error: PlanAtomError) -> Self {
+        Self::new(
+            plasm_runtime::FailureCause::Program,
+            match &error {
+                PlanAtomError::Empty { .. } => "plan_identifier_empty",
+                PlanAtomError::ObjectCoercion { .. } => "plan_identifier_object_coercion",
+            },
+            error.to_string(),
+        )
+    }
+}
+
+impl From<plasm_core::plasm_monad::PlanAtomError> for PlanAtomError {
+    fn from(error: plasm_core::plasm_monad::PlanAtomError) -> Self {
+        match error {
+            plasm_core::plasm_monad::PlanAtomError::Empty { kind } => Self::Empty { kind },
+            plasm_core::plasm_monad::PlanAtomError::ObjectCoercion { kind } => {
+                Self::ObjectCoercion { kind }
+            }
+            plasm_core::plasm_monad::PlanAtomError::EmptyPath => Self::Empty { kind: "FieldPath" },
+            plasm_core::plasm_monad::PlanAtomError::EmptyPathSegment => Self::Empty {
+                kind: "FieldPath segment",
+            },
+        }
+    }
+}
 
 macro_rules! plan_string_atom {
     ($(#[$meta:meta])* $name:ident) => {
@@ -13,16 +50,13 @@ macro_rules! plan_string_atom {
         pub struct $name(String);
 
         impl $name {
-            pub fn new(value: impl Into<String>) -> Result<Self, String> {
+            pub fn new(value: impl Into<String>) -> Result<Self, PlanAtomError> {
                 let value = value.into();
                 if value.trim().is_empty() {
-                    return Err(format!("{} must be non-empty", stringify!($name)));
+                    return Err(PlanAtomError::Empty { kind: stringify!($name) });
                 }
                 if value.contains("[object Object]") {
-                    return Err(format!(
-                        "{} contains JavaScript object string coercion ([object Object])",
-                        stringify!($name)
-                    ));
+                    return Err(PlanAtomError::ObjectCoercion { kind: stringify!($name) });
                 }
                 Ok(Self(value))
             }

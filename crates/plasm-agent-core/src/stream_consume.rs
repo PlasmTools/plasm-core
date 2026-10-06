@@ -12,10 +12,10 @@ pub(crate) fn stream_consume_for_surface_read(
     host_page_size: Option<usize>,
     pushed_budget: Option<&PushedReadBudget>,
     graph_page_spill: bool,
-) -> Result<StreamConsumeOpts, String> {
+) -> StreamConsumeOpts {
     if let Some(budget) = pushed_budget {
         if matches!(budget, PushedReadBudget::Complete) {
-            return Ok(StreamConsumeOpts {
+            return StreamConsumeOpts {
                 fetch_all: true,
                 max_items: None,
                 one_page: false,
@@ -23,11 +23,11 @@ pub(crate) fn stream_consume_for_surface_read(
                 row_match_budget: None,
                 top_k: None,
                 bound_kind: plasm_runtime::ConsumeBoundKind::None,
-            });
+            };
         }
-        let (row_match_budget, top_k) = pushed_budget_to_stream_fields(budget)?;
+        let (row_match_budget, top_k) = pushed_budget_to_stream_fields(budget);
         if top_k.is_some() {
-            return Ok(StreamConsumeOpts {
+            return StreamConsumeOpts {
                 fetch_all: true,
                 max_items: None,
                 one_page: false,
@@ -35,10 +35,10 @@ pub(crate) fn stream_consume_for_surface_read(
                 row_match_budget,
                 top_k,
                 bound_kind: plasm_runtime::ConsumeBoundKind::ExpressionTake,
-            });
+            };
         }
         if let Some(row_match_budget) = row_match_budget {
-            return Ok(StreamConsumeOpts {
+            return StreamConsumeOpts {
                 fetch_all: true,
                 max_items: None,
                 one_page: false,
@@ -46,11 +46,11 @@ pub(crate) fn stream_consume_for_surface_read(
                 row_match_budget: Some(row_match_budget),
                 top_k: None,
                 bound_kind: plasm_runtime::ConsumeBoundKind::ExpressionTake,
-            });
+            };
         }
         if let PushedReadBudget::Limit(n) = budget {
             if host_page_size.is_some() || expr_has_paginated_query(cgs, expr) {
-                return Ok(StreamConsumeOpts {
+                return StreamConsumeOpts {
                     fetch_all: false,
                     max_items: Some(*n),
                     one_page: false,
@@ -58,21 +58,21 @@ pub(crate) fn stream_consume_for_surface_read(
                     row_match_budget: None,
                     top_k: None,
                     bound_kind: plasm_runtime::ConsumeBoundKind::ExpressionTake,
-                });
+                };
             }
         }
     }
     if host_page_size.is_some() {
-        return Ok(StreamConsumeOpts {
+        return StreamConsumeOpts {
             fetch_all: false,
             max_items: host_page_size,
             one_page: false,
             graph_backed_result: graph_page_spill,
             bound_kind: plasm_runtime::ConsumeBoundKind::HostPage,
             ..Default::default()
-        });
+        };
     }
-    Ok(if expr_has_paginated_query(cgs, expr) {
+    if expr_has_paginated_query(cgs, expr) {
         StreamConsumeOpts {
             fetch_all: true,
             max_items: None,
@@ -82,7 +82,7 @@ pub(crate) fn stream_consume_for_surface_read(
         }
     } else {
         StreamConsumeOpts::default()
-    })
+    }
 }
 
 fn expr_has_paginated_query(cgs: &CGS, expr: &Expr) -> bool {
@@ -146,8 +146,7 @@ mod tests {
     fn paginated_query_defaults_to_fetch_all_without_page_size_cap() {
         let cgs = pokeapi_cgs();
         let consume =
-            stream_consume_for_surface_read(cgs.as_ref(), &berry_query(), None, None, false)
-                .expect("consume");
+            stream_consume_for_surface_read(cgs.as_ref(), &berry_query(), None, None, false);
         assert!(consume.fetch_all);
         assert!(!consume.one_page);
     }
@@ -156,8 +155,7 @@ mod tests {
     fn host_page_size_disables_fetch_all() {
         let cgs = pokeapi_cgs();
         let consume =
-            stream_consume_for_surface_read(cgs.as_ref(), &berry_query(), Some(10), None, false)
-                .expect("consume");
+            stream_consume_for_surface_read(cgs.as_ref(), &berry_query(), Some(10), None, false);
         assert!(!consume.fetch_all);
         assert_eq!(consume.max_items, Some(10));
         assert_eq!(
@@ -176,8 +174,7 @@ mod tests {
             None,
             Some(&budget),
             false,
-        )
-        .expect("consume");
+        );
         assert!(!consume.fetch_all);
         assert_eq!(consume.max_items, Some(5));
         assert_eq!(

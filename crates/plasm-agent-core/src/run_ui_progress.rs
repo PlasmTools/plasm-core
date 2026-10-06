@@ -134,14 +134,14 @@ async fn resolve_for_http(
 
 fn run_progress_error_to_response(err: RunProgressError) -> Response {
     match err {
-        RunProgressError::BadLogicalRef(detail) | RunProgressError::BadHandle(detail) => {
+        error @ (RunProgressError::BadLogicalRef(_) | RunProgressError::BadHandle(_)) => {
             problem_response(
                 Problem::custom(
                     ProblemStatus::BAD_REQUEST,
                     Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
                 )
                 .with_title("Bad Request")
-                .with_detail(detail),
+                .with_detail(error.to_string()),
             )
         }
         RunProgressError::BindingNotFound => {
@@ -186,21 +186,24 @@ mod tests {
         use plasm_runtime::{ExecutionEngine, ExecutionMode};
 
         let cgs = Arc::new(CGS::new());
-        let st = Arc::new(build_plasm_host_state(PlasmHostBootstrap {
-            engine: ExecutionEngine::new(Default::default()).expect("engine"),
-            mode: ExecutionMode::Live,
-            registry: Arc::new(CgsRegistry::from_pairs(vec![(
-                "default".into(),
-                "Default".into(),
-                vec!["default".into()],
-                cgs.clone(),
-            )])),
-            catalog_bootstrap: crate::server_state::CatalogBootstrap::Fixed,
-            incoming_auth: None,
-            run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
-            session_graph_persistence: None,
-            oss_local_filesystem_defaults: false,
-        }));
+        let st = Arc::new(
+            build_plasm_host_state(PlasmHostBootstrap {
+                engine: ExecutionEngine::new(Default::default()).expect("engine"),
+                mode: ExecutionMode::Live,
+                registry: Arc::new(CgsRegistry::from_pairs(vec![(
+                    "default".into(),
+                    "Default".into(),
+                    vec!["default".into()],
+                    cgs.clone(),
+                )])),
+                catalog_bootstrap: crate::server_state::CatalogBootstrap::Fixed,
+                incoming_auth: None,
+                run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
+                session_graph_persistence: None,
+                oss_local_filesystem_defaults: false,
+            })
+            .expect("valid catalog fixture"),
+        );
 
         let ref_str = "l_AAAAAAAAQACAAAAAAAAAAQ";
         let logical_id = parse_logical_session_wire_ref(ref_str).expect("logical ref");

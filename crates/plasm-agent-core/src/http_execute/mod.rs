@@ -180,34 +180,72 @@ pub struct ApplyCapabilitySeedsOutcome {
 
 /// Maps the parsed `page(...)` handle to the key stored in [`ExecuteSession::paging_resume_by_handle`].
 /// MCP (`logical_session_ref` set): namespaced `l_<token>_pgN` only. HTTP: plain `pgN` only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PagingHandleFault {
+    InvalidNamespace { handle: PagingHandle },
+    WrongSession { handle: PagingHandle },
+    McpRequiresNamespace { handle: PagingHandle },
+    HttpRejectsNamespace { handle: PagingHandle },
+    Unavailable { handle: PagingHandle },
+}
+
+impl PagingHandleFault {
+    pub(crate) fn code(&self) -> &'static str {
+        match self {
+            Self::Unavailable { .. } => "page_handle_unavailable",
+            _ => "page_handle_scope_mismatch",
+        }
+    }
+}
+
+impl std::fmt::Display for PagingHandleFault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidNamespace { handle } => write!(f, "invalid namespaced page handle `{handle}`"),
+            Self::WrongSession { handle } => write!(f, "page handle `{handle}` belongs to another session"),
+            Self::McpRequiresNamespace { handle } => write!(f, "page handle `{handle}` is not scoped to this MCP session; use a handle from its result"),
+            Self::HttpRejectsNamespace { handle } => write!(f, "page handle `{handle}` requires an MCP session"),
+            Self::Unavailable { handle } => write!(f, "page handle `{handle}` is no longer available; use a handle from the current result or plan a new read"),
+        }
+    }
+}
+
+impl From<PagingHandleFault> for plasm_runtime::ExecutionFailure {
+    fn from(fault: PagingHandleFault) -> Self {
+        Self::new(
+            plasm_runtime::FailureCause::Program,
+            fault.code(),
+            fault.to_string(),
+        )
+    }
+}
+
 pub(crate) fn resolve_paging_storage_handle(
     trace: Option<&PlasmTraceContext>,
     handle: &PagingHandle,
-) -> Result<PagingHandle, crate::execute_pipeline::RunLineError> {
+) -> Result<PagingHandle, PagingHandleFault> {
     let mcp_ref = trace.and_then(|t| t.logical_session_ref.as_deref());
-    let s = handle.as_str();
     let is_ns = handle.is_logical_namespaced();
     match (mcp_ref, is_ns) {
         (Some(r), true) => {
             let slot = handle.logical_session_ref().ok_or_else(|| {
-                crate::execute_pipeline::RunLineError::Parse(format!(
-                    "invalid namespaced paging handle `{s}`"
-                ))
+                PagingHandleFault::InvalidNamespace {
+                    handle: handle.clone(),
+                }
             })?;
             if slot != r {
-                return Err(crate::execute_pipeline::RunLineError::Parse(format!(
-                    "paging handle ref `{slot}` does not match current logical_session_ref `{r}`"
-                )));
+                return Err(PagingHandleFault::WrongSession {
+                    handle: handle.clone(),
+                });
             }
             Ok(handle.clone())
         }
-        (Some(r), false) => Err(crate::execute_pipeline::RunLineError::Parse(format!(
-            "MCP requires namespaced paging: use `page({r}_pgN)` from the tool result (plain `{s}` is not valid for MCP `plasm`)"
-        ))),
-        (None, true) => Err(crate::execute_pipeline::RunLineError::Parse(
-            "namespaced paging handles are only for MCP `plasm` with `plasm_context`; use plain `page(pgN)` for HTTP execute"
-                .into(),
-        )),
+        (Some(_), false) => Err(PagingHandleFault::McpRequiresNamespace {
+            handle: handle.clone(),
+        }),
+        (None, true) => Err(PagingHandleFault::HttpRejectsNamespace {
+            handle: handle.clone(),
+        }),
         (None, false) => Ok(handle.clone()),
     }
 }
@@ -235,7 +273,7 @@ pub(crate) use context::replay_teaching_exposure_waves;
 pub use context::{
     apply_capability_seeds, execute_session_create_response, expand_execute_teaching_session,
     federate_execute_session, normalize_capability_seeds, resolve_capability_seeds,
-    ExpandTeachingWaveResult,
+    ExpandTeachingWaveResult, SessionMutateError,
 };
 pub(crate) use context::{
     apply_federate_exposure_wave, build_initial_exposure_wave, ExposureCatalogWave,

@@ -5,6 +5,7 @@
 //! parsed with a CGS via [`super::parse`].
 
 use super::iterate_until::{try_parse_iterate_until, IterateUntilExpr};
+use super::pipe::PipeParseError;
 use super::program_surface::{
     classify_top_level_assignment, collect_program_statement_lines, split_top_level,
     validate_program_label, TopLevelAssignment,
@@ -12,6 +13,37 @@ use super::program_surface::{
 use super::{
     parse_pipe_expr, peel_collect_meta, split_apply_expr, Applicator, CollectMeta, PipeExpr,
 };
+use thiserror::Error;
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum ExprNodeParseError {
+    #[error("invalid pipe expression: {0}")]
+    Pipe(#[from] PipeParseError),
+    #[error("{0}")]
+    Iterate(#[from] super::iterate_until::IterateUntilError),
+    #[error("invalid application expression: {0}")]
+    Applicator(#[source] super::SurfaceSyntaxError),
+    #[error(transparent)]
+    CollectMeta(#[from] super::collect_meta::CollectMetaError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum ProgramShapeError {
+    #[error("invalid physical program lines: {0}")]
+    PhysicalLines(#[source] super::SurfaceSyntaxError),
+    #[error("invalid binding label: {0}")]
+    Binding(#[source] super::SurfaceSyntaxError),
+    #[error(transparent)]
+    Expression(#[from] ExprNodeParseError),
+    #[error("program delimiter error: {0}")]
+    Delimiter(#[source] super::SurfaceSyntaxError),
+    #[error("`return` is not Plasm syntax; use bare final roots")]
+    ReturnKeyword,
+    #[error("Plasm program needs a final root line")]
+    RootsMissing,
+    #[error("Plasm program final roots list is empty")]
+    RootsEmpty,
+}
 use crate::row_composition::RowSuffix;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,13 +76,13 @@ pub struct ExprNode {
 }
 
 impl ExprNode {
-    pub fn row_suffixes(&self) -> Result<Vec<RowSuffix>, String> {
+    pub fn row_suffixes(&self) -> Vec<RowSuffix> {
         match &self.row {
             RowExpr::Pipe(p) => p.row_suffixes(),
             RowExpr::Primary { collect_meta, .. } => {
-                Ok(collect_meta.iter().map(RowSuffix::from).collect())
+                collect_meta.iter().map(RowSuffix::from).collect()
             }
-            RowExpr::Iterate(_) => Ok(Vec::new()),
+            RowExpr::Iterate(_) => Vec::new(),
         }
     }
 
@@ -67,11 +99,13 @@ impl ExprNode {
 ///
 /// Joins tagged heredocs across physical lines ([`super::collect_program_statement_lines`]) before
 /// splitting bindings vs roots. Path syntax inside primaries is validated only when parsed with a CGS.
-pub fn parse_program_shape(source: &str) -> Result<ParsedProgram, String> {
+pub fn parse_program_shape(source: &str) -> Result<ParsedProgram, ProgramShapeError> {
     let mut statements = Vec::new();
     let mut roots = None::<Vec<ExprNode>>;
 
-    for raw_stmt in collect_program_statement_lines(source)? {
+    for raw_stmt in
+        collect_program_statement_lines(source).map_err(ProgramShapeError::PhysicalLines)?
+    {
         let line = raw_stmt.trim();
         if line.is_empty() {
             continue;
@@ -80,11 +114,11 @@ pub fn parse_program_shape(source: &str) -> Result<ParsedProgram, String> {
             let (label, rhs) = match assignment {
                 TopLevelAssignment::Binding { label, rhs } => (label, rhs),
                 TopLevelAssignment::InvalidLabel { label } => {
-                    validate_program_label(label)?;
+                    validate_program_label(label).map_err(ProgramShapeError::Binding)?;
                     unreachable!("invalid label must error");
                 }
             };
-            validate_program_label(label)?;
+            validate_program_label(label).map_err(ProgramShapeError::Binding)?;
             let expr = parse_expr_node(rhs)?;
             statements.push(Statement::Bind {
                 label: label.to_string(),
@@ -92,13 +126,16 @@ pub fn parse_program_shape(source: &str) -> Result<ParsedProgram, String> {
             });
         } else {
             if line.starts_with("return ") {
-                return Err("return is not Plasm syntax; use bare final roots".into());
+                return Err(ProgramShapeError::ReturnKeyword);
             }
             roots = Some(
-                if parse_pipe_expr(line)?.is_some() || line.trim_start().starts_with("iterate") {
+                if parse_pipe_expr(line).is_ok_and(|pipe| pipe.is_some())
+                    || line.trim_start().starts_with("iterate")
+                {
                     vec![parse_expr_node(line)?]
                 } else {
-                    split_top_level(line, ',')?
+                    split_top_level(line, ',')
+                        .map_err(ProgramShapeError::Delimiter)?
                         .into_iter()
                         .map(|s| s.trim())
                         .filter(|s| !s.is_empty())
@@ -109,29 +146,28 @@ pub fn parse_program_shape(source: &str) -> Result<ParsedProgram, String> {
         }
     }
 
-    let roots = roots.ok_or_else(|| "Plasm program needs a final root line".to_string())?;
+    let roots = roots.ok_or(ProgramShapeError::RootsMissing)?;
     if roots.is_empty() {
-        return Err("Plasm program final roots list is empty".into());
+        return Err(ProgramShapeError::RootsEmpty);
     }
     Ok(ParsedProgram { statements, roots })
 }
 
-pub fn parse_expr_node(raw: &str) -> Result<ExprNode, String> {
+pub fn parse_expr_node(raw: &str) -> Result<ExprNode, ExprNodeParseError> {
     let trimmed = raw.trim();
     if let Some(it) = try_parse_iterate_until(trimmed)? {
         // State iterate owns the full surface — no `=>` applicator stratum.
         if trimmed.contains("=>") {
-            return Err(
-                "iterate … until … take N cannot take a `=>` applicator (state iterator is complete)"
-                    .into(),
-            );
+            return Err(ExprNodeParseError::Iterate(
+                super::iterate_until::IterateUntilError::SeedApplicator,
+            ));
         }
         return Ok(ExprNode {
             row: RowExpr::Iterate(it),
             apply: None,
         });
     }
-    let (row_surface, apply) = split_apply_expr(raw)?;
+    let (row_surface, apply) = split_apply_expr(raw).map_err(ExprNodeParseError::Applicator)?;
     if let Some(pipe) = parse_pipe_expr(&row_surface)? {
         return Ok(ExprNode {
             row: RowExpr::Pipe(pipe),
@@ -140,7 +176,9 @@ pub fn parse_expr_node(raw: &str) -> Result<ExprNode, String> {
     }
     let (head, collect_meta) = peel_collect_meta(&row_surface)?;
     if head.trim().is_empty() {
-        return Err("expression primary is empty".into());
+        return Err(ExprNodeParseError::CollectMeta(
+            super::collect_meta::CollectMetaError::EmptyExpression,
+        ));
     }
     Ok(ExprNode {
         row: RowExpr::Primary { head, collect_meta },
@@ -161,7 +199,7 @@ mod tests {
         assert_eq!(p.roots.len(), 1);
         assert_eq!(p.roots[0].primary_head(), "e1{p4=repo}");
         assert!(matches!(
-            p.roots[0].row_suffixes().unwrap().as_slice(),
+            p.roots[0].row_suffixes().as_slice(),
             [RowSuffix::Limit { count: 20 }]
         ));
     }
@@ -171,7 +209,7 @@ mod tests {
         let p = parse_program_shape("commits = e1{}\ncommits | order by date desc | take 10")
             .expect("program");
         assert_eq!(p.roots[0].primary_head(), "commits");
-        assert_eq!(p.roots[0].row_suffixes().unwrap().len(), 2);
+        assert_eq!(p.roots[0].row_suffixes().len(), 2);
     }
 
     #[test]
@@ -180,7 +218,7 @@ mod tests {
         assert_eq!(p.roots.len(), 1);
         assert_eq!(p.roots[0].primary_head(), "e1");
         assert!(matches!(
-            p.roots[0].row_suffixes().unwrap().as_slice(),
+            p.roots[0].row_suffixes().as_slice(),
             [RowSuffix::Project { fields }] if fields == &vec!["id".to_string(), "title".to_string()]
         ));
     }
@@ -206,11 +244,11 @@ mod tests {
             Some(Applicator::Derive { ref body }) if body.contains("_.message")
         ));
         assert!(matches!(
-            node.row_suffixes().unwrap().first(),
+            node.row_suffixes().first(),
             Some(RowSuffix::Filter { .. })
         ));
         assert!(matches!(
-            node.row_suffixes().unwrap().last(),
+            node.row_suffixes().last(),
             Some(RowSuffix::Limit { count: 2 })
         ));
     }
@@ -219,17 +257,21 @@ mod tests {
     fn rejects_domain_symbol_binding_labels() {
         let err = parse_program_shape("e1 = foo()\nbar").expect_err("domain symbol label");
         assert!(
-            err.contains("Binding names must be labels") && err.contains("e1"),
+            err.to_string()
+                .contains("binding names must be identifiers")
+                && err.to_string().contains("e1"),
             "{err}"
         );
         let err = parse_program_shape("p1 = e4{query=\"a\"}\np2 = e4{query=\"b\"}\np1, p2")
             .expect_err("p# label is a teaching symbol");
         assert!(
-            err.contains("Binding names must be labels") && err.contains("p1"),
+            err.to_string()
+                .contains("binding names must be identifiers")
+                && err.to_string().contains("p1"),
             "{err}"
         );
         assert!(
-            !err.contains("Only one return line"),
+            !err.to_string().contains("Only one return line"),
             "reserved-label assign must not be misdiagnosed as a return-root reject: {err}"
         );
     }
@@ -262,7 +304,7 @@ mod tests {
             r#"iterate LangCursor("c1") step LangCursor(_.id).tick() until phase = "done""#,
         )
         .expect_err("missing take");
-        assert!(err.contains("take"), "{err}");
+        assert!(err.to_string().contains("take"), "{err}");
     }
 
     #[test]

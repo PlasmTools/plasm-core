@@ -57,15 +57,19 @@ pub enum McpConfigAdminError {
     #[error("configuration not found: {0}")]
     ConfigNotFound(Uuid),
     #[error("invalid UUID: {0}")]
-    InvalidUuid(String),
+    InvalidUuid(#[source] uuid::Error),
     #[error(transparent)]
     Sqlx(#[from] sqlx::Error),
     #[error(transparent)]
     Repo(#[from] McpConfigRepositoryError),
     #[error(transparent)]
     Auth(#[from] AuthError),
-    #[error("{0}")]
-    Msg(String),
+    #[error("entry_id must be non-empty")]
+    EmptyEntryId,
+    #[error("detail.id missing")]
+    MissingDetailId,
+    #[error("detail.id not uuid: {0}")]
+    InvalidDetailId(#[source] uuid::Error),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -404,9 +408,7 @@ impl McpConfigAdminService {
     ) -> Result<(), McpConfigAdminError> {
         let e = entry_id.trim();
         if e.is_empty() {
-            return Err(McpConfigAdminError::Msg(
-                "entry_id must be non-empty".into(),
-            ));
+            return Err(McpConfigAdminError::EmptyEntryId);
         }
         let Some(mut runtime) = self.repo.get_runtime_config(&config_id).await? else {
             return Err(McpConfigAdminError::ConfigNotFound(config_id));
@@ -547,9 +549,9 @@ fn summary_from_detail_json(
         detail
             .get("id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| McpConfigAdminError::Msg("detail.id missing".into()))?,
+            .ok_or(McpConfigAdminError::MissingDetailId)?,
     )
-    .map_err(|_| McpConfigAdminError::Msg("detail.id not uuid".into()))?;
+    .map_err(McpConfigAdminError::InvalidDetailId)?;
     let allowed = detail
         .get("allowed_graphs")
         .and_then(|v| v.as_array())

@@ -99,7 +99,8 @@ async fn limit_pushdown_bounds_paginated_berry_query_async() {
         run_artifacts: Arc::new(RunArtifactStore::memory()),
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
-    });
+    })
+    .expect("valid catalog fixture");
     let es = pokeapi_session(cgs.clone());
 
     let program = "all = Berry\nlimited = all.limit(5)\nlimited";

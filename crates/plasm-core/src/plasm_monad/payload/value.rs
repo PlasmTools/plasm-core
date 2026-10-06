@@ -2,6 +2,33 @@ use super::atoms::FieldPath;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum PlasmDataValueError {
+    #[error(transparent)]
+    ResolvedValue(#[from] crate::operand_binding::ResolvedValueError),
+    #[error("data operand is not fully bound")]
+    UnboundOperand,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum PlasmDataValueEvaluationError<E: std::fmt::Debug + 'static> {
+    #[error("operand resolver failed")]
+    Resolver(E),
+    #[error(transparent)]
+    DataValue(#[from] PlasmDataValueError),
+    #[error("value expression evaluation failed")]
+    Expression(
+        #[source]
+        Box<crate::value_expression::ValueEvaluationError<PlasmDataValueEvaluationError<E>>>,
+    ),
+    #[error("quantification requires an array")]
+    QuantificationRequiresArray,
+    #[error("quantification exceeds its value occurrence limit")]
+    QuantificationBudgetExceeded,
+    #[error("quantified predicate requires a Boolean")]
+    QuantifiedPredicateRequiresBoolean,
+}
+
 /// Predicate/template values in the Plasm comp DAG.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -121,8 +148,8 @@ pub struct PlanInputBinding {
 }
 
 impl TryFrom<crate::Value> for PlasmDataValue {
-    type Error = String;
-    fn try_from(value: crate::Value) -> Result<Self, String> {
+    type Error = PlasmDataValueError;
+    fn try_from(value: crate::Value) -> Result<Self, Self::Error> {
         use crate::{PlasmInputRef, Value};
         Ok(match value {
             Value::PlasmInputRef(PlasmInputRef::NodeInput { node, path }) => Self::NodeSymbol {
@@ -157,25 +184,28 @@ impl TryFrom<crate::Value> for PlasmDataValue {
                 fields: fields
                     .into_iter()
                     .map(|(k, v)| Ok((k, Self::try_from(v)?)))
-                    .collect::<Result<_, String>>()?,
+                    .collect::<Result<_, PlasmDataValueError>>()?,
             },
             value => Self::Literal {
-                value: crate::operand_binding::ResolvedValue::new(value).map_err(str::to_owned)?,
+                value: crate::operand_binding::ResolvedValue::new(value)?,
             },
         })
     }
 }
 
 impl PlasmDataValue {
-    fn substitute_local(&self, binding: &str, value: &crate::Value) -> Result<Self, String> {
+    fn substitute_local(
+        &self,
+        binding: &str,
+        value: &crate::Value,
+    ) -> Result<Self, PlasmDataValueError> {
         Ok(match self {
             Self::BindingSymbol {
                 binding: name,
                 path,
             } if name == binding => {
                 let mut operand = Self::Literal {
-                    value: crate::operand_binding::ResolvedValue::new(value.clone())
-                        .map_err(str::to_owned)?,
+                    value: crate::operand_binding::ResolvedValue::new(value.clone())?,
                 };
                 for field in path {
                     operand = Self::Expression {
@@ -216,7 +246,7 @@ impl PlasmDataValue {
                 fields: fields
                     .iter()
                     .map(|(k, v)| Ok((k.clone(), v.substitute_local(binding, value)?)))
-                    .collect::<Result<_, String>>()?,
+                    .collect::<Result<_, PlasmDataValueError>>()?,
             },
             Self::EntityRefKey { api, entity, key } => Self::EntityRefKey {
                 api: api.clone(),
@@ -228,18 +258,24 @@ impl PlasmDataValue {
     }
     /// Execute only demanded operands; unlike structural binding, branch
     /// evaluation must not read absent fields in an unselected branch.
-    pub fn evaluate<R: crate::operand_binding::OperandResolver<Error = String>>(
+    pub fn evaluate<R: crate::operand_binding::OperandResolver>(
         &self,
         resolver: &mut R,
-    ) -> Result<crate::operand_binding::ResolvedValue, String> {
+    ) -> Result<crate::operand_binding::ResolvedValue, PlasmDataValueEvaluationError<R::Error>>
+    where
+        R::Error: std::fmt::Debug + 'static,
+    {
         self.evaluate_bounded(resolver, &mut 65_536)
     }
 
-    fn evaluate_bounded<R: crate::operand_binding::OperandResolver<Error = String>>(
+    fn evaluate_bounded<R: crate::operand_binding::OperandResolver>(
         &self,
         resolver: &mut R,
         remaining: &mut usize,
-    ) -> Result<crate::operand_binding::ResolvedValue, String> {
+    ) -> Result<crate::operand_binding::ResolvedValue, PlasmDataValueEvaluationError<R::Error>>
+    where
+        R::Error: std::fmt::Debug + 'static,
+    {
         use crate::operand_binding::{BindOperands, ResolvedValue};
         match self {
             Self::Quantified {
@@ -250,30 +286,42 @@ impl PlasmDataValue {
             } => {
                 let collection = collection.evaluate_bounded(resolver, remaining)?;
                 let crate::Value::Array(items) = collection.value() else {
-                    return Err("quantification requires an array".into());
+                    return Err(PlasmDataValueEvaluationError::QuantificationRequiresArray);
                 };
                 for item in items {
                     *remaining = remaining
                         .checked_sub(1)
-                        .ok_or("quantification exceeds 65536 value occurrences")?;
+                        .ok_or(PlasmDataValueEvaluationError::QuantificationBudgetExceeded)?;
                     let value = predicate
                         .substitute_local(binding, item)?
                         .evaluate_bounded(resolver, remaining)?;
                     let crate::Value::Bool(value) = value.value() else {
-                        return Err("quantified predicate requires a Boolean".into());
+                        return Err(
+                            PlasmDataValueEvaluationError::QuantifiedPredicateRequiresBoolean,
+                        );
                     };
                     if *value != *all {
-                        return ResolvedValue::new(crate::Value::Bool(!all)).map_err(str::to_owned);
+                        return ResolvedValue::new(crate::Value::Bool(!all))
+                            .map_err(PlasmDataValueError::from)
+                            .map_err(PlasmDataValueEvaluationError::DataValue);
                     }
                 }
-                ResolvedValue::new(crate::Value::Bool(*all)).map_err(str::to_owned)
+                ResolvedValue::new(crate::Value::Bool(*all))
+                    .map_err(PlasmDataValueError::from)
+                    .map_err(PlasmDataValueEvaluationError::DataValue)
             }
-            Self::Expression { expression } => {
-                ResolvedValue::new(expression.evaluate(|value| {
-                    Ok(value.evaluate_bounded(resolver, remaining)?.into_value())
-                })?)
-                .map_err(str::to_owned)
-            }
+            Self::Expression { expression } => expression
+                .evaluate(|value| {
+                    value
+                        .evaluate_bounded(resolver, remaining)
+                        .map(crate::operand_binding::ResolvedValue::into_value)
+                })
+                .map_err(|error| PlasmDataValueEvaluationError::Expression(Box::new(error)))
+                .and_then(|value| {
+                    ResolvedValue::new(value)
+                        .map_err(PlasmDataValueError::from)
+                        .map_err(PlasmDataValueEvaluationError::DataValue)
+                }),
             Self::Array { items } => ResolvedValue::new(crate::Value::Array(
                 items
                     .iter()
@@ -283,7 +331,8 @@ impl PlasmDataValue {
                     })
                     .collect::<Result<_, _>>()?,
             ))
-            .map_err(str::to_owned),
+            .map_err(PlasmDataValueError::from)
+            .map_err(PlasmDataValueEvaluationError::DataValue),
             Self::Object { fields } => ResolvedValue::new(crate::Value::Object(
                 fields
                     .iter()
@@ -293,15 +342,22 @@ impl PlasmDataValue {
                             v.evaluate_bounded(resolver, remaining)?.into_value(),
                         ))
                     })
-                    .collect::<Result<_, String>>()?,
+                    .collect::<Result<_, PlasmDataValueEvaluationError<R::Error>>>()?,
             ))
-            .map_err(str::to_owned),
-            _ => self.bind_operands(resolver)?.into_resolved(),
+            .map_err(PlasmDataValueError::from)
+            .map_err(PlasmDataValueEvaluationError::DataValue),
+            _ => self
+                .bind_operands(resolver)
+                .map_err(PlasmDataValueEvaluationError::Resolver)?
+                .into_resolved()
+                .map_err(PlasmDataValueEvaluationError::DataValue),
         }
     }
 
     /// Finish binding without interpreting serialized markers or display strings.
-    pub fn into_resolved(self) -> Result<crate::operand_binding::ResolvedValue, String> {
+    pub fn into_resolved(
+        self,
+    ) -> Result<crate::operand_binding::ResolvedValue, PlasmDataValueError> {
         use crate::{operand_binding::ResolvedValue, Value};
         let value = match self {
             Self::Literal { value } => return Ok(value),
@@ -316,11 +372,11 @@ impl PlasmDataValue {
                 fields
                     .into_iter()
                     .map(|(k, v)| Ok((k, v.into_resolved()?.into_value())))
-                    .collect::<Result<_, String>>()?,
+                    .collect::<Result<_, PlasmDataValueError>>()?,
             ),
-            unresolved => return Err(format!("unbound data operand {unresolved:?}")),
+            _ => return Err(PlasmDataValueError::UnboundOperand),
         };
-        ResolvedValue::new(value).map_err(str::to_owned)
+        Ok(ResolvedValue::new(value)?)
     }
 }
 
@@ -332,24 +388,25 @@ mod operand_tests {
     #[test]
     fn quantified_values_preserve_scope_and_short_circuit() {
         use crate::operand_binding::{IdentityTarget, OperandResolver};
+        use std::convert::Infallible;
         struct Closed;
         impl OperandResolver for Closed {
-            type Error = String;
-            fn resolve(&mut self, _: &PlasmInputRef) -> Result<ResolvedValue, String> {
-                Err("free input".into())
+            type Error = Infallible;
+            fn resolve(&mut self, _: &PlasmInputRef) -> Result<ResolvedValue, Infallible> {
+                unreachable!("closed expression has no free inputs")
             }
             fn identity(
                 &mut self,
                 _: IdentityTarget<'_>,
                 _: &PlasmInputRef,
-            ) -> Result<crate::EntityId, String> {
-                Err("identity".into())
+            ) -> Result<crate::EntityId, Infallible> {
+                unreachable!("closed expression has no identity inputs")
             }
             fn string(
                 &mut self,
                 _: &crate::program_string_template::CompiledProgramString,
-            ) -> Result<String, String> {
-                Err("template".into())
+            ) -> Result<String, Infallible> {
+                unreachable!("closed expression has no templates")
             }
         }
         for all in [false, true] {
@@ -378,8 +435,7 @@ mod operand_tests {
             );
             assert!(quantified(vec![Value::Object(Default::default())])
                 .evaluate(&mut Closed)
-                .unwrap_err()
-                .contains("unobserved"));
+                .is_err());
         }
         let captured = PlasmDataValue::Quantified {
             all: false,
@@ -431,6 +487,64 @@ mod operand_tests {
         }
         assert!(ResolvedValue::new(Value::Float(f64::NAN)).is_err());
         assert!(ResolvedValue::new(Value::Float(f64::INFINITY)).is_err());
+    }
+
+    #[test]
+    fn quantified_evaluation_failures_are_semantic_variants() {
+        use crate::operand_binding::{IdentityTarget, OperandResolver};
+        use std::convert::Infallible;
+
+        struct Closed;
+        impl OperandResolver for Closed {
+            type Error = Infallible;
+            fn resolve(&mut self, _: &PlasmInputRef) -> Result<ResolvedValue, Infallible> {
+                unreachable!("test operands are locally bound")
+            }
+            fn identity(
+                &mut self,
+                _: IdentityTarget<'_>,
+                _: &PlasmInputRef,
+            ) -> Result<crate::EntityId, Infallible> {
+                unreachable!("test operands contain no identity")
+            }
+            fn string(
+                &mut self,
+                _: &crate::program_string_template::CompiledProgramString,
+            ) -> Result<String, Infallible> {
+                unreachable!("test operands contain no template")
+            }
+        }
+
+        let quantified = |collection, predicate| PlasmDataValue::Quantified {
+            all: true,
+            collection: Box::new(PlasmDataValue::try_from(collection).unwrap()),
+            binding: "item".into(),
+            predicate: Box::new(PlasmDataValue::try_from(predicate).unwrap()),
+        };
+        let non_array = quantified(Value::Null, Value::Bool(true));
+        assert!(matches!(
+            non_array.evaluate(&mut Closed),
+            Err(PlasmDataValueEvaluationError::QuantificationRequiresArray)
+        ));
+
+        let non_boolean_predicate = quantified(
+            Value::Array(vec![Value::Null]),
+            Value::PlasmInputRef(PlasmInputRef::row_binding("item", vec![])),
+        );
+        assert!(matches!(
+            non_boolean_predicate.evaluate(&mut Closed),
+            Err(PlasmDataValueEvaluationError::QuantifiedPredicateRequiresBoolean)
+        ));
+
+        assert!(matches!(
+            PlasmDataValue::NodeSymbol {
+                node: "missing".into(),
+                alias: "missing".into(),
+                path: vec![],
+            }
+            .into_resolved(),
+            Err(PlasmDataValueError::UnboundOperand)
+        ));
     }
 
     #[test]

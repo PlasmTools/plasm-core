@@ -22,6 +22,7 @@ use plasm_agent_core::http_execute::CapabilitySeed;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use thiserror::Error;
 use tokio::sync::{Mutex as AsyncMutex, OnceCell};
 
 use crate::transport::{JsCallbackHttpTransport, JsHostTransport};
@@ -68,8 +69,34 @@ pub struct JsRunPlanResult {
     pub failure_json: Option<String>,
 }
 
-fn map_err(err: anyhow::Error) -> Error {
-    Error::from_reason(format!("{err:#}"))
+#[derive(Debug, Error)]
+enum NodeEngineError {
+    #[error("logical session `{id}` is unknown")]
+    UnknownSession { id: String },
+    #[error("logical session has no discovery generation pin")]
+    SessionPinMissing,
+    #[error("no discovery generation has been activated")]
+    NoActivatedGeneration,
+    #[error("discovery store is unavailable")]
+    DiscoveryStoreUnavailable,
+    #[error("discovery must be activated before routing")]
+    DiscoveryNotActivated,
+    #[error("routing receipt does not match the logical session pin")]
+    RoutingPinMismatch,
+    #[error("discovery database URL is not configured")]
+    DiscoveryDatabaseUrlMissing,
+    #[error("discovery store operation failed")]
+    DiscoveryStore(#[from] plasm_agent_core::discovery_store::DiscoveryStoreError),
+    #[error("discovery routing failed")]
+    DiscoveryService(#[from] plasm_agent_core::discovery_service::DiscoveryServiceError),
+    #[error("deployment bindings JSON is invalid")]
+    DeploymentBindingsJson(#[from] serde_json::Error),
+}
+
+type NodeResult<T> = std::result::Result<T, NodeEngineError>;
+
+fn map_err(err: impl std::fmt::Display) -> Error {
+    Error::from_reason(err.to_string())
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -100,10 +127,11 @@ impl PlasmEngine {
     pub fn new() -> Self {
         Self::with_runtime(None)
     }
-    fn session_engine(&self, id: &str) -> anyhow::Result<Arc<AsyncMutex<InnerEngine>>> {
-        lock(&self.sessions).get(id).cloned().ok_or_else(|| {
-            anyhow::anyhow!("unknown logical session `{id}`; open a session with plasm_context")
-        })
+    fn session_engine(&self, id: &str) -> NodeResult<Arc<AsyncMutex<InnerEngine>>> {
+        lock(&self.sessions)
+            .get(id)
+            .cloned()
+            .ok_or_else(|| NodeEngineError::UnknownSession { id: id.to_owned() })
     }
 
     async fn execution_engine(
@@ -127,7 +155,7 @@ impl PlasmEngine {
     async fn routing_inputs(
         &self,
         logical_session_id: Option<&str>,
-    ) -> anyhow::Result<(
+    ) -> NodeResult<(
         String,
         DiscoveryAuthorization,
         Vec<plasm_core::prerequisites::CapabilityRef>,
@@ -135,9 +163,9 @@ impl PlasmEngine {
         if let Some(id) = logical_session_id {
             let shared = self.session_engine(id)?;
             let engine = shared.lock().await;
-            let pin = engine.discovery_pin().ok_or_else(|| {
-                anyhow::anyhow!("logical session has no discovery generation pin")
-            })?;
+            let pin = engine
+                .discovery_pin()
+                .ok_or_else(|| NodeEngineError::SessionPinMissing)?;
             Ok((
                 pin.generation.clone(),
                 pin.authorization.clone(),
@@ -149,7 +177,7 @@ impl PlasmEngine {
                 .read()
                 .await
                 .clone()
-                .ok_or_else(|| anyhow::anyhow!("no activated discovery generation"))?;
+                .ok_or(NodeEngineError::NoActivatedGeneration)?;
             Ok((
                 generation,
                 DiscoveryAuthorization::catalogs(allowed),
@@ -158,16 +186,19 @@ impl PlasmEngine {
         }
     }
 
-    async fn refresh_discovery_session(&self, engine: &InnerEngine) -> anyhow::Result<()> {
+    async fn refresh_discovery_session(&self, engine: &InnerEngine) -> NodeResult<()> {
         let pin = engine
             .discovery_pin()
             .cloned()
-            .ok_or_else(|| anyhow::anyhow!("logical session has no discovery generation pin"))?;
+            .ok_or(NodeEngineError::SessionPinMissing)?;
         let store = self
             .discovery_store
             .get()
-            .ok_or_else(|| anyhow::anyhow!("discovery store is unavailable"))?;
-        store.refresh_session_pin(&pin).await
+            .ok_or(NodeEngineError::DiscoveryStoreUnavailable)?;
+        store
+            .refresh_session_pin(&pin)
+            .await
+            .map_err(NodeEngineError::from)
     }
 }
 
@@ -211,32 +242,32 @@ impl PlasmEngine {
             let engine = self.inner.lock().await;
             (engine.packed_manifests(), engine.allowed_catalogs())
         };
-        let bindings = serde_json::from_str(&bindings_json)
-            .map_err(|e| Error::from_reason(format!("invalid deployment bindings: {e}")))?;
+        let bindings: plasm_core::prerequisites::DeploymentBindings =
+            serde_json::from_str(&bindings_json)
+                .map_err(NodeEngineError::from)
+                .map_err(map_err)?;
         let catalogs = paths
             .iter()
             .map(|p| PreparedCatalog::load(p))
-            .collect::<anyhow::Result<Vec<_>>>()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(NodeEngineError::from)
             .map_err(map_err)?;
         let store = self
             .discovery_store
             .get_or_try_init(|| async {
                 let url = std::env::var("PLASM_DISCOVERY_DATABASE_URL")
                     .or_else(|_| std::env::var("DATABASE_URL"))
-                    .map_err(|_| {
-                        anyhow::anyhow!(
-                            "discovery requires PLASM_DISCOVERY_DATABASE_URL or DATABASE_URL"
-                        )
-                    })?;
+                    .map_err(|_| NodeEngineError::DiscoveryDatabaseUrlMissing)?;
                 let store = DiscoveryStore::connect(&url).await?;
                 store.migrate().await?;
-                Ok::<_, anyhow::Error>(store)
+                Ok::<_, NodeEngineError>(store)
             })
             .await
             .map_err(map_err)?;
         let generation = store
             .import(&deployment_id, catalogs, &bindings)
             .await
+            .map_err(NodeEngineError::from)
             .map_err(map_err)?;
         *self.activated.write().await = Some((generation.clone(), allowed));
         Ok(generation)
@@ -252,17 +283,20 @@ impl PlasmEngine {
     ) -> Result<String> {
         let provenance: plasm_agent_core::intent_provenance::IntentProvenance =
             serde_json::from_str(&intent_provenance_json)
-                .map_err(|error| Error::from_reason(error.to_string()))?;
-        let store = self.discovery_store.get().ok_or_else(|| {
-            Error::from_reason(
-                "activateDiscovery must validate a complete generation before routing",
-            )
-        })?;
+                .map_err(NodeEngineError::from)
+                .map_err(map_err)?;
+        let store = self
+            .discovery_store
+            .get()
+            .ok_or(NodeEngineError::DiscoveryNotActivated)
+            .map_err(map_err)?;
         let (generation, allowed, exposed) = self
             .routing_inputs(logical_session_id.as_deref())
             .await
             .map_err(map_err)?;
-        let service = DiscoveryService::from_env(store.clone()).map_err(map_err)?;
+        let service = DiscoveryService::from_env(store.clone())
+            .map_err(NodeEngineError::from)
+            .map_err(map_err)?;
         let receipt = service
             .route_turn(RouteTurn {
                 new_generation: &generation,
@@ -274,11 +308,13 @@ impl PlasmEngine {
                     + std::time::Duration::from_secs(24 * 60 * 60),
             })
             .await
+            .map_err(NodeEngineError::from)
             .map_err(map_err)?;
         let teaching = {
             let (catalogs, compiled_catalogs, _) = store
                 .load_generation(&receipt.retrieval.generation)
                 .await
+                .map_err(NodeEngineError::from)
                 .map_err(map_err)?;
             let pin = DiscoverySessionPin {
                 authorization: receipt.authorization.clone(),
@@ -300,9 +336,7 @@ impl PlasmEngine {
             };
             let mut engine = shared.lock().await;
             if engine.discovery_pin() != Some(&pin) {
-                return Err(Error::from_reason(
-                    "routing receipt does not match the logical session pin",
-                ));
+                return Err(map_err(NodeEngineError::RoutingPinMismatch));
             }
             receipt
                 .closure

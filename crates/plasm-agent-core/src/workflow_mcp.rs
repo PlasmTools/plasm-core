@@ -217,14 +217,15 @@ impl PlasmMcpHandler {
             &manifest,
             Some((catalog.as_ref(), tcfg.as_deref())),
         );
-        validate_workflow_view_model(&vm).map_err(CallToolError::from_message)?;
+        validate_workflow_view_model(&vm)
+            .map_err(|error| CallToolError::from_message(error.to_string()))?;
         let scope = tenant_scope(principal_incoming.as_ref());
         let rec = self
             .plasm
             .logical_sessions
             .mint_session(&scope, intent)
             .await
-            .map_err(CallToolError::from_message)?;
+            .map_err(|error| CallToolError::from_message(error.to_string()))?;
         let logical_session_ref = format_logical_session_wire_ref(rec.logical_session_id);
         let logical_uuid = rec.logical_session_id.as_uuid();
         let seeds = manifest_seeds_to_capability_seeds(&manifest);
@@ -238,7 +239,7 @@ impl PlasmMcpHandler {
             catalog.as_ref(),
             allowed_ids.as_deref(),
         )
-        .map_err(CallToolError::from_message)?;
+        .map_err(|error| CallToolError::from_message(error.to_string()))?;
         let binding = self.resolve_binding_for_logical(key, logical_uuid).await;
         let principal = parse_optional_principal(v);
         let context_span = crate::spans::mcp_tool_plasm_context(logical_session_ref.as_str());

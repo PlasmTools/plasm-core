@@ -44,6 +44,7 @@ use plasm_core::expr_parser::ParsedExpr;
 use plasm_runtime::ExecutionResult;
 use std::path::PathBuf;
 use std::sync::Arc;
+use thiserror::Error;
 pub use uri::{
     artifact_http_path, code_plan_handle, code_plan_http_path, logical_uuid_from_uri_segment,
     parse_code_plan_handle, parse_plasm_execute_plan_uri, parse_plasm_execute_run_uri,
@@ -281,25 +282,38 @@ pub enum RunArtifactInitPolicy {
     HostedExplicitOnly,
 }
 
+#[derive(Debug, Error)]
+pub enum RunArtifactInitError {
+    #[error("PLASM_RUN_ARTIFACTS_URL is invalid")]
+    InvalidUrl(#[source] url::ParseError),
+    #[error("PLASM_RUN_ARTIFACTS_URL could not open an object store")]
+    ObjectStore(#[source] object_store::Error),
+    #[error("could not create run-artifacts directory {path:?}")]
+    CreateDirectory {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+}
+
 /// Build [`RunArtifactStore`] from environment: **object store** (`PLASM_RUN_ARTIFACTS_URL`) if set,
 /// else **local directory** (`PLASM_RUN_ARTIFACTS_DIR`) if set, else **in-memory** (see module docs for precedence).
 ///
 /// - **`PLASM_RUN_ARTIFACTS_URL`**: [`object_store::parse_url_opts`] (hosted / multi-replica; wins over `PLASM_RUN_ARTIFACTS_DIR` when set).
 /// - **`PLASM_RUN_ARTIFACTS_DIR`**: local directory root (OSS/self-host durable tier when URL unset).
-pub fn init_from_env() -> Result<Arc<RunArtifactStore>, String> {
+pub fn init_from_env() -> Result<Arc<RunArtifactStore>, RunArtifactInitError> {
     init_from_env_with_policy(RunArtifactInitPolicy::HostedExplicitOnly)
 }
 
 /// Same as [`init_from_env`], with optional OSS default directory `{local_state}/run-artifacts`.
 pub fn init_from_env_with_policy(
     policy: RunArtifactInitPolicy,
-) -> Result<Arc<RunArtifactStore>, String> {
+) -> Result<Arc<RunArtifactStore>, RunArtifactInitError> {
     if let Ok(url_raw) = std::env::var("PLASM_RUN_ARTIFACTS_URL") {
         if !url_raw.trim().is_empty() {
-            let url = url::Url::parse(&url_raw)
-                .map_err(|e| format!("PLASM_RUN_ARTIFACTS_URL is not a valid URL: {e}"))?;
+            let url = url::Url::parse(&url_raw).map_err(RunArtifactInitError::InvalidUrl)?;
             let (boxed, prefix) = object_store::parse_url_opts(&url, std::env::vars())
-                .map_err(|e| format!("PLASM_RUN_ARTIFACTS_URL could not open object store: {e}"))?;
+                .map_err(RunArtifactInitError::ObjectStore)?;
             let store: Arc<dyn ObjectStore> = Arc::from(boxed);
             let retention = retention_from_env();
             let interval = gc_interval_from_env();
@@ -319,11 +333,12 @@ pub fn init_from_env_with_policy(
     if let Ok(dir) = std::env::var("PLASM_RUN_ARTIFACTS_DIR") {
         if !dir.trim().is_empty() {
             let root: PathBuf = dir.trim().to_string().into();
-            if let Err(e) = std::fs::create_dir_all(&root) {
-                return Err(format!(
-                    "PLASM_RUN_ARTIFACTS_DIR: could not create {root:?}: {e}"
-                ));
-            }
+            std::fs::create_dir_all(&root).map_err(|source| {
+                RunArtifactInitError::CreateDirectory {
+                    path: root.clone(),
+                    source,
+                }
+            })?;
             tracing::info!(path = %root.display(), "run artifacts: local filesystem backend");
             return Ok(Arc::new(RunArtifactStore::new(Arc::new(
                 FsRunArtifactBackend { root: root.clone() },
@@ -335,11 +350,12 @@ pub fn init_from_env_with_policy(
     {
         if let Some(base) = crate::oss_local_state::resolve_local_state_root() {
             let root = base.join("run-artifacts");
-            if let Err(e) = std::fs::create_dir_all(&root) {
-                return Err(format!(
-                    "OSS default run-artifacts dir: could not create {root:?}: {e}"
-                ));
-            }
+            std::fs::create_dir_all(&root).map_err(|source| {
+                RunArtifactInitError::CreateDirectory {
+                    path: root.clone(),
+                    source,
+                }
+            })?;
             tracing::info!(
                 path = %root.display(),
                 "run artifacts: OSS default local filesystem backend (~/.plasm/local/run-artifacts or PLASM_LOCAL_STATE_DIR)"
@@ -411,10 +427,8 @@ pub fn project_artifact_payload_for_agent(
         return Ok(payload.clone());
     }
     let doc: RunArtifactDocument = serde_json::from_slice(&payload.bytes)?;
-    validate_run_artifact_document(&doc).map_err(RunArtifactError::Decode)?;
-    let slim = doc
-        .agent_view()
-        .map_err(|e| RunArtifactError::Decode(e.to_string()))?;
+    validate_run_artifact_document(&doc)?;
+    let slim = doc.agent_view()?;
     Ok(ArtifactPayload {
         metadata: payload.metadata.clone(),
         bytes: serde_json::to_vec(&slim)?.into(),
@@ -438,17 +452,13 @@ pub fn verify_payload_run_id(
 ) -> Result<(), RunArtifactError> {
     let doc: RunArtifactDocument = serde_json::from_slice(&payload.bytes)?;
     let Some(parsed) = RunArtifactId::from_wire(doc.run_id.as_str()) else {
-        return Err(RunArtifactError::Integrity(format!(
-            "artifact document run_id is not a valid wire id: {}",
-            doc.run_id
-        )));
+        return Err(RunArtifactError::InvalidDocumentRunId { run_id: doc.run_id });
     };
     if parsed != expected {
-        return Err(RunArtifactError::Integrity(format!(
-            "artifact run_id mismatch: expected {}, stored {}",
-            expected.to_wire(),
-            parsed.to_wire()
-        )));
+        return Err(RunArtifactError::RunIdMismatch {
+            expected: expected.to_wire(),
+            stored: parsed.to_wire(),
+        });
     }
     Ok(())
 }

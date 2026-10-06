@@ -3,6 +3,19 @@
 use crate::execute_session::ExecuteSession;
 use crate::plasm_plan::QualifiedEntityKey;
 use plasm_core::{FederationDispatch, CGS};
+use thiserror::Error;
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum CatalogOwnershipError {
+    #[error("entity `{entity}` is not defined in any catalog loaded in this session")]
+    EntityNotLoaded { entity: String },
+    #[error("entity `{entity}` resolved to catalog `{entry_id}`, which is not loaded")]
+    ResolvedCatalogNotLoaded { entity: String, entry_id: String },
+    #[error("entity `{entity}` is not present under catalog `{entry_id}` in this session")]
+    EntityNotPresentInCatalog { entity: String, entry_id: String },
+    #[error(transparent)]
+    Federation(#[from] plasm_core::FederationResolveError),
+}
 
 /// Build the same [`CatalogResolver`] / [`FederationDispatch`] used by type-check and live execute.
 pub(crate) fn federation_for_session(session: &ExecuteSession) -> FederationDispatch {
@@ -18,7 +31,7 @@ pub(crate) fn resolve_qualified_entity_key(
     session: &ExecuteSession,
     entity: &str,
     resolving_cgs: Option<&CGS>,
-) -> Result<QualifiedEntityKey, String> {
+) -> Result<QualifiedEntityKey, CatalogOwnershipError> {
     if session.contexts_by_entry.len() <= 1 {
         if session.cgs.entities.contains_key(entity) {
             return Ok(QualifiedEntityKey {
@@ -26,9 +39,9 @@ pub(crate) fn resolve_qualified_entity_key(
                 entity: entity.to_string(),
             });
         }
-        return Err(format!(
-            "entity `{entity}` is not defined in any catalog loaded in this session"
-        ));
+        return Err(CatalogOwnershipError::EntityNotLoaded {
+            entity: entity.to_string(),
+        });
     }
     let fed = federation_for_session(session);
     fed.resolve_qualified_entity_key(
@@ -38,7 +51,7 @@ pub(crate) fn resolve_qualified_entity_key(
         session.entry_id.as_str(),
     )
     .map(QualifiedEntityKey::from)
-    .map_err(|e| e.to_string())
+    .map_err(CatalogOwnershipError::from)
 }
 
 /// Resolve CGS for schema/type-check with federation doctrine.
@@ -46,25 +59,23 @@ pub(crate) fn resolve_cgs_for_entity<'a>(
     session: &'a ExecuteSession,
     entity: &str,
     owning_cgs: Option<&CGS>,
-) -> Result<&'a CGS, String> {
+) -> Result<&'a CGS, CatalogOwnershipError> {
     if session.contexts_by_entry.len() <= 1 {
         if session.cgs.entities.contains_key(entity) {
             return Ok(session.cgs.as_ref());
         }
-        return Err(format!(
-            "entity `{entity}` is not defined in any catalog loaded in this session"
-        ));
+        return Err(CatalogOwnershipError::EntityNotLoaded {
+            entity: entity.to_string(),
+        });
     }
     let qe = resolve_qualified_entity_key(session, entity, owning_cgs)?;
     session
         .contexts_by_entry
         .get(&qe.entry_id)
         .map(|ctx| ctx.cgs.as_ref())
-        .ok_or_else(|| {
-            format!(
-                "entity `{entity}` resolved to catalog {:?} which is not loaded",
-                qe.entry_id
-            )
+        .ok_or_else(|| CatalogOwnershipError::ResolvedCatalogNotLoaded {
+            entity: entity.to_string(),
+            entry_id: qe.entry_id,
         })
 }
 
@@ -73,7 +84,7 @@ pub(crate) fn resolve_cgs_for_entry_entity<'a>(
     session: &'a ExecuteSession,
     entry_id: &str,
     entity: &str,
-) -> Result<&'a CGS, String> {
+) -> Result<&'a CGS, CatalogOwnershipError> {
     if let Some(ctx) = session.contexts_by_entry.get(entry_id) {
         if ctx.cgs.entities.contains_key(entity) {
             return Ok(ctx.cgs.as_ref());
@@ -85,9 +96,10 @@ pub(crate) fn resolve_cgs_for_entry_entity<'a>(
     {
         return Ok(session.cgs.as_ref());
     }
-    Err(format!(
-        "entity `{entity}` is not present under catalog `{entry_id}` in this session"
-    ))
+    Err(CatalogOwnershipError::EntityNotPresentInCatalog {
+        entity: entity.to_string(),
+        entry_id: entry_id.to_string(),
+    })
 }
 
 /// Re-export for in-crate callers that already import `catalog_ownership`.
@@ -293,7 +305,7 @@ mod tests {
         let cgs = matrix_cgs();
         let session = session_with_contexts("solo", cgs, vec![], None);
         let err = resolve_qualified_entity_key(&session, "Missing", None).expect_err("err");
-        assert!(err.contains("not defined"));
+        assert!(err.to_string().contains("not defined"));
     }
 
     #[test]
@@ -301,6 +313,6 @@ mod tests {
         let cgs = matrix_cgs();
         let session = session_with_contexts("aaa", cgs.clone(), vec![("bbb", cgs)], None);
         let err = resolve_qualified_entity_key(&session, "LangItem", None).expect_err("ambiguous");
-        assert!(err.contains("ambiguous"));
+        assert!(err.to_string().contains("ambiguous"));
     }
 }

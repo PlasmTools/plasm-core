@@ -95,8 +95,7 @@ pub(crate) async fn teaching_exposure_at(
 ) -> Result<Option<plasm_core::TeachingExposureSession>, super::session::SessionMutateError> {
     Ok(st
         .try_get_execute_session(prompt_hash, session_id)
-        .await
-        .map_err(|error| error.to_string())?
+        .await?
         .and_then(|s| s.teaching_exposure.clone()))
 }
 
@@ -260,16 +259,15 @@ pub(super) async fn apply_context_intent_session_update(
     let normalized = normalize_context_intent_for_domain_filter(Some(accumulated_intent));
     let prompt_hash_p: PromptHashHex = prompt_hash
         .parse()
-        .map_err(|e: &'static str| super::session::SessionMutateError::from(e))?;
+        .map_err(|_| super::session::SessionMutateError::InvalidPromptHash)?;
     let session_id_p: ExecuteSessionId = session_id
         .parse()
-        .map_err(|e: &'static str| super::session::SessionMutateError::from(e))?;
+        .map_err(|_| super::session::SessionMutateError::InvalidSessionId)?;
     let Some(sess_arc) = st
         .try_get_execute_session(prompt_hash_p.as_str(), session_id_p.as_str())
-        .await
-        .map_err(|error| error.to_string())?
+        .await?
     else {
-        return Err("unknown or expired execute session".into());
+        return Err(super::session::SessionMutateError::UnknownOrExpiredSession);
     };
     let mut sess = (*sess_arc).clone();
     let changed = sess.context_intent != normalized;

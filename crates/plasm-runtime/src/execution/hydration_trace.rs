@@ -68,7 +68,9 @@ pub(crate) fn failure(error: &crate::RuntimeError) -> Value {
     match error {
         RequestError { status, .. } => json!({"kind":"request", "status":status}),
         DecodeError { .. } => json!({"kind":"decode"}),
-        CacheError { .. } => json!({"kind":"cache"}),
+        CacheError(_) | CacheSource(_) | CacheValueRow(_) | CacheRowDecode(_) => {
+            json!({"kind":"cache"})
+        }
         RateLimited { status, .. } => json!({"kind":"rate_limit", "status":status}),
         _ => json!({"kind":"other"}),
     }

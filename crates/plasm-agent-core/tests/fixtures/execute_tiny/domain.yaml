@@ -48,6 +48,7 @@ capabilities:
     - name: q
       value_ref: nv_product_search_q
       required: true
+      selection_effect: filter
   product_get:
     description: Fetch a product by id
     kind: get

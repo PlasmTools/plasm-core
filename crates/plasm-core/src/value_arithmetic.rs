@@ -3,6 +3,27 @@ use crate::{
     value_contract::{ValueContract, ValueShape},
     AggregateFunction, FieldType, Value,
 };
+use thiserror::Error;
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum ArithmeticContractError {
+    #[error("arithmetic union has incompatible dimensions")]
+    IncompatibleUnionDimensions,
+    #[error("arithmetic requires a numeric or money contract")]
+    NonArithmeticDomain,
+    #[error("arithmetic domain has no numeric inhabitants")]
+    EmptyArithmeticDomain,
+    #[error("operation is not an arithmetic reduction")]
+    NotArithmeticReduction,
+    #[error("value does not inhabit the declared arithmetic domain")]
+    InvalidValueDomain,
+    #[error("arithmetic operand shape is unsupported")]
+    UnsupportedOperandShape,
+    #[error("arithmetic operator is unsupported for the operand domains")]
+    UnsupportedOperandDomains,
+    #[error("arithmetic union has no variants")]
+    EmptyUnion,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArithmeticDomain {
@@ -16,19 +37,19 @@ pub trait Arithmetic {
         &self,
         op: crate::ArithOp,
         right: &ValueContract,
-    ) -> Result<ValueContract, String>;
-    fn arithmetic_domain(&self) -> Result<ArithmeticDomain, String>;
+    ) -> Result<ValueContract, ArithmeticContractError>;
+    fn arithmetic_domain(&self) -> Result<ArithmeticDomain, ArithmeticContractError>;
 }
 impl Arithmetic for ValueContract {
     fn binary_result(
         &self,
         op: crate::ArithOp,
         right: &ValueContract,
-    ) -> Result<ValueContract, String> {
+    ) -> Result<ValueContract, ArithmeticContractError> {
         binary_result(op, self, right)
     }
-    fn arithmetic_domain(&self) -> Result<ArithmeticDomain, String> {
-        fn resolve(c: &ValueContract) -> Result<Option<ArithmeticDomain>, String> {
+    fn arithmetic_domain(&self) -> Result<ArithmeticDomain, ArithmeticContractError> {
+        fn resolve(c: &ValueContract) -> Result<Option<ArithmeticDomain>, ArithmeticContractError> {
             use ArithmeticDomain::*;
             Ok(match &c.shape {
                 ValueShape::Null | ValueShape::Never => None,
@@ -51,7 +72,7 @@ impl Arithmetic for ValueContract {
                                 (Some(Integer | Number), Integer | Number) => Number,
                                 _ => {
                                     return Err(
-                                        "arithmetic union has incompatible dimensions".into()
+                                        ArithmeticContractError::IncompatibleUnionDimensions,
                                     )
                                 }
                             });
@@ -59,17 +80,20 @@ impl Arithmetic for ValueContract {
                     }
                     result
                 }
-                _ => return Err("arithmetic reduction requires a numeric or money contract".into()),
+                _ => return Err(ArithmeticContractError::NonArithmeticDomain),
             })
         }
-        resolve(self)?.ok_or_else(|| "arithmetic domain has no numeric inhabitants".into())
+        resolve(self)?.ok_or(ArithmeticContractError::EmptyArithmeticDomain)
     }
 }
 impl ArithmeticDomain {
-    pub fn reduction_result(self, function: AggregateFunction) -> Result<ValueContract, String> {
+    pub fn reduction_result(
+        self,
+        function: AggregateFunction,
+    ) -> Result<ValueContract, ArithmeticContractError> {
         use AggregateFunction::*;
         if !matches!(function, Sum | Avg) {
-            return Err("not an arithmetic reduction".into());
+            return Err(ArithmeticContractError::NotArithmeticReduction);
         }
         let mut result = ValueContract::scalar(match (self, function) {
             (Self::Money, _) => FieldType::Money,
@@ -79,7 +103,7 @@ impl ArithmeticDomain {
         result.nullable = function == Avg;
         Ok(result)
     }
-    pub fn validate(self, value: &Value) -> Result<(), String> {
+    pub fn validate(self, value: &Value) -> Result<(), ArithmeticContractError> {
         let valid = match self {
             Self::Integer => matches!(value, Value::Integer(_) | Value::Unsigned(_)),
             Self::Number => value.is_number(),
@@ -88,7 +112,7 @@ impl ArithmeticDomain {
         if valid && value.as_number().is_none_or(f64::is_finite) {
             Ok(())
         } else {
-            Err("value does not inhabit declared arithmetic domain".into())
+            Err(ArithmeticContractError::InvalidValueDomain)
         }
     }
     pub fn zero(self) -> Value {
@@ -157,7 +181,7 @@ enum OperandDomain {
     String,
     Temporal(crate::temporal_value::TemporalKind),
 }
-fn operand_domain(c: &ValueContract) -> Result<OperandDomain, String> {
+fn operand_domain(c: &ValueContract) -> Result<OperandDomain, ArithmeticContractError> {
     Ok(match &c.shape {
         ValueShape::Scalar { field_type } => match field_type {
             FieldType::Integer => OperandDomain::Integer,
@@ -166,17 +190,17 @@ fn operand_domain(c: &ValueContract) -> Result<OperandDomain, String> {
             FieldType::String | FieldType::Uuid | FieldType::DigitId | FieldType::Select => {
                 OperandDomain::String
             }
-            _ => return Err("unsupported arithmetic operand domain".into()),
+            _ => return Err(ArithmeticContractError::UnsupportedOperandShape),
         },
         ValueShape::Temporal { kind, .. } => OperandDomain::Temporal(*kind),
-        _ => return Err("unsupported arithmetic operand shape".into()),
+        _ => return Err(ArithmeticContractError::UnsupportedOperandShape),
     })
 }
 fn binary_result(
     op: crate::ArithOp,
     left: &ValueContract,
     right: &ValueContract,
-) -> Result<ValueContract, String> {
+) -> Result<ValueContract, ArithmeticContractError> {
     use crate::ArithOp;
     if let ValueShape::Union { variants } = &left.shape {
         let results = variants
@@ -186,7 +210,7 @@ fn binary_result(
         let mut result = results
             .into_iter()
             .reduce(ValueContract::join)
-            .ok_or("empty arithmetic union")?;
+            .ok_or(ArithmeticContractError::EmptyUnion)?;
         result.nullable |= left.nullable;
         return Ok(result);
     }
@@ -198,7 +222,7 @@ fn binary_result(
         let mut result = results
             .into_iter()
             .reduce(ValueContract::join)
-            .ok_or("empty arithmetic union")?;
+            .ok_or(ArithmeticContractError::EmptyUnion)?;
         result.nullable |= right.nullable;
         return Ok(result);
     }
@@ -233,11 +257,7 @@ fn binary_result(
                 FieldType::Integer
             }
         }
-        _ => {
-            return Err(format!(
-                "unsupported arithmetic value contract: {l:?} {op:?} {r:?}"
-            ))
-        }
+        _ => return Err(ArithmeticContractError::UnsupportedOperandDomains),
     };
     let mut result = ValueContract::scalar(kind);
     result.nullable = left.nullable || right.nullable;

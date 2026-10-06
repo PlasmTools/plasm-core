@@ -101,13 +101,10 @@ pub fn load_catalog_for_mcp_server_with_progress<P: FnMut(&str)>(
     match pre_matches.get_one::<String>("schema") {
         Some(path) => {
             if catalog_dir.is_some() {
-                return Err(AgentError::Schema(
-                    "do not combine --schema with --catalog-dir".into(),
-                ));
+                return Err(AgentError::SchemaAndCatalogDir);
             }
             progress(&format!("loading CGS schema from {path}"));
-            let cgs =
-                plasm_core::loader::load_schema(Path::new(path)).map_err(AgentError::Schema)?;
+            let cgs = plasm_core::loader::load_schema(Path::new(path))?;
             progress("loaded single-schema catalog");
             Ok(CatalogLoadOutcome {
                 schema_path: path.clone(),
@@ -122,11 +119,8 @@ pub fn load_catalog_for_mcp_server_with_progress<P: FnMut(&str)>(
                     let reg = crate::catalog_data::load_registry_from_catalog_dir_with_progress(
                         Path::new(cd),
                         progress,
-                    )
-                    .map_err(AgentError::Schema)?;
-                    let arc_cgs = reg.first_cgs().ok_or_else(|| {
-                        AgentError::Schema("catalog-dir catalog has no entries".into())
-                    })?;
+                    )?;
+                    let arc_cgs = reg.first_cgs().ok_or(AgentError::EmptyCatalogDirectory)?;
                     let cgs = (*arc_cgs).clone();
                     Ok(CatalogLoadOutcome {
                         schema_path: cd.clone(),
@@ -134,14 +128,10 @@ pub fn load_catalog_for_mcp_server_with_progress<P: FnMut(&str)>(
                         prebuilt_registry: Some(reg),
                     })
                 } else {
-                    Err(AgentError::Schema(
-                        "pass --schema <path> or --catalog-dir <dir> with --http/--mcp".into(),
-                    ))
+                    Err(AgentError::ServerCatalogInputRequired)
                 }
             } else {
-                Err(AgentError::Schema(
-                    "pass --schema <path> for non-server modes".into(),
-                ))
+                Err(AgentError::NonServerSchemaRequired)
             }
         }
     }
@@ -160,8 +150,7 @@ pub fn validate_catalog_templates_with_progress<P: FnMut(&str)>(
         return Ok(());
     }
     progress("validating capability templates (single schema)…");
-    plasm_compile::validate_cgs_capability_templates(&outcome.cgs)
-        .map_err(|e| AgentError::Schema(e.to_string()))?;
+    plasm_compile::validate_cgs_capability_templates(&outcome.cgs)?;
     Ok(())
 }
 
@@ -173,8 +162,7 @@ pub fn build_registry_arc(
         return Ok(Arc::clone(reg));
     }
     if let Some(cd) = matches.get_one::<String>("catalog_dir") {
-        let reg = crate::catalog_data::load_registry_from_catalog_dir(Path::new(cd))
-            .map_err(AgentError::Schema)?;
+        let reg = crate::catalog_data::load_registry_from_catalog_dir(Path::new(cd))?;
         return Ok(reg);
     }
     Ok(Arc::new(CgsRegistry::from_pairs(vec![(
@@ -209,8 +197,7 @@ pub fn build_execution_engine_from_matches(
         .map(|s| s.as_str())
         .unwrap_or("http://localhost:1080");
     let backend = crate::backend_normalize::normalize_live_backend_url(schema_path, backend_raw);
-    crate::http_backend::ReplHttpOverride::from_cli_normalized(backend.as_ref())
-        .map_err(|e| AgentError::Argument(e.to_string()))?;
+    crate::http_backend::ReplHttpOverride::from_cli_normalized(backend.as_ref())?;
 
     let mode = match matches
         .get_one::<String>("mode")
@@ -238,13 +225,10 @@ pub fn build_execution_engine_from_matches(
 }
 
 /// Validates incoming-auth env and returns a verifier for HTTP/MCP middleware.
-pub fn incoming_verifier_from_env() -> Result<Arc<IncomingAuthVerifier>, std::io::Error> {
+pub fn incoming_verifier_from_env() -> Result<Arc<IncomingAuthVerifier>, IncomingAuthStartupError> {
     let incoming_cfg = IncomingAuthConfig::from_env();
-    incoming_cfg
-        .validate_startup()
-        .map_err(std::io::Error::other)?;
-    let v =
-        Arc::new(IncomingAuthVerifier::new(incoming_cfg.clone()).map_err(std::io::Error::other)?);
+    incoming_cfg.validate_startup()?;
+    let v = Arc::new(IncomingAuthVerifier::new(incoming_cfg.clone())?);
     crate::incoming_auth::log_incoming_auth_startup(&incoming_cfg, &v);
     Ok(v)
 }
@@ -260,6 +244,36 @@ pub struct BuildInitialHostStateArgs {
     pub oss_local_filesystem_defaults: bool,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum BuildInitialHostStateError {
+    #[error(transparent)]
+    RunArtifacts(#[from] crate::run_artifacts::RunArtifactInitError),
+    #[error(transparent)]
+    SessionGraph(#[from] crate::session_graph_persistence::SessionGraphPersistenceError),
+    #[error(transparent)]
+    Host(#[from] crate::http::HostBootstrapError),
+    #[error(transparent)]
+    Discovery(#[from] crate::catalog_runtime::CatalogRuntimeError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum OssHostBootstrapError {
+    #[error(transparent)]
+    Agent(#[from] AgentError),
+    #[error(transparent)]
+    IncomingAuth(#[from] IncomingAuthStartupError),
+    #[error(transparent)]
+    HostState(#[from] BuildInitialHostStateError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum IncomingAuthStartupError {
+    #[error(transparent)]
+    Configuration(#[from] crate::incoming_auth::IncomingAuthConfigError),
+    #[error(transparent)]
+    Verifier(#[from] crate::incoming_auth::IncomingAuthError),
+}
+
 /// Initial [`PlasmHostState`] after engine + incoming auth + artifact/session stores.
 pub async fn build_initial_host_state(
     BuildInitialHostStateArgs {
@@ -271,11 +285,9 @@ pub async fn build_initial_host_state(
         run_artifacts_policy,
         oss_local_filesystem_defaults,
     }: BuildInitialHostStateArgs,
-) -> Result<PlasmHostState, std::io::Error> {
-    let run_artifacts = crate::run_artifacts::init_from_env_with_policy(run_artifacts_policy)
-        .map_err(|e| std::io::Error::other(format!("run artifacts: {e}")))?;
-    let session_graph_persistence = crate::session_graph_persistence::init_from_env()
-        .map_err(|e| std::io::Error::other(format!("session graph persistence: {e}")))?;
+) -> Result<PlasmHostState, BuildInitialHostStateError> {
+    let run_artifacts = crate::run_artifacts::init_from_env_with_policy(run_artifacts_policy)?;
+    let session_graph_persistence = crate::session_graph_persistence::init_from_env()?;
 
     let state = crate::http::build_plasm_host_state(PlasmHostBootstrap {
         engine,
@@ -286,13 +298,9 @@ pub async fn build_initial_host_state(
         run_artifacts,
         session_graph_persistence,
         oss_local_filesystem_defaults,
-    });
+    })?;
     if state.catalog.catalog_dir_path().is_some() {
-        state
-            .catalog
-            .activate_discovery()
-            .await
-            .map_err(|e| std::io::Error::other(format!("discovery activation: {e}")))?;
+        state.catalog.activate_discovery().await?;
     }
     Ok(state)
 }
@@ -477,16 +485,14 @@ async fn attach_flow_policy_repo(
 pub async fn bootstrap_plasm_host_state_oss(
     matches: &ArgMatches,
     catalog_outcome: &CatalogLoadOutcome,
-) -> Result<OssHostBootstrap, std::io::Error> {
-    let registry = build_registry_arc(matches, catalog_outcome)
-        .map_err(|e| std::io::Error::other(e.to_string()))?;
+) -> Result<OssHostBootstrap, OssHostBootstrapError> {
+    let registry = build_registry_arc(matches, catalog_outcome)?;
     let catalog_bootstrap = catalog_bootstrap_from_matches(matches);
     let (engine, mode) = build_execution_engine_from_matches(
         matches,
         catalog_outcome.schema_path.as_str(),
         &catalog_outcome.cgs,
-    )
-    .map_err(|e| std::io::Error::other(e.to_string()))?;
+    )?;
     let incoming_verifier = incoming_verifier_from_env()?;
     let mut app_state = build_initial_host_state(BuildInitialHostStateArgs {
         engine,

@@ -133,4 +133,5 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             require_complete,
         } => commands::validate::execute(&schema, &spec, require_complete).await,
     }
+    .map_err(|source| Box::new(source) as Box<dyn std::error::Error>)
 }

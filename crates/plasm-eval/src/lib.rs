@@ -29,8 +29,8 @@ pub use coverage::{
     compare_case_covers_to_derived, derive_eval_form_ids_from_reference, print_coverage_text,
     required_domain_entities, required_form_buckets, scaffold_cases_yaml, union_case_covers,
     union_case_entities, validate_case_covers_against_allowed,
-    validate_case_entities_against_schema, CaseEntityRow, CoverageOverride, CoverageReport,
-    CoversSource, EvalFormId,
+    validate_case_entities_against_schema, CaseEntityRow, CoverageError, CoverageIssue,
+    CoverageOverride, CoverageReport, CoversSource, EvalFormId,
 };
 
 use plasm_agent_core::PlasmCompBundle;
@@ -40,6 +40,43 @@ use plasm_core::CGS;
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::path::Path;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum EvalCaseLoadError {
+    #[error("failed to read eval cases file {path}")]
+    ReadFile {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("failed to enumerate eval cases directory {path}")]
+    ReadDirectory {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("failed to read eval cases directory entry in {path}")]
+    DirectoryEntry {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("eval cases YAML is invalid in {path}")]
+    InvalidYaml {
+        path: std::path::PathBuf,
+        #[source]
+        source: serde_yaml::Error,
+    },
+}
+
+#[derive(Debug, Error)]
+pub enum ProgramReferenceError {
+    #[error(transparent)]
+    Session(#[from] program_session::ProgramSessionError),
+    #[error("Python reference program was rejected: {0}")]
+    Compilation(#[source] program_session::ProgramCompileFailure),
+}
 
 pub use plasm_eval_common::{
     model_slug, openrouter_eval_llm_options, DEFAULT_OPENROUTER_EVAL_SEED,
@@ -165,19 +202,32 @@ pub struct CaseScore {
     pub notes: Vec<String>,
 }
 
-pub fn load_cases_file(path: &Path) -> anyhow::Result<Vec<EvalCase>> {
-    let text = std::fs::read_to_string(path)?;
+pub fn load_cases_file(path: &Path) -> Result<Vec<EvalCase>, EvalCaseLoadError> {
+    let text = std::fs::read_to_string(path).map_err(|source| EvalCaseLoadError::ReadFile {
+        path: path.to_path_buf(),
+        source,
+    })?;
     if let Ok(list) = serde_yaml::from_str::<Vec<EvalCase>>(&text) {
         return Ok(list);
     }
-    let single: EvalCase = serde_yaml::from_str(&text)?;
+    let single: EvalCase =
+        serde_yaml::from_str(&text).map_err(|source| EvalCaseLoadError::InvalidYaml {
+            path: path.to_path_buf(),
+            source,
+        })?;
     Ok(vec![single])
 }
 
-pub fn load_cases_dir(dir: &Path) -> anyhow::Result<Vec<EvalCase>> {
+pub fn load_cases_dir(dir: &Path) -> Result<Vec<EvalCase>, EvalCaseLoadError> {
     let mut out = Vec::new();
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
+    for entry in std::fs::read_dir(dir).map_err(|source| EvalCaseLoadError::ReadDirectory {
+        path: dir.to_path_buf(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| EvalCaseLoadError::DirectoryEntry {
+            path: dir.to_path_buf(),
+            source,
+        })?;
         let p = entry.path();
         if p.file_name()
             .and_then(|n| n.to_str())
@@ -371,11 +421,11 @@ pub fn entities_from_expr(expr: &Expr) -> HashSet<String> {
 pub async fn entities_from_reference_expr(
     reference_expr: &str,
     cgs: &CGS,
-) -> Result<HashSet<String>, String> {
+) -> Result<HashSet<String>, ProgramReferenceError> {
     let program = ProgramSession::new(cgs, None)?
         .compile(reference_expr)
         .await
-        .map_err(|error| error.agent_markdown())?;
+        .map_err(ProgramReferenceError::Compilation)?;
     let mut facts = program_facts::ProgramFacts::default();
     facts.visit(&program.artifact().comp);
     for expr in &facts.expressions {

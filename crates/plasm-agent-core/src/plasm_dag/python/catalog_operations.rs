@@ -2,7 +2,7 @@
 use plasm_core::symbol_tuning::EntityBinding;
 use plasm_core::CapabilityKind;
 
-use super::{at, CompileState, ExecuteSession, PyExpr, PythonLoweringError};
+use super::{at, CompileState, ExecuteSession, PyExpr, PythonLoweringError, PythonSourceError};
 
 /// A taught method resolved against its owning catalog exactly once. Primary
 /// `get`/`query`/`search` entry points remain read-specific constructors.
@@ -42,14 +42,26 @@ pub(super) fn resolve_taught_method<'a>(
     let method = state
         .sym_map_for(session)
         .resolve_session_method(token)
-        .map_err(|error| at(site, &error.to_string()))?;
+        .map_err(|error| at(site, error))?;
     let operation = CatalogOperation::from_kind(method.kind);
     if method.entry_id != owner.entry_id || method.domain != owner.entity {
         return Err(at(
             site,
             match operation {
-                CatalogOperation::Read(_) => "read method and entity ownership differ",
-                CatalogOperation::Write(_) => "method and receiver catalog/entity ownership differ",
+                CatalogOperation::Read(_) => PythonSourceError::ReadMethodOwnerMismatch {
+                    method: token.to_owned(),
+                    expected_entry: owner.entry_id.to_string(),
+                    expected_entity: owner.entity.to_string(),
+                    actual_entry: method.entry_id.to_string(),
+                    actual_entity: method.domain.to_string(),
+                },
+                CatalogOperation::Write(_) => PythonSourceError::WriteMethodOwnerMismatch {
+                    method: token.to_owned(),
+                    expected_entry: owner.entry_id.to_string(),
+                    expected_entity: owner.entity.to_string(),
+                    actual_entry: method.entry_id.to_string(),
+                    actual_entity: method.domain.to_string(),
+                },
             },
         ));
     }
@@ -60,9 +72,14 @@ pub(super) fn resolve_taught_method<'a>(
     )?;
     let cap = cgs
         .get_capability(method.capability.as_str())
-        .ok_or("missing method capability")?;
+        .ok_or(crate::program_rejection::PythonLoweringInvariantError::MethodCapabilityMissing)?;
     if CatalogOperation::from_kind(cap.kind) != operation {
-        return Err(at(site, "session method kind differs from pinned catalog"));
+        return Err(at(
+            site,
+            PythonSourceError::SessionMethodKindMismatch {
+                method: token.to_owned(),
+            },
+        ));
     }
     Ok(match operation {
         CatalogOperation::Read(kind) => ResolvedCatalogMethod::Read(ResolvedCatalogCall {

@@ -7,7 +7,6 @@
 use crate::value::Value;
 use crate::EntityDef;
 use indexmap::IndexMap;
-use std::fmt;
 use thiserror::Error;
 
 /// Scalar accepted inside a compound `entity_ref` map (and as a unary ref value).
@@ -32,6 +31,12 @@ pub enum EntityRefPayload {
 /// [`Value`] is not a legal normalized `entity_ref` constructor shape.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum EntityRefValueError {
+    #[error("observed entity reference has no structural _ref")]
+    MissingStructuralReference,
+    #[error("observed entity reference target does not match its declared entity")]
+    TargetMismatch,
+    #[error("observed entity reference key shape does not match the declared identity")]
+    KeyShapeMismatch,
     #[error("entity_ref value cannot be null")]
     Null,
     #[error("entity_ref value cannot be an array")]
@@ -98,28 +103,33 @@ pub(crate) fn observed_reference_payload(
     value: &Value,
     target: &EntityDef,
     target_name: &str,
-) -> Result<Value, String> {
+) -> Result<Value, EntityRefValueError> {
     let reference = value
         .get("_ref")
         .and_then(crate::RefWire::from_value)
-        .ok_or("observed entity reference requires a structural _ref")?;
+        .ok_or(EntityRefValueError::MissingStructuralReference)?;
     match reference {
         crate::RefWire::Simple { entity, id } => {
-            if entity != target_name || target.key_vars.len() > 1 {
-                return Err("observed entity reference target/key shape mismatch".into());
+            if entity != target_name {
+                return Err(EntityRefValueError::TargetMismatch);
+            }
+            if target.key_vars.len() > 1 {
+                return Err(EntityRefValueError::KeyShapeMismatch);
             }
             Ok(Value::String(id))
         }
         crate::RefWire::Compound { entity, parts } => {
-            if entity != target_name
-                || target.key_vars.len() < 2
+            if entity != target_name {
+                return Err(EntityRefValueError::TargetMismatch);
+            }
+            if target.key_vars.len() < 2
                 || parts.len() != target.key_vars.len()
                 || target
                     .key_vars
                     .iter()
                     .any(|key| !parts.contains_key(key.as_str()))
             {
-                return Err("observed entity reference target/key shape mismatch".into());
+                return Err(EntityRefValueError::KeyShapeMismatch);
             }
             Ok(Value::Object(
                 parts
@@ -301,24 +311,12 @@ pub fn normalize_entity_ref_value_for_target(value: &Value, target: &EntityDef) 
 }
 
 /// Error returned when a scope aggregate `entity_ref` cannot be normalized for splat / HTTP compile.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[error("entity_ref scope `{param_name}` for target `{target_entity}` cannot be normalized to the declared compound key; supply compound keys, identifiable row fields, a full_name owner/repo value, or an owner/repo string")]
 pub struct ScopeEntityRefNormalizeError {
     pub param_name: String,
     pub target_entity: String,
-    pub message: String,
 }
-
-impl fmt::Display for ScopeEntityRefNormalizeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "entity_ref scope `{}` for target `{}`: {}",
-            self.param_name, self.target_entity, self.message
-        )
-    }
-}
-
-impl std::error::Error for ScopeEntityRefNormalizeError {}
 
 #[cfg(test)]
 mod tests {
@@ -432,6 +430,62 @@ mod tests {
             EntityRefPayload::try_from_value(&Value::Object(IndexMap::new())),
             Err(EntityRefValueError::EmptyCompound)
         ));
+    }
+
+    #[test]
+    fn observed_reference_failures_keep_their_semantic_kind() {
+        let target = EntityDef {
+            name: "Repo".into(),
+            description: String::new(),
+            id_field: "id".into(),
+            id_format: None,
+            id_from: None,
+            fields: IndexMap::new(),
+            relations: IndexMap::new(),
+            expression_aliases: vec![],
+            implicit_request_identity: false,
+            key_vars: vec![
+                EntityFieldName::from("owner"),
+                EntityFieldName::from("name"),
+            ],
+            abstract_entity: false,
+            domain_projection_examples: false,
+            primary_read: None,
+            primary_query: None,
+            primary_search: None,
+            discovery: None,
+        };
+        let observed = |entity: &str| {
+            Value::Object(
+                [(
+                    "_ref".into(),
+                    Value::Object(
+                        [
+                            ("kind".into(), Value::String("simple".into())),
+                            ("entity".into(), Value::String(entity.into())),
+                            ("id".into(), Value::String("x".into())),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    ),
+                )]
+                .into_iter()
+                .collect(),
+            )
+        };
+
+        assert_eq!(
+            observed_reference_payload(&Value::Null, &target, "Repo"),
+            Err(EntityRefValueError::MissingStructuralReference)
+        );
+        assert_eq!(
+            observed_reference_payload(&observed("Other"), &target, "Repo"),
+            Err(EntityRefValueError::TargetMismatch)
+        );
+        assert_eq!(
+            observed_reference_payload(&observed("Repo"), &target, "Repo"),
+            Err(EntityRefValueError::KeyShapeMismatch)
+        );
     }
 
     #[test]

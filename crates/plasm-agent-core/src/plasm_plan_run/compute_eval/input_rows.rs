@@ -3,17 +3,92 @@
 use super::super::*;
 use super::hole_paths::NodeInputHoleIndex;
 use std::collections::BTreeMap;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub(crate) enum InputRowsError {
+    #[error(transparent)]
+    Identifier(#[from] crate::plasm_plan::PlanAtomError),
+    #[error("materialized node `{node_id}` for alias `{alias}` is unavailable")]
+    NodeUnavailable { node_id: String, alias: String },
+    #[error("materialized node `{node_id}` has no inline rows")]
+    RowsNotInline { node_id: String },
+    #[error("materialized node `{node_id}` has no acknowledgement")]
+    AcknowledgementMissing { node_id: String },
+    #[error("materialized scalar row has no `value` column")]
+    ScalarValueMissing,
+    #[error("materialized input value shape is invalid: {0}")]
+    ValueShapeInvalid(#[from] crate::plasm_plan_run::orchestrator::MaterializedValueShapeError),
+    #[error("materialized collection is incomplete: {0}")]
+    IncompleteCollection(#[from] plasm_core::collection_codec::CollectionFault),
+    #[error(
+        "singleton input `{alias}` from node `{node_id}` expected one row for {context}, found {rows}. This is not a Plasm syntax error; {remedy}",
+        rows = cardinality_rows(*.actual),
+        remedy = cardinality_remedy(*.actual)
+    )]
+    Cardinality {
+        node_id: String,
+        alias: String,
+        actual: usize,
+        context: String,
+    },
+    #[error("materialized row is missing projected field `{field}`")]
+    ProjectedFieldMissing { field: String },
+}
+
+fn cardinality_rows(actual: usize) -> String {
+    if actual == 0 {
+        "zero rows".into()
+    } else {
+        format!("{actual} rows")
+    }
+}
+
+fn cardinality_remedy(actual: usize) -> &'static str {
+    if actual == 0 {
+        "branch around empty results before consuming a singleton."
+    } else {
+        "make the source unique before consuming it as a singleton; the one-row contract is checked at runtime."
+    }
+}
+
+impl InputRowsError {
+    pub(crate) fn diagnostic(&self) -> String {
+        self.to_string()
+    }
+}
+
+impl From<InputRowsError> for plasm_runtime::ExecutionFailure {
+    fn from(error: InputRowsError) -> Self {
+        let code = match &error {
+            InputRowsError::Identifier(_) => "plan_identifier_invalid",
+            InputRowsError::NodeUnavailable { .. } => "plan_input_not_materialized",
+            InputRowsError::RowsNotInline { .. } => "plan_input_not_inline",
+            InputRowsError::AcknowledgementMissing { .. } => "plan_acknowledgement_missing",
+            InputRowsError::ScalarValueMissing => "plan_scalar_value_missing",
+            InputRowsError::ValueShapeInvalid(_) => "plan_input_shape_invalid",
+            InputRowsError::IncompleteCollection(_) => "plan_input_collection_incomplete",
+            InputRowsError::Cardinality { .. } => "plan_input_cardinality_invalid",
+            InputRowsError::ProjectedFieldMissing { .. } => "plan_projection_field_missing",
+        };
+        Self::new(
+            plasm_runtime::FailureCause::Program,
+            code,
+            error.to_string(),
+        )
+    }
+}
 
 fn binding_value(
     mat: &MaterializedNode,
     row: &plasm_core::ValueRow,
     index: usize,
-) -> Result<plasm_core::Value, String> {
+) -> Result<plasm_core::Value, InputRowsError> {
     match mat.value_shape_at(index)? {
         MaterializedValueShape::ScalarColumn => row
             .get("value")
             .cloned()
-            .ok_or_else(|| "scalar binding lacks its value column".into()),
+            .ok_or(InputRowsError::ScalarValueMissing),
         MaterializedValueShape::Record => Ok(row.clone().into_value()),
     }
 }
@@ -22,10 +97,12 @@ pub(crate) fn materialized_input_row_from_mat(
     node: PlanNodeId,
     mat: &MaterializedNode,
     proof: crate::plasm_plan::InputCardinalityProof,
-) -> Result<MaterializedInputRow, String> {
+) -> Result<MaterializedInputRow, InputRowsError> {
     if proof == crate::plasm_plan::InputCardinalityProof::Acknowledgement {
         if mat.result.operations.is_empty() {
-            return Err("effect result has no operation acknowledgement".into());
+            return Err(InputRowsError::AcknowledgementMissing {
+                node_id: node.as_str().to_owned(),
+            });
         }
         let completed: usize = mat
             .result
@@ -60,22 +137,23 @@ pub(crate) fn materialized_input_row_from_mat(
             row_identities: vec![None],
         });
     }
-    let inline = mat.row_source.inline_rows().ok_or_else(|| {
-        format!(
-            "plan input node {:?} has no inline rows for staging",
-            node.as_str()
-        )
-    })?;
+    let inline = mat
+        .row_source
+        .inline_rows()
+        .ok_or_else(|| InputRowsError::RowsNotInline {
+            node_id: node.as_str().to_owned(),
+        })?;
     let collection = proof == crate::plasm_plan::InputCardinalityProof::Collection;
     if collection {
-        crate::python_compute::require_complete_collection(&mat.result)
-            .map_err(|e| e.to_string())?;
+        crate::python_compute::require_complete_collection(&mat.result)?;
     }
     if inline.is_empty() && !collection {
-        return Err(format!(
-            "Plan input {:?} expected at least one row but was empty",
-            node.as_str()
-        ));
+        return Err(InputRowsError::Cardinality {
+            node_id: node.as_str().to_owned(),
+            alias: node.as_str().to_owned(),
+            actual: 0,
+            context: "input materialization".to_owned(),
+        });
     }
     let mut rows = Vec::with_capacity(inline.len());
     let mut row_identities = Vec::with_capacity(inline.len());
@@ -112,18 +190,17 @@ pub(crate) fn materialized_input_row_from_mat(
 pub(crate) fn materialized_singleton_inputs(
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
     inputs: &[ValidatedPlanDataInput],
-) -> Result<BTreeMap<InputAlias, MaterializedInputRow>, String> {
+) -> Result<BTreeMap<InputAlias, MaterializedInputRow>, InputRowsError> {
     let mut out = BTreeMap::new();
     for input in inputs {
         let node = input.node.clone();
         let alias = input.alias.clone();
-        let mat = materialized.get(&node).ok_or_else(|| {
-            format!(
-                "input node {:?} for alias {:?} has not been materialized",
-                node.as_str(),
-                alias.as_str()
-            )
-        })?;
+        let mat = materialized
+            .get(&node)
+            .ok_or_else(|| InputRowsError::NodeUnavailable {
+                node_id: node.as_str().to_owned(),
+                alias: alias.as_str().to_owned(),
+            })?;
         if !matches!(
             input.proof,
             crate::plasm_plan::InputCardinalityProof::Collection
@@ -149,19 +226,18 @@ pub(crate) fn materialized_result_use_inputs(
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
     uses_result: &[PlanResultUse],
     template: Option<&ValidatedPlanExprTemplate>,
-) -> Result<BTreeMap<InputAlias, MaterializedInputRow>, String> {
+) -> Result<BTreeMap<InputAlias, MaterializedInputRow>, InputRowsError> {
     let holes = template.map(|t| NodeInputHoleIndex::from_template_expr(&t.expr));
     let mut out = BTreeMap::new();
     for use_result in uses_result {
         let node = PlanNodeId::new(use_result.node.clone())?;
         let alias = InputAlias::new(use_result.r#as.clone())?;
-        let mat = materialized.get(&node).ok_or_else(|| {
-            format!(
-                "input node {:?} for alias {:?} has not been materialized",
-                node.as_str(),
-                alias.as_str()
-            )
-        })?;
+        let mat = materialized
+            .get(&node)
+            .ok_or_else(|| InputRowsError::NodeUnavailable {
+                node_id: node.as_str().to_owned(),
+                alias: alias.as_str().to_owned(),
+            })?;
         let row_count = mat.inline_row_count();
         let needs_singleton = holes
             .as_ref()
@@ -200,15 +276,12 @@ pub(crate) fn singleton_input_row_count_error(
     alias: &str,
     row_count: usize,
     context: &str,
-) -> String {
-    if row_count == 0 {
-        format!(
-            "Plan input {node:?} for alias {alias:?} expected exactly one row for {context}, but the source produced zero rows. This is a data-empty result, not a Plasm syntax error: run or inspect {node:?}, loosen filters if it should match, branch around empty results, or use `.singleton()` only when exactly one row is guaranteed."
-        )
-    } else {
-        format!(
-            "Plan input {node:?} for alias {alias:?} expected exactly one row for {context}, but the source produced {row_count} rows. Add filters/projection to make the source unique, aggregate intentionally, or use `.singleton()` only when exactly one row is guaranteed."
-        )
+) -> InputRowsError {
+    InputRowsError::Cardinality {
+        node_id: node.to_owned(),
+        alias: alias.to_owned(),
+        actual: row_count,
+        context: context.to_owned(),
     }
 }
 
@@ -218,18 +291,17 @@ pub(crate) fn materialized_result_use_inputs_with_source_row(
     source_node: &PlanNodeId,
     source_row: &plasm_core::ValueRow,
     source_row_identity: Option<plasm_core::RowIdentity>,
-) -> Result<BTreeMap<InputAlias, MaterializedInputRow>, String> {
+) -> Result<BTreeMap<InputAlias, MaterializedInputRow>, InputRowsError> {
     let mut out = BTreeMap::new();
     for use_result in uses_result {
         let node = PlanNodeId::new(use_result.node.clone())?;
         let alias = InputAlias::new(use_result.r#as.clone())?;
-        let mat = materialized.get(&node).ok_or_else(|| {
-            format!(
-                "input node {:?} for alias {:?} has not been materialized",
-                node.as_str(),
-                alias.as_str()
-            )
-        })?;
+        let mat = materialized
+            .get(&node)
+            .ok_or_else(|| InputRowsError::NodeUnavailable {
+                node_id: node.as_str().to_owned(),
+                alias: alias.as_str().to_owned(),
+            })?;
         let input_row = if node == *source_node {
             let row = crate::plasm_plan_run::row_values::augment_row_with_identity(
                 source_row,
@@ -269,16 +341,22 @@ pub(crate) fn materialized_result_use_inputs_with_source_row(
 
 /// Whole-row values expose precisely the declared columns. Field references and
 /// receiver dispatch retain their separate identity-bearing input representation.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ValueProjectionError {
+    #[error("materialized row is missing projected field `{field}`")]
+    FieldMissing { field: String },
+}
+
 pub(super) fn project_value_rows(
     value: &plasm_core::Value,
     fields: &[String],
     optional_fields: &std::collections::BTreeSet<String>,
-) -> Result<plasm_core::Value, String> {
+) -> Result<plasm_core::Value, ValueProjectionError> {
     fn row(
         value: &plasm_core::Value,
         fields: &[String],
         optional_fields: &std::collections::BTreeSet<String>,
-    ) -> Result<plasm_core::Value, String> {
+    ) -> Result<plasm_core::Value, ValueProjectionError> {
         let mut projected = indexmap::IndexMap::new();
         for field in fields {
             if value.get(field).is_none() && optional_fields.contains(field) {
@@ -286,7 +364,9 @@ pub(super) fn project_value_rows(
             }
             let value = value
                 .get(field)
-                .ok_or_else(|| format!("materialized row missing projected field `{field}`"))?;
+                .ok_or_else(|| ValueProjectionError::FieldMissing {
+                    field: field.clone(),
+                })?;
             projected.insert(field.clone(), value.clone());
         }
         Ok(plasm_core::Value::Object(projected))
@@ -330,7 +410,10 @@ mod value_projection_tests {
         );
         let error =
             project_value_rows(&json!({"title":"A"}), &fields, &Default::default()).unwrap_err();
-        assert!(error.contains("missing projected field `score`"), "{error}");
+        assert!(matches!(
+            error,
+            super::ValueProjectionError::FieldMissing { field } if field == "score"
+        ));
         assert_eq!(
             input["id"].as_str(),
             Some("i1"),

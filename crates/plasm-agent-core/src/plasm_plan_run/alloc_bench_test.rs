@@ -50,6 +50,7 @@ fn matrix_host() -> PlasmHostState {
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
     })
+    .expect("valid catalog fixture")
 }
 
 async fn matrix_limit_3_session(

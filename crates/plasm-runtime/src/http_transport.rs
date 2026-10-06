@@ -2,16 +2,13 @@
 //!
 //! [`ExecutionEngine`](crate::ExecutionEngine) uses [`ReqwestHttpTransport`] by default;
 //! swap in a custom [`HttpTransport`] for tests, proxies, or alternate clients.
-
 use crate::api_error_detail::{
     sanitize_preview_chars, summarize_json_api_error_for_http, summarize_text_error_body,
-    MAX_DEBUG_BODY_PREVIEW_CHARS,
 };
 use crate::auth::ResolvedAuth;
 use crate::error::RuntimeError;
 use crate::http_auth_failure::{
-    authorization_fact_from_resolved, format_http_status_error, outbound_authorization_fact,
-    OutboundAuthorizationFact,
+    authorization_fact_from_resolved, outbound_authorization_fact, OutboundAuthorizationFact,
 };
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as B64_ENGINE, Engine as _};
@@ -21,7 +18,7 @@ use plasm_compile::{
 use plasm_core::{Value, PLASM_ATTACHMENT_KEY};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tracing::{debug, warn, Instrument};
+use tracing::{debug, Instrument};
 
 /// Join `base_url` with the compiled request path.
 ///
@@ -194,11 +191,9 @@ impl ReqwestHttpTransport {
         let http_span =
             crate::spans::http_compiled_request(compiled_method_label(&request.method), url.len());
         let client = if request.credential.is_some() {
-            self.scoped_client.as_ref().ok_or_else(|| {
-                crate::credentials::credential_error(
-                    "transport has no redirect-free scoped credential client",
-                )
-            })?
+            self.scoped_client
+                .as_ref()
+                .ok_or_else(|| crate::credentials::CredentialError::RedirectFreeClientMissing)?
         } else {
             &self.client
         };
@@ -288,9 +283,7 @@ fn build_compiled_reqwest(
         let mp = request
             .multipart
             .as_ref()
-            .ok_or_else(|| RuntimeError::ConfigurationError {
-                message: "multipart request missing compiled multipart.parts".to_string(),
-            })?;
+            .ok_or_else(|| RuntimeError::HttpWire(crate::HttpWireError::MultipartPartsMissing))?;
         let form = build_multipart_form(mp)?;
         req_builder = req_builder.multipart(form);
     } else if let Some(body) = &request.body {
@@ -298,11 +291,7 @@ fn build_compiled_reqwest(
             HttpBodyFormat::Json => {
                 let json_body = plasm_value_to_json(body)?;
                 let stripped = strip_null_fields(json_body);
-                let bytes = serde_json::to_vec(&stripped).map_err(|e| {
-                    RuntimeError::SerializationError {
-                        message: format!("JSON encode outbound body: {e}"),
-                    }
-                })?;
+                let bytes = serde_json::to_vec(&stripped)?;
                 req_builder = req_builder
                     .header(
                         reqwest::header::CONTENT_TYPE,
@@ -319,10 +308,9 @@ fn build_compiled_reqwest(
                 req_builder = req_builder.body(form);
             }
             HttpBodyFormat::Multipart => {
-                return Err(RuntimeError::ConfigurationError {
-                    message: "multipart body_format requires compiled multipart.parts, not `body`"
-                        .to_string(),
-                });
+                return Err(RuntimeError::HttpWire(
+                    crate::HttpWireError::MultipartBodyForbidden,
+                ));
             }
         }
     }
@@ -404,11 +392,12 @@ pub fn compiled_template_headers(
                 .iter()
                 .find(|(resolved_key, _)| resolved_key.eq_ignore_ascii_case(key))
         }) {
-            return Err(RuntimeError::ConfigurationError {
-                message: format!(
-                    "CML template header `{key}` conflicts with resolver-owned authentication header `{resolved_key}`"
-                ),
-            });
+            return Err(RuntimeError::HttpWire(
+                crate::HttpWireError::AuthenticationHeaderConflict {
+                    header: key.clone(),
+                    resolved_header: resolved_key.clone(),
+                },
+            ));
         }
         out.push((key.clone(), header_val));
     }
@@ -546,21 +535,20 @@ fn add_multipart_part(
             .clone()
             .or(mime_from_attach)
             .unwrap_or_else(|| "application/octet-stream".to_string());
-        p = p
-            .mime_str(&ct)
-            .map_err(|e| RuntimeError::ConfigurationError {
-                message: format!(
-                    "multipart part `{}` has invalid content_type `{ct}`: {e}",
-                    spec.name
-                ),
-            })?;
+        p = p.mime_str(&ct).map_err(|e| {
+            RuntimeError::HttpWire(crate::HttpWireError::MultipartContentType {
+                part: spec.name.clone(),
+                source: e.without_url(),
+            })
+        })?;
         return Ok(form.part(spec.name.clone(), p));
     }
 
     if matches!(&spec.content, Value::Object(_) | Value::Array(_)) {
-        let vec = serde_json::to_vec(&plasm_value_to_json(&spec.content)?).map_err(|e| {
-            RuntimeError::SerializationError {
-                message: format!("multipart JSON encode for `{}`: {e}", spec.name),
+        let vec = serde_json::to_vec(&plasm_value_to_json(&spec.content)?).map_err(|source| {
+            crate::SerializationError::MultipartJson {
+                part: spec.name.clone(),
+                source,
             }
         })?;
         let mut p = Part::bytes(vec);
@@ -568,14 +556,12 @@ fn add_multipart_part(
             .content_type
             .clone()
             .unwrap_or_else(|| "application/json".to_string());
-        p = p
-            .mime_str(&ct)
-            .map_err(|e| RuntimeError::ConfigurationError {
-                message: format!(
-                    "multipart part `{}` has invalid content_type `{ct}`: {e}",
-                    spec.name
-                ),
-            })?;
+        p = p.mime_str(&ct).map_err(|e| {
+            RuntimeError::HttpWire(crate::HttpWireError::MultipartContentType {
+                part: spec.name.clone(),
+                source: e.without_url(),
+            })
+        })?;
         if let Some(fname) = &spec.file_name {
             p = p.file_name(fname.clone());
         }
@@ -583,22 +569,20 @@ fn add_multipart_part(
     }
 
     if spec.file_name.is_some() {
-        return Err(RuntimeError::ConfigurationError {
-            message: format!(
-                "multipart part `{}`: file_name requires attachment (`__plasm_attachment`) or JSON object/array content",
-                spec.name
-            ),
-        });
+        return Err(RuntimeError::HttpWire(
+            crate::HttpWireError::MultipartFileNameRequiresBinary {
+                part: spec.name.clone(),
+            },
+        ));
     }
 
     let text = match &spec.content {
         Value::PlasmInputRef(_) | Value::GetScalarExtract(_) | Value::StringTemplate(_) => {
-            return Err(RuntimeError::ConfigurationError {
-                message: format!(
-                    "multipart part `{}`: compile-time Plasm input refs are not valid HTTP wire values",
-                    spec.name
-                ),
-            });
+            return Err(RuntimeError::HttpWire(
+                crate::HttpWireError::MultipartUnboundOperand {
+                    part: spec.name.clone(),
+                },
+            ));
         }
         Value::String(s) | Value::PhraseIdent(s) => s.clone(),
         Value::Bool(b) => b.to_string(),
@@ -606,34 +590,31 @@ fn add_multipart_part(
         Value::Unsigned(i) => i.to_string(),
         Value::Float(f) => f.to_string(),
         Value::Null => {
-            return Err(RuntimeError::ConfigurationError {
-                message: format!("multipart part `{}`: unexpected null content", spec.name),
-            });
+            return Err(RuntimeError::HttpWire(
+                crate::HttpWireError::MultipartNull {
+                    part: spec.name.clone(),
+                },
+            ));
         }
         Value::Object(_) | Value::Array(_) => unreachable!("handled above"),
-        Value::Money(m) => m
-            .to_wire_text()
-            .map_err(|e| RuntimeError::SerializationError { message: e.into() })?,
+        Value::Money(m) => m.to_wire_text().map_err(crate::SerializationError::Money)?,
         Value::UnionCtor { .. } => {
-            return Err(RuntimeError::ConfigurationError {
-                message: format!(
-                    "multipart part `{}`: union constructor values must be lowered before HTTP encode",
-                    spec.name
-                ),
-            });
+            return Err(RuntimeError::HttpWire(
+                crate::HttpWireError::MultipartUnionConstructor {
+                    part: spec.name.clone(),
+                },
+            ));
         }
     };
 
     if let Some(ct) = &spec.content_type {
         let mut p = Part::text(text);
-        p = p
-            .mime_str(ct)
-            .map_err(|e| RuntimeError::ConfigurationError {
-                message: format!(
-                    "multipart part `{}` has invalid content_type `{ct}`: {e}",
-                    spec.name
-                ),
-            })?;
+        p = p.mime_str(ct).map_err(|e| {
+            RuntimeError::HttpWire(crate::HttpWireError::MultipartContentType {
+                part: spec.name.clone(),
+                source: e.without_url(),
+            })
+        })?;
         Ok(form.part(spec.name.clone(), p))
     } else {
         Ok(form.text(spec.name.clone(), text))
@@ -648,15 +629,11 @@ fn plasm_attachment_bytes_for_multipart(
 ) -> Result<MultipartAttachmentPayload, RuntimeError> {
     let obj = v
         .as_object()
-        .ok_or_else(|| RuntimeError::ConfigurationError {
-            message: "multipart attachment value must be an object".to_string(),
-        })?;
+        .ok_or_else(|| RuntimeError::HttpWire(crate::HttpWireError::AttachmentObjectRequired))?;
     let inner = obj
         .get(PLASM_ATTACHMENT_KEY)
         .and_then(|x| x.as_object())
-        .ok_or_else(|| RuntimeError::ConfigurationError {
-            message: "multipart file part expects `__plasm_attachment` metadata".to_string(),
-        })?;
+        .ok_or_else(|| RuntimeError::HttpWire(crate::HttpWireError::AttachmentMetadataMissing))?;
 
     let mime = inner
         .get("mime_type")
@@ -673,37 +650,31 @@ fn plasm_attachment_bytes_for_multipart(
 
     if let Some(Value::String(b64)) = inner.get("bytes_base64") {
         if b64.is_empty() {
-            return Err(RuntimeError::ConfigurationError {
-                message: "multipart attachment bytes_base64 is empty".to_string(),
-            });
+            return Err(RuntimeError::HttpWire(
+                crate::HttpWireError::AttachmentBytesEmpty,
+            ));
         }
-        let bytes =
-            B64_ENGINE
-                .decode(b64.as_bytes())
-                .map_err(|e| RuntimeError::ConfigurationError {
-                    message: format!("multipart attachment base64 decode failed: {e}"),
-                })?;
+        let bytes = B64_ENGINE
+            .decode(b64.as_bytes())
+            .map_err(|e| RuntimeError::HttpWire(crate::HttpWireError::AttachmentBase64(e)))?;
         return Ok((bytes, mime, file_name));
     }
 
     if inner.get("uri").is_some() {
-        return Err(RuntimeError::ConfigurationError {
-            message: "multipart file parts require `bytes_base64` in `__plasm_attachment` (uri-only attachments are not sent)"
-                .to_string(),
-        });
+        return Err(RuntimeError::HttpWire(
+            crate::HttpWireError::AttachmentUriUnsupported,
+        ));
     }
 
-    Err(RuntimeError::ConfigurationError {
-        message: "multipart attachment must include non-empty `bytes_base64`".to_string(),
-    })
+    Err(RuntimeError::HttpWire(
+        crate::HttpWireError::AttachmentBytesMissing,
+    ))
 }
 
 pub fn plasm_value_to_form_urlencoded(body: &Value) -> Result<String, RuntimeError> {
     let m = body
         .as_object()
-        .ok_or_else(|| RuntimeError::ConfigurationError {
-            message: "form_urlencoded body must be a flat object of scalar fields".to_string(),
-        })?;
+        .ok_or_else(|| RuntimeError::HttpWire(crate::HttpWireError::FormObjectRequired))?;
     let mut pairs: Vec<(String, String)> = Vec::new();
     for (k, v) in m {
         if matches!(v, Value::Null) {
@@ -715,22 +686,17 @@ pub fn plasm_value_to_form_urlencoded(body: &Value) -> Result<String, RuntimeErr
             Value::Integer(i) => i.to_string(),
             Value::Unsigned(i) => i.to_string(),
             Value::Float(f) => f.to_string(),
-            Value::Money(m) => m
-                .to_wire_text()
-                .map_err(|e| RuntimeError::SerializationError { message: e.into() })?,
+            Value::Money(m) => m.to_wire_text().map_err(crate::SerializationError::Money)?,
             _ => {
-                return Err(RuntimeError::ConfigurationError {
-                    message: format!(
-                        "form_urlencoded body field `{k}` must be null or a scalar string/number/bool"
-                    ),
-                });
+                return Err(RuntimeError::HttpWire(
+                    crate::HttpWireError::FormScalarRequired { field: k.clone() },
+                ));
             }
         };
         pairs.push((k.clone(), s));
     }
-    serde_urlencoded::to_string(pairs.as_slice()).map_err(|e| RuntimeError::SerializationError {
-        message: format!("form_urlencoded encode failed: {e}"),
-    })
+    serde_urlencoded::to_string(pairs.as_slice())
+        .map_err(|source| crate::SerializationError::Form(source).into())
 }
 
 /// Full HTTP response after the wire round-trip (body buffered for classification / retries).
@@ -756,7 +722,7 @@ pub enum HttpAttemptResult {
     Retryable {
         status: u16,
         retry_after: Option<Duration>,
-        message: String,
+        failure: crate::HttpStatusFailure,
     },
     Failed(RuntimeError),
 }
@@ -923,11 +889,10 @@ pub async fn read_http_response(
     let bytes = response
         .bytes()
         .await
-        .map_err(|e| RuntimeError::RequestError {
-            message: format!("{method} {url} — failed to read response body: {e}"),
+        .map_err(|source| RuntimeError::HttpTransport {
+            phase: crate::HttpTransportPhase::ReadResponse,
+            source: source.without_url(),
             attempts: 1,
-            status: None,
-            body: None,
         })?
         .to_vec();
 
@@ -957,171 +922,83 @@ pub fn evaluate_parsed_response(parsed: HttpParsedResponse) -> HttpAttemptResult
         rate_limit_remaining,
         authorization,
     } = parsed;
-
     trace_hydration_http_response(status, bytes.len());
-    let status_code = status;
-    let is_success = (200..300).contains(&status_code);
-
-    if bytes.is_empty() {
-        return if is_success {
-            HttpAttemptResult::Success(serde_json::Value::Null, link)
-        } else if http_failure_is_retryable(status_code, retry_after, rate_limit_remaining, None) {
-            HttpAttemptResult::Retryable {
-                status: status_code,
-                retry_after,
-                message: format!("{method} {url} — HTTP {status_code} with empty body"),
-            }
-        } else {
-            HttpAttemptResult::Failed(RuntimeError::RequestError {
-                message: compose_http_failure_message(
-                    method,
-                    &url,
-                    status_code,
-                    "empty body",
-                    true,
-                    &authorization,
-                ),
-                attempts: 1,
-                status: Some(status_code),
-                body: None,
-            })
-        };
+    let is_success = (200..300).contains(&status);
+    if bytes.is_empty() && is_success {
+        return HttpAttemptResult::Success(serde_json::Value::Null, link);
     }
-
-    let parse_result: Result<serde_json::Value, serde_json::Error> = serde_json::from_slice(&bytes);
-
-    match (is_success, parse_result) {
-        (true, Ok(json)) => HttpAttemptResult::Success(json, link),
-        (true, Err(e)) => {
-            let preview = utf8_body_preview(&bytes, 280);
-            let looks_like_markup = body_preview_looks_like_markup(&preview);
-            warn!(
-                target: "plasm_runtime::http",
-                method,
-                url = %url,
-                status = status_code,
-                content_type = content_type.as_deref().unwrap_or("(none)"),
-                body_len = bytes.len(),
-                looks_like_markup,
-                serde_err = %e,
-                body_preview = %preview,
-                "response body failed JSON parse"
-            );
-            if let Some(json) =
-                synthetic_json_from_non_json_success_body(&bytes, content_type.as_deref())
-            {
-                debug!(
-                    target: "plasm_runtime::http",
-                    method,
-                    url = %url,
-                    status = status_code,
-                    content_type = content_type.as_deref().unwrap_or("(none)"),
-                    body_len = bytes.len(),
-                    "coerced non-JSON success body to synthetic __plasm_attachment JSON"
-                );
-                HttpAttemptResult::Success(json, link)
-            } else {
-                HttpAttemptResult::Failed(RuntimeError::RequestError {
-                    message: format!(
-                        "{method} {url} — HTTP {status_code}: response body is not valid JSON ({e}); content-type: {}; body preview: {preview}",
-                        content_type.as_deref().unwrap_or("(none)")
-                    ),
-                    attempts: 1,
-                    status: Some(status_code),
-                    body: None,
-                })
-            }
-        }
-        (false, Ok(json)) => {
-            let detail = summarize_json_api_error_for_http(&json);
-            let message = compose_http_failure_message(
-                method,
-                &url,
-                status_code,
-                detail.as_str(),
-                false,
-                &authorization,
-            );
-            if http_failure_is_retryable(
-                status_code,
-                retry_after,
-                rate_limit_remaining,
-                Some(detail.as_str()),
-            ) {
-                HttpAttemptResult::Retryable {
-                    status: status_code,
-                    retry_after,
-                    message,
-                }
-            } else {
-                HttpAttemptResult::Failed(RuntimeError::RequestError {
-                    message,
-                    attempts: 1,
-                    status: Some(status_code),
-                    body: Some(json),
-                })
-            }
-        }
-        (false, Err(parse_err)) => {
-            let preview = utf8_body_preview(&bytes, MAX_DEBUG_BODY_PREVIEW_CHARS);
-            debug!(
-                target: "plasm_runtime::http",
-                method,
-                url = %url,
-                status = status_code,
-                content_type = content_type.as_deref().unwrap_or("(none)"),
-                body_len = bytes.len(),
-                serde_err = %parse_err,
-                body_preview = %preview,
-                "non-success response body is not JSON; using bounded text summary"
-            );
-            let detail = summarize_text_error_body(&bytes, content_type.as_deref());
-            let message = compose_http_failure_message(
-                method,
-                &url,
-                status_code,
-                detail.as_str(),
-                false,
-                &authorization,
-            );
-            if http_failure_is_retryable(
-                status_code,
-                retry_after,
-                rate_limit_remaining,
-                Some(detail.as_str()),
-            ) {
-                HttpAttemptResult::Retryable {
-                    status: status_code,
-                    retry_after,
-                    message,
-                }
-            } else {
-                HttpAttemptResult::Failed(RuntimeError::RequestError {
-                    message,
-                    attempts: 1,
-                    status: Some(status_code),
-                    body: None,
-                })
-            }
-        }
-    }
-}
-
-fn compose_http_failure_message(
-    method: &str,
-    url: &str,
-    status: u16,
-    detail: &str,
-    empty_body: bool,
-    authorization: &OutboundAuthorizationFact,
-) -> String {
-    if status == 401 {
-        return format_http_status_error(method, url, status, detail, authorization, None);
-    }
-    if empty_body {
-        format!("{method} {url} — HTTP {status} with empty body")
+    let (detail, body, empty_body) = if bytes.is_empty() {
+        (String::new(), None, true)
     } else {
-        format!("{method} {url} — HTTP {status} from API: {detail}")
+        match (
+            is_success,
+            serde_json::from_slice::<serde_json::Value>(&bytes),
+        ) {
+            (true, Ok(json)) => return HttpAttemptResult::Success(json, link),
+            (true, Err(source)) => {
+                debug!(target: "plasm_runtime::http", method, status,
+                    content_type = content_type.as_deref().unwrap_or("(none)"),
+                    body_len = bytes.len(), serde_err = %source,
+                    "response body failed JSON parse");
+                if let Some(json) =
+                    synthetic_json_from_non_json_success_body(&bytes, content_type.as_deref())
+                {
+                    return HttpAttemptResult::Success(json, link);
+                }
+                return HttpAttemptResult::Failed(RuntimeError::RequestError {
+                    source: crate::RequestFailure::ResponseJson {
+                        method: method.to_owned(),
+                        status,
+                        source,
+                    },
+                    attempts: 1,
+                    status: Some(status),
+                    body: None,
+                });
+            }
+            (false, Ok(json)) => (summarize_json_api_error_for_http(&json), Some(json), false),
+            (false, Err(source)) => {
+                debug!(target: "plasm_runtime::http", method, status,
+                    content_type = content_type.as_deref().unwrap_or("(none)"),
+                    body_len = bytes.len(), serde_err = %source,
+                    "non-success response body is not JSON; using bounded text summary");
+                (
+                    summarize_text_error_body(&bytes, content_type.as_deref()),
+                    None,
+                    false,
+                )
+            }
+        }
+    };
+    let retryable = http_failure_is_retryable(
+        status,
+        retry_after,
+        rate_limit_remaining,
+        (!empty_body).then_some(detail.as_str()),
+    );
+    let failure = crate::HttpStatusFailure {
+        method: method.to_owned(),
+        url,
+        status,
+        detail,
+        empty_body,
+        authorization,
+        login_token_tail: None,
+        retry_budget_exhausted: false,
+    };
+    if retryable {
+        HttpAttemptResult::Retryable {
+            status,
+            retry_after,
+            failure,
+        }
+    } else {
+        HttpAttemptResult::Failed(RuntimeError::RequestError {
+            source: crate::RequestFailure::HttpStatus(failure),
+            attempts: 1,
+            status: Some(status),
+            body,
+        })
     }
 }
 
@@ -1132,29 +1009,29 @@ fn compose_http_failure_message(
 /// [`crate::http_resilience::ResilientHttpTransport`], not in the inner client.
 #[must_use]
 pub fn classify_inner_transport_error(err: RuntimeError) -> HttpAttemptResult {
-    match &err {
+    match err {
         RuntimeError::RequestError {
             status: Some(status),
-            message,
+            source: crate::RequestFailure::HttpStatus(failure),
             ..
-        } if http_failure_is_retryable(*status, None, None, Some(message.as_str())) => {
+        } if http_failure_is_retryable(status, None, None, Some(&failure.detail)) => {
             HttpAttemptResult::Retryable {
-                status: *status,
+                status,
                 retry_after: None,
-                message: message.clone(),
+                failure,
             }
         }
         RuntimeError::RateLimited {
             status,
             retry_after,
-            message,
+            source: crate::RateLimitCause::Upstream(failure),
             ..
         } => HttpAttemptResult::Retryable {
-            status: *status,
-            retry_after: *retry_after,
-            message: message.clone(),
+            status,
+            retry_after,
+            failure,
         },
-        _ => HttpAttemptResult::Failed(err),
+        other => HttpAttemptResult::Failed(other),
     }
 }
 
@@ -1168,19 +1045,19 @@ pub fn attempt_result_into_result(
         HttpAttemptResult::Retryable {
             status,
             retry_after,
-            message,
+            failure,
         } => {
-            if http_retryable_is_rate_limited(status, retry_after, &message) {
+            if http_retryable_is_rate_limited(status, retry_after, &failure.detail) {
                 Err(RuntimeError::RateLimited {
                     status,
                     host: String::new(),
                     retry_after,
                     attempts,
-                    message,
+                    source: crate::RateLimitCause::Upstream(failure),
                 })
             } else {
                 Err(RuntimeError::RequestError {
-                    message,
+                    source: crate::RequestFailure::HttpStatus(failure),
                     attempts,
                     status: Some(status),
                     body: None,
@@ -1269,9 +1146,7 @@ fn strip_null_fields(value: serde_json::Value) -> serde_json::Value {
 fn plasm_value_to_json(value: &Value) -> Result<serde_json::Value, RuntimeError> {
     match value {
         Value::PlasmInputRef(_) | Value::GetScalarExtract(_) | Value::StringTemplate(_) => {
-            Err(RuntimeError::ConfigurationError {
-                message: "unbound program operand reached HTTP body encoding".into(),
-            })
+            Err(RuntimeError::HttpWire(crate::HttpWireError::UnboundOperand))
         }
         Value::Null => Ok(serde_json::Value::Null),
         Value::Bool(b) => Ok(serde_json::Value::Bool(*b)),
@@ -1298,7 +1173,7 @@ fn plasm_value_to_json(value: &Value) -> Result<serde_json::Value, RuntimeError>
         }
         Value::Money(m) => m
             .encode_stored()
-            .map_err(|e| RuntimeError::SerializationError { message: e.into() }),
+            .map_err(|source| crate::SerializationError::Money(source).into()),
     }
 }
 
@@ -1390,7 +1265,7 @@ mod http_outcome_tests {
     #[test]
     fn classify_inner_request_error_500_is_retryable() {
         let outcome = classify_inner_transport_error(RuntimeError::RequestError {
-            message: "HTTP 500: Internal Server Error".into(),
+            source: crate::HttpStatusFailure::without_request(500, String::new()).into(),
             attempts: 1,
             status: Some(500),
             body: None,
@@ -1404,7 +1279,7 @@ mod http_outcome_tests {
     #[test]
     fn classify_inner_request_error_401_is_terminal() {
         let outcome = classify_inner_transport_error(RuntimeError::RequestError {
-            message: "HTTP 401".into(),
+            source: crate::HttpStatusFailure::without_request(401, String::new()).into(),
             attempts: 1,
             status: Some(401),
             body: None,
@@ -1429,7 +1304,11 @@ mod http_outcome_tests {
             authorization: OutboundAuthorizationFact::absent(),
         };
         match evaluate_parsed_response(parsed) {
-            HttpAttemptResult::Failed(RuntimeError::RequestError { message, .. }) => {
+            HttpAttemptResult::Failed(RuntimeError::RequestError {
+                source: crate::RequestFailure::HttpStatus(failure),
+                ..
+            }) => {
+                let message = failure.to_string();
                 assert!(
                     message.contains("GET path=/records query=(none)"),
                     "{message}"
@@ -1455,7 +1334,11 @@ mod http_outcome_tests {
             authorization: OutboundAuthorizationFact::from_header(Some(&format!("Bearer {JWT}"))),
         };
         match evaluate_parsed_response(parsed) {
-            HttpAttemptResult::Failed(RuntimeError::RequestError { message, .. }) => {
+            HttpAttemptResult::Failed(RuntimeError::RequestError {
+                source: crate::RequestFailure::HttpStatus(failure),
+                ..
+            }) => {
+                let message = failure.to_string();
                 assert!(
                     message.contains("GET path=/users query=query=alice"),
                     "{message}"

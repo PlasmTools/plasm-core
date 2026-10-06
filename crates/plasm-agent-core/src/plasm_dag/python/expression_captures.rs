@@ -129,7 +129,7 @@ impl Lower<'_> {
             .map(|(span, _)| (span.start, span.end))
             .collect();
         let mut expression = *ruff_python_parser::parse_expression(&source)
-            .map_err(|e| e.to_string())?
+            .map_err(PythonLoweringError::parse_error)?
             .into_syntax()
             .body;
         let capture = Capture {
@@ -148,12 +148,15 @@ impl Lower<'_> {
             return Err(error);
         }
         for node in &state.lower.state.nodes[before..] {
-            let node = super::super::plan_serialize::lower_plan_node(node)?;
+            let node = super::super::plan_serialize::lower_plan_node(node);
             if matches!(
                 node.effect_class,
                 EffectClass::Write | EffectClass::SideEffect
             ) {
-                return Err("Python value expressions cannot acquire write authority".into());
+                return Err(
+                    crate::program_rejection::PythonProgramError::ValueExpressionWriteAuthority
+                        .into(),
+                );
             }
         }
         Ok(CapturedExpression {
@@ -214,14 +217,16 @@ impl Capture<'_, '_> {
         let path =
             super::super::row_suffix::membership_rhs_column_path(&state.lower.state, &[], node)?;
         let [field] = path.as_slice() else {
-            return Err("membership requires an explicit one-column rowset".into());
+            return Err(
+                crate::program_rejection::PythonProgramError::MembershipNeedsOneColumn.into(),
+            );
         };
         let code = format!(
             "[__plasm_member.{field} for __plasm_member in __plasm_input.{}]",
             captured.attr
         );
         *expression = *ruff_python_parser::parse_expression(&code)
-            .map_err(|e| e.to_string())?
+            .map_err(PythonLoweringError::parse_error)?
             .into_syntax()
             .body;
         Ok(())
@@ -263,9 +268,12 @@ impl Capture<'_, '_> {
                 };
                 let node = lower.expr(&attr.value, None)?;
                 let contract = super::super::binding_contract(&lower.state, &node)
-                    .ok_or("missing expression receiver contract")?;
+                    .ok_or(crate::program_rejection::PythonLoweringInvariantError::ExpressionReceiverContractMissing)?;
                 if !contract.row_cardinality.permits_scalar_field_extract() {
-                    return Err("field input requires a proven singleton".into());
+                    return Err(
+                        crate::program_rejection::PythonProgramError::FieldInputNeedsSingleton
+                            .into(),
+                    );
                 }
                 inputs.insert(
                     node.clone(),
@@ -283,8 +291,8 @@ impl Capture<'_, '_> {
             } else if deferred {
                 let node = lower.expr(expr, None)?;
                 // Re-enter only the immutable name port, never this expression.
-                let name =
-                    ruff_python_parser::parse_expression(&node).map_err(|e| e.to_string())?;
+                let name = ruff_python_parser::parse_expression(&node)
+                    .map_err(PythonLoweringError::parse_error)?;
                 lower.scoped_value(&name.syntax().body, inputs)?
             } else {
                 lower.scoped_value(expr, inputs)?
@@ -302,7 +310,7 @@ impl Capture<'_, '_> {
             key
         };
         let replacement = ruff_python_parser::parse_expression(&format!("__plasm_input.{key}"))
-            .map_err(|e| e.to_string())?;
+            .map_err(PythonLoweringError::parse_error)?;
         if field {
             let PyExpr::Attribute(attr) = expr else {
                 unreachable!()

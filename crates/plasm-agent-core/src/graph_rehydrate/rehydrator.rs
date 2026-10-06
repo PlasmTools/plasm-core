@@ -76,7 +76,7 @@ impl<'a> GraphSurfaceRehydrator<'a> {
             result.collection.membership(),
         )
         .await
-        .map_err(|message| plasm_runtime::RuntimeError::CacheError { message })?;
+        .map_err(|error| plasm_runtime::RuntimeError::CacheSource(Box::new(error)))?;
         result.collection = result.collection.with_materialization(rows)?;
         Ok(())
     }
@@ -123,7 +123,10 @@ impl<'a> GraphSurfaceRehydrator<'a> {
         &self,
         entity_type: &str,
         result: &ExecutionResult,
-    ) -> Result<plasm_core::collection_codec::SharedRows<CachedEntity>, String> {
+    ) -> Result<
+        plasm_core::collection_codec::SharedRows<CachedEntity>,
+        super::walk::GraphRehydrateError,
+    > {
         self.resolve_source_parents_with_identities(entity_type, result, &[])
             .await
     }
@@ -133,10 +136,13 @@ impl<'a> GraphSurfaceRehydrator<'a> {
         entity_type: &str,
         result: &ExecutionResult,
         row_identities: &[Option<plasm_core::RowIdentity>],
-    ) -> Result<plasm_core::collection_codec::SharedRows<CachedEntity>, String> {
+    ) -> Result<
+        plasm_core::collection_codec::SharedRows<CachedEntity>,
+        super::walk::GraphRehydrateError,
+    > {
         use plasm_core::collection_codec::{CollectionCodec, RecordingCodec, Transform};
         if !row_identities.is_empty() && row_identities.len() != result.count() {
-            return Err("canonical row identity count differs from recorded membership".into());
+            return Err(super::walk::GraphRehydrateError::RowIdentityCountMismatch);
         }
         let references: Vec<_> = result
             .collection
@@ -151,20 +157,17 @@ impl<'a> GraphSurfaceRehydrator<'a> {
                     .map_or_else(|| reference.clone(), |row| row.reference.clone())
             })
             .collect();
-        let membership = RecordingCodec::new()
-            .derive(
-                result
-                    .collection
-                    .membership()
-                    .identity()
-                    .derived(&"canonical_identity_projection")
-                    .map_err(|e| e.to_string())?,
-                &[result.collection.membership()],
-                Transform::Map {
-                    rows: references.into(),
-                },
-            )
-            .map_err(|e| e.to_string())?;
+        let membership = RecordingCodec::new().derive(
+            result
+                .collection
+                .membership()
+                .identity()
+                .derived(&"canonical_identity_projection")?,
+            &[result.collection.membership()],
+            Transform::Map {
+                rows: references.into(),
+            },
+        )?;
         let hot = self.snapshot_hot_locked(entity_type).await;
         // An identity-preserving projection names its canonical graph row, but
         // its projected payload cannot replace that row. Only unprojected source
@@ -175,10 +178,7 @@ impl<'a> GraphSurfaceRehydrator<'a> {
                 && !existing.contains(&row.reference))
             .then_some(i)
         });
-        let retained = result
-            .entities()
-            .select(positions)
-            .map_err(|e| e.to_string())?;
+        let retained = result.entities().select(positions)?;
         let available = plasm_core::collection_codec::SharedRows::concat([&hot.into(), &retained]);
         let rows = super::walk::collect_recorded_entities(
             &self.ctx,
@@ -207,7 +207,7 @@ impl<'a> GraphSurfaceRehydrator<'a> {
         &self,
         entity_type: &str,
         membership: &plasm_core::collection_codec::RecordedCollection<plasm_core::Ref>,
-    ) -> Result<Vec<plasm_core::ValueRow>, String> {
+    ) -> Result<Vec<plasm_core::ValueRow>, super::walk::GraphRehydrateError> {
         let hot = self.snapshot_hot_locked(entity_type).await;
         let rows = super::walk::collect_recorded_entities(
             &self.ctx,
@@ -227,7 +227,7 @@ impl<'a> GraphSurfaceRehydrator<'a> {
         &self,
         row_source: &MaterializedRowSource,
         max_rows: Option<usize>,
-    ) -> Result<Vec<plasm_core::ValueRow>, String> {
+    ) -> Result<Vec<plasm_core::ValueRow>, super::walk::GraphRehydrateError> {
         let mut rows = match row_source {
             MaterializedRowSource::Inline(rows) => rows.clone(),
             MaterializedRowSource::GraphBacked {

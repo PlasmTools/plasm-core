@@ -131,7 +131,8 @@ async fn spawn_mcp_server() -> Option<(String, tokio::task::JoinHandle<()>, Opti
         run_artifacts: Arc::new(plasm_agent::run_artifacts::RunArtifactStore::memory()),
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
-    });
+    })
+    .expect("valid catalog fixture");
     let storage = Arc::new(MemoryStorage::new());
     let catalog = Arc::new(OauthLinkCatalog::default());
     let outbound = Arc::new(AgentOutboundSecretProvider::new(

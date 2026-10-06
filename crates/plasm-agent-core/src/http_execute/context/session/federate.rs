@@ -23,20 +23,19 @@ pub async fn prepare_federate_wave(
     principal: Option<String>,
     outbound_hosted_kv_by_entry: Option<&HashMap<String, String>>,
     bindings_by_entry: Option<&HashMap<String, crate::binding_slots::SessionBindingMap>>,
-) -> Result<PreparedFederateWave, String> {
+) -> Result<PreparedFederateWave, super::SessionMutateError> {
     let mode = auth_resolution_mode_from_env();
     validate_principal_for_mode(mode, principal.as_deref())?;
 
     let names = normalize_execute_entity_names(entities);
     if names.is_empty() {
-        return Err("`entities` must be non-empty".into());
+        return Err(super::SessionMutateError::EmptyEntities);
     }
 
     let reg = st.catalog.snapshot();
     let registry_pin = reg
         .load_context(&new_entry_id)
-        .map(|ctx| ctx.cgs.catalog_cgs_hash_hex())
-        .map_err(|e| e.to_string())?;
+        .map(|ctx| ctx.cgs.catalog_cgs_hash_hex())?;
     let hosted_kv_key = outbound_hosted_kv_by_entry
         .and_then(|map| map.get(&new_entry_id))
         .map(|s| s.as_str());
@@ -49,13 +48,15 @@ pub async fn prepare_federate_wave(
         hosted_kv_key,
         entry_bindings.as_ref(),
     )
-    .await
-    .map_err(|e| e.to_string())?;
+    .await?;
     let ctx_arc = materialized.ctx;
 
     for e in &names {
         if ctx_arc.get_entity(e).is_none() {
-            return Err(format!("unknown entity `{e}` in this schema"));
+            return Err(super::SessionMutateError::UnknownEntity {
+                entry_id: new_entry_id.clone(),
+                entity: e.clone(),
+            });
         }
     }
 
@@ -105,22 +106,23 @@ async fn commit_federate_wave_inner(
 
     let prompt_hash_p: PromptHashHex = prompt_hash
         .parse()
-        .map_err(|e: &'static str| super::SessionMutateError::from(e))?;
+        .map_err(|_| super::SessionMutateError::InvalidPromptHash)?;
     let session_id_p: ExecuteSessionId = session_id
         .parse()
-        .map_err(|e: &'static str| super::SessionMutateError::from(e))?;
+        .map_err(|_| super::SessionMutateError::InvalidSessionId)?;
 
     let Some(sess_arc) = st
         .try_get_execute_session(prompt_hash_p.as_str(), session_id_p.as_str())
-        .await
-        .map_err(|error| error.to_string())?
+        .await?
     else {
-        return Err("unknown or expired execute session".into());
+        return Err(super::SessionMutateError::UnknownOrExpiredSession);
     };
     let mut sess = (*sess_arc).clone();
 
     if sess.contexts_by_entry.contains_key(&new_entry_id) {
-        return Err(format!("session already includes catalog entry `{new_entry_id}`").into());
+        return Err(super::SessionMutateError::CatalogAlreadyIncluded {
+            entry_id: new_entry_id,
+        });
     }
 
     sess.contexts_by_entry
@@ -140,7 +142,7 @@ async fn commit_federate_wave_inner(
     }
 
     let Some(mut exp) = sess.teaching_exposure.take() else {
-        return Err("session has no incremental exposure state".into());
+        return Err(super::SessionMutateError::MissingExposureState);
     };
 
     let slots_before = exp.surface.slots.clone();
@@ -211,7 +213,6 @@ pub async fn federate_execute_session(
         outbound_hosted_kv_by_entry,
         bindings_by_entry,
     )
-    .await
-    .map_err(super::SessionMutateError::from)?;
+    .await?;
     commit_federate_wave(st, prompt_hash, session_id, prepared).await
 }

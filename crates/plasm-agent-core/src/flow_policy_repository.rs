@@ -17,8 +17,10 @@ pub enum FlowPolicyRepositoryError {
     Sqlx(#[from] sqlx::Error),
     #[error("migrate: {0}")]
     Migrate(#[from] sqlx::migrate::MigrateError),
-    #[error("{0}")]
-    InvalidInput(String),
+    #[error("policy serialize: {0}")]
+    Serialization(#[source] serde_json::Error),
+    #[error("stored policy JSON invalid: {0}")]
+    StoredPolicyInvalid(#[source] serde_json::Error),
     #[error("no draft to publish")]
     NoDraft,
     #[error("validate required before publish")]
@@ -125,9 +127,8 @@ impl FlowPolicyRepository {
         project_slug: &str,
         policy: &FlowPolicy,
     ) -> Result<(), FlowPolicyRepositoryError> {
-        let json = serde_json::to_value(policy).map_err(|e| {
-            FlowPolicyRepositoryError::InvalidInput(format!("policy serialize: {e}"))
-        })?;
+        let json = serde_json::to_value(policy)
+            .map_err(|e| FlowPolicyRepositoryError::Serialization(e))?;
         let now = Utc::now();
         sqlx::query(
             r#"INSERT INTO project_flow_policies (
@@ -193,9 +194,8 @@ impl FlowPolicyRepository {
             return Err(FlowPolicyRepositoryError::ValidateRequired);
         }
         let next_rev = row.published_revision.saturating_add(1).max(1);
-        let json = serde_json::to_value(&draft).map_err(|e| {
-            FlowPolicyRepositoryError::InvalidInput(format!("policy serialize: {e}"))
-        })?;
+        let json = serde_json::to_value(&draft)
+            .map_err(|e| FlowPolicyRepositoryError::Serialization(e))?;
         let now = Utc::now();
         sqlx::query(
             r#"INSERT INTO project_flow_policies (
@@ -307,7 +307,7 @@ fn parse_policy_value(v: Value) -> Result<Option<FlowPolicy>, FlowPolicyReposito
     if v.is_null() {
         return Ok(None);
     }
-    serde_json::from_value(v).map(Some).map_err(|e| {
-        FlowPolicyRepositoryError::InvalidInput(format!("stored policy JSON invalid: {e}"))
-    })
+    serde_json::from_value(v)
+        .map(Some)
+        .map_err(|e| FlowPolicyRepositoryError::StoredPolicyInvalid(e))
 }

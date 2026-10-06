@@ -8,7 +8,9 @@ use clap::Subcommand;
 use plasm_agent_core::mcp_config_repository::McpConfigRepository;
 use plasm_agent_core::oauth_link_catalog::OauthLinkCatalog;
 
-use crate::appliance_oauth_admin::{appliance_oauth_upsert_provider, ApplianceOauthUpsert};
+use crate::appliance_oauth_admin::{
+    appliance_oauth_upsert_provider, AdminError, ApplianceOauthUpsert,
+};
 
 #[derive(Debug, clap::Args)]
 pub struct OauthCliRoot {
@@ -90,35 +92,39 @@ async fn standalone_oauth_context() -> Result<
         Arc<OauthLinkCatalog>,
         Arc<dyn auth_framework::storage::AuthStorage>,
     ),
-    Box<dyn std::error::Error + Send + Sync>,
+    AdminError,
 > {
-    let storage = plasm_agent_core::auth_framework_host::init_standalone_auth_storage().await?;
+    let storage = plasm_agent_core::auth_framework_host::init_standalone_auth_storage()
+        .await
+        .map_err(|source| AdminError::AuthInitialization { source })?;
     let catalog = Arc::new(OauthLinkCatalog::from_env());
     let repo = match plasm_agent_core::mcp_config_repository::mcp_config_database_url() {
         Some(url) => Some(Arc::new(
-            McpConfigRepository::connect_and_migrate(&url).await?,
+            McpConfigRepository::connect_and_migrate(&url)
+                .await
+                .map_err(|source| AdminError::RepositoryInitialization { source })?,
         )),
         None => None,
     };
     Ok((repo, catalog, storage))
 }
 
-fn read_secret_stdin() -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+fn read_secret_stdin() -> Result<String, AdminError> {
     let mut buf = String::new();
-    io::stdin().read_to_string(&mut buf)?;
+    io::stdin()
+        .read_to_string(&mut buf)
+        .map_err(|source| AdminError::SecretInput { source })?;
     Ok(buf.trim().to_string())
 }
 
-pub async fn run_oauth(cli: OauthCliRoot) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn run_oauth(cli: OauthCliRoot) -> Result<(), AdminError> {
     match cli.command {
         OauthCmd::Provider(cmd) => run_oauth_provider(cmd).await,
         OauthCmd::Device(cmd) => run_oauth_device(cmd).await,
     }
 }
 
-async fn run_oauth_provider(
-    cmd: OauthProviderCmd,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn run_oauth_provider(cmd: OauthProviderCmd) -> Result<(), AdminError> {
     let (repo, catalog, storage) = standalone_oauth_context().await?;
 
     match cmd {
@@ -131,9 +137,16 @@ async fn run_oauth_provider(
             };
             let rows =
                 plasm_agent_core::oauth_provider_repository::list_oauth_provider_apps(r.pool())
-                    .await?;
+                    .await
+                    .map_err(|source| AdminError::ProviderDatabase {
+                        source: source.into(),
+                    })?;
             if json {
-                println!("{}", serde_json::to_string_pretty(&rows)?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&rows)
+                        .map_err(|source| AdminError::ProviderListSerialization { source })?
+                );
             } else {
                 for row in rows {
                     println!(
@@ -165,10 +178,7 @@ async fn run_oauth_provider(
                 client_secret
             };
             let client_secret_key =
-                crate::appliance_oauth_admin::appliance_oauth_client_secret_kv_key(&entry_id)
-                    .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                        std::io::Error::other(e).into()
-                    })?;
+                crate::appliance_oauth_admin::appliance_oauth_client_secret_kv_key(&entry_id)?;
             appliance_oauth_upsert_provider(
                 repo.as_deref(),
                 catalog.as_ref(),
@@ -201,9 +211,7 @@ async fn run_oauth_provider(
     Ok(())
 }
 
-async fn run_oauth_device(
-    cmd: OauthDeviceCmd,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn run_oauth_device(cmd: OauthDeviceCmd) -> Result<(), AdminError> {
     let (_repo, catalog, storage) = standalone_oauth_context().await?;
 
     match cmd {
@@ -215,20 +223,17 @@ async fn run_oauth_device(
             let cfg = catalog
                 .resolve_for_oauth_start(&storage, entry_id.trim())
                 .await
-                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    std::io::Error::other(e.refresh_failure_message()).into()
-                })?;
+                .map_err(|source| AdminError::ProviderResolution { source })?;
             let device_url = cfg
                 .device_authorization_endpoint
                 .as_deref()
                 .map(str::trim)
                 .filter(|s: &&str| !s.is_empty())
-                .ok_or_else(|| {
-                    "missing device_authorization_endpoint for entry (provider upsert required)"
-                        .to_string()
+                .ok_or_else(|| AdminError::MissingDeviceEndpoint {
+                    entry_id: entry_id.clone(),
                 })?;
             let http = plasm_runtime::build_oauth_token_http_client(Duration::from_secs(30))
-                .map_err(|e| e.to_string())?;
+                .map_err(|source| AdminError::HttpClient { source })?;
             let resp = plasm_runtime::request_oauth_device_authorization(
                 &http,
                 device_url,
@@ -238,7 +243,7 @@ async fn run_oauth_device(
                 Duration::from_secs(30),
             )
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|source| AdminError::DeviceAuthorization { source })?;
             if json {
                 println!(
                     "{}",
@@ -271,18 +276,18 @@ async fn run_oauth_device(
             let cfg = catalog
                 .resolve_for_oauth_start(&storage, entry_id.trim())
                 .await
-                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    std::io::Error::other(e.refresh_failure_message()).into()
-                })?;
+                .map_err(|source| AdminError::ProviderResolution { source })?;
             let http = plasm_runtime::build_oauth_token_http_client(Duration::from_secs(30))
-                .map_err(|e| e.to_string())?;
+                .map_err(|source| AdminError::HttpClient { source })?;
             let http_timeout = Duration::from_secs(30);
             let mut interval = Duration::from_secs(5);
             let deadline = tokio::time::Instant::now() + Duration::from_secs(max_wait_secs.max(1));
 
             loop {
                 if tokio::time::Instant::now() >= deadline {
-                    return Err("device poll timed out".into());
+                    return Err(AdminError::DeviceTimedOut {
+                        wait_secs: max_wait_secs.max(1),
+                    });
                 }
                 match plasm_runtime::poll_oauth_device_token_once(
                     &http,
@@ -293,26 +298,36 @@ async fn run_oauth_device(
                     http_timeout,
                 )
                 .await
-                .map_err(|e| e.to_string())?
+                .map_err(|source| AdminError::DevicePoll { source })?
                 {
                     plasm_runtime::OAuthDeviceTokenPoll::Success(token_json) => {
                         let envelope = plasm_runtime::OutboundOAuthKvV1::from_token_json_for_entry(
                             entry_id.trim().to_string(),
                             &token_json,
                         )
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|source| AdminError::TokenEnvelope { source })?;
                         let hosted_kv_key = format!("plasm:outbound:v1:{}", uuid::Uuid::new_v4());
-                        let envelope_bytes = serde_json::to_vec(&envelope)?;
+                        let envelope_bytes = serde_json::to_vec(&envelope)
+                            .map_err(|source| AdminError::TokenSerialization { source })?;
                         storage
                             .store_kv(&hosted_kv_key, &envelope_bytes, None)
                             .await
-                            .map_err(|e| e.to_string())?;
-                        let _ = plasm_agent_core::oauth_binding_kv::write_oauth_binding_pointer(
+                            .map_err(|source| AdminError::TokenWrite {
+                                key: hosted_kv_key.clone(),
+                                source,
+                            })?;
+                        plasm_agent_core::oauth_binding_kv::write_oauth_binding_pointer(
                             &storage,
                             entry_id.trim(),
                             &hosted_kv_key,
                         )
-                        .await;
+                        .await
+                        .map_err(|source| {
+                            AdminError::BindingPointerWrite {
+                                entry_id: entry_id.trim().to_owned(),
+                                source,
+                            }
+                        })?;
                         if json {
                             println!(
                                 "{}",

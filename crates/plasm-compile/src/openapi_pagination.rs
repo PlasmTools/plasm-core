@@ -1,7 +1,9 @@
 //! Catalog compilation against the external OpenAPI pagination contract.
-use crate::{parse_capability_template, template_pagination, CmlError};
+use crate::CatalogTemplateError;
+use crate::{parse_capability_template, template_pagination};
 use plasm_core::{CapabilityKind, CGS};
 use serde_json::Value;
+use std::sync::Arc;
 
 fn paths(expr: &Value) -> Vec<String> {
     match expr.get("type").and_then(Value::as_str) {
@@ -186,7 +188,10 @@ fn coverage_path_matches(candidate: &str, route: &str) -> bool {
 /// Reject paginated list operations without a CML driver, including pagination
 /// omitted from both CGS inputs and CML. Only explicit paging parameter pairs are
 /// recognized; a lone `limit` is not sufficient evidence of pagination.
-pub fn validate_cgs_openapi_pagination(cgs: &CGS, spec: &Value) -> Result<(), CmlError> {
+pub fn validate_cgs_openapi_pagination(
+    cgs: &CGS,
+    spec: &Value,
+) -> Result<(), CatalogTemplateError> {
     let Some(routes) = spec.get("paths").and_then(Value::as_object) else {
         return Ok(());
     };
@@ -238,7 +243,10 @@ pub fn validate_cgs_openapi_pagination(cgs: &CGS, spec: &Value) -> Result<(), Cm
             .iter()
             .any(|(a, b)| params.contains(a) && params.contains(b));
             if paged && template_pagination(&parsed).is_none() {
-                return Err(CmlError::InvalidTemplate { message: format!("capability `{name}`: OpenAPI GET {path} declares pagination but CML omits `pagination:`") });
+                return Err(CatalogTemplateError::OpenApiPaginationMissing {
+                    capability: name.to_string(),
+                    path: path.to_string(),
+                });
             }
         }
     }
@@ -248,16 +256,18 @@ pub fn validate_cgs_openapi_pagination(cgs: &CGS, spec: &Value) -> Result<(), Cm
 pub fn validate_catalog_openapi_pagination(
     cgs: &CGS,
     directory: &std::path::Path,
-) -> Result<(), CmlError> {
+) -> Result<(), CatalogTemplateError> {
     let path = directory.join("openapi.json");
     if !path.exists() {
         return Ok(());
     }
-    let bytes = std::fs::read(&path).map_err(|e| CmlError::InvalidTemplate {
-        message: format!("read {}: {e}", path.display()),
+    let bytes = std::fs::read(&path).map_err(|e| CatalogTemplateError::OpenApiRead {
+        path: path.clone(),
+        source: Arc::new(e),
     })?;
-    let spec = serde_json::from_slice(&bytes).map_err(|e| CmlError::InvalidTemplate {
-        message: format!("parse {}: {e}", path.display()),
+    let spec = serde_json::from_slice(&bytes).map_err(|e| CatalogTemplateError::OpenApiJson {
+        path: path.clone(),
+        source: Arc::new(e),
     })?;
     validate_cgs_openapi_pagination(cgs, &spec)
 }
@@ -326,10 +336,10 @@ mod tests {
         raw["method"] = Value::String("GET".into());
         raw["path"] = serde_json::json!([{"type":"literal","value":"items"}]);
         let spec = serde_json::json!({"paths":{"/items":{"get":{"parameters":[{"in":"query","name":"page_index"},{"in":"query","name":"page_limit"}]}}}});
-        assert!(validate_cgs_openapi_pagination(&cgs, &spec)
-            .unwrap_err()
-            .to_string()
-            .contains("omits"));
+        assert!(
+            matches!(validate_cgs_openapi_pagination(&cgs, &spec).unwrap_err(),
+            CatalogTemplateError::OpenApiPaginationMissing { path, .. } if path == "/items")
+        );
         let cap = cgs
             .capabilities
             .values_mut()

@@ -27,25 +27,26 @@ impl PageCollector {
         cgs: &plasm_core::CGS,
         entity: &str,
     ) -> Result<Self, crate::RuntimeError> {
-        let fault = |message: String| crate::RuntimeError::ConfigurationError { message };
         Ok(if let Some(ref spec) = consume.top_k {
             let (field, path) = spec
                 .sort_key
                 .split_first()
-                .ok_or_else(|| fault("empty top-k field".into()))?;
+                .ok_or(crate::RuntimeError::TopKFieldEmpty)?;
             let field = cgs
                 .get_entity(entity)
                 .and_then(|e| e.fields.get(field.as_str()))
-                .ok_or_else(|| fault("unknown top-k field".into()))?;
+                .ok_or_else(|| crate::RuntimeError::FieldUnknown {
+                    entity: entity.to_owned(),
+                    field: field.clone(),
+                })?;
             let mut contract = plasm_core::value_contract::ValueContract::from_domain(
                 cgs,
                 "",
                 field.kind.registry_key(),
-            )
-            .map_err(&fault)?;
+            )?;
             contract.nullable = !field.required;
             for segment in path {
-                contract = contract.field(segment).map_err(&fault)?;
+                contract = contract.field(segment)?;
             }
             Self::TopK(TopKHeap::new(spec.clone(), contract)?)
         } else if let Some(ref budget) = consume.row_match_budget {

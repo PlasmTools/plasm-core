@@ -109,16 +109,19 @@ impl SpillHostFixture {
         let (store, prefix) =
             object_store::parse_url_opts(&url, std::env::vars()).expect("object store");
         let persistence = Arc::new(SessionGraphPersistence::new(Arc::from(store), prefix));
-        let st = Arc::new(build_plasm_host_state(PlasmHostBootstrap {
-            engine: ExecutionEngine::new(ExecutionConfig::default()).expect("engine"),
-            mode: ExecutionMode::Live,
-            registry: Arc::new(CgsRegistry::from_pairs(vec![])),
-            catalog_bootstrap: CatalogBootstrap::Fixed,
-            incoming_auth: None,
-            run_artifacts: Arc::new(RunArtifactStore::memory()),
-            session_graph_persistence: Some(Arc::clone(&persistence)),
-            oss_local_filesystem_defaults: false,
-        }));
+        let st = Arc::new(
+            build_plasm_host_state(PlasmHostBootstrap {
+                engine: ExecutionEngine::new(ExecutionConfig::default()).expect("engine"),
+                mode: ExecutionMode::Live,
+                registry: Arc::new(CgsRegistry::from_pairs(vec![])),
+                catalog_bootstrap: CatalogBootstrap::Fixed,
+                incoming_auth: None,
+                run_artifacts: Arc::new(RunArtifactStore::memory()),
+                session_graph_persistence: Some(Arc::clone(&persistence)),
+                oss_local_filesystem_defaults: false,
+            })
+            .expect("valid fixed catalog fixture"),
+        );
         Self {
             st,
             persistence,

@@ -141,7 +141,33 @@ pub fn response_items_path_prefix<'a>(
 ///
 /// Returns `None` when there is no such wrapper, when `success` is absent/non-bool, or when
 /// `success: true` — leaving the normal decode path untouched.
-pub fn graphql_mutation_envelope_failure(value: &Value, items_path: &[String]) -> Option<String> {
+#[derive(Debug)]
+pub enum GraphQlMutationFailure {
+    GraphQl { detail: String },
+    Envelope { detail: Value },
+    Unspecified,
+}
+
+impl std::fmt::Display for GraphQlMutationFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let diagnostic = match self {
+            Self::GraphQl { detail } => format!("write rejected (success: false) — GraphQL: {detail}"),
+            Self::Envelope { detail: Value::String(detail) } => {
+                format!("write rejected (success: false): {}", detail.trim())
+            }
+            Self::Envelope { detail } => format!("write rejected (success: false): {detail}"),
+            Self::Unspecified => "write rejected by the API (success: false) — check required inputs and permissions for this mutation".to_owned(),
+        };
+        f.write_str(&cap_detail(&diagnostic, MAX_API_ERROR_DETAIL_CHARS))
+    }
+}
+
+impl std::error::Error for GraphQlMutationFailure {}
+
+pub fn graphql_mutation_envelope_failure(
+    value: &Value,
+    items_path: &[String],
+) -> Option<GraphQlMutationFailure> {
     let obj = response_items_path_prefix(value, items_path)?.as_object()?;
     if obj.get("success")?.as_bool()? {
         // success: true (or non-bool handled by the `?` above) → not a failure envelope.
@@ -150,36 +176,26 @@ pub fn graphql_mutation_envelope_failure(value: &Value, items_path: &[String]) -
     // Business-level failure. Prefer explicit GraphQL `errors`; then common nested error fields on
     // the envelope; else a generic, actionable line. Never leak the items_path segment.
     if let Some(gs) = graphql_errors_summary(value) {
-        return Some(cap_detail(
-            &format!("write rejected (success: false) — GraphQL: {gs}"),
-            MAX_API_ERROR_DETAIL_CHARS,
-        ));
+        return Some(GraphQlMutationFailure::GraphQl { detail: gs });
     }
     for k in ["error", "message", "userError", "userErrors", "errors"] {
         match obj.get(k) {
             Some(Value::String(s)) if !s.trim().is_empty() => {
-                return Some(cap_detail(
-                    &format!("write rejected (success: false): {}", s.trim()),
-                    MAX_API_ERROR_DETAIL_CHARS,
-                ));
+                return Some(GraphQlMutationFailure::Envelope {
+                    detail: Value::String(s.trim().to_owned()),
+                });
             }
             Some(v @ (Value::Array(_) | Value::Object(_))) => {
-                if let Ok(detail) = serde_json::to_string(v) {
-                    if detail != "[]" && detail != "{}" {
-                        return Some(cap_detail(
-                            &format!("write rejected (success: false): {detail}"),
-                            MAX_API_ERROR_DETAIL_CHARS,
-                        ));
-                    }
+                if v.as_array().is_some_and(|values| !values.is_empty())
+                    || v.as_object().is_some_and(|values| !values.is_empty())
+                {
+                    return Some(GraphQlMutationFailure::Envelope { detail: v.clone() });
                 }
             }
             _ => {}
         }
     }
-    Some(
-        "write rejected by the API (success: false) — check required inputs and permissions for this mutation"
-            .to_string(),
-    )
+    Some(GraphQlMutationFailure::Unspecified)
 }
 
 /// Fibery `/api/commands` envelope: when `success` is false, `result` is an error object (not an array).
@@ -278,8 +294,7 @@ mod tests {
             "issue".to_string(),
         ];
         let msg = graphql_mutation_envelope_failure(&v, &path).expect("failure");
-        assert!(msg.contains("success: false"), "{msg}");
-        assert!(!msg.contains("missing path segment"), "{msg}");
+        assert!(matches!(msg, GraphQlMutationFailure::Unspecified));
     }
 
     #[test]
@@ -294,7 +309,9 @@ mod tests {
             "comment".to_string(),
         ];
         let msg = graphql_mutation_envelope_failure(&v, &path).expect("failure");
-        assert!(msg.contains("Argument Validation Error"), "{msg}");
+        assert!(
+            matches!(msg, GraphQlMutationFailure::GraphQl { detail } if detail.contains("Argument Validation Error"))
+        );
     }
 
     #[test]

@@ -6,11 +6,70 @@ use super::for_each::{bound_row_plan_eval_env, cross_uses_excluding_item};
 use super::materialized_result_use_inputs;
 use crate::plasm_plan::ValidatedIterateUntilNode;
 use plasm_core::expr_parser::ParsedExpr;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+enum IterateUntilError {
+    #[error("iteration row predicate could not be evaluated: {0}")]
+    Predicate(#[from] plasm_runtime::RuntimeError),
+    #[error("iteration seed produced no rows")]
+    EmptySeed,
+    #[error("iteration source {0} has not been materialized")]
+    SourceNotMaterialized(String),
+    #[error("iteration lost its seed row")]
+    SeedRowLost,
+    #[error("reobserved iteration rows must be inline")]
+    ReobservedRowsNotInline,
+    #[error("iteration re-observe after step {step} produced no rows")]
+    EmptyReobservation { step: usize },
+    #[error("iteration bound exhausted: until predicate not satisfied within take {take}")]
+    BoundExhausted { take: u32 },
+    #[error("iteration is missing seed_ir for re-observe")]
+    MissingSeedExpression,
+    #[error("iteration seed node is not materialized")]
+    MissingSeedNode,
+    #[error("iteration seed produced no rows")]
+    EmptyPredicateInput,
+    #[error("iteration predicate is missing")]
+    MissingPredicate,
+    #[error(transparent)]
+    Collection(#[from] plasm_core::collection_codec::CollectionFault),
+    #[error(transparent)]
+    Operand(#[from] super::eval::RuntimeOperandError),
+    #[error(transparent)]
+    WireCoercion(#[from] super::eval::WireCoercionContextError),
+}
+
+impl From<IterateUntilError> for ExecutionFailure {
+    fn from(error: IterateUntilError) -> Self {
+        let code = match &error {
+            IterateUntilError::Predicate(_) => "iterate_until_predicate_failed",
+            IterateUntilError::EmptySeed => "iterate_until_empty_seed",
+            IterateUntilError::SourceNotMaterialized(_) => "iterate_until_source_missing",
+            IterateUntilError::SeedRowLost => "iterate_until_seed_row_lost",
+            IterateUntilError::ReobservedRowsNotInline => "iterate_until_invalid_reobservation",
+            IterateUntilError::EmptyReobservation { .. } => "iterate_until_empty_reobservation",
+            IterateUntilError::BoundExhausted { .. } => "iterate_bound_exhausted",
+            IterateUntilError::MissingSeedExpression => "iterate_until_seed_expression_missing",
+            IterateUntilError::MissingSeedNode => "iterate_until_seed_node_missing",
+            IterateUntilError::EmptyPredicateInput => "iterate_until_empty_predicate_input",
+            IterateUntilError::MissingPredicate => "iterate_until_predicate_missing",
+            IterateUntilError::Collection(_) => "iterate_until_incomplete_collection",
+            IterateUntilError::Operand(_) => "iterate_until_operand_binding_failed",
+            IterateUntilError::WireCoercion(_) => "iterate_until_operand_binding_failed",
+        };
+        Self::new(
+            plasm_runtime::FailureCause::Program,
+            code,
+            error.to_string(),
+        )
+    }
+}
 
 fn row_satisfies_until(
     row: &plasm_core::Value,
     preds: &[plasm_runtime::row_predicate::BoundRowPredicate],
-) -> Result<bool, String> {
+) -> Result<bool, IterateUntilError> {
     for pred in preds {
         if !crate::plasm_plan_run::predicate_matches(row, pred)? {
             return Ok(false);
@@ -29,30 +88,60 @@ pub(crate) async fn materialize_iterate_until_node(
     let plan_shared = Some(Arc::clone(ctx.plan_shared));
     let mut current_rows = materialized_rows(es, st, session_id, materialized, &it.source).await?;
     if current_rows.is_empty() {
-        return Err("iterate_until seed produced no rows".into());
+        return Err(IterateUntilError::EmptySeed.into());
     }
     let cross = cross_uses_excluding_item(&it.uses_result, &it.item_binding);
-    let mut input_rows = materialized_result_use_inputs(materialized, &cross, None)?;
-    let wire_coercion_by_alias = wire_coercion_by_alias_from_inputs(es, &mut input_rows)?;
-    let scoped_es = entry_scoped_execute_session(es, Some(&it.effect_template.qualified_entity))?;
+    let mut input_rows =
+        materialized_result_use_inputs(materialized, &cross, None).map_err(|_| {
+            IterateUntilError::Operand(super::eval::RuntimeOperandError::MaterializedInput(
+                super::eval::MaterializedInputError,
+            ))
+        })?;
+    let wire_coercion_by_alias =
+        wire_coercion_by_alias_from_inputs(es, &mut input_rows).map_err(|error| {
+            ExecutionFailure::new(
+                plasm_runtime::FailureCause::Program,
+                "iterate_until_wire_coercion_context_invalid",
+                error.to_string(),
+            )
+        })?;
+    let scoped_es = entry_scoped_execute_session(es, Some(&it.effect_template.qualified_entity))
+        .map_err(|diagnostic| {
+            ExecutionFailure::new(
+                plasm_runtime::FailureCause::Program,
+                "iterate_until_catalog_scope_unavailable",
+                diagnostic.to_string(),
+            )
+        })?;
 
-    let seed_mat = materialized.get(&it.source).ok_or_else(|| {
-        format!(
-            "iterate_until source {} has not been materialized",
-            it.source.as_str()
-        )
-    })?;
+    let seed_mat = materialized
+        .get(&it.source)
+        .ok_or_else(|| IterateUntilError::SourceNotMaterialized(it.source.as_str().to_owned()))?;
     let seed_qe = seed_mat.qualified_entity.clone();
     let seed_collection = seed_mat.result.collection.clone();
 
     let resolved_until = super::compute_ops::resolve_filter_predicates_with_materialized(
         &it.until_predicates.clone().into(),
         materialized,
-    )?;
+    )
+    .map_err(|error| {
+        ExecutionFailure::new(
+            plasm_runtime::FailureCause::Program,
+            "iterate_until_predicate_resolution_failed",
+            error.to_string(),
+        )
+    })?;
     let until_predicates = resolved_until
         .iter()
         .map(crate::plan_read_bounds::bind_row_predicate)
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|diagnostic| {
+            ExecutionFailure::new(
+                plasm_runtime::FailureCause::Program,
+                "iterate_until_predicate_binding_failed",
+                diagnostic.to_string(),
+            )
+        })?;
     let mut current = seed_mat.clone();
     let mut operations = plasm_runtime::OperationLedger::empty();
     let mut iteration_occurrence = ctx.occurrence_path.clone();
@@ -132,9 +221,7 @@ pub(crate) async fn materialize_iterate_until_node(
                 );
                 dependencies.push(result.result.collection.clone());
             } else {
-                let row = current_rows
-                    .first()
-                    .ok_or_else(|| "iterate_until lost seed row".to_string())?;
+                let row = current_rows.first().ok_or(IterateUntilError::SeedRowLost)?;
                 let env = bound_row_plan_eval_env(
                     &it.item_binding,
                     row,
@@ -154,7 +241,14 @@ pub(crate) async fn materialize_iterate_until_node(
                     (step_idx as usize).saturating_sub(1),
                     expr_label,
                     parsed,
-                )?;
+                )
+                .map_err(|diagnostic| {
+                    ExecutionFailure::new(
+                        plasm_runtime::FailureCause::Program,
+                        "iterate_until_trace_index_invalid",
+                        diagnostic.to_string(),
+                    )
+                })?;
                 let fold = super::super::plan_fanout_parallel::execute_row_fanout(
                     st,
                     &scoped_es,
@@ -197,12 +291,12 @@ pub(crate) async fn materialize_iterate_until_node(
             current_rows = current
                 .row_source
                 .inline_rows()
-                .ok_or("reobserved rows must be inline")?
+                .ok_or(IterateUntilError::ReobservedRowsNotInline)?
                 .to_vec();
             if current_rows.is_empty() {
-                return Err(format!(
-                    "iterate_until re-observe after step {step_idx} produced no rows"
-                )
+                return Err(IterateUntilError::EmptyReobservation {
+                    step: step_idx as usize,
+                }
                 .into());
             }
             let satisfied = evaluate_stop(
@@ -239,11 +333,7 @@ pub(crate) async fn materialize_iterate_until_node(
             }
         }
 
-        Err(format!(
-            "iterate_bound_exhausted: until predicate not satisfied within take {}",
-            it.take
-        )
-        .into())
+        Err(IterateUntilError::BoundExhausted { take: it.take }.into())
     }
     .await;
     execution.map_err(|failure| {
@@ -284,13 +374,20 @@ async fn reobserve_seed(
     let seed_ir = it
         .seed_ir
         .as_ref()
-        .ok_or_else(|| "iterate_until missing seed_ir for re-observe".to_string())?;
+        .ok_or(IterateUntilError::MissingSeedExpression)?;
     let parsed = ParsedExpr {
         expr: seed_ir.expr.clone(),
         projection: seed_ir.projection.clone(),
         field_dot_extract: None,
     };
-    let scoped_es = entry_scoped_execute_session(es, Some(&it.effect_template.qualified_entity))?;
+    let scoped_es = entry_scoped_execute_session(es, Some(&it.effect_template.qualified_entity))
+        .map_err(|diagnostic| {
+            ExecutionFailure::new(
+                plasm_runtime::FailureCause::Program,
+                "iterate_until_catalog_scope_unavailable",
+                diagnostic.to_string(),
+            )
+        })?;
     // Bound identity stays template + binding until live re-observe: instantiate holes
     // (`@tok`) before CML/HTTP so bearer never sees a plan-time Binding marker.
     let parsed = super::eval::instantiate_parsed_expr_plan_inputs(
@@ -298,7 +395,8 @@ async fn reobserve_seed(
         scoped_es.cgs.as_ref(),
         &seed_replay_uses(&seed_ir.expr),
         materialized,
-    )?;
+    )
+    .map_err(ExecutionFailure::from)?;
     let expr_label = &crate::plan_dry_display::render_executable_expr(
         &seed_ir.expr,
         seed_ir.projection.as_deref(),
@@ -325,7 +423,7 @@ async fn reobserve_seed(
         .collect::<Vec<_>>();
     let mut current = materialized
         .get(&it.source)
-        .ok_or("missing iteration seed")?
+        .ok_or(IterateUntilError::MissingSeedNode)?
         .clone();
     current.row_identities = row_identities_from_entities(
         &scoped_es,
@@ -366,7 +464,7 @@ async fn evaluate_stop(
         .await?;
         return Ok((
             row_satisfies_until(
-                rows.first().ok_or("iteration seed produced no rows")?,
+                rows.first().ok_or(IterateUntilError::EmptyPredicateInput)?,
                 predicates,
             )?,
             vec![],
@@ -376,8 +474,9 @@ async fn evaluate_stop(
     };
     let mut environment = materialized.clone();
     environment.insert(it.source.clone(), current.clone());
-    let predicate =
-        crate::map_body::iteration_predicate(it)?.ok_or("missing iteration predicate")?;
+    let predicate = crate::map_body::iteration_predicate(it)
+        .map_err(ExecutionFailure::from)?
+        .ok_or(IterateUntilError::MissingPredicate)?;
     let mut occurrence_path = ctx.occurrence_path.clone();
     occurrence_path.push(occurrence);
     let mut scope_path = ctx.scope_path.clone();

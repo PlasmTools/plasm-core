@@ -1,6 +1,6 @@
 //! Emit CGS as [Mermaid ER diagram](https://mermaid.js.org/syntax/entityRelationshipDiagram.html) text (`erDiagram`).
 
-use crate::commands::common;
+use crate::commands::{common, CommandError};
 use plasm_core::schema::Cardinality;
 use plasm_core::{FieldType, CGS};
 use std::path::{Path, PathBuf};
@@ -153,7 +153,7 @@ pub async fn execute(
     output: Option<PathBuf>,
     relations_only: bool,
     direction: Option<ErDirection>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), CommandError> {
     let cgs = common::load_cgs(Path::new(schema))?;
     let text = mermaid_er_from_cgs(
         &cgs,
@@ -177,8 +177,8 @@ mod tests {
 
     #[test]
     fn mermaid_er_from_fixture_includes_diagram_and_relationship() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas");
-        let path = dir.join("test_schema.cgs.yaml");
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema(&path).expect("load fixture CGS");
         let s = mermaid_er_from_cgs(
             &cgs,
@@ -188,9 +188,9 @@ mod tests {
             },
         );
         assert!(s.contains("erDiagram"));
-        assert!(s.contains("Account"));
-        assert!(s.contains("Contact"));
+        assert!(s.contains("LangItem"));
+        assert!(s.contains("LangTag"));
         assert!(s.contains("||--o{"));
-        assert!(s.contains("contacts"));
+        assert!(s.contains("tags"));
     }
 }

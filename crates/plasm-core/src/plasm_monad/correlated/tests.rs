@@ -139,7 +139,12 @@ fn correlated_body_schedules_capture_read_reduce_construct() {
 fn correlated_body_rejects_shadowing_scope_escape_and_missing_edges() {
     let mut shadow = body();
     shadow.parent.local = id("children");
-    assert!(shadow.execution_layers().unwrap_err().contains("shadows"));
+    assert!(matches!(
+        shadow.execution_layers(),
+        Err(CorrelatedBodyError::BindGraph(
+            super::super::bind_graph::BindGraphError::CapturedInputShadowed { .. }
+        ))
+    ));
     let mut escaped = body();
     escaped
         .body
@@ -148,16 +153,24 @@ fn correlated_body_rejects_shadowing_scope_escape_and_missing_edges() {
         .get_mut(&id("children"))
         .unwrap()
         .insert(id("other_parent"));
-    assert!(escaped.execution_layers().unwrap_err().contains("escapes"));
+    assert!(matches!(
+        escaped.execution_layers(),
+        Err(CorrelatedBodyError::BindGraph(
+            super::super::bind_graph::BindGraphError::DependencyEscapesBodyScope { .. }
+        ))
+    ));
     let mut edge = body();
     edge.body.bind.deps.remove(&id("reduced"));
-    assert!(edge
-        .execution_layers()
-        .unwrap_err()
-        .contains("undeclared dependency"));
+    assert!(matches!(
+        edge.execution_layers(),
+        Err(CorrelatedBodyError::UndeclaredDependency { .. })
+    ));
     let mut omitted = body();
     omitted.body.bind.topo.pop();
-    assert!(omitted.execution_layers().unwrap_err().contains("differ"));
+    assert!(matches!(
+        omitted.execution_layers(),
+        Err(CorrelatedBodyError::StepsTopologyMismatch)
+    ));
 }
 
 #[test]
@@ -170,13 +183,20 @@ fn correlated_body_rejects_cycles_duplicates_and_undeclared_holes() {
         .get_mut(&id("children"))
         .unwrap()
         .insert(id("output"));
-    assert!(cycle.execution_layers().unwrap_err().contains("cyclic"));
+    assert!(matches!(
+        cycle.execution_layers(),
+        Err(CorrelatedBodyError::BindGraph(
+            super::super::bind_graph::BindGraphError::CyclicOrUnsatisfiableDependencies
+        ))
+    ));
     let mut duplicate = body();
     duplicate.body.bind.topo.push(id("output"));
-    assert!(duplicate
-        .execution_layers()
-        .unwrap_err()
-        .contains("duplicate"));
+    assert!(matches!(
+        duplicate.execution_layers(),
+        Err(CorrelatedBodyError::BindGraph(
+            super::super::bind_graph::BindGraphError::DuplicateTopologicalStep
+        ))
+    ));
     let mut hole = body();
     hole.body.bind.holes.insert(
         id("children"),
@@ -185,10 +205,12 @@ fn correlated_body_rejects_cycles_duplicates_and_undeclared_holes() {
             alias: "hidden".into(),
         }],
     );
-    assert!(hole
-        .execution_layers()
-        .unwrap_err()
-        .contains("undeclared dependency"));
+    assert!(matches!(
+        hole.execution_layers(),
+        Err(CorrelatedBodyError::BindGraph(
+            super::super::bind_graph::BindGraphError::InvalidHole { .. }
+        ))
+    ));
 }
 
 #[test]
@@ -198,7 +220,10 @@ fn correlated_body_rejects_mutation_even_when_mislabelled_read() {
         panic!("fixture")
     };
     read.plan_kind = SurfaceKind::Delete;
-    assert!(plan.execution_layers().unwrap_err().contains("mutating"));
+    assert!(matches!(
+        plan.execution_layers(),
+        Err(CorrelatedBodyError::MutationEffectMismatch)
+    ));
     read_only_effect_rejected(EffectClass::Write);
     read_only_effect_rejected(EffectClass::SideEffect);
 }
@@ -208,7 +233,10 @@ fn read_only_effect_rejected(effect: EffectClass) {
         panic!("fixture")
     };
     read.effect_class = effect;
-    assert!(plan.execution_layers().unwrap_err().contains("read-only"));
+    assert!(matches!(
+        plan.execution_layers(),
+        Err(CorrelatedBodyError::ReadEffectMismatch)
+    ));
 }
 
 #[test]
@@ -217,16 +245,16 @@ fn correlated_body_has_map_cardinality_and_hard_parent_bound() {
     for n in [0, 1, 256] {
         plan.check_parent_count(n).unwrap();
     }
-    assert!(plan
-        .check_parent_count(257)
-        .unwrap_err()
-        .contains("budget exceeded"));
+    assert!(matches!(
+        plan.check_parent_count(257),
+        Err(CorrelatedBodyError::ParentCountExceeded { count: 257, .. })
+    ));
     plan.check_output_count(1).unwrap();
     for n in [0, 2] {
-        assert!(plan
-            .check_output_count(n)
-            .unwrap_err()
-            .contains("exactly one"));
+        assert!(matches!(
+            plan.check_output_count(n),
+            Err(CorrelatedBodyError::OutputCountMismatch { count }) if count == n
+        ));
     }
     let mut plural = body();
     plural.body.return_ = PlasmReturn::Parallel {
@@ -235,10 +263,10 @@ fn correlated_body_has_map_cardinality_and_hard_parent_bound() {
     assert!(plural.execution_layers().is_err());
     let mut external = body();
     external.body.return_ = PlasmReturn::Step { step: id("parent") };
-    assert!(external
-        .execution_layers()
-        .unwrap_err()
-        .contains("not a local step"));
+    assert!(matches!(
+        external.execution_layers(),
+        Err(CorrelatedBodyError::ReturnOutsideScope)
+    ));
 }
 
 #[test]
@@ -289,10 +317,12 @@ fn correlated_body_checks_operands_not_only_declared_edges() {
         alias: "labels".into(),
         path: vec![],
     };
-    assert!(plan
-        .execution_layers()
-        .unwrap_err()
-        .contains("undeclared dependency"));
+    assert!(matches!(
+        plan.execution_layers(),
+        Err(CorrelatedBodyError::Scope(
+            super::scope::CorrelatedScopeError::UndeclaredDependency { .. }
+        ))
+    ));
     let mut plan = body();
     let PlasmStepPayload::Derive(output) = plan.body.steps.get_mut("output").unwrap() else {
         panic!("fixture")
@@ -301,7 +331,12 @@ fn correlated_body_checks_operands_not_only_declared_edges() {
         binding: "foreign_parent".into(),
         path: vec!["title".into()],
     };
-    assert!(plan.execution_layers().unwrap_err().contains("row scope"));
+    assert!(matches!(
+        plan.execution_layers(),
+        Err(CorrelatedBodyError::Scope(
+            super::scope::CorrelatedScopeError::BindingEscapesRowScope { .. }
+        ))
+    ));
 }
 
 #[test]
@@ -316,10 +351,10 @@ fn correlated_body_cannot_return_entity_preserving_projection_as_synthetic() {
     output.compute.op = ComputeOp::Project {
         fields: BTreeMap::new(),
     };
-    assert!(plan
-        .execution_layers()
-        .unwrap_err()
-        .contains("receiver authority"));
+    assert!(matches!(
+        plan.execution_layers(),
+        Err(CorrelatedBodyError::OutputHasEntityAuthority)
+    ));
 }
 
 #[test]
@@ -338,10 +373,12 @@ fn correlated_body_rejects_query_operand_from_a_different_scope() {
             vec!["id".into()],
         )),
     ));
-    assert!(plan
-        .execution_layers()
-        .unwrap_err()
-        .contains("escapes scope"));
+    assert!(matches!(
+        plan.execution_layers(),
+        Err(CorrelatedBodyError::Scope(
+            super::scope::CorrelatedScopeError::AliasEscapesScope { .. }
+        ))
+    ));
 }
 
 #[test]

@@ -5,6 +5,27 @@ use plasm_core::error_render::{render_parse_error_with_feedback, FeedbackStyle};
 
 use plasm_core::cgs_federation::{cgs_layer_stack_from_contexts, CgsLayer};
 use plasm_core::symbol_tuning::CatalogScope;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum ProgramSurfaceParseError {
+    #[error("invalid program surface: {0}")]
+    Parse(#[from] ParseError),
+    #[error(transparent)]
+    PhraseIdent(#[from] plasm_core::phrase_ident::PhraseIdentError),
+}
+
+#[derive(Debug, Error)]
+pub enum WireFieldTokenError {
+    #[error(transparent)]
+    CatalogOwnership(#[from] crate::catalog_ownership::CatalogOwnershipError),
+    #[error("entity `{entity}` is not defined in catalog `{entry_id}`")]
+    EntityNotFound { entity: String, entry_id: String },
+    #[error("{0}")]
+    Symbol(#[source] plasm_core::symbol_tuning::SymbolResolveError),
+    #[error("field token `{token}` requires a row binding context")]
+    MissingBindingContext { token: String },
+}
 
 pub fn session_cgs_layer_stack(session: &ExecuteSession) -> Vec<CgsLayer<'_>> {
     if session.contexts_by_entry.is_empty() {
@@ -25,21 +46,13 @@ pub fn session_cgs_layers(session: &ExecuteSession) -> Vec<&CGS> {
         .collect()
 }
 
-fn agent_program_error(head: impl AsRef<str>, help: Option<impl AsRef<str>>) -> String {
-    if let Some(h) = help {
-        format!("{}\nhelp: {}", head.as_ref(), h.as_ref())
-    } else {
-        head.as_ref().to_string()
-    }
-}
-
 /// Resolve a teaching `p#` token (or pass through a wire name) for a known row entity.
 pub fn resolve_wire_field_token(
     session: &ExecuteSession,
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     qe: Option<&QualifiedEntityKey>,
     token: &str,
-) -> Result<String, String> {
+) -> Result<String, WireFieldTokenError> {
     let t = token.trim();
     if t.is_empty() {
         return Ok(String::new());
@@ -51,15 +64,12 @@ pub fn resolve_wire_field_token(
             qe.entry_id.as_str(),
             qe.entity.as_str(),
         )
-        .map_err(|e| agent_program_error(e, None::<&str>))?;
+        .map_err(WireFieldTokenError::CatalogOwnership)?;
         let ent = cgs.get_entity(qe.entity.as_str()).ok_or_else(|| {
-            agent_program_error(
-                format!(
-                    "entity `{}` is not defined in catalog `{}`",
-                    qe.entity, qe.entry_id
-                ),
-                None::<&str>,
-            )
+            WireFieldTokenError::EntityNotFound {
+                entity: qe.entity.to_string(),
+                entry_id: qe.entry_id.to_string(),
+            }
         })?;
         return map
             .resolve_entity_field(
@@ -68,13 +78,12 @@ pub fn resolve_wire_field_token(
                 ent,
                 t,
             )
-            .map_err(|e| e.to_agent_program_error());
+            .map_err(WireFieldTokenError::Symbol);
     }
     if plasm_core::symbol_tuning::SymbolMap::is_opaque_p_sym(t) {
-        return Err(agent_program_error(
-            format!("`{t}` requires a row binding context for field resolution"),
-            Some("Use wire field names from the language card on a bound row or postfix chain with a known receiver."),
-        ));
+        return Err(WireFieldTokenError::MissingBindingContext {
+            token: t.to_string(),
+        });
     }
     Ok(t.to_string())
 }
@@ -85,7 +94,7 @@ pub fn resolve_wire_field_list(
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     qe: Option<&QualifiedEntityKey>,
     fields: &[String],
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>, WireFieldTokenError> {
     fields
         .iter()
         .map(|f| resolve_wire_field_token(session, symbol_map_cross_cache, qe, f))
@@ -124,18 +133,17 @@ pub fn parse_plasm_surface_line(
 pub(crate) fn normalize_query_capabilities_for_session(
     session: &ExecuteSession,
     expr: &mut Expr,
-) -> Result<(), String> {
+) -> Result<(), plasm_core::QueryCapabilityResolveError> {
     if session.contexts_by_entry.len() <= 1 {
-        normalize_expr_query_capabilities(expr, session.cgs.as_ref()).map_err(|e| e.to_string())
+        normalize_expr_query_capabilities(expr, session.cgs.as_ref())
     } else if let Some(exposure) = session.teaching_exposure.as_ref() {
         let fed = FederationDispatch::from_contexts_and_exposure(
             session.contexts_by_entry.clone(),
             exposure,
         );
         normalize_expr_query_capabilities_federated(expr, &fed, session.cgs.as_ref())
-            .map_err(|e| e.to_string())
     } else {
-        normalize_expr_query_capabilities(expr, session.cgs.as_ref()).map_err(|e| e.to_string())
+        normalize_expr_query_capabilities(expr, session.cgs.as_ref())
     }
 }
 
@@ -159,9 +167,9 @@ pub fn parse_plasm_surface_line_program(
         program_nodes,
         for_each_row_context,
     )?;
-    normalize_query_capabilities_for_session(session, &mut parsed.expr).map_err(|message| {
+    normalize_query_capabilities_for_session(session, &mut parsed.expr).map_err(|source| {
         ParseError {
-            kind: plasm_core::expr_parser::ParseErrorKind::Other { message },
+            kind: plasm_core::expr_parser::ParseErrorKind::QueryResolution { source },
             offset: 0,
         }
     })?;
@@ -181,7 +189,7 @@ pub fn parse_plasm_program_surface_for_dag(
     program_labels: &BTreeSet<String>,
     for_each_row_context: bool,
     node_id: Option<&str>,
-) -> Result<ParsedExpr, String> {
+) -> Result<ParsedExpr, ProgramSurfaceParseError> {
     let mut parsed = parse_plasm_surface_line_program(
         session,
         symbol_map_cross_cache,
@@ -189,10 +197,7 @@ pub fn parse_plasm_program_surface_for_dag(
         line,
         Some(program_labels),
         for_each_row_context,
-    )
-    .map_err(|e| {
-        format_session_symbolic_parse_error(session, symbol_map_cross_cache, pipeline, line, &e)
-    })?;
+    )?;
     lower_program_phrase_idents_in_parsed(session, &mut parsed, program_labels, node_id)?;
     Ok(parsed)
 }
@@ -201,8 +206,8 @@ pub(crate) fn lower_program_phrase_idents_in_parsed(
     session: &ExecuteSession,
     parsed: &mut ParsedExpr,
     program_labels: &BTreeSet<String>,
-    node_id: Option<&str>,
-) -> Result<(), String> {
+    _node_id: Option<&str>,
+) -> Result<(), plasm_core::phrase_ident::PhraseIdentError> {
     let phrase_result = if session.contexts_by_entry.len() <= 1 {
         plasm_core::lower_program_phrase_idents_in_expr(
             &mut parsed.expr,
@@ -229,73 +234,7 @@ pub(crate) fn lower_program_phrase_idents_in_parsed(
             session.cgs.as_ref(),
         )
     };
-    phrase_result.map_err(|e| {
-        let enriched = enrich_phrase_ident_program_error(session, &e);
-        if let Some(id) = node_id {
-            agent_program_error(
-                format!("Plasm program `{id}`: {enriched}"),
-                Some("Use a binding reference for program labels (`label` or `label.field`), or quote literal strings (`\"…\"`)."),
-            )
-        } else {
-            agent_program_error(enriched, None::<&str>)
-        }
-    })
-}
-
-/// Add session `e#` / catalog context when phrase-ident validation fails on federated surfaces.
-fn enrich_phrase_ident_program_error(session: &ExecuteSession, raw: &str) -> String {
-    let Some(exposure) = session.teaching_exposure.as_ref() else {
-        return raw.to_string();
-    };
-    let map = exposure.symbol_map_arc();
-
-    if let Some(entity) = raw
-        .strip_prefix("unknown entity `")
-        .and_then(|tail| tail.strip_suffix('`'))
-    {
-        for (i, ent) in exposure.entities.iter().enumerate() {
-            if ent.as_str() != entity {
-                continue;
-            }
-            let Some(eid) = exposure.entity_catalog_entry_ids.get(i) else {
-                continue;
-            };
-            let sym = map.entity_sym_for(eid.as_str(), entity);
-            return format!(
-                "unknown entity `{sym}` ({entity}) in catalog `{eid}` — use the session `e#` from the teaching table"
-            );
-        }
-    }
-
-    if let Some(cap) = raw
-        .strip_prefix("unknown capability `")
-        .and_then(|tail| tail.strip_suffix('`'))
-    {
-        let mut owners: Vec<String> = session
-            .contexts_by_entry
-            .iter()
-            .filter(|(_eid, ctx)| ctx.cgs.get_capability(cap).is_some())
-            .map(|(eid, _)| eid.clone())
-            .collect();
-        owners.sort();
-        owners.dedup();
-        if owners.is_empty() {
-            return format!(
-                "unknown capability `{cap}` — request the required capability through session extension"
-            );
-        }
-        if owners.len() == 1 {
-            return format!(
-                "unknown capability `{cap}` in catalog `{}` — use the session `e#` / `m#` from the teaching table for that catalog",
-                owners[0]
-            );
-        }
-        return format!(
-            "unknown capability `{cap}` — loaded in catalogs {owners:?}; disambiguate with session `e#` / `m#` stamps"
-        );
-    }
-
-    raw.to_string()
+    phrase_result
 }
 
 /// Program surface fragment for DAG lowering — **no** textual symbol expansion.
@@ -334,22 +273,29 @@ pub fn typecheck_parsed_for_session(
     type_check_expr_federated(&pe.expr, &fed, session.cgs.as_ref())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("Plasm program node targets catalog {entry_id:?}, but that catalog is not loaded in this execute session")]
+pub struct SessionCatalogNotLoaded {
+    pub entry_id: String,
+}
+
 pub(crate) fn entry_scoped_execute_session(
     session: &ExecuteSession,
     qualified_entity: Option<&QualifiedEntityKey>,
-) -> Result<ExecuteSession, String> {
+) -> Result<ExecuteSession, SessionCatalogNotLoaded> {
     let Some(q) = qualified_entity else {
         return Ok(session.clone());
     };
     if session.contexts_by_entry.len() <= 1 && session.entry_id == q.entry_id {
         return Ok(session.clone());
     }
-    let ctx = session.contexts_by_entry.get(&q.entry_id).ok_or_else(|| {
-        format!(
-            "Plasm program node targets catalog {:?}, but that catalog is not loaded in this execute session",
-            q.entry_id
-        )
-    })?;
+    let ctx =
+        session
+            .contexts_by_entry
+            .get(&q.entry_id)
+            .ok_or_else(|| SessionCatalogNotLoaded {
+                entry_id: q.entry_id.clone(),
+            })?;
     let mut scoped = session.clone();
     scoped.cgs = ctx.cgs.clone();
     scoped.contexts_by_entry = IndexMap::from([(q.entry_id.clone(), ctx.clone())]);
@@ -437,24 +383,45 @@ pub(crate) fn row_identities_from_entities<'a>(
         .collect()
 }
 
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum RowIdentityPropagationError {
+    #[error("row correspondence length {correspondences} does not match output rows {rows}")]
+    CorrespondenceLengthMismatch { correspondences: usize, rows: usize },
+    #[error("compute source `{source_id}` is not materialized")]
+    SourceNotMaterialized { source_id: String },
+    #[error("union source `{source_id}` is not materialized")]
+    UnionSourceNotMaterialized { source_id: String },
+    #[error(transparent)]
+    InvalidSourceId(#[from] crate::plasm_plan::PlanAtomError),
+    #[error("row correspondence {index} has no source identity slot (available {slots})")]
+    MissingIdentitySlot { index: usize, slots: usize },
+}
+
 pub(crate) fn propagate_row_identities(
     source: &PlanNodeId,
     op: &ComputeOp,
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
     occurrences: &[Option<usize>],
     output_len: usize,
-) -> Result<Vec<Option<plasm_core::RowIdentity>>, String> {
+) -> Result<Vec<Option<plasm_core::RowIdentity>>, RowIdentityPropagationError> {
     if occurrences.len() != output_len {
-        return Err("row correspondence length does not match output rows".into());
+        return Err(RowIdentityPropagationError::CorrespondenceLengthMismatch {
+            correspondences: occurrences.len(),
+            rows: output_len,
+        });
     }
-    let left = materialized
-        .get(source)
-        .ok_or("compute source is not materialized")?;
+    let left = materialized.get(source).ok_or_else(|| {
+        RowIdentityPropagationError::SourceNotMaterialized {
+            source_id: source.to_string(),
+        }
+    })?;
     let right = if let ComputeOp::Union { other } = op {
         Some(
             materialized
                 .get(&PlanNodeId::new(other.as_str())?)
-                .ok_or("union source is not materialized")?,
+                .ok_or_else(|| RowIdentityPropagationError::UnionSourceNotMaterialized {
+                    source_id: other.to_string(),
+                })?,
         )
     } else {
         None
@@ -478,7 +445,10 @@ pub(crate) fn propagate_row_identities(
             Some(index) => identities
                 .get(*index)
                 .map(|identity| (*identity).clone())
-                .ok_or_else(|| format!("row correspondence {index} has no source identity slot")),
+                .ok_or_else(|| RowIdentityPropagationError::MissingIdentitySlot {
+                    index: *index,
+                    slots: identities.len(),
+                }),
         })
         .collect()
 }
@@ -554,7 +524,7 @@ pub fn format_session_symbolic_parse_error(
         )
     {
         if let Err(msg) = crate::plasm_dag_surface_guards::reject_relation_arrow_trap(surface) {
-            return msg;
+            return msg.to_string();
         }
     }
     let sym_map = symbol_map_for_plasm_surface_parse(session, symbol_map_cross_cache);

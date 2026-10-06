@@ -1,15 +1,30 @@
 //! Structural hashing of resolved native values; no transport encoding.
 use crate::Value;
 use std::hash::Hasher;
+use thiserror::Error;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum ValueHashError {
+    #[error("resolved value nesting exceeds the maximum depth")]
+    DepthExceeded,
+    #[error("value contains a non-finite or unresolved value")]
+    NotResolved,
+}
 
 /// Feed a canonical, framed native value representation into a digest.
 /// Object insertion order is not part of value equality; numeric variants are.
-pub fn visit_resolved_value_bytes(value: &Value, write: impl FnMut(&[u8])) -> Result<(), String> {
+pub fn visit_resolved_value_bytes(
+    value: &Value,
+    write: impl FnMut(&[u8]),
+) -> Result<(), ValueHashError> {
     visit_value_bytes(value, write, false)
 }
 
 /// Lossless native cell digest for compute caches, including output-affecting metadata.
-pub fn visit_stored_value_bytes(value: &Value, write: impl FnMut(&[u8])) -> Result<(), String> {
+pub fn visit_stored_value_bytes(
+    value: &Value,
+    write: impl FnMut(&[u8]),
+) -> Result<(), ValueHashError> {
     visit_value_bytes(value, write, true)
 }
 
@@ -17,7 +32,7 @@ fn visit_value_bytes(
     value: &Value,
     mut write: impl FnMut(&[u8]),
     storage: bool,
-) -> Result<(), String> {
+) -> Result<(), ValueHashError> {
     fn bytes(value: &[u8], write: &mut impl FnMut(&[u8])) {
         write(&(value.len() as u64).to_le_bytes());
         write(value);
@@ -27,9 +42,9 @@ fn visit_value_bytes(
         write: &mut impl FnMut(&[u8]),
         depth: usize,
         storage: bool,
-    ) -> Result<(), String> {
+    ) -> Result<(), ValueHashError> {
         if depth >= 64 {
-            return Err("resolved value depth exceeded".into());
+            return Err(ValueHashError::DepthExceeded);
         }
         match value {
             Value::Null => write(&[0]),
@@ -104,14 +119,14 @@ fn visit_value_bytes(
                     visit(value, write, depth + 1, storage)?;
                 }
             }
-            _ => return Err("row computation requires finite resolved values".into()),
+            _ => return Err(ValueHashError::NotResolved),
         }
         Ok(())
     }
     visit(value, &mut write, 0, storage)
 }
 
-pub fn hash_resolved_value(value: &Value, hash: &mut impl Hasher) -> Result<(), String> {
+pub fn hash_resolved_value(value: &Value, hash: &mut impl Hasher) -> Result<(), ValueHashError> {
     visit_resolved_value_bytes(value, |bytes| hash.write(bytes))
 }
 
@@ -123,6 +138,23 @@ mod tests {
         money::{MoneyValue, MoneyWireFormat},
     };
     use std::hash::DefaultHasher;
+
+    #[test]
+    fn hash_failures_preserve_semantic_categories() {
+        let mut nested = Value::Null;
+        for _ in 0..64 {
+            nested = Value::Array(vec![nested]);
+        }
+        assert_eq!(
+            hash_resolved_value(&nested, &mut DefaultHasher::new()),
+            Err(ValueHashError::DepthExceeded)
+        );
+        assert_eq!(
+            hash_resolved_value(&Value::Float(f64::INFINITY), &mut DefaultHasher::new()),
+            Err(ValueHashError::NotResolved)
+        );
+    }
+
     fn hash(value: &Value) -> u64 {
         let mut h = DefaultHasher::new();
         hash_resolved_value(value, &mut h).unwrap();

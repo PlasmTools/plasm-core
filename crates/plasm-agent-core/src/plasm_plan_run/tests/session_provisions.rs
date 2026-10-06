@@ -47,7 +47,12 @@ impl HttpTransport for Transport {
                 )),
                 LoginOutcome::Empty => Ok((json!([]), None)),
                 LoginOutcome::Failed => Err(RuntimeError::RequestError {
-                    message: "fixture login rejected".into(),
+                    source: plasm_runtime::RequestFailure::HttpStatus(
+                        plasm_runtime::HttpStatusFailure::without_request(
+                            422,
+                            "fixture login rejected".into(),
+                        ),
+                    ),
                     attempts: 1,
                     status: Some(422),
                     body: None,
@@ -121,7 +126,8 @@ async fn run_case(
         run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
-    });
+    })
+    .expect("valid catalog fixture");
     let mut program = if delayed || applied {
         "user = LangItem(\"n1\")\n".to_string()
     } else {

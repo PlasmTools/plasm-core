@@ -8,6 +8,7 @@ use crate::entity_ref_value::{EntityRefPayload, EntityRefValueError};
 use crate::money::MoneyValue;
 use crate::value::{PlasmInputRef, Value};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use thiserror::Error;
 
 /// Strongly typed predicate RHS when it lifts from [`Value`].
 #[derive(Debug, Clone, PartialEq)]
@@ -27,14 +28,19 @@ pub enum TypedLiteral {
     Money(MoneyValue),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Error)]
 pub enum TypedLiteralError {
+    #[error("plan hole is unsupported inside a typed literal collection")]
     UnsupportedPlasmHoleInCollection,
     /// Surface union constructors (`v101{…}`) are not predicate literals.
+    #[error("union constructor is not a scalar typed literal")]
     UnionConstructor,
     /// Unquoted program phrase token — not a typed literal until lowered.
+    #[error("phrase identifier must be lowered before typed literal construction")]
     PhraseIdent,
+    #[error("unsigned JSON integer is not representable as a typed integer literal")]
     UnsignedJsonInteger,
+    #[error(transparent)]
     EntityRef(EntityRefValueError),
 }
 

@@ -166,6 +166,14 @@ pub(crate) enum MaterializedValueShape {
     ScalarColumn,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum MaterializedValueShapeError {
+    #[error("materialized value shape metadata has {metadata} entries for {rows} rows")]
+    MetadataCountMismatch { metadata: usize, rows: usize },
+    #[error("materialized value shape occurrence {index} is outside row count {rows}")]
+    OccurrenceOutOfBounds { index: usize, rows: usize },
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct MaterializedNode {
     /// Original pure value shape; scalar bindings live in the explicit value column.
@@ -184,12 +192,21 @@ pub(crate) struct MaterializedNode {
 impl MaterializedNode {
     /// Shape belongs to an occurrence, just like its value and canonical identity.
     /// Empty metadata is the compact representation of an all-record sequence.
-    pub(crate) fn value_shape_at(&self, index: usize) -> Result<MaterializedValueShape, String> {
+    pub(crate) fn value_shape_at(
+        &self,
+        index: usize,
+    ) -> Result<MaterializedValueShape, MaterializedValueShapeError> {
         if !self.value_shapes.is_empty() && self.value_shapes.len() != self.result.count() {
-            return Err("materialized value shape count does not match row count".into());
+            return Err(MaterializedValueShapeError::MetadataCountMismatch {
+                metadata: self.value_shapes.len(),
+                rows: self.result.count(),
+            });
         }
         if index >= self.result.count() {
-            return Err("materialized value shape occurrence is out of bounds".into());
+            return Err(MaterializedValueShapeError::OccurrenceOutOfBounds {
+                index,
+                rows: self.result.count(),
+            });
         }
         Ok(self
             .value_shapes
@@ -247,7 +264,10 @@ impl MaterializedNode {
     pub(crate) async fn resolve_materialized_source_parents(
         &self,
         rehydrator: &crate::graph_rehydrate::GraphSurfaceRehydrator<'_>,
-    ) -> Result<plasm_core::collection_codec::SharedRows<plasm_runtime::CachedEntity>, String> {
+    ) -> Result<
+        plasm_core::collection_codec::SharedRows<plasm_runtime::CachedEntity>,
+        crate::graph_rehydrate::GraphRehydrateError,
+    > {
         // Original observations remain usable as captured parent identities after
         // a write evicts the cache. A projection only names its canonical parent;
         // its reduced payload must not replace a missing canonical graph row.
@@ -311,9 +331,7 @@ pub(crate) async fn run_executable_plan_phased(
 ) -> Result<PlasmPlanRunResult, ExecutionFailure> {
     let executable = dry.executable.clone();
     if let Some(evidence) = active_chain(es, execution_scope) {
-        evidence
-            .record_comp_committed(&dry.artifact().comp)
-            .map_err(|e| format!("evidence comp_committed: {e}"))?;
+        evidence.record_comp_committed(&dry.artifact().comp)?;
     }
     let node_results = dry.take_node_results_for_live();
     let flow = dry.flow.clone();
@@ -515,7 +533,13 @@ pub(crate) async fn run_executable_plan_phased(
                     }
                     let node = prepared_nodes
                         .get(step_id)
-                        .ok_or_else(|| format!("missing prepared node for step {step_id}"))?
+                        .ok_or_else(|| {
+                            ExecutionFailure::new(
+                                plasm_runtime::FailureCause::Program,
+                                "plan_step_not_prepared",
+                                format!("prepared executable node for step `{step_id}` is missing"),
+                            )
+                        })?
                         .clone();
                     let outcome = Box::pin(materialize_executable_plan_step(
                         &mat_ctx,
@@ -538,19 +562,24 @@ pub(crate) async fn run_executable_plan_phased(
             }
         }
         if let Some(evidence) = active_chain(es, execution_scope) {
-            evidence
-                .record_steps_executed(&evidence_steps)
-                .map_err(|e| format!("evidence step_executed: {e}"))?;
+            evidence.record_steps_executed(&evidence_steps)?;
         }
 
-        let return_node_ids = plasm_return_node_ids(&executable.return_)?;
+        let return_node_ids = plasm_return_node_ids(&executable.return_).map_err(|error| {
+            ExecutionFailure::new(
+                plasm_runtime::FailureCause::Program,
+                "plan_return_invalid",
+                error.to_string(),
+            )
+        })?;
         let mut steps = Vec::new();
         let return_names = plasm_return_names(&executable.return_);
         for (i, node_ref) in return_node_ids.iter().enumerate() {
             let mat = materialized.get(node_ref).ok_or_else(|| {
-                format!(
-                    "plan.return materialized node {:?} missing",
-                    node_ref.as_str()
+                ExecutionFailure::new(
+                    plasm_runtime::FailureCause::Program,
+                    "plan_return_node_not_materialized",
+                    format!("returned node `{}` was not materialized", node_ref.as_str()),
                 )
             })?;
             if let Some(h) = &mat.artifact {
@@ -562,11 +591,16 @@ pub(crate) async fn run_executable_plan_phased(
                     h,
                     Some(node_ref.as_str().to_string()),
                 )
-                .await?;
+                .await
+                .map_err(|diagnostic| {
+                    ExecutionFailure::new(
+                        plasm_runtime::FailureCause::Runtime,
+                        "plan_run_seal_failed",
+                        diagnostic.to_string(),
+                    )
+                })?;
                 if let Some(evidence) = active_chain(es, execution_scope) {
-                    evidence
-                        .record_run_sealed(&seal)
-                        .map_err(|e| format!("evidence run_sealed: {e}"))?;
+                    evidence.record_run_sealed(&seal)?;
                 }
             }
             steps.push(PublishedResultStep {
@@ -626,7 +660,14 @@ pub(crate) async fn run_executable_plan_phased(
             mcp_result_policy
                 .as_ref()
                 .unwrap_or(&crate::mcp_run_markdown::McpResultTransportPolicy::default()),
-        )?;
+        )
+        .map_err(|diagnostic| {
+            ExecutionFailure::new(
+                plasm_runtime::FailureCause::Runtime,
+                "plan_result_publication_failed",
+                diagnostic.to_string(),
+            )
+        })?;
         let comp = crate::plasm_comp_wire::trace_comp_wire_from_dry(&dry);
         let mut code_plan_run_artifacts = Vec::new();
         let mut evidence_run_ids = Vec::new();
@@ -644,10 +685,7 @@ pub(crate) async fn run_executable_plan_phased(
         }
         let mut evidence_head_hex = None;
         if let Some(evidence) = active_chain(es, execution_scope) {
-            if let Some(bundle) = evidence
-                .finish_bundle()
-                .map_err(|e| format!("evidence finish: {e}"))?
-            {
+            if let Some(bundle) = evidence.finish_bundle()? {
                 evidence_head_hex = bundle.chain.head.map(|h| h.to_hex());
                 persist_evidence_sidecars(
                     &st.run_artifacts,
@@ -656,8 +694,7 @@ pub(crate) async fn run_executable_plan_phased(
                     &evidence_run_ids,
                     &bundle,
                 )
-                .await
-                .map_err(|e| format!("evidence persist: {e}"))?;
+                .await?;
             }
         }
         let mut run_plasm_meta = out.tool_meta;
@@ -731,7 +768,9 @@ fn code_plan_run_artifact_ref(
     }
 }
 
-fn plasm_return_node_ids(ret: &PlasmReturn) -> Result<Vec<PlanNodeId>, String> {
+fn plasm_return_node_ids(
+    ret: &PlasmReturn,
+) -> Result<Vec<PlanNodeId>, crate::plasm_plan::PlanAtomError> {
     match ret {
         PlasmReturn::Step { step } => Ok(vec![PlanNodeId::new(step.as_str().to_string())?]),
         PlasmReturn::Parallel { steps } => steps

@@ -13,7 +13,7 @@ use plasm_runtime::{
 };
 use tracing::Instrument;
 
-use crate::error::AgentError;
+use crate::error::{AgentArgumentError, AgentError};
 use crate::invoke_args::args_to_input;
 use crate::output::{format_result_with_cgs, OutputFormat};
 use crate::query_args::args_to_query_predicate;
@@ -32,7 +32,7 @@ pub async fn dispatch<E: ExprExecutor>(
 ) -> Result<(), AgentError> {
     let (entity_name, entity_matches) = matches
         .subcommand()
-        .ok_or_else(|| AgentError::Argument("No entity command specified".into()))?;
+        .ok_or(AgentArgumentError::MissingEntityCommand)?;
 
     let original_entity_name = cgs
         .entities
@@ -164,12 +164,10 @@ fn build_expr(
 
         // Node-level operation — ID must be present on the entity command
         let id = entity_matches.get_one::<String>("id").ok_or_else(|| {
-            AgentError::Argument(format!(
-                "'{}' requires an ID. Usage: {} <ID> {}",
-                sub_name,
-                entity_name.to_lowercase(),
-                sub_name
-            ))
+            AgentArgumentError::MissingNodeId {
+                command: sub_name.to_string(),
+                entity: entity_name.to_lowercase(),
+            }
         })?;
 
         let node_ref = cli_entity_node_ref(entity_name, entity, entity_matches, id.as_str(), cgs)?;
@@ -258,14 +256,11 @@ fn build_expr(
     }
 
     // No subcommand — if ID is present, it's an implicit get
-    let id = entity_matches
-        .get_one::<String>("id")
-        .ok_or_else(|| AgentError::Argument(format!(
-            "Provide an ID or use 'query'. Usage:\n  {} query [--filters]\n  {} <ID> [--key flags when SCHEMA uses compound keys]\n  {} <ID> <relation>",
-            entity_name.to_lowercase(),
-            entity_name.to_lowercase(),
-            entity_name.to_lowercase(),
-        )))?;
+    let id = entity_matches.get_one::<String>("id").ok_or_else(|| {
+        AgentArgumentError::MissingEntityIdOrQuery {
+            entity: entity_name.to_lowercase(),
+        }
+    })?;
 
     let get_cap = cgs
         .find_capability(entity_name, CapabilityKind::Get)
@@ -290,7 +285,9 @@ fn build_relation_expr(
     let relation_schema = cgs
         .get_entity(entity_name)
         .and_then(|e| e.relations.get(relation_name))
-        .ok_or_else(|| AgentError::Argument(format!("Relation '{}' not found", relation_name)))?;
+        .ok_or_else(|| AgentArgumentError::RelationNotFound {
+            relation: relation_name.to_owned(),
+        })?;
     let target = &relation_schema.target_resource;
 
     // Scoped relations: inject scope from the source entity; CLI does not expose those args.
@@ -304,10 +301,10 @@ fn build_relation_expr(
             let scope_val = relation_scope_string(entity, source_ref);
             let scope_pred = plasm_core::Predicate::eq(param.as_str(), scope_val);
             let cap = cgs.get_capability(capability.as_str()).ok_or_else(|| {
-                AgentError::Argument(format!(
-                    "Unknown materialize capability '{}' (relation '{}')",
-                    capability, relation_name
-                ))
+                AgentArgumentError::MaterializeCapabilityNotFound {
+                    capability: capability.to_string(),
+                    relation: relation_name.to_owned(),
+                }
             })?;
             let extra_pred = args_to_query_predicate(sub_matches, cap, cgs);
             let combined = match extra_pred {
@@ -331,10 +328,10 @@ fn build_relation_expr(
             bindings,
         } => {
             let cap = cgs.get_capability(capability.as_str()).ok_or_else(|| {
-                AgentError::Argument(format!(
-                    "Unknown materialize capability '{}' (relation '{}')",
-                    capability, relation_name
-                ))
+                AgentArgumentError::MaterializeCapabilityNotFound {
+                    capability: capability.to_string(),
+                    relation: relation_name.to_owned(),
+                }
             })?;
             let preds: Vec<plasm_core::Predicate> = bindings
                 .iter()
@@ -370,10 +367,10 @@ fn build_relation_expr(
             bindings,
         } => {
             cgs.get_capability(capability.as_str()).ok_or_else(|| {
-                AgentError::Argument(format!(
-                    "Unknown materialize capability '{}' (relation '{}')",
-                    capability, relation_name
-                ))
+                AgentArgumentError::MaterializeCapabilityNotFound {
+                    capability: capability.to_string(),
+                    relation: relation_name.to_owned(),
+                }
             })?;
             let mut bound: IndexMap<String, String> = IndexMap::new();
             for (cap_param, parent_field) in bindings.iter() {
@@ -383,7 +380,9 @@ fn build_relation_expr(
                 );
             }
             let target_ent = cgs.get_entity(target.as_str()).ok_or_else(|| {
-                AgentError::Argument(format!("Unknown target entity '{}'", target))
+                AgentArgumentError::TargetEntityNotFound {
+                    entity: target.to_string(),
+                }
             })?;
             let reference = ref_from_get_materialize_bindings(target_ent, &bound)?;
             let get = GetExpr::from_ref(reference);
@@ -594,8 +593,7 @@ fn collect_template_string_bindings(
     path_matches: &ArgMatches,
     extra_matches: Option<&ArgMatches>,
 ) -> Result<IndexMap<String, String>, AgentError> {
-    let template = parse_capability_template(template)
-        .map_err(|_| AgentError::Argument("Invalid capability template".into()))?;
+    let template = parse_capability_template(template)?;
     let mut out = IndexMap::new();
 
     let http_path_vars = match &template {
@@ -613,11 +611,10 @@ fn collect_template_string_bindings(
             for var_name in http_path_vars.iter().take(http_path_vars.len() - 1) {
                 let arg_id = path_param_arg_id(var_name);
                 let s = path_matches.get_one::<String>(arg_id).ok_or_else(|| {
-                    AgentError::Argument(format!(
-                        "Missing required path flag --{} (CML path variable `{}`)",
-                        var_name.replace('_', "-"),
-                        var_name
-                    ))
+                    AgentArgumentError::MissingPathFlag {
+                        flag: var_name.replace('_', "-"),
+                        variable: var_name.clone(),
+                    }
                 })?;
                 out.insert(var_name.clone(), s.clone());
             }
@@ -705,17 +702,17 @@ fn cli_entity_node_ref(
     if entity.key_vars.len() <= 1 {
         return Ok(Ref::new(entity_name, positional_id));
     }
-    let get_cap = cgs.find_capability(entity_name, CapabilityKind::Get).ok_or_else(|| {
-        AgentError::Argument(format!(
-            "Entity `{entity_name}` uses compound key {:?}; a GET capability is required to resolve CLI path variables.",
-            entity.key_vars
-        ))
-    })?;
+    let get_cap = cgs
+        .find_capability(entity_name, CapabilityKind::Get)
+        .ok_or_else(|| AgentArgumentError::CompoundKeyRequiresGet {
+            entity: entity_name.to_owned(),
+            key_vars: entity.key_vars.iter().map(ToString::to_string).collect(),
+        })?;
     let mapping = get_cap.mapping.as_ref().ok_or_else(|| {
-        AgentError::Argument(format!(
-            "Entity `{entity_name}` uses compound key {:?}; derived Gets have no CML path template for CLI key binding.",
-            entity.key_vars
-        ))
+        AgentArgumentError::CompoundKeyGetRequiresPathTemplate {
+            entity: entity_name.to_owned(),
+            key_vars: entity.key_vars.iter().map(ToString::to_string).collect(),
+        }
     })?;
     let mut bindings =
         collect_template_string_bindings(&mapping.template, positional_id, entity_matches, None)?;
@@ -731,11 +728,12 @@ fn cli_entity_node_ref(
     let mut parts = std::collections::BTreeMap::new();
     for kv in &entity.key_vars {
         let Some(v) = bindings.get(kv.as_str()) else {
-            return Err(AgentError::Argument(format!(
-                "Missing compound key part `{kv}` for entity `{entity_name}` \
-                 (use --{} or the positional id for the last URL segment, per SCHEMA `key_vars`)",
-                kv.replace('_', "-")
-            )));
+            return Err(AgentArgumentError::MissingCompoundKeyPart {
+                part: kv.to_string(),
+                entity: entity_name.to_owned(),
+                flag: kv.replace('_', "-"),
+            }
+            .into());
         };
         parts.insert(kv.as_str().to_string(), v.clone());
     }
@@ -765,10 +763,10 @@ fn ref_from_get_materialize_bindings(
         let mut parts = BTreeMap::new();
         for kv in &target_ent.key_vars {
             let s = binding_values.get(kv.as_str()).ok_or_else(|| {
-                AgentError::Argument(format!(
-                    "get_scoped_bindings missing bound value for `{}` on {}",
-                    kv, target_ent.name
-                ))
+                AgentArgumentError::MissingScopedGetBinding {
+                    field: kv.to_string(),
+                    entity: target_ent.name.to_string(),
+                }
             })?;
             parts.insert(kv.to_string(), s.clone());
         }
@@ -776,11 +774,9 @@ fn ref_from_get_materialize_bindings(
     } else {
         let id = binding_values
             .get(target_ent.id_field.as_str())
-            .ok_or_else(|| {
-                AgentError::Argument(format!(
-                    "get_scoped_bindings missing bound value for `{}` on {}",
-                    target_ent.id_field, target_ent.name
-                ))
+            .ok_or_else(|| AgentArgumentError::MissingScopedGetBinding {
+                field: target_ent.id_field.to_string(),
+                entity: target_ent.name.to_string(),
             })?;
         Ok(Ref::new(target_ent.name.clone(), id.clone()))
     }

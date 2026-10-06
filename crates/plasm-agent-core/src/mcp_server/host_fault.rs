@@ -5,18 +5,6 @@
 #[derive(Debug, Clone)]
 pub struct HostFault(pub plasm_runtime::ExecutionFailure);
 
-impl From<String> for HostFault {
-    fn from(value: String) -> Self {
-        Self(value.into())
-    }
-}
-
-impl From<&str> for HostFault {
-    fn from(value: &str) -> Self {
-        Self(value.into())
-    }
-}
-
 impl std::fmt::Display for HostFault {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(&self.0, f)

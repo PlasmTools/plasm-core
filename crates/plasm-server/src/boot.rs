@@ -26,6 +26,14 @@ use crate::tui::run_running_mode;
 
 pub const BOOT_PHASE_COUNT: usize = 8;
 
+#[derive(Debug, thiserror::Error)]
+pub enum TerminalUiError {
+    #[error("terminal UI I/O failed")]
+    Io(#[from] io::Error),
+    #[error("RUN terminal UI failed")]
+    Running(#[source] io::Error),
+}
+
 /// Handoff from async bootstrap to the Ratatui UI thread (host state + admin job bridge).
 pub struct RunningHandoff {
     pub state: Arc<PlasmHostState>,
@@ -304,7 +312,7 @@ pub fn run_appliance_shell(
     ui_evt_tx: Option<Sender<UiEvent>>,
     listen: TcpListenEndpoint,
     log_rx: Option<crossbeam_channel::Receiver<crate::appliance_log::ApplianceLogEntry>>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), TerminalUiError> {
     enable_raw_mode()?;
     let mut buffer = stdout();
     execute!(buffer, EnterAlternateScreen)?;
@@ -319,7 +327,7 @@ pub fn run_appliance_shell(
     };
     let _guard = scopeguard::guard((), |_| restore_terminal());
 
-    let inner = (|| -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let inner = (|| -> Result<(), TerminalUiError> {
         let mut model = BootModel::new();
         let mut dirty = true;
         loop {
@@ -339,7 +347,8 @@ pub fn run_appliance_shell(
                         Some(handoff.admin_bridge),
                         handoff.policy_store_detail,
                         log_rx,
-                    )?;
+                    )
+                    .map_err(TerminalUiError::Running)?;
                     return Ok(());
                 }
                 Ok(BootstrapUiMsg::Shutdown) => return Ok(()),

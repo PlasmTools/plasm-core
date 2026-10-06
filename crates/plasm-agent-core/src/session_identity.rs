@@ -18,6 +18,18 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum LogicalSessionRegistrationError {
+    #[error("logical session requires valid nonempty intent")]
+    InvalidInitialIntent,
+    #[error("routing session belongs to another scope")]
+    ScopeMismatch,
+    #[error("routing intent rewrites session ancestry")]
+    AncestryRewrite,
+    #[error(transparent)]
+    IntentProvenance(#[from] crate::intent_provenance::IntentProvenanceError),
+}
+
 use crate::mcp_transport_store::RedisBackend;
 
 const SESSION_KEY_PREFIX: &str = "mcp:logical:session:v2:";
@@ -246,16 +258,17 @@ impl LogicalSessionRegistry {
         &self,
         tenant_scope: &str,
         first_intent_turn: &str,
-    ) -> Result<LogicalSessionRecord, String> {
+    ) -> Result<LogicalSessionRecord, LogicalSessionRegistrationError> {
         let turn = normalize_intent_turn(first_intent_turn)
-            .ok_or("logical session requires valid nonempty intent")?;
+            .ok_or(LogicalSessionRegistrationError::InvalidInitialIntent)?;
         let intent_turns = vec![turn];
         let accumulated_intent = normalize_accumulated_intent(&intent_turns);
         let rec = LogicalSessionRecord {
             logical_session_id: LogicalSessionId::new_v4(),
             tenant_scope: tenant_scope.to_string(),
-            intent_provenance: crate::intent_provenance::IntentProvenance::from_turns(intent_turns)
-                .map_err(|e| e.to_string())?,
+            intent_provenance: crate::intent_provenance::IntentProvenance::from_turns(
+                intent_turns,
+            )?,
             accumulated_intent,
             discovery_pin: None,
         };
@@ -270,17 +283,17 @@ impl LogicalSessionRegistry {
         tenant_scope: &str,
         provenance: &crate::intent_provenance::IntentProvenance,
         discovery_pin: Option<crate::discovery_store::DiscoverySessionPin>,
-    ) -> Result<LogicalSessionRecord, String> {
+    ) -> Result<LogicalSessionRecord, LogicalSessionRegistrationError> {
         if let Some(existing) = self.get(id).await {
             if existing.tenant_scope != tenant_scope {
-                return Err("routing session belongs to another scope".into());
+                return Err(LogicalSessionRegistrationError::ScopeMismatch);
             }
             if !provenance
                 .turns()
                 .take(existing.intent_provenance.turns().count())
                 .eq(existing.intent_provenance.turns())
             {
-                return Err("routing intent rewrites session ancestry".into());
+                return Err(LogicalSessionRegistrationError::AncestryRewrite);
             }
         }
         let intent_turns: Vec<_> = provenance.turns().map(str::to_owned).collect();

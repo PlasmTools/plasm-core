@@ -67,9 +67,19 @@ async fn fetch_entity_get_by_ref(
     ),
     ExecutionFailure,
 > {
-    let scoped = entry_scoped_execute_session(es, Some(target))?;
+    let scoped = entry_scoped_execute_session(es, Some(target)).map_err(|diagnostic| {
+        ExecutionFailure::new(
+            plasm_runtime::FailureCause::Program,
+            "relation_hydration_catalog_unavailable",
+            diagnostic.to_string(),
+        )
+    })?;
     if reference.primary_slot_str().is_empty() {
-        return Err(format!("relation hydrate GET: empty identity for `{}`", reference).into());
+        return Err(ExecutionFailure::new(
+            plasm_runtime::FailureCause::Program,
+            "relation_hydration_identity_missing",
+            format!("relation hydrate GET has an empty identity for `{reference}`"),
+        ));
     }
     let mut get_expr = GetExpr::from_ref(reference.clone());
     if let Some(cap) = get_capability {
@@ -94,9 +104,13 @@ async fn fetch_entity_get_by_ref(
     ))
     .await?;
     let entity = result.entities().first().cloned().ok_or_else(|| {
-        format!(
-            "relation hydrate GET returned no `{}` row",
-            reference.entity_type
+        ExecutionFailure::new(
+            plasm_runtime::FailureCause::Runtime,
+            "relation_hydration_target_missing",
+            format!(
+                "relation hydrate GET returned no `{}` row",
+                reference.entity_type
+            ),
         )
     })?;
     Ok((
@@ -132,7 +146,13 @@ async fn hydrate_relation_entities_if_needed(
     max_hydrate: Option<usize>,
     plan_shared: Option<Arc<PlanLineExecuteShared>>,
 ) -> Result<RelationHydration, ExecutionFailure> {
-    let scoped = entry_scoped_execute_session(es, Some(target))?;
+    let scoped = entry_scoped_execute_session(es, Some(target)).map_err(|diagnostic| {
+        ExecutionFailure::new(
+            plasm_runtime::FailureCause::Program,
+            "relation_hydration_catalog_unavailable",
+            diagnostic.to_string(),
+        )
+    })?;
     let cgs = scoped.cgs.as_ref();
     let entity_type = target.entity.as_str();
     if !relation_entities_need_hydration(cgs, entity_type, &entities) {
@@ -289,7 +309,13 @@ pub(crate) async fn finalize_typed_relation_materialized_node(
     max_hydrate: Option<usize>,
     plan_shared: Option<Arc<PlanLineExecuteShared>>,
 ) -> Result<MaterializedNode, ExecutionFailure> {
-    let scoped = entry_scoped_execute_session(es, Some(target))?;
+    let scoped = entry_scoped_execute_session(es, Some(target)).map_err(|diagnostic| {
+        ExecutionFailure::new(
+            plasm_runtime::FailureCause::Program,
+            "relation_hydration_catalog_unavailable",
+            diagnostic.to_string(),
+        )
+    })?;
     let cgs = scoped.cgs.as_ref();
     let entity_type = target.entity.as_str();
     // Keep the transport hydration future out of every enclosing relation frame.

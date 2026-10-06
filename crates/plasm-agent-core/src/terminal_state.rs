@@ -1,9 +1,17 @@
 //! Filesystem mirrors for the remote terminal; server sessions own symbols and pins.
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
+use thiserror::Error;
 use uuid::Uuid;
+
+pub type TerminalStateResult<T> = Result<T, TerminalStateError>;
+
+#[derive(Debug, Error)]
+pub enum TerminalStateError {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionBinding {
@@ -80,7 +88,10 @@ pub fn mint_client_session_id() -> String {
     hex::encode(Uuid::new_v4().as_bytes())[..8].to_string()
 }
 
-pub fn write_current_session_pointer(server: &str, client_session_id: &str) -> Result<PathBuf> {
+pub fn write_current_session_pointer(
+    server: &str,
+    client_session_id: &str,
+) -> TerminalStateResult<PathBuf> {
     let dir = host_mirror_dir(server);
     std::fs::create_dir_all(&dir)?;
     let path = current_session_pointer_path(server);
@@ -88,7 +99,7 @@ pub fn write_current_session_pointer(server: &str, client_session_id: &str) -> R
     Ok(path)
 }
 
-pub fn read_current_session_pointer(server: &str) -> Result<Option<String>> {
+pub fn read_current_session_pointer(server: &str) -> TerminalStateResult<Option<String>> {
     let path = current_session_pointer_path(server);
     if !path.exists() {
         return Ok(None);
@@ -122,7 +133,7 @@ receive via MCP `tools/list`.\n\n\
     )
 }
 
-pub fn write_language_frontmatter_markdown(frontmatter: &str) -> Result<PathBuf> {
+pub fn write_language_frontmatter_markdown(frontmatter: &str) -> TerminalStateResult<PathBuf> {
     let path = language_frontmatter_markdown_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -172,7 +183,7 @@ Use `plasm-repl --schema` for local schema execution.
     )
 }
 
-pub fn write_plasm_cli_agent_skill(grammar_frontmatter: &str) -> Result<PathBuf> {
+pub fn write_plasm_cli_agent_skill(grammar_frontmatter: &str) -> TerminalStateResult<PathBuf> {
     let path = plasm_cli_agent_skill_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;

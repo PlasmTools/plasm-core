@@ -54,14 +54,41 @@ pub enum WithLiteral {
     String(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[derive(Debug, Clone, Error)]
 pub enum WithExprError {
     #[error("empty .with body")]
     EmptyBody,
     #[error("invalid .with column `{0}`")]
     BadColumn(String),
-    #[error("invalid .with expression: {0}")]
-    Parse(String),
+    #[error(transparent)]
+    InvalidColumn(#[from] super::atoms::PlanAtomError),
+    #[error(
+        "invalid computed field reference `{reference}`; use a row field or a supported expression"
+    )]
+    InvalidFieldReference { reference: String },
+    #[error("expected a .with column in `name: expression` form")]
+    ColumnAssignmentRequired,
+    #[error("unbalanced expression parentheses")]
+    UnbalancedParentheses,
+    #[error("unterminated string literal")]
+    UnterminatedString,
+    #[error("unterminated parenthesized expression")]
+    UnterminatedParentheses,
+    #[error("number must be finite")]
+    NonFiniteNumber,
+    #[error("invalid JSON string literal")]
+    StringLiteralJson {
+        #[source]
+        source: std::sync::Arc<serde_json::Error>,
+    },
+    #[error("row expressions do not accept template filter pipes; use Minijinja inside a string")]
+    TemplatePipeForbidden,
+    #[error("unknown .with function `{name}` (known calls: len, when; now is not a call)")]
+    UnknownFunction { name: String },
+    #[error("when(pred, then, else) requires three arguments, found {actual}")]
+    WhenArgumentCount { actual: usize },
+    #[error("when() predicate must be a comparison")]
+    WhenComparisonRequired,
 }
 
 impl WithExpr {

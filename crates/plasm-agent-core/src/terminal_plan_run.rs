@@ -274,8 +274,13 @@ pub async fn resolve_terminal_plan_run(
     trace: Option<&PlasmTraceContext>,
     handle: &OperationHandle,
 ) -> Result<PlasmPlanRunResult, OperationError> {
-    let key = crate::operation::resolve_operation_storage_handle(trace, handle)
-        .map_err(|e| session_unknown_handle(sess, handle.as_str(), e))?;
+    let key =
+        crate::operation::resolve_operation_storage_handle(trace, handle).map_err(|error| {
+            OperationError::HandleNamespaceFailure {
+                handle: handle.as_str().to_string(),
+                error,
+            }
+        })?;
     let hint = wait_hint(trace, handle, &key);
 
     if let Some(op) = sess.get_operation(&key) {

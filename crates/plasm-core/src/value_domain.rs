@@ -9,6 +9,122 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum ValueDomainError {
+    #[error("missing value-domain type")]
+    MissingType,
+    #[error("retired value-domain type '{name}'; use {replacement}")]
+    RetiredType {
+        name: &'static str,
+        replacement: &'static str,
+    },
+    #[error("unknown value-domain type '{0}'")]
+    UnknownType(String),
+    #[error("entity_ref value domain requires a target")]
+    MissingEntityRefTarget,
+    #[error("enum membership requires at least one token")]
+    EmptyEnumMembership,
+    #[error("enum gloss for token '{token}' contains reserved delimiter '{delimiter}'")]
+    ForbiddenEnumGlossDelimiter { token: String, delimiter: char },
+    #[error("pattern exceeds the {max_bytes}-byte limit (found {actual_bytes} bytes)")]
+    PatternTooLong {
+        actual_bytes: usize,
+        max_bytes: usize,
+    },
+    #[error("invalid regular expression: {0}")]
+    InvalidPattern(#[source] regex::Error),
+    #[error("invalid value for profile {0:?}")]
+    InvalidProfileValue(ProfileId),
+    #[error("value is shorter than min_length {0}")]
+    BelowMinLength(usize),
+    #[error("value is longer than max_length {0}")]
+    AboveMaxLength(usize),
+    #[error("string does not match the declared pattern")]
+    PatternMismatch,
+    #[error("enum profile has no membership declaration")]
+    MissingEnumMembership,
+    #[error("value is not an allowed enum member")]
+    UnknownEnumMember,
+    #[error("numeric value is below minimum {0}")]
+    BelowMinimum(f64),
+    #[error("numeric value is above maximum {0}")]
+    AboveMaximum(f64),
+    #[error("numeric value is not above exclusive minimum {0}")]
+    AtOrBelowExclusiveMinimum(f64),
+    #[error("numeric value is not below exclusive maximum {0}")]
+    AtOrAboveExclusiveMaximum(f64),
+    #[error("multiple_of must be non-zero")]
+    ZeroMultiple,
+    #[error("numeric value is not a multiple of {0}")]
+    NotMultiple(f64),
+}
+
+impl ValueDomainError {
+    pub(crate) fn contract_violation(&self) -> crate::ValueDomainViolation {
+        use crate::ValueDomainViolation as Violation;
+        match self {
+            Self::MissingType => Violation::MissingType,
+            Self::RetiredType { name, replacement } => Violation::RetiredType { name, replacement },
+            Self::UnknownType(name) => Violation::UnknownType { name: name.clone() },
+            Self::MissingEntityRefTarget => Violation::MissingEntityRefTarget,
+            Self::EmptyEnumMembership => Violation::EmptyEnumMembership,
+            Self::ForbiddenEnumGlossDelimiter { token, delimiter } => {
+                Violation::ForbiddenEnumGlossDelimiter {
+                    token: token.clone(),
+                    delimiter: *delimiter,
+                }
+            }
+            Self::PatternTooLong {
+                actual_bytes,
+                max_bytes,
+            } => Violation::PatternTooLong {
+                actual_bytes: *actual_bytes,
+                max_bytes: *max_bytes,
+            },
+            Self::InvalidPattern(_) => Violation::PatternConfiguration,
+            Self::InvalidProfileValue(profile) => Violation::InvalidProfile(*profile),
+            Self::BelowMinLength(value) => Violation::BelowMinLength(*value),
+            Self::AboveMaxLength(value) => Violation::AboveMaxLength(*value),
+            Self::PatternMismatch => Violation::PatternMismatch,
+            Self::MissingEnumMembership => Violation::MissingEnumMembership,
+            Self::UnknownEnumMember => Violation::UnknownEnumMember,
+            Self::BelowMinimum(_) => Violation::BelowMinimum,
+            Self::AboveMaximum(_) => Violation::AboveMaximum,
+            Self::AtOrBelowExclusiveMinimum(_) => Violation::ExclusiveMinimum,
+            Self::AtOrAboveExclusiveMaximum(_) => Violation::ExclusiveMaximum,
+            Self::ZeroMultiple => Violation::ZeroMultiple,
+            Self::NotMultiple(_) => Violation::NotMultiple,
+        }
+    }
+
+    pub(crate) fn violation(&self) -> Option<crate::ValueDomainViolation> {
+        use crate::ValueDomainViolation as Violation;
+        Some(match self {
+            Self::InvalidProfileValue(profile) => Violation::InvalidProfile(*profile),
+            Self::BelowMinLength(value) => Violation::BelowMinLength(*value),
+            Self::AboveMaxLength(value) => Violation::AboveMaxLength(*value),
+            Self::PatternMismatch => Violation::PatternMismatch,
+            Self::MissingEnumMembership => Violation::MissingEnumMembership,
+            Self::UnknownEnumMember => Violation::UnknownEnumMember,
+            Self::BelowMinimum(_) => Violation::BelowMinimum,
+            Self::AboveMaximum(_) => Violation::AboveMaximum,
+            Self::AtOrBelowExclusiveMinimum(_) => Violation::ExclusiveMinimum,
+            Self::AtOrAboveExclusiveMaximum(_) => Violation::ExclusiveMaximum,
+            Self::ZeroMultiple => Violation::ZeroMultiple,
+            Self::NotMultiple(_) => Violation::NotMultiple,
+            Self::MissingType
+            | Self::RetiredType { .. }
+            | Self::UnknownType(_)
+            | Self::MissingEntityRefTarget
+            | Self::EmptyEnumMembership
+            | Self::ForbiddenEnumGlossDelimiter { .. }
+            | Self::PatternTooLong { .. }
+            | Self::InvalidPattern(_) => return None,
+        })
+    }
+}
 
 /// Closed set of wire kernels.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -207,17 +323,17 @@ const MAX_PATTERN_BYTES: usize = 512;
 const PATTERN_COMPILED_SIZE_LIMIT: usize = 1024 * 1024;
 
 /// Compile an author `pattern:` with load-time bounds.
-pub fn compile_pattern(pattern: &str) -> Result<regex::Regex, String> {
+pub fn compile_pattern(pattern: &str) -> Result<regex::Regex, ValueDomainError> {
     if pattern.len() > MAX_PATTERN_BYTES {
-        return Err(format!(
-            "pattern exceeds {MAX_PATTERN_BYTES} bytes (got {})",
-            pattern.len()
-        ));
+        return Err(ValueDomainError::PatternTooLong {
+            actual_bytes: pattern.len(),
+            max_bytes: MAX_PATTERN_BYTES,
+        });
     }
     regex::RegexBuilder::new(pattern)
         .size_limit(PATTERN_COMPILED_SIZE_LIMIT)
         .build()
-        .map_err(|e| format!("invalid pattern: {e}"))
+        .map_err(ValueDomainError::InvalidPattern)
 }
 
 /// Characters forbidden inside teaching gloss text (pair / token delimiters).
@@ -254,9 +370,9 @@ impl EnumMembership {
     pub fn try_new(
         tokens: Vec<String>,
         glosses: Option<IndexMap<String, String>>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, ValueDomainError> {
         if tokens.is_empty() {
-            return Err("enum membership requires at least one token".into());
+            return Err(ValueDomainError::EmptyEnumMembership);
         }
         let glosses = match glosses {
             None => None,
@@ -271,9 +387,10 @@ impl EnumMembership {
                         .chars()
                         .find(|c| ENUM_GLOSS_FORBIDDEN_CHARS.contains(c))
                     {
-                        return Err(format!(
-                            "enum gloss for token '{tok}' must not contain '{bad}' (reserved teaching delimiter)"
-                        ));
+                        return Err(ValueDomainError::ForbiddenEnumGlossDelimiter {
+                            token: tok,
+                            delimiter: bad,
+                        });
                     }
                     cleaned.insert(tok, gloss.to_string());
                 }
@@ -332,31 +449,35 @@ impl PartialEq for ValueDomain {
 pub fn parse_type_name(
     type_str: &str,
     target: Option<&str>,
-) -> Result<(KernelKind, Option<ProfileId>), String> {
+) -> Result<(KernelKind, Option<ProfileId>), ValueDomainError> {
     let t = type_str.trim();
     if t.is_empty() {
-        return Err("missing `type`".into());
+        return Err(ValueDomainError::MissingType);
     }
     match t {
         "date" => {
-            return Err(
-                "type 'date' was removed; use a temporal profile (`rfc3339`, `iso8601_date`, `unix_ms`, or `unix_sec`)"
-                    .into(),
-            );
+            return Err(ValueDomainError::RetiredType {
+                name: "date",
+                replacement: "a temporal profile",
+            });
         }
         "select" => {
-            return Err("type 'select' was removed; use `type: enum` with `enum: [...]`".into());
+            return Err(ValueDomainError::RetiredType {
+                name: "select",
+                replacement: "type: enum with enum membership",
+            });
         }
         "multi_select" => {
-            return Err(
-                "type 'multi_select' was removed; use `type: multi_enum` with `enum: [...]`".into(),
-            );
+            return Err(ValueDomainError::RetiredType {
+                name: "multi_select",
+                replacement: "type: multi_enum with enum membership",
+            });
         }
         "datetime" => {
-            return Err(
-                "type 'datetime' was removed; use a temporal profile (`rfc3339`, `iso8601_date`, `unix_ms`, or `unix_sec`)"
-                    .into(),
-            );
+            return Err(ValueDomainError::RetiredType {
+                name: "datetime",
+                replacement: "a temporal profile",
+            });
         }
         _ => {}
     }
@@ -400,7 +521,7 @@ pub fn parse_type_name(
         "money" => Ok((KernelKind::Money, None)),
         "entity_ref" => {
             let Some(tgt) = target.map(str::trim).filter(|s| !s.is_empty()) else {
-                return Err("type 'entity_ref' requires `target:`".into());
+                return Err(ValueDomainError::MissingEntityRefTarget);
             };
             Ok((
                 KernelKind::EntityRef {
@@ -410,7 +531,7 @@ pub fn parse_type_name(
                 None,
             ))
         }
-        other => Err(format!("unknown type '{other}'")),
+        other => Err(ValueDomainError::UnknownType(other.to_owned())),
     }
 }
 
@@ -512,7 +633,7 @@ impl ValueDomain {
         mut constraints: Constraints,
         enum_membership: Option<EnumMembership>,
         currency: Option<String>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, ValueDomainError> {
         let pattern_re = match constraints.pattern.as_deref() {
             Some(p) if !p.is_empty() => Some(compile_pattern(p)?),
             _ => {
@@ -671,7 +792,7 @@ impl ValueDomain {
     }
 
     /// Validate a concrete string against profile + string constraints.
-    pub fn validate_string_value(&self, s: &str) -> Result<(), String> {
+    pub fn validate_string_value(&self, s: &str) -> Result<(), ValueDomainError> {
         if let Some(p) = self.profile {
             if p.is_canned_string() || p == ProfileId::Uuid {
                 validate_string_profile(p, s)?;
@@ -680,23 +801,23 @@ impl ValueDomain {
         validate_string_constraints(s, &self.constraints, self.pattern_re.as_ref())?;
         if matches!(self.profile, Some(ProfileId::Enum)) {
             let Some(allowed) = self.enum_tokens() else {
-                return Err("enum profile requires `enum:` membership list".into());
+                return Err(ValueDomainError::MissingEnumMembership);
             };
             if !allowed.iter().any(|a| a == s) {
-                return Err(format!("value '{s}' is not in enum {allowed:?}"));
+                return Err(ValueDomainError::UnknownEnumMember);
             }
         }
         Ok(())
     }
 
     /// Validate a numeric value against numeric constraints.
-    pub fn validate_number_value(&self, n: f64) -> Result<(), String> {
+    pub fn validate_number_value(&self, n: f64) -> Result<(), ValueDomainError> {
         validate_number_constraints(n, &self.constraints)
     }
 }
 
 /// Profile-specific string validation (canned set).
-pub fn validate_string_profile(profile: ProfileId, s: &str) -> Result<(), String> {
+pub fn validate_string_profile(profile: ProfileId, s: &str) -> Result<(), ValueDomainError> {
     match profile {
         ProfileId::Uuid => validate_uuid(s),
         ProfileId::DigitId => validate_digit_id(s),
@@ -707,13 +828,13 @@ pub fn validate_string_profile(profile: ProfileId, s: &str) -> Result<(), String
         ProfileId::E164 => validate_e164(s),
         ProfileId::Ipv4 => Ipv4Addr::from_str(s)
             .map(|_| ())
-            .map_err(|_| format!("invalid ipv4 '{s}'")),
+            .map_err(|_| ValueDomainError::InvalidProfileValue(profile)),
         ProfileId::Ipv6 => Ipv6Addr::from_str(s)
             .map(|_| ())
-            .map_err(|_| format!("invalid ipv6 '{s}'")),
+            .map_err(|_| ValueDomainError::InvalidProfileValue(profile)),
         ProfileId::Hex => {
             if s.is_empty() || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
-                return Err(format!("invalid hex '{s}'"));
+                return Err(ValueDomainError::InvalidProfileValue(profile));
             }
             Ok(())
         }
@@ -723,28 +844,28 @@ pub fn validate_string_profile(profile: ProfileId, s: &str) -> Result<(), String
     }
 }
 
-pub(crate) fn validate_digit_id(s: &str) -> Result<(), String> {
+pub(crate) fn validate_digit_id(s: &str) -> Result<(), ValueDomainError> {
     if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
-        return Err(format!("digit_id must be ASCII digits, got {s:?}"));
+        return Err(ValueDomainError::InvalidProfileValue(ProfileId::DigitId));
     }
     Ok(())
 }
 
-fn validate_uuid(s: &str) -> Result<(), String> {
+fn validate_uuid(s: &str) -> Result<(), ValueDomainError> {
     let b = s.as_bytes();
     if b.len() != 36 {
-        return Err(format!("invalid uuid '{s}'"));
+        return Err(ValueDomainError::InvalidProfileValue(ProfileId::Uuid));
     }
     for (i, &c) in b.iter().enumerate() {
         match i {
             8 | 13 | 18 | 23 => {
                 if c != b'-' {
-                    return Err(format!("invalid uuid '{s}'"));
+                    return Err(ValueDomainError::InvalidProfileValue(ProfileId::Uuid));
                 }
             }
             _ => {
                 if !c.is_ascii_hexdigit() {
-                    return Err(format!("invalid uuid '{s}'"));
+                    return Err(ValueDomainError::InvalidProfileValue(ProfileId::Uuid));
                 }
             }
         }
@@ -752,21 +873,26 @@ fn validate_uuid(s: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_email(s: &str) -> Result<(), String> {
+fn validate_email(s: &str) -> Result<(), ValueDomainError> {
     if s.is_empty() || s.contains(' ') || s.contains('\n') {
-        return Err(format!("invalid email '{s}'"));
+        return Err(ValueDomainError::InvalidProfileValue(ProfileId::Email));
     }
     let Some((local, domain)) = s.split_once('@') else {
-        return Err(format!("invalid email '{s}'"));
+        return Err(ValueDomainError::InvalidProfileValue(ProfileId::Email));
     };
     if local.is_empty() || domain.is_empty() || !domain.contains('.') {
-        return Err(format!("invalid email '{s}'"));
+        return Err(ValueDomainError::InvalidProfileValue(ProfileId::Email));
     }
     Ok(())
 }
 
-fn validate_url(s: &str, http_only: bool) -> Result<(), String> {
-    let parsed = url::Url::parse(s).map_err(|_| format!("invalid url '{s}'"))?;
+fn validate_url(s: &str, http_only: bool) -> Result<(), ValueDomainError> {
+    let profile = if http_only {
+        ProfileId::HttpUrl
+    } else {
+        ProfileId::Url
+    };
+    let parsed = url::Url::parse(s).map_err(|_| ValueDomainError::InvalidProfileValue(profile))?;
     let scheme = parsed.scheme();
     let ok_scheme = if http_only {
         scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
@@ -776,54 +902,58 @@ fn validate_url(s: &str, http_only: bool) -> Result<(), String> {
             || scheme.eq_ignore_ascii_case("ftp")
     };
     if !ok_scheme {
-        return Err(format!("invalid url '{s}'"));
+        return Err(ValueDomainError::InvalidProfileValue(profile));
     }
     match parsed.host() {
         Some(url::Host::Domain(d)) if !d.is_empty() => Ok(()),
         Some(url::Host::Ipv4(_) | url::Host::Ipv6(_)) => Ok(()),
-        _ => Err(format!("invalid url '{s}'")),
+        _ => Err(ValueDomainError::InvalidProfileValue(profile)),
     }
 }
 
-fn validate_hostname(s: &str) -> Result<(), String> {
+fn validate_hostname(s: &str) -> Result<(), ValueDomainError> {
     if s.is_empty() || s.len() > 253 {
-        return Err(format!("invalid hostname '{s}'"));
+        return Err(ValueDomainError::InvalidProfileValue(ProfileId::Hostname));
     }
     if s.starts_with('.') || s.ends_with('.') || s.contains("..") {
-        return Err(format!("invalid hostname '{s}'"));
+        return Err(ValueDomainError::InvalidProfileValue(ProfileId::Hostname));
     }
     for label in s.split('.') {
         if label.is_empty() || label.len() > 63 {
-            return Err(format!("invalid hostname '{s}'"));
+            return Err(ValueDomainError::InvalidProfileValue(ProfileId::Hostname));
         }
         if label.starts_with('-') || label.ends_with('-') {
-            return Err(format!("invalid hostname '{s}'"));
+            return Err(ValueDomainError::InvalidProfileValue(ProfileId::Hostname));
         }
         if !label
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-')
         {
-            return Err(format!("invalid hostname '{s}'"));
+            return Err(ValueDomainError::InvalidProfileValue(ProfileId::Hostname));
         }
     }
     Ok(())
 }
 
-fn validate_e164(s: &str) -> Result<(), String> {
+fn validate_e164(s: &str) -> Result<(), ValueDomainError> {
     let digits = if let Some(rest) = s.strip_prefix('+') {
         rest
     } else {
         s
     };
     if digits.is_empty() || digits.len() > 15 || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return Err(format!("invalid e164 '{s}'"));
+        return Err(ValueDomainError::InvalidProfileValue(ProfileId::E164));
     }
     Ok(())
 }
 
-fn validate_base64(s: &str, url_safe: bool) -> Result<(), String> {
+fn validate_base64(s: &str, url_safe: bool) -> Result<(), ValueDomainError> {
     if s.is_empty() {
-        return Err("invalid base64: empty".into());
+        return Err(ValueDomainError::InvalidProfileValue(if url_safe {
+            ProfileId::Base64Url
+        } else {
+            ProfileId::Base64
+        }));
     }
     let alphabet_ok = |c: u8| {
         c.is_ascii_alphanumeric()
@@ -835,7 +965,11 @@ fn validate_base64(s: &str, url_safe: bool) -> Result<(), String> {
             || c == b'='
     };
     if !s.bytes().all(alphabet_ok) {
-        return Err(format!("invalid base64 '{s}'"));
+        return Err(ValueDomainError::InvalidProfileValue(if url_safe {
+            ProfileId::Base64Url
+        } else {
+            ProfileId::Base64
+        }));
     }
     Ok(())
 }
@@ -844,70 +978,76 @@ pub fn validate_string_constraints(
     s: &str,
     c: &Constraints,
     pattern_re: Option<&regex::Regex>,
-) -> Result<(), String> {
+) -> Result<(), ValueDomainError> {
     if let Some(min) = c.min_length {
         if s.chars().count() < min {
-            return Err(format!("string shorter than min_length {min}"));
+            return Err(ValueDomainError::BelowMinLength(min));
         }
     }
     if let Some(max) = c.max_length {
         if s.chars().count() > max {
-            return Err(format!("string longer than max_length {max}"));
+            return Err(ValueDomainError::AboveMaxLength(max));
         }
     }
     if let Some(re) = pattern_re {
         if !re.is_match(s) {
-            return Err("string does not match pattern".into());
+            return Err(ValueDomainError::PatternMismatch);
         }
     } else if let Some(ref pat) = c.pattern {
         let re = compile_pattern(pat)?;
         if !re.is_match(s) {
-            return Err(format!("string does not match pattern {pat:?}"));
+            return Err(ValueDomainError::PatternMismatch);
         }
     }
     Ok(())
 }
 
 /// Validate string length / pattern constraints (compiles `pattern` when no prebuilt regex).
-pub fn validate_constraints_on_string(constraints: &Constraints, s: &str) -> Result<(), String> {
+pub fn validate_constraints_on_string(
+    constraints: &Constraints,
+    s: &str,
+) -> Result<(), ValueDomainError> {
     validate_string_constraints(s, constraints, None)
 }
 
-pub fn validate_number_constraints(n: f64, c: &Constraints) -> Result<(), String> {
+pub fn validate_number_constraints(n: f64, c: &Constraints) -> Result<(), ValueDomainError> {
     if let Some(min) = c.min {
         if n < min {
-            return Err(format!("value {n} below min {min}"));
+            return Err(ValueDomainError::BelowMinimum(min));
         }
     }
     if let Some(max) = c.max {
         if n > max {
-            return Err(format!("value {n} above max {max}"));
+            return Err(ValueDomainError::AboveMaximum(max));
         }
     }
     if let Some(xmin) = c.exclusive_min {
         if n <= xmin {
-            return Err(format!("value {n} not above exclusive_min {xmin}"));
+            return Err(ValueDomainError::AtOrBelowExclusiveMinimum(xmin));
         }
     }
     if let Some(xmax) = c.exclusive_max {
         if n >= xmax {
-            return Err(format!("value {n} not below exclusive_max {xmax}"));
+            return Err(ValueDomainError::AtOrAboveExclusiveMaximum(xmax));
         }
     }
     if let Some(m) = c.multiple_of {
         if m == 0.0 {
-            return Err("multiple_of must be non-zero".into());
+            return Err(ValueDomainError::ZeroMultiple);
         }
         let q = n / m;
         if (q - q.round()).abs() > 1e-9 {
-            return Err(format!("value {n} is not a multiple of {m}"));
+            return Err(ValueDomainError::NotMultiple(m));
         }
     }
     Ok(())
 }
 
 /// Validate numeric min/max / multiple_of constraints.
-pub fn validate_constraints_on_number(constraints: &Constraints, n: f64) -> Result<(), String> {
+pub fn validate_constraints_on_number(
+    constraints: &Constraints,
+    n: f64,
+) -> Result<(), ValueDomainError> {
     validate_number_constraints(n, constraints)
 }
 
@@ -917,15 +1057,21 @@ mod tests {
 
     #[test]
     fn rejects_retired_type_names() {
-        assert!(parse_type_name("date", None)
-            .unwrap_err()
-            .contains("rfc3339"));
-        assert!(parse_type_name("select", None)
-            .unwrap_err()
-            .contains("enum"));
-        assert!(parse_type_name("multi_select", None)
-            .unwrap_err()
-            .contains("multi_enum"));
+        assert!(matches!(
+            parse_type_name("date", None),
+            Err(ValueDomainError::RetiredType { name: "date", .. })
+        ));
+        assert!(matches!(
+            parse_type_name("select", None),
+            Err(ValueDomainError::RetiredType { name: "select", .. })
+        ));
+        assert!(matches!(
+            parse_type_name("multi_select", None),
+            Err(ValueDomainError::RetiredType {
+                name: "multi_select",
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -1001,7 +1147,48 @@ mod tests {
     fn pattern_compile_bounds() {
         assert!(compile_pattern("^a+$").is_ok());
         let big = "a".repeat(MAX_PATTERN_BYTES + 1);
-        assert!(compile_pattern(&big).unwrap_err().contains("exceeds"));
+        assert!(matches!(
+            compile_pattern(&big),
+            Err(ValueDomainError::PatternTooLong { .. })
+        ));
+        let malformed = compile_pattern("(").unwrap_err();
+        assert!(matches!(malformed, ValueDomainError::InvalidPattern(_)));
+        assert!(std::error::Error::source(&malformed).is_some());
+    }
+
+    #[test]
+    fn constraint_failures_preserve_semantic_variants() {
+        assert!(matches!(
+            validate_string_constraints(
+                "x",
+                &Constraints {
+                    min_length: Some(2),
+                    ..Default::default()
+                },
+                None
+            ),
+            Err(ValueDomainError::BelowMinLength(2))
+        ));
+        assert!(matches!(
+            validate_number_constraints(
+                2.0,
+                &Constraints {
+                    exclusive_min: Some(2.0),
+                    ..Default::default()
+                }
+            ),
+            Err(ValueDomainError::AtOrBelowExclusiveMinimum(2.0))
+        ));
+        assert!(matches!(
+            validate_number_constraints(
+                3.0,
+                &Constraints {
+                    multiple_of: Some(2.0),
+                    ..Default::default()
+                }
+            ),
+            Err(ValueDomainError::NotMultiple(2.0))
+        ));
     }
 
     #[test]
@@ -1059,6 +1246,9 @@ mod tests {
         let mut glosses = IndexMap::new();
         glosses.insert("a".into(), "x = y".into());
         let err = EnumMembership::try_new(vec!["a".into()], Some(glosses)).unwrap_err();
-        assert!(err.contains("'='"), "{err}");
+        assert!(matches!(
+            err,
+            ValueDomainError::ForbiddenEnumGlossDelimiter { delimiter: '=', .. }
+        ));
     }
 }

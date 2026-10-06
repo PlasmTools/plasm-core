@@ -279,12 +279,12 @@ pub fn validate_expected_scope(
             continue;
         }
         if !scope.contains_key(sp.name.as_str()) {
-            return Err(RuntimeError::ConfigurationError {
-                message: format!(
-                    "view `{view_name}` requires identity/scope field `{}` (declared under views.scope)",
-                    sp.name
-                ),
-            });
+            return Err(RuntimeError::ViewPlan(
+                crate::ViewPlanError::ScopeFieldRequired {
+                    view: view_name.to_owned(),
+                    field: sp.name.clone(),
+                },
+            ));
         }
     }
     Ok(())
@@ -344,21 +344,16 @@ pub fn resolve_binding(
     node_fields: &ViewNodeFieldMap,
 ) -> Result<Value, RuntimeError> {
     match binding {
-        ViewParamBinding::Scope { param } => {
-            scope
-                .get(param)
-                .cloned()
-                .ok_or_else(|| RuntimeError::ConfigurationError {
-                    message: format!("view scope missing `{param}`"),
-                })
-        }
+        ViewParamBinding::Scope { param } => scope.get(param).cloned().ok_or_else(|| {
+            RuntimeError::ViewPlan(crate::ViewPlanError::ScopeMissing {
+                param: param.clone(),
+            })
+        }),
         ViewParamBinding::Literal { value } => Ok(json_to_plasm_value(value)),
         ViewParamBinding::NodeField { node, field } => {
             let fields = node_fields
                 .get(node)
-                .ok_or_else(|| RuntimeError::ConfigurationError {
-                    message: format!("view bind references unknown node `{node}`"),
-                })?;
+                .ok_or_else(|| RuntimeError::ViewNodeMissing { node: node.clone() })?;
             Ok(fields.get(field).cloned().unwrap_or(Value::Null))
         }
         ViewParamBinding::Computed { template } => {
@@ -393,9 +388,9 @@ pub fn scalar_string_from_value(v: &Value) -> Result<String, RuntimeError> {
         Value::Integer(i) => Ok(i.to_string()),
         Value::Bool(b) => Ok(b.to_string()),
         Value::Float(f) => Ok(f.to_string()),
-        _ => Err(RuntimeError::ConfigurationError {
-            message: format!("view identity field expected scalar, got {:?}", v),
-        }),
+        _ => Err(RuntimeError::ViewPlan(
+            crate::ViewPlanError::IdentityScalarRequired,
+        )),
     }
 }
 
@@ -406,22 +401,21 @@ pub fn build_view_row_reference(
     let mut parts = BTreeMap::new();
     if !view_ent.key_vars.is_empty() {
         for kv in &view_ent.key_vars {
-            let v =
-                fields_plain
-                    .get(kv.as_str())
-                    .ok_or_else(|| RuntimeError::ConfigurationError {
-                        message: format!("view output missing key field `{kv}`"),
-                    })?;
+            let v = fields_plain.get(kv.as_str()).ok_or_else(|| {
+                RuntimeError::ViewPlan(crate::ViewPlanError::OutputIdentityMissing {
+                    field: kv.to_string(),
+                })
+            })?;
             parts.insert(kv.to_string(), scalar_string_from_value(v)?);
         }
         Ok(Ref::compound(view_ent.name.clone(), parts))
     } else {
         let idf = view_ent.id_field.as_str();
-        let v = fields_plain
-            .get(idf)
-            .ok_or_else(|| RuntimeError::ConfigurationError {
-                message: format!("view output missing id field `{idf}`"),
-            })?;
+        let v = fields_plain.get(idf).ok_or_else(|| {
+            RuntimeError::ViewPlan(crate::ViewPlanError::OutputIdentityMissing {
+                field: idf.to_owned(),
+            })
+        })?;
         Ok(Ref::new(
             view_ent.name.clone(),
             scalar_string_from_value(v)?,
@@ -463,11 +457,11 @@ pub fn ref_from_get_bind_params(
         let mut parts = BTreeMap::new();
         for kv in &target_ent.key_vars {
             let s = bound_scalar_for_get_param(kv.as_str(), cap, bound_param_to_string)
-                .ok_or_else(|| RuntimeError::ConfigurationError {
-                    message: format!(
-                        "view Get node: missing binding for parameter `{}` (needed for `{}` key_vars)",
-                        kv, target_ent.name
-                    ),
+                .ok_or_else(|| {
+                    RuntimeError::ViewPlan(crate::ViewPlanError::GetBindingMissing {
+                        entity: target_ent.name.to_string(),
+                        field: kv.to_string(),
+                    })
                 })?;
             parts.insert(kv.to_string(), s);
         }
@@ -475,9 +469,10 @@ pub fn ref_from_get_bind_params(
     } else {
         let idf = target_ent.id_field.as_str();
         let id = bound_scalar_for_get_param(idf, cap, bound_param_to_string).ok_or_else(|| {
-            RuntimeError::ConfigurationError {
-                message: format!("view Get node: missing binding for id parameter `{}`", idf),
-            }
+            RuntimeError::ViewPlan(crate::ViewPlanError::GetBindingMissing {
+                entity: target_ent.name.to_string(),
+                field: idf.to_owned(),
+            })
         })?;
         Ok(Ref::new(target_ent.name.clone(), id))
     }
@@ -534,12 +529,9 @@ fn rows_for_binding<'a>(
             let mut seen = std::collections::HashSet::new();
             let mut rows = Vec::new();
             for node in nodes {
-                let result =
-                    node_results
-                        .get(node)
-                        .ok_or_else(|| RuntimeError::ConfigurationError {
-                            message: format!("unknown identity union node `{node}`"),
-                        })?;
+                let result = node_results
+                    .get(node)
+                    .ok_or_else(|| RuntimeError::ViewNodeMissing { node: node.clone() })?;
                 for row in result.entities() {
                     if seen.insert(row.reference.clone()) {
                         rows.push(row);
@@ -560,9 +552,7 @@ fn rows_for_binding<'a>(
         } => {
             let r = node_results
                 .get(node)
-                .ok_or_else(|| RuntimeError::ConfigurationError {
-                    message: format!("view relation_output references unknown node `{node}`"),
-                })?;
+                .ok_or_else(|| RuntimeError::ViewNodeMissing { node: node.clone() })?;
             let matched: Vec<&CachedEntity> = r
                 .entities()
                 .iter()
@@ -580,17 +570,13 @@ fn rows_for_binding<'a>(
         ViewRelationBinding::NodeAllRows { node } => {
             let r = node_results
                 .get(node)
-                .ok_or_else(|| RuntimeError::ConfigurationError {
-                    message: format!("view relation_output references unknown node `{node}`"),
-                })?;
+                .ok_or_else(|| RuntimeError::ViewNodeMissing { node: node.clone() })?;
             Ok(r.entities().iter().collect())
         }
         ViewRelationBinding::NodeSingleRow { node } => {
             let r = node_results
                 .get(node)
-                .ok_or_else(|| RuntimeError::ConfigurationError {
-                    message: format!("view relation_output references unknown node `{node}`"),
-                })?;
+                .ok_or_else(|| RuntimeError::ViewNodeMissing { node: node.clone() })?;
             Ok(r.entities().iter().collect::<Vec<_>>())
         }
     }
@@ -603,14 +589,11 @@ pub fn resolve_view_relation_maps(
 ) -> Result<IndexMap<String, DecodedRelation>, RuntimeError> {
     let mut out: IndexMap<String, DecodedRelation> = IndexMap::new();
     for spec in &view.relation_outputs {
-        let target_ent = cgs.get_entity(spec.target.as_str()).ok_or_else(|| {
-            RuntimeError::ConfigurationError {
-                message: format!(
-                    "view relation_output references unknown target entity `{}`",
-                    spec.target
-                ),
-            }
-        })?;
+        let target_ent =
+            cgs.get_entity(spec.target.as_str())
+                .ok_or_else(|| RuntimeError::EntityUnknown {
+                    entity: spec.target.to_string(),
+                })?;
         let refs: Vec<Ref> = match &spec.binding {
             ViewRelationBinding::FirstNodeRowWhere { .. } => {
                 let rows = rows_for_binding(&spec.binding, node_results)?;
@@ -631,23 +614,20 @@ pub fn resolve_view_relation_maps(
             ViewRelationBinding::NodeSingleRow { node } => {
                 let r = node_results
                     .get(node)
-                    .ok_or_else(|| RuntimeError::ConfigurationError {
-                        message: format!("view relation_output references unknown node `{node}`"),
-                    })?;
+                    .ok_or_else(|| RuntimeError::ViewNodeMissing { node: node.clone() })?;
                 if r.count() != 1 {
-                    return Err(RuntimeError::ConfigurationError {
-                        message: format!(
-                            "view relation_output node_single_row `{node}` expected exactly one entity (got {})",
-                            r.count()
-                        ),
-                    });
+                    return Err(RuntimeError::ViewPlan(
+                        crate::ViewPlanError::SingleRowCount {
+                            node: node.clone(),
+                            count: r.count(),
+                        },
+                    ));
                 }
-                let row = r
-                    .entities()
-                    .first()
-                    .ok_or_else(|| RuntimeError::ConfigurationError {
-                        message: format!("view relation_output node `{node}` missing row"),
-                    })?;
+                let row = r.entities().first().ok_or_else(|| {
+                    RuntimeError::ViewPlan(crate::ViewPlanError::NodeRowMissing {
+                        node: (*node).to_owned(),
+                    })
+                })?;
                 vec![cached_row_to_target_ref(target_ent, row)?]
             }
         };
@@ -669,8 +649,8 @@ pub fn resolve_view_relation_maps(
                 node_results
                     .get(*node)
                     .map(|result| result.collection.membership())
-                    .ok_or_else(|| RuntimeError::ConfigurationError {
-                        message: format!("missing view relation input {node}"),
+                    .ok_or_else(|| RuntimeError::ViewNodeMissing {
+                        node: (*node).to_owned(),
                     })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -695,29 +675,28 @@ pub(crate) fn derive_view_query_scope(
     query: &QueryExpr,
     cgs: &CGS,
 ) -> Result<IndexMap<String, Value>, RuntimeError> {
-    let view = cgs
-        .views
-        .get(view_name)
-        .ok_or_else(|| RuntimeError::ConfigurationError {
-            message: format!("unknown composed view `{view_name}`"),
-        })?;
+    let view = cgs.views.get(view_name).ok_or_else(|| {
+        RuntimeError::ViewPlan(crate::ViewPlanError::UnknownView {
+            view: view_name.to_owned(),
+        })
+    })?;
     if query.entity.as_str() != view.entity.as_str() {
-        return Err(RuntimeError::ConfigurationError {
-            message: format!(
-                "view `{view_name}` targets entity {} but query was for {}",
-                view.entity.as_str(),
-                query.entity.as_str()
-            ),
-        });
+        return Err(RuntimeError::ViewPlan(
+            crate::ViewPlanError::TargetMismatch {
+                view: view_name.to_owned(),
+                expected: view.entity.to_string(),
+                actual: query.entity.to_string(),
+            },
+        ));
     }
     match &query.predicate {
         Some(pred) => predicate_scope_map(pred),
         None if view.scope.iter().all(|s| !s.required || s.inject.is_some()) => Ok(IndexMap::new()),
-        None => Err(RuntimeError::ConfigurationError {
-            message: format!(
-                "view `{view_name}` requires a query predicate supplying scope parameters"
-            ),
-        }),
+        None => Err(RuntimeError::ViewPlan(
+            crate::ViewPlanError::ScopePredicateRequired {
+                view: view_name.to_owned(),
+            },
+        )),
     }
 }
 
@@ -727,26 +706,25 @@ pub(crate) fn derive_view_get_scope(
     get: &GetExpr,
     cgs: &CGS,
 ) -> Result<IndexMap<String, Value>, RuntimeError> {
-    let view = cgs
-        .views
-        .get(view_name)
-        .ok_or_else(|| RuntimeError::ConfigurationError {
-            message: format!("unknown composed view `{view_name}`"),
-        })?;
+    let view = cgs.views.get(view_name).ok_or_else(|| {
+        RuntimeError::ViewPlan(crate::ViewPlanError::UnknownView {
+            view: view_name.to_owned(),
+        })
+    })?;
     if get.reference.entity_type.as_str() != view.entity.as_str() {
-        return Err(RuntimeError::ConfigurationError {
-            message: format!(
-                "view `{view_name}` targets entity {} but get ref was for {}",
-                view.entity.as_str(),
-                get.reference.entity_type
-            ),
-        });
+        return Err(RuntimeError::ViewPlan(
+            crate::ViewPlanError::TargetMismatch {
+                view: view_name.to_owned(),
+                expected: view.entity.to_string(),
+                actual: get.reference.entity_type.to_string(),
+            },
+        ));
     }
-    let view_entity =
-        cgs.get_entity(&view.entity)
-            .ok_or_else(|| RuntimeError::ConfigurationError {
-                message: format!("view `{view_name}` targets unknown entity {}", view.entity),
-            })?;
+    let view_entity = cgs
+        .get_entity(&view.entity)
+        .ok_or_else(|| RuntimeError::EntityUnknown {
+            entity: view.entity.to_string(),
+        })?;
     scope_from_get_reference(view_entity, get)
 }
 
@@ -791,14 +769,11 @@ pub(crate) fn prepare_view_node<'a>(
                 let v = resolve_binding(bspec, scope, node_fields)?;
                 bound.insert(param.clone(), scalar_string_from_value(&v)?);
             }
-            let target_ent = cgs.get_entity(cap.domain.as_str()).ok_or_else(|| {
-                RuntimeError::ConfigurationError {
-                    message: format!(
-                        "view node `{}`: unknown entity domain `{}`",
-                        node.id, cap.domain
-                    ),
-                }
-            })?;
+            let target_ent =
+                cgs.get_entity(cap.domain.as_str())
+                    .ok_or_else(|| RuntimeError::EntityUnknown {
+                        entity: cap.domain.to_string(),
+                    })?;
             let reference = ref_from_view_get_node(target_ent, cap, &bound)?;
             Ok(PreparedViewNode::Get {
                 cap,
@@ -821,12 +796,12 @@ pub(crate) fn prepare_view_node<'a>(
             };
             Ok(PreparedViewNode::Create { cap, create })
         }
-        other => Err(RuntimeError::ConfigurationError {
-            message: format!(
-                "view node `{}`: unsupported capability kind {other:?}",
-                node.id
-            ),
-        }),
+        other => Err(RuntimeError::ViewPlan(
+            crate::ViewPlanError::UnsupportedNodeKind {
+                node: node.id.clone(),
+                kind: other,
+            },
+        )),
     }
 }
 
@@ -836,17 +811,16 @@ pub(crate) fn load_view_dag<'a>(
     cgs: &'a CGS,
     ambient: &ViewAmbientContext,
 ) -> Result<(&'a ViewDefinition, &'a EntityDef, IndexMap<String, Value>), RuntimeError> {
-    let view = cgs
-        .views
-        .get(view_name)
-        .ok_or_else(|| RuntimeError::ConfigurationError {
-            message: format!("unknown composed view `{view_name}`"),
+    let view = cgs.views.get(view_name).ok_or_else(|| {
+        RuntimeError::ViewPlan(crate::ViewPlanError::UnknownView {
+            view: view_name.to_owned(),
+        })
+    })?;
+    let view_entity = cgs
+        .get_entity(&view.entity)
+        .ok_or_else(|| RuntimeError::EntityUnknown {
+            entity: view.entity.to_string(),
         })?;
-    let view_entity =
-        cgs.get_entity(&view.entity)
-            .ok_or_else(|| RuntimeError::ConfigurationError {
-                message: format!("view `{view_name}` targets unknown entity {}", view.entity),
-            })?;
     merge_view_ambient_scope(view, &mut scope, ambient);
     validate_expected_scope(view_name, view, &scope)?;
     Ok((view, view_entity, scope))

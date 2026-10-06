@@ -1,6 +1,17 @@
 //! Lift wire [`PlasmCompArtifact`] into topo-ordered executable steps for the host runner.
 
 use plasm_core::{PlasmBindGraph, PlasmCompArtifact, PlasmReturn, PlasmStepPayload, StepId};
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum PlasmCompLiftError {
+    #[error(transparent)]
+    Validation(#[from] plasm_core::plasm_monad::PlasmCompValidationError),
+    #[error("bind graph references missing step `{step}`")]
+    MissingStep { step: String },
+    #[error("step `{step}` is not present in the bind graph")]
+    OrphanStep { step: String },
+}
 
 /// In-memory executable comp: bind graph + topo-ordered typed step payloads.
 #[derive(Debug, Clone)]
@@ -14,7 +25,7 @@ pub(crate) struct ExecutablePlasmComp {
 /// Validate comp wiring and materialize steps in bind topological order.
 pub(crate) fn lift_executable_comp(
     artifact: &PlasmCompArtifact,
-) -> Result<ExecutablePlasmComp, String> {
+) -> Result<ExecutablePlasmComp, PlasmCompLiftError> {
     artifact.comp.validate()?;
     let mut steps_topo = Vec::with_capacity(artifact.comp.bind.topo.len());
     for id in &artifact.comp.bind.topo {
@@ -22,7 +33,9 @@ pub(crate) fn lift_executable_comp(
             .comp
             .steps
             .get(id.as_str())
-            .ok_or_else(|| format!("lift_executable_comp: bind.topo step {id} missing from steps"))?
+            .ok_or_else(|| PlasmCompLiftError::MissingStep {
+                step: id.to_string(),
+            })?
             .clone();
         steps_topo.push((id.clone(), payload));
     }
@@ -31,9 +44,7 @@ pub(crate) fn lift_executable_comp(
             artifact.comp.bind.topo.iter().map(|s| s.as_str()).collect();
         for key in artifact.comp.steps.keys() {
             if !topo_ids.contains(key.as_str()) {
-                return Err(format!(
-                    "lift_executable_comp: steps contains orphan step {key} not in bind.topo"
-                ));
+                return Err(PlasmCompLiftError::OrphanStep { step: key.clone() });
             }
         }
     }

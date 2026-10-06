@@ -196,7 +196,10 @@ fn fixture_runner_node_single_row_cardinality_error() {
     let ambient = ViewAmbientContext::default();
     let err =
         run_view_dag_sync(&runner, "lang_digest", scope, &cgs, &ambient).expect_err("cardinality");
-    assert!(err.to_string().contains("node_single_row"), "{err}");
+    assert!(
+        matches!(err, RuntimeError::ViewPlan(crate::ViewPlanError::SingleRowCount { ref node, count: 2 }) if node == "item_node"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -272,8 +275,8 @@ impl ViewNodeRunner for FixtureViewNodeRunner {
         source: &ExecutionResult,
     ) -> Result<ExecutionResult, crate::RuntimeError> {
         let mut result = self.results.get(&node.id).cloned().ok_or_else(|| {
-            crate::RuntimeError::ConfigurationError {
-                message: format!("fixture missing traversal `{}`", node.id),
+            crate::RuntimeError::ViewNodeMissing {
+                node: node.id.clone(),
             }
         })?;
         result.collection = crate::execution::ExecutionCollection::evaluate(
@@ -299,8 +302,8 @@ impl ViewNodeRunner for FixtureViewNodeRunner {
         self.results
             .get(&node.id)
             .cloned()
-            .ok_or_else(|| crate::RuntimeError::ConfigurationError {
-                message: format!("fixture runner missing node `{}`", node.id),
+            .ok_or_else(|| crate::RuntimeError::ViewNodeMissing {
+                node: node.id.clone(),
             })
     }
 
@@ -315,8 +318,8 @@ impl ViewNodeRunner for FixtureViewNodeRunner {
         self.results
             .get(&node.id)
             .cloned()
-            .ok_or_else(|| crate::RuntimeError::ConfigurationError {
-                message: format!("fixture runner missing node `{}`", node.id),
+            .ok_or_else(|| crate::RuntimeError::ViewNodeMissing {
+                node: node.id.clone(),
             })
     }
 
@@ -330,8 +333,8 @@ impl ViewNodeRunner for FixtureViewNodeRunner {
         self.results
             .get(&node.id)
             .cloned()
-            .ok_or_else(|| crate::RuntimeError::ConfigurationError {
-                message: format!("fixture runner missing node `{}`", node.id),
+            .ok_or_else(|| crate::RuntimeError::ViewNodeMissing {
+                node: node.id.clone(),
             })
     }
 }

@@ -23,6 +23,30 @@
 use async_trait::async_trait;
 use thiserror::Error;
 
+/// JSON shape metadata for input validation, without retaining input contents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JsonInputKind {
+    Null,
+    Boolean,
+    Number,
+    String,
+    Array,
+    Object,
+}
+
+impl From<&serde_json::Value> for JsonInputKind {
+    fn from(value: &serde_json::Value) -> Self {
+        match value {
+            serde_json::Value::Null => Self::Null,
+            serde_json::Value::Bool(_) => Self::Boolean,
+            serde_json::Value::Number(_) => Self::Number,
+            serde_json::Value::String(_) => Self::String,
+            serde_json::Value::Array(_) => Self::Array,
+            serde_json::Value::Object(_) => Self::Object,
+        }
+    }
+}
+
 /// Errors returned by an [`SdkTransport`] implementation.
 #[derive(Debug, Error)]
 pub enum SdkTransportError {
@@ -30,17 +54,32 @@ pub enum SdkTransportError {
     #[error("unknown capability '{capability}'")]
     UnknownCapability { capability: String },
 
-    /// The input JSON failed the SDK's validation.
-    #[error("invalid input for capability '{capability}': {message}")]
-    InvalidInput { capability: String, message: String },
+    /// The SDK requires an object, but received a different JSON shape.
+    #[error("invalid input for capability '{capability}': expected JSON object, got {actual:?}")]
+    ObjectInputRequired {
+        capability: String,
+        actual: JsonInputKind,
+    },
+
+    /// Input cannot deserialize into the SDK operation's declared input type.
+    #[error("invalid JSON input for capability '{capability}': {source}")]
+    InputDeserialization {
+        capability: String,
+        #[source]
+        source: serde_json::Error,
+    },
 
     /// The SDK operation failed during execution.
-    #[error("SDK execution failed for capability '{capability}': {message}")]
-    ExecutionFailed { capability: String, message: String },
+    #[error("SDK execution failed for capability '{capability}': {source}")]
+    ExecutionFailed {
+        capability: String,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
 
     /// The SDK is missing required configuration (RPC URLs, API keys, etc.).
-    #[error("SDK not configured: {message}")]
-    NotConfigured { message: String },
+    #[error("SDK not configured: missing {setting}")]
+    NotConfigured { setting: String },
 
     /// Catch-all for SDK-internal errors that should preserve their source chain.
     #[error("SDK error for capability '{capability}': {source}")]
@@ -68,7 +107,9 @@ pub trait SdkTransport: Send + Sync {
     ///
     /// `input` is typically a [`serde_json::Value::Object`] with keys from the
     /// mapping template.  SDKs that require an object should return
-    /// [`SdkTransportError::InvalidInput`] if `input` is not a `Value::Object`.
+    /// [`SdkTransportError::ObjectInputRequired`] if `input` is not a `Value::Object`.
+    /// Typed JSON decoding failures use [`SdkTransportError::InputDeserialization`],
+    /// retaining the original [`serde_json::Error`] as their cause.
     async fn execute_capability(
         &self,
         capability: &str,
@@ -95,13 +136,13 @@ mod tests {
                 "echo" => Ok(input),
                 "fail" => Err(SdkTransportError::ExecutionFailed {
                     capability: capability.into(),
-                    message: "intentional failure".into(),
+                    source: Box::new(std::io::Error::other("intentional failure")),
                 }),
                 "validate" => {
                     if !input.is_object() {
-                        return Err(SdkTransportError::InvalidInput {
+                        return Err(SdkTransportError::ObjectInputRequired {
                             capability: capability.into(),
-                            message: "expected JSON object".into(),
+                            actual: JsonInputKind::from(&input),
                         });
                     }
                     Ok(input)
@@ -145,13 +186,64 @@ mod tests {
             .execute_capability("validate", json!([1, 2, 3]))
             .await
             .unwrap_err();
-        assert!(matches!(err, SdkTransportError::InvalidInput { .. }));
+        assert!(matches!(err, SdkTransportError::ObjectInputRequired {
+            capability, actual: JsonInputKind::Array,
+        } if capability == "validate"));
+    }
+
+    #[tokio::test]
+    async fn every_non_object_shape_is_rejected_without_input_contents() {
+        for (input, expected) in [
+            (json!(null), JsonInputKind::Null),
+            (json!(false), JsonInputKind::Boolean),
+            (json!(42), JsonInputKind::Number),
+            (json!("private-input"), JsonInputKind::String),
+            (json!([]), JsonInputKind::Array),
+        ] {
+            let error = MockSdk
+                .execute_capability("validate", input)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(&error, SdkTransportError::ObjectInputRequired { capability, actual }
+                if capability == "validate" && *actual == expected)
+            );
+            assert!(!error.to_string().contains("private-input"));
+        }
+        assert_eq!(JsonInputKind::from(&json!({})), JsonInputKind::Object);
+        assert_eq!(
+            MockSdk
+                .execute_capability("validate", json!({}))
+                .await
+                .unwrap(),
+            json!({})
+        );
+    }
+
+    #[test]
+    fn input_deserialization_preserves_typed_cause() {
+        use std::error::Error;
+        let source = serde_json::from_value::<u64>(json!([])).unwrap_err();
+        let error = SdkTransportError::InputDeserialization {
+            capability: "count".into(),
+            source,
+        };
+        assert!(
+            matches!(&error, SdkTransportError::InputDeserialization { capability, source }
+            if capability == "count" && source.is_data())
+        );
+        assert!(error
+            .source()
+            .unwrap()
+            .downcast_ref::<serde_json::Error>()
+            .unwrap()
+            .is_data());
     }
 
     #[tokio::test]
     async fn not_configured_error() {
         let err = SdkTransportError::NotConfigured {
-            message: "missing RPC URL".into(),
+            setting: "RPC URL".into(),
         };
         assert!(err.to_string().contains("missing RPC URL"));
     }

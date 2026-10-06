@@ -34,51 +34,75 @@ struct Config {
     vectors: PathBuf,
     bindings: PathBuf,
 }
-fn read<T: serde::de::DeserializeOwned>(p: impl AsRef<Path>) -> Result<T> {
+#[derive(Debug, thiserror::Error)]
+enum ProbeError {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    Catalog(#[from] plasm_core::catalog_il::CatalogIlError),
+    #[error(transparent)]
+    Discovery(#[from] plasm_core::catalog_discovery::CatalogDiscoveryError),
+    #[error(transparent)]
+    Templates(#[from] plasm_compile::CatalogTemplateError),
+    #[error(transparent)]
+    Store(#[from] plasm_agent_core::discovery_store::DiscoveryStoreError),
+    #[error("manifest path has no containing directory")]
+    ManifestDirectoryMissing,
+    #[error("frozen document for `{capability}` changed")]
+    FrozenDocumentChanged { capability: String },
+    #[error("frozen vector for `{capability}` is missing")]
+    FrozenVectorMissing { capability: String },
+}
+fn read<T: serde::de::DeserializeOwned>(p: impl AsRef<Path>) -> std::result::Result<T, ProbeError> {
     Ok(serde_json::from_slice(&std::fs::read(p)?)?)
 }
-fn save(p: impl AsRef<Path>, v: &impl serde::Serialize) -> Result<()> {
+fn save(p: impl AsRef<Path>, v: &impl serde::Serialize) -> std::result::Result<(), ProbeError> {
     std::fs::write(p, serde_json::to_vec(v)?)?;
     Ok(())
 }
 fn destination(c: &Config, s: &str) -> PathBuf {
     c.out.join("packs").join(s.replace('/', "--"))
 }
-fn prepare(c: &Config) -> Result<()> {
+fn prepare(c: &Config) -> std::result::Result<(), ProbeError> {
     let docs: BTreeMap<String, CapabilityDocument> = read(&c.documents)?;
     let vectors: BTreeMap<String, Vec<f32>> = read(&c.vectors)?;
     for source in &c.sources {
         let mut manifest: CatalogManifest = read(&source.manifest)?;
-        let root = source.manifest.parent().context("manifest directory")?;
+        let root = source
+            .manifest
+            .parent()
+            .ok_or(ProbeError::ManifestDirectoryMissing)?;
         let cgs = plasm_core::catalog_il::load_catalog_il_verified(
             &std::fs::read(root.join(&manifest.cgs_json))?,
             &manifest.cgs_hash,
-        )
-        .map_err(anyhow::Error::msg)?
+        )?
         .fresh_catalog_digest();
-        let rendered = plasm_core::catalog_discovery::capability_documents(&cgs)
-            .map_err(anyhow::Error::msg)?;
+        let rendered = plasm_core::catalog_discovery::capability_documents(&cgs)?;
         let capabilities = rendered
             .into_iter()
             .map(|document| {
-                anyhow::ensure!(
-                    docs.get(&format!("{}::{}", source.source, document.capability))
-                        == Some(&document),
-                    "frozen document changed"
-                );
+                if docs.get(&format!("{}::{}", source.source, document.capability))
+                    != Some(&document)
+                {
+                    return Err(ProbeError::FrozenDocumentChanged {
+                        capability: document.capability.clone(),
+                    });
+                }
                 Ok(EmbeddedCapability {
                     embedding: vectors
                         .get(&document.text)
-                        .context("missing frozen vector")?
+                        .ok_or_else(|| ProbeError::FrozenVectorMissing {
+                            capability: document.capability.clone(),
+                        })?
                         .clone(),
                     document,
                 })
             })
-            .collect::<Result<Vec<_>>>()?;
-        let cgs_bytes =
-            plasm_core::catalog_il::cgs_to_catalog_il_bytes(&cgs).map_err(anyhow::Error::msg)?;
-        let recipes =
-            plasm_compile::compile_cgs_capability_templates(&cgs).map_err(anyhow::Error::msg)?;
+            .collect::<std::result::Result<Vec<_>, ProbeError>>()?;
+        let cgs_bytes = plasm_core::catalog_il::cgs_to_catalog_il_bytes(&cgs)?;
+        let recipes = plasm_compile::compile_cgs_capability_templates(&cgs)?;
         let recipe_bytes = serde_json::to_vec(&recipes)?;
         let artifact = CatalogDiscoveryArtifact {
             entry_id: manifest.entry_id.clone(),
@@ -88,7 +112,7 @@ fn prepare(c: &Config) -> Result<()> {
             capabilities,
             prerequisites: cgs.prerequisites.clone(),
         };
-        artifact.validate(&cgs).map_err(anyhow::Error::msg)?;
+        artifact.validate(&cgs)?;
         let discovery_bytes = serde_json::to_vec(&artifact)?;
         manifest.cgs_hash = artifact.cgs_hash;
         manifest.cgs_json = "catalog.cgs.json".into();
@@ -115,7 +139,8 @@ async fn main() -> Result<()> {
     let args: Vec<_> = std::env::args().collect();
     let c: Config = read(args.get(2).context("config path required")?)?;
     if args.get(1).map(String::as_str) == Some("prepare") {
-        return prepare(&c);
+        prepare(&c)?;
+        return Ok(());
     }
     let case = c
         .cases

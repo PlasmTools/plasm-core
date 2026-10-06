@@ -45,11 +45,7 @@ fn preflight_compile_query(
         extract_predicate_vars(pred, &mut env);
     }
     normalize_cml_env_inputs(&mut env, cgs, capability)?;
-    plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
-        RuntimeError::ConfigurationError {
-            message: e.to_string(),
-        }
-    })?;
+    plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability)?;
     if let Some(proj) = &query.projection {
         env.insert(
             "projection".to_string(),
@@ -124,11 +120,7 @@ fn preflight_compile_create(
         }
     }
     normalize_cml_env_inputs(&mut env, cgs, capability)?;
-    plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
-        RuntimeError::ConfigurationError {
-            message: e.to_string(),
-        }
-    })?;
+    plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability)?;
     apply_preflight_compile_stubs(&mut env, capability, cgs);
     merge_plasm_execute_session_env(&mut env);
     compile_operation_dispatch(&capability_template, &env).map(|_| ())
@@ -150,11 +142,8 @@ fn preflight_compile_delete(
     let mut env = CmlEnv::new();
     let target_ent = cgs
         .get_entity(delete.target.entity_type.as_str())
-        .ok_or_else(|| RuntimeError::ConfigurationError {
-            message: format!(
-                "unknown entity `{}` for delete identity-env projection",
-                delete.target.entity_type
-            ),
+        .ok_or_else(|| RuntimeError::EntityUnknown {
+            entity: delete.target.entity_type.to_string(),
         })?;
     populate_template_path_env(
         &mut env,
@@ -167,11 +156,7 @@ fn preflight_compile_delete(
         env.insert("input".to_string(), input);
     }
     normalize_cml_env_inputs(&mut env, cgs, capability)?;
-    plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
-        RuntimeError::ConfigurationError {
-            message: e.to_string(),
-        }
-    })?;
+    plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability)?;
     merge_plasm_execute_session_env(&mut env);
     compile_operation_dispatch(&capability_template, &env).map(|_| ())
 }
@@ -192,11 +177,8 @@ fn preflight_compile_invoke(
     let mut env = CmlEnv::new();
     let target_ent = cgs
         .get_entity(invoke.target.entity_type.as_str())
-        .ok_or_else(|| RuntimeError::ConfigurationError {
-            message: format!(
-                "unknown entity `{}` for invoke identity-env projection",
-                invoke.target.entity_type
-            ),
+        .ok_or_else(|| RuntimeError::EntityUnknown {
+            entity: invoke.target.entity_type.to_string(),
         })?;
     populate_template_path_env(
         &mut env,
@@ -209,11 +191,7 @@ fn preflight_compile_invoke(
         env.insert("input".to_string(), input.clone());
     }
     normalize_cml_env_inputs(&mut env, cgs, capability)?;
-    plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
-        RuntimeError::ConfigurationError {
-            message: e.to_string(),
-        }
-    })?;
+    plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability)?;
     merge_entity_id_from_into_input_env(&mut env, Some(target_ent), capability);
     apply_preflight_compile_stubs(&mut env, capability, cgs);
     merge_plasm_execute_session_env(&mut env);

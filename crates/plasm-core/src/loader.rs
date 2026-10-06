@@ -23,6 +23,199 @@ use serde::{Deserialize, Deserializer};
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, trace, warn};
 
+#[derive(Debug, thiserror::Error)]
+pub enum SchemaFileReadError {
+    #[error("failed to inspect {kind} file {path}")]
+    Stat {
+        kind: SchemaFileKind,
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("{path} is not a regular {kind} file")]
+    NotRegularFile { kind: SchemaFileKind, path: PathBuf },
+    #[error("{kind} file {path} is too large ({actual_bytes} bytes; max {max_bytes})")]
+    TooLarge {
+        kind: SchemaFileKind,
+        path: PathBuf,
+        actual_bytes: u64,
+        max_bytes: u64,
+    },
+    #[error("failed to read {kind} file {path}")]
+    Read {
+        kind: SchemaFileKind,
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+}
+
+#[derive(Debug, Clone, Copy, thiserror::Error)]
+pub enum SchemaFileKind {
+    #[error("domain.yaml")]
+    Domain,
+    #[error("mappings.yaml")]
+    Mappings,
+    #[error("schema YAML")]
+    Combined,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum SchemaLoadError {
+    #[error(transparent)]
+    FileRead(#[from] SchemaFileReadError),
+    #[error("failed to parse domain.yaml: {0}")]
+    DomainYaml(#[source] serde_yaml::Error),
+    #[error("failed to parse mappings.yaml: {0}")]
+    MappingsYaml(#[source] serde_yaml::Error),
+    #[error("schema YAML is neither CGS interchange nor combined domain+mappings")]
+    CombinedYaml(#[source] serde_yaml::Error),
+    #[error("CGS validation failed: {0}")]
+    Validation(#[from] crate::error::SchemaError),
+    #[error("compiled catalog artifact could not be read at {path}")]
+    CatalogArtifactRead {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error(transparent)]
+    CatalogIl(#[from] crate::catalog_il::CatalogIlError),
+    #[error(transparent)]
+    Assembly(#[from] SchemaAssemblyError),
+    #[error("bare CGS JSON is unsupported at {path}; use YAML or a compiled catalog artifact")]
+    BareCgsJson { path: PathBuf },
+    #[error("unknown schema format at {path}")]
+    UnknownFormat { path: PathBuf },
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum SchemaAssemblyError {
+    #[error("values[{value_ref}]: string_semantics is retired")]
+    RemovedStringSemantics { value_ref: String },
+    #[error("values[{value_ref}]: value_format is retired")]
+    RemovedValueFormat { value_ref: String },
+    #[error("values[{value_ref}]: type is required")]
+    MissingValueType { value_ref: String },
+    #[error("values[{value_ref}] has an invalid value domain: {source}")]
+    ValueDomain {
+        value_ref: String,
+        #[source]
+        source: crate::value_domain::ValueDomainError,
+    },
+    #[error("values[{value_ref}] of type {value_type} requires non-empty enum membership")]
+    EnumMembershipRequired {
+        value_ref: String,
+        value_type: &'static str,
+    },
+    #[error("values[{value_ref}] of type array requires items")]
+    ArrayItemsRequired { value_ref: String },
+    #[error("values[{value_ref}] declares items for a non-array type")]
+    ItemsOnNonArray { value_ref: String },
+    #[error(transparent)]
+    ArrayItems(#[from] DomainArrayItemsError),
+    #[error("entity {entity} field {field} requires value_ref")]
+    FieldValueRefRequired { entity: String, field: String },
+    #[error("entity {entity} field {field} references unknown value domain {value_ref}")]
+    UnknownFieldValueRef {
+        entity: String,
+        field: String,
+        value_ref: String,
+    },
+    #[error("entity {entity} field {field} has an invalid value-domain key")]
+    FieldValueDomainKey {
+        entity: String,
+        field: String,
+        #[source]
+        source: crate::schema::ValueDomainKeyError,
+    },
+    #[error("entity {entity} compound key requires explicit identity metadata")]
+    CompoundIdentityMissing {
+        entity: String,
+        key_vars: Vec<String>,
+    },
+    #[error("failed to add entity {entity}")]
+    AddEntity {
+        entity: String,
+        #[source]
+        source: crate::error::SchemaError,
+    },
+    #[error("capability {capability} declares derive and also has a mapping")]
+    DerivedCapabilityHasMapping { capability: String },
+    #[error("capability {capability} may use derive only with kind get")]
+    DerivedCapabilityNotGet { capability: String },
+    #[error("capability {capability} has no derive match field or entity identity field")]
+    DerivedMatchFieldMissing { capability: String },
+    #[error("derived capability {capability} requires entity {entity} to declare id_field")]
+    DerivedIdentityFieldMissing { capability: String, entity: String },
+    #[error("capability {capability} has no mappings.yaml entry")]
+    CapabilityMappingMissing { capability: String },
+    #[error(transparent)]
+    CapabilityInputs(#[from] CapabilityInputAssemblyError),
+    #[error("failed to add capability {capability}")]
+    AddCapability {
+        capability: String,
+        #[source]
+        source: crate::error::SchemaError,
+    },
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum DomainArrayItemsError {
+    #[error("values[{value_ref}] requires items.value_ref")]
+    ValueRefMissing { value_ref: String },
+    #[error("values[{value_ref}] items require a top-level values registry")]
+    ValuesRegistryMissing { value_ref: String },
+    #[error("values[{value_ref}] references unknown array item domain {item_ref}")]
+    UnknownItemValueRef { value_ref: String, item_ref: String },
+    #[error("values[{value_ref}] has a recursive array domain")]
+    RecursiveArray { value_ref: String },
+    #[error("values[{value_ref}] references unknown nested array domain {item_ref}")]
+    UnknownNestedArrayValueRef { value_ref: String, item_ref: String },
+    #[error("values[{value_ref}] has an invalid array item domain key")]
+    InvalidValueDomainKey {
+        value_ref: String,
+        #[source]
+        source: crate::schema::ValueDomainKeyError,
+    },
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum CapabilityInputAssemblyError {
+    #[error(transparent)]
+    Parameter(#[from] CapabilityParameterError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum CapabilityParameterError {
+    #[error(
+        "capability {capability} parameter {parameter} references unknown value domain {value_ref}"
+    )]
+    UnknownValueRef {
+        capability: String,
+        parameter: String,
+        value_ref: String,
+    },
+    #[error("capability {capability} parameter {parameter} has an invalid value-domain key")]
+    InvalidValueDomainKey {
+        capability: String,
+        parameter: String,
+        #[source]
+        source: crate::schema::ValueDomainKeyError,
+    },
+    #[error(
+        "capability {capability} parameter {parameter} must choose exactly one of value_ref or input_type"
+    )]
+    ConflictingValueSources {
+        capability: String,
+        parameter: String,
+    },
+    #[error("capability {capability} parameter {parameter} requires value_ref or input_type")]
+    MissingValueSource {
+        capability: String,
+        parameter: String,
+    },
+}
+
 fn deserialize_forbidden_invoke_preflight_key<'de, D>(deserializer: D) -> Result<(), D::Error>
 where
     D: Deserializer<'de>,
@@ -45,29 +238,35 @@ pub fn plasm_cgs_fast_load_enabled() -> bool {
 
 /// Read a schema YAML file as UTF-8 text. Refuses FIFOs/sockets and oversized files so we never
 /// block forever on `read_to_string` (e.g. `mkfifo domain.yaml`) or allocate pathological buffers.
-fn read_schema_text_file(path: &Path, label: &str) -> Result<String, String> {
-    let meta = std::fs::metadata(path)
-        .map_err(|e| format!("Failed to stat {label} {}: {e}", path.display()))?;
+fn read_schema_text_file(path: &Path, kind: SchemaFileKind) -> Result<String, SchemaFileReadError> {
+    let meta = std::fs::metadata(path).map_err(|source| SchemaFileReadError::Stat {
+        kind,
+        path: path.to_path_buf(),
+        source,
+    })?;
     if !is_regular_schema_file(&meta) {
-        return Err(format!(
-            "{} is not a regular file (or is a pipe/socket); refusing to read",
-            path.display()
-        ));
+        return Err(SchemaFileReadError::NotRegularFile {
+            kind,
+            path: path.to_path_buf(),
+        });
     }
     let len = meta.len();
     if len > MAX_SCHEMA_FILE_BYTES {
-        return Err(format!(
-            "{label} {} is too large ({} bytes; max {})",
-            path.display(),
-            len,
-            MAX_SCHEMA_FILE_BYTES
-        ));
+        return Err(SchemaFileReadError::TooLarge {
+            kind,
+            path: path.to_path_buf(),
+            actual_bytes: len,
+            max_bytes: MAX_SCHEMA_FILE_BYTES,
+        });
     }
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read {label} {}: {e}", path.display()))?;
+    let text = std::fs::read_to_string(path).map_err(|source| SchemaFileReadError::Read {
+        kind,
+        path: path.to_path_buf(),
+        source,
+    })?;
     trace!(
         path = %path.display(),
-        label,
+        kind = ?kind,
         chars = text.len(),
         "read_schema_text_file"
     );
@@ -451,7 +650,7 @@ pub struct DomainItems {
 }
 
 /// Load a CGS from split domain.yaml + mappings.yaml files.
-pub fn load_split_schema(domain_path: &Path, mappings_path: &Path) -> Result<CGS, String> {
+pub fn load_split_schema(domain_path: &Path, mappings_path: &Path) -> Result<CGS, SchemaLoadError> {
     load_split_schema_internal(domain_path, mappings_path, true)
 }
 
@@ -459,7 +658,7 @@ pub fn load_split_schema(domain_path: &Path, mappings_path: &Path) -> Result<CGS
 pub fn load_split_schema_unvalidated(
     domain_path: &Path,
     mappings_path: &Path,
-) -> Result<CGS, String> {
+) -> Result<CGS, SchemaLoadError> {
     load_split_schema_internal(domain_path, mappings_path, false)
 }
 
@@ -467,25 +666,25 @@ fn load_split_schema_internal(
     domain_path: &Path,
     mappings_path: &Path,
     validate: bool,
-) -> Result<CGS, String> {
+) -> Result<CGS, SchemaLoadError> {
     let span = crate::spans::schema_load_split(domain_path, mappings_path);
     let _enter = span.enter();
     let t0 = std::time::Instant::now();
 
     debug!("phase: read domain.yaml");
-    let domain_content = read_schema_text_file(domain_path, "domain.yaml")?;
+    let domain_content = read_schema_text_file(domain_path, SchemaFileKind::Domain)?;
     debug!(bytes = domain_content.len(), "phase: read domain.yaml done");
 
     debug!("phase: read mappings.yaml");
-    let mappings_content = read_schema_text_file(mappings_path, "mappings.yaml")?;
+    let mappings_content = read_schema_text_file(mappings_path, SchemaFileKind::Mappings)?;
     debug!(
         bytes = mappings_content.len(),
         "phase: read mappings.yaml done"
     );
 
     debug!("phase: serde_yaml parse domain (DomainFile)");
-    let domain: DomainFile = serde_yaml::from_str(&domain_content)
-        .map_err(|e| format!("Failed to parse domain YAML: {}", e))?;
+    let domain: DomainFile =
+        serde_yaml::from_str(&domain_content).map_err(SchemaLoadError::DomainYaml)?;
     debug!(
         entities = domain.entities.len(),
         capabilities = domain.capabilities.len(),
@@ -493,8 +692,8 @@ fn load_split_schema_internal(
     );
 
     debug!("phase: serde_yaml parse mappings (IndexMap)");
-    let mappings: IndexMap<String, serde_json::Value> = serde_yaml::from_str(&mappings_content)
-        .map_err(|e| format!("Failed to parse mappings YAML: {}", e))?;
+    let mappings: IndexMap<String, serde_json::Value> =
+        serde_yaml::from_str(&mappings_content).map_err(SchemaLoadError::MappingsYaml)?;
     debug!(keys = mappings.len(), "phase: mappings YAML parsed");
 
     debug!("phase: assemble_cgs");
@@ -513,7 +712,7 @@ fn load_split_schema_internal(
 }
 
 /// Like [`load_schema_dir`] but skips validation — caller must run [`finalize_cgs_load`] after mutations.
-pub fn load_schema_dir_unvalidated(dir: &Path) -> Result<CGS, String> {
+pub fn load_schema_dir_unvalidated(dir: &Path) -> Result<CGS, SchemaLoadError> {
     let resolved = resolve_schema_directory_for_load(dir);
     let span = crate::spans::schema_load_directory(&resolved);
     let _g = span.enter();
@@ -524,7 +723,7 @@ pub fn load_schema_dir_unvalidated(dir: &Path) -> Result<CGS, String> {
 }
 
 /// Run post-assemble normalization, validation, and string-semantics checks.
-pub fn finalize_cgs_load(cgs: &mut CGS) -> Result<(), String> {
+pub fn finalize_cgs_load(cgs: &mut CGS) -> Result<(), crate::error::SchemaError> {
     let span = crate::spans::schema_validate(cgs.entities.len(), cgs.capabilities.len());
     let _guard = span.enter();
     let legacy_via_param = std::mem::take(&mut cgs.pending_legacy_via_param_patches);
@@ -535,8 +734,7 @@ pub fn finalize_cgs_load(cgs: &mut CGS) -> Result<(), String> {
         capabilities = cgs.capabilities.len(),
         "assemble_cgs: calling CGS::validate"
     );
-    cgs.validate()
-        .map_err(|e| format!("CGS validation failed: {}", e))?;
+    cgs.validate()?;
 
     warn_scope_aggregate_policy_template_mismatches(cgs);
     warn_unlabeled_output_data(cgs);
@@ -567,7 +765,7 @@ fn resolve_schema_directory_for_load(dir: &Path) -> PathBuf {
 }
 
 /// Load a CGS from a directory containing domain.yaml and mappings.yaml.
-pub fn load_schema_dir(dir: &Path) -> Result<CGS, String> {
+pub fn load_schema_dir(dir: &Path) -> Result<CGS, SchemaLoadError> {
     let resolved = resolve_schema_directory_for_load(dir);
     let span = crate::spans::schema_load_directory(&resolved);
     let _g = span.enter();
@@ -580,7 +778,7 @@ pub fn load_schema_dir(dir: &Path) -> Result<CGS, String> {
 /// Load a CGS from a directory (`domain.yaml` + `mappings.yaml`), a single YAML file
 /// (serialized [`CGS`] interchange, or combined domain + mappings), or a legacy `.json`
 /// path (deprecated; removed — use YAML or a schema directory).
-pub fn load_schema(path: &Path) -> Result<CGS, String> {
+pub fn load_schema(path: &Path) -> Result<CGS, SchemaLoadError> {
     let span = crate::spans::schema_load_path(path);
     let _g = span.enter();
 
@@ -590,15 +788,14 @@ pub fn load_schema(path: &Path) -> Result<CGS, String> {
     }
     if path.extension().is_some_and(|e| e == "yaml" || e == "yml") {
         debug!("load_schema branch: yaml file");
-        let content = read_schema_text_file(path, "schema YAML")?;
+        let content = read_schema_text_file(path, SchemaFileKind::Combined)?;
 
         // Full CGS document (e.g. `.cgs.yaml` from extract pipelines)
         debug!("trying serde_yaml -> CGS interchange");
         if let Ok(mut cgs) = serde_yaml::from_str::<CGS>(&content) {
             debug!("CGS interchange parse ok; validating");
             cgs.stamp_entity_ref_catalogs();
-            cgs.validate()
-                .map_err(|e| format!("CGS validation failed: {}", e))?;
+            cgs.validate()?;
             return Ok(cgs);
         }
 
@@ -612,12 +809,8 @@ pub fn load_schema(path: &Path) -> Result<CGS, String> {
         }
 
         debug!("trying combined DomainFile + mappings YAML");
-        let combined: CombinedFile = serde_yaml::from_str(&content).map_err(|e| {
-            format!(
-                "Failed to parse YAML (expected CGS or domain+mappings): {}",
-                e
-            )
-        })?;
+        let combined: CombinedFile =
+            serde_yaml::from_str(&content).map_err(SchemaLoadError::CombinedYaml)?;
         return assemble_cgs(combined.domain, combined.mappings);
     }
     if path
@@ -626,23 +819,26 @@ pub fn load_schema(path: &Path) -> Result<CGS, String> {
         .is_some_and(|n| n.ends_with(crate::catalog_il::CATALOG_IL_BODY_SUFFIX))
     {
         debug!("load_schema branch: compiled catalog JSON IL");
-        let bytes = std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-        return crate::catalog_il::load_catalog_il_bytes(&bytes);
+        let bytes = std::fs::read(path).map_err(|source| SchemaLoadError::CatalogArtifactRead {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        return Ok(crate::catalog_il::load_catalog_il_bytes(&bytes)?);
     }
     if path.extension().is_some_and(|e| e == "json") {
-        Err(format!(
-            "bare CGS JSON is not supported ({}). Use a directory with domain.yaml + mappings.yaml, a .cgs.yaml / .yaml CGS file, or a compiled `{}` catalog artifact.",
-            path.display(),
-            crate::catalog_il::CATALOG_IL_BODY_SUFFIX
-        ))
+        Err(SchemaLoadError::BareCgsJson {
+            path: path.to_path_buf(),
+        })
     } else {
-        Err(format!("Unknown schema format: {}", path.display()))
+        Err(SchemaLoadError::UnknownFormat {
+            path: path.to_path_buf(),
+        })
     }
 }
 
 /// Pluggable CGS loading (filesystem path, embedded bundle, remote fetch, etc.).
 pub trait SchemaSource {
-    fn load_cgs(&self) -> Result<CGS, String>;
+    fn load_cgs(&self) -> Result<CGS, SchemaLoadError>;
 }
 
 /// Load via [`load_schema`] from a file or directory path.
@@ -652,18 +848,17 @@ pub struct PathSchemaSource {
 }
 
 impl SchemaSource for PathSchemaSource {
-    fn load_cgs(&self) -> Result<CGS, String> {
+    fn load_cgs(&self) -> Result<CGS, SchemaLoadError> {
         load_schema(&self.path)
     }
 }
 
 fn compile_domain_named_values(
     domain_values: &IndexMap<String, DomainNamedValue>,
-) -> Result<IndexMap<String, NamedValueSchema>, String> {
+) -> Result<IndexMap<String, NamedValueSchema>, SchemaAssemblyError> {
     let mut out = IndexMap::new();
     for (name, dv) in domain_values.iter() {
-        let ctx = format!("values['{name}']");
-        let schema = compile_one_named_value(dv, &ctx, &out)?;
+        let schema = compile_one_named_value(dv, name, &out)?;
         out.insert(name.clone(), schema);
     }
     Ok(out)
@@ -671,25 +866,32 @@ fn compile_domain_named_values(
 
 fn compile_one_named_value(
     d: &DomainNamedValue,
-    ctx: &str,
+    value_ref: &str,
     prior: &IndexMap<String, NamedValueSchema>,
-) -> Result<NamedValueSchema, String> {
+) -> Result<NamedValueSchema, SchemaAssemblyError> {
     if d.string_semantics.is_some() {
-        return Err(format!(
-            "{ctx}: `string_semantics` was removed; use profile types (`markdown`, `document`, `json_text`, `html`) or bare `string`"
-        ));
+        return Err(SchemaAssemblyError::RemovedStringSemantics {
+            value_ref: value_ref.to_owned(),
+        });
     }
     if d.value_format.is_some() {
-        return Err(format!(
-            "{ctx}: `value_format` was removed; use temporal profiles (`rfc3339`, `iso8601_date`, `unix_ms`, `unix_sec`) or money as decimal-string kernel"
-        ));
+        return Err(SchemaAssemblyError::RemovedValueFormat {
+            value_ref: value_ref.to_owned(),
+        });
     }
     let vt = d.value_type.trim();
     if vt.is_empty() {
-        return Err(format!("{ctx}: missing `type`"));
+        return Err(SchemaAssemblyError::MissingValueType {
+            value_ref: value_ref.to_owned(),
+        });
     }
-    let (kernel, profile) = crate::value_domain::parse_type_name(vt, d.target.as_deref())
-        .map_err(|e| format!("{ctx}: {e}"))?;
+    let (kernel, profile) =
+        crate::value_domain::parse_type_name(vt, d.target.as_deref()).map_err(|source| {
+            SchemaAssemblyError::ValueDomain {
+                value_ref: value_ref.to_owned(),
+                source,
+            }
+        })?;
 
     let enum_membership = {
         let membership_yaml = d.enum_key.clone().or_else(|| d.enum_values.clone());
@@ -701,8 +903,12 @@ fn compile_one_named_value(
                     None
                 } else {
                     Some(
-                        crate::value_domain::EnumMembership::try_new(tokens, glosses)
-                            .map_err(|e| format!("{ctx}: {e}"))?,
+                        crate::value_domain::EnumMembership::try_new(tokens, glosses).map_err(
+                            |source| SchemaAssemblyError::ValueDomain {
+                                value_ref: value_ref.to_owned(),
+                                source,
+                            },
+                        )?,
                     )
                 }
             }
@@ -714,36 +920,34 @@ fn compile_one_named_value(
             .as_ref()
             .is_none_or(|m| m.tokens().is_empty())
     {
-        return Err(format!(
-            "{ctx}: type 'multi_enum' requires non-empty `enum:` membership list"
-        ));
+        return Err(SchemaAssemblyError::EnumMembershipRequired {
+            value_ref: value_ref.to_owned(),
+            value_type: "multi_enum",
+        });
     }
     if matches!(profile, Some(crate::value_domain::ProfileId::Enum))
         && enum_membership
             .as_ref()
             .is_none_or(|m| m.tokens().is_empty())
     {
-        return Err(format!(
-            "{ctx}: type 'enum' requires non-empty `enum:` membership list"
-        ));
+        return Err(SchemaAssemblyError::EnumMembershipRequired {
+            value_ref: value_ref.to_owned(),
+            value_type: "enum",
+        });
     }
 
     let array_items = if matches!(kernel, crate::value_domain::KernelKind::Array) {
         let Some(ref it) = d.items else {
-            return Err(format!(
-                "{ctx}: type 'array' requires `items:` describing element types"
-            ));
+            return Err(SchemaAssemblyError::ArrayItemsRequired {
+                value_ref: value_ref.to_owned(),
+            });
         };
-        Some(parse_domain_array_items(
-            it,
-            &format!("{ctx}, items"),
-            Some(prior),
-        )?)
+        Some(parse_domain_array_items(it, value_ref, Some(prior))?)
     } else {
         if d.items.is_some() {
-            return Err(format!(
-                "{ctx}: 'items:' is only valid when type is 'array'"
-            ));
+            return Err(SchemaAssemblyError::ItemsOnNonArray {
+                value_ref: value_ref.to_owned(),
+            });
         }
         None
     };
@@ -772,7 +976,10 @@ fn compile_one_named_value(
         enum_membership,
         currency,
     )
-    .map_err(|e| format!("{ctx}: {e}"))?;
+    .map_err(|source| SchemaAssemblyError::ValueDomain {
+        value_ref: value_ref.to_owned(),
+        source,
+    })?;
 
     Ok(NamedValueSchema::from_domain(
         d.description.clone(),
@@ -785,23 +992,33 @@ fn field_schema_from_domain_field(
     entity_name: &str,
     f: &DomainField,
     values: &IndexMap<String, NamedValueSchema>,
-) -> Result<FieldSchema, String> {
-    let ctx = format!("entity '{entity_name}', field '{fname}'");
+) -> Result<FieldSchema, SchemaAssemblyError> {
     let vr = f.value_ref.trim();
     if vr.is_empty() {
-        return Err(format!(
-            "{ctx}: `value_ref` is required — declare the wire shape under top-level `values:`"
-        ));
+        return Err(SchemaAssemblyError::FieldValueRefRequired {
+            entity: entity_name.to_owned(),
+            field: fname.to_owned(),
+        });
     }
     let nv = values
         .get(vr)
-        .ok_or_else(|| format!("{ctx}: unknown `value_ref` '{vr}'"))?;
+        .ok_or_else(|| SchemaAssemblyError::UnknownFieldValueRef {
+            entity: entity_name.to_owned(),
+            field: fname.to_owned(),
+            value_ref: vr.to_owned(),
+        })?;
     let description = if f.description.trim().is_empty() {
         nv.description.clone()
     } else {
         f.description.clone()
     };
-    let vdk = ValueDomainKey::new(vr.to_string()).map_err(|e| format!("{ctx}: {e}"))?;
+    let vdk = ValueDomainKey::new(vr.to_string()).map_err(|source| {
+        SchemaAssemblyError::FieldValueDomainKey {
+            entity: entity_name.to_owned(),
+            field: fname.to_owned(),
+            source,
+        }
+    })?;
     Ok(FieldSchema {
         name: EntityFieldName::from(fname),
         kind: FieldValueKind::Registry(vdk),
@@ -825,14 +1042,17 @@ fn input_field_schema_from_domain_parameter(
     cap_name: &str,
     p: &DomainParameter,
     values: &IndexMap<String, NamedValueSchema>,
-) -> Result<InputFieldSchema, String> {
-    let ctx = format!("capability '{cap_name}', parameter '{}'", p.name);
+) -> Result<InputFieldSchema, CapabilityParameterError> {
     let vr = p.value_ref.trim();
     match (vr.is_empty(), p.input_type.as_ref()) {
         (false, None) => {
             let nv = values
                 .get(vr)
-                .ok_or_else(|| format!("{ctx}: unknown `value_ref` '{vr}'"))?;
+                .ok_or_else(|| CapabilityParameterError::UnknownValueRef {
+                    capability: cap_name.to_owned(),
+                    parameter: p.name.to_string(),
+                    value_ref: vr.to_owned(),
+                })?;
             let description = if p.description.trim().is_empty() {
                 let nd = nv.description.trim();
                 if nd.is_empty() {
@@ -843,7 +1063,13 @@ fn input_field_schema_from_domain_parameter(
             } else {
                 Some(p.description.clone())
             };
-            let vdk = ValueDomainKey::new(vr.to_string()).map_err(|e| format!("{ctx}: {e}"))?;
+            let vdk = ValueDomainKey::new(vr.to_string()).map_err(|source| {
+                CapabilityParameterError::InvalidValueDomainKey {
+                    capability: cap_name.to_owned(),
+                    parameter: p.name.to_string(),
+                    source,
+                }
+            })?;
             Ok(InputFieldSchema {
                 name: p.name.clone(),
                 wire: crate::InputFieldWire::Registry(vdk),
@@ -871,12 +1097,14 @@ fn input_field_schema_from_domain_parameter(
             wire_json_path: None,
             wire_array_element_key: None,
         }),
-        (false, Some(_)) => Err(format!(
-            "{ctx}: set exactly one of `value_ref` or `input_type`, not both"
-        )),
-        (true, None) => Err(format!(
-            "{ctx}: missing `value_ref` and `input_type` — declare a `values:` key or inline `input_type`"
-        )),
+        (false, Some(_)) => Err(CapabilityParameterError::ConflictingValueSources {
+            capability: cap_name.to_owned(),
+            parameter: p.name.to_string(),
+        }),
+        (true, None) => Err(CapabilityParameterError::MissingValueSource {
+            capability: cap_name.to_owned(),
+            parameter: p.name.to_string(),
+        }),
     }
 }
 
@@ -884,10 +1112,10 @@ fn input_fields_from_domain_parameters(
     cap_name: &str,
     params: &[DomainParameter],
     values: &IndexMap<String, NamedValueSchema>,
-) -> Result<Vec<InputFieldSchema>, String> {
+) -> Result<Vec<InputFieldSchema>, CapabilityInputAssemblyError> {
     params
         .iter()
-        .map(|p| input_field_schema_from_domain_parameter(cap_name, p, values))
+        .map(|p| input_field_schema_from_domain_parameter(cap_name, p, values).map_err(Into::into))
         .collect()
 }
 
@@ -895,7 +1123,7 @@ fn capability_inputs_from_domain(
     cap_name: &str,
     cap: &DomainCapability,
     values: &IndexMap<String, NamedValueSchema>,
-) -> Result<CapabilityInputs, String> {
+) -> Result<CapabilityInputs, SchemaAssemblyError> {
     Ok(CapabilityInputs {
         receiver: cap
             .receiver
@@ -922,7 +1150,7 @@ fn capability_inputs_from_domain(
 fn assemble_cgs_core(
     mut domain: DomainFile,
     mut mappings: IndexMap<String, serde_json::Value>,
-) -> Result<CGS, String> {
+) -> Result<CGS, SchemaAssemblyError> {
     let span = crate::spans::schema_assemble(domain.entities.len(), domain.capabilities.len());
     let _g = span.enter();
     trace!("assemble_cgs: building entity resources");
@@ -948,7 +1176,7 @@ fn assemble_cgs_core(
             .fields
             .iter()
             .map(|(fname, f)| field_schema_from_domain_field(fname, name, f, &cgs.values))
-            .collect::<Result<Vec<_>, String>>()?;
+            .collect::<Result<Vec<_>, SchemaAssemblyError>>()?;
 
         let source_id_field = entity
             .id_field
@@ -1018,7 +1246,10 @@ fn assemble_cgs_core(
         };
 
         cgs.add_resource(resource)
-            .map_err(|e| format!("Failed to add entity '{}': {}", name, e))?;
+            .map_err(|source| SchemaAssemblyError::AddEntity {
+                entity: name.clone(),
+                source,
+            })?;
     }
 
     trace!(
@@ -1031,14 +1262,14 @@ fn assemble_cgs_core(
 
         let (mapping, derived) = if let Some(derive) = &cap.derive {
             if mappings.contains_key(cap_name) {
-                return Err(format!(
-                    "Capability '{cap_name}' declares derive: and must not have a mappings.yaml entry"
-                ));
+                return Err(SchemaAssemblyError::DerivedCapabilityHasMapping {
+                    capability: cap_name.clone(),
+                });
             }
             if kind != CapabilityKind::Get {
-                return Err(format!(
-                    "Capability '{cap_name}': derive: is only valid on kind: get"
-                ));
+                return Err(SchemaAssemblyError::DerivedCapabilityNotGet {
+                    capability: cap_name.clone(),
+                });
             }
             let match_field = derive.match_field.clone().unwrap_or_else(|| {
                 domain
@@ -1048,19 +1279,17 @@ fn assemble_cgs_core(
                     .unwrap_or_default()
             });
             if match_field.trim().is_empty() {
-                return Err(format!(
-                    "Capability '{cap_name}': derive.match_field is empty and entity has no id_field"
-                ));
+                return Err(SchemaAssemblyError::DerivedMatchFieldMissing {
+                    capability: cap_name.clone(),
+                });
             }
             let identity_field = domain
                 .entities
                 .get(&cap.entity)
                 .and_then(|e| e.id_field.clone())
-                .ok_or_else(|| {
-                    format!(
-                        "Capability '{cap_name}': derive: requires entity '{}' to declare id_field",
-                        cap.entity
-                    )
+                .ok_or_else(|| SchemaAssemblyError::DerivedIdentityFieldMissing {
+                    capability: cap_name.clone(),
+                    entity: cap.entity.clone(),
                 })?;
             let plan = crate::DerivedGetPlan {
                 get_capability: CapabilityName::from(cap_name.clone()),
@@ -1072,9 +1301,9 @@ fn assemble_cgs_core(
             (None, Some(plan))
         } else {
             let template = mappings.swap_remove(cap_name).ok_or_else(|| {
-                format!(
-                    "Capability '{cap_name}' is listed in domain.yaml but has no entry in mappings.yaml"
-                )
+                SchemaAssemblyError::CapabilityMappingMissing {
+                    capability: cap_name.clone(),
+                }
             })?;
             (
                 Some(CapabilityMapping {
@@ -1106,7 +1335,10 @@ fn assemble_cgs_core(
         };
 
         cgs.add_capability(capability)
-            .map_err(|e| format!("Failed to add capability '{}': {}", cap_name, e))?;
+            .map_err(|source| SchemaAssemblyError::AddCapability {
+                capability: cap_name.clone(),
+                source,
+            })?;
     }
 
     if !mappings.is_empty() {
@@ -1128,7 +1360,7 @@ fn assemble_cgs_core(
 fn assemble_cgs(
     domain: DomainFile,
     mappings: IndexMap<String, serde_json::Value>,
-) -> Result<CGS, String> {
+) -> Result<CGS, SchemaLoadError> {
     let mut cgs = assemble_cgs_core(domain, mappings)?;
     finalize_cgs_load(&mut cgs)?;
     Ok(cgs)
@@ -1141,7 +1373,7 @@ fn assemble_cgs(
 fn validate_compound_entity_identity(
     entity_name: &str,
     entity: &DomainEntity,
-) -> Result<(), String> {
+) -> Result<(), SchemaAssemblyError> {
     if entity.key_vars.len() < 2 {
         return Ok(());
     }
@@ -1151,10 +1383,10 @@ fn validate_compound_entity_identity(
     if has_explicit || has_id_from || implicit {
         return Ok(());
     }
-    Err(format!(
-        "entity '{entity_name}': compound key_vars {:?} require an explicit `id_field`, non-empty `id_from`, or `implicit_request_identity: true` (do not rely on implicit default to the first key var)",
-        entity.key_vars
-    ))
+    Err(SchemaAssemblyError::CompoundIdentityMissing {
+        entity: entity_name.to_owned(),
+        key_vars: entity.key_vars.clone(),
+    })
 }
 
 /// Warn when a catalog that declares `data_classes:` leaves structured/multiline read outputs
@@ -1207,23 +1439,26 @@ fn warn_scope_aggregate_policy_template_mismatches(cgs: &CGS) {
 
 fn parse_domain_array_items(
     items: &DomainItems,
-    context: &str,
+    value_ref: &str,
     named_values: Option<&IndexMap<String, NamedValueSchema>>,
-) -> Result<ArrayItemsSchema, String> {
+) -> Result<ArrayItemsSchema, DomainArrayItemsError> {
     let name = items.value_ref.trim();
     if name.is_empty() {
-        return Err(format!(
-            "{context}: `items.value_ref` is required (element shape lives under `values:`)"
-        ));
+        return Err(DomainArrayItemsError::ValueRefMissing {
+            value_ref: value_ref.to_owned(),
+        });
     }
     let Some(map) = named_values else {
-        return Err(format!(
-            "{context}: array `items` require top-level `values:` in domain.yaml"
-        ));
+        return Err(DomainArrayItemsError::ValuesRegistryMissing {
+            value_ref: value_ref.to_owned(),
+        });
     };
     let nv = map
         .get(name)
-        .ok_or_else(|| format!("{context}: unknown `items.value_ref` '{name}'"))?;
+        .ok_or_else(|| DomainArrayItemsError::UnknownItemValueRef {
+            value_ref: value_ref.to_owned(),
+            item_ref: name.to_owned(),
+        })?;
     // Named values resolve against prior declarations, so forward/self references
     // are rejected above. Bound nested chains as well, including prebuilt registries.
     let mut current = nv;
@@ -1231,15 +1466,23 @@ fn parse_domain_array_items(
     while let Some(item) = &current.array_items {
         let key = item.kind.registry_key().as_str();
         if seen.len() >= 64 || !seen.insert(key.to_owned()) {
-            return Err(format!(
-                "{context}: recursive array domain exceeds nesting bounds"
-            ));
+            return Err(DomainArrayItemsError::RecursiveArray {
+                value_ref: value_ref.to_owned(),
+            });
         }
-        current = map
-            .get(key)
-            .ok_or_else(|| format!("{context}: unknown nested array element {key}"))?;
+        current =
+            map.get(key)
+                .ok_or_else(|| DomainArrayItemsError::UnknownNestedArrayValueRef {
+                    value_ref: value_ref.to_owned(),
+                    item_ref: key.to_owned(),
+                })?;
     }
-    let vdk = ValueDomainKey::new(name.to_string()).map_err(|e| format!("{context}: {e}"))?;
+    let vdk = ValueDomainKey::new(name.to_string()).map_err(|source| {
+        DomainArrayItemsError::InvalidValueDomainKey {
+            value_ref: value_ref.to_owned(),
+            source,
+        }
+    })?;
     Ok(ArrayItemsSchema {
         kind: FieldValueKind::Registry(vdk),
         field_type: nv.field_type.clone(),
@@ -1433,7 +1676,7 @@ capabilities:
         )
         .unwrap();
         std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
-        let err = load_schema_dir(dir.path()).unwrap_err();
+        let err = load_schema_dir(dir.path()).unwrap_err().to_string();
         assert!(err.contains("string_semantics"), "unexpected error: {err}");
     }
 
@@ -1467,7 +1710,7 @@ capabilities:
         )
         .unwrap();
         std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
-        let err = load_schema_dir(dir.path()).unwrap_err();
+        let err = load_schema_dir(dir.path()).unwrap_err().to_string();
         assert!(
             err.contains("quote_currency") && err.contains("currency_field"),
             "unexpected error: {err}"
@@ -1509,7 +1752,7 @@ capabilities:
         )
         .unwrap();
         std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
-        let err = load_schema_dir(dir.path()).unwrap_err();
+        let err = load_schema_dir(dir.path()).unwrap_err().to_string();
         assert!(
             err.contains("qty") && err.contains("string"),
             "unexpected error: {err}"
@@ -1637,7 +1880,9 @@ capabilities:
         if !dir.join("domain.yaml").is_file() {
             return;
         }
-        let err = load_schema_dir(dir).expect_err("broken relation target should fail validate");
+        let err = load_schema_dir(dir)
+            .expect_err("broken relation target should fail validate")
+            .to_string();
         assert!(
             err.contains("MissingEntity") && err.contains("peer"),
             "unexpected error: {err}"
@@ -1647,7 +1892,9 @@ capabilities:
     #[test]
     fn load_schema_dir_rejects_entity_ref_as_identity() {
         let dir = Path::new("../../fixtures/schemas/entity_ref_as_identity");
-        let err = load_schema_dir(dir).expect_err("entity_ref id_field must fail CGS validate");
+        let err = load_schema_dir(dir)
+            .expect_err("entity_ref id_field must fail CGS validate")
+            .to_string();
         assert!(
             err.contains("unsupported identity type")
                 && err.contains("BadProduct")
@@ -1806,7 +2053,7 @@ capabilities:
         )
         .unwrap();
         std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
-        let err = load_schema_dir(dir.path()).unwrap_err();
+        let err = load_schema_dir(dir.path()).unwrap_err().to_string();
         assert!(
             err.contains("requires") && err.contains("items"),
             "unexpected error: {err}"
@@ -1871,7 +2118,7 @@ capabilities: {}
         )
         .unwrap();
         std::fs::write(dir.path().join("mappings.yaml"), "{}\n").unwrap();
-        let err = load_schema_dir(dir.path()).unwrap_err();
+        let err = load_schema_dir(dir.path()).unwrap_err().to_string();
         assert!(
             err.contains("requires") && err.contains("items"),
             "unexpected error: {err}"
@@ -1910,7 +2157,7 @@ capabilities:
         )
         .unwrap();
         std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
-        let err = load_schema_dir(dir.path()).unwrap_err();
+        let err = load_schema_dir(dir.path()).unwrap_err().to_string();
         assert!(
             err.contains("multi_enum") && (err.contains("enum") || err.contains("non-empty")),
             "unexpected error: {err}"
@@ -1942,7 +2189,7 @@ capabilities: {}
         )
         .unwrap();
         std::fs::write(dir.path().join("mappings.yaml"), "{}\n").unwrap();
-        let err = load_schema_dir(dir.path()).unwrap_err();
+        let err = load_schema_dir(dir.path()).unwrap_err().to_string();
         assert!(
             err.contains("only valid when type is 'array'") || err.contains("items"),
             "unexpected error: {err}"
@@ -2062,7 +2309,7 @@ capabilities:
         )
         .unwrap();
         std::fs::write(dir.path().join("mappings.yaml"), "note_search: {}\n").unwrap();
-        let err = load_schema_dir(dir.path()).unwrap_err();
+        let err = load_schema_dir(dir.path()).unwrap_err().to_string();
         assert!(
             err.contains("note_search")
                 && err.contains("kind: search")
@@ -2216,9 +2463,9 @@ capabilities:
         )
         .unwrap();
         std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
-        let err = load_schema_dir(dir.path()).unwrap_err();
+        let err = load_schema_dir(dir.path()).unwrap_err().to_string();
         assert!(
-            err.to_string().contains("must not contain ';'"),
+            err.to_string().contains("reserved delimiter ';'"),
             "unexpected err: {err}"
         );
     }
@@ -2258,7 +2505,7 @@ capabilities:
         )
         .unwrap();
         std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
-        let err = load_schema_dir(dir.path()).unwrap_err();
+        let err = load_schema_dir(dir.path()).unwrap_err().to_string();
         assert!(
             err.contains("overlap") && err.contains("selection") && err.contains("controls"),
             "unexpected error: {err}"
@@ -2310,7 +2557,7 @@ capabilities:
             "session_get: {}\nwidget_get: {}\nq:\n  query:\n    session:\n      type: var\n      name: session_id\n",
         )
         .unwrap();
-        let err = load_schema_dir(dir.path()).unwrap_err();
+        let err = load_schema_dir(dir.path()).unwrap_err().to_string();
         assert!(
             err.contains("execution") || err.contains("unknown field"),
             "expected unknown-field reject for execution:; got: {err}"
@@ -2346,7 +2593,7 @@ capabilities:
         )
         .unwrap();
         std::fs::write(dir.path().join("mappings.yaml"), "q: {}\n").unwrap();
-        let err = load_schema_dir(dir.path()).unwrap_err();
+        let err = load_schema_dir(dir.path()).unwrap_err().to_string();
         assert!(err.contains("role"), "unexpected error: {err}");
     }
 
@@ -2378,7 +2625,7 @@ capabilities:
         )
         .unwrap();
         std::fs::write(dir.path().join("mappings.yaml"), "do_thing: {}\n").unwrap();
-        let err = load_schema_dir(dir.path()).unwrap_err();
+        let err = load_schema_dir(dir.path()).unwrap_err().to_string();
         assert!(
             err.contains("side_effect") && err.contains("description"),
             "unexpected error: {err}"
@@ -2425,7 +2672,7 @@ capabilities:
         )
         .unwrap();
         std::fs::write(dir.path().join("mappings.yaml"), "upd: {}\n").unwrap();
-        let err = load_schema_dir(dir.path()).unwrap_err();
+        let err = load_schema_dir(dir.path()).unwrap_err().to_string();
         assert!(
             err.contains("validation.predicates") && err.contains("values:"),
             "unexpected error: {err}"

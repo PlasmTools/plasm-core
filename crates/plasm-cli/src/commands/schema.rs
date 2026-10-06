@@ -1,16 +1,19 @@
-use crate::commands::common;
+use crate::commands::{common, CommandError, InputKind};
 use crate::SchemaAction;
 use plasm_core::CGS;
 use std::path::Path;
 
-pub async fn execute(action: SchemaAction) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn execute(action: SchemaAction) -> Result<(), CommandError> {
     match action {
         SchemaAction::Validate { file } => {
             println!("Validating schema file: {}", file);
 
             if !Path::new(&file).exists() {
                 eprintln!("Error: Schema file '{}' does not exist", file);
-                return Err("File not found".into());
+                return Err(CommandError::InputMissing {
+                    kind: InputKind::Schema,
+                    path: file.into(),
+                });
             }
 
             let cgs: CGS = common::load_cgs(Path::new(&file))?;

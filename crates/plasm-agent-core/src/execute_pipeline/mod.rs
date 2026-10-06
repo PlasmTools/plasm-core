@@ -6,6 +6,7 @@ mod run_line_error;
 mod scope;
 
 pub(crate) use dispatch::preflight_line_compile_dispatch;
+pub use dispatch::DispatchError;
 
 pub use plasm_core::PreflightToken;
 pub use preflight::{PlasmPreflight, PreflightNormalized, PreflightReport};
@@ -87,7 +88,7 @@ impl ExecutePipeline {
         RunLineError,
     > {
         PlasmPreflight::preflight_parsed_line(sess, line, &parsed)
-            .map_err(|e| RunLineError::Parse(e.into()))?;
+            .map_err(RunLineError::Admission)?;
         crate::http_execute::run_parsed_plasm_line(
             line,
             sess,
@@ -110,7 +111,8 @@ impl ExecutePipeline {
         session: &ExecuteSession,
         source: &str,
         parsed: &ParsedExpr,
-    ) -> Result<(String, String, serde_json::Value), String> {
-        PlasmPreflight::dry_preview_for_line(session, source, parsed).map_err(|e| e.into())
+    ) -> Result<(String, String, serde_json::Value), crate::program_diagnostic::ProgramStageError>
+    {
+        PlasmPreflight::dry_preview_for_line(session, source, parsed)
     }
 }

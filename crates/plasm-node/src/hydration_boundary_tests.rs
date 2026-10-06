@@ -19,7 +19,7 @@ impl HttpTransport for Transport {
         _: &str,
         req: &CompiledRequest,
         _: Option<ResolvedAuth>,
-    ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+    ) -> std::result::Result<(serde_json::Value, Option<String>), RuntimeError> {
         self.calls.lock().unwrap().push(req.path.clone());
         let parts: Vec<_> = req.path.trim_matches('/').split('/').collect();
         let body = match parts.as_slice() {
@@ -75,7 +75,7 @@ impl HttpTransport for Transport {
         &self,
         _: &str,
         _: Option<ResolvedAuth>,
-    ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+    ) -> std::result::Result<(serde_json::Value, Option<String>), RuntimeError> {
         panic!("unexpected absolute GET")
     }
 }

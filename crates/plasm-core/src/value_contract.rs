@@ -2,6 +2,7 @@
 use crate::{FieldType, ValueDomainKey, CGS};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use thiserror::Error;
 
 mod intersection;
 mod refinement;
@@ -19,6 +20,127 @@ pub struct ValueContract {
     pub shape: ValueShape,
     pub domain: Option<DomainRef>,
     pub nullable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum ValueContractError {
+    #[error("field `{name}` is absent from the record contract")]
+    FieldMissing { name: String },
+    #[error("field `{name}` requires a record contract")]
+    FieldRequiresRecord { name: String },
+    #[error("union contract has no variants")]
+    EmptyUnion,
+    #[error("nested observation depth exceeded the supported limit")]
+    ObservationDepthExceeded,
+    #[error("reference catalog `{entry_id}` is not loaded")]
+    ReferenceCatalogNotLoaded { entry_id: String },
+    #[error("reference target `{target}` is absent from its catalog")]
+    ReferenceTargetMissing { target: String },
+    #[error("observation matches no union variant")]
+    NoUnionVariantMatches,
+    #[error("observed union projection is ambiguous")]
+    AmbiguousUnionProjection,
+    #[error("value nesting exceeded the supported limit")]
+    ValidationDepthExceeded,
+    #[error("value domain catalog `{entry_id}` is not loaded")]
+    DomainCatalogNotLoaded { entry_id: String },
+    #[error("value domain catalog pin does not match for `{entry_id}`")]
+    DomainCatalogPinMismatch { entry_id: String },
+    #[error("value domain `{value_ref}` is absent from catalog `{entry_id}`")]
+    DomainMissing { entry_id: String, value_ref: String },
+    #[error("expected {expected} at `{path}`")]
+    ShapeMismatch {
+        path: String,
+        expected: &'static str,
+    },
+    #[error("field `{field}` is missing at `{path}`")]
+    RequiredFieldMissing { path: String, field: String },
+    #[error("field `{field}` is undeclared at `{path}`")]
+    UndeclaredField { path: String, field: String },
+    #[error("presence contract names undeclared field `{field}` at `{path}`")]
+    PresenceFieldUndeclared { path: String, field: String },
+    #[error("duplicate set element at `{path}`")]
+    DuplicateSetElement { path: String },
+    #[error("value does not satisfy its declared contract at `{path}`")]
+    ContractMismatch { path: String },
+    #[error("refinement recursion exceeded the supported limit")]
+    RefinementDepthExceeded,
+    #[error("value violates the declared domain at `{path}`")]
+    DomainViolation { path: String },
+    #[error("value has an invalid temporal encoding at `{path}`")]
+    InvalidTemporalEncoding { path: String },
+    #[error("value contract intersection recursion exceeded the supported limit")]
+    IntersectionDepthExceeded,
+    #[error("value contract intersection contains distinct domain identities")]
+    ConflictingValueDomains,
+    #[error("value contract intersection contains incompatible semantic string types")]
+    ConflictingSemanticStringTypes,
+    #[error("value contract intersection contains incompatible temporal encodings")]
+    ConflictingTemporalEncodings,
+    #[error("value contract intersection has no representable specialized carrier")]
+    UnrepresentableSpecializedIntersection,
+    #[error("value-domain recursion exceeded the supported materialization limit")]
+    DomainResolutionDepthExceeded,
+    #[error("value domain is absent from the catalog")]
+    DomainNotFound,
+    #[error("array value domain has no element contract")]
+    ArrayDomainElementMissing,
+    #[error("value contracts have no compatible intersection")]
+    IncompatibleIntersection,
+    #[error("value contracts have no compatible refinement")]
+    IncompatibleRefinement,
+    #[error("native money value is required at `{path}`")]
+    MoneyRequired { path: String },
+    #[error("money currency differs from its declared domain at `{path}`")]
+    MoneyCurrencyMismatch { path: String },
+    #[error("value is not valid JSON data at `{path}`")]
+    InvalidJson { path: String },
+    #[error("value does not satisfy its materialized contract at `{path}`")]
+    MaterializedValueMismatch { path: String },
+    #[error("invalid temporal value")]
+    Temporal(#[from] crate::value_order::TemporalValueError),
+    #[error(transparent)]
+    TemporalCodec(#[from] crate::temporal_value::TemporalValueError),
+    #[error(transparent)]
+    Equality(#[from] crate::value_equality::ValueEqualityError),
+    #[error("value domain validation failed at `{path}`: {source}")]
+    Domain {
+        path: String,
+        #[source]
+        source: crate::ValueDomainViolation,
+    },
+    #[error("quantification requires a non-null array")]
+    QuantificationRequiresNonNullArray,
+    #[error("quantification requires an array")]
+    QuantificationRequiresArray,
+    #[error("quantified predicate requires a non-null Boolean")]
+    QuantifiedPredicateRequiresBoolean,
+    #[error("unresolved symbol has no materialized type")]
+    UnresolvedSymbol,
+    #[error("value inference references a source field that is absent")]
+    SourceFieldMissing,
+    #[error("value inference source node is absent")]
+    SourceNodeMissing,
+    #[error("value inference source is excluded by its declared projection")]
+    SourceFieldExcluded,
+    #[error("value inference source has incompatible field contracts")]
+    IncompatibleSourceFieldContracts,
+    #[error("value inference source operation is unsupported")]
+    UnsupportedSourceOperation,
+    #[error("unevaluated expression is not a materialized literal")]
+    UnevaluatedExpressionNotLiteral,
+    #[error("length requires a string, array or record")]
+    InvalidLengthOperand,
+    #[error(transparent)]
+    ValueExpression(#[from] Box<crate::value_expression::InferenceError>),
+    #[error(transparent)]
+    Reference(#[from] crate::entity_ref_value::EntityRefValueError),
+}
+
+impl From<crate::value_expression::InferenceError> for ValueContractError {
+    fn from(error: crate::value_expression::InferenceError) -> Self {
+        Self::ValueExpression(Box::new(error))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,8 +187,6 @@ pub enum ValueShape {
     },
 }
 
-type ValueContractResolver<'a> = dyn FnMut(&str, &[String]) -> Result<ValueContract, String> + 'a;
-
 #[derive(Clone, Copy)]
 enum ValidationBoundary {
     Materialized,
@@ -109,7 +229,7 @@ impl ValueContract {
         value: &crate::Value,
         cgs: &CGS,
         entry: &str,
-    ) -> Result<crate::Value, String> {
+    ) -> Result<crate::Value, ValueContractError> {
         self.observed_value_in(value, cgs, entry, &|_| None)
     }
 
@@ -120,7 +240,7 @@ impl ValueContract {
         cgs: &'a CGS,
         entry: &str,
         catalogs: &dyn Fn(&str) -> Option<&'a CGS>,
-    ) -> Result<crate::Value, String> {
+    ) -> Result<crate::Value, ValueContractError> {
         self.observed_value_at(value, cgs, entry, 0, catalogs)
     }
 
@@ -131,9 +251,9 @@ impl ValueContract {
         entry: &str,
         depth: usize,
         catalogs: &dyn Fn(&str) -> Option<&'a CGS>,
-    ) -> Result<crate::Value, String> {
+    ) -> Result<crate::Value, ValueContractError> {
         if depth >= 64 {
-            return Err("nested observation depth exceeded".into());
+            return Err(ValueContractError::ObservationDepthExceeded);
         }
 
         match (&self.shape, value) {
@@ -149,12 +269,22 @@ impl ValueContract {
                 let owner = if entry_id.as_str().is_empty() || entry_id.as_str() == entry {
                     cgs
                 } else {
-                    catalogs(entry_id.as_str()).ok_or("reference catalog is not loaded")?
+                    catalogs(entry_id.as_str()).ok_or_else(|| {
+                        ValueContractError::ReferenceCatalogNotLoaded {
+                            entry_id: entry_id.to_string(),
+                        }
+                    })?
                 };
-                let entity = owner
-                    .get_entity(target.as_str())
-                    .ok_or("unknown reference target")?;
-                crate::entity_ref_value::observed_reference_payload(value, entity, target.as_str())
+                let entity = owner.get_entity(target.as_str()).ok_or_else(|| {
+                    ValueContractError::ReferenceTargetMissing {
+                        target: target.to_string(),
+                    }
+                })?;
+                Ok(crate::entity_ref_value::observed_reference_payload(
+                    value,
+                    entity,
+                    target.as_str(),
+                )?)
             }
             (ValueShape::ObservedRecord { fields, .. }, crate::Value::Object(values)) => fields
                 .iter()
@@ -211,9 +341,9 @@ impl ValueContract {
                 });
                 let result = candidates
                     .next()
-                    .ok_or("observation matches no union variant")?;
+                    .ok_or(ValueContractError::NoUnionVariantMatches)?;
                 if candidates.any(|candidate| candidate != result) {
-                    return Err("ambiguous observed union projection".into());
+                    return Err(ValueContractError::AmbiguousUnionProjection);
                 }
                 Ok(result)
             }
@@ -221,10 +351,15 @@ impl ValueContract {
         }
     }
 
-    pub fn data_value(
+    pub fn data_value<E>(
         value: &crate::PlasmDataValue,
-        resolve: &mut ValueContractResolver<'_>,
-    ) -> Result<Self, String> {
+        // Quantifier scopes wrap the resolver recursively. Erase its concrete
+        // closure type so each scope does not create another monomorphization.
+        resolve: &mut dyn FnMut(&str, &[String]) -> Result<ValueContract, E>,
+    ) -> Result<Self, E>
+    where
+        E: From<ValueContractError> + From<crate::value_expression::InferenceError>,
+    {
         use crate::PlasmDataValue as V;
         Ok(match value {
             V::Quantified {
@@ -235,10 +370,10 @@ impl ValueContract {
             } => {
                 let collection = Self::data_value(collection, resolve)?;
                 if collection.nullable {
-                    return Err("quantification requires a non-null array".into());
+                    return Err(ValueContractError::QuantificationRequiresNonNullArray.into());
                 }
                 let ValueShape::Array { element } = collection.shape else {
-                    return Err("quantification requires an array".into());
+                    return Err(ValueContractError::QuantificationRequiresArray.into());
                 };
                 if matches!(element.shape, ValueShape::Never) {
                     return Ok(Self::scalar(FieldType::Boolean));
@@ -254,7 +389,7 @@ impl ValueContract {
                     Ok(value)
                 })?;
                 if result.nullable || result.summary() != crate::SyntheticValueKind::Boolean {
-                    return Err("quantified predicate requires a non-null Boolean".into());
+                    return Err(ValueContractError::QuantifiedPredicateRequiresBoolean.into());
                 }
                 Self::scalar(FieldType::Boolean)
             }
@@ -273,7 +408,7 @@ impl ValueContract {
                     fields: fields
                         .iter()
                         .map(|(k, v)| Ok((k.clone(), Self::data_value(v, resolve)?)))
-                        .collect::<Result<_, String>>()?,
+                        .collect::<Result<_, E>>()?,
                 },
                 domain: None,
                 nullable: false,
@@ -283,7 +418,7 @@ impl ValueContract {
                 entry_id: api.clone().into(),
                 target: entity.clone().into(),
             }),
-            V::Symbol { .. } => return Err("unresolved symbol has no materialized type".into()),
+            V::Symbol { .. } => return Err(ValueContractError::UnresolvedSymbol.into()),
         })
     }
 
@@ -316,7 +451,7 @@ impl ValueContract {
         }
     }
 
-    pub fn literal(value: &crate::Value) -> Result<Self, String> {
+    pub fn literal(value: &crate::Value) -> Result<Self, ValueContractError> {
         use crate::Value as V;
         Ok(match value {
             V::Null => Self {
@@ -337,26 +472,30 @@ impl ValueContract {
                     fields: fields
                         .iter()
                         .map(|(k, v)| Ok((k.clone(), Self::literal(v)?)))
-                        .collect::<Result<_, String>>()?,
+                        .collect::<Result<_, ValueContractError>>()?,
                 },
                 domain: None,
                 nullable: false,
             },
-            _ => return Err("unevaluated expression is not a materialized literal".into()),
+            _ => return Err(ValueContractError::UnevaluatedExpressionNotLiteral),
         })
     }
     pub fn aggregate(
         function: crate::AggregateFunction,
         input: Option<&Self>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, crate::row_plan::contracts::RowContractError> {
         crate::row_plan::contracts::reduction_contract(function, input)
     }
     /// Infer row expressions without executing them. Aliases retain their domain;
     /// computed scalars use the result type rather than impersonating an input domain.
-    pub fn with_expr(
+    pub fn with_expr<E>(
         expr: &crate::WithExpr,
-        field: &mut impl FnMut(&crate::FieldPath) -> Result<Self, String>,
-    ) -> Result<Self, String> {
+        field: &mut impl FnMut(&crate::FieldPath) -> Result<Self, E>,
+    ) -> Result<Self, E>
+    where
+        E: From<crate::row_plan::contracts::RowContractError>
+            + From<crate::value_arithmetic::ArithmeticContractError>,
+    {
         use crate::{WithExpr as E, WithLiteral as L};
         Ok(match expr {
             E::Field(path) => field(path)?,
@@ -379,7 +518,9 @@ impl ValueContract {
                         | crate::SyntheticValueKind::Array
                         | crate::SyntheticValueKind::Object
                 ) {
-                    return Err("length requires a string, array or record".into());
+                    return Err(
+                        crate::row_plan::contracts::RowContractError::InvalidLengthOperand.into(),
+                    );
                 }
                 let mut result = Self::scalar(FieldType::Integer);
                 result.nullable = input.nullable;
@@ -443,7 +584,11 @@ impl ValueContract {
         }
     }
 
-    pub fn from_domain(cgs: &CGS, entry: &str, key: &ValueDomainKey) -> Result<Self, String> {
+    pub fn from_domain(
+        cgs: &CGS,
+        entry: &str,
+        key: &ValueDomainKey,
+    ) -> Result<Self, ValueContractError> {
         Self::resolve(cgs, entry, key, &mut Vec::new())
     }
 
@@ -452,17 +597,20 @@ impl ValueContract {
         entry: &str,
         key: &ValueDomainKey,
         stack: &mut Vec<ValueDomainKey>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, ValueContractError> {
         if stack.len() >= 64 || stack.contains(key) {
-            return Err("recursive value domain exceeds materialized type bounds".into());
+            return Err(ValueContractError::DomainResolutionDepthExceeded);
         }
-        let value = cgs.values.get(key.as_str()).ok_or("unknown value domain")?;
+        let value = cgs
+            .values
+            .get(key.as_str())
+            .ok_or(ValueContractError::DomainNotFound)?;
         stack.push(key.clone());
         let shape = if value.field_type == FieldType::Array {
             let item = value
                 .array_items
                 .as_ref()
-                .ok_or("array domain has no element contract")?;
+                .ok_or(ValueContractError::ArrayDomainElementMissing)?;
             ValueShape::Array {
                 element: Box::new(Self::resolve(cgs, entry, item.kind.registry_key(), stack)?),
             }
@@ -503,7 +651,7 @@ impl ValueContract {
         cgs: &CGS,
         entry: &str,
         path: &str,
-    ) -> Result<(), String> {
+    ) -> Result<(), ValueContractError> {
         self.validate_in(value, cgs, entry, path, &|_| None)
     }
 
@@ -515,7 +663,7 @@ impl ValueContract {
         entry: &str,
         path: &str,
         catalogs: &dyn Fn(&str) -> Option<&'a CGS>,
-    ) -> Result<(), String> {
+    ) -> Result<(), ValueContractError> {
         self.validate_at(
             value,
             cgs,
@@ -537,26 +685,34 @@ impl ValueContract {
         depth: usize,
         catalogs: &dyn Fn(&str) -> Option<&'a CGS>,
         boundary: ValidationBoundary,
-    ) -> Result<(), String> {
+    ) -> Result<(), ValueContractError> {
         if depth >= 64 {
-            return Err(format!("{path}: nested value depth exceeded"));
+            return Err(ValueContractError::ValidationDepthExceeded);
         }
         let (cgs, entry) = match &self.domain {
             Some(reference) if reference.entry_id != entry => (
-                catalogs(&reference.entry_id)
-                    .ok_or_else(|| format!("{path}: value domain catalog is not loaded"))?,
+                catalogs(&reference.entry_id).ok_or_else(|| {
+                    ValueContractError::DomainCatalogNotLoaded {
+                        entry_id: reference.entry_id.clone(),
+                    }
+                })?,
                 reference.entry_id.as_str(),
             ),
             _ => (cgs, entry),
         };
         let domain = if let Some(reference) = &self.domain {
             if reference.entry_id != entry || reference.catalog_hash != cgs.catalog_cgs_hash_hex() {
-                return Err(format!("{path}: value domain catalog pin mismatch"));
+                return Err(ValueContractError::DomainCatalogPinMismatch {
+                    entry_id: reference.entry_id.clone(),
+                });
             }
             Some(
                 &cgs.values
                     .get(reference.value_ref.as_str())
-                    .ok_or("unknown value domain")?
+                    .ok_or_else(|| ValueContractError::DomainMissing {
+                        entry_id: reference.entry_id.clone(),
+                        value_ref: reference.value_ref.to_string(),
+                    })?
                     .domain,
             )
         } else {
@@ -583,7 +739,10 @@ impl ValueContract {
             ValueShape::Array { element } | ValueShape::Set { element } => {
                 let values = value
                     .as_array()
-                    .ok_or_else(|| format!("{path}: expected array"))?;
+                    .ok_or_else(|| ValueContractError::ShapeMismatch {
+                        path: path.into(),
+                        expected: "array",
+                    })?;
                 if matches!(self.shape, ValueShape::Set { .. }) {
                     use crate::value_equality::Equatable;
                     let equality = element.equality()?;
@@ -591,7 +750,9 @@ impl ValueContract {
                     for value in values {
                         let key = equality.key(value)?;
                         if keys.contains(&key) {
-                            return Err(format!("{path}: duplicate set element"));
+                            return Err(ValueContractError::DuplicateSetElement {
+                                path: path.into(),
+                            });
                         }
                         keys.push(key);
                     }
@@ -613,9 +774,13 @@ impl ValueContract {
                 key,
                 value: element,
             } => {
-                let values = value
-                    .as_object()
-                    .ok_or_else(|| format!("{path}: expected dictionary"))?;
+                let values =
+                    value
+                        .as_object()
+                        .ok_or_else(|| ValueContractError::ShapeMismatch {
+                            path: path.into(),
+                            expected: "dictionary",
+                        })?;
                 for (name, value) in values {
                     key.validate_at(
                         &crate::Value::String(name.clone()),
@@ -643,13 +808,23 @@ impl ValueContract {
                 optional_fields,
             } => {
                 if !optional_fields.iter().all(|name| fields.contains_key(name)) {
-                    return Err(format!(
-                        "{path}: presence contract names an undeclared field"
-                    ));
+                    let field = optional_fields
+                        .iter()
+                        .find(|name| !fields.contains_key(*name))
+                        .cloned()
+                        .unwrap_or_default();
+                    return Err(ValueContractError::PresenceFieldUndeclared {
+                        path: path.into(),
+                        field,
+                    });
                 }
-                let values = value
-                    .as_object()
-                    .ok_or_else(|| format!("{path}: expected observed record"))?;
+                let values =
+                    value
+                        .as_object()
+                        .ok_or_else(|| ValueContractError::ShapeMismatch {
+                            path: path.into(),
+                            expected: "observed record",
+                        })?;
                 for (name, field) in fields {
                     match values.get(name) {
                         Some(value) => field.validate_at(
@@ -662,7 +837,12 @@ impl ValueContract {
                             boundary,
                         )?,
                         None if optional_fields.contains(name) => {}
-                        None => return Err(format!("{path}.{name}: missing field")),
+                        None => {
+                            return Err(ValueContractError::RequiredFieldMissing {
+                                path: path.into(),
+                                field: name.clone(),
+                            })
+                        }
                     }
                 }
                 if let Some(name) = values
@@ -670,18 +850,28 @@ impl ValueContract {
                     .find(|name| !fields.contains_key(*name))
                     .filter(|_| matches!(boundary, ValidationBoundary::Materialized))
                 {
-                    return Err(format!("{path}.{name}: undeclared observed field"));
+                    return Err(ValueContractError::UndeclaredField {
+                        path: path.into(),
+                        field: name.clone(),
+                    });
                 }
                 true
             }
             ValueShape::Record { fields } => {
-                let values = value
-                    .as_object()
-                    .ok_or_else(|| format!("{path}: expected record"))?;
+                let values =
+                    value
+                        .as_object()
+                        .ok_or_else(|| ValueContractError::ShapeMismatch {
+                            path: path.into(),
+                            expected: "record",
+                        })?;
                 for (name, field) in fields {
-                    let v = values
-                        .get(name)
-                        .ok_or_else(|| format!("{path}.{name}: missing field"))?;
+                    let v = values.get(name).ok_or_else(|| {
+                        ValueContractError::RequiredFieldMissing {
+                            path: path.into(),
+                            field: name.clone(),
+                        }
+                    })?;
                     field.validate_at(
                         v,
                         cgs,
@@ -703,21 +893,34 @@ impl ValueContract {
                 }
                 FieldType::Date => value.is_string() || value.as_integer().is_some(),
                 FieldType::MultiSelect => {
-                    let items = value
-                        .as_array()
-                        .ok_or_else(|| format!("{path}: expected enum array"))?;
+                    let items =
+                        value
+                            .as_array()
+                            .ok_or_else(|| ValueContractError::ShapeMismatch {
+                                path: path.into(),
+                                expected: "enum array",
+                            })?;
                     for (i, item) in items.iter().enumerate() {
-                        let text = item
-                            .as_str()
-                            .ok_or_else(|| format!("{path}[{i}]: expected enum string"))?;
+                        let text =
+                            item.as_str()
+                                .ok_or_else(|| ValueContractError::ShapeMismatch {
+                                    path: format!("{path}[{i}]"),
+                                    expected: "enum string",
+                                })?;
                         if let Some(d) = domain {
-                            d.validate_string_value(text)
-                                .map_err(|e| format!("{path}[{i}]: {e}"))?;
+                            d.validate_string_value(text).map_err(|error| {
+                                ValueContractError::Domain {
+                                    path: format!("{path}[{i}]"),
+                                    source: error.contract_violation(),
+                                }
+                            })?;
                             if !d
                                 .enum_tokens()
                                 .is_some_and(|tokens| tokens.iter().any(|t| t == text))
                             {
-                                return Err(format!("{path}[{i}]: value is not in enum"));
+                                return Err(ValueContractError::DomainViolation {
+                                    path: format!("{path}[{i}]"),
+                                });
                             }
                         }
                     }
@@ -725,11 +928,13 @@ impl ValueContract {
                 }
                 FieldType::Money => {
                     let crate::Value::Money(money) = value else {
-                        return Err(format!("{path}: expected native money"));
+                        return Err(ValueContractError::MoneyRequired { path: path.into() });
                     };
                     if let Some(currency) = domain.and_then(|d| d.currency.as_deref()) {
                         if money.currency() != Some(currency) {
-                            return Err(format!("{path}: money currency mismatch"));
+                            return Err(ValueContractError::MoneyCurrencyMismatch {
+                                path: path.into(),
+                            });
                         }
                     }
                     true
@@ -737,15 +942,15 @@ impl ValueContract {
                 FieldType::EntityRef { .. } => {
                     crate::entity_ref_value::EntityRefPayload::try_from_value(value).is_ok()
                 }
-                FieldType::Json | FieldType::Blob => validate_json(value, depth + 1).is_ok(),
+                FieldType::Json | FieldType::Blob => match validate_json(value, depth + 1) {
+                    Ok(()) => true,
+                    Err(()) => return Err(ValueContractError::InvalidJson { path: path.into() }),
+                },
                 FieldType::Array => false, // An array always requires its element contract.
             },
         };
         if !valid {
-            return Err(format!(
-                "{path}: value violates materialized type {}",
-                self.python_type()
-            ));
+            return Err(ValueContractError::MaterializedValueMismatch { path: path.into() });
         }
         let encoded = if domain.is_some() && value.get("__plasm_temporal").is_some() {
             if let ValueShape::Temporal { kind, wire } = &self.shape {
@@ -775,37 +980,44 @@ impl ValueContract {
                         .max_length
                         .is_some_and(|n| items.len() > n)
                 {
-                    return Err(format!("{path}: array length violates domain constraints"));
+                    return Err(ValueContractError::DomainViolation { path: path.into() });
                 }
             }
             if let Some(text) = value.as_str() {
                 domain
                     .validate_string_value(text)
-                    .map_err(|e| format!("{path}: {e}"))?;
+                    .map_err(|error| ValueContractError::Domain {
+                        path: path.to_owned(),
+                        source: error.contract_violation(),
+                    })?;
                 use crate::value_domain::ProfileId;
                 match domain.profile {
                     Some(ProfileId::Rfc3339) => {
-                        chrono::DateTime::parse_from_rfc3339(text)
-                            .map_err(|e| format!("{path}: invalid RFC3339: {e}"))?;
+                        chrono::DateTime::parse_from_rfc3339(text).map_err(|_| {
+                            ValueContractError::InvalidTemporalEncoding { path: path.into() }
+                        })?;
                     }
                     Some(ProfileId::Iso8601NaiveDatetime) => {
                         crate::temporal_value::components(
                             value,
                             crate::temporal_value::TemporalKind::Datetime,
                             Some(crate::TemporalWireFormat::Iso8601NaiveDatetime),
-                        )
-                        .map_err(|e| format!("{path}: invalid naive datetime: {e}"))?;
+                        )?;
                     }
                     Some(ProfileId::Iso8601Date) => {
-                        chrono::NaiveDate::parse_from_str(text, "%Y-%m-%d")
-                            .map_err(|e| format!("{path}: invalid date: {e}"))?;
+                        chrono::NaiveDate::parse_from_str(text, "%Y-%m-%d").map_err(|_| {
+                            ValueContractError::InvalidTemporalEncoding { path: path.into() }
+                        })?;
                     }
                     _ => {}
                 }
             } else if let Some(number) = value.as_number() {
-                domain
-                    .validate_number_value(number)
-                    .map_err(|e| format!("{path}: {e}"))?;
+                domain.validate_number_value(number).map_err(|error| {
+                    ValueContractError::Domain {
+                        path: path.to_owned(),
+                        source: error.contract_violation(),
+                    }
+                })?;
             }
         }
         Ok(())
@@ -851,9 +1063,9 @@ impl ValueContract {
     }
 }
 
-fn validate_json(value: &crate::Value, depth: usize) -> Result<(), String> {
+fn validate_json(value: &crate::Value, depth: usize) -> Result<(), ()> {
     if depth >= 64 {
-        return Err("nested JSON depth exceeded".into());
+        return Err(());
     }
     match value {
         crate::Value::Array(values) => {
@@ -872,7 +1084,7 @@ fn validate_json(value: &crate::Value, depth: usize) -> Result<(), String> {
         | crate::Value::Integer(_)
         | crate::Value::Unsigned(_) => {}
         crate::Value::Float(v) if v.is_finite() => {}
-        _ => return Err("expected resolved JSON data".into()),
+        _ => return Err(()),
     }
     Ok(())
 }
@@ -880,20 +1092,24 @@ fn validate_json(value: &crate::Value, depth: usize) -> Result<(), String> {
 impl ValueContract {
     /// Structural value access, including every variant of a union. Presence
     /// remains a runtime obligation; selecting a field creates no authority.
-    pub fn field(&self, name: &str) -> Result<Self, String> {
+    pub fn field(&self, name: &str) -> Result<Self, ValueContractError> {
         match &self.shape {
             ValueShape::Record { fields } | ValueShape::ObservedRecord { fields, .. } => fields
                 .get(name)
                 .cloned()
-                .ok_or_else(|| format!("unknown value field {name}")),
+                .ok_or_else(|| ValueContractError::FieldMissing {
+                    name: name.to_owned(),
+                }),
             ValueShape::Union { variants } => variants
                 .iter()
                 .map(|v| v.field(name))
                 .collect::<Result<Vec<_>, _>>()?
                 .into_iter()
                 .reduce(Self::join)
-                .ok_or("empty record union".into()),
-            _ => Err(format!("field {name} requires a record value")),
+                .ok_or(ValueContractError::EmptyUnion),
+            _ => Err(ValueContractError::FieldRequiresRecord {
+                name: name.to_owned(),
+            }),
         }
     }
 }
@@ -903,6 +1119,46 @@ mod presence_tests {
     use super::*;
     use crate::fixture_value as json;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn domain_fault_retains_path_and_semantic_cause_without_observed_value() {
+        let cgs = crate::loader::load_schema_dir(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/plasm_language_matrix"),
+        )
+        .unwrap();
+        let key = ValueDomainKey::new("nv_lang_item_code").unwrap();
+        let contract = ValueContract::from_domain(&cgs, "matrix", &key).unwrap();
+        let error = contract
+            .validate(&json!("x"), &cgs, "matrix", "rows[2].code")
+            .unwrap_err();
+        assert!(
+            matches!(&error, ValueContractError::Domain { path, source: crate::ValueDomainViolation::BelowMinLength(3) } if path == "rows[2].code")
+        );
+        let cause = std::error::Error::source(&error).unwrap();
+        assert!(matches!(
+            cause.downcast_ref::<crate::ValueDomainViolation>(),
+            Some(crate::ValueDomainViolation::BelowMinLength(3))
+        ));
+        assert!(!error.to_string().contains("\"x\""));
+    }
+
+    #[test]
+    fn field_errors_distinguish_missing_field_from_non_record_shape() {
+        let record = ValueContract::record(BTreeMap::new(), Default::default());
+        assert_eq!(
+            record.field("absent"),
+            Err(ValueContractError::FieldMissing {
+                name: "absent".into()
+            })
+        );
+        assert_eq!(
+            ValueContract::scalar(FieldType::String).field("name"),
+            Err(ValueContractError::FieldRequiresRecord {
+                name: "name".into()
+            })
+        );
+    }
 
     #[test]
     fn reduction_contracts_preserve_native_numeric_result_kinds() {

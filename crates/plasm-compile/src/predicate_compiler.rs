@@ -96,19 +96,16 @@ fn compile_comparison(
         return Ok(BackendFilter::True);
     }
     if let Some(schema) = entity.fields.get(field) {
-        let domain = schema
-            .named_value(cgs)
-            .map_err(|e| CompileError::CompilationFailed {
-                message: e.to_string(),
-            })?;
-        plasm_core::temporal_input::encode_domain_temporals(&mut wire, domain, cgs)
-            .map_err(|message| CompileError::CompilationFailed { message })?;
+        let domain = schema.named_value(cgs).map_err(CompileError::Schema)?;
+        plasm_core::temporal_input::encode_domain_temporals(&mut wire, domain, cgs)?;
         return Ok(BackendFilter::field(field, BackendOp::from(op), wire));
     }
 
-    Err(CompileError::CompilationFailed {
-        message: format!("Field '{}' not found in entity '{}'", field, entity.name),
-    })
+    Err(plasm_core::TypeError::FieldNotFound {
+        field: field.to_owned(),
+        entity: entity.name.to_string(),
+    }
+    .into())
 }
 
 fn compile_relation(
@@ -122,21 +119,16 @@ fn compile_relation(
         entity
             .relations
             .get(relation)
-            .ok_or_else(|| CompileError::CompilationFailed {
-                message: format!(
-                    "Relation '{}' not found in entity '{}'",
-                    relation, entity.name
-                ),
+            .ok_or_else(|| plasm_core::TypeError::RelationNotFound {
+                relation: relation.to_owned(),
+                entity: entity.name.to_string(),
             })?;
 
     // Get target entity
     let target_entity = cgs
         .get_entity(&relation_schema.target_resource)
-        .ok_or_else(|| CompileError::CompilationFailed {
-            message: format!(
-                "Target entity '{}' not found",
-                relation_schema.target_resource
-            ),
+        .ok_or_else(|| plasm_core::TypeError::EntityNotFound {
+            entity: relation_schema.target_resource.to_string(),
         })?;
 
     // Compile nested predicate if present
@@ -159,11 +151,11 @@ pub fn compile_query(
     query: &plasm_core::QueryExpr,
     cgs: &CGS,
 ) -> Result<Option<BackendFilter>, CompileError> {
-    let entity = cgs
-        .get_entity(&query.entity)
-        .ok_or_else(|| CompileError::CompilationFailed {
-            message: format!("Entity '{}' not found", query.entity),
-        })?;
+    let entity =
+        cgs.get_entity(&query.entity)
+            .ok_or_else(|| plasm_core::TypeError::EntityNotFound {
+                entity: query.entity.to_string(),
+            })?;
 
     // Resolve capability parameters so the compiler can distinguish
     // entity-field predicates from capability-param pass-throughs.
@@ -178,10 +170,7 @@ pub fn compile_query(
     {
         Vec::new()
     } else {
-        let cap =
-            resolve_query_capability(query, cgs).map_err(|e| CompileError::CompilationFailed {
-                message: e.to_string(),
-            })?;
+        let cap = resolve_query_capability(query, cgs).map_err(CompileError::QueryResolution)?;
         cap.query_surface_fields().cloned().collect()
     };
 

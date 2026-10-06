@@ -38,16 +38,32 @@ pub(crate) struct SessionMaterializationPins<'a> {
 }
 
 /// Typed failures from registry load + tenant/http/overlay materialization.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub(crate) enum MaterializeError {
+#[derive(Debug, thiserror::Error)]
+pub enum MaterializeError {
     #[error("unknown catalog entry `{0}`")]
     UnknownEntry(String),
-    #[error("load context `{entry_id}`: {detail}")]
-    LoadContext { entry_id: String, detail: String },
-    #[error("http backend for `{entry_id}`: {detail}")]
-    HttpBackend { entry_id: String, detail: String },
-    #[error("schema overlay for `{entry_id}`: {detail}")]
-    SchemaOverlay { entry_id: String, detail: String },
+    #[error("catalog context load failed for `{entry_id}`: {source}")]
+    LoadContext {
+        entry_id: String,
+        #[source]
+        source: DiscoveryError,
+    },
+    #[error("materialized primary catalog entry `{entry_id}` is missing")]
+    PrimaryEntryMissing { entry_id: String },
+    #[error("http backend for `{entry_id}`: {source}")]
+    HttpBackend {
+        entry_id: String,
+        #[source]
+        source: crate::binding_slots::HttpBackendResolutionError,
+    },
+    #[error("schema overlay for `{entry_id}` failed: {source}")]
+    SchemaOverlay {
+        entry_id: String,
+        #[source]
+        source: crate::schema_overlay_session::SchemaOverlaySessionError,
+    },
+    #[error(transparent)]
+    CatalogRuntime(#[from] crate::catalog_runtime::CatalogRuntimeError),
 }
 
 /// Outcome of comparing live rematerialized digests to pinned effective hashes.
@@ -67,11 +83,11 @@ pub(crate) async fn materialize_entry_context(
     let mut ctx = match reg.load_context(entry_id) {
         Ok(ctx) => ctx,
         Err(DiscoveryError::UnknownEntry(id)) => return Err(MaterializeError::UnknownEntry(id)),
-        Err(e) => {
+        Err(source) => {
             return Err(MaterializeError::LoadContext {
                 entry_id: entry_id.to_string(),
-                detail: e.to_string(),
-            });
+                source,
+            })
         }
     };
     if let Some(kv) = outbound_hosted_kv {
@@ -89,20 +105,26 @@ pub(crate) async fn materialize_entry_context(
         outbound_hosted_kv,
     )
     .await
-    .map_err(|detail| MaterializeError::HttpBackend {
+    .map_err(|source| MaterializeError::HttpBackend {
         entry_id: entry_id.to_string(),
-        detail,
+        source,
     })?;
     if catalog_backend.needs_origin_resolution(entry_id) {
         ctx = patch_cgs_context_resolved_http_backend(ctx, &http_backend);
     }
-    let effective_cgs =
-        resolve_schema_overlay(st, ctx.cgs.clone(), http_backend.as_str(), entry_id)
-            .await
-            .map_err(|detail| MaterializeError::SchemaOverlay {
-                entry_id: entry_id.to_string(),
-                detail,
-            })?;
+    let compiled = st.catalog.compiled_catalog(entry_id)?;
+    let effective_cgs = resolve_schema_overlay(
+        st,
+        ctx.cgs.clone(),
+        compiled,
+        http_backend.as_str(),
+        entry_id,
+    )
+    .await
+    .map_err(|source| MaterializeError::SchemaOverlay {
+        entry_id: entry_id.to_string(),
+        source,
+    })?;
     let ctx = Arc::new(CgsContext::entry(
         entry_id.to_string(),
         effective_cgs.clone(),
@@ -223,10 +245,10 @@ async fn encode_durable_exposure_snapshot(
         .map(|(k, v)| (k.clone(), v.as_str().to_string()))
         .collect();
     let snap = plasm_core::PersistedSymbolLedger::from_session(exp, ledger_pins)
-        .map_err(|e| ExecuteSessionPersistError::SymbolLedgerEncode(e.to_string()))?;
+        .map_err(|e| ExecuteSessionPersistError::SymbolLedgerEncode(Arc::new(e)))?;
     let symbol_ledger_bytes = snap
         .encode()
-        .map_err(|e| ExecuteSessionPersistError::SymbolLedgerEncode(e.to_string()))?;
+        .map_err(|e| ExecuteSessionPersistError::SymbolLedgerEncode(Arc::new(e)))?;
     if symbol_ledger_bytes.is_empty() {
         return Err(ExecuteSessionPersistError::MissingSymbolLedger);
     }
@@ -239,15 +261,16 @@ async fn encode_durable_exposure_snapshot(
 async fn resolve_schema_overlay(
     st: &PlasmHostState,
     base: Arc<CGS>,
+    compiled: Arc<plasm_compile::CompiledCatalog>,
     http_base: &str,
     entry_id: &str,
-) -> Result<Arc<CGS>, String> {
+) -> Result<Arc<CGS>, crate::schema_overlay_session::SchemaOverlaySessionError> {
     crate::schema_overlay_session::resolve_schema_overlay_for_host(
         st.engine.as_ref(),
         st.mode,
         st.effective_outbound_secret_provider(),
         base,
-        st.catalog.compiled_catalog(entry_id)?,
+        compiled,
         http_base,
         entry_id,
     )
@@ -302,7 +325,8 @@ mod tests {
             run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
             session_graph_persistence: None,
             oss_local_filesystem_defaults: false,
-        });
+        })
+        .expect("valid catalog fixture");
 
         let baseline = materialize_entry_context(&st, "langmatrix", None, None)
             .await

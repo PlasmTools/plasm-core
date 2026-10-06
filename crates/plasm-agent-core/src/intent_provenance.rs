@@ -1,6 +1,16 @@
 //! Lossless ancestry for discovery. Position is node identity within one chain.
-use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum IntentProvenanceError {
+    #[error("intent provenance must contain at least one turn")]
+    Empty,
+    #[error("intent provenance parent must be the preceding node")]
+    InvalidParent,
+    #[error("intent text must be nonempty and contain no NUL character")]
+    InvalidIntentText,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -23,21 +33,18 @@ struct WireProvenance {
 }
 
 impl TryFrom<WireProvenance> for IntentProvenance {
-    type Error = anyhow::Error;
-    fn try_from(wire: WireProvenance) -> Result<Self> {
-        ensure!(
-            !wire.nodes.is_empty(),
-            "intent provenance must not be empty"
-        );
+    type Error = IntentProvenanceError;
+    fn try_from(wire: WireProvenance) -> Result<Self, Self::Error> {
+        if wire.nodes.is_empty() {
+            return Err(IntentProvenanceError::Empty);
+        }
         for (index, node) in wire.nodes.iter().enumerate() {
-            ensure!(
-                node.parent == index.checked_sub(1),
-                "intent parent must be the preceding node"
-            );
-            ensure!(
-                !node.intent.trim().is_empty() && !node.intent.contains('\0'),
-                "intent must be nonempty Unicode text without NUL"
-            );
+            if node.parent != index.checked_sub(1) {
+                return Err(IntentProvenanceError::InvalidParent);
+            }
+            if node.intent.trim().is_empty() || node.intent.contains('\0') {
+                return Err(IntentProvenanceError::InvalidIntentText);
+            }
         }
         Ok(Self { nodes: wire.nodes })
     }
@@ -48,7 +55,7 @@ impl IntentProvenance {
         self.nodes.iter().map(|node| node.intent.as_str())
     }
 
-    pub fn derived(&self, intent: String) -> Result<Self> {
+    pub fn derived(&self, intent: String) -> Result<Self, IntentProvenanceError> {
         Self::from_turns(self.turns().map(str::to_owned).chain([intent]))
     }
 
@@ -56,7 +63,9 @@ impl IntentProvenance {
         self.nodes.starts_with(&previous.nodes) && self.nodes.len() <= previous.nodes.len() + 1
     }
 
-    pub fn from_turns(turns: impl IntoIterator<Item = String>) -> Result<Self> {
+    pub fn from_turns(
+        turns: impl IntoIterator<Item = String>,
+    ) -> Result<Self, IntentProvenanceError> {
         WireProvenance {
             nodes: turns
                 .into_iter()

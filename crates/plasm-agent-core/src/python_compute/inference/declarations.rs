@@ -1,5 +1,6 @@
 use super::*;
 
+#[derive(Clone)]
 pub(super) struct Declarations {
     pub source: String,
     pub contracts: BTreeMap<String, Type>,
@@ -16,9 +17,13 @@ impl Default for Declarations {
     }
 }
 impl Declarations {
-    pub fn render(&mut self, value: &Type, depth: usize) -> Result<String, String> {
+    pub fn render(
+        &mut self,
+        value: &Type,
+        depth: usize,
+    ) -> Result<String, super::DeclarationError> {
         if depth >= 64 {
-            return Err("analysis declaration depth exceeds 64".into());
+            return Err(super::DeclarationError::DepthExceeded);
         }
         if value.nullable && value.shape != ValueShape::Null {
             let mut inner = value.clone();
@@ -35,7 +40,7 @@ impl Declarations {
         if let ValueShape::MappingRecord { record } = &value.shape {
             let fields = match &record.shape {
                 ValueShape::Record { fields } | ValueShape::ObservedRecord { fields, .. } => fields,
-                _ => return Err("mapping input requires a record contract".into()),
+                _ => return Err(super::DeclarationError::MappingInputNotRecord),
             };
             let name = format!("PlasmAnalysisType{}", self.contracts.len());
             self.contracts.insert(name.clone(), value.clone());
@@ -48,7 +53,9 @@ impl Declarations {
                 }
                 members.push(format!(
                     "{}: {ty}",
-                    serde_json::to_string(key).map_err(|e| e.to_string())?
+                    serde_json::to_string(key).map_err(|error| {
+                        super::DeclarationError::Serialization(std::sync::Arc::new(error))
+                    })?
                 ));
             }
             self.source.push_str(&format!(
@@ -72,14 +79,21 @@ impl Declarations {
             let mut members = String::new();
             let mut indexed = Vec::new();
             for (field, contract) in fields {
-                super::super::upstream::validate_member(field)?;
+                super::super::upstream::validate_member(field).map_err(|_| {
+                    super::DeclarationError::InvalidMember {
+                        field: field.clone(),
+                    }
+                })?;
                 let ty = self.render(contract, depth + 1)?;
                 members.push_str(&format!(
                     "    @property\n    def {field}(self) -> {ty}: ...\n"
                 ));
                 indexed.push((field.clone(), ty));
             }
-            members.push_str(&super::super::upstream::record_index_members(&indexed));
+            members.push_str(
+                &super::super::upstream::record_index_members(&indexed)
+                    .map_err(super::DeclarationError::Compute)?,
+            );
             self.source.push_str(&format!(
                 "class {name}(Protocol):\n{}",
                 if members.is_empty() {
@@ -111,7 +125,7 @@ impl Declarations {
                 FieldType::Money => "PlasmMoney",
                 FieldType::EntityRef { .. } | FieldType::Json | FieldType::Blob => "object",
                 FieldType::Date | FieldType::Array => {
-                    return Err("analysis requires an explicit temporal/array shape".into())
+                    return Err(super::DeclarationError::ShapeNeedsExplicitContract)
                 }
                 _ => "str",
             }

@@ -3,6 +3,43 @@
 
 use super::applicator::method_call_at_depth_zero;
 use super::program_surface::is_valid_program_label;
+use thiserror::Error;
+
+const ITERATE_FORM: &str = "`cur = e#(\"id\")` / `cur = e#(tok)` / `cur = e#{id_field=tok}` then `iterate cur step Entity.m#(…) until field = value take N` (PLP-8; `take N` mandatory)";
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum IterateUntilError {
+    #[error("invalid state iterate: unbounded `while` is forbidden; use `iterate … step … until … take N` (hard bound required); lawful form: {ITERATE_FORM}")]
+    UnboundedWhile,
+    #[error("invalid state iterate: missing seed after `iterate` (expected a Get identity: `cur = e#(\"id\")` / `cur = e#(tok)` / `cur = e#{{id_field=tok}}` then `iterate cur step … until … take N`); lawful form: {ITERATE_FORM}")]
+    MissingSeed,
+    #[error("invalid state iterate: seed expression is empty; lawful form: {ITERATE_FORM}")]
+    EmptySeed,
+    #[error("invalid state iterate: missing `step` clause (hard-bound iterate requires step, until, and take); lawful form: {ITERATE_FORM}")]
+    MissingStepClause,
+    #[error("invalid state iterate: step expression is empty; lawful form: {ITERATE_FORM}")]
+    EmptyStep,
+    #[error("invalid state iterate: step is a keyword followed by an invoke (`iterate cur step Entity.m#(…)`), not a binder; lawful form: {ITERATE_FORM}")]
+    StepIsBinder,
+    #[error("invalid state iterate: step must be a write/side-effect invoke (`Entity.m#(…)` / `Entity.method(…)`); lawful form: {ITERATE_FORM}")]
+    InvalidStep,
+    #[error("invalid state iterate: missing `until` clause (hard-bound iterate requires step, until, and take); lawful form: {ITERATE_FORM}")]
+    MissingUntilClause,
+    #[error("invalid state iterate: until predicate is empty; lawful form: {ITERATE_FORM}")]
+    EmptyUntil,
+    #[error("invalid state iterate: missing `take N` bound (hard bound; no unbounded iterate); lawful form: {ITERATE_FORM}")]
+    MissingTake,
+    #[error("invalid state iterate: `take` requires a positive integer bound, got `{value}`; lawful form: {ITERATE_FORM}")]
+    InvalidTake { value: String },
+    #[error("invalid state iterate: invalid take bound `{value}`; lawful form: {ITERATE_FORM}")]
+    TakeOutOfRange { value: String },
+    #[error("invalid state iterate: `take N` requires N ≥ 1; lawful form: {ITERATE_FORM}")]
+    ZeroTake,
+    #[error("invalid state iterate: seed must not include `=>` applicators; bind the seed first; lawful form: {ITERATE_FORM}")]
+    SeedApplicator,
+    #[error("iterate seed `{seed}` must be a catalog Get identity ({ITERATE_SEED_GET_FAMILY}) so the seed can be re-observed")]
+    SeedMustBeGetIdentity { seed: String },
+}
 
 /// Parsed `iterate … step … until … take N` (hard bound required).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,14 +55,12 @@ pub struct IterateUntilExpr {
 }
 
 /// Try parse a full expression as state iterate. `Ok(None)` if not an `iterate` form.
-pub fn try_parse_iterate_until(raw: &str) -> Result<Option<IterateUntilExpr>, String> {
+pub fn try_parse_iterate_until(raw: &str) -> Result<Option<IterateUntilExpr>, IterateUntilError> {
     let t = raw.trim();
     if t.starts_with("while")
         && (t.len() == 5 || t.as_bytes().get(5).is_some_and(|b| b.is_ascii_whitespace()))
     {
-        return Err(iterate_usage_err(
-            "unbounded `while` is forbidden; use `iterate … step … until … take N` (hard bound required)",
-        ));
+        return Err(IterateUntilError::UnboundedWhile);
     }
     if !t.starts_with("iterate") {
         return Ok(None);
@@ -36,63 +71,55 @@ pub fn try_parse_iterate_until(raw: &str) -> Result<Option<IterateUntilExpr>, St
     }
     let rest = after_kw.trim_start();
     if rest.is_empty() {
-        return Err(iterate_usage_err(
-            "missing seed after `iterate` (expected a Get identity: `cur = e#(\"id\")` / `cur = e#(tok)` / `cur = e#{id_field=tok}` then `iterate cur step … until … take N`)",
-        ));
+        return Err(IterateUntilError::MissingSeed);
     }
 
     let (seed, after_seed) = split_keyword_clause(rest, "step")?;
     let seed = seed.trim();
     if seed.is_empty() {
-        return Err(iterate_usage_err("seed expression is empty"));
+        return Err(IterateUntilError::EmptySeed);
     }
 
     let (step, after_step) = split_keyword_clause(after_seed, "until")?;
     let step = step.trim();
     if step.is_empty() {
-        return Err(iterate_usage_err("step expression is empty"));
+        return Err(IterateUntilError::EmptyStep);
     }
     if step.starts_with('=') {
-        return Err(iterate_usage_err(
-            "step is a keyword followed by an invoke (`iterate cur step Entity.m#(…)`), not a binder",
-        ));
+        return Err(IterateUntilError::StepIsBinder);
     }
     if !method_call_at_depth_zero(step) {
-        return Err(iterate_usage_err(
-            "step must be a write/side-effect invoke (`Entity.m#(…)` / `Entity.method(…)`)",
-        ));
+        return Err(IterateUntilError::InvalidStep);
     }
 
     let (until, after_until) = split_keyword_clause(after_step, "take")?;
     let until = normalize_until_pred(until.trim());
     if until.is_empty() {
-        return Err(iterate_usage_err("until predicate is empty"));
+        return Err(IterateUntilError::EmptyUntil);
     }
 
     let take_raw = after_until.trim();
     if take_raw.is_empty() {
-        return Err(iterate_usage_err(
-            "`take N` is required (hard bound; no unbounded iterate)",
-        ));
+        return Err(IterateUntilError::MissingTake);
     }
     if take_raw.contains(char::is_whitespace) || take_raw.contains(|c: char| !c.is_ascii_digit()) {
-        return Err(iterate_usage_err(&format!(
-            "`take` requires a positive integer bound, got `{take_raw}`"
-        )));
+        return Err(IterateUntilError::InvalidTake {
+            value: take_raw.to_owned(),
+        });
     }
     let take: u32 = take_raw
         .parse()
-        .map_err(|_| iterate_usage_err(&format!("invalid take bound `{take_raw}`")))?;
+        .map_err(|_| IterateUntilError::TakeOutOfRange {
+            value: take_raw.to_owned(),
+        })?;
     if take == 0 {
-        return Err(iterate_usage_err("`take N` requires N ≥ 1"));
+        return Err(IterateUntilError::ZeroTake);
     }
 
     // Reject seed that looks like a domain symbol alone without call/braces when it's not a label.
     // Labels and Entity(…) / Entity{…} are fine; bare `e1` is a label-or-entity head (ok).
     if seed.contains("=>") {
-        return Err(iterate_usage_err(
-            "seed must not include `=>` applicators; bind the seed first",
-        ));
+        return Err(IterateUntilError::SeedApplicator);
     }
 
     Ok(Some(IterateUntilExpr {
@@ -118,20 +145,17 @@ pub const ITERATE_SEED_GET_FAMILY: &str =
     "`cur = e#(\"id\")` / `cur = e#(tok)` / `cur = e#{id_field=tok}` then `iterate cur step …`";
 
 /// Taught repair when iterate seed is not a catalog Get identity (PLP-8).
-pub fn iterate_seed_must_be_get_identity(seed: &str) -> String {
-    format!(
-        "iterate seed `{seed}` must be a catalog Get identity ({ITERATE_SEED_GET_FAMILY}) so the seed can be re-observed"
-    )
-}
-
-fn iterate_usage_err(detail: &str) -> String {
-    format!(
-        "invalid state iterate: {detail}; lawful form: `cur = e#(\"id\")` / `cur = e#(tok)` / `cur = e#{{id_field=tok}}` then `iterate cur step Entity.m#(…) until field = value take N` (PLP-8; `take N` mandatory)"
-    )
+pub fn iterate_seed_must_be_get_identity(seed: &str) -> IterateUntilError {
+    IterateUntilError::SeedMustBeGetIdentity {
+        seed: seed.to_owned(),
+    }
 }
 
 /// Split `head KEYWORD tail` at depth-0 keyword token.
-fn split_keyword_clause<'a>(src: &'a str, keyword: &str) -> Result<(&'a str, &'a str), String> {
+fn split_keyword_clause<'a>(
+    src: &'a str,
+    keyword: &str,
+) -> Result<(&'a str, &'a str), IterateUntilError> {
     let bytes = src.as_bytes();
     let mut i = 0usize;
     let mut depth = 0i32;
@@ -153,9 +177,11 @@ fn split_keyword_clause<'a>(src: &'a str, keyword: &str) -> Result<(&'a str, &'a
         }
         i += 1;
     }
-    Err(iterate_usage_err(&format!(
-        "missing `{keyword}` clause (hard-bound iterate requires step, until, and take)"
-    )))
+    Err(match keyword {
+        "step" => IterateUntilError::MissingStepClause,
+        "until" => IterateUntilError::MissingUntilClause,
+        _ => IterateUntilError::MissingTake,
+    })
 }
 
 fn is_keyword_at(bytes: &[u8], i: usize, kw: &[u8]) -> bool {
@@ -224,7 +250,7 @@ mod tests {
             r#"iterate LangItem("i1") step LangItem(_.id).ping() until active = true"#,
         )
         .expect_err("take required");
-        assert!(err.contains("take"), "{err}");
+        assert!(matches!(err, IterateUntilError::MissingTake));
     }
 
     #[test]
@@ -233,7 +259,7 @@ mod tests {
             r#"iterate LangItem("i1") step LangItem(_.id).ping() until active = true take 0"#,
         )
         .expect_err("N>=1");
-        assert!(err.contains("N ≥ 1") || err.contains("N >= 1"), "{err}");
+        assert!(matches!(err, IterateUntilError::ZeroTake));
     }
 
     #[test]
@@ -251,17 +277,22 @@ mod tests {
     #[test]
     fn rejects_while() {
         let err = try_parse_iterate_until("while true").expect_err("while");
-        assert!(err.contains("while") && err.contains("iterate"), "{err}");
+        assert!(matches!(err, IterateUntilError::UnboundedWhile));
     }
 
     #[test]
     fn seed_get_identity_diagnostic_names_taught_form() {
         let err = iterate_seed_must_be_get_identity("cur");
-        assert!(err.contains("cur = e#(\"id\")"), "{err}");
-        assert!(err.contains("e#(tok)"), "{err}");
-        assert!(err.contains("e#{id_field=tok}"), "{err}");
-        assert!(err.contains("iterate cur step"), "{err}");
-        assert!(!err.contains("carry ir"), "{err}");
+        assert!(matches!(
+            err,
+            IterateUntilError::SeedMustBeGetIdentity { .. }
+        ));
+        let rendered = err.to_string();
+        assert!(rendered.contains("cur = e#(\"id\")"), "{rendered}");
+        assert!(rendered.contains("e#(tok)"), "{rendered}");
+        assert!(rendered.contains("e#{id_field=tok}"), "{rendered}");
+        assert!(rendered.contains("iterate cur step"), "{rendered}");
+        assert!(!rendered.contains("carry ir"), "{rendered}");
     }
 
     #[test]
@@ -271,7 +302,8 @@ mod tests {
         )
         .expect_err("step is a keyword; `step = invoke` is not lawful");
         assert!(
-            err.contains("not a binder") && err.contains("iterate cur step Entity.m#(…)"),
+            err.to_string().contains("not a binder")
+                && err.to_string().contains("iterate cur step Entity.m#(…)"),
             "diagnostic must name the executable invoke-after-step form, got: {err}"
         );
     }

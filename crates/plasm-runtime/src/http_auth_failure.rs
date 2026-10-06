@@ -254,9 +254,17 @@ pub fn request_error_from_host_http(
 ) -> RuntimeError {
     let detail = host_body_detail(body);
     let authorization = OutboundAuthorizationFact::from_header(authorization_header);
-    let message = format_http_status_error(method, url, status, &detail, &authorization, None);
     RuntimeError::RequestError {
-        message,
+        source: crate::RequestFailure::HttpStatus(crate::HttpStatusFailure {
+            method: method.to_owned(),
+            url: url.to_owned(),
+            status,
+            detail,
+            empty_body: body.is_empty(),
+            authorization,
+            login_token_tail: None,
+            retry_budget_exhausted: false,
+        }),
         attempts: 1,
         status: Some(status),
         body: serde_json::from_str(body).ok(),

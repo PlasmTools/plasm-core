@@ -1,6 +1,7 @@
 //! Post-materialize compute and template rendering.
 
 mod compute_ops;
+pub(crate) use compute_ops::BindingRowsError;
 mod dry_staging;
 mod eval;
 mod for_each;

@@ -3,12 +3,35 @@ use crate::{
     CapabilitySchema, FieldType, InputFieldSchema, InputFieldWire, InputType, NamedValueSchema,
     Value, CGS,
 };
+use thiserror::Error;
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum TemporalInputError {
+    #[error("temporal input nesting exceeded the supported limit")]
+    NestingLimitExceeded,
+    #[error("array domain has no element contract")]
+    ArrayElementContractMissing,
+    #[error("input domain `{domain}` is absent")]
+    InputDomainMissing { domain: String },
+    #[error("temporal union requires exactly one discriminator match")]
+    UnionDiscriminatorMismatch,
+    #[error("wrapped input `{field}` does not reference an array domain")]
+    WrappedInputNotArray { field: String },
+    #[error("array element domain `{domain}` is absent")]
+    ArrayElementDomainMissing { domain: String },
+    #[error("wrapped input `{field}` requires an array contract")]
+    WrappedInputContractMismatch { field: String },
+    #[error("temporal input domain declares a money wire format")]
+    UnexpectedMoneyFormat,
+    #[error(transparent)]
+    Temporal(#[from] crate::TemporalNormalizationError),
+}
 
 pub fn encode_capability_temporals(
     input: &mut Value,
     cap: &CapabilitySchema,
     cgs: &CGS,
-) -> Result<(), String> {
+) -> Result<(), TemporalInputError> {
     for schema in cap.invocation_input_schemas() {
         encode_type(input, &schema.input_type, cgs, 0)?;
     }
@@ -32,7 +55,7 @@ pub fn encode_domain_temporals(
     value: &mut Value,
     domain: &NamedValueSchema,
     cgs: &CGS,
-) -> Result<(), String> {
+) -> Result<(), TemporalInputError> {
     encode_domain(value, domain, cgs, 0)
 }
 
@@ -41,31 +64,34 @@ fn encode_domain(
     domain: &NamedValueSchema,
     cgs: &CGS,
     depth: usize,
-) -> Result<(), String> {
+) -> Result<(), TemporalInputError> {
     if depth >= 64 {
-        return Err("temporal input nesting exceeds 64".into());
+        return Err(TemporalInputError::NestingLimitExceeded);
     }
     if domain.field_type == FieldType::Date
         && matches!(&*value, Value::Object(o) if o.contains_key("__plasm_temporal"))
     {
-        *value = crate::coerce_value_for_field_type(
-            &domain.field_type,
-            domain.value_format,
-            domain.array_items.as_ref(),
-            value.clone(),
-        )?;
+        let wire = match domain.value_format {
+            Some(crate::ValueWireFormat::Temporal(wire)) => wire,
+            None => crate::TemporalWireFormat::Rfc3339,
+            Some(crate::ValueWireFormat::Money(_)) => {
+                return Err(TemporalInputError::UnexpectedMoneyFormat);
+            }
+        };
+        *value = crate::temporal::normalize_temporal_value(value.clone(), wire)?;
     } else if domain.field_type == FieldType::Array {
         if let Value::Array(items) = value {
             let key = domain
                 .array_items
                 .as_ref()
-                .ok_or("array has no element contract")?
+                .ok_or(TemporalInputError::ArrayElementContractMissing)?
                 .kind
                 .registry_key();
-            let element = cgs
-                .values
-                .get(key.as_str())
-                .ok_or("unknown array element domain")?;
+            let element = cgs.values.get(key.as_str()).ok_or_else(|| {
+                TemporalInputError::InputDomainMissing {
+                    domain: key.to_string(),
+                }
+            })?;
             for item in items {
                 encode_domain(item, element, cgs, depth + 1)?;
             }
@@ -79,11 +105,15 @@ fn encode_field(
     field: &InputFieldSchema,
     cgs: &CGS,
     depth: usize,
-) -> Result<(), String> {
+) -> Result<(), TemporalInputError> {
     match &field.wire {
         InputFieldWire::Registry(key) => encode_domain(
             value,
-            cgs.values.get(key.as_str()).ok_or("unknown input domain")?,
+            cgs.values
+                .get(key.as_str())
+                .ok_or_else(|| TemporalInputError::InputDomainMissing {
+                    domain: key.to_string(),
+                })?,
             cgs,
             depth + 1,
         ),
@@ -91,9 +121,14 @@ fn encode_field(
     }
 }
 
-fn encode_type(value: &mut Value, ty: &InputType, cgs: &CGS, depth: usize) -> Result<(), String> {
+fn encode_type(
+    value: &mut Value,
+    ty: &InputType,
+    cgs: &CGS,
+    depth: usize,
+) -> Result<(), TemporalInputError> {
     if depth >= 64 {
-        return Err("temporal input nesting exceeds 64".into());
+        return Err(TemporalInputError::NestingLimitExceeded);
     }
     match (value, ty) {
         (Value::Object(object), InputType::Object { fields, .. }) => {
@@ -117,7 +152,7 @@ fn encode_type(value: &mut Value, ty: &InputType, cgs: &CGS, depth: usize) -> Re
                 })
                 .collect::<Vec<_>>();
             let [variant] = matching.as_slice() else {
-                return Err("temporal input union requires one discriminator".into());
+                return Err(TemporalInputError::UnionDiscriminatorMismatch);
             };
             for field in &variant.fields {
                 let mut slot = None;
@@ -160,30 +195,40 @@ fn encode_type(value: &mut Value, ty: &InputType, cgs: &CGS, depth: usize) -> Re
                                                 }
                                             }
                                             InputFieldWire::Registry(k) => {
-                                                let domain = cgs
-                                                    .values
-                                                    .get(k.as_str())
-                                                    .ok_or("unknown input domain")?;
+                                                let domain =
+                                                    cgs.values.get(k.as_str()).ok_or_else(
+                                                        || TemporalInputError::InputDomainMissing {
+                                                            domain: k.to_string(),
+                                                        },
+                                                    )?;
                                                 let element = domain
                                                     .array_items
                                                     .as_ref()
-                                                    .ok_or("wrapped input requires array domain")?
+                                                    .ok_or_else(|| {
+                                                        TemporalInputError::WrappedInputNotArray {
+                                                            field: field.name.clone(),
+                                                        }
+                                                    })?
                                                     .kind
                                                     .registry_key();
                                                 encode_domain(
                                                     inner,
                                                     cgs.values
                                                         .get(element.as_str())
-                                                        .ok_or("unknown element domain")?,
+                                                        .ok_or_else(|| {
+                                                            TemporalInputError::ArrayElementDomainMissing {
+                                                                domain: element.to_string(),
+                                                            }
+                                                        })?,
                                                     cgs,
                                                     depth + 1,
                                                 )?;
                                             }
-                                            _ => {
-                                                return Err(
-                                                    "wrapped input requires array contract".into()
-                                                )
-                                            }
+                                            _ => return Err(
+                                                TemporalInputError::WrappedInputContractMismatch {
+                                                    field: field.name.clone(),
+                                                },
+                                            ),
                                         }
                                     }
                                 }

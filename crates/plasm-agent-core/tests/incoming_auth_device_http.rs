@@ -52,7 +52,8 @@ fn test_host_state(storage: Arc<MemoryStorage>) -> plasm_agent_core::server_stat
         run_artifacts: Arc::new(plasm_agent_core::run_artifacts::RunArtifactStore::memory()),
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
-    });
+    })
+    .expect("valid catalog fixture");
     st.oss.auth_storage = Some(storage);
     st
 }

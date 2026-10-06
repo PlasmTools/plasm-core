@@ -84,7 +84,7 @@ pub(crate) fn decode_payload(encoded: &[u8]) -> Result<ArtifactPayload, RunArtif
     let header = ARTIFACT_MAGIC.len() + 4;
     if encoded.len() < header || &encoded[..ARTIFACT_MAGIC.len()] != ARTIFACT_MAGIC {
         return Err(RunArtifactError::Decode(
-            "invalid artifact framing header".into(),
+            super::types::RunArtifactDecodeError::InvalidFrameHeader,
         ));
     }
     let mut len_bytes = [0u8; 4];
@@ -92,12 +92,15 @@ pub(crate) fn decode_payload(encoded: &[u8]) -> Result<ArtifactPayload, RunArtif
     let meta_len = u32::from_be_bytes(len_bytes) as usize;
     if encoded.len() < header + meta_len {
         return Err(RunArtifactError::Decode(
-            "invalid artifact framing metadata length".into(),
+            super::types::RunArtifactDecodeError::MetadataTruncated {
+                declared: meta_len,
+                available: encoded.len().saturating_sub(header),
+            },
         ));
     }
     let metadata: ArtifactPayloadMetadata =
         serde_json::from_slice(&encoded[header..header + meta_len])?;
-    validate_artifact_payload_metadata(&metadata).map_err(RunArtifactError::Decode)?;
+    validate_artifact_payload_metadata(&metadata)?;
     let bytes = Bytes::copy_from_slice(&encoded[header + meta_len..]);
     Ok(ArtifactPayload { metadata, bytes })
 }

@@ -1131,13 +1131,23 @@ mod value_wire_format_tests {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ValueBudgetError {
+    #[error("value depth budget exceeded")]
+    DepthExceeded,
+    #[error("value byte budget exceeded")]
+    BytesExceeded,
+    #[error("expected resolved finite value")]
+    NotResolvedFinite,
+}
+
 /// Charge native payload size without materializing a serialization buffer.
 /// Includes a fixed node charge, collection keys and string payloads; bounded depth
 /// prevents hostile nested values from exhausting the host stack.
-pub fn charge_value_budget(value: &Value, remaining: &mut usize) -> Result<(), String> {
-    fn walk(value: &Value, remaining: &mut usize, depth: usize) -> Result<(), String> {
+pub fn charge_value_budget(value: &Value, remaining: &mut usize) -> Result<(), ValueBudgetError> {
+    fn walk(value: &Value, remaining: &mut usize, depth: usize) -> Result<(), ValueBudgetError> {
         if depth >= 64 {
-            return Err("value depth budget exceeded".into());
+            return Err(ValueBudgetError::DepthExceeded);
         }
         let bytes = match value {
             Value::String(s) => s.len(),
@@ -1146,7 +1156,7 @@ pub fn charge_value_budget(value: &Value, remaining: &mut usize) -> Result<(), S
         };
         *remaining = remaining
             .checked_sub(16usize.saturating_add(bytes))
-            .ok_or("value byte budget exceeded")?;
+            .ok_or(ValueBudgetError::BytesExceeded)?;
         match value {
             Value::Array(values) => {
                 for v in values {
@@ -1157,7 +1167,7 @@ pub fn charge_value_budget(value: &Value, remaining: &mut usize) -> Result<(), S
                 for (key, v) in values {
                     *remaining = remaining
                         .checked_sub(key.len())
-                        .ok_or("value byte budget exceeded")?;
+                        .ok_or(ValueBudgetError::BytesExceeded)?;
                     walk(v, remaining, depth + 1)?;
                 }
             }
@@ -1168,7 +1178,7 @@ pub fn charge_value_budget(value: &Value, remaining: &mut usize) -> Result<(), S
             | Value::String(_)
             | Value::Money(_) => {}
             Value::Float(v) if v.is_finite() => {}
-            _ => return Err("expected resolved finite value".into()),
+            _ => return Err(ValueBudgetError::NotResolvedFinite),
         }
         Ok(())
     }
@@ -1204,13 +1214,22 @@ mod native_budget_tests {
         let mut exact = cost;
         charge_value_budget(&value, &mut exact).unwrap();
         assert_eq!(exact, 0);
-        assert!(charge_value_budget(&value, &mut (cost - 1)).is_err());
+        assert_eq!(
+            charge_value_budget(&value, &mut (cost - 1)),
+            Err(ValueBudgetError::BytesExceeded)
+        );
         let mut unlimited = usize::MAX;
-        assert!(charge_value_budget(&Value::Float(f64::NAN), &mut unlimited).is_err());
+        assert_eq!(
+            charge_value_budget(&Value::Float(f64::NAN), &mut unlimited),
+            Err(ValueBudgetError::NotResolvedFinite)
+        );
         let mut nested = Value::Null;
         for _ in 0..64 {
             nested = Value::Array(vec![nested]);
         }
-        assert!(charge_value_budget(&nested, &mut unlimited).is_err());
+        assert_eq!(
+            charge_value_budget(&nested, &mut unlimited),
+            Err(ValueBudgetError::DepthExceeded)
+        );
     }
 }

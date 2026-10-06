@@ -69,9 +69,13 @@ pub fn plasm_map_step(
     plasm_bind_step(comp, id, source, step, &[])
 }
 
-pub fn plasm_parallel_return(steps: Vec<StepId>) -> Result<PlasmReturn, String> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("parallel return requires at least one step")]
+pub struct EmptyParallelReturn;
+
+pub fn plasm_parallel_return(steps: Vec<StepId>) -> Result<PlasmReturn, EmptyParallelReturn> {
     if steps.is_empty() {
-        return Err("parallel return requires at least one step".into());
+        return Err(EmptyParallelReturn);
     }
     if steps.len() == 1 {
         return Ok(PlasmReturn::Step {

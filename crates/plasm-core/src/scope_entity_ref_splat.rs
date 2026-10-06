@@ -38,13 +38,13 @@ pub fn apply_entity_ref_scope_splat(
             continue;
         };
 
-        let normalized = normalize_entity_ref_value_for_target(&aggregate_val, ent).ok_or_else(|| {
-            ScopeEntityRefNormalizeError {
-                param_name: aggregate_name.to_string(),
-                target_entity: target.to_string(),
-                message: "cannot normalize entity_ref scope value to target key_vars — supply compound keys, identifiable row fields, full_name owner/repo, or owner/repo string".into(),
-            }
-        })?;
+        let normalized =
+            normalize_entity_ref_value_for_target(&aggregate_val, ent).ok_or_else(|| {
+                ScopeEntityRefNormalizeError {
+                    param_name: aggregate_name.to_string(),
+                    target_entity: target.to_string(),
+                }
+            })?;
         set_scope_aggregate_value(env, aggregate_name, normalized.clone());
 
         splat_aggregate_into_env(env, &ent.key_vars, &normalized);

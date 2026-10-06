@@ -21,6 +21,16 @@ pub enum RefKind {
     Unknown,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum TemplateRootError {
+    #[error(transparent)]
+    ProgramString(#[from] crate::program_string_template::ProgramStringError),
+    #[error("undeclared template root `{root}`")]
+    UndeclaredRoot { root: String },
+    #[error("use `{cursor}.path` for the row cursor instead of `_`")]
+    IncorrectRowCursor { cursor: String },
+}
+
 /// Compile-time context for classifying Minijinja roots.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TemplateRefContext<'a> {
@@ -77,14 +87,8 @@ impl<'a> TemplateRefContext<'a> {
 
     /// Validate Minijinja roots: dollar forbidden; bare Unknown names are row fields when a
     /// row cursor is in scope; dotted Unknown roots are undeclared cross-bindings.
-    pub fn validate_string_roots(
-        &self,
-        s: &str,
-        error: impl FnOnce(String) -> String,
-    ) -> Result<(), String> {
-        if let Err(e) = reject_dollar_interpolation(s) {
-            return Err(error(e.to_string()));
-        }
+    pub fn validate_string_roots(&self, s: &str) -> Result<(), TemplateRootError> {
+        reject_dollar_interpolation(s)?;
         let paths = interpolation_paths(s);
         for root in interpolation_roots(s) {
             match self.classify_root(root.as_str()) {
@@ -96,12 +100,14 @@ impl<'a> TemplateRefContext<'a> {
                     if self.row_binding.is_some() && !dotted {
                         continue;
                     }
-                    return Err(error(root));
+                    return Err(TemplateRootError::UndeclaredRoot { root });
                 }
             }
             if root == "_" && self.row_binding != Some("_") {
                 let cursor = self.row_binding.unwrap_or("_");
-                return Err(error(format!("_ (use {cursor}.path for the row cursor)")));
+                return Err(TemplateRootError::IncorrectRowCursor {
+                    cursor: cursor.to_owned(),
+                });
             }
         }
         Ok(())
@@ -144,25 +150,24 @@ mod tests {
     #[test]
     fn validate_rejects_dotted_unknown_cross_binding() {
         let ctx = TemplateRefContext::for_row_scope("_");
-        assert!(ctx
-            .validate_string_roots("{{ missing.content }}", |r| format!("undeclared alias {r}"))
-            .unwrap_err()
-            .contains("missing"));
+        assert!(
+            matches!(ctx.validate_string_roots("{{ missing.content }}"), Err(TemplateRootError::UndeclaredRoot { root }) if root == "missing")
+        );
     }
 
     #[test]
     fn validate_allows_row_fields() {
         let ctx = TemplateRefContext::for_row_scope("_");
         assert!(ctx
-            .validate_string_roots("{{ title }} — {{ code }}", |r| r)
+            .validate_string_roots("{{ title }} — {{ code }}")
             .is_ok());
     }
 
     #[test]
     fn validate_rejects_dollar() {
         let ctx = TemplateRefContext::for_row_scope("_");
-        let err = ctx.validate_string_roots("${title}", |r| r).unwrap_err();
-        assert!(err.contains("abolished"));
+        let err = ctx.validate_string_roots("${title}").unwrap_err();
+        assert!(matches!(err, TemplateRootError::ProgramString(_)));
     }
 
     #[test]

@@ -2,6 +2,7 @@
 use super::literal_operands::LiteralOperand;
 use super::*;
 use crate::plasm_plan::{InputCardinality, PlanDataInput};
+use crate::program_rejection::PythonLoweringInvariantError;
 use std::num::NonZeroU32;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -36,24 +37,66 @@ impl Lower<'_> {
         source_override: Option<&str>,
     ) -> Result<CorrelatedBody, PythonLoweringError> {
         if self.frame.depth >= 16 {
-            return Err(at(e, "scoped composition exceeds 16 map levels"));
+            return Err(at(
+                e,
+                PythonSourceError::MapScopeDepth {
+                    max: 16,
+                    actual: self.frame.depth,
+                },
+            ));
         }
         let PyExpr::Call(call) = e else {
-            return Err(at(e, "expected map"));
+            return Err(at(e, PythonSourceError::ExpectedMapCall));
         };
         let PyExpr::Attribute(attr) = &*call.func else {
-            return Err(at(e, "expected map receiver"));
+            return Err(at(e, PythonSourceError::ExpectedMapReceiver));
         };
-        if call.arguments.args.len() != 1
-            || call.arguments.keywords.len() > 1
-            || (mode != ScopeMode::Rows && call.arguments.keywords.is_empty())
+        if call.arguments.args.len() != 1 {
+            return Err(at(
+                e,
+                if mode == ScopeMode::Rows {
+                    PythonSourceError::FlatMapCallbackCount {
+                        actual: call.arguments.args.len(),
+                    }
+                } else {
+                    PythonSourceError::MapCallbackCount {
+                        actual: call.arguments.args.len(),
+                    }
+                },
+            ));
+        }
+        if call.arguments.keywords.len() > 1
             || call
                 .arguments
                 .keywords
                 .first()
                 .is_some_and(|k| k.arg.as_ref().map(|s| s.as_str()) != Some("max_parents"))
         {
-            return Err(at(e, "scope requires one callback and optional max_parents; map requires an explicit bound"));
+            return Err(at(
+                e,
+                if mode == ScopeMode::Rows {
+                    PythonSourceError::FlatMapKeywordShape {
+                        keywords: call
+                            .arguments
+                            .keywords
+                            .iter()
+                            .map(|k| k.arg.as_ref().map(ToString::to_string))
+                            .collect(),
+                    }
+                } else {
+                    PythonSourceError::MapKeywordShape {
+                        keywords: call
+                            .arguments
+                            .keywords
+                            .iter()
+                            .map(|k| k.arg.as_ref().map(ToString::to_string))
+                            .collect(),
+                    }
+                },
+            ));
+        }
+        if mode != ScopeMode::Rows && call.arguments.keywords.is_empty() {
+            return Err(at(e, PythonSourceError::MissingMapParentBound));
         }
         let limit = call
             .arguments
@@ -66,7 +109,7 @@ impl Lower<'_> {
             .ok()
             .and_then(NonZeroU32::new)
             .filter(|n| n.get() <= mode.parent_budget())
-            .ok_or("scope parent bound exceeds execution budget")?;
+            .ok_or(PythonLoweringInvariantError::ScopeParentBoundExceeded)?;
         let source = match source_override {
             Some(source) => source.to_owned(),
             None => self.expr(&attr.value, None)?,
@@ -96,7 +139,13 @@ impl Lower<'_> {
         mode: ScopeMode,
     ) -> Result<CorrelatedBody, PythonLoweringError> {
         if self.frame.depth >= 16 {
-            return Err(at(e, "scoped composition exceeds 16 levels"));
+            return Err(at(
+                e,
+                PythonSourceError::CallbackScopeDepth {
+                    max: 16,
+                    actual: self.frame.depth,
+                },
+            ));
         }
         let lambda = &callback.lambda;
         if callback
@@ -104,12 +153,17 @@ impl Lower<'_> {
             .as_ref()
             .is_some_and(|id| self.active_callbacks.contains(id))
         {
-            return Err(at(e, "recursive callbacks are not a bounded DAG"));
+            return Err(at(
+                e,
+                PythonSourceError::RecursiveCallback {
+                    callback: callback.identity.clone(),
+                },
+            ));
         }
         let source = source.to_owned();
         let flatten = mode == ScopeMode::Rows;
         let contract = super::super::binding_contract(&self.state, &source)
-            .ok_or("map source contract missing")?;
+            .ok_or(PythonLoweringInvariantError::MapSourceContractMissing)?;
         let owner = super::super::schema_validate::resolve_qualified_entity_for_dag_source(
             &self.state,
             &[],
@@ -121,7 +175,7 @@ impl Lower<'_> {
                 entity: "__value".into(),
             })
         })
-        .ok_or("map rows require typed catalog provenance")?;
+        .ok_or(PythonLoweringInvariantError::MapCatalogProvenanceMissing)?;
         if let Some(annotation) = lambda
             .parameters
             .as_ref()
@@ -155,7 +209,12 @@ impl Lower<'_> {
                         .resolve_session_entity(label)
                         .is_ok()
                 {
-                    return Err(at(e, "callback parameter must not shadow a host binding"));
+                    return Err(at(
+                        e,
+                        PythonSourceError::CallbackParameterShadowsHost {
+                            name: label.to_owned(),
+                        },
+                    ));
                 }
             }
         }
@@ -168,7 +227,12 @@ impl Lower<'_> {
                 .resolve_session_entity(row)
                 .is_ok()
         {
-            return Err(at(e, "map parameter must not shadow a reserved binding"));
+            return Err(at(
+                e,
+                PythonSourceError::MapParameterShadowsReserved {
+                    name: row.to_owned(),
+                },
+            ));
         }
         let mut scope_names = callback
             .closure
@@ -202,7 +266,7 @@ impl Lower<'_> {
                 if let Some(annotation) = &parameter.parameter.annotation {
                     let binding = scope_names
                         .get(parameter.parameter.name.as_str())
-                        .ok_or("default dependency is absent")?;
+                        .ok_or(PythonLoweringInvariantError::CallbackDefaultDependencyMissing)?;
                     let schema = super::text::inferred_schema(self.es, &self.state, binding, 0)?;
                     let actual = if super::super::binding_contract(&self.state, binding)
                         .is_some_and(|c| c.value_kind == BindingValueKind::ScalarCell)
@@ -211,7 +275,9 @@ impl Lower<'_> {
                             .fields
                             .first()
                             .and_then(|f| f.value_type.clone())
-                            .ok_or("default value contract missing")?
+                            .ok_or(
+                                PythonLoweringInvariantError::CallbackDefaultValueContractMissing,
+                            )?
                     } else {
                         schema.row_contract()?
                     };
@@ -300,11 +366,11 @@ impl Lower<'_> {
         let output = scoped.callback_sequence(&callback.flow(), row, mode)?;
         let (output, output_contract) = if flatten {
             let contract = super::super::binding_contract(&scoped.state, &output)
-                .ok_or("missing scoped output contract")?;
+                .ok_or(PythonLoweringInvariantError::ScopedOutputContractMissing)?;
             if contract.value_kind == BindingValueKind::ScalarCell {
                 return Err(at(
                     lambda.body.as_ref(),
-                    "flat_map requires rows or effects, not a scalar value",
+                    PythonSourceError::FlatMapScalarResult,
                 ));
             }
             let owner = super::super::schema_validate::resolve_qualified_entity_for_dag_source(
@@ -318,9 +384,12 @@ impl Lower<'_> {
                     entity: "__value".into(),
                 })
             })
-            .ok_or("scoped result has no catalog provenance")?;
-            let node = scoped.state.get(&output).ok_or("missing scope result")?;
-            let acknowledgement = super::super::plan_serialize::lower_plan_node(node)?.result_shape
+            .ok_or(PythonLoweringInvariantError::ScopedResultProvenanceMissing)?;
+            let node = scoped
+                .state
+                .get(&output)
+                .ok_or(PythonLoweringInvariantError::ScopedResultNodeMissing)?;
+            let acknowledgement = super::super::plan_serialize::lower_plan_node(node).result_shape
                 == ResultShape::SideEffectAck;
             let schema = if acknowledgement {
                 SyntheticResultSchema {
@@ -358,7 +427,7 @@ impl Lower<'_> {
             .nodes
             .iter()
             .map(|n| super::super::plan_serialize::lower_plan_node(n))
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Vec<_>>();
         let mut plan = crate::plasm_plan::Plan::from_nodes(
             None,
             nodes,
@@ -413,7 +482,7 @@ impl Lower<'_> {
         let mut captures = Vec::new();
         for id in external.iter().filter(|id| id.as_str() != row) {
             let contract = super::super::binding_contract(&scoped.state, id.as_str())
-                .ok_or("capture contract missing")?;
+                .ok_or(PythonLoweringInvariantError::CaptureContractMissing)?;
             let owner = super::super::schema_validate::resolve_qualified_entity_for_dag_source(
                 &scoped.state,
                 &[],
@@ -425,7 +494,7 @@ impl Lower<'_> {
                     entity: "__value".into(),
                 })
             })
-            .ok_or("captured value requires catalog provenance")?;
+            .ok_or(PythonLoweringInvariantError::CapturedValueProvenanceMissing)?;
             let schema = super::text::inferred_schema(self.es, &scoped.state, id.as_str(), 0)?;
             let value_contract = if contract.value_kind == BindingValueKind::ScalarCell {
                 Some(
@@ -433,7 +502,7 @@ impl Lower<'_> {
                         .fields
                         .first()
                         .and_then(|field| field.value_type.clone())
-                        .ok_or("scalar capture contract missing")?,
+                        .ok_or(PythonLoweringInvariantError::CaptureScalarContractMissing)?,
                 )
             } else {
                 None
@@ -486,7 +555,13 @@ impl Lower<'_> {
         inputs: &mut BTreeMap<String, PlanDataInput>,
     ) -> Result<PlasmDataValue, PythonLoweringError> {
         if self.value_depth >= 64 {
-            return Err(at(e, "value expression depth exceeds 64"));
+            return Err(at(
+                e,
+                PythonSourceError::ValueExpressionDepth {
+                    max: 64,
+                    actual: self.value_depth,
+                },
+            ));
         }
         self.value_depth += 1;
         let result = self.scoped_value_inner(e, inputs);
@@ -586,7 +661,8 @@ impl Lower<'_> {
                 return self.scoped_node_value(e, inputs);
             }
             _ => PlasmDataValue::Literal {
-                value: plasm_core::operand_binding::ResolvedValue::new(literal(e)?)?,
+                value: plasm_core::operand_binding::ResolvedValue::new(literal(e)?)
+                    .map_err(|_| PythonLoweringInvariantError::InvalidResolvedLiteral)?,
             },
         })
     }
@@ -598,7 +674,11 @@ impl Lower<'_> {
     ) -> Result<PlasmDataValue, PythonLoweringError> {
         let node = self.expr(e, None)?;
         let is_compute = matches!(
-            &self.state.get(&node).ok_or("missing scoped result")?.source,
+            &self
+                .state
+                .get(&node)
+                .ok_or(PythonLoweringInvariantError::ScopedResultNodeMissing)?
+                .source,
             super::super::types::DagNodeSource::Compute {
                 op: ComputeOp::Python { .. },
                 ..
@@ -607,14 +687,22 @@ impl Lower<'_> {
         let scalar = super::super::binding_contract(&self.state, &node)
             .is_some_and(|contract| contract.value_kind == BindingValueKind::ScalarCell);
         let record = matches!(
-            &self.state.get(&node).ok_or("missing value result")?.source,
+            &self
+                .state
+                .get(&node)
+                .ok_or(PythonLoweringInvariantError::ValueResultNodeMissing)?
+                .source,
             super::super::types::DagNodeSource::Derive {
                 value_type: Some(_),
                 ..
             }
         ) && self.state.get(&node).is_some_and(|node| node.singleton);
         let acknowledgement = matches!(
-            &self.state.get(&node).ok_or("missing effect result")?.source,
+            &self
+                .state
+                .get(&node)
+                .ok_or(PythonLoweringInvariantError::EffectResultNodeMissing)?
+                .source,
             super::super::types::DagNodeSource::Surface {
                 result_shape: ResultShape::SideEffectAck,
                 ..
@@ -659,17 +747,20 @@ impl Lower<'_> {
                     let key_expression = item
                         .key
                         .as_ref()
-                        .ok_or("dictionary unpacking is not admitted")?;
+                        .ok_or(PythonLoweringInvariantError::DictionaryUnpackingNotAdmitted)?;
                     // A materialized record needs a closed field contract.
-                    let key = string(key_expression).map_err(|_| {
+                    let key = string(key_expression).map_err(|error| {
                         at(
                             key_expression,
-                            "materialized dictionaries require string keys",
+                            error.with_context(crate::program_rejection::PythonLoweringContext::DictionaryKeyRequiresString),
                         )
                     })?;
                     let value = self.scoped_value(&item.value, inputs)?;
-                    if fields.insert(key, value).is_some() {
-                        return Err(at(e, "duplicate output field"));
+                    if fields.insert(key.clone(), value).is_some() {
+                        return Err(at(
+                            e,
+                            PythonSourceError::DuplicateOutputField { field: key },
+                        ));
                     }
                 }
                 PlasmDataValue::Object { fields }
@@ -686,7 +777,8 @@ impl Lower<'_> {
             | LiteralOperand::Signed(_)
             | LiteralOperand::Boolean(_)
             | LiteralOperand::Null(())) => PlasmDataValue::Literal {
-                value: plasm_core::operand_binding::ResolvedValue::new(scalar.scalar(e)?)?,
+                value: plasm_core::operand_binding::ResolvedValue::new(scalar.scalar(e)?)
+                    .map_err(|_| PythonLoweringInvariantError::InvalidResolvedLiteral)?,
             },
         })
     }

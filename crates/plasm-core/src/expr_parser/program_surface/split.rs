@@ -2,6 +2,7 @@
 
 use super::super::heredoc_surface::{heredoc_surface_step_at, HeredocSurfaceStep};
 use super::labels::is_valid_program_label;
+use super::SurfaceSyntaxError;
 
 /// Top-level `=` that is a program binding, an invalid binding attempt, or pipe/where equality.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,7 +78,7 @@ pub fn split_assignment_for_binding(line: &str) -> Option<(&str, &str)> {
 ///
 /// Used for comma-separated roots and aggregate argument lists. Unlike [`collect_program_statement_lines`],
 /// this errors if a heredoc opener on one line is incomplete (hard newline required after `TAG`).
-pub fn split_top_level(s: &str, delimiter: char) -> Result<Vec<&str>, String> {
+pub fn split_top_level(s: &str, delimiter: char) -> Result<Vec<&str>, SurfaceSyntaxError> {
     let mut out = Vec::new();
     let mut start = 0usize;
     let mut depth = 0i32;
@@ -87,15 +88,13 @@ pub fn split_top_level(s: &str, delimiter: char) -> Result<Vec<&str>, String> {
         let c = s[i..]
             .chars()
             .next()
-            .ok_or_else(|| "invalid UTF-8 boundary".to_string())?;
+            .ok_or(SurfaceSyntaxError::InvalidUtf8Boundary)?;
         let cl = c.len_utf8();
         if quote.is_none() {
             match heredoc_surface_step_at(s, i)? {
                 HeredocSurfaceStep::NotAnOpener => {}
                 HeredocSurfaceStep::OpenerIncomplete { .. } => {
-                    return Err(
-                        "tagged heredoc `<<TAG` must have a newline immediately after the tag on the opener line (hard newline; do not squash `<<TAG` with the body on one line)".into(),
-                    );
+                    return Err(SurfaceSyntaxError::HeredocOpenerMissingNewline);
                 }
                 HeredocSurfaceStep::SkipTo(next) => {
                     i = next;
@@ -117,7 +116,9 @@ pub fn split_top_level(s: &str, delimiter: char) -> Result<Vec<&str>, String> {
         i += cl;
     }
     if depth != 0 {
-        return Err(format!("unbalanced delimiters in `{s}`"));
+        return Err(SurfaceSyntaxError::UnbalancedDelimiters {
+            expression: s.to_owned(),
+        });
     }
     out.push(&s[start..]);
     Ok(out)
@@ -127,14 +128,17 @@ pub fn split_top_level(s: &str, delimiter: char) -> Result<Vec<&str>, String> {
 pub fn split_token_top_level<'a>(
     line: &'a str,
     token: &str,
-) -> Result<Option<(&'a str, &'a str)>, String> {
+) -> Result<Option<(&'a str, &'a str)>, SurfaceSyntaxError> {
     let mut depth = 0i32;
     let mut quote = None::<char>;
     let bytes = line.as_bytes();
     let token_b = token.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
-        let c = line[i..].chars().next().ok_or("invalid UTF-8 boundary")?;
+        let c = line[i..]
+            .chars()
+            .next()
+            .ok_or(SurfaceSyntaxError::InvalidUtf8Boundary)?;
         match c {
             '"' | '\'' if quote == Some(c) => quote = None,
             '"' | '\'' if quote.is_none() => quote = Some(c),

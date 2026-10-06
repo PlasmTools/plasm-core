@@ -95,6 +95,9 @@ async fn execute_plasm_tool_dry_run_inner(
             Err(crate::compilation_error::CompilationError::Host(failure)) => {
                 return Err(failure.into())
             }
+            Err(error @ crate::compilation_error::CompilationError::Checker(_)) => {
+                return Err(plasm_runtime::ExecutionFailure::from(error).into())
+            }
             Err(crate::compilation_error::CompilationError::Program(stage)) => {
                 record_mcp_plasm_dry_run_phase("compile", phase.elapsed());
                 record_mcp_plasm_dry_run_phase("total", total_started.elapsed());
@@ -120,7 +123,7 @@ async fn execute_plasm_tool_dry_run_inner(
         return Ok(plan_result_from_stage(
             &ctx,
             program,
-            ProgramStageError::plan("plan dry-run preflight failed — fix errors before run_ref"),
+            ProgramStageError::plan(crate::program_diagnostic::PlanStageError::PreflightFailed),
         ));
     }
 
@@ -248,7 +251,13 @@ async fn execute_plasm_tool_dry_run_inner(
         !inline_fits,
     )
     .await
-    .map_err(|e| HostFault::from(e.to_string()))?;
+    .map_err(|error| {
+        HostFault(plasm_runtime::ExecutionFailure::new(
+            plasm_runtime::FailureCause::Runtime,
+            "plan_commit_registration_failed",
+            error.to_string(),
+        ))
+    })?;
     record_mcp_plasm_dry_run_phase("commit_register", phase.elapsed());
 
     phase = Instant::now();

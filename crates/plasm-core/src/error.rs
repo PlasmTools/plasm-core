@@ -1,7 +1,70 @@
 use thiserror::Error;
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
+pub enum ValueDomainViolation {
+    #[error("value-domain type is missing")]
+    MissingType,
+    #[error("value-domain type `{name}` is retired; use {replacement}")]
+    RetiredType {
+        name: &'static str,
+        replacement: &'static str,
+    },
+    #[error("unknown value-domain type `{name}`")]
+    UnknownType { name: String },
+    #[error("entity_ref value domain requires a target")]
+    MissingEntityRefTarget,
+    #[error("enum membership requires at least one token")]
+    EmptyEnumMembership,
+    #[error("enum gloss for token `{token}` contains reserved delimiter `{delimiter}`")]
+    ForbiddenEnumGlossDelimiter { token: String, delimiter: char },
+    #[error("pattern exceeds the {max_bytes}-byte limit (found {actual_bytes} bytes)")]
+    PatternTooLong {
+        actual_bytes: usize,
+        max_bytes: usize,
+    },
+    #[error("value violates profile {0:?}")]
+    InvalidProfile(crate::ProfileId),
+    #[error("value is shorter than minimum length {0}")]
+    BelowMinLength(usize),
+    #[error("value exceeds maximum length {0}")]
+    AboveMaxLength(usize),
+    #[error("value does not match the declared pattern")]
+    PatternMismatch,
+    #[error("declared pattern could not be evaluated")]
+    PatternConfiguration,
+    #[error("enum membership is missing")]
+    MissingEnumMembership,
+    #[error("value is not an allowed enum member")]
+    UnknownEnumMember,
+    #[error("value is below the minimum constraint")]
+    BelowMinimum,
+    #[error("value is above the maximum constraint")]
+    AboveMaximum,
+    #[error("value does not satisfy the exclusive minimum constraint")]
+    ExclusiveMinimum,
+    #[error("value does not satisfy the exclusive maximum constraint")]
+    ExclusiveMaximum,
+    #[error("multiple_of must be non-zero")]
+    ZeroMultiple,
+    #[error("value is not a multiple of the declared constraint")]
+    NotMultiple,
+}
+
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum TypeError {
+    #[error("field `{field}` value coercion failed: {source}")]
+    CoercionFailure {
+        field: String,
+        #[source]
+        source: crate::wire_coercion::CoercionError,
+    },
+    #[error("field `{field}` cannot be coerced to entity reference for `{target}`: {source}")]
+    EntityRefCoercionFailure {
+        field: String,
+        target: String,
+        #[source]
+        source: crate::wire_coercion::CoercionError,
+    },
     #[error("Field '{field}' not found in entity '{entity}'")]
     FieldNotFound { field: String, entity: String },
 
@@ -21,6 +84,14 @@ pub enum TypeError {
         field_type: String,
     },
 
+    #[error("Value type '{value_type}' violates the declared value domain for field '{field}': {violation}")]
+    ValueDomainViolation {
+        field: String,
+        value_type: String,
+        #[source]
+        violation: ValueDomainViolation,
+    },
+
     /// The model echoed the teaching placeholder `$` literally instead of substituting a real value.
     #[error("Literal `$` is prompt-only teaching syntax for field '{field}'; replace with a real value ({expected_type})")]
     DomainPlaceholderLiteral {
@@ -38,8 +109,12 @@ pub enum TypeError {
     #[error("Entity '{entity}' not found in schema")]
     EntityNotFound { entity: String },
 
-    #[error("Get on entity '{entity}': {message}")]
-    RefKeyMismatch { entity: String, message: String },
+    #[error("Get on entity '{entity}': {source}")]
+    RefKeyMismatch {
+        entity: String,
+        #[source]
+        source: ReferenceContractError,
+    },
 
     #[error(
         "Chain auto-get requires a Get capability on '{target_entity}' (from {source_entity}.{selector})"
@@ -71,8 +146,11 @@ pub enum TypeError {
     },
 
     /// Surface query failed lane-typed [`crate::ResolvedRowset`] normalization (RA-1).
-    #[error("rowset normalize: {message}")]
-    RowsetNormalize { message: String },
+    #[error("rowset normalize: {source}")]
+    RowsetNormalize {
+        #[source]
+        source: Box<crate::rowset::RowsetNormalizeError>,
+    },
 }
 
 impl TypeError {
@@ -99,8 +177,8 @@ impl TypeError {
             Self::InputRequired { capability } => format!(
                 "Capability {capability:?} requires input. Supply its declared required arguments."
             ),
-            Self::RefKeyMismatch { message, .. } => format!(
-                "Get identity mismatch: {message}. Follow the declared get identity signature."
+            Self::RefKeyMismatch { source, .. } => format!(
+                "Get identity mismatch: {source}. Follow the declared get identity signature."
             ),
             Self::DomainPlaceholderLiteral {
                 field,
@@ -115,12 +193,152 @@ impl TypeError {
             Self::ChainTargetMissingGet { target_entity, .. } => format!(
                 "The relation target {target_entity:?} has no Get capability. Use a declared materialized relation or source."
             ),
+            Self::CoercionFailure { .. } | Self::EntityRefCoercionFailure { .. } => {
+                self.to_string()
+            }
             Self::IncompatibleOperator { .. }
             | Self::IncompatibleValue { .. }
+            | Self::ValueDomainViolation { .. }
             | Self::CrossCurrencyCompare { .. } => self.to_string(),
-            Self::RowsetNormalize { message } => format!("Source input contract: {message}"),
+            Self::RowsetNormalize { source } => format!("Source input contract: {source}"),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum ReferenceContractError {
+    #[error("compound key {keys:?} required; use named form Entity(key=value, ...)")]
+    CompoundKeyRequired { keys: Vec<String> },
+    #[error("simple id form expected for this entity")]
+    SimpleKeyRequired,
+    #[error("expected compound identity keys {expected:?}, got {actual:?}")]
+    CompoundKeysMismatch {
+        expected: Vec<String>,
+        actual: Vec<String>,
+    },
+    #[error("operation requires a `{entity}` receiver")]
+    ReceiverRequired { entity: String },
+    #[error("operation has no entity receiver; supply its declared inputs")]
+    UnexpectedReceiver,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum RegistryAliasError {
+    #[error("must be non-empty")]
+    Empty,
+    #[error("duplicate alias")]
+    Duplicate,
+    #[error("must not duplicate canonical entry_id")]
+    DuplicatesCanonicalEntry,
+}
+
+#[derive(Debug, Clone, Error)]
+pub enum ViewMappingError {
+    #[error("expected `transport: view` in mappings for this capability")]
+    TransportRequired,
+    #[error("expected `view: {view}` to match views map key")]
+    ViewKeyMismatch { view: String },
+    #[error("traversal node `{node}` cannot also declare capability, bind, or when")]
+    ConflictingTraversal { node: String },
+    #[error("private binding `{binding}` shadows a scope or output field")]
+    PrivateBindingShadow { binding: String },
+    #[error("output field `{field}`: computed template must be non-empty")]
+    ComputedTemplateEmpty { field: String },
+    #[error("identity union needs at least one node and a many relation")]
+    InvalidIdentityUnion,
+    #[error("transport `view` requires string `view` key")]
+    ViewKeyMissing,
+    #[error("unknown views key `{view}`")]
+    UnknownView { view: String },
+    #[error("capability domain `{actual}` must match view entity `{expected}`")]
+    DomainMismatch { actual: String, expected: String },
+}
+
+#[derive(Debug, Clone, Error)]
+pub enum SchemaConstraintError {
+    #[error("capability '{capability}': query/search inputs may only use scope, selection, and controls")]
+    QueryInputLane { capability: String },
+    #[error("capability '{capability}': selection is only valid on query/search capabilities")]
+    SelectionOnNonQuery { capability: String },
+    #[error("capability '{capability}': {lane} contains an empty input name")]
+    EmptyInputName {
+        capability: String,
+        lane: &'static str,
+    },
+    #[error("capability '{capability}': input '{input}' appears in both {previous} and {lane}; capability input lanes must be disjoint")]
+    DuplicateInput {
+        capability: String,
+        input: String,
+        previous: &'static str,
+        lane: &'static str,
+    },
+    #[error("capability '{capability}': {lane} input '{input}' cannot declare selection_effect")]
+    SelectionEffectForbidden {
+        capability: String,
+        input: String,
+        lane: &'static str,
+    },
+    #[error("capability '{capability}': selection input '{input}' requires selection_effect")]
+    SelectionEffectMissing { capability: String, input: String },
+    #[error("entity '{entity}' field '{field}': `currency_field` is only valid on money fields")]
+    CurrencyOnNonMoney { entity: String, field: String },
+}
+
+#[derive(Debug, Clone, Error)]
+pub enum PipelineSegmentError {
+    #[error("duplicate zero-arity pipeline method label on capabilities '{previous}' and '{capability}'")]
+    DuplicateMethod {
+        previous: String,
+        capability: String,
+    },
+    #[error("zero-arity pipeline method '{capability}' collides with a relation")]
+    MethodRelationCollision { capability: String },
+    #[error("zero-arity pipeline method '{capability}' collides with field '{field}'")]
+    MethodFieldCollision { capability: String, field: String },
+    #[error("relation has the same name as EntityRef field '{field}'")]
+    RelationReferenceCollision { field: String },
+}
+
+#[derive(Debug, Clone, Error)]
+pub enum RegistryWireMismatch {
+    #[error("array items field_type {actual:?} vs values {expected:?}")]
+    FieldType {
+        actual: crate::FieldType,
+        expected: crate::FieldType,
+    },
+    #[error("array items value_format vs values mismatch")]
+    ValueFormat,
+    #[error("array items allowed_values vs values mismatch")]
+    AllowedValues,
+}
+
+#[derive(Debug, Clone, Error)]
+pub enum EntityExpressionError {
+    #[error(transparent)]
+    Teaching(std::sync::Arc<crate::prompt_render::python::PythonTeachingError>),
+    #[error("No declared root capability or relation produces a receiver; add a get, query, search, create or declared entity output.")]
+    ReceiverUnavailable,
+}
+
+#[derive(Debug, Clone, Error)]
+pub enum RelationMaterializeError {
+    #[error("no such capability name")]
+    UnknownCapability,
+    #[error("capability is declared on entity '{actual}' but relation targets '{expected}'")]
+    DomainMismatch { actual: String, expected: String },
+    #[error("capability kind must be {expected} (got {actual:?})")]
+    KindMismatch {
+        expected: crate::preflight::PreflightReadKind,
+        actual: crate::CapabilityKind,
+    },
+    #[error("capability has no parent-scope parameters; scoped materialization requires them")]
+    ParentScopeMissing,
+    #[error("object input does not declare materialize parameter `{param}`")]
+    ParamMissing { param: String },
+    #[error("param `{param}` uses inline structural input, not a value-domain reference")]
+    InlineParam { param: String },
+    #[error("param `{param}` references unknown value domain `{value_ref}`")]
+    ParamValueMissing { param: String, value_ref: String },
 }
 
 impl From<crate::money::CrossCurrencyError> for TypeError {
@@ -134,16 +352,27 @@ impl From<crate::money::CrossCurrencyError> for TypeError {
 
 #[derive(Error, Debug, Clone)]
 pub enum SchemaError {
-    #[error("invalid prerequisite declaration: {detail}")]
-    PrerequisiteInvalid { detail: String },
+    #[error("invalid prerequisite declaration: {source}")]
+    PrerequisiteInvalid {
+        #[source]
+        source: crate::prerequisites::PrerequisiteError,
+    },
     #[error("Duplicate entity name: '{name}'")]
     DuplicateEntity { name: String },
 
-    #[error("registry_aliases entry '{alias}': {message}")]
-    RegistryAliasInvalid { alias: String, message: String },
+    #[error("registry_aliases entry '{alias}': {source}")]
+    RegistryAliasInvalid {
+        alias: String,
+        #[source]
+        source: RegistryAliasError,
+    },
 
-    #[error("Capability '{capability}' preflight: {message}")]
-    PreflightInvalid { capability: String, message: String },
+    #[error("Capability '{capability}' preflight: {source}")]
+    PreflightInvalid {
+        capability: String,
+        #[source]
+        source: crate::preflight::PreflightValidationError,
+    },
 
     #[error("Duplicate field name '{field}' in entity '{entity}'")]
     DuplicateField { entity: String, field: String },
@@ -293,11 +522,12 @@ pub enum SchemaError {
 
     /// Relation names, field names, and zero-arity pipeline method labels must be disjoint per entity
     /// so `.segment` without `()` resolves unambiguously.
-    #[error("Entity '{entity}': pipeline segment '{segment}' — {message}")]
+    #[error("Entity '{entity}': pipeline segment '{segment}' — {source}")]
     PipelineSegmentConflict {
         entity: String,
         segment: String,
-        message: String,
+        #[source]
+        source: PipelineSegmentError,
     },
 
     #[error("Expression alias '{alias}' is claimed by entity '{owner}' and entity '{other}'")]
@@ -404,11 +634,12 @@ pub enum SchemaError {
     )]
     InlineStructuralInputField { name: String },
 
-    #[error("{context}: denormalized wire fields disagree with `values['{key}']` — {detail}")]
+    #[error("{context}: denormalized wire fields disagree with `values['{key}']` — {source}")]
     RegistryDenormalizationMismatch {
         key: String,
         context: String,
-        detail: String,
+        #[source]
+        source: RegistryWireMismatch,
     },
 
     #[error(
@@ -470,6 +701,22 @@ pub enum SchemaError {
         field: String,
     },
 
+    #[error("entity `{entity}` relation `{relation}` has an invalid parent field: {source}")]
+    RelationParentFieldInvalid {
+        entity: String,
+        relation: String,
+        #[source]
+        source: crate::wire_coercion::ParentFieldTypeError,
+    },
+
+    #[error("identity field `{entity}.{field}` cannot be resolved: {source}")]
+    IdentityFieldTypeResolution {
+        entity: String,
+        field: String,
+        #[source]
+        source: crate::wire_coercion::ParentFieldTypeError,
+    },
+
     #[error(
         "Entity '{entity}' relation '{relation}': binding `{cap_param}` ← parent `{parent_field}` is not assignable ({parent_type:?} → {param_type:?})"
     )]
@@ -486,7 +733,10 @@ pub enum SchemaError {
     RelationMaterializeEmptyBindings { entity: String, relation: String },
 
     #[error("from_parent_get embed graph has a cycle: {cycle}")]
-    FromParentGetEmbedCycle { cycle: String },
+    FromParentGetEmbedCycle {
+        #[source]
+        cycle: crate::relation_materialize::EntityCycle,
+    },
 
     #[error("Entity '{entity}' relation '{relation}': from_parent_get `path` must be non-empty")]
     RelationFromParentGetEmptyPath { entity: String, relation: String },
@@ -533,19 +783,24 @@ pub enum SchemaError {
     },
 
     #[error(
-        "Entity '{entity}' relation '{relation}': materialize capability '{capability}' for target '{target}' is invalid: {detail}"
+        "Entity '{entity}' relation '{relation}': materialize capability '{capability}' for target '{target}' is invalid: {source}"
     )]
     RelationMaterializeCapabilityInvalid {
         entity: String,
         relation: String,
         target: String,
         capability: String,
-        detail: String,
+        #[source]
+        source: RelationMaterializeError,
     },
 
     /// After structural checks, no type-checked teaching example line could be synthesized.
-    #[error("Entity '{entity}' is not expression-complete: {detail}")]
-    EntityExpressionIncomplete { entity: String, detail: String },
+    #[error("Entity '{entity}' is not expression-complete: {source}")]
+    EntityExpressionIncomplete {
+        entity: String,
+        #[source]
+        source: EntityExpressionError,
+    },
 
     /// A capability exists in the CGS but has zero representation in the teaching bundle.
     #[error(
@@ -640,15 +895,35 @@ pub enum SchemaError {
     #[error("View '{view}': declares capability '{capability}' but it is not defined")]
     ViewCapabilityMissing { view: String, capability: String },
 
-    #[error("View '{view}': capability '{capability}' mapping invalid for views: {detail}")]
+    #[error("View '{view}': capability '{capability}' mapping invalid for views: {source}")]
     ViewCapabilityMappingInvalid {
         view: String,
         capability: String,
-        detail: String,
+        #[source]
+        source: ViewMappingError,
     },
 
-    #[error("Derived get '{capability}': {detail}")]
-    DerivedGetInvalid { capability: String, detail: String },
+    #[error("view `{view}` capability `{capability}` has no mapping: {source}")]
+    ViewMappingMissing {
+        view: String,
+        capability: String,
+        #[source]
+        source: crate::schema::MissingCapabilityMapping,
+    },
+
+    #[error("view `{view}` node cannot be resolved: {source}")]
+    ViewNodeResolution {
+        view: String,
+        #[source]
+        source: crate::schema::ViewNodeResolutionError,
+    },
+
+    #[error("Derived get '{capability}': {source}")]
+    DerivedGetInvalid {
+        capability: String,
+        #[source]
+        source: crate::derived_get::DerivedGetError,
+    },
 
     #[error(
         "View '{view}': node '{node}' capability '{capability}' must be Query, Get, Search, or mutator (got {kind})"
@@ -737,8 +1012,8 @@ pub enum SchemaError {
     #[error("View '{view}': node '{node}' computed bind template must be non-empty")]
     ViewNodeBindEmptyTemplate { view: String, node: String },
 
-    #[error("{message}")]
-    SchemaConstraint { message: String },
+    #[error(transparent)]
+    SchemaConstraint(#[from] SchemaConstraintError),
 
     #[error(
         "capability '{capability}' (kind: search): must declare a free-text selection param named query/q/search (or a sole selection slot) for Entity~\"…\""
@@ -750,15 +1025,15 @@ pub enum SchemaError {
     )]
     SearchOptionalFreeText { capability: String, param: String },
 
-    #[error("schema_overlay: {detail}")]
-    SchemaOverlayInvalid { detail: String },
+    #[error("schema_overlay: {source}")]
+    SchemaOverlayInvalid {
+        #[source]
+        source: crate::schema_overlay::OverlayValidationError,
+    },
 }
 
 #[derive(Error, Debug, Clone)]
 pub enum NormalizationError {
     #[error("Predicate complexity exceeds maximum depth limit")]
     MaxDepthExceeded,
-
-    #[error("Internal normalization error: {message}")]
-    InternalError { message: String },
 }

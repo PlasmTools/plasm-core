@@ -10,10 +10,11 @@ use super::{resolve_paging_storage_handle, trace_api_entry_id_for_execute_root, 
 impl From<PersistExecuteRunError> for RunLineError {
     fn from(e: PersistExecuteRunError) -> Self {
         match e {
-            PersistExecuteRunError::Mint(d) => RunLineError::Parse(d),
+            PersistExecuteRunError::Mint(d) => RunLineError::ArtifactDigest(d),
             PersistExecuteRunError::Collection(e) => RunLineError::Runtime(e.into()),
             PersistExecuteRunError::Serialization(e) => RunLineError::ArtifactSerialization(e),
             PersistExecuteRunError::Persist(d) => RunLineError::ArtifactPersist(d),
+            PersistExecuteRunError::SourceRehydration(e) => RunLineError::ArtifactRehydration(e),
         }
     }
 }
@@ -30,12 +31,20 @@ impl From<crate::graph_execute::GraphBranchRunError> for RunLineError {
 
 fn run_line_error_metric_labels(err: &RunLineError) -> (&'static str, &'static str) {
     match err {
-        RunLineError::Parse(_) => ("parse", "parse"),
+        RunLineError::Parse { .. }
+        | RunLineError::Admission(_)
+        | RunLineError::WireField(_)
+        | RunLineError::ArtifactDigest(_) => ("parse", "parse"),
+        RunLineError::MissingPageResume => ("execute", "page_resume"),
+        RunLineError::CatalogOwnership(_) => ("parse", "catalog_ownership"),
+        RunLineError::PageHandle(_) => ("parse", "page_handle"),
         RunLineError::Normalize(_) => ("parse", "normalize"),
         RunLineError::Projection(_) => ("projection", "projection"),
         RunLineError::Runtime(_) => ("execute", "runtime"),
         RunLineError::ArtifactSerialization(_) => ("artifact", "serialization"),
-        RunLineError::ArtifactPersist(_) => ("artifact", "persist"),
+        RunLineError::ArtifactPersist(_) | RunLineError::ArtifactRehydration(_) => {
+            ("artifact", "persist")
+        }
         RunLineError::GraphWriteConflict { .. } => ("execute", "graph_write_conflict"),
         RunLineError::Operation(_) => ("operation", "continuation"),
         RunLineError::OperationFailed(_) => ("operation", "failed"),
@@ -71,12 +80,12 @@ pub(crate) fn parse_plasm_line_for_session(
             sess,
             Some(st.sessions.symbol_map_cross_cache()),
         );
-        RunLineError::Parse(execute_session_parse_error_message(
-            &e,
-            line,
-            sess.cgs.as_ref(),
-            sym_map.as_ref(),
-        ))
+        let correction =
+            execute_session_parse_error_message(&e, line, sess.cgs.as_ref(), sym_map.as_ref());
+        RunLineError::Parse {
+            source: e,
+            correction,
+        }
     })?;
     if let Some(ref fed) = sess.federation_dispatch() {
         normalize_expr_query_capabilities_federated(
@@ -87,7 +96,7 @@ pub(crate) fn parse_plasm_line_for_session(
     } else {
         normalize_expr_query_capabilities(&mut parsed.expr, sess.cgs.as_ref())
     }
-    .map_err(|e| RunLineError::Normalize(e.to_string()))?;
+    .map_err(RunLineError::Normalize)?;
     Ok(parsed)
 }
 
@@ -157,7 +166,7 @@ pub(crate) async fn run_parsed_plasm_line(
         Some(token) => token,
         None => {
             crate::execute_pipeline::PlasmPreflight::preflight_parsed_line(sess, line, &parsed)
-                .map_err(|e| RunLineError::Parse(e.into()))?;
+                .map_err(RunLineError::Admission)?;
             plasm_core::PreflightToken::VERIFIED
         }
     };
@@ -196,7 +205,9 @@ pub(crate) async fn run_parsed_plasm_line(
         );
     });
     let page_storage_key: Option<PagingHandle> = match &parsed.expr {
-        plasm_core::Expr::Page(p) => Some(resolve_paging_storage_handle(trace, &p.handle)?),
+        plasm_core::Expr::Page(p) => Some(
+            resolve_paging_storage_handle(trace, &p.handle).map_err(RunLineError::PageHandle)?,
+        ),
         _ => None,
     };
     let _page_paging_serial = if page_storage_key.is_some() {
@@ -224,25 +235,16 @@ pub(crate) async fn run_parsed_plasm_line(
             return Ok((parsed, result, Some(artifact)));
         }
     }
-    let page_resume_owned: Option<QueryPaginationResumeData> = if let Some(ref key) =
-        page_storage_key
-    {
-        Some(sess.peek_paging_resume(key).ok_or_else(|| {
-                let detail = match trace.and_then(|t| t.logical_session_ref.as_deref()) {
-                    Some(r) => format!(
-                        "unknown paging handle `{}` — stale continuation or wrong logical session; use `page({r}_pgN)` from the latest tool result for this `logical_session_ref`",
-                        key.as_str()
-                    ),
-                    None => format!(
-                        "unknown paging handle `{}` (handles are minted when a paginated query returns additional pages)",
-                        key.as_str()
-                    ),
-                };
-                RunLineError::Parse(detail)
+    let page_resume_owned: Option<QueryPaginationResumeData> =
+        if let Some(ref key) = page_storage_key {
+            Some(sess.peek_paging_resume(key).ok_or_else(|| {
+                RunLineError::PageHandle(PagingHandleFault::Unavailable {
+                    handle: key.clone(),
+                })
             })?)
-    } else {
-        None
-    };
+        } else {
+            None
+        };
 
     let root_entity_owned: String = if let Some(r) = &page_resume_owned {
         r.query.entity.to_string()
@@ -251,24 +253,29 @@ pub(crate) async fn run_parsed_plasm_line(
     };
     let root_entity = root_entity_owned.as_str();
     let qualified_entity = if let Some(key) = page_storage_key.as_ref() {
-        sess.paging_qualified_entity(key)
-            .ok_or_else(|| RunLineError::Parse(format!("unknown paging handle `{key}`")))?
+        sess.paging_qualified_entity(key).ok_or_else(|| {
+            RunLineError::PageHandle(PagingHandleFault::Unavailable {
+                handle: key.clone(),
+            })
+        })?
     } else if let Some(owner) = parsed.expr.qualified_entity_key() {
         crate::plasm_plan::QualifiedEntityKey::from(owner)
     } else {
         crate::catalog_ownership::resolve_qualified_entity_key(sess, root_entity, None)
-            .map_err(RunLineError::Parse)?
+            .map_err(RunLineError::CatalogOwnership)?
     };
     let exec_cgs = crate::catalog_ownership::resolve_cgs_for_entry_entity(
         sess,
         &qualified_entity.entry_id,
         &qualified_entity.entity,
     )
-    .map_err(RunLineError::Parse)?;
+    .map_err(RunLineError::CatalogOwnership)?;
     let parsed = crate::execute_pipeline::preflight_line_compile_dispatch(
         sess, sess, &parsed, line, exec_cgs,
     )
-    .map_err(RunLineError::Parse)?;
+    .map_err(|error| {
+        RunLineError::Admission(crate::program_diagnostic::ProgramStageError::from(error))
+    })?;
     let fp_sink = Arc::new(Mutex::new(Vec::<String>::new()));
     let (_, operation) = trace_expr_api_meta(&parsed.expr);
 
@@ -371,6 +378,7 @@ pub(crate) async fn run_parsed_plasm_line(
             PersistExecuteRunError::Persist(_) => "artifact_persist",
             PersistExecuteRunError::Mint(_) => "parse",
             PersistExecuteRunError::Collection(_) => "collection",
+            PersistExecuteRunError::SourceRehydration(_) => "source_rehydration",
         };
         if phase != "parse" {
             crate::metrics::record_execute_expression_line(

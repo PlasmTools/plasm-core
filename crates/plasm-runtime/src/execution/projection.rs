@@ -126,10 +126,9 @@ impl ExecutionEngine {
                                     )
                                     .await?;
                                 if row.reference != get.reference {
-                                    return Err(RuntimeError::ConfigurationError {
-                                        message:
-                                            "projection Get changed the requested entity identity"
-                                                .into(),
+                                    return Err(RuntimeError::GetIdentityMismatch {
+                                        expected: get.reference.clone(),
+                                        actual: row.reference.clone(),
                                     });
                                 }
                                 branch.insert(row.clone())?;

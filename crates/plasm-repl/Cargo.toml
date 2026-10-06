@@ -26,7 +26,7 @@ plasm-eval = { path = "../plasm-eval" }
 plasm-core = { path = "../plasm-core" }
 plasm-compile = { path = "../plasm-compile" }
 plasm-runtime = { path = "../plasm-runtime" }
-anyhow = { workspace = true }
+thiserror = { workspace = true }
 serde_json = { workspace = true }
 clap = { workspace = true }
 rustyline = { workspace = true }

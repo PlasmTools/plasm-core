@@ -9,11 +9,79 @@ use crate::RuntimeError;
 /// Convert a runtime failure into a structured [`StepError`].
 pub fn step_error_from_runtime(err: &RuntimeError, cgs: &CGS) -> StepError {
     match err {
+        RuntimeError::Evm(_) => StepError::new(StepErrorCategory::Runtime, err.to_string(), None),
+        RuntimeError::CatalogTemplate(source) => {
+            StepError::new(StepErrorCategory::Config, source.to_string(), None)
+        }
+        RuntimeError::ResponseNarrowing(_)
+        | RuntimeError::HttpWire(_)
+        | RuntimeError::Chain(_)
+        | RuntimeError::ViewPlan(_)
+        | RuntimeError::Preflight(_)
+        | RuntimeError::HttpLimiter(_)
+        | RuntimeError::PaginationFault(_)
+        | RuntimeError::RelationParametersMissing { .. }
+        | RuntimeError::MaterializeBindingMissing { .. }
+        | RuntimeError::EmbeddedHydrationPlanRequired
+        | RuntimeError::ReadIdentityType
+        | RuntimeError::CompiledCatalogMissing
+        | RuntimeError::CompiledCatalogScopeMissing
+        | RuntimeError::ViewQueryDispatchRequired
+        | RuntimeError::EvmRpcUrlMissing
+        | RuntimeError::ContinuationDispatchRequired { .. }
+        | RuntimeError::TeachingValueNotExecutable
+        | RuntimeError::CapabilityUnknown { .. }
+        | RuntimeError::ReadCapabilityRequired { .. }
+        | RuntimeError::GetCapabilityRequired { .. }
+        | RuntimeError::DerivedGetNestingForbidden { .. }
+        | RuntimeError::ViewGetNestingForbidden
+        | RuntimeError::GetIdentityMismatch { .. }
+        | RuntimeError::HttpQueryTemplateRequired
+        | RuntimeError::ViewPaginationUnsupported
+        | RuntimeError::PaginationPageLimit { .. }
+        | RuntimeError::LiveAbsolutePaginationRequired
+        | RuntimeError::Ordering(_)
+        | RuntimeError::TopKFieldUnobserved
+        | RuntimeError::TopKSequenceOverflow
+        | RuntimeError::TopKFieldEmpty
+        | RuntimeError::FieldUnknown { .. }
+        | RuntimeError::EntityUnknown { .. }
+        | RuntimeError::ViewNodeMissing { .. }
+        | RuntimeError::ComputedOutputPhaseRequired
+        | RuntimeError::TraversalParentTypeMismatch { .. }
+        | RuntimeError::Credential(_)
+        | RuntimeError::PaginationContract(_)
+        | RuntimeError::IdentityProjection(_)
+        | RuntimeError::EntityRefScope(_)
+        | RuntimeError::QueryResolution(_)
+        | RuntimeError::SchemaContract(_)
+        | RuntimeError::OperandResolution(_)
+        | RuntimeError::ViewTemplate { .. }
+        | RuntimeError::ViewTemplateEmpty
+        | RuntimeError::ViewTemplateTooLong { .. }
+        | RuntimeError::ViewNode { .. } => {
+            StepError::new(StepErrorCategory::Config, err.to_string(), None)
+        }
+        RuntimeError::ViewNodeResolution(error) => {
+            StepError::new(StepErrorCategory::Config, error.to_string(), None)
+        }
         RuntimeError::FieldUnavailable { .. } => {
             StepError::new(StepErrorCategory::Runtime, err.to_string(), None)
         }
         RuntimeError::Collection(fault) => {
             StepError::new(StepErrorCategory::Runtime, fault.to_string(), None)
+        }
+        RuntimeError::ValueContract(error) => {
+            StepError::new(StepErrorCategory::Runtime, error.to_string(), None)
+        }
+        RuntimeError::RowPredicate(error) => {
+            StepError::new(StepErrorCategory::Runtime, error.to_string(), None)
+        }
+        RuntimeError::TemporalInput(error) => {
+            StepError::new(StepErrorCategory::Runtime, error.to_string(), None)
+        }
+        RuntimeError::ValueCoercion(error) => {
+            StepError::new(StepErrorCategory::Runtime, error.to_string(), None)
         }
         RuntimeError::TypeError { source } => render_type_error(source, cgs),
         RuntimeError::CompilationError { source } => {
@@ -48,26 +116,31 @@ pub fn step_error_from_runtime(err: &RuntimeError, cgs: &CGS) -> StepError {
             ),
             None,
         ),
-        RuntimeError::RequestError { message, .. } => StepError::new(
+        RuntimeError::HostTransport { .. } | RuntimeError::HttpTransport { .. } => StepError::new(
+            StepErrorCategory::Network,
+            err.to_string(),
+            None,
+        ),
+        RuntimeError::RequestError { source, .. } => StepError::new(
             StepErrorCategory::Network,
             append_correction_lines(
-                message.clone(),
+                source.to_string(),
                 vec!["Confirm --backend base URL, network reachability, and TLS.".into()],
             ),
             None,
         ),
         RuntimeError::WorkflowConflict {
-            conflict, message, ..
+            conflict, ..
         } => StepError::new(
             StepErrorCategory::Network,
             append_correction_lines(
-                format!("{message}\n\n{}", conflict.markdown_block()),
+                conflict.markdown_block(),
                 vec!["Resolve the workflow conflict before retrying the mutator.".into()],
             ),
             None,
         ),
         RuntimeError::RateLimited {
-            message,
+            source,
             retry_after,
             ..
         } => {
@@ -80,13 +153,18 @@ pub fn step_error_from_runtime(err: &RuntimeError, cgs: &CGS) -> StepError {
             }
             StepError::new(
                 StepErrorCategory::Network,
-                append_correction_lines(message.clone(), hints),
+                append_correction_lines(source.to_string(), hints),
                 None,
             )
         }
-        RuntimeError::CacheError { message } => {
-            StepError::new(StepErrorCategory::Runtime, message.clone(), None)
+        RuntimeError::CacheError(_) => {
+            StepError::new(StepErrorCategory::Runtime, err.to_string(), None)
         }
+        RuntimeError::CacheSource(_) | RuntimeError::CacheValueRow(_) | RuntimeError::CacheRowDecode(_) => StepError::new(
+            StepErrorCategory::Runtime,
+            err.to_string(),
+            None,
+        ),
         RuntimeError::UnsupportedExecutionMode { mode } => StepError::new(
             StepErrorCategory::Config,
             format!("Execution mode '{mode}' not supported"),
@@ -115,22 +193,19 @@ pub fn step_error_from_runtime(err: &RuntimeError, cgs: &CGS) -> StepError {
             format!("Replay miss for fingerprint {fingerprint}"),
             None,
         ),
-        RuntimeError::ReplayStoreError { message } => {
-            StepError::new(StepErrorCategory::Config, message.clone(), None)
-        }
-        RuntimeError::ConfigurationError { message } => {
-            StepError::new(StepErrorCategory::Config, message.clone(), None)
+        RuntimeError::ReplayStoreError(_) => {
+            StepError::new(StepErrorCategory::Config, err.to_string(), None)
         }
         RuntimeError::PaginationProgress { .. } => {
             StepError::new(StepErrorCategory::Runtime, err.to_string(), None)
         }
-        RuntimeError::SerializationError { message } => {
-            StepError::new(StepErrorCategory::Runtime, message.clone(), None)
+        RuntimeError::SerializationError(_) => {
+            StepError::new(StepErrorCategory::Runtime, err.to_string(), None)
         }
-        RuntimeError::AuthenticationError { message } => StepError::new(
+        RuntimeError::CredentialProvider { .. } | RuntimeError::AuthenticationError(_) => StepError::new(
             StepErrorCategory::Auth,
             append_correction_lines(
-                message.clone(),
+                err.to_string(),
                 vec![
                     "Set the env vars declared in the CGS `auth` block (see schema README).".into(),
                 ],

@@ -415,7 +415,7 @@ async fn recursive_union_codec_preserves_record_attributes_and_nullable_elements
 
 #[test]
 fn typed_output_codec_is_lossless_and_bounded() {
-    fn decode(value: MontyObject) -> Result<plasm_core::Value, String> {
+    fn decode(value: MontyObject) -> Result<plasm_core::Value, super::PythonOutputError> {
         super::output_value(value.as_ref(), 0, &mut 1024)
     }
     for (object, expected) in [
@@ -486,7 +486,9 @@ async fn exact_money_functions_execute_in_monty() {
     ] {
         let result = pool
             .compute_value(source.into(), rows.clone(), &BTreeMap::new(), |v| {
-                crate::python_money::decode(v).map(Value::Money)
+                crate::python_money::decode(v)
+                    .map(Value::Money)
+                    .map_err(PythonReturnValueError::from)
             })
             .await
             .unwrap();

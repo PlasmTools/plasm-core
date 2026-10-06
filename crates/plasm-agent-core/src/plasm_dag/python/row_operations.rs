@@ -50,18 +50,29 @@ impl Lower<'_> {
                     || !call.arguments.keywords.is_empty()
                     || !matches!(receiver, PyExpr::Call(_))
                 {
-                    return Err(at(e, "page_size requires a positive literal bound attached directly to a catalog read call"));
+                    return Err(at(
+                        e,
+                        PythonSourceError::PageSizeCallShape {
+                            positional: call.arguments.args.len(),
+                            keywords: call.arguments.keywords.len(),
+                        },
+                    ));
                 }
-                let size = u32::try_from(integer(&call.arguments.args[0])?)
+                let page_size = integer(&call.arguments.args[0])?;
+                let size = u32::try_from(page_size)
                     .ok()
                     .filter(|n| *n > 0)
-                    .ok_or_else(|| at(e, "page_size requires a positive u32"))?;
+                    .ok_or_else(|| {
+                        at(e, PythonSourceError::InvalidPageSize { value: page_size })
+                    })?;
                 let read = self.expr(receiver, Some(id))?;
-                let index = *self.state.labels.get(&read).ok_or("missing read node")?;
+                let index = *self.state.labels.get(&read).ok_or(
+                    crate::program_rejection::PythonLoweringInvariantError::ReadNodeMissing,
+                )?;
                 let node = Arc::make_mut(&mut self.state.nodes[index]);
                 if !matches!(&node.source, super::super::types::DagNodeSource::Surface { parsed, effect_class: EffectClass::Read, .. } if matches!(parsed.expr, plasm_core::Expr::Query(_)))
                 {
-                    return Err(at(e, "page_size applies to catalog query/search reads"));
+                    return Err(at(e, PythonSourceError::PageSizeRequiresCatalogRead));
                 }
                 node.page_size = Some(size as usize);
                 Ok(read)
@@ -83,7 +94,7 @@ impl Lower<'_> {
     ) -> Result<String, PythonLoweringError> {
         use RowOperation::*;
         let suffix = match operation {
-            Map | PageSize => return Err(at(e, "row constructor entered transform dispatch")),
+            Map | PageSize => return Err(at(e, PythonSourceError::RowConstructorInTransform)),
             Iterate => return self.iteration(e, call, source, id),
             FlatMap => return self.fanout(e, call, source, id),
             Aggregate | GroupBy | Distinct => {
@@ -94,7 +105,7 @@ impl Lower<'_> {
                     return self.project_aliases(e, call, source, id);
                 }
                 if call.arguments.args.is_empty() {
-                    return Err(at(e, "select requires fields"));
+                    return Err(at(e, PythonSourceError::SelectFieldsMissing));
                 }
                 RowSuffix::Project {
                     fields: call
@@ -109,7 +120,10 @@ impl Lower<'_> {
                 if call.arguments.args.len() != 1 || call.arguments.keywords.len() > 1 {
                     return Err(at(
                         e,
-                        "order_by requires one field and optional descending=True/False",
+                        PythonSourceError::OrderByArgumentShape {
+                            positional: call.arguments.args.len(),
+                            keywords: call.arguments.keywords.len(),
+                        },
                     ));
                 }
                 let key = string(&call.arguments.args[0])?;
@@ -122,11 +136,22 @@ impl Lower<'_> {
                             .is_some_and(|arg| arg.as_str() == "descending") =>
                     {
                         let PyExpr::BooleanLiteral(value) = &keyword.value else {
-                            return Err(at(e, "descending requires a literal Boolean"));
+                            return Err(at(e, PythonSourceError::DescendingRequiresBoolean));
                         };
                         value.value
                     }
-                    _ => return Err(at(e, "order_by only accepts the descending keyword")),
+                    _ => {
+                        return Err(at(
+                            e,
+                            PythonSourceError::OrderByKeyword {
+                                keyword: call
+                                    .arguments
+                                    .keywords
+                                    .first()
+                                    .and_then(|k| k.arg.as_ref().map(ToString::to_string)),
+                            },
+                        ))
+                    }
                 };
                 let node = super::super::row_suffix::lower_sort_compute(
                     self.es,
@@ -141,16 +166,24 @@ impl Lower<'_> {
             }
             Union | Take | Where => {
                 if call.arguments.args.len() != 1 || !call.arguments.keywords.is_empty() {
-                    return Err(at(e, "row operation requires one positional argument"));
+                    return Err(at(
+                        e,
+                        PythonSourceError::RowOperationArgumentShape {
+                            operation: operation.name().to_owned(),
+                            positional: call.arguments.args.len(),
+                            keywords: call.arguments.keywords.len(),
+                        },
+                    ));
                 }
                 match operation {
                     Union => RowSuffix::Union {
                         rhs: self.expr(&call.arguments.args[0], None)?,
                     },
                     Take => {
-                        let count = u32::try_from(integer(&call.arguments.args[0])?)
-                            .ok()
-                            .ok_or_else(|| at(e, "take requires a nonnegative u32"))?;
+                        let take = integer(&call.arguments.args[0])?;
+                        let count = u32::try_from(take).ok().ok_or_else(|| {
+                            at(e, PythonSourceError::InvalidTakeBound { value: take })
+                        })?;
                         RowSuffix::Limit { count }
                     }
                     Where => return self.filter(e, source, id, &call.arguments.args[0]),

@@ -77,11 +77,8 @@ impl ExecutionEngine {
         let execution_mode = mode.unwrap_or(self.config.default_mode);
         let capability = cgs
             .get_capability(resume.capability_name.as_str())
-            .ok_or_else(|| RuntimeError::ConfigurationError {
-                message: format!(
-                    "unknown capability `{}` in pagination resume",
-                    resume.capability_name
-                ),
+            .ok_or_else(|| RuntimeError::CapabilityUnknown {
+                capability: resume.capability_name.clone(),
             })?;
         let state: PaginationLoopState = resume.state.try_into()?;
         let QueryPaginationResumeData {

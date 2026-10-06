@@ -16,7 +16,45 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
+use thiserror::Error;
 use tokio_util::sync::CancellationToken;
+
+#[derive(Debug, Error)]
+pub enum PlanCommitRehydrateError {
+    #[error("invalid rehydrated comp: {0}")]
+    Bundle(#[from] crate::plasm_comp_bundle::PlasmCompBundleError),
+    #[error("rehydrated plan validation failed: {0}")]
+    Validation(#[from] crate::plasm_step_convert::StepPayloadLiftError),
+    #[error("rehydrated plan flow denied ({:?}, {} violation(s))", .denial.verdict, .denial.violations.len())]
+    FlowDenied { denial: FlowDenial },
+    #[error("rehydrated plan policy revision mismatch (stored {stored:?}, current {current:?})")]
+    PolicyRevisionMismatch {
+        stored: PolicyRevision,
+        current: Option<PolicyRevision>,
+    },
+}
+
+#[derive(Debug, Error)]
+pub enum AsyncOperationStartError {
+    #[error(transparent)]
+    Session(#[from] crate::execute_session::SessionOperationError),
+    #[error("evidence begin: {0}")]
+    Evidence(#[from] crate::evidence_chain::EvidenceEmitError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum OperationHandleResolutionError {
+    #[error("invalid namespaced operation handle `{handle}`")]
+    InvalidNamespacedHandle { handle: String },
+    #[error(
+        "operation handle logical-session ref `{actual}` does not match current ref `{expected}`"
+    )]
+    SessionRefMismatch { actual: String, expected: String },
+    #[error("namespaced logical-session operation required; use `{logical_session_ref}_oN` from the operation result")]
+    NamespacedHandleRequired { logical_session_ref: String },
+    #[error("namespaced operation handles require a logical_session_ref context")]
+    NamespaceContextRequired,
+}
 
 tokio::task_local! {
     static PLAN_EXECUTE_CANCEL: Option<CancelSignal>;
@@ -61,13 +99,12 @@ pub fn verify_plan_commit_for_run(
     es: &ExecuteSession,
     commit_ref: &PlanCommitRef,
     plan_json: &serde_json::Value,
-) -> Result<(), String> {
+) -> Result<(), crate::plan_commit_store::PlanCommitVerifyError> {
     crate::plan_commit_store::verify_plan_commit_id(
         es,
         commit_ref,
         compute_plan_commit_id(plan_json),
     )
-    .map_err(|e| e.detail())
 }
 
 /// Verify a plan acceptance token against the compiled comp (stable across dry/live paths).
@@ -75,13 +112,12 @@ pub fn verify_plan_commit_for_comp(
     es: &ExecuteSession,
     commit_ref: &PlanCommitRef,
     comp: &plasm_core::PlasmComp,
-) -> Result<(), String> {
+) -> Result<(), crate::plan_commit_store::PlanCommitVerifyError> {
     crate::plan_commit_store::verify_plan_commit_id(
         es,
         commit_ref,
         compute_plan_commit_id_from_semantic(&plan_commit_canonical_comp(comp)),
     )
-    .map_err(|e| e.detail())
 }
 
 /// Verify a plan acceptance token against a dry-run evaluation without building presentation DAG fields.
@@ -89,7 +125,7 @@ pub fn verify_plan_commit_for_dry(
     es: &ExecuteSession,
     commit_ref: &PlanCommitRef,
     dry: &DryPlasmPlanEvaluation,
-) -> Result<(), String> {
+) -> Result<(), crate::plan_commit_store::PlanCommitVerifyError> {
     verify_plan_commit_for_comp(es, commit_ref, &dry.artifact().comp)
 }
 pub const PLAN_COMMIT_TTL: Duration = Duration::from_secs(600);
@@ -132,11 +168,19 @@ impl ExecutionScope {
         }
     }
 
-    pub fn check(&self) -> Result<(), String> {
+    pub fn check(&self) -> Result<(), plasm_runtime::ExecutionFailure> {
         if self.cancel.is_cancelled() || self.token.is_cancelled() {
-            return Err("operation cancelled".to_string());
+            return Err(Self::cancelled_failure());
         }
         Ok(())
+    }
+
+    pub(crate) fn cancelled_failure() -> plasm_runtime::ExecutionFailure {
+        plasm_runtime::ExecutionFailure::new(
+            plasm_runtime::FailureCause::Cancelled,
+            "operation_cancelled",
+            "operation cancelled",
+        )
     }
 
     pub fn cancel(&self) {
@@ -423,7 +467,7 @@ impl PlanCommitRecord {
     pub fn rehydrated_from_persisted(
         es: &ExecuteSession,
         input: RehydratedPlanCommit,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, PlanCommitRehydrateError> {
         let RehydratedPlanCommit {
             commit_ref,
             commit_id,
@@ -436,12 +480,10 @@ impl PlanCommitRecord {
             expires_at,
             dry_cache,
         } = input;
-        let bundle = crate::plasm_comp_bundle::PlasmCompBundle::new(artifact.clone())
-            .map_err(|e| format!("invalid rehydrated comp: {e}"))?;
+        let bundle = crate::plasm_comp_bundle::PlasmCompBundle::new(artifact.clone())?;
         let executable = bundle.executable();
         let prepared =
-            crate::plan_prepare::build_prepared_validated_plan(&artifact.comp, executable)
-                .map_err(|e| format!("rehydrated plan validation failed: {e}"))?;
+            crate::plan_prepare::build_prepared_validated_plan(&artifact.comp, executable)?;
         let topological_order = if dry_cache.topological_order.is_empty() {
             executable
                 .steps_topo
@@ -458,19 +500,14 @@ impl PlanCommitRecord {
             &catalog,
             &es.flow_policy,
         );
-        let flow = checked.admit().map_err(|denial| {
-            format!(
-                "rehydrated plan flow denied ({:?}, {} violation(s))",
-                denial.verdict,
-                denial.violations.len()
-            )
-        })?;
+        let flow = checked
+            .admit()
+            .map_err(|denial| PlanCommitRehydrateError::FlowDenied { denial })?;
         if flow.policy_revision.unwrap_or_default() != policy_revision {
-            return Err(format!(
-                "rehydrated plan policy revision mismatch (stored {}, current {:?})",
-                policy_revision.0,
-                flow.policy_revision.map(|r| r.0)
-            ));
+            return Err(PlanCommitRehydrateError::PolicyRevisionMismatch {
+                stored: policy_revision,
+                current: flow.policy_revision,
+            });
         }
         Ok(Self {
             commit_ref,
@@ -768,29 +805,29 @@ pub fn plan_commit_meta(
 pub fn resolve_operation_storage_handle(
     trace: Option<&crate::trace_sink_emit::PlasmTraceContext>,
     handle: &OperationHandle,
-) -> Result<OperationHandle, String> {
+) -> Result<OperationHandle, OperationHandleResolutionError> {
     let s = handle.as_str();
     let mcp_ref = trace.and_then(|t| t.logical_session_ref.as_deref());
     let is_ns = handle.is_logical_namespaced();
     match (mcp_ref, is_ns) {
         (Some(r), true) => {
-            let slot = handle
-                .logical_session_ref()
-                .ok_or_else(|| format!("invalid namespaced operation handle `{s}`"))?;
+            let slot = handle.logical_session_ref().ok_or_else(|| {
+                OperationHandleResolutionError::InvalidNamespacedHandle {
+                    handle: s.to_string(),
+                }
+            })?;
             if slot != r {
-                return Err(format!(
-                    "operation handle ref `{slot}` does not match current logical_session_ref `{r}`"
-                ));
+                return Err(OperationHandleResolutionError::SessionRefMismatch {
+                    actual: slot.to_string(),
+                    expected: r.to_string(),
+                });
             }
             Ok(handle.clone())
         }
-        (Some(r), false) => Err(format!(
-            "namespaced logical-session operation required: use `wait({r}_oN)` from the operation result"
-        )),
-        (None, true) => Err(
-            "namespaced operation handles require a logical_session_ref context"
-                .to_string(),
-        ),
+        (Some(r), false) => Err(OperationHandleResolutionError::NamespacedHandleRequired {
+            logical_session_ref: r.to_string(),
+        }),
+        (None, true) => Err(OperationHandleResolutionError::NamespaceContextRequired),
         (None, false) => Ok(handle.clone()),
     }
 }
@@ -865,6 +902,7 @@ async fn run_plasm_comp_on_pool(
         .await
     })
     .await
+    .map_err(crate::live_plan_run_worker::LivePlanRunError::into_execution_failure)
 }
 
 /// Start a background live plan run; poll with `wait(handle)` / cancel with `cancel(handle)`.
@@ -879,7 +917,7 @@ pub fn spawn_async_plan_run(
     cancel: CancelSignal,
     accept: OpAcceptContext,
     dry: Option<crate::plasm_plan_run::DryPlasmPlanEvaluation>,
-) -> Result<(), String> {
+) -> Result<(), AsyncOperationStartError> {
     let mut accept = accept;
     accept.host = Some(Arc::downgrade(&st));
     let plan_hooks = accept.plan_trace.clone();
@@ -891,9 +929,7 @@ pub fn spawn_async_plan_run(
         es.as_ref(),
         session_id.as_str(),
         accept.evidence_anchors.clone(),
-    )
-    .map_err(|e| format!("evidence begin: {e}"))?
-    {
+    )? {
         scope.evidence = Some(run_chain);
     }
     es.emit_op_accept(&handle, &st)?;
@@ -992,6 +1028,16 @@ mod tests {
     }
 
     #[test]
+    fn cancellation_is_a_typed_execution_failure() {
+        let scope = ExecutionScope::new();
+        scope.cancel();
+
+        let error = scope.check().expect_err("cancelled scope must fail");
+        assert_eq!(error.cause, plasm_runtime::FailureCause::Cancelled);
+        assert_eq!(error.code, "operation_cancelled");
+    }
+
+    #[test]
     fn operation_protocol_consumes_entire_command() {
         for command in [
             "wait(o1)",
@@ -1020,6 +1066,34 @@ mod tests {
                 "{source}"
             );
         }
+    }
+
+    #[test]
+    fn operation_handle_namespace_failures_are_semantic() {
+        use crate::trace_sink_emit::PlasmTraceContext;
+
+        let namespaced = OperationHandle::mint_namespaced("l_AAAAAAAAQACAAAAAAAAAAQ", 1);
+        let missing_context = resolve_operation_storage_handle(None, &namespaced).unwrap_err();
+        assert_eq!(
+            missing_context,
+            OperationHandleResolutionError::NamespaceContextRequired
+        );
+
+        let trace = PlasmTraceContext {
+            trace_id: uuid::Uuid::nil(),
+            call_index: None,
+            mcp_session_id: None,
+            logical_session_id: None,
+            logical_session_ref: Some("l_AAAAAAAAQACAAAAAAAAABQ".into()),
+        };
+        let mismatch = resolve_operation_storage_handle(Some(&trace), &namespaced).unwrap_err();
+        assert_eq!(
+            mismatch,
+            OperationHandleResolutionError::SessionRefMismatch {
+                actual: "l_AAAAAAAAQACAAAAAAAAAAQ".into(),
+                expected: "l_AAAAAAAAQACAAAAAAAAABQ".into(),
+            }
+        );
     }
 
     #[test]

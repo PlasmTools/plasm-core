@@ -34,6 +34,15 @@ use serde::Serialize;
 #[path = "execute_session_operations.rs"]
 mod operations;
 
+/// A compiled catalog required by an execute session is not pinned in its inventory.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum CompiledCatalogLookupError {
+    #[error("no compiled request recipes pinned for catalog `{entry_id}`")]
+    EntryMissing { entry_id: String },
+    #[error("no compiled request recipes pinned for CGS `{catalog_hash}`")]
+    HashMissing { catalog_hash: String },
+}
+
 /// Default cap on concurrent `Running` async operations per execute session.
 pub const DEFAULT_MAX_RUNNING_OPS_PER_SESSION: usize = 16;
 
@@ -50,6 +59,17 @@ fn running_handles_from_map(
     map: &HashMap<OperationHandle, crate::operation::OperationState>,
 ) -> Vec<OperationHandle> {
     operations::running_handles_from_map(map)
+}
+
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum SessionOperationError {
+    #[error("{}", format_too_many_operations_error(.running, *.capacity))]
+    CapacityExceeded {
+        running: Vec<OperationHandle>,
+        capacity: usize,
+    },
+    #[error("unknown operation handle `{handle}`")]
+    UnknownHandle { handle: OperationHandle },
 }
 
 fn format_too_many_operations_error(handles: &[OperationHandle], cap: usize) -> String {
@@ -705,23 +725,25 @@ impl ExecuteSession {
     pub(crate) fn compiled_catalog_for_entry(
         &self,
         entry_id: &str,
-    ) -> Result<Arc<plasm_compile::CompiledCatalog>, String> {
+    ) -> Result<Arc<plasm_compile::CompiledCatalog>, CompiledCatalogLookupError> {
         self.compiled_catalogs_by_entry
             .get(entry_id)
             .cloned()
-            .ok_or_else(|| format!("no compiled request recipes pinned for catalog `{entry_id}`"))
+            .ok_or_else(|| CompiledCatalogLookupError::EntryMissing {
+                entry_id: entry_id.to_owned(),
+            })
     }
 
     pub(crate) fn compiled_catalog_for_cgs(
         &self,
         cgs: &CGS,
-    ) -> Result<Arc<plasm_compile::CompiledCatalog>, String> {
+    ) -> Result<Arc<plasm_compile::CompiledCatalog>, CompiledCatalogLookupError> {
         let hash = cgs.catalog_cgs_hash_hex();
         self.compiled_catalogs_by_entry
             .values()
             .find(|compiled| compiled.cgs_hash() == hash)
             .cloned()
-            .ok_or_else(|| format!("no compiled request recipes pinned for CGS `{hash}`"))
+            .ok_or(CompiledCatalogLookupError::HashMissing { catalog_hash: hash })
     }
 
     /// Allocate the next monotonic `resource_index` for this execute session (used for `plasm://r/{n}`).
@@ -939,7 +961,7 @@ impl ExecuteSession {
         handle: OperationHandle,
         cancel: plasm_runtime::CancelSignal,
         accept: crate::operation::OpAcceptContext,
-    ) -> Result<(), String> {
+    ) -> Result<(), SessionOperationError> {
         let cap = max_running_ops_per_session();
         let mut map = self
             .operation_by_handle
@@ -947,7 +969,10 @@ impl ExecuteSession {
             .unwrap_or_else(|e| e.into_inner());
         let running = running_handles_from_map(&map);
         if running.len() >= cap {
-            return Err(format_too_many_operations_error(&running, cap));
+            return Err(SessionOperationError::CapacityExceeded {
+                running,
+                capacity: cap,
+            });
         }
         let (progress_tx, _) = tokio::sync::broadcast::channel(64);
         let (terminal_tx, _) =
@@ -1055,16 +1080,23 @@ impl ExecuteSession {
                         crate::operation::OperationPollSnapshot::Succeeded(result)
                     } else {
                         crate::operation::OperationPollSnapshot::Failed(
-                            "operation succeeded; poll again after cross-pod artifact hydrate"
-                                .into(),
+                            plasm_runtime::ExecutionFailure::new(
+                                plasm_runtime::FailureCause::Runtime,
+                                "operation_result_hydration_pending",
+                                "operation completed but its cross-pod result artifact is not hydrated yet",
+                            ),
                         )
                     }
                 }
                 crate::operation::OperationPhase::Failed => {
                     crate::operation::OperationPollSnapshot::Failed(
-                        op.error
-                            .clone()
-                            .unwrap_or_else(|| "operation failed".into()),
+                        op.error.clone().unwrap_or_else(|| {
+                            plasm_runtime::ExecutionFailure::new(
+                                plasm_runtime::FailureCause::Runtime,
+                                "operation_failed_without_detail",
+                                "operation failed without a recorded failure detail",
+                            )
+                        }),
                     )
                 }
                 crate::operation::OperationPhase::Cancelled => {
@@ -1241,13 +1273,15 @@ impl ExecuteSession {
         &self,
         handle: &OperationHandle,
         st: &crate::server_state::PlasmHostState,
-    ) -> Result<(), String> {
+    ) -> Result<(), SessionOperationError> {
         let mut map = self
             .operation_by_handle
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let Some(op) = map.get_mut(handle) else {
-            return Err(format!("unknown operation handle `{}`", handle.as_str()));
+            return Err(SessionOperationError::UnknownHandle {
+                handle: handle.clone(),
+            });
         };
         op.agent_emit.seq = 1;
         let line = crate::operation_progress::render_op_wire_line(
@@ -2114,7 +2148,7 @@ async fn finalize_session_once(
     session_id: &str,
     release_artifacts: Option<&Arc<RunArtifactStore>>,
     release_graph_persistence: Option<&Arc<SessionGraphPersistence>>,
-) -> Result<(), String> {
+) -> Result<(), crate::session_graph_persistence::SessionGraphPersistenceError> {
     if let Some(store) = release_artifacts {
         sess.finalize_run_artifacts(session_id, store).await;
     }
@@ -2584,8 +2618,16 @@ mod tests {
                 crate::operation::OpAcceptContext::default(),
             )
             .expect_err("cap");
-        assert!(err.contains("too_many_operations"), "unexpected: {err}");
-        assert!(err.contains("wait(") && err.contains("cancel("));
+        assert!(
+            matches!(&err, SessionOperationError::CapacityExceeded { running, capacity: 2 } if running.len() == 2),
+            "unexpected: {err}"
+        );
+        let diagnostic = err.to_string();
+        assert!(
+            diagnostic.contains("too_many_operations"),
+            "unexpected: {err}"
+        );
+        assert!(diagnostic.contains("wait(") && diagnostic.contains("cancel("));
         match prev {
             Some(v) => unsafe {
                 env::set_var("PLASM_MAX_RUNNING_OPS_PER_SESSION", v);

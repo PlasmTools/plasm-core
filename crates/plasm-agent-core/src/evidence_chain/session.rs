@@ -187,10 +187,10 @@ impl EvidenceChainSession {
         )?;
         let expected_wire = run_id_wire_from_digest(&digest);
         if seal.expected_run_id_wire.trim() != expected_wire {
-            return Err(EvidenceEmitError::RunBundleDigest(format!(
-                "run_id wire {:?} does not match recomputed digest (expected {expected_wire})",
-                seal.expected_run_id_wire
-            )));
+            return Err(EvidenceEmitError::RunIdDigestMismatch {
+                supplied: seal.expected_run_id_wire.clone(),
+                expected: expected_wire,
+            });
         }
         g.builder
             .push(

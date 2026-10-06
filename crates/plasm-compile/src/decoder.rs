@@ -379,9 +379,7 @@ pub(crate) fn apply_field_derive_rule(
             alternate_prefixes,
             part_index,
         } => {
-            let s = v.as_str().ok_or_else(|| DecodeError::InvalidStructure {
-                message: "segments_after_prefix derive requires a JSON string value".to_string(),
-            })?;
+            let s = v.as_str().ok_or(DecodeError::SegmentDeriveInput)?;
             let mut rest: Option<&str> = s.strip_prefix(prefix.as_str());
             if rest.is_none() {
                 for alt in alternate_prefixes {
@@ -391,19 +389,13 @@ pub(crate) fn apply_field_derive_rule(
                     }
                 }
             }
-            let rest = rest.ok_or_else(|| DecodeError::InvalidStructure {
-                message: format!(
-                    "segments_after_prefix: value does not start with prefix {prefix:?} or alternates"
-                ),
-            })?;
+            let rest = rest.ok_or(DecodeError::SegmentPrefixMissing)?;
             let parts: Vec<&str> = rest.split('/').filter(|p| !p.is_empty()).collect();
             let seg = parts
                 .get(*part_index)
-                .ok_or_else(|| DecodeError::InvalidStructure {
-                    message: format!(
-                    "segments_after_prefix: part_index {part_index} out of range (got {} segments)",
-                    parts.len()
-                ),
+                .ok_or_else(|| DecodeError::SegmentIndex {
+                    index: *part_index,
+                    segments: parts.len(),
                 })?;
             let seg = seg.trim_end_matches(".git");
             Ok(serde_json::Value::String(seg.to_string()))
@@ -414,9 +406,7 @@ pub(crate) fn apply_field_derive_rule(
             value_field,
             case_insensitive,
         } => {
-            let arr = v.as_array().ok_or_else(|| DecodeError::InvalidStructure {
-                message: "name_value_array_lookup derive requires a JSON array value".to_string(),
-            })?;
+            let arr = v.as_array().ok_or(DecodeError::NameValueDeriveInput)?;
             for item in arr {
                 let Some(obj) = item.as_object() else {
                     continue;
@@ -446,9 +436,7 @@ pub(crate) fn apply_field_derive_rule(
             key,
             case_insensitive,
         } => {
-            let obj = v.as_object().ok_or_else(|| DecodeError::InvalidStructure {
-                message: "object_key_lookup derive requires a JSON object value".to_string(),
-            })?;
+            let obj = v.as_object().ok_or(DecodeError::ObjectKeyDeriveInput)?;
             if *case_insensitive {
                 for (k, val) in obj {
                     if k.eq_ignore_ascii_case(key.as_str()) {
@@ -519,11 +507,7 @@ pub fn apply_transform(
             serde_json::Value::String(s) => Ok(Value::String(s.clone())),
             serde_json::Value::Number(n) => Ok(Value::String(n.to_string())),
             serde_json::Value::Bool(b) => Ok(Value::String(b.to_string())),
-            _ => Err(DecodeError::TransformFailed {
-                transform: "to_string".to_string(),
-                value: value.to_string(),
-                reason: "Value cannot be converted to string".to_string(),
-            }),
+            _ => Err(DecodeError::StringTransformInput),
         },
 
         Transform::ToNumber => match value {
@@ -533,31 +517,17 @@ pub fn apply_transform(
                 } else if let Some(f) = n.as_f64() {
                     Ok(Value::Float(f))
                 } else {
-                    Err(DecodeError::TransformFailed {
-                        transform: "to_number".to_string(),
-                        value: value.to_string(),
-                        reason: "Number is not a valid f64".to_string(),
-                    })
+                    Err(DecodeError::NumberRepresentation)
                 }
             }
-            serde_json::Value::String(s) => {
-                if let Ok(i) = s.parse::<i64>() {
-                    Ok(Value::Integer(i))
-                } else if let Ok(f) = s.parse::<f64>() {
-                    Ok(Value::Float(f))
-                } else {
-                    Err(DecodeError::TransformFailed {
-                        transform: "to_number".to_string(),
-                        value: value.to_string(),
-                        reason: "String cannot be parsed as number".to_string(),
-                    })
-                }
-            }
-            _ => Err(DecodeError::TransformFailed {
-                transform: "to_number".to_string(),
-                value: value.to_string(),
-                reason: "Value is not a number or string".to_string(),
-            }),
+            serde_json::Value::String(s) => match s.parse::<i64>() {
+                Ok(i) => Ok(Value::Integer(i)),
+                Err(integer) => s
+                    .parse::<f64>()
+                    .map(Value::Float)
+                    .map_err(|source| DecodeError::NumberParse { integer, source }),
+            },
+            _ => Err(DecodeError::NumberTransformInput),
         },
 
         Transform::ToBool => match value {
@@ -565,17 +535,9 @@ pub fn apply_transform(
             serde_json::Value::String(s) => match s.to_lowercase().as_str() {
                 "true" | "yes" | "1" => Ok(Value::Bool(true)),
                 "false" | "no" | "0" => Ok(Value::Bool(false)),
-                _ => Err(DecodeError::TransformFailed {
-                    transform: "to_bool".to_string(),
-                    value: value.to_string(),
-                    reason: "String is not a valid boolean".to_string(),
-                }),
+                _ => Err(DecodeError::BooleanLiteral),
             },
-            _ => Err(DecodeError::TransformFailed {
-                transform: "to_bool".to_string(),
-                value: value.to_string(),
-                reason: "Value is not a boolean or string".to_string(),
-            }),
+            _ => Err(DecodeError::BooleanTransformInput),
         },
 
         Transform::MapEnum { mapping } => {
@@ -586,11 +548,7 @@ pub fn apply_transform(
                     Ok(Value::String(key_str.to_string())) // Pass through if not in mapping
                 }
             } else {
-                Err(DecodeError::TransformFailed {
-                    transform: "map_enum".to_string(),
-                    value: value.to_string(),
-                    reason: "Value is not a string".to_string(),
-                })
+                Err(DecodeError::EnumTransformInput)
             }
         }
     }
@@ -698,6 +656,80 @@ mod tests {
     use super::*;
     use crate::decode_entities;
     use serde_json::json;
+
+    #[test]
+    fn transform_rejections_are_semantic_and_do_not_expose_values() {
+        let secret = "private-response-value";
+        let cases = [
+            (Transform::ToString, json!({"token": secret})),
+            (Transform::ToNumber, json!([secret])),
+            (Transform::ToBool, json!({"token": secret})),
+            (Transform::ToBool, json!(secret)),
+            (
+                Transform::MapEnum {
+                    mapping: IndexMap::new(),
+                },
+                json!([secret]),
+            ),
+        ];
+        for (index, (transform, value)) in cases.into_iter().enumerate() {
+            let error = apply_transform(&transform, &value).unwrap_err();
+            assert!(matches!(
+                (index, &error),
+                (0, DecodeError::StringTransformInput)
+                    | (1, DecodeError::NumberTransformInput)
+                    | (2, DecodeError::BooleanTransformInput)
+                    | (3, DecodeError::BooleanLiteral)
+                    | (4, DecodeError::EnumTransformInput)
+            ));
+            assert!(!error.to_string().contains(secret));
+            assert!(!format!("{error:?}").contains(secret));
+        }
+    }
+
+    #[test]
+    fn numeric_transform_preserves_parse_errors_without_the_input() {
+        use std::error::Error;
+        let secret = "private-numeric-value";
+        let error = apply_transform(&Transform::ToNumber, &json!(secret)).unwrap_err();
+        assert!(error.source().unwrap().is::<std::num::ParseFloatError>());
+        assert!(matches!(&error, DecodeError::NumberParse { integer, .. }
+            if integer.kind() == &std::num::IntErrorKind::InvalidDigit));
+        assert!(matches!(error.clone(), DecodeError::NumberParse { .. }));
+        assert!(!error.to_string().contains(secret));
+        assert!(!format!("{error:?}").contains(secret));
+        assert_eq!(
+            apply_transform(&Transform::ToNumber, &json!("42")).unwrap(),
+            Value::Integer(42)
+        );
+        assert_eq!(
+            apply_transform(&Transform::ToNumber, &json!("4.5")).unwrap(),
+            Value::Float(4.5)
+        );
+    }
+
+    #[test]
+    fn segment_derivation_rejections_keep_only_contract_metadata() {
+        let rule = FieldDeriveRule::SegmentsAfterPrefix {
+            prefix: "private-prefix/".to_owned(),
+            alternate_prefixes: Vec::new(),
+            part_index: 1,
+        };
+        assert!(matches!(
+            apply_field_derive_rule(&rule, &json!(null)),
+            Err(DecodeError::SegmentDeriveInput)
+        ));
+        let error = apply_field_derive_rule(&rule, &json!("private-value")).unwrap_err();
+        assert!(matches!(&error, DecodeError::SegmentPrefixMissing));
+        assert!(!format!("{error:?} {error}").contains("private-"));
+        assert!(matches!(
+            apply_field_derive_rule(&rule, &json!("private-prefix/only")),
+            Err(DecodeError::SegmentIndex {
+                index: 1,
+                segments: 1
+            })
+        ));
+    }
 
     #[test]
     fn test_extract_simple_path() {

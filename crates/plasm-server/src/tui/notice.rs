@@ -520,7 +520,7 @@ pub(crate) fn device_bind_error_notice(entry_id: &str, raw_error: &str) -> RunNo
 pub(crate) fn copy_notice(
     success_title: impl Into<String>,
     error_title: impl Into<String>,
-    copy_result: Result<(), String>,
+    copy_result: Result<(), super::clipboard::ClipboardError>,
 ) -> RunNotice {
     match copy_result {
         Ok(()) => RunNotice::new(
@@ -534,7 +534,7 @@ pub(crate) fn copy_notice(
             error_title,
             "Clipboard operation failed.",
         )
-        .with_details(vec![e])
+        .with_details(vec![e.to_string()])
         .with_action_hint("Verify clipboard access for this terminal session and try again."),
     }
 }

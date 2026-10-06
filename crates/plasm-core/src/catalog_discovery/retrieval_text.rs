@@ -7,6 +7,19 @@ use crate::schema::{
     NamedValueSchema, OutputType, ValueDomainSlot,
 };
 use std::collections::BTreeSet;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum RetrievalTextError {
+    #[error("selection input `{field}` lacks its validated row effect")]
+    SelectionEffectMissing { field: String },
+    #[error("discovery meaning contains a cyclic array value domain at `{key}`")]
+    CyclicArrayValueDomain { key: String },
+    #[error(transparent)]
+    InputProjection(#[from] super::input_projection::InputProjectionError),
+    #[error(transparent)]
+    Schema(#[from] crate::SchemaError),
+}
 
 /// Input roles are preserved independently of parameter spelling.
 #[derive(Clone, Copy)]
@@ -46,7 +59,7 @@ pub(super) fn render(
     cgs: &crate::CGS,
     cap: &CapabilitySchema,
     entity: &EntityDef,
-) -> Result<RenderedMeaning, String> {
+) -> Result<RenderedMeaning, RetrievalTextError> {
     let view = SemanticView {
         cgs,
         capability: cap,
@@ -72,7 +85,7 @@ pub(super) fn render(
 impl SemanticView<'_> {
     /// One narrative contract for retrieval and judgment. Input roles come from
     /// the model; descriptions are never inferred from identifiers or task text.
-    fn operation(&self) -> Result<String, String> {
+    fn operation(&self) -> Result<String, RetrievalTextError> {
         let cap = self.capability;
         let mut prose = Narrative::default();
         prose.push(cap.description.clone());
@@ -109,10 +122,9 @@ impl SemanticView<'_> {
         }
         for field in &self.inputs.selection.0 {
             let effect = field.selection_effect.ok_or_else(|| {
-                format!(
-                    "selection input '{}' lacks its validated row effect",
-                    field.name
-                )
+                RetrievalTextError::SelectionEffectMissing {
+                    field: field.name.to_string(),
+                }
             })?;
             prose.push(format!(
                 "Backend selection {}: {}",
@@ -177,7 +189,7 @@ impl SemanticView<'_> {
             // A relevance projection describes only declared observations with
             // authored meaning. The full typed output contract remains in CGS.
             if let Some(field) = self.entity.fields.get(name.as_str()) {
-                let value = field.named_value(self.cgs).map_err(|e| e.to_string())?;
+                let value = field.named_value(self.cgs)?;
                 if !field.description.is_empty() || !value.description.is_empty() {
                     observed.push(value_meaning(
                         self.cgs,
@@ -259,7 +271,10 @@ impl Narrative {
     }
 }
 
-fn input_fields(cgs: &crate::CGS, fields: &[InputFieldSchema]) -> Result<String, String> {
+fn input_fields(
+    cgs: &crate::CGS,
+    fields: &[InputFieldSchema],
+) -> Result<String, RetrievalTextError> {
     fields
         .iter()
         .map(|field| input_field(cgs, field))
@@ -267,11 +282,11 @@ fn input_fields(cgs: &crate::CGS, fields: &[InputFieldSchema]) -> Result<String,
         .map(|meanings| meanings.join("; "))
 }
 
-fn input_field(cgs: &crate::CGS, field: &InputFieldSchema) -> Result<String, String> {
+fn input_field(cgs: &crate::CGS, field: &InputFieldSchema) -> Result<String, RetrievalTextError> {
     let meaning = match &field.wire {
         InputFieldWire::Registry(_) => value_meaning(
             cgs,
-            field.named_value(cgs).map_err(|e| e.to_string())?,
+            field.named_value(cgs)?,
             field.description.as_deref(),
             &mut BTreeSet::new(),
         )?,
@@ -300,7 +315,7 @@ fn value_meaning(
     value: &NamedValueSchema,
     description: Option<&str>,
     seen: &mut BTreeSet<String>,
-) -> Result<String, String> {
+) -> Result<String, RetrievalTextError> {
     let mut parts = Vec::new();
     for text in description
         .into_iter()
@@ -340,9 +355,9 @@ fn value_meaning(
     if let Some(items) = &value.array_items {
         let key = items.value_domain_key().as_str().to_string();
         if !seen.insert(key.clone()) {
-            return Err(format!("cyclic discovery array value domain: {key}"));
+            return Err(RetrievalTextError::CyclicArrayValueDomain { key });
         }
-        let item = cgs.named_value_for_slot(items).map_err(|e| e.to_string())?;
+        let item = cgs.named_value_for_slot(items)?;
         parts.push(format!(
             "Each element describes {}",
             value_meaning(cgs, item, None, seen)?
@@ -352,7 +367,7 @@ fn value_meaning(
     Ok(parts.join(" "))
 }
 
-fn input_shape(cgs: &crate::CGS, input: &InputType) -> Result<String, String> {
+fn input_shape(cgs: &crate::CGS, input: &InputType) -> Result<String, RetrievalTextError> {
     Ok(match input {
         InputType::None => "no input".into(),
         InputType::Value {
@@ -437,7 +452,7 @@ fn input_shape(cgs: &crate::CGS, input: &InputType) -> Result<String, String> {
                     }
                     Ok(text)
                 })
-                .collect::<Result<Vec<_>, String>>()?;
+                .collect::<Result<Vec<_>, RetrievalTextError>>()?;
             format!(
                 "one of these alternative variants: {}",
                 alternatives.join("; ")

@@ -93,7 +93,7 @@ impl RunArtifactStore {
         }
         let head_hex = bundle
             .chain_head()
-            .ok_or_else(|| RunArtifactError::Decode("evidence bundle missing chain head".into()))?
+            .ok_or(RunArtifactError::MissingEvidenceChainHead)?
             .to_hex();
         let bytes = serde_json::to_vec(bundle)?;
         let n = bytes.len();

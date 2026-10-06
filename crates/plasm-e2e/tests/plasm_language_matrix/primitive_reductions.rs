@@ -173,13 +173,10 @@ pub(super) async fn run_boundary(typed_output: bool) -> usize {
                     ["domain"] = Value::Null;
                 let mut artifact = bundle.artifact().clone();
                 artifact.comp = serde_json::from_value(forged).unwrap();
-                let error =
-                    plasm_agent::plasm_compile::PlasmCompBundle::new(artifact).and_then(|bundle| {
-                        super::evaluate_plasm_comp_dry(&es, &bundle)
-                            .map(|_| ())
-                            .map_err(|e| e.to_string())
-                    });
-                assert!(error.is_err(), "forged return domain accepted");
+                assert!(
+                    super::python::corrupted_bundle_rejected(&es, artifact),
+                    "forged return domain accepted"
+                );
             }
             let dry = super::evaluate_plasm_comp_dry(&es, &bundle).unwrap();
             super::assert_comp_witness(&dry).unwrap();

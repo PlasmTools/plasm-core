@@ -14,13 +14,181 @@ mod helpers;
 #[cfg(test)]
 mod tests;
 
+/// Original checker records remain inspectable; formatting happens in Display.
+#[derive(Debug, Clone)]
+pub struct InferenceDiagnostics {
+    pub entries: Vec<LocatedAnalysisDiagnostic>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LocatedAnalysisDiagnostic {
+    pub diagnostic: monty_analysis::AnalysisDiagnostic,
+    pub location: Option<(usize, usize)>,
+}
+
+impl From<Vec<monty_analysis::AnalysisDiagnostic>> for InferenceDiagnostics {
+    fn from(errors: Vec<monty_analysis::AnalysisDiagnostic>) -> Self {
+        Self {
+            entries: errors
+                .into_iter()
+                .map(|diagnostic| LocatedAnalysisDiagnostic {
+                    diagnostic,
+                    location: None,
+                })
+                .collect(),
+        }
+    }
+}
+
+impl std::fmt::Display for InferenceDiagnostics {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (index, entry) in self.entries.iter().enumerate() {
+            if index > 0 {
+                writeln!(f)?;
+            }
+            if let Some((line, column)) = entry.location {
+                write!(f, "plasm_compute.py:{line}:{column}: ")?;
+            }
+            write!(f, "{}: {}", entry.diagnostic.code, entry.diagnostic.message)?;
+        }
+        Ok(())
+    }
+}
+impl std::error::Error for InferenceDiagnostics {}
+
+impl From<plasm_core::value_contract::ValueContractError> for InferenceError {
+    fn from(error: plasm_core::value_contract::ValueContractError) -> Self {
+        Self::Graph(InferenceGraphError::ValueContract(error))
+    }
+}
+
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum InferenceError {
+    #[error("Python checker diagnostics: {diagnostics}")]
+    Diagnostics {
+        #[source]
+        diagnostics: InferenceDiagnostics,
+    },
+    #[error("return entity catalog `{entry_id}` is not loaded")]
+    ReturnCatalogMissing { entry_id: String },
+    #[error("Python inference backend failed: {0}")]
+    Backend(#[from] monty_analysis::AnalysisError),
+    #[error("Python source parse failed: {source}")]
+    Parse {
+        #[source]
+        source: ruff_python_parser::ParseError,
+    },
+    #[error(transparent)]
+    Program(#[from] crate::program_rejection::PythonProgramError),
+    #[error(transparent)]
+    Compute(#[from] crate::program_rejection::PythonComputeError),
+    #[error(transparent)]
+    ComputeRejection(#[from] crate::program_rejection::PythonComputeRejection),
+    #[error("catalog value contract could not be constructed: {0}")]
+    CatalogValueContract(#[source] Box<crate::program_rejection::PythonComputeError>),
+    #[error(transparent)]
+    SymbolResolve(#[from] plasm_core::symbol_tuning::SymbolResolveError),
+    #[error("inferred type graph is invalid: {0}")]
+    Graph(#[from] InferenceGraphError),
+    #[error("Python type declaration failed: {0}")]
+    Declaration(#[from] DeclarationError),
+    #[error("Python return contract check failed: {0}")]
+    Return(#[from] ReturnContractError),
+    #[error("Python analysis failed its control-flow bound")]
+    ControlFlowBoundExceeded,
+    #[error("generated compute function is missing")]
+    GeneratedFunctionMissing,
+    #[error("local helper names are duplicated")]
+    DuplicateLocalHelper,
+    #[error("local helper parameter binding could not be resolved")]
+    HelperParameterBindingMissing,
+    #[error("local helper argument expansion is unsupported")]
+    ExpandedHelperArgumentsUnsupported,
+    #[error("local helper calls are variadic")]
+    VariadicLocalHelperCall,
+    #[error("local helper count exceeds the inference bound")]
+    LocalHelperLimitExceeded,
+    #[error("local helper call count exceeds the inference bound")]
+    LocalHelperCallLimitExceeded,
+    #[error("local helper inference did not converge")]
+    LocalHelperInferenceDidNotConverge,
+    #[error("checker supplied no inferred helper contract")]
+    HelperContractMissing,
+}
+
+impl From<ruff_python_parser::ParseError> for InferenceError {
+    fn from(error: ruff_python_parser::ParseError) -> Self {
+        Self::Parse { source: error }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum InferenceGraphError {
+    #[error("recursive inferred type exceeds the maximum depth")]
+    RecursiveType,
+    #[error("inferred type graph contains an invalid reference")]
+    InvalidReference,
+    #[error("inferred nominal type has no declared name")]
+    NominalNameMissing,
+    #[error("inferred nominal type is not declared")]
+    NominalUnsealed,
+    #[error("materialized dictionaries require string keys")]
+    DictionaryKeyNotString,
+    #[error("inferred Python type is not materializable")]
+    UnsupportedType,
+    #[error("inferred temporal type is unsupported")]
+    UnsupportedTemporal,
+    #[error("inferred Python type `{name}` has no materialized Plasm contract")]
+    UnsupportedNamedType { name: String },
+    #[error("inferred Python nominal type `{identity}` is not sealed")]
+    UnsealedNamedType { identity: String },
+    #[error("inferred type graph contains an unsupported node")]
+    UnsupportedNode,
+    #[error("inferred intersection has no positive materialized constraint")]
+    EmptyIntersection,
+    #[error(transparent)]
+    ValueContract(#[from] plasm_core::value_contract::ValueContractError),
+}
+
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum DeclarationError {
+    #[error("analysis declaration exceeds the maximum nesting depth")]
+    DepthExceeded,
+    #[error("mapping input requires a record contract")]
+    MappingInputNotRecord,
+    #[error("analysis requires an explicit temporal or array shape")]
+    ShapeNeedsExplicitContract,
+    #[error("Python field name `{field}` is not a valid member")]
+    InvalidMember { field: String },
+    #[error("Python type declaration serialization failed: {0}")]
+    Serialization(#[source] std::sync::Arc<serde_json::Error>),
+    #[error(transparent)]
+    Compute(#[from] crate::program_rejection::PythonComputeError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ReturnContractError {
+    #[error("annotation has unresolved value types")]
+    UnresolvedAnnotation,
+    #[error("generated compute function is missing")]
+    ComputeFunctionMissing,
+    #[error("analysis declaration names are reserved")]
+    ReservedDeclarationName,
+    #[error("checker supplied no return contract")]
+    ReturnContractMissing,
+    #[error("annotation must produce exactly one contract")]
+    AnnotationContractCount,
+    #[error("local helper return is not a closed materialized contract")]
+    OpenHelperReturn,
+}
+
 #[cfg(test)]
 pub(super) fn infer(
     expression: &str,
     parameter: &str,
     argument: &Type,
     imports: &str,
-) -> Result<Type, String> {
+) -> Result<Type, InferenceError> {
     infer_body(
         &format!("\n    return ({expression})"),
         &[(parameter, argument)],
@@ -34,7 +202,7 @@ pub(super) fn infer_body(
     body: &str,
     parameters: &[(&str, &Type)],
     imports: &str,
-) -> Result<Type, String> {
+) -> Result<Type, InferenceError> {
     let mut declarations = declarations::Declarations::default();
     let parameters = parameters
         .iter()
@@ -46,9 +214,9 @@ pub(super) fn infer_body(
         .collect::<Result<Vec<_>, _>>()?
         .join(", ");
     let source = format!("{imports}\ndef __plasm_expression({parameters}):{body}\n");
-    let parsed = ruff_python_parser::parse_module(&source).map_err(|e| e.to_string())?;
+    let parsed = ruff_python_parser::parse_module(&source)?;
     let Some(ruff_python_ast::Stmt::FunctionDef(function)) = parsed.suite().last() else {
-        return Err("missing generated compute function".into());
+        return Err(ReturnContractError::ComputeFunctionMissing.into());
     };
     {
         use ruff_python_ast::visitor::{self, Visitor};
@@ -64,7 +232,7 @@ pub(super) fn infer_body(
         let mut reserved = Reserved(false);
         reserved.visit_body(&function.body);
         if reserved.0 {
-            return Err("analysis declaration names are not program capabilities".into());
+            return Err(ReturnContractError::ReservedDeclarationName.into());
         }
     }
     let mut source = source;
@@ -82,7 +250,9 @@ pub(super) fn infer_body(
             let AnalysisOutcome::Rejected(errors) = result.outcome else {
                 unreachable!()
             };
-            return Err(body_diagnostics(errors, &source));
+            return Err(InferenceError::Diagnostics {
+                diagnostics: body_diagnostics(errors, &source),
+            });
         };
         if pass == 0 && graph.nodes.contains(&Node::Unknown) {
             let specialized = helpers::close_local_calls(&source, &mut declarations)?;
@@ -102,7 +272,7 @@ pub(super) fn infer_body(
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
             .reduce(Type::join)
-            .ok_or_else(|| "checker supplied no return contract".into());
+            .ok_or(ReturnContractError::ReturnContractMissing.into());
     }
     unreachable!("local helper inference uses at most two whole-body passes")
 }
@@ -117,14 +287,18 @@ pub(super) fn check_annotated_body(
     imports: &str,
     cgs: &plasm_core::CGS,
     catalogs: &BTreeMap<String, std::sync::Arc<plasm_core::CGS>>,
-) -> Result<(), String> {
+) -> Result<(), InferenceError> {
     // Authored output contracts are validated refinements. Reuse the same
     // output/input declarations as final worker admission; inference's nominal
     // evidence declarations must not impose a second, incompatible return ABI.
-    let mut stubs = super::upstream::stubs_in(&BTreeMap::new(), cgs, catalogs)?;
+    let mut stubs =
+        super::upstream::stubs_in(&BTreeMap::new(), cgs, catalogs).map_err(InferenceError::from)?;
     for (name, contract) in aliases {
-        super::upstream::validate_member(name)?;
-        let rendered = super::upstream::output_annotation(contract, cgs, catalogs, &mut stubs)?;
+        super::upstream::validate_member(name).map_err(|_| DeclarationError::InvalidMember {
+            field: name.clone(),
+        })?;
+        let rendered = super::upstream::output_annotation(contract, cgs, catalogs, &mut stubs)
+            .map_err(InferenceError::from)?;
         stubs.push_str(&format!("{name}: TypeAlias = {rendered}\n"));
     }
     // An existing materialized container retains its concrete element type;
@@ -144,11 +318,11 @@ pub(super) fn check_annotated_body(
         }
     }
     for (name, contract) in aliases {
-        let observed = super::upstream::input_type(contract, cgs, catalogs, &mut stubs)?;
+        let observed = super::upstream::input_type(contract, cgs, catalogs, &mut stubs)
+            .map_err(InferenceError::from)?;
         stubs.push_str(&format!("PlasmObserved{name}: TypeAlias = {observed}\n"));
     }
-    let mut observed = *ruff_python_parser::parse_expression(annotation)
-        .map_err(|e| e.to_string())?
+    let mut observed = *ruff_python_parser::parse_expression(annotation)?
         .into_syntax()
         .body;
     ruff_python_ast::visitor::transformer::Transformer::visit_expr(
@@ -161,6 +335,7 @@ pub(super) fn check_annotated_body(
         .map(|(name, ty)| {
             super::upstream::input_type(ty, cgs, catalogs, &mut stubs)
                 .map(|ty| format!("{name}: {ty}"))
+                .map_err(InferenceError::from)
         })
         .collect::<Result<Vec<_>, _>>()?
         .join(", ");
@@ -183,9 +358,13 @@ pub(super) fn check_annotated_body(
         )?;
         match inferred.outcome {
             AnalysisOutcome::Inferred(graph) if graph.nodes.contains(&Node::Unknown) => {
-                return Err("local helper return is not a closed materialized contract".into());
+                return Err(ReturnContractError::OpenHelperReturn.into());
             }
-            AnalysisOutcome::Rejected(errors) => return Err(body_diagnostics(errors, &source)),
+            AnalysisOutcome::Rejected(errors) => {
+                return Err(InferenceError::Diagnostics {
+                    diagnostics: body_diagnostics(errors, &source),
+                })
+            }
             AnalysisOutcome::Inferred(_) => {}
         }
     }
@@ -197,38 +376,45 @@ pub(super) fn check_annotated_body(
     })?;
     match result.outcome {
         AnalysisOutcome::Inferred(_) => Ok(()),
-        AnalysisOutcome::Rejected(errors) => Err(body_diagnostics(errors, &source)),
+        AnalysisOutcome::Rejected(errors) => Err(InferenceError::Diagnostics {
+            diagnostics: body_diagnostics(errors, &source),
+        }),
     }
 }
 
-fn body_diagnostics(errors: Vec<monty_analysis::AnalysisDiagnostic>, source: &str) -> String {
-    errors
-        .into_iter()
-        .map(|error| {
-            let location = error
-                .span
-                .and_then(|span| source.get(..span.start as usize))
-                .map(|prefix| {
-                    let line = prefix.bytes().filter(|b| *b == b'\n').count() + 1;
-                    let column = prefix
-                        .rsplit('\n')
-                        .next()
-                        .unwrap_or_default()
-                        .chars()
-                        .count()
-                        + 1;
-                    format!("plasm_compute.py:{line}:{column}: ")
-                })
-                .unwrap_or_default();
-            format!("{location}{}: {}", error.code, error.message)
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+fn body_diagnostics(
+    errors: Vec<monty_analysis::AnalysisDiagnostic>,
+    source: &str,
+) -> InferenceDiagnostics {
+    InferenceDiagnostics {
+        entries: errors
+            .into_iter()
+            .map(|diagnostic| {
+                let location = diagnostic
+                    .span
+                    .and_then(|span| source.get(..span.start as usize))
+                    .map(|prefix| {
+                        (
+                            prefix.bytes().filter(|b| *b == b'\n').count() + 1,
+                            prefix
+                                .rsplit('\n')
+                                .next()
+                                .unwrap_or_default()
+                                .chars()
+                                .count()
+                                + 1,
+                        )
+                    });
+                LocatedAnalysisDiagnostic {
+                    diagnostic,
+                    location,
+                }
+            })
+            .collect(),
+    }
 }
-
-/// Ask the authoritative checker about Python assignment compatibility. Plasm
-/// uses this only to select a value/collection boundary, never to infer operators.
-pub(super) fn assignable(actual: &Type, expected: &Type) -> Result<bool, String> {
+/// Ask the checker about assignment compatibility, not operator inference.
+pub(super) fn assignable(actual: &Type, expected: &Type) -> Result<bool, InferenceError> {
     let mut declarations = declarations::Declarations::default();
     let actual = declarations.render(actual, 0)?;
     let expected = declarations.render(expected, 0)?;
@@ -242,9 +428,12 @@ pub(super) fn assignable(actual: &Type, expected: &Type) -> Result<bool, String>
 /// Resolve a Python annotation through the same checker used for expression
 /// inference. Aliases carry only host-owned nominal/record contracts.
 #[cfg(test)]
-pub(super) fn annotation(source: &str, aliases: &BTreeMap<String, Type>) -> Result<Type, String> {
+pub(super) fn annotation(
+    source: &str,
+    aliases: &BTreeMap<String, Type>,
+) -> Result<Type, InferenceError> {
     annotation_with_imports(source, aliases, "", None)?
-        .ok_or("annotation has unresolved value types".into())
+        .ok_or(ReturnContractError::UnresolvedAnnotation.into())
 }
 
 pub(super) fn annotation_with_imports(
@@ -252,10 +441,12 @@ pub(super) fn annotation_with_imports(
     aliases: &BTreeMap<String, Type>,
     imports: &str,
     actual: Option<&Type>,
-) -> Result<Option<Type>, String> {
+) -> Result<Option<Type>, InferenceError> {
     let mut declarations = declarations::Declarations::default();
     for (name, contract) in aliases {
-        super::upstream::validate_member(name)?;
+        super::upstream::validate_member(name).map_err(|_| DeclarationError::InvalidMember {
+            field: name.clone(),
+        })?;
         let rendered = declarations.render(contract, 0)?;
         declarations
             .source
@@ -290,15 +481,13 @@ pub(super) fn annotation_with_imports(
                 declarations: &declarations,
             };
             let [root] = graph.roots.as_slice() else {
-                return Err("annotation must produce one contract".into());
+                return Err(ReturnContractError::AnnotationContractCount.into());
             };
             decoder.decode(*root, 0).map(Some)
         }
-        AnalysisOutcome::Rejected(errors) => Err(errors
-            .into_iter()
-            .map(|e| format!("{}: {}", e.code, e.message))
-            .collect::<Vec<_>>()
-            .join("\n")),
+        AnalysisOutcome::Rejected(errors) => Err(InferenceError::Diagnostics {
+            diagnostics: errors.into(),
+        }),
     }
 }
 
@@ -324,16 +513,16 @@ struct Decoder<'a> {
     declarations: &'a declarations::Declarations,
 }
 impl Decoder<'_> {
-    fn decode(&self, id: TypeId, depth: usize) -> Result<Type, String> {
+    fn decode(&self, id: TypeId, depth: usize) -> Result<Type, InferenceError> {
         if depth >= 64 {
-            return Err("recursive inferred type is not a finite Plasm contract".into());
+            return Err(InferenceGraphError::RecursiveType.into());
         }
         let recur = |id| self.decode(id, depth + 1);
         let node = self
             .graph
             .nodes
             .get(id.0 as usize)
-            .ok_or("invalid inferred type reference")?;
+            .ok_or(InferenceGraphError::InvalidReference)?;
         Ok(match node {
             Node::Never => never(),
             Node::None => Type {
@@ -382,9 +571,14 @@ impl Decoder<'_> {
             {
                 self.declarations
                     .contracts
-                    .get(identity.path.last().ok_or("missing nominal name")?)
+                    .get(
+                        identity
+                            .path
+                            .last()
+                            .ok_or(InferenceGraphError::NominalNameMissing)?,
+                    )
                     .cloned()
-                    .ok_or("unsealed inferred nominal identity")?
+                    .ok_or(InferenceGraphError::NominalUnsealed)?
             }
             Node::Instance {
                 identity,
@@ -412,7 +606,7 @@ impl Decoder<'_> {
                                 && (key.summary() != plasm_core::SyntheticValueKind::String
                                     || key.nullable)
                             {
-                                return Err("materialized dictionaries require string keys".into());
+                                return Err(InferenceGraphError::DictionaryKeyNotString.into());
                             }
                             Type {
                                 shape: ValueShape::Dictionary {
@@ -424,19 +618,21 @@ impl Decoder<'_> {
                             }
                         }
                         _ => {
-                            return Err(format!(
-                                "inferred Python {name} is not a materialized Plasm type"
-                            ))
+                            return Err(InferenceGraphError::UnsupportedNamedType {
+                                name: name.to_owned(),
+                            }
+                            .into())
                         }
                     }
                 } else if identity.source.ends_with("/datetime.pyi") {
                     plasm_core::temporal_value::TemporalKind::parse(name)
-                        .ok_or("unsupported inferred temporal type")?
+                        .ok_or(InferenceGraphError::UnsupportedTemporal)?
                         .contract()
                 } else {
-                    return Err(format!(
-                        "unsealed inferred Python type {identity:?}::{name}"
-                    ));
+                    return Err(InferenceGraphError::UnsealedNamedType {
+                        identity: format!("{identity:?}::{name}"),
+                    }
+                    .into());
                 }
             }
             Node::Intersection { positive, negative } => {
@@ -454,7 +650,7 @@ impl Decoder<'_> {
                 let mut values = values.into_iter();
                 let mut value = values
                     .next()
-                    .ok_or("inferred intersection has no materialized positive constraint")?;
+                    .ok_or(InferenceGraphError::EmptyIntersection)?;
                 for evidence in values {
                     value = value.intersect_constraints(&evidence)?;
                 }
@@ -470,11 +666,7 @@ impl Decoder<'_> {
                 }
                 value
             }
-            _ => {
-                return Err(format!(
-                    "inferred Python type is not a closed materialized contract: {node:?}"
-                ))
-            }
+            _ => return Err(InferenceGraphError::UnsupportedNode.into()),
         })
     }
 }
@@ -485,8 +677,8 @@ pub(crate) fn branch_contracts(
     source: &str,
     argument: &Type,
     paths: &[Vec<String>],
-) -> Result<Option<Vec<(Type, Type)>>, String> {
-    let parsed = ruff_python_parser::parse_module(source).map_err(|e| e.to_string())?;
+) -> Result<Option<Vec<(Type, Type)>>, InferenceError> {
+    let parsed = ruff_python_parser::parse_module(source)?;
     let (imports, suite) = crate::python_datetime::Imports::split(source, parsed.suite())?;
     let [ruff_python_ast::Stmt::FunctionDef(function)] = suite else {
         return Ok(None);
@@ -507,11 +699,15 @@ pub(crate) fn branch_contracts(
         .iter()
         .map(|path| {
             for field in path {
-                super::upstream::validate_member(field)?;
+                super::upstream::validate_member(field).map_err(|_| {
+                    DeclarationError::InvalidMember {
+                        field: field.clone(),
+                    }
+                })?;
             }
             Ok(format!("{name}.{}", path.join(".")))
         })
-        .collect::<Result<Vec<_>, String>>()?;
+        .collect::<Result<Vec<_>, InferenceError>>()?;
     let result = monty_analysis::analyze_branches(&monty_analysis::BranchRequest {
         bindings: vec![monty_analysis::Binding {
             name: name.into(),
@@ -526,11 +722,9 @@ pub(crate) fn branch_contracts(
     let graph = match result.outcome {
         AnalysisOutcome::Inferred(graph) => graph,
         AnalysisOutcome::Rejected(errors) => {
-            return Err(errors
-                .into_iter()
-                .map(|e| format!("{}: {}", e.code, e.message))
-                .collect::<Vec<_>>()
-                .join("\n"))
+            return Err(InferenceError::Diagnostics {
+                diagnostics: errors.into(),
+            })
         }
     };
     let decoder = Decoder {
@@ -541,19 +735,19 @@ pub(crate) fn branch_contracts(
         .iter()
         .zip(&graph.roots[paths.len()..])
         .map(|(yes, no)| Ok((decoder.decode(*yes, 0)?, decoder.decode(*no, 0)?)))
-        .collect::<Result<Vec<_>, String>>()
+        .collect::<Result<Vec<_>, InferenceError>>()
         .map(Some)
 }
 
-pub(crate) fn observation_paths(value: &Type) -> Result<Vec<Vec<String>>, String> {
+pub(crate) fn observation_paths(value: &Type) -> Result<Vec<Vec<String>>, InferenceError> {
     fn walk(
         value: &Type,
         path: Vec<String>,
         out: &mut Vec<Vec<String>>,
         depth: usize,
-    ) -> Result<(), String> {
+    ) -> Result<(), InferenceError> {
         if depth >= 64 {
-            return Err("branch observation depth exceeds 64".into());
+            return Err(InferenceError::ControlFlowBoundExceeded);
         }
         if !path.is_empty() {
             out.push(path.clone());

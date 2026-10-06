@@ -1,9 +1,9 @@
-use crate::commands::common;
+use crate::commands::{common, CommandError, InputKind};
 use crate::PredicateAction;
 use plasm_core::{type_check_predicate, Predicate, CGS};
 use std::path::Path;
 
-pub async fn execute(action: PredicateAction) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn execute(action: PredicateAction) -> Result<(), CommandError> {
     match action {
         PredicateAction::Check { schema, predicate } => {
             println!("Type-checking predicate against schema...");
@@ -11,11 +11,13 @@ pub async fn execute(action: PredicateAction) -> Result<(), Box<dyn std::error::
             // Load schema
             if !Path::new(&schema).exists() {
                 eprintln!("Error: Schema file '{}' does not exist", schema);
-                return Err("Schema file not found".into());
+                return Err(CommandError::InputMissing {
+                    kind: InputKind::Schema,
+                    path: schema.into(),
+                });
             }
 
-            let cgs: CGS = common::load_cgs(Path::new(&schema))
-                .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+            let cgs: CGS = common::load_cgs(Path::new(&schema))?;
 
             // Load predicate
             let predicate_data = if Path::new(&predicate).exists() {
@@ -50,7 +52,10 @@ pub async fn execute(action: PredicateAction) -> Result<(), Box<dyn std::error::
                 eprintln!("✗ No compatible entities found for this predicate");
                 eprintln!("  Referenced fields: {:?}", referenced_fields);
                 eprintln!("  Referenced relations: {:?}", referenced_relations);
-                return Err("No compatible entities".into());
+                return Err(CommandError::NoCompatibleEntity {
+                    fields: referenced_fields,
+                    relations: referenced_relations,
+                });
             }
 
             // Type-check against all compatible entities

@@ -1,6 +1,18 @@
 use crate::CmlError;
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum FormatTemplateError {
+    #[error("unclosed format placeholder at byte {offset}")]
+    UnclosedPlaceholder { offset: usize },
+    #[error("empty or nested format placeholder at byte {offset}")]
+    InvalidPlaceholder { offset: usize },
+    #[error("format placeholder {name} has no matching variable")]
+    MissingVariable { name: String },
+    #[error("format variable {name} is unused")]
+    UnusedVariable { name: String },
+}
+
 /// Format syntax compiled at the catalog decoding boundary. Inserted values are data.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
@@ -24,14 +36,12 @@ impl TryFrom<String> for FormatTemplate {
         while let Some(start) = remaining.find('{') {
             segments.push(Segment::Literal(remaining[..start].to_owned()));
             let suffix = &remaining[start + 1..];
-            let end = suffix.find('}').ok_or_else(|| CmlError::InvalidTemplate {
-                message: "unclosed format placeholder".into(),
-            })?;
+            let end = suffix
+                .find('}')
+                .ok_or(FormatTemplateError::UnclosedPlaceholder { offset: start })?;
             let name = &suffix[..end];
             if name.is_empty() || name.contains('{') {
-                return Err(CmlError::InvalidTemplate {
-                    message: "empty or nested format placeholder".into(),
-                });
+                return Err(FormatTemplateError::InvalidPlaceholder { offset: start }.into());
             }
             segments.push(Segment::Slot(name.to_owned()));
             remaining = &suffix[end + 1..];
@@ -61,16 +71,15 @@ impl FormatTemplate {
     ) -> Result<(), CmlError> {
         for name in self.slots() {
             if !vars.contains_key(name) {
-                return Err(CmlError::InvalidTemplate {
-                    message: format!("missing format var '{name}'"),
-                });
+                return Err(FormatTemplateError::MissingVariable {
+                    name: name.to_owned(),
+                }
+                .into());
             }
         }
         for name in vars.keys() {
             if !self.slots().any(|slot| slot == name) {
-                return Err(CmlError::InvalidTemplate {
-                    message: format!("unused format var '{name}'"),
-                });
+                return Err(FormatTemplateError::UnusedVariable { name: name.clone() }.into());
             }
         }
         Ok(())
@@ -98,7 +107,10 @@ mod tests {
     #[test]
     fn malformed_source_fails_decoding() {
         for source in ["{", "{}", "{{a}"] {
-            assert!(serde_json::from_value::<FormatTemplate>(source.into()).is_err());
+            assert!(matches!(
+                serde_json::from_value::<FormatTemplate>(source.into()),
+                Err(error) if error.to_string().contains("format placeholder")
+            ));
         }
     }
 

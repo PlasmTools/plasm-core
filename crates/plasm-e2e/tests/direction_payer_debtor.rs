@@ -71,6 +71,7 @@ fn direction_host(
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
     })
+    .expect("valid catalog fixture")
 }
 
 async fn ledger_payload(uri: Uri) -> Json<serde_json::Value> {

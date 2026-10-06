@@ -12,10 +12,7 @@ impl Lower<'_> {
         id: &str,
     ) -> Result<String, PythonLoweringError> {
         if call.arguments.args.len() != 1 {
-            return Err(at(
-                site,
-                "iterate requires one step callback, until=predicate and max_steps=positive integer",
-            ));
+            return Err(at(site, PythonSourceError::IterationArgumentShape));
         }
         let mut until = None;
         let mut bound = None;
@@ -23,22 +20,40 @@ impl Lower<'_> {
             match keyword.arg.as_ref().map(|a| a.as_str()) {
                 Some("until") if until.is_none() => until = Some(&keyword.value),
                 Some("max_steps") if bound.is_none() => bound = Some(&keyword.value),
-                _ => {
+                Some("until" | "max_steps") => {
                     return Err(at(
                         site,
-                        "unknown, duplicate or unpacked iteration argument",
-                    ))
+                        PythonSourceError::DuplicateIterationKeyword {
+                            keyword: keyword.arg.as_ref().expect("matched name").to_string(),
+                        },
+                    ));
                 }
+                Some(keyword) => {
+                    return Err(at(
+                        site,
+                        PythonSourceError::UnknownIterationKeyword {
+                            keyword: keyword.to_owned(),
+                        },
+                    ));
+                }
+                None => return Err(at(site, PythonSourceError::IterationKeywordUnpacking)),
             }
         }
-        let until = until.ok_or_else(|| at(site, "iterate requires until"))?;
-        let take = u32::try_from(integer(
-            bound.ok_or_else(|| at(site, "iterate requires max_steps"))?,
-        )?)
-        .ok()
-        .filter(|n| *n > 0)
-        .ok_or_else(|| at(site, "max_steps must be a positive u32"))?;
-        let seed_node = self.state.get(seed).ok_or("missing iteration seed")?;
+        let until = until.ok_or_else(|| at(site, PythonSourceError::MissingIterationUntil))?;
+        let max_steps =
+            integer(bound.ok_or_else(|| at(site, PythonSourceError::MissingIterationBound))?)?;
+        let take = u32::try_from(max_steps)
+            .ok()
+            .filter(|n| *n > 0)
+            .ok_or_else(|| {
+                at(
+                    site,
+                    PythonSourceError::InvalidIterationBound { value: max_steps },
+                )
+            })?;
+        let seed_node = self.state.get(seed).ok_or(
+            crate::program_rejection::PythonLoweringInvariantError::IterationSeedNodeMissing,
+        )?;
         super::super::pipeline::require_iterate_seed_get_identity(seed_node, seed)?;
         let callback = self.callback(until)?;
         let body = self.scoped_callback_body(
@@ -60,8 +75,8 @@ impl Lower<'_> {
             super::body::ScopeMode::Rows,
         )?);
         let effect = plasm_core::plasm_monad::correlated::iteration_step_effect(&step_scope)
-            .map_err(|error| at(site, &format!("invalid iteration step: {error}")))?;
-        let effect_kind = crate::plasm_step_convert::surface_kind_to_plan(effect.kind)?;
+            .map_err(|error| at(site, PythonSourceError::IterationStep { source: error }))?;
+        let effect_kind = crate::plasm_step_convert::surface_kind_to_plan(effect.kind);
         let effect_class = effect.effect_class;
         let result_shape = effect.result_shape;
         let qualified_entity = QualifiedEntityKey {

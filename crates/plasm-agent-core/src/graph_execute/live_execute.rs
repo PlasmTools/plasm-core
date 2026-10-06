@@ -59,11 +59,9 @@ async fn execute_on_branch(
     let mat = branch.mat_mut();
     let mut result = match &parsed.expr {
         Expr::Page(page) => {
-            let resume = page_resume_owned.take().ok_or_else(|| {
-                RunLineError::Parse(
-                    "internal: page expression without pagination snapshot".to_string(),
-                )
-            })?;
+            let resume = page_resume_owned
+                .take()
+                .ok_or_else(|| RunLineError::MissingPageResume)?;
             let consume = StreamConsumeOpts {
                 fetch_all: false,
                 max_items: page.limit,
@@ -90,8 +88,7 @@ async fn execute_on_branch(
                 *host_page_size,
                 surface_read_budget.as_ref(),
                 *graph_spill_active,
-            )
-            .map_err(RunLineError::Parse)?;
+            );
             st.engine
                 .execute(
                     &parsed.expr,
@@ -138,7 +135,7 @@ async fn execute_on_branch(
             let entity_type = result.entities()[0].reference.entity_type.clone();
             let proj_cgs =
                 crate::catalog_ownership::resolve_cgs_for_entity(sess, entity_type.as_str(), None)
-                    .map_err(RunLineError::Parse)?;
+                    .map_err(RunLineError::CatalogOwnership)?;
             let qe = crate::catalog_ownership::resolve_qualified_entity_key(
                 sess,
                 entity_type.as_str(),
@@ -151,7 +148,7 @@ async fn execute_on_branch(
                 qe.as_ref(),
                 fields,
             )
-            .map_err(RunLineError::Parse)?;
+            .map_err(RunLineError::WireField)?;
             match st
                 .engine
                 .auto_resolve_projection(
@@ -185,7 +182,7 @@ async fn execute_on_branch(
                         parsed_expression = %log_expr,
                         "projection enrichment failed (expression detail)"
                     );
-                    return Err(RunLineError::Projection(e.to_string()));
+                    return Err(RunLineError::Projection(e));
                 }
             }
             apply_projection(&mut result, fields);

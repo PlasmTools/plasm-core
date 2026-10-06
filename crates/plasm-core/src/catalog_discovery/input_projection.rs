@@ -5,11 +5,38 @@ use crate::prerequisites::{InputLane, InputPath};
 use crate::schema::{
     CapabilityInputs, CapabilitySchema, InputFieldSchema, InputFieldWire, InputType,
 };
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum InputProjectionError {
+    #[error("discovery acquisition binding on `{capability}` is invalid: {source}")]
+    InvalidAcquisitionBinding {
+        capability: String,
+        #[source]
+        source: InputProjectionFault,
+    },
+}
+
+#[derive(Debug, Error)]
+pub enum InputProjectionFault {
+    #[error("the declared input lane is absent")]
+    MissingLane,
+    #[error("the acquired input path requires an object lane")]
+    RequiresObjectLane,
+    #[error("the acquired input path is empty")]
+    EmptyPath,
+    #[error("acquired field `{field}` is absent")]
+    FieldMissing { field: String },
+    #[error("the acquired input path traverses a scalar field")]
+    TraversesScalar,
+    #[error("the acquired input path traverses a non-object field")]
+    TraversesNonObject,
+}
 
 pub(super) fn relevance_inputs(
     cgs: &crate::CGS,
     capability: &CapabilitySchema,
-) -> Result<CapabilityInputs, String> {
+) -> Result<CapabilityInputs, InputProjectionError> {
     let mut inputs = capability.inputs.clone();
     for path in cgs.prerequisites.acquired_inputs(capability.name.as_str()) {
         // A derived read's identity seat is implicit, not an authored input field.
@@ -21,17 +48,20 @@ pub(super) fn relevance_inputs(
         {
             continue;
         }
-        remove_acquired(&mut inputs, path).map_err(|error| {
-            format!(
-                "invalid discovery acquisition binding on {}: {error}",
-                capability.name
-            )
+        remove_acquired(&mut inputs, path).map_err(|source| {
+            InputProjectionError::InvalidAcquisitionBinding {
+                capability: capability.name.to_string(),
+                source,
+            }
         })?;
     }
     Ok(inputs)
 }
 
-fn remove_acquired(inputs: &mut CapabilityInputs, input: &InputPath) -> Result<(), String> {
+fn remove_acquired(
+    inputs: &mut CapabilityInputs,
+    input: &InputPath,
+) -> Result<(), InputProjectionFault> {
     let fields = match input.lane {
         InputLane::Scope => &mut inputs.scope.0,
         InputLane::Selection => &mut inputs.selection.0,
@@ -42,13 +72,13 @@ fn remove_acquired(inputs: &mut CapabilityInputs, input: &InputPath) -> Result<(
             } else {
                 &mut inputs.payload
             };
-            let schema = lane.as_mut().ok_or("missing acquired input lane")?;
+            let schema = lane.as_mut().ok_or(InputProjectionFault::MissingLane)?;
             let InputType::Object {
                 fields,
                 additional_fields,
             } = &mut schema.input_type
             else {
-                return Err("acquired input path requires an object lane".into());
+                return Err(InputProjectionFault::RequiresObjectLane);
             };
             remove_field(fields, &input.path)?;
             if fields.is_empty() && !*additional_fields {
@@ -60,24 +90,29 @@ fn remove_acquired(inputs: &mut CapabilityInputs, input: &InputPath) -> Result<(
     remove_field(fields, &input.path)
 }
 
-fn remove_field(fields: &mut Vec<InputFieldSchema>, path: &[String]) -> Result<(), String> {
-    let (head, rest) = path.split_first().ok_or("empty acquired input path")?;
+fn remove_field(
+    fields: &mut Vec<InputFieldSchema>,
+    path: &[String],
+) -> Result<(), InputProjectionFault> {
+    let (head, rest) = path.split_first().ok_or(InputProjectionFault::EmptyPath)?;
     let index = fields
         .iter()
         .position(|field| &field.name == head)
-        .ok_or_else(|| format!("missing acquired field {head}"))?;
+        .ok_or_else(|| InputProjectionFault::FieldMissing {
+            field: head.clone(),
+        })?;
     if rest.is_empty() {
         fields.remove(index);
     } else {
         let InputFieldWire::Inline(ty) = &mut fields[index].wire else {
-            return Err("acquired input path traverses a scalar".into());
+            return Err(InputProjectionFault::TraversesScalar);
         };
         let InputType::Object {
             fields: children,
             additional_fields,
         } = ty.as_mut()
         else {
-            return Err("acquired input path traverses a non-object".into());
+            return Err(InputProjectionFault::TraversesNonObject);
         };
         remove_field(children, rest)?;
         if children.is_empty() && !*additional_fields {
@@ -245,8 +280,11 @@ mod tests {
         cgs.prerequisites.requirements.get_mut("read").unwrap()[0].bindings[0]
             .input
             .path = vec!["absent".into()];
-        assert!(super::super::capability_documents(&cgs)
-            .unwrap_err()
-            .contains("missing input field absent"));
+        assert!(matches!(
+            super::super::capability_documents(&cgs),
+            Err(super::super::CatalogDiscoveryError::Prerequisite(
+                crate::prerequisites::PrerequisiteError::MissingInputField
+            ))
+        ));
     }
 }

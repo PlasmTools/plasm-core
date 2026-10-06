@@ -133,7 +133,7 @@ pub(in crate::plasm_dag) fn dedupe_inputs(inputs: Vec<PlanDataInput>) -> Vec<Pla
 /// Resolve dependency provenance from typed source nodes before artifact serialization.
 pub(in crate::plasm_dag) fn stamp_plan_uses_result_qualified_entities(
     plan: &mut Plan,
-) -> Result<(), String> {
+) -> Result<(), crate::plasm_plan::PlanValidationError> {
     let uses = plan
         .nodes
         .iter()

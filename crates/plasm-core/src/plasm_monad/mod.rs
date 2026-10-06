@@ -14,22 +14,29 @@ pub mod operators;
 pub mod payload;
 pub mod step;
 
-pub use bind_graph::{PlasmBindGraph, PlasmHoleUse};
-pub use comp::{PlasmComp, PlasmCompArtifact, PlasmReturn, StepId, PLASM_COMP_WIRE_VERSION};
-pub use correlated::{CorrelatedBody, ParentCapture, ScopedCapture, ScopedOutput};
+pub use bind_graph::{BindGraphError, PlasmBindGraph, PlasmHoleUse};
+pub use comp::{
+    PlasmComp, PlasmCompArtifact, PlasmCompValidationError, PlasmReturn, StepId, StepIdError,
+    PLASM_COMP_WIRE_VERSION,
+};
+pub use correlated::{
+    CorrelatedBody, CorrelatedBodyError, IterationStepEffectError, ParentCapture, ScopedCapture,
+    ScopedOutput,
+};
 pub use equiv::{comp_equivalent, comp_semantic_eq, CompEquivDiff, CompEquivResult, RewritePolicy};
 pub use operators::{
     empty_comp, invoke_step_payload, map_step_payload, plasm_bind_step, plasm_map_step,
-    plasm_parallel_return, plasm_pure_step,
+    plasm_parallel_return, plasm_pure_step, EmptyParallelReturn,
 };
 pub use payload::{
     AggregateFunction, AggregateSpec, ArithOp, BindingName, ComputeOp, ComputeTemplate, DeriveKind,
     DerivePayload, DeriveTemplate, EffectTemplate, FieldPath, FlatMapApplyPayload,
-    FlatMapRelationPayload, InputCardinality, InvokePayload, MapPayload, OutputName, PlanDataInput,
-    PlanExprIr, PlanExprTemplate, PlanInputBinding, PlanPredicate, PlanPredicateOp,
-    PlanQualifiedEntityKey, PlanRelationTraversal, PlanResultUse, PlasmDataValue, PlasmStepPayload,
-    PurePayload, RelationCardinality, RelationName, RelationSourceCardinality,
-    SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind, UnfoldUntilPayload,
+    FlatMapRelationPayload, InputCardinality, InvokePayload, MapPayload, OutputName, PlanAtomError,
+    PlanDataInput, PlanExprIr, PlanExprTemplate, PlanInputBinding, PlanPredicate, PlanPredicateOp,
+    PlanQualifiedEntityKey, PlanRelationTraversal, PlanResultUse, PlasmDataValue,
+    PlasmDataValueError, PlasmDataValueEvaluationError, PlasmStepPayload, PurePayload,
+    RelationCardinality, RelationName, RelationSourceCardinality, SyntheticFieldSchema,
+    SyntheticResultSchema, SyntheticResultSchemaError, SyntheticValueKind, UnfoldUntilPayload,
     WithColumn, WithExpr, WithExprError, WithLiteral,
 };
 pub use step::{

@@ -11,6 +11,49 @@ use super::{
 mod scope;
 
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum CorrelatedBodyError {
+    #[error("scoped composition exceeds the maximum nesting depth")]
+    NestingDepthExceeded,
+    #[error("scope parent bound exceeds the execution budget")]
+    ParentBoundExceeded,
+    #[error("correlated body requires a named, catalog-qualified parent capture")]
+    InvalidParentCapture,
+    #[error("correlated body requires the current PlasmComp wire version")]
+    UnsupportedWireVersion,
+    #[error("correlated body steps and bind.topo differ")]
+    StepsTopologyMismatch,
+    #[error("scoped capture has an empty or duplicate source/local port")]
+    InvalidCapture,
+    #[error("predicate scopes cannot contain effects")]
+    EffectfulPredicateScope,
+    #[error("read-only operation has a mutating effect label")]
+    ReadEffectMismatch,
+    #[error("mutating operation has a read-only effect label")]
+    MutationEffectMismatch,
+    #[error("correlated body step `{step}` uses undeclared dependency `{dependency}`")]
+    UndeclaredDependency { step: String, dependency: String },
+    #[error("correlated body must return one synthetic row, not parallel roots")]
+    ParallelReturn,
+    #[error("correlated rowset return is not a local step or capture")]
+    ReturnOutsideScope,
+    #[error("correlated body return is not a local step")]
+    ReturnNotLocal,
+    #[error("correlated body output must declare a single row")]
+    OutputCardinalityMismatch,
+    #[error("correlated body output must be synthetic, without entity receiver authority")]
+    OutputHasEntityAuthority,
+    #[error("correlated map parent budget exceeded: {count} > {maximum}")]
+    ParentCountExceeded { count: usize, maximum: u32 },
+    #[error("correlated map body must return exactly one row, got {count}")]
+    OutputCountMismatch { count: usize },
+    #[error(transparent)]
+    BindGraph(#[from] super::bind_graph::BindGraphError),
+    #[error(transparent)]
+    Scope(#[from] scope::CorrelatedScopeError),
+}
 use std::collections::BTreeSet;
 use std::num::NonZeroU32;
 
@@ -73,35 +116,36 @@ pub struct ScopedCapture {
 impl CorrelatedBody {
     /// Check a closed scope and return layers from the shared bind scheduler.
     /// No rows, code or remote reads are evaluated to establish this schedule.
-    pub fn execution_layers(&self) -> Result<Vec<Vec<StepId>>, String> {
+    pub fn execution_layers(&self) -> Result<Vec<Vec<StepId>>, CorrelatedBodyError> {
         self.execution_layers_at_depth(0)
     }
 
-    fn execution_layers_at_depth(&self, depth: usize) -> Result<Vec<Vec<StepId>>, String> {
+    fn execution_layers_at_depth(
+        &self,
+        depth: usize,
+    ) -> Result<Vec<Vec<StepId>>, CorrelatedBodyError> {
         if depth >= 16 {
-            return Err("scoped composition exceeds 16 map levels".into());
+            return Err(CorrelatedBodyError::NestingDepthExceeded);
         }
         // All scopes share the execution occurrence budget. Surface operators
         // may impose a smaller authored bound (for example explicit map).
         let maximum = 65_536;
         if self.max_parents.get() > maximum {
-            return Err("scope parent bound exceeds execution budget".into());
+            return Err(CorrelatedBodyError::ParentBoundExceeded);
         }
         if self.parent.source.as_str().trim().is_empty()
             || self.parent.local.as_str().trim().is_empty()
             || self.parent.entity.entry_id.trim().is_empty()
             || self.parent.entity.entity.trim().is_empty()
         {
-            return Err(
-                "correlated body requires a named, catalog-qualified parent capture".into(),
-            );
+            return Err(CorrelatedBodyError::InvalidParentCapture);
         }
         if self.body.version != PLASM_COMP_WIRE_VERSION {
-            return Err("correlated body requires a current-version PlasmComp".into());
+            return Err(CorrelatedBodyError::UnsupportedWireVersion);
         }
         let step_ids: BTreeSet<_> = self.body.steps.keys().map(|s| StepId(s.clone())).collect();
         if step_ids != self.body.bind.topo.iter().cloned().collect() {
-            return Err("correlated body steps and bind.topo differ".into());
+            return Err(CorrelatedBodyError::StepsTopologyMismatch);
         }
         let mut inputs = BTreeSet::from([self.parent.local.clone()]);
         for capture in &self.captures {
@@ -109,7 +153,7 @@ impl CorrelatedBody {
                 || !inputs.insert(capture.local.clone())
                 || capture.local.as_str().trim().is_empty()
             {
-                return Err("duplicate or empty scoped capture port".into());
+                return Err(CorrelatedBodyError::InvalidCapture);
             }
         }
         let layers = self.body.bind.execution_layers(&inputs)?;
@@ -120,7 +164,7 @@ impl CorrelatedBody {
             self.effect_class(),
             EffectClass::Read | EffectClass::ArtifactRead
         ) {
-            return Err("predicate scopes cannot contain effects".into());
+            return Err(CorrelatedBodyError::EffectfulPredicateScope);
         }
         for (id, payload) in &self.body.steps {
             match payload {
@@ -150,11 +194,11 @@ impl CorrelatedBody {
                         EffectClass::Read | EffectClass::ArtifactRead
                     )
                 {
-                    return Err("read-only operation has a mutating effect label".into());
+                    return Err(CorrelatedBodyError::ReadEffectMismatch);
                 }
                 if !read && !matches!(p.effect_class, EffectClass::Write | EffectClass::SideEffect)
                 {
-                    return Err("mutating operation has a read-only effect label".into());
+                    return Err(CorrelatedBodyError::MutationEffectMismatch);
                 }
             }
             scope::check(&self.body, id, payload)?;
@@ -190,42 +234,41 @@ impl CorrelatedBody {
             let deps = self.body.bind.deps.get(&StepId(id.clone()));
             for read in reads {
                 if !deps.is_some_and(|deps| deps.contains(&StepId(read.into()))) {
-                    return Err(format!(
-                        "correlated body step {id} uses undeclared dependency {read}"
-                    ));
+                    return Err(CorrelatedBodyError::UndeclaredDependency {
+                        step: id.clone(),
+                        dependency: read.into(),
+                    });
                 }
             }
         }
         let PlasmReturn::Step { step } = &self.body.return_ else {
-            return Err("correlated body must return one synthetic row, not parallel roots".into());
+            return Err(CorrelatedBodyError::ParallelReturn);
         };
         // A rowset scope may be the identity on an admitted input port. No
         // synthetic operation is needed; catalog authority and the output schema
         // are still checked against that port by host admission.
         if matches!(self.output, ScopedOutput::Rows { .. }) {
             if !step_ids.contains(step) && !inputs.contains(step) {
-                return Err("correlated rowset return is not a local step or capture".into());
+                return Err(CorrelatedBodyError::ReturnOutsideScope);
             }
             return Ok(layers);
+        }
+        if !step_ids.contains(step) {
+            return Err(CorrelatedBodyError::ReturnOutsideScope);
         }
         let output = self
             .body
             .steps
             .get(step.as_str())
-            .ok_or("correlated body return is not a local step")?;
+            .ok_or(CorrelatedBodyError::ReturnNotLocal)?;
         if output.result_shape() != ResultShape::Single {
-            return Err("correlated body output must declare a single row".into());
+            return Err(CorrelatedBodyError::OutputCardinalityMismatch);
         }
         match output {
             PlasmStepPayload::Pure(_) | PlasmStepPayload::Derive(_) => {}
             PlasmStepPayload::Map(p)
                 if p.compute.schema.entity.is_none() && !p.compute.op.preserves_row_identity() => {}
-            _ => {
-                return Err(
-                    "correlated body output must be synthetic, without entity receiver authority"
-                        .into(),
-                )
-            }
+            _ => return Err(CorrelatedBodyError::OutputHasEntityAuthority),
         }
         Ok(layers)
     }
@@ -244,12 +287,12 @@ impl CorrelatedBody {
     }
 
     /// Parent admission is fail-before-read; a bound is never an implicit take/limit.
-    pub fn check_parent_count(&self, count: usize) -> Result<(), String> {
+    pub fn check_parent_count(&self, count: usize) -> Result<(), CorrelatedBodyError> {
         if count > self.max_parents.get() as usize {
-            return Err(format!(
-                "correlated map parent budget exceeded: {count} > {}",
-                self.max_parents
-            ));
+            return Err(CorrelatedBodyError::ParentCountExceeded {
+                count,
+                maximum: self.max_parents.get(),
+            });
         }
         Ok(())
     }
@@ -272,11 +315,9 @@ impl CorrelatedBody {
     }
 
     /// Called after each body execution, before appending its sole output row.
-    pub fn check_output_count(&self, count: usize) -> Result<(), String> {
+    pub fn check_output_count(&self, count: usize) -> Result<(), CorrelatedBodyError> {
         if !matches!(self.output, ScopedOutput::Rows { .. }) && count != 1 {
-            return Err(format!(
-                "correlated map body must return exactly one row, got {count}"
-            ));
+            return Err(CorrelatedBodyError::OutputCountMismatch { count });
         }
         Ok(())
     }
@@ -298,10 +339,28 @@ mod tests;
 
 /// A state iteration permits one explicit mutation, preceded by ordinary typed
 /// computations/reads. The scope never multiplies or hides its effect budget.
-pub fn iteration_step_effect(body: &CorrelatedBody) -> Result<super::EffectTemplate, String> {
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum IterationStepEffectError {
+    #[error(transparent)]
+    Body(#[from] CorrelatedBodyError),
+    #[error("iteration step requires a singleton row/effect scope")]
+    RequiresSingletonScope,
+    #[error("iteration step requires exactly one explicit catalog mutation")]
+    RequiresExactlyOneMutation,
+    #[error("iteration step requires a catalog mutation")]
+    RequiresCatalogMutation,
+    #[error("iteration mutation has no executable IR")]
+    MissingExecutableIr,
+    #[error("iteration mutation has no owner")]
+    MissingOwner,
+}
+
+pub fn iteration_step_effect(
+    body: &CorrelatedBody,
+) -> Result<super::EffectTemplate, IterationStepEffectError> {
     body.execution_layers()?;
     if body.max_parents.get() != 1 || !matches!(body.output, ScopedOutput::Rows { .. }) {
-        return Err("iteration step requires a singleton row/effect scope".into());
+        return Err(IterationStepEffectError::RequiresSingletonScope);
     }
     let effects = body
         .body
@@ -310,7 +369,7 @@ pub fn iteration_step_effect(body: &CorrelatedBody) -> Result<super::EffectTempl
         .filter(|p| p.is_write_or_side_effect())
         .collect::<Vec<_>>();
     let [PlasmStepPayload::Invoke(operation)] = effects.as_slice() else {
-        return Err("iteration step requires exactly one explicit catalog mutation".into());
+        return Err(IterationStepEffectError::RequiresExactlyOneMutation);
     };
     if !matches!(
         operation.plan_kind,
@@ -319,7 +378,7 @@ pub fn iteration_step_effect(body: &CorrelatedBody) -> Result<super::EffectTempl
             | super::SurfaceKind::Delete
             | super::SurfaceKind::Action
     ) {
-        return Err("iteration step requires a catalog mutation".into());
+        return Err(IterationStepEffectError::RequiresCatalogMutation);
     }
     let template = if let Some(template) = &operation.ir_template {
         template.clone()
@@ -331,14 +390,14 @@ pub fn iteration_step_effect(body: &CorrelatedBody) -> Result<super::EffectTempl
             input_bindings: vec![],
         }
     } else {
-        return Err("iteration mutation has no executable IR".into());
+        return Err(IterationStepEffectError::MissingExecutableIr);
     };
     Ok(super::EffectTemplate {
         kind: operation.plan_kind,
         qualified_entity: operation
             .qualified_entity
             .clone()
-            .ok_or("iteration mutation has no owner")?,
+            .ok_or(IterationStepEffectError::MissingOwner)?,
         expr_template: operation.display_expr.clone().unwrap_or_default(),
         input_bindings: template.input_bindings.clone(),
         ir_template: template,

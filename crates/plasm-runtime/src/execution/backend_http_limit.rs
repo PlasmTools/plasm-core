@@ -8,11 +8,10 @@ type Limits = Mutex<HashMap<(String, String), (usize, Weak<Semaphore>)>>;
 static LIMITS: OnceLock<Limits> = OnceLock::new();
 
 fn semaphore(origin: String, entry: String, cap: usize) -> Result<Arc<Semaphore>, RuntimeError> {
-    let mut limits = LIMITS.get_or_init(Default::default).lock().map_err(|_| {
-        RuntimeError::ConfigurationError {
-            message: "backend HTTP limiter lock poisoned".into(),
-        }
-    })?;
+    let mut limits = LIMITS
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(|_| crate::HttpLimiterError::LockPoisoned)?;
     // Only active or waiting requests keep a pool alive. Discard idle origins
     // rather than retaining every backend ever visited by a long-lived host.
     limits.retain(|_, (_, pool)| pool.strong_count() > 0);
@@ -20,9 +19,11 @@ fn semaphore(origin: String, entry: String, cap: usize) -> Result<Arc<Semaphore>
     if let Some((stored_cap, pool)) = limits.get(&key) {
         if let Some(pool) = pool.upgrade() {
             if *stored_cap != cap {
-                return Err(RuntimeError::ConfigurationError {
-                    message: "conflicting HTTP concurrency limits for the same backend".into(),
-                });
+                return Err(crate::HttpLimiterError::ConflictingLimits {
+                    existing: *stored_cap,
+                    requested: cap,
+                }
+                .into());
             }
             return Ok(pool);
         }
@@ -52,25 +53,24 @@ impl ExecutionEngine {
             return Ok(None);
         };
         let origin = url::Url::parse(destination)
-            .map_err(|_| RuntimeError::ConfigurationError {
-                message: "invalid HTTP backend limiter destination".into(),
-            })?
+            .map_err(crate::HttpLimiterError::Destination)?
             .origin()
             .ascii_serialization();
         let timeout = crate::http_resilience::ResilientHttpTransport::semaphore_acquire_timeout();
         let pool = semaphore(origin.clone(), entry, cap)?;
         let permit = tokio::time::timeout(timeout, pool.acquire_owned())
             .await
-            .map_err(|_| RuntimeError::RateLimited {
+            .map_err(|source| RuntimeError::RateLimited {
                 status: 429,
                 host: origin,
                 retry_after: Some(timeout),
                 attempts: 0,
-                message: "HTTP concurrency queue timeout waiting for backend".into(),
+                source: crate::RateLimitCause::QueueTimeout {
+                    scope: "backend".to_owned(),
+                    source,
+                },
             })?
-            .map_err(|_| RuntimeError::ConfigurationError {
-                message: "backend HTTP limiter closed".into(),
-            })?;
+            .map_err(crate::HttpLimiterError::Closed)?;
         Ok(Some(permit))
     }
 }

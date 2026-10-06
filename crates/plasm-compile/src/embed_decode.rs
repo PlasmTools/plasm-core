@@ -57,11 +57,8 @@ fn decode_single_entity(
             continue;
         }
         if !relation_decoder.decoder.relations.is_empty() {
-            return Err(DecodeError::InvalidStructure {
-                message: format!(
-                    "relation `{}` embed decoder must be a leaf (nested .relations forbidden; CEP-10)",
-                    relation_decoder.relation
-                ),
+            return Err(DecodeError::NestedRelationDecoder {
+                relation: relation_decoder.relation.clone(),
             });
         }
         let exhaustive_count = cgs
@@ -160,9 +157,7 @@ fn decode_entity_fields_and_ref(
         rid.clone()
     } else if let Some(ref path) = decoder.id_path {
         let vals = extract_path(path, source)?;
-        let first = vals.first().ok_or_else(|| DecodeError::InvalidStructure {
-            message: "id_path matched no value".to_string(),
-        })?;
+        let first = vals.first().ok_or_else(|| DecodeError::IdentityPathEmpty)?;
         json_scalar_to_id_string(first)?
     } else {
         extract_id_from_source(source, decoder.id_field.as_deref())?
@@ -215,10 +210,7 @@ fn decode_entity_fields_and_ref(
             fields.insert(name.clone(), plasm_core::json_value_to_plasm_value(source));
         }
     } else {
-        return Err(DecodeError::InvalidStructure {
-            message: "entity decode source must be a JSON object or a string/number id scalar"
-                .to_string(),
-        });
+        return Err(DecodeError::EntitySourceShape);
     }
 
     if decoder.id_path.is_some() || decoder.request_identity_override.is_some() {
@@ -232,9 +224,13 @@ fn decode_entity_fields_and_ref(
                     let schema = entity
                         .fields
                         .get(name.as_str())
-                        .and_then(|field| field.named_value(cgs).ok())
-                        .ok_or_else(|| DecodeError::InvalidStructure {
-                            message: format!("identity field `{name}` has no declared value type"),
+                        .ok_or_else(|| DecodeError::IdentityFieldTypeMissing {
+                            field: name.clone(),
+                        })?
+                        .named_value(cgs)
+                        .map_err(|source| DecodeError::IdentityFieldContract {
+                            field: name.clone(),
+                            source,
                         })?;
                     plasm_core::decode_coerce_and_validate_field(name, schema, raw)
                         .map_err(field_decode_error)?
@@ -273,9 +269,11 @@ fn decode_entity_fields_and_ref(
             let schema = entity
                 .fields
                 .get(key.as_str())
-                .and_then(|field| field.named_value(cgs).ok())
-                .ok_or_else(|| DecodeError::InvalidStructure {
-                    message: format!("identity field `{key}` has no declared value type"),
+                .ok_or_else(|| DecodeError::IdentityFieldTypeMissing { field: key.clone() })?
+                .named_value(cgs)
+                .map_err(|source| DecodeError::IdentityFieldContract {
+                    field: key.clone(),
+                    source,
                 })?;
             plasm_core::decode_coerce_and_validate_field(key, schema, raw)
                 .map_err(field_decode_error)?
@@ -301,11 +299,9 @@ fn build_decoded_reference(
                 .get(k)
                 .and_then(value_to_key_slot)
                 .or_else(|| decoder.identity_ambient.get(k).cloned())
-                .ok_or_else(|| DecodeError::InvalidStructure {
-                    message: format!(
-                        "compound key part `{k}` missing for entity `{}` (row fields and identity ambient do not supply it)",
-                        decoder.entity
-                    ),
+                .ok_or_else(|| DecodeError::CompoundKeyPartMissing {
+                    entity: decoder.entity.clone(),
+                    part: k.clone(),
                 })?;
             parts.insert(k.clone(), v);
         }
@@ -349,9 +345,7 @@ fn json_scalar_to_id_string(v: &serde_json::Value) -> Result<String, DecodeError
     match v {
         serde_json::Value::String(s) => Ok(s.clone()),
         serde_json::Value::Number(n) => Ok(n.to_string()),
-        _ => Err(DecodeError::InvalidStructure {
-            message: "id_path must resolve to a string or number".to_string(),
-        }),
+        _ => Err(DecodeError::IdentityScalarRequired),
     }
 }
 
@@ -379,14 +373,19 @@ fn validate_exhaustive_embed(
     }) = materialize
     {
         if path.is_empty() {
-            return Err(DecodeError::InvalidStructure {
-                message: "exhaustive embedded relation requires a nonempty path".into(),
+            return Err(DecodeError::ExhaustiveEmbedPathEmpty {
+                parent: parent.to_owned(),
+                relation: relation.to_owned(),
             });
         }
         return plasm_core::relation_materialize::exhaustive_from_parent_get_count(
-            &plasm_core::json_value_to_plasm_value(wire), path,
-        ).map(Some).ok_or_else(|| DecodeError::InvalidStructure {
-            message: format!("exhaustive embedded relation `{parent}.{relation}` has a missing, null or malformed path branch"),
+            &plasm_core::json_value_to_plasm_value(wire),
+            path,
+        )
+        .map(Some)
+        .ok_or_else(|| DecodeError::ExhaustiveEmbedBranch {
+            parent: parent.to_owned(),
+            relation: relation.to_owned(),
         });
     }
     Ok(None)
@@ -399,9 +398,7 @@ fn observed_membership(
     exhaustive_count: Option<usize>,
 ) -> Result<plasm_core::row_contract::RelationMembership, DecodeError> {
     plasm_core::row_contract::RelationMembership::observe(cgs, context, refs, exhaustive_count)
-        .map_err(|e| DecodeError::InvalidStructure {
-            message: e.to_string(),
-        })
+        .map_err(|source| DecodeError::RelationMembership { source })
 }
 
 fn expand_transitive_from_parent_get_embeds(
@@ -428,11 +425,7 @@ fn expand_transitive_from_parent_get_embeds(
                 | Some(RelationMaterialization::PreferFromParentGet { path, .. }) => path,
                 _ => continue,
             };
-            let rel_path = path_expr_from_json_segments(path_seg).map_err(|e| {
-                DecodeError::InvalidStructure {
-                    message: e.to_string(),
-                }
-            })?;
+            let rel_path = path_expr_from_json_segments(path_seg)?;
             if !relation_decode_path_specified(&wire, &rel_path) {
                 continue;
             }
@@ -527,16 +520,14 @@ pub fn extract_id_from_source(
     match source {
         serde_json::Value::String(s) => Ok(s.clone()),
         serde_json::Value::Number(n) => Ok(n.to_string()),
-        _ => Err(DecodeError::InvalidStructure {
-            message: "No valid ID field found in source object".to_string(),
-        }),
+        _ => Err(DecodeError::IdentityMissing),
     }
 }
 
 fn field_decode_error(error: plasm_core::DecodeFieldDiagnostic) -> DecodeError {
     DecodeError::FieldContract {
         field: error.field,
-        reason: error.message,
+        source: error.source,
     }
 }
 
@@ -546,6 +537,41 @@ mod tests {
     use crate::decoder::{PathExpr, RelationDecoder};
     use plasm_core::Cardinality;
     use serde_json::json;
+
+    #[test]
+    fn identity_failures_are_semantic_and_do_not_expose_response_values() {
+        let secret = "private-response-value";
+        let decoder = EntityDecoder::new("Row", PathExpr::empty());
+        let error = decode_entities(&decoder, &json!({"token": secret})).unwrap_err();
+        assert!(matches!(&error, DecodeError::IdentityMissing));
+        assert!(!format!("{error:?} {error}").contains(secret));
+        assert!(matches!(
+            json_scalar_to_id_string(&json!({"token": secret})),
+            Err(DecodeError::IdentityScalarRequired)
+        ));
+        let mut decoder = decoder;
+        decoder.id_path = Some(PathExpr::from_slice(&["absent"]));
+        assert!(matches!(
+            decode_entities(&decoder, &json!({"token": secret})),
+            Err(DecodeError::IdentityPathEmpty)
+        ));
+    }
+
+    #[test]
+    fn membership_failure_preserves_the_core_source() {
+        use std::error::Error;
+        let error = observed_membership(None, &"fixture", Vec::new(), Some(0)).unwrap_err();
+        assert!(matches!(
+            &error,
+            DecodeError::RelationMembership {
+                source: plasm_core::collection_codec::CollectionFault::Conservation,
+            }
+        ));
+        assert!(error
+            .source()
+            .unwrap()
+            .is::<plasm_core::collection_codec::CollectionFault>());
+    }
 
     #[test]
     fn exhaustive_embed_rejects_missing_wildcard_suffix_before_cache_normalization() {
@@ -588,8 +614,8 @@ mod tests {
         let invalid = json!({"id":"root", "notes":[{"target":{"note_id":1}},{}]});
         let error = decode_entities_with_cgs(&decoder, &invalid, Some(&cgs)).unwrap_err();
         assert!(
-            error.to_string().contains("exhaustive embedded relation"),
-            "{error}"
+            matches!(error, DecodeError::ExhaustiveEmbedBranch { parent, relation }
+            if parent == "Folder" && relation == "notes")
         );
         for valid in [json!({"id":"root", "notes":[]}), json!({"id":"root"})] {
             decode_entities_with_cgs(&decoder, &valid, Some(&cgs)).unwrap();

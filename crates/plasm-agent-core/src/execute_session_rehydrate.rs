@@ -16,70 +16,41 @@ use crate::mcp_transport_store::execute_session_registry::PersistedExecuteSessio
 use crate::server_state::PlasmHostState;
 
 /// Why cross-pod rehydrate failed (distinct from "descriptor not in Redis").
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, thiserror::Error)]
 pub enum RehydrateError {
+    #[error("unknown catalog entry `{0}`")]
     UnknownEntry(String),
+    #[error("catalog hash mismatch for `{entry_id}` (session pinned {expected}, live {live})")]
     CatalogHashMismatch {
         entry_id: String,
         expected: String,
         live: String,
     },
+    #[error("persisted execute session descriptor expired")]
     DescriptorExpired,
-    EntityCatalogPairingMismatch {
-        entities: usize,
-        catalog_ids: usize,
-    },
+    #[error("entity/catalog pairing mismatch ({entities} entities, {catalog_ids} catalog ids)")]
+    EntityCatalogPairingMismatch { entities: usize, catalog_ids: usize },
     /// Embedded symbol ledger missing from durable descriptor (replay is not used).
+    #[error("persisted execute session has no symbol ledger; create a new context")]
     SymbolLedgerNotFound,
     /// Pinned catalog digests in the ledger no longer match live materialized CGS.
+    #[error("symbol ledger catalog pins no longer match live catalogs")]
     SymbolSpaceResetRequired,
-    SymbolLedgerDecode(String),
-    CatalogRecipes(String),
-    Discovery(String),
+    #[error("symbol ledger decoding or hydration failed: {0}")]
+    SymbolLedgerDecode(#[from] plasm_core::PersistedSymbolLedgerDecodeError),
+    #[error("compiled catalog recipes unavailable: {0}")]
+    CatalogRecipes(#[from] crate::catalog_runtime::CatalogRuntimeError),
+    #[error(transparent)]
+    Discovery(#[from] DiscoveryError),
+    #[error("catalog/session materialization failed: {0}")]
+    Materialize(#[source] MaterializeError),
 }
-
-impl std::fmt::Display for RehydrateError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::UnknownEntry(id) => write!(f, "unknown catalog entry `{id}`"),
-            Self::CatalogHashMismatch {
-                entry_id,
-                expected,
-                live,
-            } => write!(
-                f,
-                "catalog hash mismatch for `{entry_id}` (session pinned {expected}, live {live})"
-            ),
-            Self::DescriptorExpired => write!(f, "persisted execute session descriptor expired"),
-            Self::EntityCatalogPairingMismatch {
-                entities,
-                catalog_ids,
-            } => write!(
-                f,
-                "entity/catalog pairing mismatch ({entities} entities, {catalog_ids} catalog ids)"
-            ),
-            Self::SymbolLedgerNotFound => write!(
-                f,
-                "persisted execute session has no symbol ledger — call plasm_context with session_mode: \"new\""
-            ),
-            Self::SymbolSpaceResetRequired => write!(
-                f,
-                "symbol ledger catalog pins no longer match live catalogs — call plasm_context with session_mode: \"new\""
-            ),
-            Self::SymbolLedgerDecode(e) => write!(f, "symbol ledger decode failed: {e}"),
-            Self::CatalogRecipes(e) => write!(f, "compiled catalog recipes unavailable: {e}"),
-            Self::Discovery(e) => write!(f, "{e}"),
-        }
-    }
-}
-
-impl std::error::Error for RehydrateError {}
 
 impl From<MaterializeError> for RehydrateError {
     fn from(e: MaterializeError) -> Self {
         match e {
             MaterializeError::UnknownEntry(id) => Self::UnknownEntry(id),
-            other => Self::Discovery(other.to_string()),
+            other => Self::Materialize(other),
         }
     }
 }
@@ -151,11 +122,7 @@ pub(crate) fn registry_catalog_pins_typed(
         let hash = match reg.load_context(eid) {
             Ok(ctx) => RegistryCatalogHash::from_registry_cgs(ctx.cgs.as_ref()),
             Err(DiscoveryError::UnknownEntry(id)) => return Err(RehydrateError::UnknownEntry(id)),
-            Err(e) => {
-                return Err(RehydrateError::Discovery(format!(
-                    "load context `{eid}`: {e}"
-                )));
-            }
+            Err(e) => return Err(RehydrateError::Discovery(e)),
         };
         registry_hash_by_entry.insert(eid.clone(), hash);
     }
@@ -188,11 +155,7 @@ pub(crate) fn registry_pins_match_live(
                 .as_str()
                 .to_string(),
             Err(DiscoveryError::UnknownEntry(id)) => return Err(RehydrateError::UnknownEntry(id)),
-            Err(e) => {
-                return Err(RehydrateError::Discovery(format!(
-                    "load context `{eid}`: {e}"
-                )));
-            }
+            Err(e) => return Err(RehydrateError::Discovery(e)),
         };
         if live != expected {
             return Err(RehydrateError::CatalogHashMismatch {
@@ -255,6 +218,7 @@ pub fn should_discard_persisted_execute_on_rehydrate_error(err: &RehydrateError)
             | RehydrateError::SymbolSpaceResetRequired
             | RehydrateError::SymbolLedgerDecode(_)
             | RehydrateError::CatalogRecipes(_)
+            | RehydrateError::Materialize(MaterializeError::UnknownEntry(_))
     )
 }
 
@@ -265,8 +229,7 @@ fn hydrate_teaching_exposure_from_descriptor(
     if desc.symbol_ledger_bytes.is_empty() {
         return Err(RehydrateError::SymbolLedgerNotFound);
     }
-    let snap = plasm_core::PersistedSymbolLedger::decode(desc.symbol_ledger_bytes.as_slice())
-        .map_err(|e| RehydrateError::SymbolLedgerDecode(e.to_string()))?;
+    let snap = plasm_core::PersistedSymbolLedger::decode(desc.symbol_ledger_bytes.as_slice())?;
     let catalog_cgs: IndexMap<String, Arc<plasm_core::CGS>> = contexts_by_entry
         .iter()
         .map(|(eid, ctx)| (eid.clone(), ctx.cgs.clone()))
@@ -274,8 +237,7 @@ fn hydrate_teaching_exposure_from_descriptor(
     if !plasm_core::catalog_pins_match(&snap.catalog_cgs_hashes, &catalog_cgs) {
         return Err(RehydrateError::SymbolSpaceResetRequired);
     }
-    snap.hydrate(&catalog_cgs)
-        .map_err(|e| RehydrateError::SymbolLedgerDecode(e.to_string()))
+    snap.hydrate(&catalog_cgs).map_err(Into::into)
 }
 
 pub async fn rehydrate_execute_session(
@@ -293,9 +255,8 @@ pub async fn rehydrate_execute_session(
     let primary_materialized =
         materialized
             .get(&desc.entry_id)
-            .ok_or_else(|| MaterializeError::LoadContext {
+            .ok_or_else(|| MaterializeError::PrimaryEntryMissing {
                 entry_id: desc.entry_id.clone(),
-                detail: "primary entry missing after materialize".into(),
             })?;
     let cgs = primary_materialized.effective_cgs.clone();
     let http_backend = Some(primary_materialized.http_backend.as_str().to_string());
@@ -472,7 +433,7 @@ mod tests {
             }
         ));
         assert!(!should_discard_persisted_execute_on_rehydrate_error(
-            &Discovery("network".into())
+            &Discovery(DiscoveryError::EmptyQuery)
         ));
     }
 
@@ -516,7 +477,8 @@ mod tests {
             run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
             session_graph_persistence: None,
             oss_local_filesystem_defaults: false,
-        });
+        })
+        .expect("valid catalog fixture");
         let desc = PersistedExecuteSessionDescriptor {
             prompt_hash: "ph".into(),
             session_id: "sid".into(),
@@ -637,14 +599,14 @@ mod tests {
                 RegistryCatalogHash::from_hex("stale"),
             )]),
         };
-        assert_eq!(
+        assert!(matches!(
             registry_pins_match_live(&reg, &bad_pins),
             Err(RehydrateError::CatalogHashMismatch {
-                entry_id: "overshow".into(),
-                expected: "stale".into(),
-                live: live_hash,
-            })
-        );
+                entry_id,
+                expected,
+                live,
+            }) if entry_id == "overshow" && expected == "stale" && live == live_hash
+        ));
     }
 
     #[test]

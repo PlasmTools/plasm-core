@@ -1,6 +1,98 @@
 use super::*;
 use proptest::prelude::*;
 
+#[derive(Debug, PartialEq, Deserialize)]
+struct RejectedJson;
+
+impl Serialize for RejectedJson {
+    fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
+        Err(serde::ser::Error::custom("private-row-value"))
+    }
+}
+
+fn frame_with_payload(payload: &[u8]) -> Vec<u8> {
+    let mut frame = b"PCC\x01".to_vec();
+    frame.extend_from_slice(&Sha256::digest(payload));
+    frame.extend_from_slice(payload);
+    frame
+}
+
+#[test]
+fn identity_json_failures_preserve_typed_sources_without_rendering_values() {
+    use std::error::Error;
+    let failures = [
+        CollectionIdentity::for_untyped_observation(&RejectedJson).unwrap_err(),
+        identity(0).derived(&RejectedJson).unwrap_err(),
+        CollectionIdentity::for_expression(&crate::CGS::new(), &RejectedJson, 0).unwrap_err(),
+    ];
+    for (index, fault) in failures.into_iter().enumerate() {
+        let source = match &fault {
+            CollectionFault::ObservationJson { source } if index == 0 => source,
+            CollectionFault::DerivationJson { source } if index == 1 => source,
+            CollectionFault::ExpressionJson { source } if index == 2 => source,
+            other => panic!("unexpected fault: {other:?}"),
+        };
+        assert!(source.is_data());
+        assert!(fault.source().is_some());
+        assert!(!fault.to_string().contains("private-row-value"));
+        assert!(matches!(
+            fault.clone(),
+            CollectionFault::ObservationJson { .. }
+                | CollectionFault::DerivationJson { .. }
+                | CollectionFault::ExpressionJson { .. }
+        ));
+    }
+}
+
+#[test]
+fn frame_json_failures_preserve_sources_without_rendering_values() {
+    use std::error::Error;
+    let codec = RecordingCodec::<RejectedJson>::new();
+    let collection = codec
+        .record(identity(0), vec![RejectedJson], Observation::Literal)
+        .unwrap();
+    let fault = codec.encode(&collection).unwrap_err();
+    assert!(matches!(&fault, CollectionFault::FrameEncodeJson { source } if source.is_data()));
+    assert!(fault.source().is_some());
+    assert!(!fault.to_string().contains("private-row-value"));
+
+    let fault = RecordingCodec::<u8>::new()
+        .decode(&frame_with_payload(b"{"), &identity(0))
+        .unwrap_err();
+    assert!(matches!(&fault, CollectionFault::FrameDecodeJson { source } if source.is_eof()));
+    assert!(fault.source().is_some());
+}
+
+#[test]
+fn frame_validation_rejects_specific_contract_violations() {
+    let codec = RecordingCodec::<u8>::new();
+    assert!(matches!(
+        codec.decode(&[0; 35], &identity(0)),
+        Err(CollectionFault::FrameTooShort { actual: 35 })
+    ));
+    let mut frame = frame_with_payload(b"{}");
+    frame[3] = 2;
+    assert!(matches!(
+        codec.decode(&frame, &identity(0)),
+        Err(CollectionFault::FrameHeader)
+    ));
+    frame[3] = 1;
+    frame[4] ^= 1;
+    assert!(matches!(
+        codec.decode(&frame, &identity(0)),
+        Err(CollectionFault::FrameDigestMismatch)
+    ));
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "identity": identity(0), "rows": [],
+        "evidence": {"coverage": "unknown", "gaps": []},
+    }))
+    .unwrap();
+    assert!(matches!(
+        codec.decode(&frame_with_payload(&payload), &identity(0)),
+        Err(CollectionFault::FrameEvidenceInconsistent)
+    ));
+}
+
 fn identity(expression: u8) -> CollectionIdentity {
     CollectionIdentity {
         catalog: [7; 32],
@@ -117,7 +209,16 @@ proptest! {
             restored = codec.decode(&codec.encode(&restored).unwrap(), original.identity()).unwrap();
         }
         prop_assert_eq!(&restored, &original);
-        prop_assert_eq!(codec.materialize(&restored, Demand::Whole), codec.materialize(&original, Demand::Whole));
+        match (codec.materialize(&restored, Demand::Whole), codec.materialize(&original, Demand::Whole)) {
+            (Ok(actual), Ok(expected)) => prop_assert_eq!(actual, expected),
+            (Err(CollectionFault::Incomplete { identity: actual, coverage: actual_coverage, gaps: actual_gaps }),
+             Err(CollectionFault::Incomplete { identity: expected, coverage: expected_coverage, gaps: expected_gaps })) => {
+                prop_assert_eq!(actual, expected);
+                prop_assert_eq!(actual_coverage, expected_coverage);
+                prop_assert_eq!(actual_gaps, expected_gaps);
+            }
+            _ => prop_assert!(false, "materialization outcomes differ"),
+        }
     }
     #[test]
     fn corrupted_frames_never_decode(rows in prop::collection::vec(any::<u8>(), 0..64), position in any::<usize>(), mask in 1u8..=255) {
@@ -129,7 +230,7 @@ proptest! {
     fn identity_and_epoch_cannot_be_reused(rows in prop::collection::vec(any::<u8>(), 0..32), epoch in 13u64..u64::MAX) {
         let codec = RecordingCodec::new();let c = observed(rows, 0);
         let mut wrong = identity(0); wrong.epoch = epoch;
-        prop_assert_eq!(codec.decode(&codec.encode(&c).unwrap(), &wrong), Err(CollectionFault::IdentityMismatch));
+        prop_assert!(matches!(codec.decode(&codec.encode(&c).unwrap(), &wrong), Err(CollectionFault::IdentityMismatch)), "expected typed collection fault");
         let derived = codec.derive(wrong, &[&c], Transform::Identity).unwrap();
         prop_assert_ne!(derived.identity(), c.identity());
         prop_assert_eq!(derived.coverage(), c.coverage());
@@ -157,7 +258,7 @@ proptest! {
     #[test]
     fn embedded_declaration_requires_occurrence_conservation(rows in prop::collection::vec(any::<u8>(), 0..32), extra in 1usize..32) {
         let codec = RecordingCodec::new();let len=rows.len();
-        prop_assert_eq!(codec.record(identity(0), rows.clone(), Observation::Embedded {declared_exhaustive:true, observed:len+extra}), Err(CollectionFault::Conservation));
+        prop_assert!(matches!(codec.record(identity(0), rows.clone(), Observation::Embedded {declared_exhaustive:true, observed:len+extra}), Err(CollectionFault::Conservation)), "expected typed collection fault");
         let c=codec.record(identity(0),rows,Observation::Embedded {declared_exhaustive:false,observed:len}).unwrap();
         prop_assert_eq!(c.coverage(),ResultCoverage::Unknown);
         prop_assert!(codec.materialize(&c,Demand::Whole).is_err());
@@ -211,15 +312,18 @@ fn same_count_child_substitution_is_rejected() {
         .record(identity(2), vec![2], Observation::Literal)
         .unwrap();
     let declared = [identity(1), identity(2)];
-    assert_eq!(
-        codec.derive(
-            identity(3),
-            &[&parent, &b, &a],
-            Transform::FlatMap {
-                children: &declared
-            }
+    assert!(
+        matches!(
+            codec.derive(
+                identity(3),
+                &[&parent, &b, &a],
+                Transform::FlatMap {
+                    children: &declared
+                }
+            ),
+            Err(CollectionFault::InputMismatch { index: 0 })
         ),
-        Err(CollectionFault::InputMismatch { index: 0 })
+        "expected typed collection fault"
     );
 }
 
@@ -233,16 +337,25 @@ fn gaps_keep_the_producer_identity_after_derivation() {
         .derive(identity(2), &[&source], Transform::Distinct)
         .unwrap();
     let error = codec.materialize(&output, Demand::Whole).unwrap_err();
+    let CollectionFault::Incomplete {
+        identity: actual_identity,
+        coverage,
+        gaps,
+    } = error
+    else {
+        panic!("expected incomplete collection");
+    };
     assert_eq!(
-        error,
-        CollectionFault::Incomplete {
-            identity: identity(2).with_inputs([source.identity()]),
-            coverage: ResultCoverage::Unknown,
-            gaps: BTreeSet::from([EvidenceGap {
-                source: identity(1),
-                reason: Gap::UnprovenTermination
-            }]),
-        }
+        actual_identity,
+        identity(2).with_inputs([source.identity()])
+    );
+    assert_eq!(coverage, ResultCoverage::Unknown);
+    assert_eq!(
+        gaps,
+        BTreeSet::from([EvidenceGap {
+            source: identity(1),
+            reason: Gap::UnprovenTermination,
+        }])
     );
 }
 
@@ -268,16 +381,19 @@ fn typed_reference_storage_preserves_identity_occurrences() {
 #[test]
 fn declaration_does_not_hide_decoded_occurrence_loss() {
     let codec = RecordingCodec::<u8>::new();
-    assert_eq!(
-        codec.record(
-            identity(0),
-            vec![1],
-            Observation::Exhausted {
-                decoded: 2,
-                discarded: 0
-            }
+    assert!(
+        matches!(
+            codec.record(
+                identity(0),
+                vec![1],
+                Observation::Exhausted {
+                    decoded: 2,
+                    discarded: 0
+                }
+            ),
+            Err(CollectionFault::Conservation)
         ),
-        Err(CollectionFault::Conservation)
+        "expected typed collection fault"
     );
     let capped = codec
         .record(
@@ -320,16 +436,19 @@ fn filter_record_cannot_reorder_duplicate_or_invent_occurrences() {
     let codec = RecordingCodec::new();
     let source = observed(vec![3, 3, 4], 0);
     for retained in [vec![1, 0], vec![0, 0], vec![3]] {
-        assert_eq!(
-            codec.derive(
-                identity(1),
-                &[&source],
-                Transform::Filter {
-                    retained: &retained,
-                    captures: &[]
-                }
+        assert!(
+            matches!(
+                codec.derive(
+                    identity(1),
+                    &[&source],
+                    Transform::Filter {
+                        retained: &retained,
+                        captures: &[]
+                    }
+                ),
+                Err(CollectionFault::Conservation)
             ),
-            Err(CollectionFault::Conservation)
+            "expected typed collection fault"
         );
     }
     let kept = codec
@@ -394,27 +513,33 @@ fn filter_cannot_drop_or_substitute_collection_capture_evidence() {
         .unwrap();
     assert_eq!(filtered.coverage(), ResultCoverage::Unknown);
     assert!(codec.materialize(&filtered, Demand::Whole).is_err());
-    assert_eq!(
-        codec.derive(
-            identity(2),
-            &[&source],
-            Transform::Filter {
-                retained: &[0],
-                captures: &captures
-            }
+    assert!(
+        matches!(
+            codec.derive(
+                identity(2),
+                &[&source],
+                Transform::Filter {
+                    retained: &[0],
+                    captures: &captures
+                }
+            ),
+            Err(CollectionFault::Arity)
         ),
-        Err(CollectionFault::Arity)
+        "expected typed collection fault"
     );
-    assert_eq!(
-        codec.derive(
-            identity(2),
-            &[&source, &source],
-            Transform::Filter {
-                retained: &[0],
-                captures: &captures
-            }
+    assert!(
+        matches!(
+            codec.derive(
+                identity(2),
+                &[&source, &source],
+                Transform::Filter {
+                    retained: &[0],
+                    captures: &captures
+                }
+            ),
+            Err(CollectionFault::InputMismatch { index: 0 })
         ),
-        Err(CollectionFault::InputMismatch { index: 0 })
+        "expected typed collection fault"
     );
 }
 
@@ -444,9 +569,12 @@ fn reorder_rejects_equal_value_occurrence_substitution() {
     let source = observed(vec![7, 7, 9], 0);
     let codec = RecordingCodec::new();
     for positions in [&[0, 0, 2][..], &[0, 2][..], &[0, 1, 3][..]] {
-        assert_eq!(
-            codec.derive(identity(1), &[&source], Transform::Reorder { positions }),
-            Err(CollectionFault::Conservation),
+        assert!(
+            matches!(
+                codec.derive(identity(1), &[&source], Transform::Reorder { positions }),
+                Err(CollectionFault::Conservation)
+            ),
+            "expected typed collection fault"
         );
     }
 }
@@ -468,9 +596,12 @@ proptest! {
 #[test]
 fn occurrence_prefix_rejects_substitution_reordering_and_excess() {
     for actual in [vec![1, 2, 2], vec![2, 1, 1], vec![1, 1, 2, 2], vec![1, 2]] {
-        assert_eq!(
-            validate_occurrence_prefix(&[1, 1, 2], &actual),
-            Err(CollectionFault::Conservation)
+        assert!(
+            matches!(
+                validate_occurrence_prefix(&[1, 1, 2], &actual),
+                Err(CollectionFault::Conservation)
+            ),
+            "expected typed collection fault"
         );
     }
     assert_eq!(
@@ -491,9 +622,12 @@ fn prefix_validation_is_available_through_the_codec_trait() {
         .unwrap();
     assert_eq!(observation.decoded(), 3);
     assert_eq!(observation.discarded(), 1);
-    assert_eq!(
-        codec.validate_prefix(&mut expected.iter(), &mut [1, 2].iter()),
-        Err(CollectionFault::Conservation)
+    assert!(
+        matches!(
+            codec.validate_prefix(&mut expected.iter(), &mut [1, 2].iter()),
+            Err(CollectionFault::Conservation)
+        ),
+        "expected typed collection fault"
     );
 }
 
@@ -635,16 +769,19 @@ fn replace_allocates_only_changed_payload_and_preserves_evidence() {
     assert_eq!(source.observed()[1].0, 2);
     assert_eq!(changed.coverage(), source.coverage());
     assert_eq!(changed.gaps(), source.gaps());
-    assert_eq!(
-        codec.derive(
-            identity(1),
-            &[&source],
-            Transform::Replace {
-                index: 3,
-                row: NonClone(9)
-            }
+    assert!(
+        matches!(
+            codec.derive(
+                identity(1),
+                &[&source],
+                Transform::Replace {
+                    index: 3,
+                    row: NonClone(9)
+                }
+            ),
+            Err(CollectionFault::Conservation)
         ),
-        Err(CollectionFault::Conservation)
+        "expected typed collection fault"
     );
 }
 
@@ -655,15 +792,18 @@ fn map_validates_cardinality_and_capture_uncertainty() {
     let capture = codec
         .record(identity(1), vec![3], Observation::UnprovenPage)
         .unwrap();
-    assert_eq!(
-        codec.derive(
-            identity(2),
-            &[&source],
-            Transform::Map {
-                rows: vec![9].into()
-            }
+    assert!(
+        matches!(
+            codec.derive(
+                identity(2),
+                &[&source],
+                Transform::Map {
+                    rows: vec![9].into()
+                }
+            ),
+            Err(CollectionFault::Conservation)
         ),
-        Err(CollectionFault::Conservation)
+        "expected typed collection fault"
     );
     let mapped = codec
         .derive(
@@ -706,9 +846,12 @@ fn derived_identity_binds_ordered_catalogs_and_observation_epochs() {
     assert_ne!(ab.identity(), ba.identity());
     assert_ne!(ab.identity(), ac.identity());
     assert_eq!(ab.coverage(), ResultCoverage::Complete);
-    assert_eq!(
-        codec.decode(&codec.encode(&ab).unwrap(), ba.identity()),
-        Err(CollectionFault::IdentityMismatch)
+    assert!(
+        matches!(
+            codec.decode(&codec.encode(&ab).unwrap(), ba.identity()),
+            Err(CollectionFault::IdentityMismatch)
+        ),
+        "expected typed collection fault"
     );
 }
 

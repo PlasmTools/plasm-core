@@ -30,29 +30,27 @@ pub fn eval_compute_ops(
     ops: &[ComputeOp],
     rows: &[plasm_core::ValueRow],
     contract: &plasm_core::value_contract::ValueContract,
-) -> Result<ComputeEvalOutcome, String> {
-    let step = StepId::new("row").map_err(|e| e.to_string())?;
+) -> Result<ComputeEvalOutcome, plasm_core::RowComputeError> {
+    let step = StepId::new("row")?;
     use plasm_core::{CollectRows, CompileRowPlan, IngestRows};
     let schema = plasm_core::PlasmFrameSchema::new(
         plasm_core::row_plan::FrameShape::Remapped {
             reason: plasm_core::row_plan::RemapReason::Derive,
         },
         contract.clone(),
-    )?;
+    )
+    .map_err(plasm_core::RowComputeError::Schema)?;
     let mut engine = super::ValueRowEngine::new();
-    let frame = engine
-        .ingest(
-            &plasm_core::ScanSource::Inline { schema },
-            plasm_core::IngestBatch { rows },
-        )
-        .map_err(|e| e.to_string())?;
-    let plan =
-        fold_compute_ops(ops, frame, step, CollectCardinality::List).map_err(|e| e.to_string())?;
-    let compiled = engine.compile(&plan).map_err(|e| e.to_string())?;
-    let collected = engine
-        .collect(compiled, plan.collect().clone())
-        .map_err(|e| e.to_string())?;
-    collected.validate_correspondence(rows.len())?;
+    let frame = engine.ingest(
+        &plasm_core::ScanSource::Inline { schema },
+        plasm_core::IngestBatch { rows },
+    )?;
+    let plan = fold_compute_ops(ops, frame, step, CollectCardinality::List)?;
+    let compiled = engine.compile(&plan)?;
+    let collected = engine.collect(compiled, plan.collect().clone())?;
+    collected
+        .validate_correspondence(rows.len())
+        .map_err(plasm_core::RowComputeError::Correspondence)?;
     match plan.collect() {
         CollectReason::Render { spec, .. } => Ok(ComputeEvalOutcome::Render {
             schema: collected.schema,
@@ -67,10 +65,14 @@ pub fn eval_compute_ops(
     }
 }
 
-pub(super) fn apply_stored_plan(plan: &RowPlan, state: &mut FrameState<'_>) -> Result<(), String> {
+pub(super) fn apply_stored_plan(
+    plan: &RowPlan,
+    state: &mut FrameState<'_>,
+) -> Result<(), plasm_core::RowComputeError> {
     let now = Utc::now();
     for (_, node) in plan.nodes().iter() {
-        let output = plasm_core::row_plan::contracts::output_contract(&state.contract, node)?;
+        let output = plasm_core::row_plan::contracts::output_contract(&state.contract, node)
+            .map_err(plasm_core::RowComputeError::Contract)?;
         apply_node(node, state, now)?;
         state.contract = output;
         use plasm_core::row_plan::{FrameShape, RemapReason};
@@ -90,14 +92,41 @@ fn apply_node(
     node: &PlanNode,
     state: &mut FrameState<'_>,
     now: DateTime<Utc>,
-) -> Result<(), String> {
+) -> Result<(), plasm_core::RowComputeError> {
     match node {
         PlanNode::Filter(filter) => {
             let predicate = Predicate::compile(filter.predicates(), &state.contract)?;
             let keep = state
                 .rows
                 .iter()
-                .map(|r| predicate.evaluate(r).map(|v| v == Some(true)))
+                .map(|r| {
+                    predicate
+                        .evaluate(r)
+                        .map(|v| v == Some(true))
+                        .map_err(|error| match error {
+                            PredicateEvaluationError::Ordering(error) => {
+                                plasm_core::RowComputeError::Ordering(error)
+                            }
+                            PredicateEvaluationError::Equality(error) => {
+                                plasm_core::RowComputeError::Equality(error)
+                            }
+                            PredicateEvaluationError::ContainsRequiresStrings => {
+                                plasm_core::RowComputeError::ContainsRequiresStrings
+                            }
+                            PredicateEvaluationError::MembershipRequiresCollection => {
+                                plasm_core::RowComputeError::MembershipRequiresCollection
+                            }
+                            PredicateEvaluationError::StringMembershipRequiresString => {
+                                plasm_core::RowComputeError::StringMembershipRequiresString
+                            }
+                            PredicateEvaluationError::MembershipComparison => {
+                                plasm_core::RowComputeError::MembershipComparison
+                            }
+                            PredicateEvaluationError::MissingField { field } => {
+                                plasm_core::RowComputeError::MissingField { field }
+                            }
+                        })
+                })
                 .collect::<Result<Vec<_>, _>>()?;
             let mut i = 0;
             state.rows.retain(|_| {
@@ -107,14 +136,17 @@ fn apply_node(
             });
         }
         PlanNode::Sort { key, descending } => {
-            let contract = plasm_core::row_plan::contracts::field_contract(&state.contract, key)?;
-            let ordering = plasm_core::value_order::Orderable::ordering(&contract)
-                .map_err(|e| e.to_string())?;
+            let contract = plasm_core::row_plan::contracts::field_contract(&state.contract, key)
+                .map_err(plasm_core::RowComputeError::Contract)?;
+            let ordering = plasm_core::value_order::Orderable::ordering(&contract)?;
             let name = key.dotted();
             for row in &state.rows {
-                ordering
-                    .validate(row.require(&name)?)
-                    .map_err(|e| e.to_string())?;
+                let value =
+                    row.get(&name)
+                        .ok_or_else(|| plasm_core::RowComputeError::MissingField {
+                            field: name.clone(),
+                        })?;
+                ordering.validate(value)?;
             }
             let mut error = None;
             state.rows.sort_by(|a, b| {
@@ -140,7 +172,7 @@ fn apply_node(
                 }
             });
             if let Some(error) = error {
-                return Err(error.to_string());
+                return Err(plasm_core::RowComputeError::Ordering(error));
             }
         }
         PlanNode::Limit { count } => state.rows.truncate(*count),
@@ -155,14 +187,16 @@ fn apply_node(
                     let mut out = Row(Default::default(), row.1);
                     for (name, path) in &spec.fields {
                         let source = path.dotted();
-                        let cell = row
-                            .cell(&source)
-                            .ok_or_else(|| format!("field `{source}` is unobserved (not null)"))?;
+                        let cell = row.cell(&source).ok_or_else(|| {
+                            plasm_core::RowComputeError::MissingField {
+                                field: source.clone(),
+                            }
+                        })?;
                         out.0.insert(name.as_str().into(), cell);
                     }
                     Ok(out)
                 })
-                .collect::<Result<_, String>>()?;
+                .collect::<Result<_, plasm_core::RowComputeError>>()?;
         }
         PlanNode::With { columns } => {
             for row in &mut state.rows {
@@ -171,17 +205,38 @@ fn apply_node(
                     .map(|column| {
                         let cell = match &column.expr {
                             WithExpr::Field(path) => row.cell(&path.dotted()).ok_or_else(|| {
-                                format!("field `{}` is unobserved (not null)", path.dotted())
+                                plasm_core::RowComputeError::MissingField {
+                                    field: path.dotted(),
+                                }
                             })?,
-                            expr => Cell::computed(super::expression::evaluate(
-                                expr,
-                                now,
-                                &mut |path| Ok(row.require(&path.dotted())?.clone()),
-                            )?),
+                            expr => Cell::computed(
+                                super::expression::evaluate(expr, now, &mut |path| {
+                                    Ok(row.require(&path.dotted())?.clone())
+                                })
+                                .map_err(|error| {
+                                    match error {
+                                    plasm_core::value_expression::WithEvaluationError::Field(
+                                        error,
+                                    ) => error,
+                                    plasm_core::value_expression::WithEvaluationError::Arithmetic(
+                                        error,
+                                    ) => plasm_core::RowComputeError::Arithmetic(error),
+                                    plasm_core::value_expression::WithEvaluationError::InvalidNumberLiteral => {
+                                        plasm_core::RowComputeError::InvalidExpressionNumber
+                                    }
+                                    plasm_core::value_expression::WithEvaluationError::InvalidLengthOperand => {
+                                        plasm_core::RowComputeError::InvalidExpressionLengthOperand
+                                    }
+                                    plasm_core::value_expression::WithEvaluationError::Comparison(error) => {
+                                        plasm_core::RowComputeError::Comparison(error)
+                                    }
+                                }
+                                })?,
+                            ),
                         };
                         Ok((column.name.as_str().to_owned(), cell))
                     })
-                    .collect::<Result<Vec<_>, String>>()?;
+                    .collect::<Result<Vec<_>, plasm_core::RowComputeError>>()?;
                 row.0.extend(outputs);
             }
         }
@@ -204,11 +259,29 @@ enum Predicate {
     Or(Vec<Self>),
     Not(Box<Self>),
 }
+
+#[derive(Debug, thiserror::Error)]
+enum PredicateEvaluationError {
+    #[error(transparent)]
+    Ordering(#[from] plasm_core::value_order::OrderingError),
+    #[error(transparent)]
+    Equality(#[from] plasm_core::value_equality::ValueEqualityError),
+    #[error("field `{field}` is unobserved (not null)")]
+    MissingField { field: String },
+    #[error("contains requires two string values")]
+    ContainsRequiresStrings,
+    #[error("membership requires a string or array on the right")]
+    MembershipRequiresCollection,
+    #[error("string membership requires a string on the left")]
+    StringMembershipRequiresString,
+    #[error("membership values cannot be compared in their declared value domain")]
+    MembershipComparison,
+}
 impl Predicate {
     fn compile(
         expr: &plasm_core::BooleanExpr<PlanPredicate>,
         input: &plasm_core::value_contract::ValueContract,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, plasm_core::PredicateCompileError> {
         use plasm_core::BooleanExpr;
         Ok(match expr {
             BooleanExpr::Atom(p) => {
@@ -262,7 +335,7 @@ impl Predicate {
             BooleanExpr::Not(x) => Self::Not(Box::new(Self::compile(x, input)?)),
         })
     }
-    fn evaluate(&self, row: &Row<'_>) -> Result<Option<bool>, String> {
+    fn evaluate(&self, row: &Row<'_>) -> Result<Option<bool>, PredicateEvaluationError> {
         use PlanPredicateOp::*;
         Ok(match self {
             Self::Atom {
@@ -271,16 +344,18 @@ impl Predicate {
                 rhs,
                 contract,
             } => {
-                let lhs = row.require(name)?;
+                let lhs = row
+                    .get(name)
+                    .ok_or_else(|| PredicateEvaluationError::MissingField {
+                        field: name.clone(),
+                    })?;
                 if *op == Exists {
                     Some(!lhs.is_null())
                 } else if lhs.is_null() || rhs.is_null() {
                     None
                 } else if matches!(op, Lt | Lte | Gt | Gte) {
-                    let order = plasm_core::value_order::Orderable::ordering(contract.as_ref())
-                        .map_err(|e| e.to_string())?
-                        .compare_literal(lhs, rhs)
-                        .map_err(|e| e.to_string())?;
+                    let order = plasm_core::value_order::Orderable::ordering(contract.as_ref())?
+                        .compare_literal(lhs, rhs)?;
                     Some(match op {
                         Lt => order.is_lt(),
                         Lte => order.is_le(),
@@ -291,12 +366,42 @@ impl Predicate {
                 } else if matches!(op, Eq | Ne) {
                     use plasm_core::{value_equality::Equatable, value_order::Orderable};
                     let equal = match contract.ordering() {
-                        Ok(order) => order.equal_literal(lhs, rhs).map_err(|e| e.to_string())?,
+                        Ok(order) => order.equal_literal(lhs, rhs)?,
                         Err(_) => contract.equality()?.equivalent(lhs, rhs)?,
                     };
                     Some(if *op == Eq { equal } else { !equal })
                 } else {
-                    Some(super::expression::predicate(*op, lhs, rhs)?)
+                    Some(match op {
+                        Contains => lhs
+                            .as_str()
+                            .zip(rhs.as_str())
+                            .map(|(left, right)| left.contains(right))
+                            .ok_or(PredicateEvaluationError::ContainsRequiresStrings)?,
+                        In | NotIn => {
+                            let found = if let Some(haystack) = rhs.as_str() {
+                                haystack.contains(lhs.as_str().ok_or(
+                                    PredicateEvaluationError::StringMembershipRequiresString,
+                                )?)
+                            } else if let Some(items) = rhs.as_array() {
+                                let mut found = false;
+                                for item in items {
+                                    found |= plasm_core::value_expression::compare(Eq, lhs, item)
+                                        .map_err(|_| {
+                                        PredicateEvaluationError::MembershipComparison
+                                    })?;
+                                }
+                                found
+                            } else {
+                                return Err(PredicateEvaluationError::MembershipRequiresCollection);
+                            };
+                            if *op == NotIn {
+                                !found
+                            } else {
+                                found
+                            }
+                        }
+                        _ => unreachable!("all other predicate operators were handled above"),
+                    })
                 }
             }
             Self::Not(x) => x.evaluate(row)?.map(|x| !x),
@@ -338,7 +443,7 @@ mod tests {
     fn evaluate_temporal_fixture(
         ops: &[ComputeOp],
         rows: &[plasm_core::ValueRow],
-    ) -> Result<ComputeEvalOutcome, String> {
+    ) -> Result<ComputeEvalOutcome, plasm_core::RowComputeError> {
         let mut contract = super::super::fixture_contract(rows);
         let plasm_core::value_contract::ValueShape::Record { fields } = &mut contract.shape else {
             unreachable!()
@@ -633,6 +738,30 @@ mod tests {
     }
 
     #[test]
+    fn contains_with_non_string_value_returns_semantic_error() {
+        let rows = vec![row!({"owner": "alice"})];
+        let predicate = plasm_core::PlanPredicate {
+            field_path: FieldPath::from_dotted("owner").unwrap(),
+            op: PlanPredicateOp::Contains,
+            value: PlasmDataValue::Literal {
+                value: plasm_core::operand_binding::ResolvedValue::new(value!(1))
+                    .expect("literal data"),
+            },
+        };
+        let error = evaluate_fixture(
+            &[ComputeOp::Filter {
+                predicates: vec![predicate].into(),
+            }],
+            &rows,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            plasm_core::RowComputeError::ContainsRequiresStrings
+        ));
+    }
+
+    #[test]
     fn with_mul_adds_column() {
         let rows = vec![row!({"quantity": 2, "price": 5})];
         let columns = parse_with_body("notional: quantity * price").unwrap();
@@ -874,7 +1003,7 @@ mod tests {
         }];
         let err = evaluate_fixture(&ops, &rows).unwrap_err();
         assert!(
-            err.contains("currency") || err.contains("money"),
+            err.to_string().contains("currency") || err.to_string().contains("money"),
             "expected cross-currency error, got {err}"
         );
     }
@@ -965,12 +1094,10 @@ mod presence_tests {
             key: FieldPath::from_dotted("score").unwrap(),
             descending: false,
         };
-        assert!(evaluate_fixture(
+        assert!(matches!(evaluate_fixture(
             std::slice::from_ref(&op),
             &[row!({"id":1}), row!({"id":2,"score":null})]
-        )
-        .unwrap_err()
-        .contains("unobserved"));
+        ).unwrap_err(), plasm_core::RowComputeError::MissingField { field } if field == "score"));
         assert!(
             evaluate_fixture(std::slice::from_ref(&op), &[row!({"id":2,"score":null})]).is_ok()
         );

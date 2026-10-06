@@ -12,6 +12,10 @@ pub enum OperationError {
         hint: String,
         open_handles: Vec<String>,
     },
+    HandleNamespaceFailure {
+        handle: String,
+        error: crate::operation::OperationHandleResolutionError,
+    },
     OperationFailed {
         handle: String,
         error: plasm_runtime::ExecutionFailure,
@@ -38,6 +42,7 @@ impl OperationError {
         match self {
             Self::UnknownHandle { .. } => Self::CODE_UNKNOWN,
             Self::OperationFailed { .. } => Self::CODE_OPERATION_FAILED,
+            Self::HandleNamespaceFailure { .. } => Self::CODE_UNKNOWN,
             Self::NotOnReplica { .. } => Self::CODE_NOT_ON_REPLICA,
             Self::ResultArtifactMissing { .. } => Self::CODE_ARTIFACT_MISSING,
         }
@@ -67,6 +72,9 @@ impl OperationError {
             Self::OperationFailed { handle, error } => {
                 format!("operation `{handle}` failed: {error}")
             }
+            Self::HandleNamespaceFailure { handle, error } => {
+                format!("invalid operation handle `{handle}`: {error}")
+            }
             Self::NotOnReplica { handle, .. } => format!(
                 "operation `{handle}` is running on another host; poll `wait({handle})` until terminal or retry after completion"
             ),
@@ -83,6 +91,16 @@ impl OperationError {
 impl std::fmt::Display for OperationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.detail())
+    }
+}
+
+impl std::error::Error for OperationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::HandleNamespaceFailure { error, .. } => Some(error),
+            Self::OperationFailed { error, .. } => Some(error),
+            _ => None,
+        }
     }
 }
 
@@ -107,13 +125,20 @@ mod operation_error_tests {
     fn operation_failed_detail_omits_private_diagnostic() {
         let err = OperationError::OperationFailed {
             handle: "o1".into(),
-            error: "session graph changed during concurrent execute; retry the request".into(),
+            error: plasm_runtime::ExecutionFailure::new(
+                plasm_runtime::FailureCause::Runtime,
+                "concurrent_execute_conflict",
+                "session graph changed during concurrent execute; retry the request",
+            ),
         };
         assert_eq!(err.code(), OperationError::CODE_OPERATION_FAILED);
+        let detail = err.detail();
         assert_eq!(
-            err.detail(),
-            "operation `o1` failed: unclassified_execution_failure: Stop"
+            detail,
+            "operation `o1` failed: concurrent_execute_conflict: Stop"
         );
+        assert!(!detail.contains("session graph changed"));
+        assert!(!detail.contains("retry the request"));
     }
 
     #[test]

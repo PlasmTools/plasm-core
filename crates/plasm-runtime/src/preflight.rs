@@ -218,9 +218,7 @@ async fn hydrate_invoke_target(
 ) -> Result<(), RuntimeError> {
     let prefix = prefix.trim();
     if prefix.is_empty() {
-        return Err(RuntimeError::ConfigurationError {
-            message: "preflight hydrate_invoke_target: prefix must not be empty".to_string(),
-        });
+        return Err(crate::PreflightError::HydrationPrefixEmpty.into());
     }
 
     if let Some(entity) = cache.get(&invoke.target) {
@@ -271,8 +269,8 @@ async fn hydrate_entity_ref_param(
             })?;
     let ent = cgs
         .get_entity(get_capability.domain.as_str())
-        .ok_or_else(|| RuntimeError::ConfigurationError {
-            message: format!("preflight: unknown entity {}", get_capability.domain),
+        .ok_or_else(|| RuntimeError::EntityUnknown {
+            entity: get_capability.domain.to_string(),
         })?;
     let reference = ref_from_param_env(env, ent, param)?;
     let get = GetExpr {
@@ -292,16 +290,12 @@ async fn hydrate_entity_ref_param(
         )
         .await?;
     for (wire_key, field) in merge {
-        let v =
-            cached
-                .fields
-                .get(field.as_str())
-                .ok_or_else(|| RuntimeError::ConfigurationError {
-                    message: format!(
-                        "preflight hydrate_entity_ref_param: get '{}' did not provide field '{}'",
-                        get_cap, field
-                    ),
-                })?;
+        let v = cached.fields.get(field.as_str()).ok_or_else(|| {
+            crate::PreflightError::HydratedFieldMissing {
+                capability: get_cap.to_owned(),
+                field: field.to_string(),
+            }
+        })?;
         env.insert(wire_key.clone(), v.to_value());
     }
     Ok(())
@@ -310,8 +304,8 @@ async fn hydrate_entity_ref_param(
 fn ref_from_param_env(env: &CmlEnv, ent: &EntityDef, param: &str) -> Result<Ref, RuntimeError> {
     let v = env
         .get(param)
-        .ok_or_else(|| RuntimeError::ConfigurationError {
-            message: format!("preflight: missing param '{param}' in env"),
+        .ok_or_else(|| crate::PreflightError::ParameterMissing {
+            param: param.to_owned(),
         })?;
     let id_str = match v {
         Value::String(s) => s.clone(),
@@ -328,14 +322,16 @@ fn ref_from_param_env(env: &CmlEnv, ent: &EntityDef, param: &str) -> Result<Ref,
                     Value::Integer(i) => Some(i.to_string()),
                     _ => None,
                 })
-                .ok_or_else(|| RuntimeError::ConfigurationError {
-                    message: format!("preflight: param '{param}' object missing key '{key}'"),
+                .ok_or_else(|| crate::PreflightError::ParameterKeyMissing {
+                    param: param.to_owned(),
+                    key: key.to_owned(),
                 })?
         }
         _ => {
-            return Err(RuntimeError::ConfigurationError {
-                message: format!("preflight: param '{param}' is not a scalar entity ref"),
-            });
+            return Err(crate::PreflightError::ParameterNotEntityRef {
+                param: param.to_owned(),
+            }
+            .into());
         }
     };
     Ok(Ref::new(ent.name.clone(), id_str))
@@ -375,14 +371,11 @@ async fn query_pick_step(
         )
         .await?;
 
-    let needle = env
-        .get(&pick.equals_param)
-        .ok_or_else(|| RuntimeError::ConfigurationError {
-            message: format!(
-                "preflight query_pick: missing equals_param '{}' in env",
-                pick.equals_param
-            ),
-        })?;
+    let needle =
+        env.get(&pick.equals_param)
+            .ok_or_else(|| crate::PreflightError::ParameterMissing {
+                param: pick.equals_param.clone(),
+            })?;
     let needle_str = value_to_match_string(needle);
 
     let mut matches: Vec<&CachedEntity> = Vec::new();
@@ -396,32 +389,33 @@ async fn query_pick_step(
     }
 
     match matches.len() {
-        0 => Err(RuntimeError::ConfigurationError {
-            message: format!(
-                "preflight query_pick: no row where {} == {} in first page of '{}'",
-                pick.field, pick.equals_param, query_cap_name
-            ),
-        }),
+        0 => Err(crate::PreflightError::PickMatchCount {
+            matches: 0,
+            field: pick.field.clone(),
+            equals_param: pick.equals_param.clone(),
+            capability: query_cap_name.to_owned(),
+        }
+        .into()),
         1 => {
             let row = matches[0];
             for (wire_key, field) in merge {
                 let v = row.fields.get(field.as_str()).ok_or_else(|| {
-                    RuntimeError::ConfigurationError {
-                        message: format!(
-                            "preflight query_pick: row missing field '{field}' for wire key '{wire_key}'"
-                        ),
+                    crate::PreflightError::PickFieldMissing {
+                        field: field.to_owned(),
+                        wire_key: wire_key.to_owned(),
                     }
                 })?;
                 env.insert(wire_key.clone(), v.to_value());
             }
             Ok(())
         }
-        n => Err(RuntimeError::ConfigurationError {
-            message: format!(
-                "preflight query_pick: {n} rows match {} == {} in '{}' (ambiguous)",
-                pick.field, pick.equals_param, query_cap_name
-            ),
-        }),
+        n => Err(crate::PreflightError::PickMatchCount {
+            matches: n,
+            field: pick.field.clone(),
+            equals_param: pick.equals_param.clone(),
+            capability: query_cap_name.to_owned(),
+        }
+        .into()),
     }
 }
 
@@ -446,9 +440,7 @@ fn resolve_scope_bind(env: &CmlEnv, bind: &ScopeBind) -> Result<Value, RuntimeEr
         return env
             .get(p)
             .cloned()
-            .ok_or_else(|| RuntimeError::ConfigurationError {
-                message: format!("preflight scope: missing from_param '{p}'"),
-            });
+            .ok_or_else(|| crate::PreflightError::ParameterMissing { param: p.clone() }.into());
     }
     if let Some(path) = &bind.from_preflight {
         return value_at_preflight_path(env, path);
@@ -456,37 +448,28 @@ fn resolve_scope_bind(env: &CmlEnv, bind: &ScopeBind) -> Result<Value, RuntimeEr
     if let Some(lit) = &bind.literal {
         return Ok(lit.clone());
     }
-    Err(RuntimeError::ConfigurationError {
-        message: "preflight scope bind: one of from_param, from_preflight, literal required"
-            .to_string(),
-    })
+    Err(crate::PreflightError::ScopeBindMissing.into())
 }
 
 fn value_at_preflight_path(env: &CmlEnv, path: &PreflightFieldPath) -> Result<Value, RuntimeError> {
     if path.path.is_empty() {
-        return Err(RuntimeError::ConfigurationError {
-            message: "preflight from_preflight.path must not be empty".to_string(),
-        });
+        return Err(crate::PreflightError::PathEmpty.into());
     }
     let top_key = format!("{}_{}", path.prefix, path.path[0]);
     let mut cur = env
         .get(&top_key)
         .cloned()
-        .ok_or_else(|| RuntimeError::ConfigurationError {
-            message: format!("preflight path: missing env key '{top_key}'"),
-        })?;
+        .ok_or_else(|| crate::PreflightError::PathKeyMissing { key: top_key })?;
     for seg in path.path.iter().skip(1) {
         cur = match cur {
-            Value::Object(mut map) => {
-                map.swap_remove(seg)
-                    .ok_or_else(|| RuntimeError::ConfigurationError {
-                        message: format!("preflight path: missing segment '{seg}'"),
-                    })?
-            }
+            Value::Object(mut map) => map
+                .swap_remove(seg)
+                .ok_or_else(|| crate::PreflightError::PathKeyMissing { key: seg.clone() })?,
             _ => {
-                return Err(RuntimeError::ConfigurationError {
-                    message: format!("preflight path: cannot descend into '{seg}'"),
-                });
+                return Err(crate::PreflightError::PathCannotDescend {
+                    segment: seg.clone(),
+                }
+                .into());
             }
         };
     }
@@ -531,8 +514,8 @@ async fn label_ids_delta_step(
     if do_add {
         let name = env
             .get(add_when)
-            .ok_or_else(|| RuntimeError::ConfigurationError {
-                message: format!("preflight label_ids_delta: missing '{add_when}'"),
+            .ok_or_else(|| crate::PreflightError::ParameterMissing {
+                param: add_when.to_owned(),
             })?;
         let name_str = value_to_match_string(name);
         let id = resolve_label_id_by_name(engine, cgs, cache, mode, lookup_cap_schema, &name_str)
@@ -542,8 +525,8 @@ async fn label_ids_delta_step(
     if do_remove {
         let name = env
             .get(remove_when)
-            .ok_or_else(|| RuntimeError::ConfigurationError {
-                message: format!("preflight label_ids_delta: missing '{remove_when}'"),
+            .ok_or_else(|| crate::PreflightError::ParameterMissing {
+                param: remove_when.to_owned(),
             })?;
         let name_str = value_to_match_string(name);
         if let Ok(id) =
@@ -589,13 +572,9 @@ async fn resolve_label_id_by_name(
         }
     }
     match matches.len() {
-        0 => Err(RuntimeError::ConfigurationError {
-            message: format!("preflight label_ids_delta: no label named '{name}'"),
-        }),
+        0 => Err(crate::PreflightError::LabelMatchCount { matches: 0 }.into()),
         1 => Ok(matches.into_iter().next().unwrap()),
-        n => Err(RuntimeError::ConfigurationError {
-            message: format!("preflight label_ids_delta: {n} labels named '{name}'"),
-        }),
+        n => Err(crate::PreflightError::LabelMatchCount { matches: n }.into()),
     }
 }
 
@@ -612,23 +591,21 @@ async fn existence_check_step(
 ) -> Result<(), RuntimeError> {
     let qcap = cgs
         .get_capability(query_cap)
-        .ok_or_else(|| RuntimeError::ConfigurationError {
-            message: format!("existence_check: unknown capability '{query_cap}'"),
+        .ok_or_else(|| RuntimeError::CapabilityUnknown {
+            capability: query_cap.to_owned(),
         })?;
     let keys = capability
         .identity_key
         .as_ref()
         .filter(|keys| !keys.is_empty())
-        .ok_or_else(|| RuntimeError::ConfigurationError {
-            message: "existence check requires a declared identity".into(),
-        })?;
+        .ok_or(crate::PreflightError::ExistenceIdentityUndeclared)?;
     let mut identity = IndexMap::new();
     for key in keys {
         let value = env
             .get(key)
             .filter(|value| !matches!(value, Value::Null))
-            .ok_or_else(|| RuntimeError::ConfigurationError {
-                message: format!("existence check is missing identity field {key}"),
+            .ok_or_else(|| crate::PreflightError::ExistenceIdentityMissing {
+                field: key.to_owned(),
             })?;
         identity.insert(key.clone(), value.clone());
     }
@@ -646,9 +623,7 @@ async fn existence_check_step(
                 .is_none_or(|field| field.to_value() != *value)
         })
     }) {
-        return Err(RuntimeError::ConfigurationError {
-            message: "existence check response does not prove the requested identity".into(),
-        });
+        return Err(crate::PreflightError::ExistenceIdentityUnproven.into());
     }
     if res.count() > 0 {
         match on_exists {
@@ -664,10 +639,6 @@ async fn existence_check_step(
                         ),
                         existing: None,
                     }),
-                    message: format!(
-                        "preflight existence_check failed for capability '{}'",
-                        capability.name
-                    ),
                     attempts: 1,
                 });
             }

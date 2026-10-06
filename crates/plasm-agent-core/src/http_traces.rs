@@ -22,6 +22,7 @@ use serde::Serialize;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::convert::Infallible;
+use thiserror::Error;
 use uuid::Uuid;
 
 use crate::http_problem_util::{problem_response, problem_types};
@@ -173,7 +174,9 @@ async fn list_traces(
                         error = %detail,
                         "GET /v1/traces: trace sink read failed",
                     );
-                    return Err(problem_response(problem_trace_sink_unavailable(detail)));
+                    return Err(problem_response(problem_trace_sink_unavailable(
+                        detail.to_string(),
+                    )));
                 }
             }
         } else if let Some(arch) = st.local_trace_archive.as_ref() {
@@ -264,7 +267,9 @@ async fn get_trace_detail(
                     error = %detail,
                     "GET /v1/traces/:id: trace sink read failed",
                 );
-                return Err(problem_response(problem_trace_sink_unavailable(detail)));
+                return Err(problem_response(problem_trace_sink_unavailable(
+                    detail.to_string(),
+                )));
             }
         }
     }
@@ -355,6 +360,24 @@ pub fn trace_routes() -> Router {
         .route("/v1/traces/{trace_id}/stream", get(stream_trace_events))
 }
 
+#[derive(Debug, Error)]
+enum TraceSinkReadError {
+    #[error("HTTP transport to trace sink failed")]
+    Transport(#[source] reqwest::Error),
+    #[error("trace sink {endpoint} returned HTTP {status}: {body}")]
+    UnsuccessfulStatus {
+        endpoint: &'static str,
+        status: reqwest::StatusCode,
+        body: String,
+    },
+    #[error("trace sink {endpoint} response JSON is invalid")]
+    InvalidResponseJson {
+        endpoint: &'static str,
+        #[source]
+        source: reqwest::Error,
+    },
+}
+
 async fn list_traces_from_sink(
     client: &reqwest::Client,
     base: &str,
@@ -363,7 +386,7 @@ async fn list_traces_from_sink(
     status: Option<&str>,
     offset: usize,
     limit: usize,
-) -> Result<Vec<TraceSummaryDto>, String> {
+) -> Result<Vec<TraceSummaryDto>, TraceSinkReadError> {
     let mut qp = vec![
         ("tenant_id", tenant_id.to_string()),
         ("offset", offset.to_string()),
@@ -383,7 +406,7 @@ async fn list_traces_from_sink(
         .get(url)
         .send()
         .await
-        .map_err(|e| format!("HTTP transport to trace sink: {e}"))?;
+        .map_err(TraceSinkReadError::Transport)?;
     let status_code = resp.status();
     if !status_code.is_success() {
         let body = resp
@@ -393,14 +416,19 @@ async fn list_traces_from_sink(
             .chars()
             .take(512)
             .collect::<String>();
-        return Err(format!(
-            "trace sink GET /v1/traces returned {status_code}: {body}"
-        ));
+        return Err(TraceSinkReadError::UnsuccessfulStatus {
+            endpoint: "GET /v1/traces",
+            status: status_code,
+            body,
+        });
     }
-    let body: SinkTraceListResponse = resp
-        .json()
-        .await
-        .map_err(|e| format!("trace sink list response JSON: {e}"))?;
+    let body: SinkTraceListResponse =
+        resp.json()
+            .await
+            .map_err(|source| TraceSinkReadError::InvalidResponseJson {
+                endpoint: "GET /v1/traces",
+                source,
+            })?;
     let traces = body
         .traces
         .into_iter()
@@ -435,7 +463,7 @@ async fn fetch_trace_detail_from_sink(
     base: &str,
     tenant_id: &str,
     trace_id: Uuid,
-) -> Result<Option<crate::trace_hub::TraceDetailDto>, String> {
+) -> Result<Option<crate::trace_hub::TraceDetailDto>, TraceSinkReadError> {
     let url = format!(
         "{}/v1/traces/{}?tenant_id={}",
         base.trim_end_matches('/'),
@@ -446,7 +474,7 @@ async fn fetch_trace_detail_from_sink(
         .get(url)
         .send()
         .await
-        .map_err(|e| format!("HTTP transport to trace sink: {e}"))?;
+        .map_err(TraceSinkReadError::Transport)?;
     if resp.status() == reqwest::StatusCode::NOT_FOUND {
         return Ok(None);
     }
@@ -459,14 +487,19 @@ async fn fetch_trace_detail_from_sink(
             .chars()
             .take(512)
             .collect::<String>();
-        return Err(format!(
-            "trace sink GET /v1/traces/{{id}} returned {status}: {body}"
-        ));
+        return Err(TraceSinkReadError::UnsuccessfulStatus {
+            endpoint: "GET /v1/traces/{id}",
+            status,
+            body,
+        });
     }
-    let body: SinkTraceDetailResponse = resp
-        .json()
-        .await
-        .map_err(|e| format!("trace sink detail response JSON: {e}"))?;
+    let body: SinkTraceDetailResponse =
+        resp.json()
+            .await
+            .map_err(|source| TraceSinkReadError::InvalidResponseJson {
+                endpoint: "GET /v1/traces/{id}",
+                source,
+            })?;
     let summary = body.detail.summary;
     let records = body
         .detail

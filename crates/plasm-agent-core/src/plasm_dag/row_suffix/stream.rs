@@ -1,6 +1,7 @@
 //! Row suffix stream decomposition and lowering.
 
 use super::super::binding_continuation;
+use super::super::error::DagCompilationError;
 use super::super::pipeline::{compile_row_expr_nodes, compile_surface_nodes};
 use super::super::prelude::*;
 use super::super::relation::try_split_single_hop_surface_chain;
@@ -17,7 +18,7 @@ pub(in crate::plasm_dag) fn try_lower_row_suffix_expression(
     state: &CompileState<'_>,
     id: &str,
     expr: &str,
-) -> Result<Option<Vec<DagNode>>, String> {
+) -> Result<Option<Vec<DagNode>>, DagCompilationError> {
     let expr_trim = expr.trim();
     if expr_trim.starts_with('(') && expr_trim.ends_with(')') {
         let plasm_core::MembershipRhs::Pipe(inner) =
@@ -69,7 +70,7 @@ fn lower_row_expression_with_suffixes(
     final_id: Option<&str>,
     head: String,
     suffixes: Vec<RowSuffix>,
-) -> Result<Vec<DagNode>, String> {
+) -> Result<Vec<DagNode>, DagCompilationError> {
     if suffixes.is_empty() {
         return compile_surface_nodes(session, state, binding_id, full_rhs);
     }
@@ -83,13 +84,12 @@ pub(in crate::plasm_dag) fn decompose_row_suffix_stream(
     session: &ExecuteSession,
     state: &CompileState<'_>,
     expr: &str,
-) -> Result<(String, Vec<RowSuffix>), String> {
+) -> Result<(String, Vec<RowSuffix>), DagCompilationError> {
     let mut cur = expr.trim().to_string();
     let mut suffixes_rev: Vec<RowSuffix> = Vec::new();
 
     loop {
-        let (core, collect_meta) =
-            peel_collect_meta(&cur).map_err(|e| format!("row suffix stream: {e}"))?;
+        let (core, collect_meta) = peel_collect_meta(&cur)?;
         for meta in collect_meta.iter().rev() {
             suffixes_rev.push(RowSuffix::from(meta));
         }
@@ -168,9 +168,9 @@ pub(in crate::plasm_dag) fn lower_suffix_stream(
     head: &str,
     suffixes: Vec<RowSuffix>,
     final_id: Option<&str>,
-) -> Result<Vec<DagNode>, String> {
+) -> Result<Vec<DagNode>, DagCompilationError> {
     if suffixes.is_empty() {
-        return Err("internal: lower_suffix_stream requires non-empty suffixes".into());
+        return Err(DagCompilationError::EmptyStream);
     }
 
     let tail_singleton = suffixes.iter().any(|s| matches!(s, RowSuffix::Singleton));
@@ -334,22 +334,24 @@ fn compile_membership_filter_rhs(
     binding_id: &str,
     suffix_i: usize,
     body: &str,
-) -> Result<(String, Vec<DagNode>), String> {
+) -> Result<(String, Vec<DagNode>), DagCompilationError> {
     let tree = plasm_core::parse_boolean_filter(body)?;
     let mut prefix = Vec::new();
     let mut mem_i = 0usize;
-    let rewritten = tree.try_map(&mut |clause| -> Result<String, String> {
+    let rewritten = tree.try_map(&mut |clause| -> Result<String, DagCompilationError> {
         match plasm_core::parse_membership_clause(clause)? {
             Some(m) => {
                 let label = match m.rhs {
                     plasm_core::MembershipRhs::Binding(name) => name,
                     plasm_core::MembershipRhs::Pipe(inner) => {
-                        let node = parse_expr_node(&inner)
-                            .map_err(|e| format!("membership RHS `{inner}`: {e}"))?;
+                        let node = parse_expr_node(&inner).map_err(|source| {
+                            DagCompilationError::MembershipExpression {
+                                inner: inner.clone(),
+                                source,
+                            }
+                        })?;
                         if node.apply.is_some() {
-                            return Err(
-                                "membership RHS cannot take `=>`; bind the pipeline first".into()
-                            );
+                            return Err(DagCompilationError::MembershipApplicator);
                         }
                         let id = format!("__plasm_{binding_id}_s{suffix_i}_mem{mem_i}");
                         mem_i += 1;
@@ -376,13 +378,17 @@ fn compile_union_rhs(
     binding_id: &str,
     suffix_i: usize,
     rhs: &str,
-) -> Result<(String, Vec<DagNode>), String> {
+) -> Result<(String, Vec<DagNode>), DagCompilationError> {
     match plasm_core::parse_closed_rowset_ref(rhs, "union")? {
         plasm_core::MembershipRhs::Binding(name) => Ok((name, Vec::new())),
         plasm_core::MembershipRhs::Pipe(inner) => {
-            let node = parse_expr_node(&inner).map_err(|e| format!("union RHS `{inner}`: {e}"))?;
+            let node =
+                parse_expr_node(&inner).map_err(|source| DagCompilationError::UnionExpression {
+                    inner: inner.clone(),
+                    source,
+                })?;
             if node.apply.is_some() {
-                return Err("union RHS cannot take `=>`; bind the pipeline first".into());
+                return Err(DagCompilationError::UnionApplicator);
             }
             let id = format!("__plasm_{binding_id}_s{suffix_i}_un0");
             let (nodes, out_id) = compile_row_expr_nodes(session, state, &id, &inner, &node.row)?;

@@ -47,11 +47,8 @@ impl ExecutionEngine {
         // can establish that the requested state exists; neither status nor body
         // grants success, no-effect evidence, or retry authority.
         let via_cap = cgs.get_capability(reconcile.via.as_str()).ok_or_else(|| {
-            RuntimeError::ConfigurationError {
-                message: format!(
-                    "reconcile.via '{}' not found for capability '{}'",
-                    reconcile.via, capability.name
-                ),
+            RuntimeError::CapabilityUnknown {
+                capability: reconcile.via.to_string(),
             }
         })?;
         let identity =
@@ -89,10 +86,8 @@ impl ExecutionEngine {
             return Err(err);
         }
         if let Some(mismatch) = detect_identity_mismatch(capability, env_input, &res) {
-            let md = mismatch.markdown_block();
             return Err(RuntimeError::WorkflowConflict {
                 conflict: Box::new(mismatch),
-                message: md,
                 attempts: 1,
             });
         }
@@ -200,17 +195,13 @@ impl ExecutionEngine {
                     let token = match v {
                         Value::String(s) => s.clone(),
                         Value::Integer(n) => n.to_string(),
-                        _ => {
-                            return Err(RuntimeError::ConfigurationError {
-                                message: "read-backed identity must be a string or integer".into(),
-                            })
-                        }
+                        _ => return Err(RuntimeError::ReadIdentityType),
                     };
                     bound.insert(k.clone(), token);
                 }
                 let target_ent = cgs.get_entity(via_cap.domain.as_str()).ok_or_else(|| {
-                    RuntimeError::ConfigurationError {
-                        message: format!("unknown entity {}", via_cap.domain),
+                    RuntimeError::EntityUnknown {
+                        entity: via_cap.domain.to_string(),
                     }
                 })?;
                 let bound: std::collections::BTreeMap<String, String> = bound.into_iter().collect();
@@ -248,11 +239,9 @@ impl ExecutionEngine {
                 )
                 .await
             }
-            _ => Err(RuntimeError::ConfigurationError {
-                message: format!(
-                    "reconcile via '{}' must be kind get, query, or search (got {:?})",
-                    via_cap.name, via_cap.kind
-                ),
+            _ => Err(RuntimeError::ReadCapabilityRequired {
+                capability: via_cap.name.to_string(),
+                actual: via_cap.kind,
             }),
         }
     }

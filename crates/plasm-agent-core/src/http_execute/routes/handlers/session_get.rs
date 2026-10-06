@@ -36,7 +36,7 @@ pub(crate) async fn handle_execute_session_get(
     if !session_allows_principal(&sess, principal.as_ref()) {
         return incoming_auth_problem(
             crate::incoming_auth::IncomingAuthFailure::Invalid(
-                "execute session tenant does not match caller".into(),
+                crate::incoming_auth::IncomingAuthError::SessionTenantMismatch,
             ),
             true,
         );

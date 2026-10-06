@@ -5,6 +5,19 @@
 
 use crate::value_domain::validate_digit_id;
 use crate::Value;
+use thiserror::Error;
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum DigitIdCoercionError {
+    #[error("IEEE floating-point values cannot identify digit ids")]
+    InexactFloatIdentity,
+    #[error("value of type {actual} cannot identify a digit id")]
+    UnsupportedValue { actual: &'static str },
+    #[error("digit id must contain only ASCII digits")]
+    InvalidDigits,
+    #[error("coerced digit id did not remain a string")]
+    InvalidCoercedValue,
+}
 
 /// JSON number → exact decimal digits (i64/u64 only). IEEE float is not digit_id identity.
 pub(crate) fn digit_id_json_to_plasm(value: &serde_json::Value) -> Value {
@@ -27,36 +40,29 @@ pub(crate) fn digit_id_json_to_plasm(value: &serde_json::Value) -> Value {
 
 /// Exact digit-string identity. Integer literals stringify via `i64` (not `f64`).
 /// Float is rejected so IEEE rounding cannot mint a neighbor id.
-pub(crate) fn coerce_digit_id(val: Value) -> Result<Value, String> {
+pub(crate) fn coerce_digit_id(val: Value) -> Result<Value, DigitIdCoercionError> {
     let s = match val {
         Value::Integer(n) if n >= 0 => n.to_string(),
         Value::Unsigned(n) => n.to_string(),
         Value::String(s) | Value::PhraseIdent(s) => s,
         Value::Float(_) => {
-            return Err(
-                "cannot coerce float to digit_id (IEEE identity is not exact; use quoted digits)"
-                    .into(),
-            );
+            return Err(DigitIdCoercionError::InexactFloatIdentity);
         }
         other => {
-            return Err(format!(
-                "cannot coerce {} to digit_id (use quoted digits)",
-                other.type_name()
-            ));
+            return Err(DigitIdCoercionError::UnsupportedValue {
+                actual: other.type_name(),
+            });
         }
     };
-    validate_digit_id(&s)?;
+    validate_digit_id(&s).map_err(|_| DigitIdCoercionError::InvalidDigits)?;
     Ok(Value::String(s))
 }
 
 /// IdentityCodec / JSON identity cells: one coerce, then the digit string.
-pub(crate) fn encode_digit_id_identity(value: &Value) -> Result<String, String> {
+pub(crate) fn encode_digit_id_identity(value: &Value) -> Result<String, DigitIdCoercionError> {
     match coerce_digit_id(value.clone())? {
         Value::String(s) => Ok(s),
-        other => Err(format!(
-            "digit_id identity did not coerce to a digit string, got {}",
-            other.type_name()
-        )),
+        _ => Err(DigitIdCoercionError::InvalidCoercedValue),
     }
 }
 
@@ -101,9 +107,9 @@ mod tests {
             Value::Float(9_007_199_254_740_993i64 as f64),
         )
         .expect_err("IEEE float is not digit_id");
-        assert!(
-            err.contains("float") || err.contains("IEEE") || err.contains("digit_id"),
-            "{err}"
+        assert_eq!(
+            err,
+            super::super::CoercionError::DigitId(DigitIdCoercionError::InexactFloatIdentity)
         );
         assert!(
             coerce_value_for_field_type(&FieldType::DigitId, None, None, Value::Integer(-1),)
@@ -184,7 +190,7 @@ mod tests {
         );
         let err = encode_digit_id_identity(&crate::fixture_value!(9_007_199_254_740_993i64 as f64))
             .expect_err("IEEE");
-        assert!(err.contains("IEEE"), "{err}");
+        assert_eq!(err, DigitIdCoercionError::InexactFloatIdentity);
         assert!(encode_digit_id_identity(&crate::fixture_value!("64-19")).is_err());
         assert!(encode_digit_id_identity(&crate::fixture_value!(-1)).is_err());
     }

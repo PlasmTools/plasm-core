@@ -55,8 +55,8 @@ impl ExecutionEngine {
         Box::pin(async move {
             let source_entity =
                 cgs.get_entity(&query.entity)
-                    .ok_or_else(|| RuntimeError::ConfigurationError {
-                        message: format!("Entity '{}' not found", query.entity),
+                    .ok_or_else(|| RuntimeError::EntityUnknown {
+                        entity: query.entity.to_string(),
                     })?;
 
             let mut push_left_preds: Vec<Predicate> = Vec::new();

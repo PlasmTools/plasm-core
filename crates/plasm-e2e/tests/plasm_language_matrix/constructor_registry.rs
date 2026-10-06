@@ -56,7 +56,7 @@ fn row_operations(comp: &plasm_core::plasm_monad::PlasmComp) -> BTreeSet<String>
     found
 }
 
-mod build {
+pub(super) mod build {
     use super::*;
     use plasm_agent::plasm_compile::PythonBuildStatement;
     #[derive(Clone, Deserialize)]
@@ -99,13 +99,50 @@ mod build {
                 .join("\n")
         )
     }
-    fn validate(rules: &[BuildRule]) -> Result<(), String> {
+    #[derive(Debug)]
+    pub(in super::super) enum RegistryError {
+        DuplicateProduction,
+        DuplicateRule { operation: String },
+        MissingObligation { operation: String },
+        DanglingWitness { id: String },
+        NotPositiveEvidence { id: String },
+        WitnessOmitsConstructor { id: String, operation: String },
+        RelationWitness { id: String },
+        InventoryMismatch,
+        Contract(super::super::literate_contract::ContractError),
+        Lowering(plasm_agent::program_rejection::PythonLoweringError),
+    }
+    impl std::fmt::Display for RegistryError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "constructor registry rejected: {self:?}")
+        }
+    }
+    impl std::error::Error for RegistryError {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            match self {
+                Self::Contract(source) => Some(source),
+                Self::Lowering(source) => Some(source),
+                _ => None,
+            }
+        }
+    }
+    impl From<super::super::literate_contract::ContractError> for RegistryError {
+        fn from(source: super::super::literate_contract::ContractError) -> Self {
+            Self::Contract(source)
+        }
+    }
+    impl From<plasm_agent::program_rejection::PythonLoweringError> for RegistryError {
+        fn from(source: plasm_agent::program_rejection::PythonLoweringError) -> Self {
+            Self::Lowering(source)
+        }
+    }
+    fn validate(rules: &[BuildRule]) -> Result<(), RegistryError> {
         let expected: BTreeSet<_> = PythonBuildStatement::ALL
             .iter()
             .map(|op| op.name())
             .collect();
         if expected.len() != PythonBuildStatement::ALL.len() {
-            return Err("duplicate production name".into());
+            return Err(RegistryError::DuplicateProduction);
         }
         let laws = super::super::literate_contract::parse(include_str!(
             "../../../../doc-site/docs/reference/python-conformance.md"
@@ -113,7 +150,9 @@ mod build {
         let mut actual = BTreeSet::new();
         for rule in rules {
             if !actual.insert(rule.operation.as_str()) {
-                return Err("duplicate rule".into());
+                return Err(RegistryError::DuplicateRule {
+                    operation: rule.operation.clone(),
+                });
             }
             if rule.premise.trim().is_empty()
                 || rule.transfer.trim().is_empty()
@@ -125,25 +164,30 @@ mod build {
                     .any(|n| n.body.trim().is_empty() || n.error.trim().is_empty())
                 || !laws.contains_key(&rule.law)
             {
-                return Err("missing obligation".into());
+                return Err(RegistryError::MissingObligation {
+                    operation: rule.operation.clone(),
+                });
             }
             for id in &rule.witnesses {
                 let case = super::super::python::cases()
                     .find(|case| case.id == id)
-                    .ok_or("dangling witness")?;
+                    .ok_or_else(|| RegistryError::DanglingWitness { id: id.clone() })?;
                 if case.expect_live_error.is_some() {
-                    return Err("not positive evidence".into());
+                    return Err(RegistryError::NotPositiveEvidence { id: id.clone() });
                 }
                 if !PythonBuildStatement::inventory(&program(case.python))?
                     .iter()
                     .any(|kind| kind.name() == rule.operation)
                 {
-                    return Err("witness omits constructor".into());
+                    return Err(RegistryError::WitnessOmitsConstructor {
+                        id: id.clone(),
+                        operation: rule.operation.clone(),
+                    });
                 }
             }
         }
         if actual != expected {
-            return Err("production/rule mismatch".into());
+            return Err(RegistryError::InventoryMismatch);
         }
         Ok(())
     }
@@ -164,7 +208,7 @@ mod build {
                     .await
                     .expect_err("invalid build admitted");
                 assert!(
-                    error.contains(&rejection.error),
+                    error.to_string().contains(&rejection.error),
                     "{} expected {:?}: {error}",
                     rule.operation,
                     rejection.error

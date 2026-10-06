@@ -44,10 +44,36 @@ pub enum QueryCapabilityResolveError {
         "ambiguous query for entity '{entity}': predicate matches more than one capability ({names})"
     )]
     Ambiguous { entity: String, names: String },
-    #[error("no query capability matches for entity '{entity}': {message}")]
-    NoMatchingCapability { entity: String, message: String },
-    #[error("rowset normalize for entity '{entity}': {message}")]
-    RowsetNormalize { entity: String, message: String },
+    #[error("no query capability matches for entity '{entity}': {source}")]
+    NoMatchingCapability {
+        entity: String,
+        #[source]
+        source: QueryMatchError,
+    },
+    #[error("rowset normalize for entity '{entity}': {source}")]
+    RowsetNormalize {
+        entity: String,
+        #[source]
+        source: Box<crate::rowset::RowsetNormalizeError>,
+    },
+}
+
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
+pub enum QueryMatchError {
+    #[error("every query capability for this entity requires scope parameters in the predicate; include every required scope field so one query row can match (partial scope is not enough). Available: {requirements:?}")]
+    MissingScope {
+        requirements: Vec<QueryScopeRequirement>,
+    },
+    #[error("no query capability for this entity")]
+    NoQueryCapability,
+    #[error("catalog `{catalog}` is not loaded or does not define the requested entity")]
+    CatalogUnavailable { catalog: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueryScopeRequirement {
+    pub capability: String,
+    pub missing: Vec<String>,
 }
 
 /// Required parent-scope parameter names for `cap`, in stable order.
@@ -265,10 +291,10 @@ fn normalize_query_arm(
         .filter(|s| !s.is_empty())
         .or(cgs.entry_id.as_deref())
         .unwrap_or("");
-    crate::rowset::normalize_query_expr_to_rowset(q, cgs, entry_id).map_err(|message| {
+    crate::rowset::normalize_query_expr_to_rowset(q, cgs, entry_id).map_err(|error| {
         QueryCapabilityResolveError::RowsetNormalize {
             entity: q.entity.to_string(),
-            message,
+            source: Box::new(error),
         }
     })?;
     Ok(())
@@ -390,15 +416,17 @@ pub fn resolve_query_capability<'a>(
                             .into_iter()
                             .filter(|name| !pred_fields.contains(name))
                             .collect::<Vec<_>>();
-                        format!("{} (missing: {})", c.name, missing.join(", "))
+                        QueryScopeRequirement {
+                            capability: c.name.to_string(),
+                            missing,
+                        }
                     })
                     .collect();
                 return Err(QueryCapabilityResolveError::NoMatchingCapability {
                     entity: query.entity.to_string(),
-                    message: format!(
-                        "every query capability for this entity requires scope parameters in the predicate; include every required scope field so one query row can match (partial scope is not enough). Available: {}",
-                        names.join(", ")
-                    ),
+                    source: QueryMatchError::MissingScope {
+                        requirements: names,
+                    },
                 });
             }
             if let Some(cap) = try_resolve_search_for_filter_query(query, cgs) {
@@ -406,7 +434,7 @@ pub fn resolve_query_capability<'a>(
             }
             Err(QueryCapabilityResolveError::NoMatchingCapability {
                 entity: query.entity.to_string(),
-                message: "no query capability for this entity".to_string(),
+                source: QueryMatchError::NoQueryCapability,
             })
         }
         1 => Ok(candidates[0]),
@@ -503,10 +531,9 @@ pub fn normalize_expr_query_capabilities_federated(
                 fed.cgs_for_catalog_entry_id(eid, q.entity.as_str())
                     .ok_or_else(|| QueryCapabilityResolveError::NoMatchingCapability {
                         entity: q.entity.to_string(),
-                        message: format!(
-                            "catalog `{eid}` is not loaded or does not define `{}`",
-                            q.entity
-                        ),
+                        source: QueryMatchError::CatalogUnavailable {
+                            catalog: eid.to_owned(),
+                        },
                     })?
             } else {
                 cgs_for(q.entity.as_str())

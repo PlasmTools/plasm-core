@@ -96,21 +96,35 @@ pub fn teaching_tsv_agent_body_from_wrapped_prompt(
     teaching_tsv_from_wrapped_prompt(prompt, fence_info, TeachingFenceSlice::AgentFull)
 }
 
+/// Structural failures in the two-column language card teaching table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub(crate) enum TeachingTableValidationError {
+    #[error("empty language card table")]
+    EmptyTable,
+    #[error("expected header `plasm_expr\\tMeaning`")]
+    InvalidHeader,
+    #[error("line {line}: expected exactly one tab between `plasm_expr` and `Meaning`, got {actual} tab(s)")]
+    InvalidTabCount { line: usize, actual: usize },
+    #[error("line {line}: `plasm_expr` cell must not have leading/trailing whitespace")]
+    ExpressionWhitespace { line: usize },
+    #[error("line {line}: `Meaning` cell must not have leading/trailing whitespace")]
+    MeaningWhitespace { line: usize },
+}
+
 /// Invariant for prompts emitted by [`render_prompt_tsv_from_bundle`]: from the `plasm_expr\tMeaning`
 /// header through the end of the table, every non-empty body line that is not a `#` comment uses
 /// **exactly one** tab between the expression column and Meaning ([`DomainTsvEncodedLine::write_line`] only;
 /// middle-dot ` · ` joins gloss fragments **inside** Meaning). Tab U+0009 is emitted solely at that boundary.
-pub(crate) fn validate_teaching_tsv_teaching_table(body_from_header: &str) -> Result<(), String> {
+pub(crate) fn validate_teaching_tsv_teaching_table(
+    body_from_header: &str,
+) -> Result<(), TeachingTableValidationError> {
     let mut lines = body_from_header.lines();
     let header = lines
         .next()
-        .ok_or_else(|| "empty language card table".to_string())?;
+        .ok_or(TeachingTableValidationError::EmptyTable)?;
     let header = header.strip_suffix('\r').unwrap_or(header);
     if header != "plasm_expr\tMeaning" {
-        return Err(format!(
-            "expected header `plasm_expr\\tMeaning`, got {:?}",
-            header.chars().take(80).collect::<String>()
-        ));
+        return Err(TeachingTableValidationError::InvalidHeader);
     }
     for (i, raw_line) in lines.enumerate() {
         let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
@@ -119,34 +133,19 @@ pub(crate) fn validate_teaching_tsv_teaching_table(body_from_header: &str) -> Re
         }
         let tabs = line.bytes().filter(|b| *b == b'\t').count();
         if tabs != 1 {
-            return Err(format!(
-                "line {}: expected exactly one `\\t` between `plasm_expr` and `Meaning`, got {} tab(s): {:?}",
-                i + 2,
-                tabs,
-                line.chars().take(160).collect::<String>()
-            ));
+            return Err(TeachingTableValidationError::InvalidTabCount {
+                line: i + 2,
+                actual: tabs,
+            });
         }
         let (expr, meaning) = line.split_once('\t').expect("one tab implies split_once");
-        if expr.contains('\t') || meaning.contains('\t') {
-            return Err(format!(
-                "line {}: stray tab inside a cell after split",
-                i + 2
-            ));
-        }
         let expr_trim = expr.trim();
         let meaning_trim = meaning.trim();
         if expr != expr_trim {
-            return Err(format!(
-                "line {}: `plasm_expr` cell must not have leading/trailing whitespace (got {:?})",
-                i + 2,
-                expr.chars().take(120).collect::<String>()
-            ));
+            return Err(TeachingTableValidationError::ExpressionWhitespace { line: i + 2 });
         }
         if meaning != meaning_trim {
-            return Err(format!(
-                "line {}: `Meaning` cell must not have leading/trailing whitespace",
-                i + 2
-            ));
+            return Err(TeachingTableValidationError::MeaningWhitespace { line: i + 2 });
         }
     }
     Ok(())

@@ -183,10 +183,9 @@ fn error_response(status: StatusCode, error: MockError) -> (StatusCode, Json<Err
     let error_type = match error {
         MockError::EntityNotFound { .. } => "EntityNotFound",
         MockError::ResourceNotFound { .. } => "ResourceNotFound",
-        MockError::FilterError { .. } => "FilterError",
-        MockError::InvalidRequest { .. } => "InvalidRequest",
+        MockError::FilterType { .. } | MockError::FilterCompilation { .. } => "FilterError",
+        MockError::RelationNotFound { .. } => "InvalidRequest",
         MockError::SerializationError { .. } => "SerializationError",
-        MockError::ConfigurationError { .. } => "ConfigurationError",
     };
 
     (

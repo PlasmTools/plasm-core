@@ -1,8 +1,38 @@
 //! Provider serialization seam. JSON exists only at encode/decode, never as
 //! selection state. Each decoder receives the binding context issued with its request.
-use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum DecisionResponseError {
+    #[error("malformed decision response envelope")]
+    MalformedEnvelope(#[source] serde_json::Error),
+    #[error("decision response resolved to an unexpected model")]
+    UnexpectedModel,
+    #[error("decision response came from an unexpected provider")]
+    UnexpectedProvider,
+    #[error("decision response has missing or extra answers")]
+    AnswerSetMismatch,
+    #[error("decision answer has an unexpected question type")]
+    UnexpectedQuestionType,
+    #[error("decision answer contains an unsupported choice")]
+    UnsupportedChoice,
+    #[error("decision answer probability keys differ from the requested choices")]
+    ProbabilityKeysMismatch,
+    #[error("decision answer probability vector is invalid")]
+    InvalidProbabilities,
+    #[error("decision answer confidence is invalid")]
+    InvalidConfidence,
+}
+
+#[derive(Debug, Error)]
+pub enum DecisionCodecError {
+    #[error("decision request serialization failed")]
+    Serialize(#[from] serde_json::Error),
+    #[error(transparent)]
+    Response(#[from] DecisionResponseError),
+}
 
 const MAX_ROUNDED_PROBABILITY_DRIFT: f64 = 0.011;
 
@@ -40,57 +70,59 @@ pub(crate) fn decode_jev_choices<'a>(
     questions: impl IntoIterator<Item = &'a str>,
     choices: &[&str],
     raw: &str,
-) -> Result<BTreeMap<String, ValidatedChoice>> {
+) -> Result<BTreeMap<String, ValidatedChoice>, DecisionResponseError> {
     let envelope: ChoiceEnvelope =
-        serde_json::from_str(raw).context("malformed Jev Decisions envelope")?;
-    ensure!(
-        envelope.model == model
-            || envelope
-                .model
-                .strip_prefix(model)
-                .is_some_and(|suffix| suffix.starts_with('-')),
-        "unexpected Jev resolved model"
-    );
-    ensure!(envelope.provider == "TypeSafe", "unexpected Jev provider");
+        serde_json::from_str(raw).map_err(DecisionResponseError::MalformedEnvelope)?;
+    if !(envelope.model == model
+        || envelope
+            .model
+            .strip_prefix(model)
+            .is_some_and(|suffix| suffix.starts_with('-')))
+    {
+        return Err(DecisionResponseError::UnexpectedModel);
+    }
+    if envelope.provider != "TypeSafe" {
+        return Err(DecisionResponseError::UnexpectedProvider);
+    }
     let questions: BTreeSet<_> = questions.into_iter().collect();
-    ensure!(
-        envelope.answers.len() == questions.len()
-            && envelope
-                .answers
-                .keys()
-                .all(|key| questions.contains(key.as_str())),
-        "Jev response has missing or extra answers"
-    );
+    if envelope.answers.len() != questions.len()
+        || !envelope
+            .answers
+            .keys()
+            .all(|key| questions.contains(key.as_str()))
+    {
+        return Err(DecisionResponseError::AnswerSetMismatch);
+    }
     envelope
         .answers
         .into_iter()
         .map(|(question, answer)| {
-            ensure!(answer.kind == "choice", "Jev answer is not a choice");
-            ensure!(
-                choices.contains(&answer.choice.as_str()),
-                "Jev answer has unknown choice"
-            );
-            ensure!(
-                answer.probabilities.len() == choices.len()
-                    && choices
-                        .iter()
-                        .all(|key| answer.probabilities.contains_key(*key)),
-                "Jev answer probability keys differ from requested choices"
-            );
+            if answer.kind != "choice" {
+                return Err(DecisionResponseError::UnexpectedQuestionType);
+            }
+            if !choices.contains(&answer.choice.as_str()) {
+                return Err(DecisionResponseError::UnsupportedChoice);
+            }
+            if answer.probabilities.len() != choices.len()
+                || !choices
+                    .iter()
+                    .all(|key| answer.probabilities.contains_key(*key))
+            {
+                return Err(DecisionResponseError::ProbabilityKeysMismatch);
+            }
             let total: f64 = answer.probabilities.values().sum();
-            ensure!(
-                answer
-                    .probabilities
-                    .values()
-                    .all(|p| p.is_finite() && (0.0..=1.0).contains(p))
-                    && total > 0.0
-                    && (total - 1.0).abs() <= MAX_ROUNDED_PROBABILITY_DRIFT,
-                "invalid Jev probability vector"
-            );
-            ensure!(
-                answer.confidence.is_finite() && (0.0..=1.0).contains(&answer.confidence),
-                "invalid Jev confidence"
-            );
+            if !answer
+                .probabilities
+                .values()
+                .all(|p| p.is_finite() && (0.0..=1.0).contains(p))
+                || total <= 0.0
+                || (total - 1.0).abs() > MAX_ROUNDED_PROBABILITY_DRIFT
+            {
+                return Err(DecisionResponseError::InvalidProbabilities);
+            }
+            if !answer.confidence.is_finite() || !(0.0..=1.0).contains(&answer.confidence) {
+                return Err(DecisionResponseError::InvalidConfidence);
+            }
             Ok((
                 question,
                 ValidatedChoice {
@@ -109,21 +141,18 @@ pub(crate) fn decode_jev_choices<'a>(
 
 pub(crate) trait DecisionCodec {
     type Request<'a>: Serialize;
-    type Context: ?Sized;
-    type Output;
 
-    fn encode(request: &Self::Request<'_>) -> Result<String> {
+    fn encode(request: &Self::Request<'_>) -> std::result::Result<String, DecisionCodecError> {
         // Canonical map order makes identities independent of Rust field declaration order.
         Ok(serde_json::to_string(&serde_json::to_value(request)?)?)
     }
-    fn decode(context: &Self::Context, raw: &str) -> Result<Self::Output>;
 }
 
 /// serde's ordinary map decoder overwrites duplicate keys. Provider decisions
 /// must reject those ambiguous bindings instead of accepting the last answer.
 pub(crate) fn unique_map<'de, D, V>(
     deserializer: D,
-) -> Result<std::collections::BTreeMap<String, V>, D::Error>
+) -> std::result::Result<std::collections::BTreeMap<String, V>, D::Error>
 where
     D: serde::Deserializer<'de>,
     V: serde::Deserialize<'de>,
@@ -137,7 +166,7 @@ where
         fn visit_map<A: serde::de::MapAccess<'de>>(
             self,
             mut map: A,
-        ) -> Result<Self::Value, A::Error> {
+        ) -> std::result::Result<Self::Value, A::Error> {
             let mut values = std::collections::BTreeMap::new();
             while let Some((key, value)) = map.next_entry::<String, V>()? {
                 if values.insert(key, value).is_some() {
@@ -166,7 +195,9 @@ mod tests {
         })
     }
 
-    fn decode(raw: &str) -> Result<BTreeMap<String, ValidatedChoice>> {
+    fn decode(
+        raw: &str,
+    ) -> std::result::Result<BTreeMap<String, ValidatedChoice>, DecisionResponseError> {
         decode_jev_choices("typesafe/jev-test", ["q"], &["yes", "no"], raw)
     }
 

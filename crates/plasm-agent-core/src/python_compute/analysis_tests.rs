@@ -95,7 +95,7 @@ fn static_checker_failures_are_not_source_corrections() {
     let stubs = " ".repeat(monty_analysis::AnalysisLimits::default().max_source_bytes as usize);
     assert!(matches!(
         super::admission::check_definition("def f() -> int:\n    return 1\n", &stubs),
-        Err(crate::compilation_error::CompilationError::Host(_))
+        Err(crate::compilation_error::CompilationError::Checker(_))
     ));
     assert!(matches!(
         super::admission::check_definition("def f() -> int:\n    return 'wrong'\n", ""),

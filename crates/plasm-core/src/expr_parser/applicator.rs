@@ -1,6 +1,7 @@
 //! Application stratum (`=>` applicators): derive, render, row application, relation fanout.
 
 use super::heredoc_surface::tagged_heredoc_close_kind;
+use super::SurfaceSyntaxError;
 use super::{split_top_level, validate_program_label};
 
 /// Right-hand side of `rowset => applicator` (stratum 3).
@@ -31,12 +32,10 @@ pub enum RenderApplicator {
 }
 
 /// Parse the RHS of a top-level `=>` (already split; no leading `=>`).
-pub fn parse_applicator(raw: &str) -> Result<Applicator, String> {
+pub fn parse_applicator(raw: &str) -> Result<Applicator, SurfaceSyntaxError> {
     let right = raw.trim();
     if right.is_empty() {
-        return Err(
-            "`=>` requires an applicator (`{ … }`, `<<TAG`, `Entity.m#(…)`, or `_.r#`)".into(),
-        );
+        return Err(SurfaceSyntaxError::MissingApplicator);
     }
     if let Some(opener) = right.strip_prefix("<<") {
         let template = parse_render_template_after_tag_opener(opener)?;
@@ -46,9 +45,11 @@ pub fn parse_applicator(raw: &str) -> Result<Applicator, String> {
     }
     if let Some((head, tail)) = super::split_token_top_level(right, "|")? {
         let (head, tail) = (head.trim(), tail.trim());
-        return Err(format!(
-            "`=>` must be the final stage; `{right}` has a row pipeline after application. Bind the application first, then preserve the filter or transform: `applied = rows => {head}` followed by `result = applied | {tail}`"
-        ));
+        return Err(SurfaceSyntaxError::PipelineAfterApplication {
+            expression: right.to_owned(),
+            head: head.to_owned(),
+            tail: tail.to_owned(),
+        });
     }
     if let Some(wire) = right.strip_prefix("_.") {
         if method_call_at_depth_zero(right) {
@@ -58,9 +59,9 @@ pub fn parse_applicator(raw: &str) -> Result<Applicator, String> {
         }
         let wire = wire.trim();
         if wire.is_empty() || wire.contains(char::is_whitespace) || wire.contains('(') {
-            return Err(format!(
-                "relation applicator must be `_.r#` or `_.wire` (got `=> {right}`)"
-            ));
+            return Err(SurfaceSyntaxError::InvalidRelationApplicator {
+                expression: right.to_owned(),
+            });
         }
         return Ok(Applicator::Relation {
             wire: wire.to_string(),
@@ -76,9 +77,9 @@ pub fn parse_applicator(raw: &str) -> Result<Applicator, String> {
             surface: right.to_string(),
         });
     }
-    Err(format!(
-        "unsupported `=>` applicator `{right}`; use a row-producing form such as `=> {{ … }}`, `=> <<TAG`, `=> Entity(_.id)`, `=> Entity{{parent_id=_.id}}`, `=> Entity.m#(…, _)`, or `=> _.r#`"
-    ))
+    Err(SurfaceSyntaxError::UnsupportedApplicator {
+        expression: right.to_owned(),
+    })
 }
 
 #[cfg(test)]
@@ -114,20 +115,14 @@ mod complete_application_tests {
     }
 }
 
-fn parse_render_template_after_tag_opener(rest: &str) -> Result<String, String> {
+fn parse_render_template_after_tag_opener(rest: &str) -> Result<String, SurfaceSyntaxError> {
     let bytes = rest.as_bytes();
     if rest.is_empty() {
-        return Err(
-            "row-to-text template heredoc: expected `<<TAG` then newline after the tag on the opener line"
-                .into(),
-        );
+        return Err(SurfaceSyntaxError::InvalidHeredocTag);
     }
     let b0 = bytes[0];
     if !(b0.is_ascii_alphabetic() || b0 == b'_') {
-        return Err(
-            "row-to-text template heredoc: `<<` must be followed by `TAG` ([A-Za-z_][A-Za-z0-9_]*) then newline"
-                .into(),
-        );
+        return Err(SurfaceSyntaxError::InvalidHeredocTag);
     }
     let mut pos = 1usize;
     while pos < bytes.len() && (bytes[pos].is_ascii_alphanumeric() || bytes[pos] == b'_') {
@@ -135,9 +130,7 @@ fn parse_render_template_after_tag_opener(rest: &str) -> Result<String, String> 
     }
     let tag = &rest[..pos];
     if pos >= bytes.len() || bytes[pos] != b'\n' {
-        return Err(format!(
-            "row-to-text template heredoc `<<{tag}`: newline required immediately after the tag on the opener line (same rule as structured parameter heredocs)"
-        ));
+        return Err(SurfaceSyntaxError::HeredocOpenerMissingNewline);
     }
     pos += 1;
     let body_start = pos;
@@ -150,14 +143,16 @@ fn parse_render_template_after_tag_opener(rest: &str) -> Result<String, String> 
         if let Some((_, leading_ws)) = tagged_heredoc_close_kind(line_slice, tag) {
             let tail = rest[line_start + leading_ws + tag.len()..].trim();
             if !tail.is_empty() {
-                return Err(format!("unexpected trailing syntax `{tail}` after render applicator; `=>` must be the final stage. Bind the rendered result before applying another transform"));
+                return Err(SurfaceSyntaxError::RenderTrailingSyntax {
+                    tail: tail.to_owned(),
+                });
             }
             return Ok(rest[body_start..line_start].to_string());
         }
         if pos >= bytes.len() {
-            return Err(format!(
-                "row-to-text template heredoc `<<{tag}` is not closed: after the template body, add a line whose trimmed text is `{tag}` (closes on the first such line)"
-            ));
+            return Err(SurfaceSyntaxError::HeredocUnterminated {
+                tag: tag.to_owned(),
+            });
         }
         if bytes[pos] == b'\r' {
             pos += 1;
@@ -165,9 +160,9 @@ fn parse_render_template_after_tag_opener(rest: &str) -> Result<String, String> 
         if pos < bytes.len() && bytes[pos] == b'\n' {
             pos += 1;
         } else {
-            return Err(format!(
-                "row-to-text template heredoc `<<{tag}`: malformed line terminator inside template body"
-            ));
+            return Err(SurfaceSyntaxError::RenderLineTerminator {
+                tag: tag.to_owned(),
+            });
         }
     }
 }
@@ -263,12 +258,10 @@ pub(crate) fn method_call_at_depth_zero(t: &str) -> bool {
 }
 
 /// Split `pipe_or_primary => applicator` at top level; parse applicator when present.
-pub fn split_apply_expr(raw: &str) -> Result<(String, Option<Applicator>), String> {
+pub fn split_apply_expr(raw: &str) -> Result<(String, Option<Applicator>), SurfaceSyntaxError> {
     if let Some((prefix, _)) = super::split_token_top_level(raw, "<<")? {
         if !prefix.trim().is_empty() && super::split_token_top_level(prefix, "=>")?.is_none() {
-            return Err(
-                "row-to-text rendering requires `source => <<TAG`, not `source <<TAG`".into(),
-            );
+            return Err(SurfaceSyntaxError::MissingRenderArrow);
         }
     }
     match super::split_token_top_level(raw, "=>")? {
@@ -276,7 +269,7 @@ pub fn split_apply_expr(raw: &str) -> Result<(String, Option<Applicator>), Strin
         Some((left, right)) => {
             let left = left.trim().to_string();
             if left.is_empty() {
-                return Err("`=>` requires a left-hand rowset".into());
+                return Err(SurfaceSyntaxError::MissingApplicationSource);
             }
             let mut app = parse_applicator(right)?;
             if let Applicator::Render {
@@ -305,7 +298,7 @@ mod tests {
     #[test]
     fn postfix_heredoc_requires_render_arrow_without_rejecting_literals() {
         let error = split_apply_expr("rows <<TEXT\nbody\nTEXT").unwrap_err();
-        assert!(error.contains("=>"));
+        assert!(matches!(error, SurfaceSyntaxError::MissingRenderArrow));
         for source in [
             "<<TEXT\nbody\nTEXT",
             "rows => <<TEXT\n{{ title }}\nTEXT",
@@ -346,7 +339,9 @@ mod tests {
     fn foreach_rejects_bare_message_token_as_effect() {
         // `.message` alone is not an effect surface — must be derive or error.
         let err = parse_applicator("row.message").unwrap_err();
-        assert!(err.contains("unsupported"), "{err}");
+        assert!(
+            matches!(err, SurfaceSyntaxError::UnsupportedApplicator { expression } if expression == "row.message")
+        );
     }
 
     #[test]

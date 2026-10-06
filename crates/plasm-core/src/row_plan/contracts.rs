@@ -2,31 +2,64 @@
 use super::{PlanNode, ReductionFunction, TypedAggregate};
 use crate::{value_contract::ValueContract, value_order::Orderable, AggregateFunction, FieldPath};
 use std::collections::{BTreeMap, BTreeSet};
+use thiserror::Error;
 
-pub fn field_contract(row: &ValueContract, path: &FieldPath) -> Result<ValueContract, String> {
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum RowContractError {
+    #[error("reduction input contract is missing")]
+    ReductionInputMissing,
+    #[error("row computation requires a record contract")]
+    RowComputationRequiresRecord,
+    #[error(transparent)]
+    ValueContract(#[from] crate::value_contract::ValueContractError),
+    #[error(transparent)]
+    Ordering(#[from] crate::value_order::OrderingError),
+    #[error(transparent)]
+    Equality(#[from] crate::value_equality::ValueEqualityError),
+    #[error(transparent)]
+    Arithmetic(#[from] crate::value_arithmetic::ArithmeticContractError),
+    #[error(transparent)]
+    ValueExpression(#[from] crate::value_expression::InferenceError),
+    #[error("length requires a string, array or record")]
+    InvalidLengthOperand,
+    #[error("computed field `{field}` is absent from the input schema")]
+    ComputedFieldMissing { field: String },
+}
+
+pub fn field_contract(
+    row: &ValueContract,
+    path: &FieldPath,
+) -> Result<ValueContract, RowContractError> {
     // Projected dotted names are fields in their own right.
-    if let Ok(value) = row.field(&path.dotted()) {
+    let dotted = path.dotted();
+    if let Ok(value) = row.field(&dotted) {
         return Ok(value);
     }
     path.dotted()
         .split('.')
-        .try_fold(row.clone(), |value, name| value.field(name))
+        .try_fold(row.clone(), |value, name| {
+            value.field(name).map_err(Into::into)
+        })
 }
 
 pub fn reduction_contract(
     function: AggregateFunction,
     input: Option<&ValueContract>,
-) -> Result<ValueContract, String> {
+) -> Result<ValueContract, RowContractError> {
     use AggregateFunction::*;
     if function != Count {
-        let input = input.ok_or("reduction input contract missing")?;
+        let input = input.ok_or(RowContractError::ReductionInputMissing)?;
         match function {
             Min | Max => {
-                input.ordering().map_err(|e| e.to_string())?;
+                input.ordering()?;
             }
             Sum | Avg => {
                 use crate::value_arithmetic::Arithmetic;
-                return input.arithmetic_domain()?.reduction_result(function);
+                return input
+                    .arithmetic_domain()
+                    .map_err(RowContractError::Arithmetic)?
+                    .reduction_result(function)
+                    .map_err(RowContractError::Arithmetic);
             }
             _ => {}
         }
@@ -34,22 +67,25 @@ pub fn reduction_contract(
     if function == Count {
         return Ok(ValueContract::scalar(crate::FieldType::Integer));
     }
-    let mut result = input.ok_or("reduction input contract missing")?.clone();
+    let mut result = input
+        .ok_or(RowContractError::ReductionInputMissing)?
+        .clone();
     result.nullable = true;
     Ok(result)
 }
 
-pub fn output_contract(input: &ValueContract, node: &PlanNode) -> Result<ValueContract, String> {
+pub fn output_contract(
+    input: &ValueContract,
+    node: &PlanNode,
+) -> Result<ValueContract, RowContractError> {
     match node {
         PlanNode::Filter(filter) => {
             filter
                 .predicates()
-                .try_map(&mut |predicate| -> Result<_, String> {
+                .try_map(&mut |predicate| -> Result<_, RowContractError> {
                     use crate::PlanPredicateOp::*;
                     if matches!(predicate.op, Lt | Lte | Gt | Gte) {
-                        field_contract(input, &predicate.field_path)?
-                            .ordering()
-                            .map_err(|e| e.to_string())?;
+                        field_contract(input, &predicate.field_path)?.ordering()?;
                     }
                     Ok(predicate.clone())
                 })?;
@@ -66,9 +102,7 @@ pub fn output_contract(input: &ValueContract, node: &PlanNode) -> Result<ValueCo
             Ok(input.clone())
         }
         PlanNode::Sort { key, .. } => {
-            field_contract(input, key)?
-                .ordering()
-                .map_err(|e| e.to_string())?;
+            field_contract(input, key)?.ordering()?;
             Ok(input.clone())
         }
         PlanNode::Project(spec) => {
@@ -108,13 +142,12 @@ pub fn output_contract(input: &ValueContract, node: &PlanNode) -> Result<ValueCo
             let fields = match &mut result.shape {
                 crate::value_contract::ValueShape::Record { fields }
                 | crate::value_contract::ValueShape::ObservedRecord { fields, .. } => fields,
-                _ => return Err("row computation requires a record contract".into()),
+                _ => return Err(RowContractError::RowComputationRequiresRecord),
             };
             for column in columns {
-                fields.insert(
-                    column.name.as_str().into(),
-                    ValueContract::with_expr(&column.expr, &mut |p| field_contract(input, p))?,
-                );
+                let inferred =
+                    ValueContract::with_expr(&column.expr, &mut |p| field_contract(input, p))?;
+                fields.insert(column.name.as_str().into(), inferred);
             }
             Ok(result)
         }

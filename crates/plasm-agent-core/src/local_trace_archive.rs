@@ -18,24 +18,33 @@ pub struct LocalTraceArchive {
 
 type ArcLocal = Arc<LocalTraceArchive>;
 
-fn safe_fs_segment(s: &str) -> Result<&str, std::io::Error> {
+#[derive(Debug, thiserror::Error)]
+pub enum LocalTraceArchiveError {
+    #[error("invalid path segment in trace archive key")]
+    InvalidPathSegment,
+    #[error("trace identifier is not a UUID: {0}")]
+    InvalidTraceId(#[source] uuid::Error),
+    #[error("trace archive filesystem operation failed: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("trace archive JSON is invalid: {0}")]
+    Json(#[from] serde_json::Error),
+}
+
+fn safe_fs_segment(s: &str) -> Result<&str, LocalTraceArchiveError> {
     if s.is_empty() || s.contains("..") || s.contains('/') || s.contains('\\') {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "invalid path segment in trace archive key",
-        ));
+        return Err(LocalTraceArchiveError::InvalidPathSegment);
     }
     Ok(s)
 }
 
 impl LocalTraceArchive {
-    pub fn new(root: PathBuf) -> std::io::Result<Self> {
+    pub fn new(root: PathBuf) -> Result<Self, LocalTraceArchiveError> {
         std::fs::create_dir_all(&root)?;
         Ok(Self { root })
     }
 
     /// `Some(archive)` when `PLASM_TRACE_ARCHIVE_DIR` is a non-empty path.
-    pub fn from_env() -> std::io::Result<Option<ArcLocal>> {
+    pub fn from_env() -> Result<Option<ArcLocal>, LocalTraceArchiveError> {
         Self::from_env_or_oss_default(false)
     }
 
@@ -43,7 +52,7 @@ impl LocalTraceArchive {
     /// use [`crate::oss_local_state::resolve_local_state_root`] as the archive root (`{root}/traces/...` layout).
     pub fn from_env_or_oss_default(
         oss_local_filesystem_defaults: bool,
-    ) -> std::io::Result<Option<ArcLocal>> {
+    ) -> Result<Option<ArcLocal>, LocalTraceArchiveError> {
         match std::env::var("PLASM_TRACE_ARCHIVE_DIR") {
             Ok(s) if !s.trim().is_empty() => Ok(Some(Arc::new(Self::new(s.trim().into())?))),
             _ => {
@@ -59,7 +68,11 @@ impl LocalTraceArchive {
         }
     }
 
-    fn trace_dir(&self, tenant_id: &str, trace_id: Uuid) -> Result<PathBuf, std::io::Error> {
+    fn trace_dir(
+        &self,
+        tenant_id: &str,
+        trace_id: Uuid,
+    ) -> Result<PathBuf, LocalTraceArchiveError> {
         let t = safe_fs_segment(tenant_id)?;
         Ok(self
             .root
@@ -69,10 +82,12 @@ impl LocalTraceArchive {
     }
 
     /// Best-effort persist a completed trace for later list/detail.
-    pub async fn persist_trace(&self, detail: &TraceDetailDto) -> std::io::Result<()> {
-        let trace_id = Uuid::parse_str(&detail.summary.trace_id).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, format!("trace_id: {e}"))
-        })?;
+    pub async fn persist_trace(
+        &self,
+        detail: &TraceDetailDto,
+    ) -> Result<(), LocalTraceArchiveError> {
+        let trace_id = Uuid::parse_str(&detail.summary.trace_id)
+            .map_err(LocalTraceArchiveError::InvalidTraceId)?;
         let dir = self.trace_dir(&detail.summary.tenant_id, trace_id)?;
         tokio::fs::create_dir_all(&dir).await?;
         let summary = serde_json::to_string_pretty(&detail.summary)?;
@@ -94,7 +109,7 @@ impl LocalTraceArchive {
         offset: usize,
         limit: usize,
         status: TraceListStatus,
-    ) -> std::io::Result<Vec<TraceSummaryDto>> {
+    ) -> Result<Vec<TraceSummaryDto>, LocalTraceArchiveError> {
         if status == TraceListStatus::Live {
             return Ok(Vec::new());
         }
@@ -103,7 +118,7 @@ impl LocalTraceArchive {
         let mut rd = match tokio::fs::read_dir(&dir).await {
             Ok(d) => d,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(e) => return Err(e),
+            Err(e) => return Err(e.into()),
         };
         let mut summaries: Vec<(u64, TraceSummaryDto)> = Vec::new();
         while let Some(ent) = rd.next_entry().await? {
@@ -144,15 +159,14 @@ impl LocalTraceArchive {
         &self,
         tenant_id: &str,
         trace_id: Uuid,
-    ) -> std::io::Result<Option<TraceDetailDto>> {
+    ) -> Result<Option<TraceDetailDto>, LocalTraceArchiveError> {
         let sum_path = self.trace_dir(tenant_id, trace_id)?.join("summary.json");
         let data = match tokio::fs::read_to_string(&sum_path).await {
             Ok(s) => s,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(e),
+            Err(e) => return Err(e.into()),
         };
-        let file: TraceSummaryFile = serde_json::from_str(&data)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let file: TraceSummaryFile = serde_json::from_str(&data)?;
         let summary = file.into_dto();
         if summary.tenant_id != tenant_id || summary.trace_id != trace_id.hyphenated().to_string() {
             return Ok(None);
@@ -215,6 +229,20 @@ impl TraceSummaryFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invalid_trace_id_preserves_uuid_source() {
+        let error =
+            LocalTraceArchiveError::InvalidTraceId(Uuid::parse_str("not-a-uuid").unwrap_err());
+        assert!(std::error::Error::source(&error)
+            .unwrap()
+            .downcast_ref::<uuid::Error>()
+            .is_some());
+        assert!(matches!(
+            safe_fs_segment("../tenant"),
+            Err(LocalTraceArchiveError::InvalidPathSegment)
+        ));
+    }
 
     #[tokio::test]
     async fn local_trace_round_trip() {

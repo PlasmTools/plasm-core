@@ -59,7 +59,7 @@ async fn callbacks_resolve_callable_names_at_definition_site() {
     let recursive =
         "def act(row):\n    return E.query().flat_map(act)\nreturn E.query().flat_map(act)";
     let error = compile_fixture(&es, recursive).await.unwrap_err();
-    assert!(error.contains("recursive callbacks"), "{error}");
+    assert!(error.to_string().contains("recursive callbacks"), "{error}");
 }
 
 #[tokio::test]

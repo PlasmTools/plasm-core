@@ -126,7 +126,7 @@ async fn python_compute_after_fanout_preserves_output_ownership_and_projection()
         let error = plasm_agent::plasm_compile::compile_python_program(&es, &source)
             .await
             .expect_err("fanout must not erase its output schema");
-        assert!(error.contains(expected_error), "{error}");
+        assert!(error.to_string().contains(expected_error), "{error}");
     }
 }
 

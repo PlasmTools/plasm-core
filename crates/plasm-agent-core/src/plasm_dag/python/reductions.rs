@@ -36,7 +36,7 @@ impl Lower<'_> {
             .collect::<Result<Vec<_>, PythonLoweringError>>()?;
         let node = if method == "distinct" {
             if !call.arguments.keywords.is_empty() {
-                return Err(at(site, "distinct accepts only literal field names"));
+                return Err(at(site, PythonSourceError::DistinctKeywords));
             }
             super::super::row_suffix::lower_distinct_compute(
                 self.es,
@@ -46,36 +46,46 @@ impl Lower<'_> {
                 id,
                 "",
                 keys,
-            )?
+            )
+            .map_err(|error| at(site, super::super::RowSuffixLoweringError::from(error)))?
         } else {
             if method == "aggregate" && !keys.is_empty() {
-                return Err(at(
-                    site,
-                    "aggregate accepts only named aggregate descriptors",
-                ));
+                return Err(at(site, PythonSourceError::AggregatePositionalArguments));
             }
             let mut aggregates = Vec::new();
             for keyword in &call.arguments.keywords {
                 let alias = keyword
                     .arg
                     .as_ref()
-                    .ok_or_else(|| at(site, "aggregate unpacking is not admitted"))?;
+                    .ok_or_else(|| at(site, PythonSourceError::AggregateUnpacking))?;
                 let PyExpr::Call(descriptor) = &keyword.value else {
-                    return Err(at(site, "expected agg.count() or agg.function(\"field\")"));
+                    return Err(at(site, PythonSourceError::ExpectedAggregateCall));
                 };
                 let PyExpr::Attribute(function) = &*descriptor.func else {
-                    return Err(at(site, "expected an agg descriptor"));
+                    return Err(at(site, PythonSourceError::ExpectedAggregateAttribute));
                 };
                 if name(&function.value) != Some("agg") || !descriptor.arguments.keywords.is_empty()
                 {
-                    return Err(at(site, "expected a literal agg descriptor"));
+                    return Err(at(site, PythonSourceError::AggregateDescriptorShape));
                 }
                 let descriptor_kind = AggregateDescriptor::parse(function.attr.as_str())
-                    .ok_or_else(|| at(site, "unsupported aggregate function"))?;
+                    .ok_or_else(|| {
+                        at(
+                            site,
+                            PythonSourceError::UnknownAggregateFunction {
+                                function: function.attr.to_string(),
+                            },
+                        )
+                    })?;
                 let field = match descriptor_kind {
                     AggregateDescriptor::Count => {
                         if !descriptor.arguments.args.is_empty() {
-                            return Err(at(site, "agg.count takes no arguments"));
+                            return Err(at(
+                                site,
+                                PythonSourceError::CountArguments {
+                                    actual: descriptor.arguments.args.len(),
+                                },
+                            ));
                         }
                         None
                     }
@@ -86,7 +96,13 @@ impl Lower<'_> {
                     | AggregateDescriptor::First
                     | AggregateDescriptor::Last => {
                         let [field] = descriptor.arguments.args.as_ref() else {
-                            return Err(at(site, "aggregate requires one literal field name"));
+                            return Err(at(
+                                site,
+                                PythonSourceError::AggregateFieldArgumentShape {
+                                    function: descriptor_kind.name().to_owned(),
+                                    actual: descriptor.arguments.args.len(),
+                                },
+                            ));
                         };
                         Some(FieldPath::from_dotted(&string(field)?)?)
                     }
@@ -107,7 +123,13 @@ impl Lower<'_> {
                 "",
                 (method == "group_by").then_some(keys),
                 aggregates,
-            )?
+            )
+            .map_err(|error| match error {
+                super::super::row_suffix::ReductionLoweringError::Contract(error) => {
+                    at(site, error)
+                }
+                other => at(site, super::super::RowSuffixLoweringError::from(other)),
+            })?
         };
         self.insert(node)
     }

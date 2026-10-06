@@ -28,10 +28,7 @@ impl RunArtifactBackend for ObjectStoreRunArtifactBackend {
     ) -> Result<usize, RunArtifactError> {
         let n = encoded.len();
         let key = artifact_object_key(&self.prefix, prompt_hash, session_id, run_id);
-        self.store
-            .put(&key, encoded.into())
-            .await
-            .map_err(|e| RunArtifactError::ObjectStore(e.to_string()))?;
+        self.store.put(&key, encoded.into()).await?;
         Ok(n)
     }
 
@@ -55,10 +52,7 @@ impl RunArtifactBackend for ObjectStoreRunArtifactBackend {
     ) -> Result<(), RunArtifactError> {
         let key = resource_index_pointer_key(&self.prefix, prompt_hash, session_id, resource_index);
         let body = run_id.to_wire();
-        self.store
-            .put(&key, body.into_bytes().into())
-            .await
-            .map_err(|e| RunArtifactError::ObjectStore(e.to_string()))?;
+        self.store.put(&key, body.into_bytes().into()).await?;
         Ok(())
     }
 
@@ -85,18 +79,14 @@ impl RunArtifactBackend for ObjectStoreRunArtifactBackend {
     ) -> Result<usize, RunArtifactError> {
         let n = encoded.len();
         let key = code_plan_object_key(&self.prefix, prompt_hash, session_id, plan_id);
-        self.store
-            .put(&key, encoded.into())
-            .await
-            .map_err(|e| RunArtifactError::ObjectStore(e.to_string()))?;
+        self.store.put(&key, encoded.into()).await?;
         let idx = code_plan_index_pointer_key(&self.prefix, prompt_hash, session_id, plan_index);
         self.store
             .put(
                 &idx,
                 plan_id.as_hyphenated().to_string().into_bytes().into(),
             )
-            .await
-            .map_err(|e| RunArtifactError::ObjectStore(e.to_string()))?;
+            .await?;
         Ok(n)
     }
 
@@ -133,10 +123,7 @@ impl RunArtifactBackend for ObjectStoreRunArtifactBackend {
     ) -> Result<usize, RunArtifactError> {
         let n = encoded.len();
         let key = evidence_object_key(&self.prefix, prompt_hash, session_id, run_id);
-        self.store
-            .put(&key, encoded.to_vec().into())
-            .await
-            .map_err(|e| RunArtifactError::ObjectStore(e.to_string()))?;
+        self.store.put(&key, encoded.to_vec().into()).await?;
         Ok(n)
     }
 
@@ -149,10 +136,7 @@ impl RunArtifactBackend for ObjectStoreRunArtifactBackend {
     ) -> Result<usize, RunArtifactError> {
         let n = encoded.len();
         let key = evidence_head_object_key(&self.prefix, prompt_hash, session_id, head_hex);
-        self.store
-            .put(&key, encoded.to_vec().into())
-            .await
-            .map_err(|e| RunArtifactError::ObjectStore(e.to_string()))?;
+        self.store.put(&key, encoded.to_vec().into()).await?;
         Ok(n)
     }
 
@@ -166,8 +150,7 @@ impl RunArtifactBackend for ObjectStoreRunArtifactBackend {
         let key = evidence_run_head_pointer_key(&self.prefix, prompt_hash, session_id, run_id);
         self.store
             .put(&key, head_hex.as_bytes().to_vec().into())
-            .await
-            .map_err(|e| RunArtifactError::ObjectStore(e.to_string()))?;
+            .await?;
         Ok(())
     }
 

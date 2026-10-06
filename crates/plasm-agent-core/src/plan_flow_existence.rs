@@ -237,7 +237,19 @@ fn surface_read_constraints(surface: &ValidatedSurfaceNode) -> BTreeMap<String, 
             .map(|s| s.as_str().to_string())
             .unwrap_or_default();
         if let PlanValue::Literal { value } = &p.value {
-            if let Some(s) = json_scalar_to_string(&value.to_wire()) {
+            if let Some(s) =
+                value
+                    .value()
+                    .as_str()
+                    .map(str::to_owned)
+                    .or_else(|| match value.value() {
+                        plasm_core::Value::Integer(number) => Some(number.to_string()),
+                        plasm_core::Value::Unsigned(number) => Some(number.to_string()),
+                        plasm_core::Value::Float(number) => Some(number.to_string()),
+                        plasm_core::Value::Bool(boolean) => Some(boolean.to_string()),
+                        _ => None,
+                    })
+            {
                 out.insert(field, s);
             }
         }
@@ -295,15 +307,6 @@ fn comparison_value_as_string(value: &TypedComparisonValue) -> Option<String> {
         Value::Integer(i) => Some(i.to_string()),
         Value::Float(f) => Some(f.to_string()),
         Value::Bool(b) => Some(b.to_string()),
-        _ => None,
-    }
-}
-
-fn json_scalar_to_string(v: &serde_json::Value) -> Option<String> {
-    match v {
-        serde_json::Value::String(s) => Some(s.clone()),
-        serde_json::Value::Number(n) => Some(n.to_string()),
-        serde_json::Value::Bool(b) => Some(b.to_string()),
         _ => None,
     }
 }

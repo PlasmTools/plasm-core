@@ -1,7 +1,9 @@
 //! Canonical pipe row algebra (`catalog_source | stage` / `binding | stage`).
 
+use super::SurfaceSyntaxError;
 use crate::row_composition::RowSuffix;
 use crate::row_membership::{parse_closed_rowset_ref, MembershipRhs};
+use thiserror::Error;
 
 use super::{
     is_valid_program_label, peel_collect_meta, split_top_level, validate_pipe_head_syntax,
@@ -102,9 +104,21 @@ pub struct PipeExpr {
     pub collect_meta: Vec<CollectMeta>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum PipeParseError {
+    #[error("invalid rowset reference: {0}")]
+    Membership(#[from] Box<crate::row_membership::RowMembershipParseError>),
+    #[error(transparent)]
+    CollectMeta(#[from] super::collect_meta::CollectMetaError),
+    #[error("invalid pipe delimiters: {0}")]
+    Delimiter(#[from] SurfaceSyntaxError),
+    #[error("invalid pipe stage: {0}")]
+    Stage(#[source] SurfaceSyntaxError),
+}
+
 impl PipeExpr {
     /// Typed row-algebra stream for DAG lowering.
-    pub fn row_suffixes(&self) -> Result<Vec<RowSuffix>, String> {
+    pub fn row_suffixes(&self) -> Vec<RowSuffix> {
         let mut out = Vec::new();
         for stage in &self.stages {
             out.extend(stage.to_row_suffixes());
@@ -112,7 +126,7 @@ impl PipeExpr {
         for meta in &self.collect_meta {
             out.push(RowSuffix::from(meta));
         }
-        Ok(out)
+        out
     }
 }
 
@@ -120,29 +134,28 @@ impl PipeExpr {
 ///
 /// Top-level `=> applicator` is **not** part of the pipe (application stratum). It is stripped
 /// here so callers that only need row algebra never see `take N => …` as a stage body.
-pub fn parse_pipe_expr(raw: &str) -> Result<Option<PipeExpr>, String> {
-    let (without_apply, _applicator) = match crate::expr_parser::split_token_top_level(raw, "=>")? {
+pub fn parse_pipe_expr(raw: &str) -> Result<Option<PipeExpr>, PipeParseError> {
+    let (without_apply, _applicator) = match crate::expr_parser::split_token_top_level(raw, "=>")
+        .map_err(PipeParseError::Delimiter)?
+    {
         Some((left, right)) => (left, Some(right)),
         None => (raw, None),
     };
     let (without_meta, collect_meta) = peel_collect_meta(without_apply)?;
-    let parts = split_top_level(&without_meta, '|')?;
+    let parts = split_top_level(&without_meta, '|').map_err(PipeParseError::Delimiter)?;
     if parts.len() == 1 {
         return Ok(None);
     }
     if parts.iter().any(|part| part.trim().is_empty()) {
-        return Err("pipe stages must not be empty; use `head | stage`".into());
+        return Err(PipeParseError::Stage(SurfaceSyntaxError::EmptyPipeStage));
     }
 
     let raw_head = parts[0].trim();
     if raw_head.starts_with("from ") {
-        return Err(
-            "`from` is not Plasm syntax; write a catalog head (`e#`, `e#{…}`, `e#(id)`, `e#~\"q\"`, or wire entity) before `|` stages"
-                .into(),
-        );
+        return Err(PipeParseError::Stage(SurfaceSyntaxError::FromKeyword));
     }
 
-    validate_pipe_head_syntax(raw_head)?;
+    validate_pipe_head_syntax(raw_head).map_err(PipeParseError::Stage)?;
 
     let stages = parts[1..]
         .iter()
@@ -155,42 +168,43 @@ pub fn parse_pipe_expr(raw: &str) -> Result<Option<PipeExpr>, String> {
     }))
 }
 
-fn parse_stage(raw: &str) -> Result<PipeStage, String> {
+fn parse_stage(raw: &str) -> Result<PipeStage, PipeParseError> {
     if let Some(body) = keyword_tail(raw, "where") {
-        require_nonempty(body, "where predicates")?;
+        require_nonempty(body, "where predicates").map_err(PipeParseError::Stage)?;
         return Ok(PipeStage::Where {
             predicates: body.to_string(),
         });
     }
     if let Some(body) = keyword_tail(raw, "select") {
-        return parse_select(body);
+        return parse_select(body).map_err(PipeParseError::Stage);
     }
     if let Some(body) = keyword_tail(raw, "summarize") {
-        return parse_summarize(body);
+        return parse_summarize(body).map_err(PipeParseError::Stage);
     }
     if let Some(body) = keyword_tail(raw, "order by") {
-        return parse_order_by(body);
+        return parse_order_by(body).map_err(PipeParseError::Stage);
     }
     if let Some(body) = keyword_tail(raw, "take") {
-        let n = positive_integer(body, "take")?;
+        let n = positive_integer(body, "take").map_err(PipeParseError::Stage)?;
         return Ok(PipeStage::Take(n));
     }
     if raw == "distinct" {
         return Ok(PipeStage::Distinct { keys: None });
     }
     if let Some(body) = keyword_tail(raw, "distinct by") {
-        require_nonempty(body, "distinct keys")?;
+        require_nonempty(body, "distinct keys").map_err(PipeParseError::Stage)?;
         return Ok(PipeStage::Distinct {
             keys: Some(body.to_string()),
         });
     }
     if let Some(body) = keyword_tail(raw, "union") {
-        require_nonempty(body, "union rhs")?;
+        require_nonempty(body, "union rhs").map_err(PipeParseError::Stage)?;
         return Ok(PipeStage::Union {
-            rhs: parse_closed_rowset_ref(body, "union")?,
+            rhs: parse_closed_rowset_ref(body, "union")
+                .map_err(|error| PipeParseError::Membership(Box::new(error)))?,
         });
     }
-    Err(unknown_pipe_stage_diagnostic(raw))
+    Err(PipeParseError::Stage(unknown_pipe_stage_diagnostic(raw)))
 }
 
 fn pipe_stage_head_token(raw: &str) -> &str {
@@ -201,22 +215,19 @@ fn pipe_stage_head_token(raw: &str) -> &str {
     &raw[..end]
 }
 
-fn unknown_pipe_stage_diagnostic(raw: &str) -> String {
+fn unknown_pipe_stage_diagnostic(raw: &str) -> SurfaceSyntaxError {
     let ident = pipe_stage_head_token(raw);
     if crate::is_shared_minijinja_filter(ident) {
-        let mut msg = String::from("unknown pipe stage `");
-        msg.push_str(raw);
-        msg.push_str(
-            "` is a Minijinja filter, not row algebra; write the filter inside `{{ }}` or per-row `=> <<TAG`",
-        );
-        return msg;
+        return SurfaceSyntaxError::TemplateFilterAsPipeStage {
+            stage: raw.to_owned(),
+        };
     }
-    format!(
-        "unknown pipe stage `{raw}`; use `where`, `select`, `summarize`, `order by`, `take`, `distinct`, or `union`"
-    )
+    SurfaceSyntaxError::UnknownPipeStage {
+        stage: raw.to_owned(),
+    }
 }
 
-fn parse_select(body: &str) -> Result<PipeStage, String> {
+fn parse_select(body: &str) -> Result<PipeStage, SurfaceSyntaxError> {
     require_nonempty(body, "select items")?;
     let mut fields = Vec::new();
     let mut assignments = Vec::new();
@@ -229,19 +240,19 @@ fn parse_select(body: &str) -> Result<PipeStage, String> {
             let name = name.trim();
             let expr = expr.trim();
             if !is_valid_program_label(name) || expr.is_empty() {
-                return Err(format!(
-                    "select assignment `{item}` must be `name = expression`"
-                ));
+                return Err(SurfaceSyntaxError::InvalidSelectAssignment {
+                    item: item.to_owned(),
+                });
             }
             assignments.push((name.to_string(), expr.to_string()));
         } else if item.is_empty() {
-            return Err("select items must not be empty".into());
+            return Err(SurfaceSyntaxError::EmptySelectItem);
         } else {
             fields.push(item.to_string());
         }
     }
     if include_all && fields.is_empty() && assignments.is_empty() {
-        return Err("`select *` alone is redundant; remove the stage".into());
+        return Err(SurfaceSyntaxError::RedundantSelectAll);
     }
     Ok(PipeStage::Select {
         fields,
@@ -250,20 +261,18 @@ fn parse_select(body: &str) -> Result<PipeStage, String> {
     })
 }
 
-fn parse_summarize(body: &str) -> Result<PipeStage, String> {
+fn parse_summarize(body: &str) -> Result<PipeStage, SurfaceSyntaxError> {
     require_nonempty(body, "summarize aggregates")?;
     let (keys, aggregates) = if let Some(rest) = body.strip_prefix("by ") {
-        let aggregate_start = find_named_aggregate_start(rest).ok_or_else(|| {
-            "`summarize by` requires named aggregates, e.g. `summarize by owner n=count()`"
-                .to_string()
-        })?;
+        let aggregate_start = find_named_aggregate_start(rest)
+            .ok_or_else(|| SurfaceSyntaxError::UnnamedAggregates)?;
         let keys = split_top_level(rest[..aggregate_start].trim_end_matches([',', ' ']), ',')?
             .iter()
             .map(|part| part.trim().to_string())
             .filter(|part| !part.is_empty())
             .collect::<Vec<_>>();
         if keys.is_empty() {
-            return Err("`summarize by` requires at least one key".into());
+            return Err(SurfaceSyntaxError::EmptySummarizeKeys);
         }
         (keys, rest[aggregate_start..].to_string())
     } else {
@@ -271,7 +280,7 @@ fn parse_summarize(body: &str) -> Result<PipeStage, String> {
     };
     let aggregates = normalize_count_calls(&aggregates);
     if !aggregates.contains('=') {
-        return Err("`summarize` requires named aggregates, e.g. `summarize n=count()`".into());
+        return Err(SurfaceSyntaxError::UnnamedAggregates);
     }
     Ok(PipeStage::Summarize { keys, aggregates })
 }
@@ -314,25 +323,25 @@ fn find_named_aggregate_start(raw: &str) -> Option<usize> {
     None
 }
 
-fn parse_order_by(body: &str) -> Result<PipeStage, String> {
+fn parse_order_by(body: &str) -> Result<PipeStage, SurfaceSyntaxError> {
     require_nonempty(body, "order keys")?;
     let mut terms = Vec::new();
     for raw_term in split_top_level(body, ',')? {
         let mut words = raw_term.split_whitespace();
-        let field = words
-            .next()
-            .ok_or_else(|| "`order by` requires a field".to_string())?;
+        let field = words.next().ok_or(SurfaceSyntaxError::MissingOrderField)?;
         let descending = match words.next() {
             None | Some("asc") => false,
             Some("desc") => true,
             Some(other) => {
-                return Err(format!(
-                    "unknown order direction `{other}`; use `asc` or `desc`"
-                ))
+                return Err(SurfaceSyntaxError::UnknownOrderDirection {
+                    direction: other.to_owned(),
+                })
             }
         };
         if words.next().is_some() {
-            return Err(format!("invalid order term `{raw_term}`"));
+            return Err(SurfaceSyntaxError::InvalidOrderTerm {
+                term: raw_term.to_owned(),
+            });
         }
         terms.push((field.to_string(), descending));
     }
@@ -345,21 +354,27 @@ fn keyword_tail<'a>(raw: &'a str, keyword: &str) -> Option<&'a str> {
         .map(str::trim)
 }
 
-fn require_nonempty(raw: &str, what: &str) -> Result<(), String> {
+fn require_nonempty(raw: &str, what: &str) -> Result<(), SurfaceSyntaxError> {
     if raw.trim().is_empty() {
-        Err(format!("pipe stage requires {what}"))
+        Err(SurfaceSyntaxError::MissingStageArgument {
+            part: what.to_owned(),
+        })
     } else {
         Ok(())
     }
 }
 
-fn positive_integer(raw: &str, stage: &str) -> Result<usize, String> {
+fn positive_integer(raw: &str, stage: &str) -> Result<usize, SurfaceSyntaxError> {
     let n = raw
         .trim()
         .parse::<usize>()
-        .map_err(|_| format!("`{stage}` requires a positive integer"))?;
+        .map_err(|_| SurfaceSyntaxError::InvalidStageBound {
+            stage: stage.to_owned(),
+        })?;
     if n == 0 {
-        return Err(format!("`{stage}` requires a positive integer"));
+        return Err(SurfaceSyntaxError::InvalidStageBound {
+            stage: stage.to_owned(),
+        });
     }
     Ok(n)
 }
@@ -388,7 +403,7 @@ mod tests {
         assert!(matches!(parsed.stages[3], PipeStage::OrderBy { .. }));
         assert!(matches!(parsed.stages[4], PipeStage::Take(10)));
         assert!(matches!(
-            parsed.row_suffixes().unwrap().last(),
+            parsed.row_suffixes().last(),
             Some(RowSuffix::Limit { count: 10 })
         ));
     }
@@ -447,9 +462,11 @@ mod tests {
     fn rejects_removed_from_keyword() {
         assert!(parse_pipe_expr("from e1 | take 1")
             .unwrap_err()
+            .to_string()
             .contains("`from` is not Plasm syntax"));
         assert!(parse_pipe_expr("from items | take 1")
             .unwrap_err()
+            .to_string()
             .contains("`from` is not Plasm syntax"));
     }
 
@@ -462,9 +479,12 @@ mod tests {
             "items | <<MD\ntext\nMD",
         ] {
             let err = parse_pipe_expr(src).expect_err(src);
-            assert!(err.contains("unknown pipe stage"), "src={src} err={err}");
             assert!(
-                !err.contains("Minijinja"),
+                err.to_string().contains("unknown pipe stage"),
+                "src={src} err={err}"
+            );
+            assert!(
+                !err.to_string().contains("Minijinja"),
                 "non-filter token must not claim the filter lane: src={src} err={err}"
             );
         }
@@ -480,10 +500,10 @@ mod tests {
         ] {
             let err = parse_pipe_expr(src).expect_err(src);
             assert!(
-                err.contains("unknown pipe stage")
-                    && err.contains("Minijinja")
-                    && err.contains("{{")
-                    && err.contains("=> <<TAG"),
+                err.to_string().contains("unknown pipe stage")
+                    && err.to_string().contains("Minijinja")
+                    && err.to_string().contains("{{")
+                    && err.to_string().contains("=> <<TAG"),
                 "taught filter stage must name the render lane: src={src} err={err}"
             );
             assert!(
@@ -521,7 +541,7 @@ mod tests {
             } if inner.contains("select owner")
         ));
         assert!(matches!(
-            pipe.row_suffixes().unwrap().last(),
+            pipe.row_suffixes().last(),
             Some(RowSuffix::Union { rhs }) if rhs.starts_with('(')
         ));
     }
@@ -529,6 +549,6 @@ mod tests {
     #[test]
     fn rejects_union_literal_list() {
         let err = parse_pipe_expr(r#"alice | union ("a", "b")"#).expect_err("list");
-        assert!(err.contains("not a literal list"), "{err}");
+        assert!(err.to_string().contains("not a literal list"), "{err}");
     }
 }

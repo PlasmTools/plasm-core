@@ -112,9 +112,11 @@ impl HttpTransport for HonestyHarness {
             return self.handle_note_get(request).await;
         }
 
-        Err(RuntimeError::CacheError {
-            message: format!("unexpected request {:?} {}", request.method, request.path),
-        })
+        Err(crate::CacheError::UnexpectedRequest {
+            method: request.method.clone(),
+            path: request.path.clone(),
+        }
+        .into())
     }
 
     async fn get_json_absolute(
@@ -163,10 +165,8 @@ impl HonestyHarness {
 
         match outcome {
             CreateScript::Fail { status } => Err(RuntimeError::RequestError {
-                message: format!(
-                    "HTTP request failed: POST {} — HTTP {status} from API: harness reject",
-                    request.path
-                ),
+                source: crate::HttpStatusFailure::without_request(status, "harness reject".into())
+                    .into(),
                 attempts: 1,
                 status: Some(status),
                 body: None,
@@ -245,9 +245,10 @@ impl HonestyHarness {
             ResponseFault::None => {
                 let note = self.with_model(|m| m.backend.notes.get(&requested).cloned());
                 let Some(note) = note else {
-                    return Err(RuntimeError::CacheError {
-                        message: format!("harness: unknown note {requested}"),
-                    });
+                    return Err(crate::CacheError::HarnessNoteMissing {
+                        id: requested.to_string(),
+                    }
+                    .into());
                 };
                 (note.note_id, note.title, note.body)
             }

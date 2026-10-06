@@ -16,7 +16,9 @@ pub(crate) use backend::{
     patch_cgs_context_outbound_hosted, patch_cgs_context_resolved_http_backend,
     resolve_http_backend_for_entry,
 };
-pub use seed_resolve::{resolve_capability_seeds, resolve_entity_name_case_insensitive};
+pub use seed_resolve::{
+    resolve_capability_seeds, resolve_entity_name_case_insensitive, SeedResolutionError,
+};
 pub use seeds::normalize_capability_seeds;
 pub(crate) use seeds::{
     build_capability_exposure_plan, build_plasm_context_agent_markdown,
@@ -30,6 +32,7 @@ pub(crate) use session::execute_session_create_response_inner;
 #[cfg(test)]
 pub(crate) use session::replay_teaching_exposure_waves;
 pub(crate) use session::upsert_logical_ledger_from_snapshot;
+pub use session::SessionMutateError;
 pub(crate) use session::{
     apply_federate_exposure_wave, build_initial_exposure_wave, ExposureCatalogWave,
 };

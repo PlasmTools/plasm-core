@@ -46,7 +46,7 @@ impl FanoutCoordinate {
     /// Injective Cantor pairing in a reserved high trace-index namespace. Ordinary
     /// source lines retain their small source offsets. Values stay within the exact JSON/JS
     /// integer range; overflow is rejected before jobs run.
-    fn trace_index(self) -> Result<usize, String> {
+    fn trace_index(self) -> Result<usize, FanoutCoordinateOverflow> {
         let node = self.node as u128;
         let row = self.row as u128;
         let diagonal = node + row;
@@ -55,17 +55,25 @@ impl FanoutCoordinate {
             .and_then(|n| (n / 2).checked_add(row))
             .filter(|n| *n < (1u128 << 52))
             .and_then(|n| usize::try_from(n + (1u128 << 52)).ok())
-            .ok_or_else(|| {
-                format!(
-                    "fanout trace coordinate exceeds representable range: node={}, row={}",
-                    self.node, self.row
-                )
+            .ok_or(FanoutCoordinateOverflow {
+                node: self.node,
+                row: self.row,
             })?;
         Ok(pair)
     }
 }
 
-pub(crate) fn plan_subline_index(node_index: usize, row_index: usize) -> Result<usize, String> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("fanout trace coordinate exceeds representable range: node={node}, row={row}")]
+pub(crate) struct FanoutCoordinateOverflow {
+    pub node: usize,
+    pub row: usize,
+}
+
+pub(crate) fn plan_subline_index(
+    node_index: usize,
+    row_index: usize,
+) -> Result<usize, FanoutCoordinateOverflow> {
     FanoutCoordinate {
         node: node_index,
         row: row_index,
@@ -316,7 +324,13 @@ pub(crate) fn push_verified_row_job(
     jobs.push(PlanLineJob {
         index: row_index,
         expr_label,
-        trace_line_index: plan_subline_index(node_index, row_index)?,
+        trace_line_index: plan_subline_index(node_index, row_index).map_err(|diagnostic| {
+            ExecutionFailure::new(
+                plasm_runtime::FailureCause::Program,
+                "plan_trace_line_index_invalid",
+                diagnostic.to_string(),
+            )
+        })?,
         parsed,
         source_identity: None,
     });
@@ -329,7 +343,7 @@ pub(crate) fn push_row_job(
     row_index: usize,
     expr_label: String,
     parsed: ParsedExpr,
-) -> Result<(), String> {
+) -> Result<(), FanoutCoordinateOverflow> {
     jobs.push(PlanLineJob {
         index: row_index,
         expr_label,
@@ -347,7 +361,7 @@ pub(crate) fn push_row_job_with_source(
     expr_label: String,
     parsed: ParsedExpr,
     source_identity: Option<String>,
-) -> Result<(), String> {
+) -> Result<(), FanoutCoordinateOverflow> {
     jobs.push(PlanLineJob {
         index: row_index,
         expr_label,

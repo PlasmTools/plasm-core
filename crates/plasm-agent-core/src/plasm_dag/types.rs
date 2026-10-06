@@ -180,16 +180,24 @@ impl<'a> CompileState<'a> {
         map
     }
 
-    pub(in crate::plasm_dag) fn insert(&mut self, node: DagNode) -> Result<(), String> {
+    pub(in crate::plasm_dag) fn insert(
+        &mut self,
+        node: DagNode,
+    ) -> Result<(), crate::program_rejection::PythonLoweringInvariantError> {
         let labels = Arc::make_mut(&mut self.labels);
         if labels.contains_key(&node.id) {
             if node.id.starts_with("return_") {
-                return Err(program_duplicate_return_node_error());
+                return Err(
+                    crate::program_rejection::PythonLoweringInvariantError::DuplicateBindingLabel {
+                        label: node.id,
+                    },
+                );
             }
-            return Err(format!(
-                "Duplicate program label `{label}` — use a unique binding name.",
-                label = node.id
-            ));
+            return Err(
+                crate::program_rejection::PythonLoweringInvariantError::DuplicateBindingLabel {
+                    label: node.id,
+                },
+            );
         }
         labels.insert(node.id.clone(), self.nodes.len());
         self.nodes.push(Arc::new(node));

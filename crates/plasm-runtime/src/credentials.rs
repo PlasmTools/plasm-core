@@ -3,6 +3,38 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, thiserror::Error)]
+pub enum CredentialError {
+    #[error("invalid credential reference")]
+    InvalidReference,
+    #[error("transport has no redirect-free scoped credential client")]
+    RedirectFreeClientMissing,
+    #[error("credential effects require live reviewed execution")]
+    LiveExecutionRequired,
+    #[error("scoped delegated authentication requires live dispatch")]
+    LiveDispatchRequired,
+    #[error("credential binding origin does not match the executing catalog origin")]
+    BindingOriginMismatch,
+    #[error("scoped credential pagination requires declared request parameters, not an absolute continuation URL")]
+    AbsoluteContinuationForbidden,
+    #[error("invalid credential request destination: {0}")]
+    RequestDestination(#[source] url::ParseError),
+    #[error("credential request destination is outside its scope")]
+    DestinationOutsideScope,
+    #[error("scoped host authentication is not configured")]
+    HostAuthenticationMissing,
+    #[error("credential effects require an execute session")]
+    ExecuteSessionMissing,
+    #[error("execute session has no credential persistence adapter")]
+    PersistenceMissing,
+    #[error("invalid credential transport origin: {0}")]
+    TransportOrigin(#[source] url::ParseError),
+    #[error("credential expired")]
+    Expired,
+    #[error("credential scope mismatch")]
+    ScopeMismatch,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CredentialScope {
     pub session: String,
@@ -37,7 +69,7 @@ impl CredentialReference {
                 .bytes()
                 .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
         {
-            return Err(credential_error("invalid credential reference"));
+            return Err(CredentialError::InvalidReference.into());
         }
         Ok(Self(value.into()))
     }
@@ -64,12 +96,6 @@ impl std::fmt::Debug for StoredCredential {
             .field("scope", &self.scope)
             .field("expires_at_unix", &self.expires_at_unix)
             .finish_non_exhaustive()
-    }
-}
-
-pub fn credential_error(message: &str) -> crate::RuntimeError {
-    crate::RuntimeError::ConfigurationError {
-        message: message.into(),
     }
 }
 

@@ -42,18 +42,24 @@ impl<'a> LiteralOperand<'a> {
         match self {
             Self::Signed(unary) => {
                 let PyExpr::NumberLiteral(number) = &*unary.operand else {
-                    return Err(at(e, "signed value requires a numeric literal"));
+                    return Err(at(e, PythonSourceError::SignedLiteralRequiresNumber));
                 };
                 let negative = unary.op == ruff_python_ast::UnaryOp::USub;
                 match &number.value {
                     ruff_python_ast::Number::Int(value) => {
                         // Parse the sign with the magnitude: i64::MIN has no positive i64.
                         let spelling = format!("{}{value}", if negative { "-" } else { "" });
-                        Ok(plasm_core::Value::Integer(
-                            spelling
-                                .parse()
-                                .map_err(|_| at(e, "integer out of range"))?,
-                        ))
+                        Ok(plasm_core::Value::Integer(spelling.parse().map_err(
+                            |source| {
+                                at(
+                                    e,
+                                    PythonSourceError::IntegerOutOfRange {
+                                        literal: spelling.clone(),
+                                        source,
+                                    },
+                                )
+                            },
+                        )?))
                     }
                     ruff_python_ast::Number::Float(value) if value.is_finite() => {
                         Ok(plasm_core::Value::Float(if negative {
@@ -62,7 +68,7 @@ impl<'a> LiteralOperand<'a> {
                             *value
                         }))
                     }
-                    _ => Err(at(e, "expected a finite real number")),
+                    _ => Err(at(e, PythonSourceError::ExpectedFiniteReal)),
                 }
             }
             Self::Text(expr) => Ok(plasm_core::Value::String(string(expr)?)),
@@ -71,14 +77,13 @@ impl<'a> LiteralOperand<'a> {
                     Ok(plasm_core::Value::Float(*value))
                 }
                 ruff_python_ast::Number::Int(_) => Ok(plasm_core::Value::Integer(integer(e)?)),
-                _ => Err(at(e, "expected a finite real number")),
+                _ => Err(at(e, PythonSourceError::ExpectedFiniteReal)),
             },
             Self::Null(()) => Ok(plasm_core::Value::Null),
             Self::Boolean(b) => Ok(plasm_core::Value::Bool(b)),
-            Self::Array(_) | Self::Record(_) => Err(at(
-                e,
-                "expected a string, finite number, boolean or null literal",
-            )),
+            Self::Array(_) | Self::Record(_) => {
+                Err(at(e, PythonSourceError::ExpectedScalarLiteral))
+            }
         }
     }
 }

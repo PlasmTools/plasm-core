@@ -2,6 +2,26 @@
 use super::*;
 use plasm_core::value_contract::{ValueContract as Type, ValueShape as Shape};
 
+#[derive(Debug, thiserror::Error)]
+pub enum PythonArgumentError {
+    #[error("plural compute source supplies list[Row]; use a map callback for per-row work")]
+    PluralSourceRequiresMapCallback,
+    #[error("singleton compute source supplies Row, not list[Row]")]
+    SingletonSourceRequiresRow,
+    #[error("value compute requires exactly one value column; project the intended field")]
+    ValueSourceRequiresOneColumn,
+    #[error("compute source input differs from its annotation")]
+    AnnotationMismatch(#[source] Box<crate::python_compute::inference::InferenceError>),
+    #[error(transparent)]
+    Inference(#[from] crate::python_compute::inference::InferenceError),
+    #[error("compute input field {field} is unobserved")]
+    InputFieldUnobserved { field: String },
+    #[error("value compute invocation requires one row")]
+    ValueInvocationRequiresOneRow,
+    #[error("compute input value violates its declared contract")]
+    ValueContract(#[source] plasm_core::value_contract::ValueContractError),
+}
+
 pub(super) struct Argument {
     pub field: Option<String>,
     pub per_row: bool,
@@ -24,13 +44,10 @@ pub(super) fn resolve(
     symbols: &dyn SymbolResolve,
     imports: &str,
     mode: ComputeInputMode,
-) -> Result<Argument, String> {
+) -> Result<Argument, PythonArgumentError> {
     if is_row(annotation) {
         if mode != ComputeInputMode::Singleton {
-            return Err(
-                "plural compute source supplies list[Row]; use a map callback for per-row work"
-                    .into(),
-            );
+            return Err(PythonArgumentError::PluralSourceRequiresMapCallback);
         }
         return Ok(Argument {
             mapping: None,
@@ -42,7 +59,7 @@ pub(super) fn resolve(
     if matches!(annotation, Expr::Subscript(s) if name(&s.value) == Some("list") && is_row(&s.slice))
     {
         if mode != ComputeInputMode::Collection {
-            return Err("singleton compute source supplies Row, not list[Row]".into());
+            return Err(PythonArgumentError::SingletonSourceRequiresRow);
         }
         return Ok(Argument {
             mapping: None,
@@ -142,9 +159,7 @@ pub(super) fn resolve(
     }
     let mut columns = fields.iter();
     let Some((field, actual)) = columns.next().filter(|_| fields.len() == 1) else {
-        return Err(
-            "value compute requires exactly one value column; project the intended field".into(),
-        );
+        return Err(PythonArgumentError::ValueSourceRequiresOneColumn);
     };
     // Check only the source-selected materialization mode. Monty owns Python
     // subtyping and annotation compatibility.
@@ -158,7 +173,7 @@ pub(super) fn resolve(
     let per_row = mode.per_row();
     expected
         .check(if per_row { actual } else { &collection })
-        .map_err(|error| format!("compute source input differs from its annotation: {error}"))?;
+        .map_err(|error| PythonArgumentError::AnnotationMismatch(Box::new(error)))?;
     Ok(Argument {
         mapping: None,
         field: Some(field.clone()),
@@ -195,7 +210,7 @@ impl Argument {
         cgs: &CGS,
         entry: &str,
         catalogs: &BTreeMap<String, std::sync::Arc<CGS>>,
-    ) -> Result<(), String> {
+    ) -> Result<(), PythonArgumentError> {
         let Some(field) = &self.field else {
             return Ok(());
         };
@@ -204,12 +219,14 @@ impl Argument {
             .map(|row| {
                 row.get(field)
                     .cloned()
-                    .ok_or_else(|| format!("compute input field {field} is unobserved"))
+                    .ok_or_else(|| PythonArgumentError::InputFieldUnobserved {
+                        field: field.clone(),
+                    })
             })
             .collect::<Result<Vec<_>, _>>()?;
         let input = if self.per_row {
             let [value] = values.as_slice() else {
-                return Err("value compute invocation requires one row".into());
+                return Err(PythonArgumentError::ValueInvocationRequiresOneRow);
             };
             value.clone()
         } else {
@@ -219,6 +236,7 @@ impl Argument {
             .validate_in(&input, cgs, entry, "compute argument", &|entry| {
                 catalogs.get(entry).map(AsRef::as_ref)
             })
+            .map_err(PythonArgumentError::ValueContract)
     }
 }
 

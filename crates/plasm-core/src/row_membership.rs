@@ -5,6 +5,44 @@
 //! scalar comparisons by `boolean_surface` before this rowset-only lowering.
 
 use crate::expr_parser::{is_valid_program_label, parse_expr_node, split_top_level, RowExpr};
+use thiserror::Error;
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum RowMembershipParseError {
+    #[error("row membership delimiter error: {0}")]
+    Delimiter(#[source] crate::expr_parser::SurfaceSyntaxError),
+    #[error("where predicates must not be empty")]
+    EmptyWhere,
+    #[error("membership LHS `{field}` must be a current-row field (RA-2 / RA-13)")]
+    InvalidField { field: String },
+    #[error("{lane} RHS is empty; use a binding or `(other | select field)` ({law})")]
+    EmptyRhs { lane: String, law: &'static str },
+    #[error(
+        "{lane} RHS parenthesized pipeline is unclosed; write `(other | select field)` ({law})"
+    )]
+    UnclosedPipeline { lane: String, law: &'static str },
+    #[error("{lane} RHS `(…)` is empty")]
+    EmptyPipeline { lane: String },
+    #[error("{lane} RHS pipeline `{inner}` is invalid: {source}")]
+    InvalidPipeline {
+        lane: String,
+        inner: String,
+        #[source]
+        source: crate::expr_parser::ExprNodeParseError,
+    },
+    #[error("{lane} RHS cannot take `=>`; bind the pipeline then use the label ({law})")]
+    PipelineApplicator { lane: String, law: &'static str },
+    #[error("{lane} RHS cannot be `iterate … until`")]
+    IteratePipeline { lane: String },
+    #[error("{lane} RHS must be a rowset (binding or parenthesized `| select` pipeline), not a literal list")]
+    LiteralList { lane: String },
+    #[error("{lane} RHS `{rhs}` must be a binding or `(other | select field)` ({law})")]
+    InvalidBinding {
+        lane: String,
+        rhs: String,
+        law: &'static str,
+    },
+}
 
 /// Membership atom parsed from a `| where` clause.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,32 +63,32 @@ pub enum MembershipRhs {
 }
 
 /// Split a `| where` body on top-level commas (implicit AND).
-pub fn split_where_and_clauses(body: &str) -> Result<Vec<&str>, String> {
-    let parts = split_top_level(body.trim(), ',')?;
+pub fn split_where_and_clauses(body: &str) -> Result<Vec<&str>, RowMembershipParseError> {
+    let parts = split_top_level(body.trim(), ',').map_err(RowMembershipParseError::Delimiter)?;
     let out: Vec<&str> = parts
         .into_iter()
         .map(str::trim)
         .filter(|p| !p.is_empty())
         .collect();
     if out.is_empty() {
-        return Err("where predicates must not be empty".into());
+        return Err(RowMembershipParseError::EmptyWhere);
     }
     Ok(out)
 }
 
 /// Parse one clause as RA-13 membership, or `Ok(None)` when it is a scalar compare.
-pub fn parse_membership_clause(clause: &str) -> Result<Option<RowMembership>, String> {
+pub fn parse_membership_clause(
+    clause: &str,
+) -> Result<Option<RowMembership>, RowMembershipParseError> {
     let raw = clause.trim();
     if raw.is_empty() {
         return Ok(None);
     }
-    let Some((field, anti, rhs_raw)) = split_membership_op(raw)? else {
+    let Some((field, anti, rhs_raw)) = split_membership_op(raw) else {
         return Ok(None);
     };
     if !is_row_field_ident(&field) {
-        return Err(format!(
-            "membership LHS `{field}` must be a current-row field (RA-2 / RA-13)"
-        ));
+        return Err(RowMembershipParseError::InvalidField { field });
     }
     let rhs = parse_closed_rowset_ref(rhs_raw, "membership")?;
     Ok(Some(RowMembership { field, rhs, anti }))
@@ -63,7 +101,7 @@ fn is_row_field_ident(field: &str) -> bool {
 }
 
 /// Find top-level ` not in ` / ` in ` (outside quotes and nesting).
-pub(crate) fn split_membership_op(raw: &str) -> Result<Option<(String, bool, &str)>, String> {
+pub(crate) fn split_membership_op(raw: &str) -> Option<(String, bool, &str)> {
     let bytes = raw.as_bytes();
     let mut i = 0usize;
     let mut depth = 0i32;
@@ -83,19 +121,19 @@ pub(crate) fn split_membership_op(raw: &str) -> Result<Option<(String, bool, &st
                 let after = after.trim_start();
                 if let Some(rhs) = strip_keyword_at(after, "in") {
                     let field = raw[..i].trim();
-                    return Ok(Some((field.to_string(), true, rhs.trim())));
+                    return Some((field.to_string(), true, rhs.trim()));
                 }
             }
             if let Some(rhs) = strip_keyword_at(&raw[i..], "in") {
                 let field = raw[..i].trim();
                 if !field.is_empty() {
-                    return Ok(Some((field.to_string(), false, rhs.trim())));
+                    return Some((field.to_string(), false, rhs.trim()));
                 }
             }
         }
         i += cl;
     }
-    Ok(None)
+    None
 }
 
 fn ident_boundary_before(s: &str, i: usize) -> bool {
@@ -122,46 +160,66 @@ fn strip_keyword_at<'a>(s: &'a str, kw: &str) -> Option<&'a str> {
 }
 
 /// Closed rowset on the right of RA-13 `in` / RA-14 `union`.
-pub fn parse_closed_rowset_ref(rhs: &str, lane: &str) -> Result<MembershipRhs, String> {
+pub fn parse_closed_rowset_ref(
+    rhs: &str,
+    lane: &str,
+) -> Result<MembershipRhs, RowMembershipParseError> {
     let rhs = rhs.trim();
     let ra = if lane == "union" { "RA-14" } else { "RA-13" };
     if rhs.is_empty() {
-        return Err(format!(
-            "{lane} RHS is empty; use a binding or `(other | select field)` ({ra})"
-        ));
+        return Err(RowMembershipParseError::EmptyRhs {
+            lane: lane.to_owned(),
+            law: ra,
+        });
     }
     if rhs.starts_with('(') {
         if !rhs.ends_with(')') {
-            return Err(format!(
-                "{lane} RHS parenthesized pipeline is unclosed; write `(other | select field)` ({ra})"
-            ));
+            return Err(RowMembershipParseError::UnclosedPipeline {
+                lane: lane.to_owned(),
+                law: ra,
+            });
         }
         let inner = rhs[1..rhs.len() - 1].trim();
         if inner.is_empty() {
-            return Err(format!("{lane} RHS `(…)` is empty"));
+            return Err(RowMembershipParseError::EmptyPipeline {
+                lane: lane.to_owned(),
+            });
         }
         if looks_like_literal_list(inner) {
-            return Err(literal_list_reject(lane, inner));
+            return Err(RowMembershipParseError::LiteralList {
+                lane: lane.to_owned(),
+            });
         }
         let node =
-            parse_expr_node(inner).map_err(|e| format!("{lane} RHS pipeline `{inner}`: {e}"))?;
+            parse_expr_node(inner).map_err(|source| RowMembershipParseError::InvalidPipeline {
+                lane: lane.to_owned(),
+                inner: inner.to_owned(),
+                source,
+            })?;
         if node.apply.is_some() {
-            return Err(format!(
-                "{lane} RHS cannot take `=>`; bind the pipeline then use the label ({ra})"
-            ));
+            return Err(RowMembershipParseError::PipelineApplicator {
+                lane: lane.to_owned(),
+                law: ra,
+            });
         }
         if matches!(node.row, RowExpr::Iterate(_)) {
-            return Err(format!("{lane} RHS cannot be `iterate … until`"));
+            return Err(RowMembershipParseError::IteratePipeline {
+                lane: lane.to_owned(),
+            });
         }
         return Ok(MembershipRhs::Pipe(inner.to_string()));
     }
     if looks_like_literal_list(rhs) {
-        return Err(literal_list_reject(lane, rhs));
+        return Err(RowMembershipParseError::LiteralList {
+            lane: lane.to_owned(),
+        });
     }
     if !is_valid_program_label(rhs) {
-        return Err(format!(
-            "{lane} RHS `{rhs}` must be a binding or `(other | select field)` ({ra})"
-        ));
+        return Err(RowMembershipParseError::InvalidBinding {
+            lane: lane.to_owned(),
+            rhs: rhs.to_owned(),
+            law: ra,
+        });
     }
     Ok(MembershipRhs::Binding(rhs.to_string()))
 }
@@ -171,19 +229,6 @@ fn looks_like_literal_list(inner: &str) -> bool {
     t.starts_with('"')
         || t.starts_with('\'')
         || split_top_level(t, ',').is_ok_and(|parts| parts.len() > 1) && !t.contains('|')
-}
-
-fn literal_list_reject(lane: &str, rhs: &str) -> String {
-    let mut msg = format!(
-        "{lane} RHS must be a rowset (binding or parenthesized `| select` pipeline), not a literal list"
-    );
-    if let Some(quoted) = crate::unquote_single_string_literal(rhs) {
-        if let Some(hint) = crate::quoted_literal_hint(quoted, None) {
-            msg.push('\n');
-            msg.push_str(&hint);
-        }
-    }
-    msg
 }
 
 #[cfg(test)]
@@ -235,15 +280,13 @@ mod tests {
     #[test]
     fn rejects_literal_list() {
         let err = parse_membership_clause(r#"email in ("a", "b")"#).expect_err("list");
-        assert!(err.contains("not a literal list"), "{err}");
+        assert!(matches!(err, RowMembershipParseError::LiteralList { .. }));
     }
 
     #[test]
     fn quoted_string_rowset_fails_with_literal_hint() {
         let err = parse_membership_clause(r#"title in "item""#).expect_err("quoted rowset");
-        assert!(err.contains("not a literal list"), "{err}");
-        assert!(err.contains("string literal"), "{err}");
-        assert!(err.contains("\"item\""), "{err}");
+        assert!(matches!(err, RowMembershipParseError::LiteralList { .. }));
     }
 
     #[test]

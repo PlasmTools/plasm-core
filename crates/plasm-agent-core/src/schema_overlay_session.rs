@@ -19,6 +19,22 @@ use std::env;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+#[derive(Debug, thiserror::Error)]
+pub enum SchemaOverlaySessionError {
+    #[error(transparent)]
+    Template(#[from] plasm_compile::CatalogTemplateError),
+    #[error(transparent)]
+    Runtime(#[from] RuntimeError),
+    #[error(transparent)]
+    Projection(#[from] plasm_core::SchemaOverlayError),
+    #[error("overlay pipeline references missing collect {name}")]
+    MissingCollect { name: String },
+    #[error(transparent)]
+    Schema(#[from] plasm_core::SchemaError),
+    #[error(transparent)]
+    Compilation(#[from] plasm_compile::CmlError),
+}
+
 const ENV_SCHEMA_OVERLAY_TTL_SECS: &str = "PLASM_SCHEMA_OVERLAY_TTL_SECS";
 const DEFAULT_OVERLAY_TTL_SECS: u64 = 600;
 
@@ -46,11 +62,11 @@ async fn fetch_overlay_source_response(
     capability: &str,
     http_base: &str,
     options: OverlaySourceOptions<'_>,
-) -> Result<JsonValue, String> {
+) -> Result<JsonValue, SchemaOverlaySessionError> {
     engine
         .fetch_overlay_source_response(base, compiled, capability, http_base, options)
         .await
-        .map_err(|e: RuntimeError| e.to_string())
+        .map_err(SchemaOverlaySessionError::Runtime)
 }
 
 async fn fetch_overlay_merged_response(
@@ -61,7 +77,7 @@ async fn fetch_overlay_merged_response(
     http_base: &str,
     auth_resolver: Option<Arc<AuthResolver>>,
     mode: ExecutionMode,
-) -> Result<(JsonValue, String), String> {
+) -> Result<(JsonValue, String), SchemaOverlaySessionError> {
     let source = &spec.source;
     if source.steps.is_empty() {
         let bind = if source.bind.is_empty() {
@@ -113,13 +129,14 @@ async fn fetch_overlay_merged_response(
         }
 
         let for_each_name = step.for_each.as_ref().expect("validated for_each");
-        let rows = collections
-            .get(for_each_name)
-            .ok_or_else(|| format!("overlay pipeline missing collect '{for_each_name}'"))?;
+        let rows = collections.get(for_each_name).ok_or_else(|| {
+            SchemaOverlaySessionError::MissingCollect {
+                name: for_each_name.clone(),
+            }
+        })?;
         let merge = step.merge.as_ref().expect("validated merge");
         for row in rows {
-            let bind =
-                resolve_overlay_row_bind(&step.bind, row, None, None).map_err(|e| e.to_string())?;
+            let bind = resolve_overlay_row_bind(&step.bind, row, None, None)?;
             let response = fetch_overlay_source_response(
                 engine,
                 base,
@@ -134,8 +151,7 @@ async fn fetch_overlay_merged_response(
             )
             .await?;
             pipeline_responses.push(response.clone());
-            overlay_merge_step_response(&mut merged, merge, &response)
-                .map_err(|e| e.to_string())?;
+            overlay_merge_step_response(&mut merged, merge, &response)?;
         }
     }
 
@@ -153,7 +169,7 @@ pub async fn resolve_schema_overlay_cgs(
     http_base: &str,
     auth_resolver: Option<Arc<AuthResolver>>,
     entry_id: &str,
-) -> Result<Arc<CGS>, String> {
+) -> Result<Arc<CGS>, SchemaOverlaySessionError> {
     let spec = match base.schema_overlay_spec() {
         Some(s) => s,
         None => return Ok(base),
@@ -189,9 +205,7 @@ pub async fn resolve_schema_overlay_cgs(
     }
 
     let overlay = build_schema_overlay(spec, base.as_ref(), &response)?;
-    let merged = base
-        .with_overlay(overlay)
-        .map_err(|e| format!("schema overlay merge: {e}"))?;
+    let merged = base.with_overlay(overlay)?;
     let effective = Arc::new(merged);
 
     if ttl.as_secs() > 0 {
@@ -212,7 +226,7 @@ pub async fn resolve_schema_overlay_for_host(
     compiled: Arc<plasm_compile::CompiledCatalog>,
     http_backend: &str,
     entry_id: &str,
-) -> Result<Arc<CGS>, String> {
+) -> Result<Arc<CGS>, SchemaOverlaySessionError> {
     let auth = base
         .auth
         .clone()
@@ -227,11 +241,8 @@ pub async fn resolve_schema_overlay_for_local(
     base: Arc<CGS>,
     http_backend: &str,
     entry_id: &str,
-) -> Result<Arc<CGS>, String> {
-    let compiled = Arc::new(
-        plasm_compile::compile_cgs_capability_templates(&base)
-            .map_err(|error| format!("compile local schema overlay recipes: {error}"))?,
-    );
+) -> Result<Arc<CGS>, SchemaOverlaySessionError> {
+    let compiled = Arc::new(plasm_compile::compile_cgs_capability_templates(&base)?);
     let auth = base
         .auth
         .clone()

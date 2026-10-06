@@ -254,7 +254,8 @@ mod tests {
             run_artifacts: Arc::new(RunArtifactStore::memory()),
             session_graph_persistence: None,
             oss_local_filesystem_defaults: false,
-        });
+        })
+        .expect("valid catalog fixture");
         let mut st = st;
         st.oss.execute_session_registry = reg;
         (st, store)

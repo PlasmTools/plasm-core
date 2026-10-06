@@ -2,16 +2,17 @@
 
 mod binding_continuation;
 mod binding_contract;
+pub(crate) mod error;
 mod invoke_cardinality;
-mod plan_serialize;
+pub(crate) mod plan_serialize;
 mod prelude;
 mod prerequisite_seats;
-mod relation;
-mod row_suffix;
+pub(crate) mod relation;
+pub(crate) mod row_suffix;
 mod scalar_extract;
-mod schema_validate;
+pub(crate) mod schema_validate;
 mod types;
-mod view_embed_proof;
+pub(crate) mod view_embed_proof;
 
 #[path = "../plasm_render_dag.rs"]
 mod render_dag;
@@ -64,6 +65,7 @@ pub(in crate::plasm_dag) use relation::{
 };
 #[allow(unused_imports)]
 pub(in crate::plasm_dag) use row_suffix::row_suffix_to_compute;
+pub(crate) use row_suffix::RowSuffixLoweringError;
 #[allow(unused_imports)]
 pub(in crate::plasm_dag) use types::{
     CompileState, DagNode, DagNodeSource, ExpandedProgramSurface,

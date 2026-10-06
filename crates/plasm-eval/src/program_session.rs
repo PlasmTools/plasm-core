@@ -4,11 +4,37 @@ use plasm_agent_core::{
 };
 use plasm_core::{CgsContext, TeachingExposureSession, CGS};
 use std::sync::Arc;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum ProgramSessionError {
+    #[error("unknown entity `{entity}`")]
+    UnknownEntity { entity: String },
+    #[error("teaching exposure is missing from the execute session")]
+    MissingExposure,
+    #[error("failed to prepare Python teaching wave")]
+    TeachingWave(#[from] plasm_core::prompt_render::python::PythonTeachingError),
+    #[error("failed to compile capability templates: {0}")]
+    CapabilityTemplates(#[source] plasm_compile::CatalogTemplateError),
+}
 
 #[derive(Debug)]
 pub enum ProgramCompileFailure {
     Program(ProgramDiagnostic),
     Host(plasm_agent_core::compilation_error::ExecutionFailure),
+}
+impl std::fmt::Display for ProgramCompileFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.agent_markdown())
+    }
+}
+impl std::error::Error for ProgramCompileFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Program(diagnostic) => Some(&diagnostic.stage),
+            Self::Host(failure) => Some(failure),
+        }
+    }
 }
 impl ProgramCompileFailure {
     pub fn agent_markdown(&self) -> String {
@@ -32,14 +58,16 @@ pub struct ProgramSession {
 }
 
 impl ProgramSession {
-    pub fn new(cgs: &CGS, focus: Option<&str>) -> Result<Self, String> {
+    pub fn new(cgs: &CGS, focus: Option<&str>) -> Result<Self, ProgramSessionError> {
         let mut local_cgs = cgs.clone();
         local_cgs.bind_registry_entry_id("local");
         let cgs = Arc::new(local_cgs);
         let mut entities = match focus {
             Some(entity) => {
                 if cgs.get_entity(entity).is_none() {
-                    return Err(format!("unknown entity {entity}"));
+                    return Err(ProgramSessionError::UnknownEntity {
+                        entity: entity.to_string(),
+                    });
                 }
                 vec![entity.to_string()]
             }
@@ -58,7 +86,8 @@ impl ProgramSession {
             wave.declarations
         );
         let compiled = Arc::new(
-            plasm_compile::compile_cgs_capability_templates(&cgs).map_err(|e| e.to_string())?,
+            plasm_compile::compile_cgs_capability_templates(&cgs)
+                .map_err(ProgramSessionError::CapabilityTemplates)?,
         );
         let contexts = [(
             "local".into(),
@@ -87,16 +116,18 @@ impl ProgramSession {
         Ok(Self { execute })
     }
 
-    pub fn extend(&mut self, entity: &str) -> Result<String, String> {
+    pub fn extend(&mut self, entity: &str) -> Result<String, ProgramSessionError> {
         let cgs = self.execute.cgs.clone();
         if cgs.get_entity(entity).is_none() {
-            return Err(format!("unknown entity {entity}"));
+            return Err(ProgramSessionError::UnknownEntity {
+                entity: entity.to_string(),
+            });
         }
         let mut exposure = self
             .execute
             .teaching_exposure
             .clone()
-            .ok_or("missing exposure")?;
+            .ok_or(ProgramSessionError::MissingExposure)?;
         exposure.expose_entities(&[&cgs], cgs.clone(), "local", &[entity]);
         let wave = plasm_core::prompt_render::python::prepare_python_teaching_wave(
             &exposure,
@@ -137,6 +168,9 @@ impl ProgramSession {
                 plasm_agent_core::compilation_error::CompilationError::Host(failure) => {
                     ProgramCompileFailure::Host(failure)
                 }
+                error @ plasm_agent_core::compilation_error::CompilationError::Checker(_) => {
+                    ProgramCompileFailure::Host(error.into())
+                }
             })
     }
 }
@@ -151,6 +185,18 @@ mod tests {
         )
         .unwrap();
         ProgramSession::new(&cgs, Some("Item")).unwrap()
+    }
+    #[test]
+    fn unknown_focus_is_a_typed_semantic_error() {
+        let cgs = plasm_core::load_schema(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/python_dag_slice"),
+        )
+        .unwrap();
+        assert!(matches!(
+            ProgramSession::new(&cgs, Some("MissingEntity")),
+            Err(ProgramSessionError::UnknownEntity { entity }) if entity == "MissingEntity"
+        ));
     }
     #[tokio::test]
     async fn same_session_teaches_compiles_and_repairs_python_only() {

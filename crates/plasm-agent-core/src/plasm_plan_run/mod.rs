@@ -50,6 +50,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod compute_eval;
 mod dry;
+pub use dry::DryPlanValidationError;
 pub mod evidence_plan;
 mod executable_plan;
 mod materialize;
@@ -74,7 +75,7 @@ pub(crate) use compute_eval::*;
 pub(crate) use executable_plan::*;
 pub(crate) use materialize::*;
 pub(crate) use relation_hydrate::finalize_typed_relation_materialized_node;
-pub(crate) use render_columns::RenderColumns;
+pub(crate) use render_columns::{RenderColumns, RenderColumnsError};
 
 pub use dry::{
     evaluate_plasm_comp_dry, node_dependencies, plan_dry_compact_view, render_node_operation,
@@ -87,7 +88,7 @@ pub use parse::{
     parse_plasm_line_for_session, parse_plasm_program_surface_for_dag, parse_plasm_surface_line,
     parse_plasm_surface_line_program, resolve_wire_field_list, resolve_wire_field_token,
     session_cgs_layer_stack, session_cgs_layers, symbol_map_for_plasm_surface_parse,
-    typecheck_parsed_for_session,
+    typecheck_parsed_for_session, ProgramSurfaceParseError, WireFieldTokenError,
 };
 
 #[allow(unused_imports)]
@@ -99,6 +100,7 @@ pub(crate) use orchestrator::{
     inline_row_source, inline_row_source_owned, MaterializedInputRow, MaterializedNode,
     MaterializedValueShape,
 };
+pub use parse::SessionCatalogNotLoaded;
 pub(crate) use parse::{
     entry_scoped_execute_session, propagate_row_identities, row_identities_from_entities,
 };
@@ -284,7 +286,7 @@ impl DryPlasmPlanEvaluation {
         bundle: &crate::plasm_comp_bundle::PlasmCompBundle,
         cache: &crate::operation::PlanCommitDryCache,
         review: PlanDryReview,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, crate::plasm_step_convert::StepPayloadLiftError> {
         let executable = bundle.executable();
         let artifact = bundle.artifact().clone();
         let prepared =
@@ -387,17 +389,28 @@ impl PlasmPlanApprovalPolicy {
 
 /// Parse, validate, and dry-run a typed plan JSON (test helper; production uses comp bundles).
 #[cfg(test)]
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum PlanDryTestError {
+    #[error(transparent)]
+    Validation(#[from] crate::plasm_plan::PlanValidationError),
+    #[error(transparent)]
+    Bundle(#[from] crate::plasm_comp_bundle::PlasmCompBundleError),
+    #[error(transparent)]
+    Evaluation(#[from] crate::program_diagnostic::ProgramStageError),
+}
+
+#[cfg(test)]
 pub(crate) fn evaluate_plasm_plan_dry(
     es: &ExecuteSession,
     plan: &serde_json::Value,
-) -> Result<DryPlasmPlanEvaluation, String> {
+) -> Result<DryPlasmPlanEvaluation, PlanDryTestError> {
     use crate::plasm_comp_bundle::PlasmCompBundle;
     use crate::plasm_comp_wire::plasm_comp_from_validated;
     use crate::plasm_plan::parse_and_validate_plan_json;
     let validated = parse_and_validate_plan_json(plan)?;
     let artifact = plasm_comp_from_validated(&validated);
     let bundle = PlasmCompBundle::new(artifact)?;
-    evaluate_plasm_comp_dry(es, &bundle).map_err(|e| e.into())
+    Ok(evaluate_plasm_comp_dry(es, &bundle)?)
 }
 
 fn graph_summary_with_approval_receipts(

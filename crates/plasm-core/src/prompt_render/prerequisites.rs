@@ -7,6 +7,33 @@ use crate::schema::EntityDef;
 use crate::symbol_tuning::SymbolRender;
 use crate::{CapabilityKind, CapabilitySchema, CGS};
 use std::collections::BTreeMap;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum PrerequisiteBindingRenderError {
+    #[error("prerequisite closure references missing acquisition `{id}`")]
+    MissingAcquisition { id: String },
+    #[error("prerequisite closure references missing capability `{reference:?}`")]
+    MissingCapability { reference: CapabilityRef },
+    #[error("prerequisite capability `{reference:?}` was not exposed to teaching")]
+    CapabilityNotExposed { reference: CapabilityRef },
+    #[error("provider `{instance}` references missing input port `{port}`")]
+    MissingProviderInput { instance: String, port: String },
+    #[error("prerequisite edge references missing provider output `{output}`")]
+    MissingProviderOutput { output: String },
+    #[error("prerequisite binding has an empty input path")]
+    EmptyInputPath,
+    #[error("prerequisite capability references missing catalog `{catalog}`")]
+    MissingCatalog { catalog: String },
+    #[error("provider capability `{reference:?}` has no declared entity output")]
+    MissingEntityOutput { reference: CapabilityRef },
+    #[error("provider output `{field}` could not be serialized")]
+    Serialization {
+        field: String,
+        #[source]
+        source: serde_json::Error,
+    },
+}
 
 /// Explain input/output bindings after the host has exposed every capability in the closure.
 /// This renderer is pure: acquisition remains ordinary agent-authored execution.
@@ -14,7 +41,7 @@ pub fn render_prerequisite_bindings(
     closure: &PrerequisiteClosure,
     catalogs: &BTreeMap<String, &CGS>,
     symbols: &dyn SymbolRender,
-) -> Result<String, String> {
+) -> Result<String, PrerequisiteBindingRenderError> {
     if closure.edges.is_empty() && closure.input_sources.is_empty() {
         return Ok(String::new());
     }
@@ -38,7 +65,10 @@ pub fn render_prerequisite_bindings(
         let provider = catalogs
             .get(&acquisition.provider_catalog)
             .and_then(|c| c.prerequisites.providers.get(&acquisition.provider))
-            .ok_or("missing taught provider")?;
+            .ok_or_else(|| PrerequisiteBindingRenderError::MissingProviderInput {
+                instance: acquisition.id.clone(),
+                port: "provider".into(),
+            })?;
         let filled_get = renderer.filled_get_identity_acquisition(acquisition, provider)?;
         lines.push(format!(
             "Acquisition {}: {}",
@@ -54,10 +84,12 @@ pub fn render_prerequisite_bindings(
             );
         }
         for (port, argument) in &acquisition.arguments {
-            let input = provider
-                .inputs
-                .get(port)
-                .ok_or("missing provider input mapping")?;
+            let input = provider.inputs.get(port).ok_or_else(|| {
+                PrerequisiteBindingRenderError::MissingProviderInput {
+                    instance: acquisition.id.clone(),
+                    port: port.clone(),
+                }
+            })?;
             if filled_get.is_some()
                 && renderer.is_get_identity_input(&acquisition.capability, input)?
             {
@@ -73,10 +105,11 @@ pub fn render_prerequisite_bindings(
     let mut bindings: BTreeMap<String, std::collections::BTreeSet<String>> = BTreeMap::new();
     for edge in &closure.edges {
         for binding in &edge.requirement.bindings {
-            let field = edge
-                .provider_outputs
-                .get(&binding.output)
-                .ok_or("missing output mapping")?;
+            let field = edge.provider_outputs.get(&binding.output).ok_or_else(|| {
+                PrerequisiteBindingRenderError::MissingProviderOutput {
+                    output: binding.output.clone(),
+                }
+            })?;
             let source = format!(
                 "{}.{}",
                 renderer.label(&edge.provider_instance)?,
@@ -109,23 +142,31 @@ struct BindingRenderer<'a> {
 }
 
 impl BindingRenderer<'_> {
-    fn label(&self, id: &str) -> Result<String, String> {
+    fn label(&self, id: &str) -> Result<String, PrerequisiteBindingRenderError> {
         self.closure
             .acquisitions
             .iter()
             .position(|a| a.id == id)
             .map(|index| format!("a{}", index + 1))
-            .ok_or_else(|| "missing acquisition instance".into())
+            .ok_or_else(|| PrerequisiteBindingRenderError::MissingAcquisition { id: id.into() })
     }
 
-    fn schema(&self, reference: &CapabilityRef) -> Result<&CapabilitySchema, String> {
+    fn schema(
+        &self,
+        reference: &CapabilityRef,
+    ) -> Result<&CapabilitySchema, PrerequisiteBindingRenderError> {
         self.catalogs
             .get(&reference.catalog)
             .and_then(|cgs| cgs.capabilities.get(reference.capability.as_str()))
-            .ok_or_else(|| format!("missing capability {reference:?}"))
+            .ok_or_else(|| PrerequisiteBindingRenderError::MissingCapability {
+                reference: reference.clone(),
+            })
     }
 
-    fn capability(&self, reference: &CapabilityRef) -> Result<String, String> {
+    fn capability(
+        &self,
+        reference: &CapabilityRef,
+    ) -> Result<String, PrerequisiteBindingRenderError> {
         let cap = self.schema(reference)?;
         let entity = self
             .symbols
@@ -136,9 +177,9 @@ impl BindingRenderer<'_> {
             &reference.capability,
         );
         if self.symbols.resolve_method_symbol_triple(&method).is_none() {
-            return Err(format!(
-                "prerequisite capability was not exposed: {reference:?}"
-            ));
+            return Err(PrerequisiteBindingRenderError::CapabilityNotExposed {
+                reference: reference.clone(),
+            });
         }
         Ok(taught_capability_seat(
             cap,
@@ -149,7 +190,10 @@ impl BindingRenderer<'_> {
         ))
     }
 
-    fn acquisition_returns_collection(&self, reference: &CapabilityRef) -> Result<bool, String> {
+    fn acquisition_returns_collection(
+        &self,
+        reference: &CapabilityRef,
+    ) -> Result<bool, PrerequisiteBindingRenderError> {
         Ok(matches!(
             self.schema(reference)?
                 .output_schema
@@ -159,7 +203,10 @@ impl BindingRenderer<'_> {
         ))
     }
 
-    fn get_identity_field(&self, reference: &CapabilityRef) -> Result<Option<String>, String> {
+    fn get_identity_field(
+        &self,
+        reference: &CapabilityRef,
+    ) -> Result<Option<String>, PrerequisiteBindingRenderError> {
         let cap = self.schema(reference)?;
         if cap.kind != CapabilityKind::Get {
             return Ok(None);
@@ -184,7 +231,7 @@ impl BindingRenderer<'_> {
         &self,
         reference: &CapabilityRef,
         input: &InputPath,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, PrerequisiteBindingRenderError> {
         let Some(identity) = self.get_identity_field(reference)? else {
             return Ok(false);
         };
@@ -195,16 +242,18 @@ impl BindingRenderer<'_> {
         &self,
         acquisition: &crate::prerequisites::Acquisition,
         provider: &Provider,
-    ) -> Result<Option<String>, String> {
+    ) -> Result<Option<String>, PrerequisiteBindingRenderError> {
         let Some(identity) = self.get_identity_field(&acquisition.capability)? else {
             return Ok(None);
         };
         let mut found: Option<&serde_json::Value> = None;
         for (port, argument) in &acquisition.arguments {
-            let input = provider
-                .inputs
-                .get(port)
-                .ok_or("missing provider input mapping")?;
+            let input = provider.inputs.get(port).ok_or_else(|| {
+                PrerequisiteBindingRenderError::MissingProviderInput {
+                    instance: acquisition.id.clone(),
+                    port: port.clone(),
+                }
+            })?;
             if input.path.first().is_some_and(|head| head == &identity) {
                 match argument {
                     ResolvedArgument::Constant { value } => {
@@ -252,13 +301,21 @@ impl BindingRenderer<'_> {
             .ident_sym_entity_field_for(catalog, cap.domain.as_str(), ent.id_field.as_str())
     }
 
-    fn input(&self, reference: &CapabilityRef, input: &InputPath) -> Result<String, String> {
-        let (head, tail) = input.path.split_first().ok_or("empty input binding")?;
+    fn input(
+        &self,
+        reference: &CapabilityRef,
+        input: &InputPath,
+    ) -> Result<String, PrerequisiteBindingRenderError> {
+        let (head, tail) = input
+            .path
+            .split_first()
+            .ok_or(PrerequisiteBindingRenderError::EmptyInputPath)?;
         let cap = self.schema(reference)?;
-        let cgs = self
-            .catalogs
-            .get(&reference.catalog)
-            .ok_or("missing catalog")?;
+        let cgs = self.catalogs.get(&reference.catalog).ok_or_else(|| {
+            PrerequisiteBindingRenderError::MissingCatalog {
+                catalog: reference.catalog.clone(),
+            }
+        })?;
         // Match the Python Get declaration: non-scope inputs are acquired into
         // the session, not exposed as Python call arguments.
         if cap.kind == CapabilityKind::Get
@@ -286,18 +343,29 @@ impl BindingRenderer<'_> {
         ))
     }
 
-    fn output(&self, reference: &CapabilityRef, field: &str) -> Result<String, String> {
+    fn output(
+        &self,
+        reference: &CapabilityRef,
+        field: &str,
+    ) -> Result<String, PrerequisiteBindingRenderError> {
         let cap = self.schema(reference)?;
         let entity = match cap.output_schema.as_ref().map(|o| &o.output_type) {
             Some(crate::schema::OutputType::Entity { entity_type })
             | Some(crate::schema::OutputType::Collection { entity_type, .. }) => entity_type,
-            _ => return Err("provider has no declared entity output".into()),
+            _ => {
+                return Err(PrerequisiteBindingRenderError::MissingEntityOutput {
+                    reference: reference.clone(),
+                })
+            }
         };
         let _ = entity;
         Ok(field.into())
     }
 
-    fn argument(&self, argument: &ResolvedArgument) -> Result<String, String> {
+    fn argument(
+        &self,
+        argument: &ResolvedArgument,
+    ) -> Result<String, PrerequisiteBindingRenderError> {
         match argument {
             ResolvedArgument::BusinessIdentity { consumer, field } => {
                 let symbol = field;
@@ -307,7 +375,12 @@ impl BindingRenderer<'_> {
                 ))
             }
             ResolvedArgument::Constant { value } => {
-                serde_json::to_string(value).map_err(|e| e.to_string())
+                serde_json::to_string(value).map_err(|source| {
+                    PrerequisiteBindingRenderError::Serialization {
+                        field: "prerequisite constant".into(),
+                        source,
+                    }
+                })
             }
             ResolvedArgument::BusinessInput { consumer, input } => self.input(consumer, input),
             ResolvedArgument::ProviderOutput { instance, field } => {
@@ -316,7 +389,9 @@ impl BindingRenderer<'_> {
                     .acquisitions
                     .iter()
                     .find(|a| &a.id == instance)
-                    .ok_or("missing acquisition instance")?;
+                    .ok_or_else(|| PrerequisiteBindingRenderError::MissingAcquisition {
+                        id: instance.clone(),
+                    })?;
                 Ok(format!(
                     "{}.{}",
                     self.label(instance)?,

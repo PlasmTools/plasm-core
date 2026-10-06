@@ -410,7 +410,7 @@ fn boolean_membership_branches_preserve_materialized_contracts() {
 
 // Drive the exported graph boundary directly: upstream intersection ordering is
 // not an authority ordering, including when metadata occurs under containers.
-fn decode_intersection_contracts(values: &[Type]) -> Result<Type, String> {
+fn decode_intersection_contracts(values: &[Type]) -> Result<Type, InferenceError> {
     let mut declarations = declarations::Declarations::default();
     let mut nodes = Vec::new();
     for (index, value) in values.iter().enumerate() {
@@ -554,9 +554,10 @@ fn annotation_resolution_is_upstream_owned() {
         super::annotation("list['int']", &aliases).unwrap(),
         array(integer)
     );
-    assert!(super::annotation("dict[int, str]", &aliases)
-        .unwrap_err()
-        .contains("string keys"));
+    assert!(matches!(
+        super::annotation("dict[int, str]", &aliases).unwrap_err(),
+        InferenceError::Graph(InferenceGraphError::DictionaryKeyNotString)
+    ));
     assert!(super::annotation("list[int, str]", &aliases).is_err());
     assert!(super::annotation("NotAType", &aliases).is_err());
 }
@@ -665,4 +666,25 @@ fn authored_record_returns_preserve_container_and_literal_constraints() {
             "{annotation}: {body}"
         );
     }
+}
+#[test]
+fn checker_rejection_retains_original_record() {
+    let record = monty_analysis::AnalysisDiagnostic {
+        code: "invalid-argument-type".into(),
+        message: "argument rejected".into(),
+        source: Some("analysis.py".into()),
+        span: None,
+    };
+    let failure = InferenceError::Diagnostics {
+        diagnostics: vec![record.clone()].into(),
+    };
+    let InferenceError::Diagnostics { diagnostics } = &failure else {
+        unreachable!()
+    };
+    assert_eq!(diagnostics.entries[0].diagnostic, record);
+    assert!(std::error::Error::source(&failure).is_some());
+    assert_eq!(
+        diagnostics.to_string(),
+        "invalid-argument-type: argument rejected"
+    );
 }

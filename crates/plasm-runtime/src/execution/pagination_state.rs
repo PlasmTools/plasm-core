@@ -58,18 +58,22 @@ fn compiled_query_insert(
             compiled_query_insert_http(request, key, val);
             Ok(())
         }
-        CompiledOperation::EvmCall(_) => Err(RuntimeError::ConfigurationError {
-            message: format!("pagination key '{key}' is not valid for evm_call transport"),
-        }),
-        CompiledOperation::EvmLogs(_) => Err(RuntimeError::ConfigurationError {
-            message: format!(
-                "query parameter pagination key '{key}' is not valid for evm_logs transport"
-            ),
-        }),
+        CompiledOperation::EvmCall(_) => Err(crate::PaginationFault::QueryParameterUnsupported {
+            key: key.to_owned(),
+            transport: crate::PaginationTransport::EvmCall,
+        }
+        .into()),
+        CompiledOperation::EvmLogs(_) => Err(crate::PaginationFault::QueryParameterUnsupported {
+            key: key.to_owned(),
+            transport: crate::PaginationTransport::EvmLogs,
+        }
+        .into()),
         CompiledOperation::View(_) | CompiledOperation::CredentialBind(_) => {
-            Err(RuntimeError::ConfigurationError {
-                message: format!("pagination key '{key}' is not valid for composed view transport"),
-            })
+            Err(crate::PaginationFault::QueryParameterUnsupported {
+                key: key.to_owned(),
+                transport: crate::PaginationTransport::ComposedView,
+            }
+            .into())
         }
     }
 }
@@ -79,18 +83,17 @@ fn compiled_query_remove(compiled: &mut CompiledOperation, key: &str) -> Result<
         CompiledOperation::Http(request) | CompiledOperation::GraphQl(request) => {
             if let Some(query) = request.query.as_mut() {
                 let Value::Object(fields) = query else {
-                    return Err(RuntimeError::ConfigurationError {
-                        message: "initial-only pagination query must compile to an object"
-                            .to_string(),
-                    });
+                    return Err(RuntimeError::PaginationFault(
+                        crate::PaginationFault::InitialQueryObjectRequired,
+                    ));
                 };
                 fields.shift_remove(key);
             }
             Ok(())
         }
-        _ => Err(RuntimeError::ConfigurationError {
-            message: "initial-only pagination query requires HTTP transport".to_string(),
-        }),
+        _ => Err(RuntimeError::PaginationFault(
+            crate::PaginationFault::InitialQueryHttpRequired,
+        )),
     }
 }
 
@@ -114,15 +117,16 @@ fn compiled_block_range_set(
             compiled_query_insert_http(request, "to_block", Value::String(to_block.to_string()));
             Ok(())
         }
-        CompiledOperation::EvmCall(_) => Err(RuntimeError::ConfigurationError {
-            message: "block-range pagination is not valid for evm_call transport".to_string(),
-        }),
-        CompiledOperation::View(_) | CompiledOperation::CredentialBind(_) => {
-            Err(RuntimeError::ConfigurationError {
-                message: "block-range pagination is not valid for composed view transport"
-                    .to_string(),
-            })
-        }
+        CompiledOperation::EvmCall(_) => Err(RuntimeError::PaginationFault(
+            crate::PaginationFault::BlockRangeUnsupported {
+                transport: crate::PaginationTransport::EvmCall,
+            },
+        )),
+        CompiledOperation::View(_) | CompiledOperation::CredentialBind(_) => Err(
+            RuntimeError::PaginationFault(crate::PaginationFault::BlockRangeUnsupported {
+                transport: crate::PaginationTransport::ComposedView,
+            }),
+        ),
     }
 }
 
@@ -137,10 +141,9 @@ pub(crate) fn merge_pagination_into_body(
     let target_map: &mut IndexMap<String, Value> =
         if let Some(path) = merge_path.filter(|p| !p.is_empty()) {
             let Value::Object(root) = body else {
-                return Err(RuntimeError::ConfigurationError {
-                    message: "pagination with body_merge_path requires a JSON object request body"
-                        .into(),
-                });
+                return Err(RuntimeError::PaginationFault(
+                    crate::PaginationFault::BodyObjectRequired,
+                ));
             };
             let mut cur = root;
             for segment in path {
@@ -150,20 +153,19 @@ pub(crate) fn merge_pagination_into_body(
                 match entry {
                     Value::Object(next) => cur = next,
                     _ => {
-                        return Err(RuntimeError::ConfigurationError {
-                            message: format!(
-                                "pagination body_merge_path: expected object at segment '{segment}'"
-                            ),
-                        });
+                        return Err(crate::PaginationFault::BodyPathObjectRequired {
+                            segment: segment.clone(),
+                        }
+                        .into());
                     }
                 }
             }
             cur
         } else {
             let Value::Object(m) = body else {
-                return Err(RuntimeError::ConfigurationError {
-                    message: "pagination body injection requires a JSON object request body".into(),
-                });
+                return Err(RuntimeError::PaginationFault(
+                    crate::PaginationFault::BodyObjectRequired,
+                ));
             };
             m
         };
@@ -176,9 +178,9 @@ fn response_map(
 ) -> Result<&serde_json::Map<String, serde_json::Value>, RuntimeError> {
     match v {
         serde_json::Value::Object(m) => Ok(m),
-        _ => Err(RuntimeError::ConfigurationError {
-            message: "expected JSON object in paginated API response".into(),
-        }),
+        _ => Err(RuntimeError::PaginationFault(
+            crate::PaginationFault::ResponseObjectRequired,
+        )),
     }
 }
 
@@ -196,8 +198,8 @@ pub(crate) fn pagination_context_map<'a>(
             } else {
                 cur.get(seg)
             }
-            .ok_or_else(|| RuntimeError::ConfigurationError {
-                message: format!("pagination response_prefix: missing segment '{seg}'"),
+            .ok_or_else(|| crate::PaginationFault::ResponseSegmentMissing {
+                segment: seg.clone(),
             })?;
         }
     }
@@ -230,17 +232,14 @@ impl PaginationLoopState {
     ) -> Result<Self, RuntimeError> {
         if pconf.location == plasm_compile::PaginationLocation::BlockRange {
             if user.from_block.is_none() {
-                return Err(RuntimeError::ConfigurationError {
-                    message:
-                        "block_range pagination requires QueryPagination.from_block / --from-block"
-                            .to_string(),
-                });
+                return Err(RuntimeError::PaginationFault(
+                    crate::PaginationFault::FromBlockMissing,
+                ));
             }
             if consume.fetch_all && user.to_block.is_none() {
-                return Err(RuntimeError::ConfigurationError {
-                    message: "block_range pagination with --all requires QueryPagination.to_block / --to-block"
-                        .to_string(),
-                });
+                return Err(RuntimeError::PaginationFault(
+                    crate::PaginationFault::ToBlockMissing,
+                ));
             }
             return Ok(Self {
                 param_values: indexmap::IndexMap::new(),
@@ -301,11 +300,9 @@ impl PaginationLoopState {
 
         // BlockRange is handled separately.
         if pconf.location == plasm_compile::PaginationLocation::BlockRange {
-            let from_block = self
-                .from_block
-                .ok_or_else(|| RuntimeError::ConfigurationError {
-                    message: "block_range pagination requires a starting block".to_string(),
-                })?;
+            let from_block = self.from_block.ok_or_else(|| {
+                RuntimeError::PaginationFault(crate::PaginationFault::FromBlockMissing)
+            })?;
             let span = u64::from(default_lim).max(1);
             let mut to_block = from_block.saturating_add(span.saturating_sub(1));
             if let Some(final_to) = self.final_to_block {
@@ -328,16 +325,18 @@ impl PaginationLoopState {
                     compiled_block_range_set(compiled, from_block, to_block)?;
                 }
                 CompiledOperation::EvmCall(_) => {
-                    return Err(RuntimeError::ConfigurationError {
-                        message: "block_range pagination is not valid for evm_call transport"
-                            .to_string(),
-                    });
+                    return Err(RuntimeError::PaginationFault(
+                        crate::PaginationFault::BlockRangeUnsupported {
+                            transport: crate::PaginationTransport::EvmCall,
+                        },
+                    ));
                 }
                 CompiledOperation::View(_) | CompiledOperation::CredentialBind(_) => {
-                    return Err(RuntimeError::ConfigurationError {
-                        message: "block_range pagination is not valid for composed view transport"
-                            .to_string(),
-                    });
+                    return Err(RuntimeError::PaginationFault(
+                        crate::PaginationFault::BlockRangeUnsupported {
+                            transport: crate::PaginationTransport::ComposedView,
+                        },
+                    ));
                 }
             }
             self.last_requested_to_block = Some(to_block);
@@ -376,10 +375,9 @@ impl PaginationLoopState {
                     | CompiledOperation::GraphQl(ref mut req) = compiled
                     {
                         if req.body_format == plasm_compile::HttpBodyFormat::Multipart {
-                            return Err(RuntimeError::ConfigurationError {
-                                message: "pagination with location body is not supported for multipart HTTP requests"
-                                    .to_string(),
-                            });
+                            return Err(RuntimeError::PaginationFault(
+                                crate::PaginationFault::MultipartUnsupported,
+                            ));
                         }
                         if req.body.is_none() {
                             req.body = Some(Value::Object(IndexMap::new()));

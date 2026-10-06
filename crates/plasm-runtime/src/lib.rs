@@ -102,6 +102,7 @@ pub mod auth_resolution;
 pub mod binding_kv;
 pub mod branch_commit;
 pub mod cache;
+mod chain_error;
 pub mod credentials;
 pub mod error;
 pub mod evm;
@@ -113,6 +114,7 @@ pub mod http_config;
 pub mod http_resilience;
 pub mod http_trace;
 pub mod http_transport;
+mod http_wire_error;
 pub mod materialization;
 pub mod materialization_conflict;
 pub mod mockserver;
@@ -120,13 +122,17 @@ pub mod oauth_client;
 pub mod oauth_token_debug;
 pub mod paginated_collect;
 pub mod preflight;
+mod preflight_error;
 pub mod query_index;
 pub mod replay;
+mod request_error;
+mod response_narrow_error;
 pub mod row_compute;
 pub mod row_predicate;
 pub mod runtime_error_render;
 pub mod session_graph_cache;
 pub mod top_k;
+mod view_plan_error;
 pub mod workflow_reconcile;
 
 mod value_match;
@@ -164,7 +170,7 @@ pub use api_error_detail::{
 pub use auth::*;
 pub use auth_resolution::{
     auth_resolution_mode_from_env, auth_resolution_mode_from_str, validate_principal_for_mode,
-    AuthResolutionMode,
+    AuthResolutionError, AuthResolutionMode,
 };
 pub use branch_commit::{
     detect_materialization_conflicts, BranchMaterializationBase, WriteConflictDetails,

@@ -1,4 +1,4 @@
-use crate::commands::common;
+use crate::commands::{common, CommandError, InputKind};
 use indexmap::IndexMap;
 use plasm_compile::CmlRequest;
 use plasm_core::{
@@ -44,11 +44,7 @@ impl CheckResult {
 const VALIDATION_PAGINATION_MAX_ITEMS: usize = 12;
 
 /// Run exhaustive validation of a CGS against a hermit mock.
-pub async fn execute(
-    schema: &str,
-    spec: &str,
-    require_complete: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn execute(schema: &str, spec: &str, require_complete: bool) -> Result<(), CommandError> {
     println!("Loading schema: {}", schema);
     let cgs = common::load_cgs(Path::new(schema))?;
     println!(
@@ -60,7 +56,10 @@ pub async fn execute(
     println!("\nStarting hermit mock from: {spec}");
     let spec_path = Path::new(spec);
     if !spec_path.exists() {
-        return Err(format!("Spec file not found: {spec}").into());
+        return Err(CommandError::InputMissing {
+            kind: InputKind::OpenApiSpec,
+            path: spec.into(),
+        });
     }
 
     let external = beavuck_hermit::spec_loader::load(spec_path);
@@ -73,7 +72,9 @@ pub async fn execute(
             missing.join("\n")
         );
         if require_complete {
-            return Err(message.into());
+            return Err(CommandError::UncoveredOpenApiOperations {
+                operations: missing,
+            });
         }
         println!("{message}");
     }
@@ -406,10 +407,10 @@ pub async fn execute(
     );
 
     if total_fail > 0 || total_warn > 0 {
-        return Err(format!(
-            "Hermit conformance incomplete: {total_fail} failures, {total_warn} warnings"
-        )
-        .into());
+        return Err(CommandError::ConformanceIncomplete {
+            failures: total_fail,
+            warnings: total_warn,
+        });
     }
     println!("\nAll exercised checks passed; {total_skip} skipped checks remain unverified.");
 
@@ -740,7 +741,7 @@ fn query_mapping_has_pagination(cap: &plasm_core::CapabilitySchema) -> bool {
 
 async fn start_hermit(
     spec_path: &Path,
-) -> Result<(String, tokio::task::JoinHandle<()>), Box<dyn std::error::Error>> {
+) -> Result<(String, tokio::task::JoinHandle<()>), CommandError> {
     let spec = beavuck_hermit::spec_loader::load(spec_path);
     let routes = beavuck_hermit::spec_parser::extract_routes(&spec);
     let router = beavuck_hermit::router::build_spec_responses(routes);

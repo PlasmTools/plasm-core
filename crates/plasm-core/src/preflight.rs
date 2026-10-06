@@ -97,10 +97,98 @@ pub struct PreflightFieldPath {
 
 const RESERVED_PREFIX: &str = "plasm_execute_";
 
-fn preflight_err(cap: &CapabilitySchema, message: String) -> SchemaError {
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum PreflightValidationError {
+    #[error("idempotent output requires a read-backed reconciliation contract")]
+    ReconciliationMissing,
+    #[error("reconciliation read capability does not exist")]
+    ReconciliationCapabilityMissing,
+    #[error("reconciliation must use an effect-free read")]
+    ReconciliationEffectful,
+    #[error("reconciliation requires a non-empty identity_key")]
+    ReconciliationIdentityMissing,
+    #[error("reconciliation read entity does not exist")]
+    ReconciliationEntityMissing,
+    #[error("reconciliation read must expose identity field {field}")]
+    ReconciliationFieldMissing { field: String },
+    #[error("{step} hydrate_invoke_target: prefix must not be empty")]
+    HydrationPrefixEmpty { step: String },
+    #[error("{step} hydrate_invoke_target is not allowed on kind create")]
+    HydrationOnCreate { step: String },
+    #[error("{step} {kind}: merge must not be empty")]
+    MergeEmpty {
+        step: String,
+        kind: PreflightMergeKind,
+    },
+    #[error("{step} query_pick: scope must not be empty")]
+    QueryScopeEmpty { step: String },
+    #[error("{step} label_ids_delta: from_preflight.prefix must not be empty")]
+    LabelPrefixEmpty { step: String },
+    #[error("{step} existence_check requires capability identity_key")]
+    ExistenceIdentityMissing { step: String },
+    #[error("{step} references unknown capability '{capability}'")]
+    CapabilityMissing { step: String, capability: String },
+    #[error("{step} capability '{capability}' must be {expected}")]
+    CapabilityKind {
+        step: String,
+        capability: String,
+        expected: PreflightReadKind,
+    },
+    #[error("{step} is only allowed on create/update/delete/action")]
+    MutatingCapabilityRequired { step: String },
+    #[error("{step} references unknown param '{param}'")]
+    ParamMissing { step: String, param: String },
+    #[error("{step} get '{capability}' is for entity {actual}, expected {expected}")]
+    GetDomainMismatch {
+        step: String,
+        capability: String,
+        actual: String,
+        expected: String,
+    },
+    #[error("{step} get '{capability}' is for entity {actual}, param '{param}' is entity_ref to {expected}")]
+    ParamDomainMismatch {
+        step: String,
+        capability: String,
+        actual: String,
+        param: String,
+        expected: String,
+    },
+    #[error("{step} param '{param}' references unknown value domain '{value_ref}'")]
+    ParamValueMissing {
+        step: String,
+        param: String,
+        value_ref: String,
+    },
+    #[error("{step} param '{param}' must be entity_ref")]
+    ParamNotEntityRef { step: String, param: String },
+    #[error("{step} merge key '{wire_key}' must not use reserved prefix 'plasm_execute_'")]
+    ReservedWireKey { step: String, wire_key: String },
+    #[error("duplicate preflight merge wire key '{wire_key}' ({step})")]
+    DuplicateWireKey { step: String, wire_key: String },
+}
+
+#[derive(Debug, Clone, Copy, thiserror::Error)]
+pub enum PreflightMergeKind {
+    #[error("hydrate_entity_ref_param")]
+    HydrateEntityRefParam,
+    #[error("query_pick")]
+    QueryPick,
+}
+
+#[derive(Debug, Clone, Copy, thiserror::Error)]
+pub enum PreflightReadKind {
+    #[error("kind get")]
+    Get,
+    #[error("kind query or search")]
+    QueryOrSearch,
+    #[error("query, search, or get")]
+    AnyRead,
+}
+
+fn preflight_err(cap: &CapabilitySchema, source: PreflightValidationError) -> SchemaError {
     SchemaError::PreflightInvalid {
         capability: cap.name.to_string(),
-        message,
+        source,
     }
 }
 
@@ -111,14 +199,15 @@ pub fn validate_capability_preflight(cgs: &CGS, cap: &CapabilitySchema) -> Resul
         .as_ref()
         .filter(|output| output.idempotent)
     {
-        let reconcile = output.reconcile.as_ref().ok_or_else(|| {
+        let reconcile = output
+            .reconcile
+            .as_ref()
+            .ok_or_else(|| preflight_err(cap, PreflightValidationError::ReconciliationMissing))?;
+        let lookup = cgs.get_capability(&reconcile.via).ok_or_else(|| {
             preflight_err(
                 cap,
-                "idempotent output requires a read-backed reconciliation contract".into(),
+                PreflightValidationError::ReconciliationCapabilityMissing,
             )
-        })?;
-        let lookup = cgs.get_capability(&reconcile.via).ok_or_else(|| {
-            preflight_err(cap, "reconciliation read capability does not exist".into())
         })?;
         if !matches!(
             lookup.kind,
@@ -126,7 +215,7 @@ pub fn validate_capability_preflight(cgs: &CGS, cap: &CapabilitySchema) -> Resul
         ) {
             return Err(preflight_err(
                 cap,
-                "reconciliation must use an effect-free read".into(),
+                PreflightValidationError::ReconciliationEffectful,
             ));
         }
         let keys = cap
@@ -134,20 +223,19 @@ pub fn validate_capability_preflight(cgs: &CGS, cap: &CapabilitySchema) -> Resul
             .as_ref()
             .filter(|keys| !keys.is_empty())
             .ok_or_else(|| {
-                preflight_err(
-                    cap,
-                    "reconciliation requires a non-empty identity_key".into(),
-                )
+                preflight_err(cap, PreflightValidationError::ReconciliationIdentityMissing)
             })?;
         let entity = cgs.get_entity(lookup.domain.as_str()).ok_or_else(|| {
-            preflight_err(cap, "reconciliation read entity does not exist".into())
+            preflight_err(cap, PreflightValidationError::ReconciliationEntityMissing)
         })?;
         for key in keys {
             validate_param_exists(cap, key, "reconciliation identity")?;
             if !entity.fields.contains_key(key.as_str()) {
                 return Err(preflight_err(
                     cap,
-                    format!("reconciliation read must expose identity field {key}"),
+                    PreflightValidationError::ReconciliationFieldMissing {
+                        field: key.to_string(),
+                    },
                 ));
             }
         }
@@ -168,13 +256,17 @@ pub fn validate_capability_preflight(cgs: &CGS, cap: &CapabilitySchema) -> Resul
                 if prefix.trim().is_empty() {
                     return Err(preflight_err(
                         cap,
-                        format!("{step_label} hydrate_invoke_target: prefix must not be empty"),
+                        PreflightValidationError::HydrationPrefixEmpty {
+                            step: step_label.clone(),
+                        },
                     ));
                 }
                 if cap.kind == CapabilityKind::Create {
                     return Err(preflight_err(
                         cap,
-                        format!("{step_label} hydrate_invoke_target is not allowed on kind create"),
+                        PreflightValidationError::HydrationOnCreate {
+                            step: step_label.clone(),
+                        },
                     ));
                 }
                 validate_get_on_domain(cgs, cap, get, &step_label)?;
@@ -185,7 +277,10 @@ pub fn validate_capability_preflight(cgs: &CGS, cap: &CapabilitySchema) -> Resul
                 if merge.is_empty() {
                     return Err(preflight_err(
                         cap,
-                        format!("{step_label} hydrate_entity_ref_param: merge must not be empty"),
+                        PreflightValidationError::MergeEmpty {
+                            step: step_label.clone(),
+                            kind: PreflightMergeKind::HydrateEntityRefParam,
+                        },
                     ));
                 }
                 validate_get_for_param_entity(cgs, cap, param, get, &step_label)?;
@@ -208,7 +303,10 @@ pub fn validate_capability_preflight(cgs: &CGS, cap: &CapabilitySchema) -> Resul
                 if merge.is_empty() {
                     return Err(preflight_err(
                         cap,
-                        format!("{step_label} query_pick: merge must not be empty"),
+                        PreflightValidationError::MergeEmpty {
+                            step: step_label.clone(),
+                            kind: PreflightMergeKind::QueryPick,
+                        },
                     ));
                 }
                 validate_query_cap(cgs, query, &step_label)?;
@@ -216,7 +314,9 @@ pub fn validate_capability_preflight(cgs: &CGS, cap: &CapabilitySchema) -> Resul
                 if scope.is_empty() {
                     return Err(preflight_err(
                         cap,
-                        format!("{step_label} query_pick: scope must not be empty"),
+                        PreflightValidationError::QueryScopeEmpty {
+                            step: step_label.clone(),
+                        },
                     ));
                 }
                 for wire_key in merge.keys() {
@@ -237,9 +337,9 @@ pub fn validate_capability_preflight(cgs: &CGS, cap: &CapabilitySchema) -> Resul
                 if from_preflight.prefix.trim().is_empty() {
                     return Err(preflight_err(
                         cap,
-                        format!(
-                            "{step_label} label_ids_delta: from_preflight.prefix must not be empty"
-                        ),
+                        PreflightValidationError::LabelPrefixEmpty {
+                            step: step_label.clone(),
+                        },
                     ));
                 }
                 validate_query_cap(cgs, lookup, &step_label)?;
@@ -259,9 +359,9 @@ pub fn validate_capability_preflight(cgs: &CGS, cap: &CapabilitySchema) -> Resul
                     .ok_or_else(|| {
                         preflight_err(
                             cap,
-                            format!(
-                                "{step_label} existence_check requires capability identity_key"
-                            ),
+                            PreflightValidationError::ExistenceIdentityMissing {
+                                step: step_label.clone(),
+                            },
                         )
                     })?;
                 for key in keys {
@@ -270,9 +370,10 @@ pub fn validate_capability_preflight(cgs: &CGS, cap: &CapabilitySchema) -> Resul
                 let lookup = cgs.get_capability(query).ok_or_else(|| {
                     preflight_err(
                         cap,
-                        format!(
-                            "{step_label} existence_check references unknown capability '{query}'"
-                        ),
+                        PreflightValidationError::CapabilityMissing {
+                            step: step_label.clone(),
+                            capability: query.clone(),
+                        },
                     )
                 })?;
                 match lookup.kind {
@@ -280,9 +381,11 @@ pub fn validate_capability_preflight(cgs: &CGS, cap: &CapabilitySchema) -> Resul
                     _ => {
                         return Err(preflight_err(
                             cap,
-                            format!(
-                                "{step_label} existence_check lookup '{query}' must be query, search, or get"
-                            ),
+                            PreflightValidationError::CapabilityKind {
+                                step: step_label.clone(),
+                                capability: query.clone(),
+                                expected: PreflightReadKind::AnyRead,
+                            },
                         ));
                     }
                 }
@@ -300,7 +403,9 @@ fn require_mutating_kind(cap: &CapabilitySchema, step_label: &str) -> Result<(),
         | CapabilityKind::Action => Ok(()),
         CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get => Err(preflight_err(
             cap,
-            format!("{step_label} is only allowed on create/update/delete/action"),
+            PreflightValidationError::MutatingCapabilityRequired {
+                step: step_label.to_owned(),
+            },
         )),
     }
 }
@@ -313,7 +418,10 @@ fn validate_param_exists(
     if !cap.input_fields().any(|field| field.name == param) {
         return Err(preflight_err(
             cap,
-            format!("{step_label} references unknown param '{param}'"),
+            PreflightValidationError::ParamMissing {
+                step: step_label.to_owned(),
+                param: param.to_owned(),
+            },
         ));
     }
     Ok(())
@@ -328,22 +436,31 @@ fn validate_get_on_domain(
     let get_cap = cgs.get_capability(get_name).ok_or_else(|| {
         preflight_err(
             cap,
-            format!("{step_label} references unknown capability '{get_name}'"),
+            PreflightValidationError::CapabilityMissing {
+                step: step_label.to_owned(),
+                capability: get_name.to_owned(),
+            },
         )
     })?;
     if get_cap.kind != CapabilityKind::Get {
         return Err(preflight_err(
             cap,
-            format!("{step_label} capability '{get_name}' must be kind get"),
+            PreflightValidationError::CapabilityKind {
+                step: step_label.to_owned(),
+                capability: get_name.to_owned(),
+                expected: PreflightReadKind::Get,
+            },
         ));
     }
     if get_cap.domain != cap.domain {
         return Err(preflight_err(
             cap,
-            format!(
-                "{step_label} get '{get_name}' is for entity {}, expected {}",
-                get_cap.domain, cap.domain
-            ),
+            PreflightValidationError::GetDomainMismatch {
+                step: step_label.to_owned(),
+                capability: get_name.to_owned(),
+                actual: get_cap.domain.to_string(),
+                expected: cap.domain.to_string(),
+            },
         ));
     }
     Ok(())
@@ -359,23 +476,33 @@ fn validate_get_for_param_entity(
     let get_cap = cgs.get_capability(get_name).ok_or_else(|| {
         preflight_err(
             cap,
-            format!("{step_label} references unknown capability '{get_name}'"),
+            PreflightValidationError::CapabilityMissing {
+                step: step_label.to_owned(),
+                capability: get_name.to_owned(),
+            },
         )
     })?;
     if get_cap.kind != CapabilityKind::Get {
         return Err(preflight_err(
             cap,
-            format!("{step_label} capability '{get_name}' must be kind get"),
+            PreflightValidationError::CapabilityKind {
+                step: step_label.to_owned(),
+                capability: get_name.to_owned(),
+                expected: PreflightReadKind::Get,
+            },
         ));
     }
     let target = param_entity_ref_target(cgs, cap, param, step_label)?;
     if get_cap.domain.as_str() != target.as_str() {
         return Err(preflight_err(
             cap,
-            format!(
-                "{step_label} get '{get_name}' is for entity {}, param '{param}' is entity_ref to {target}",
-                get_cap.domain
-            ),
+            PreflightValidationError::ParamDomainMismatch {
+                step: step_label.to_owned(),
+                capability: get_name.to_owned(),
+                actual: get_cap.domain.to_string(),
+                param: param.to_owned(),
+                expected: target,
+            },
         ));
     }
     Ok(())
@@ -390,15 +517,42 @@ fn param_entity_ref_target(
     let field = cap
         .input_fields()
         .find(|field| field.name == param)
-        .ok_or_else(|| preflight_err(cap, format!("{step_label} unknown param '{param}'")))?;
-    let nv = field
-        .named_value(cgs)
-        .map_err(|e| preflight_err(cap, format!("{step_label} param '{param}': {e}")))?;
+        .ok_or_else(|| {
+            preflight_err(
+                cap,
+                PreflightValidationError::ParamMissing {
+                    step: step_label.to_owned(),
+                    param: param.to_owned(),
+                },
+            )
+        })?;
+    let crate::schema::InputFieldWire::Registry(value_ref) = &field.wire else {
+        return Err(preflight_err(
+            cap,
+            PreflightValidationError::ParamNotEntityRef {
+                step: step_label.to_owned(),
+                param: param.to_owned(),
+            },
+        ));
+    };
+    let nv = cgs.values.get(value_ref.as_str()).ok_or_else(|| {
+        preflight_err(
+            cap,
+            PreflightValidationError::ParamValueMissing {
+                step: step_label.to_owned(),
+                param: param.to_owned(),
+                value_ref: value_ref.to_string(),
+            },
+        )
+    })?;
     match &nv.field_type {
         FieldType::EntityRef { target, .. } => Ok(target.to_string()),
         _ => Err(preflight_err(
             cap,
-            format!("{step_label} param '{param}' must be entity_ref"),
+            PreflightValidationError::ParamNotEntityRef {
+                step: step_label.to_owned(),
+                param: param.to_owned(),
+            },
         )),
     }
 }
@@ -408,13 +562,20 @@ fn validate_query_cap(cgs: &CGS, query_name: &str, step_label: &str) -> Result<(
         .get_capability(query_name)
         .ok_or_else(|| SchemaError::PreflightInvalid {
             capability: query_name.to_string(),
-            message: format!("{step_label} references unknown capability '{query_name}'"),
+            source: PreflightValidationError::CapabilityMissing {
+                step: step_label.to_owned(),
+                capability: query_name.to_owned(),
+            },
         })?;
     match q.kind {
         CapabilityKind::Query | CapabilityKind::Search => Ok(()),
         _ => Err(SchemaError::PreflightInvalid {
             capability: query_name.to_string(),
-            message: format!("{step_label} capability '{query_name}' must be kind query or search"),
+            source: PreflightValidationError::CapabilityKind {
+                step: step_label.to_owned(),
+                capability: query_name.to_owned(),
+                expected: PreflightReadKind::QueryOrSearch,
+            },
         }),
     }
 }
@@ -427,9 +588,10 @@ fn reject_reserved_wire_key(
     if wire_key.starts_with(RESERVED_PREFIX) {
         return Err(preflight_err(
             cap,
-            format!(
-                "{step_label} merge key '{wire_key}' must not use reserved prefix '{RESERVED_PREFIX}'"
-            ),
+            PreflightValidationError::ReservedWireKey {
+                step: step_label.to_owned(),
+                wire_key: wire_key.to_owned(),
+            },
         ));
     }
     Ok(())
@@ -444,7 +606,10 @@ fn reject_duplicate_wire_key(
     if !seen.insert(wire_key.to_string()) {
         return Err(preflight_err(
             cap,
-            format!("duplicate preflight merge wire key '{wire_key}' ({step_label})"),
+            PreflightValidationError::DuplicateWireKey {
+                step: step_label.to_owned(),
+                wire_key: wire_key.to_owned(),
+            },
         ));
     }
     Ok(())

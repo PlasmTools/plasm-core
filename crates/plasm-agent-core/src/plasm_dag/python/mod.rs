@@ -37,6 +37,7 @@ use ruff_python_ast::{Expr as PyExpr, Stmt};
 use ruff_text_size::Ranged;
 
 use crate::program_rejection::PythonLoweringError;
+use crate::program_rejection::{PythonProgramError, PythonSourceError};
 
 fn lower_python_program(
     es: &ExecuteSession,
@@ -80,7 +81,7 @@ fn lower_python_program(
                     .resolve_session_entity(&local)
                     .is_ok())
         {
-            return Err("build local shadows a reserved host binding".into());
+            return Err(PythonProgramError::BuildLocalShadowsReservedBinding.into());
         }
     }
     for parameter in root
@@ -92,15 +93,16 @@ fn lower_python_program(
         .chain(&root.build.parameters.kwonlyargs)
     {
         if parameter.parameter.name.as_str() != "self" {
-            let value = parameter
-                .default
-                .as_deref()
-                .ok_or("missing bound build default")?;
+            let value = parameter.default.as_deref().ok_or(
+                crate::program_rejection::PythonLoweringInvariantError::MissingBoundBuildDefault,
+            )?;
             let binding = lower.fresh();
             lower.expr(value, Some(&binding))?;
             lower.remember_static_sequence(&binding, value);
             if let Some(annotation) = parameter.parameter.annotation.as_deref() {
-                let input = text::inferred_schema(es, &lower.state, &binding, 0)?.row_contract()?;
+                let input = text::inferred_schema(es, &lower.state, &binding, 0)?
+                    .row_contract()
+                    .map_err(PythonLoweringError::from)?;
                 crate::python_compute::check_callback_closed_return(
                     es,
                     annotation,
@@ -126,9 +128,12 @@ fn lower_python_program(
         lower.statement(stmt)?;
     }
     let value = match &flow.exit {
-        monty_analysis::FlowExit::Return(Some(value)) |
-        monty_analysis::FlowExit::Branch { source_expression: Some(value), .. } => value,
-        _ => return Err("build requires materialized return roots; branching roots have no DAG return representation".into()),
+        monty_analysis::FlowExit::Return(Some(value))
+        | monty_analysis::FlowExit::Branch {
+            source_expression: Some(value),
+            ..
+        } => value,
+        _ => return Err(PythonProgramError::BranchingReturnUnsupported.into()),
     };
     let roots = if let PyExpr::Tuple(tuple) = value {
         tuple
@@ -140,14 +145,14 @@ fn lower_python_program(
         vec![lower.expr(value, None)?]
     };
     if roots.is_empty() {
-        return Err("return must contain at least one rowset".into());
+        return Err(PythonProgramError::EmptyReturn.into());
     }
     let nodes = lower
         .state
         .nodes
         .iter()
         .map(|n| super::plan_serialize::lower_plan_node(n))
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Vec<_>>();
     let ret = if roots.len() > 1 {
         crate::plasm_plan::PlanReturn::Parallel {
             nodes: roots.clone(),
@@ -176,7 +181,7 @@ fn lower_python_program(
     // reparses serialized runtime steps to infer whether a declaration was used.
     for name in root.methods.keys() {
         if !lower.used_methods.contains(name) {
-            return Err(format!("compute {name} requires a typed DAG callsite").into());
+            return Err(PythonProgramError::UnusedCompute { name: name.clone() }.into());
         }
     }
     let bundle = PlasmCompBundle::new(artifact)?;
@@ -193,23 +198,23 @@ pub(crate) fn compile_python_program_checked(
         return Err(ProgramStageError::Parse {
             correction: "Python program exceeds 32 KiB source budget".into(),
             span_offset: None,
+            error: std::sync::Arc::new(
+                crate::program_diagnostic::ProgramParseError::SourceBudgetExceeded,
+            ),
         });
     }
     let ast =
         ruff_python_parser::parse_module(source).map_err(|error| ProgramStageError::Parse {
             correction: format!("Python syntax: {error}"),
             span_offset: Some(u32::from(error.location.start()) as usize),
+            error: std::sync::Arc::new(crate::program_diagnostic::ProgramParseError::Python(error)),
         })?;
     let bundle = lower_python_program(es, source, ast.suite()).map_err(|error| {
         ProgramStageError::PythonLowering {
             error: error.into(),
         }
     })?;
-    crate::plasm_plan_run::evaluate_plasm_comp_dry(es, &bundle).map_err(|correction| {
-        ProgramStageError::Plan {
-            correction: format!("Python plan: {correction}"),
-        }
-    })?;
+    crate::plasm_plan_run::evaluate_plasm_comp_dry(es, &bundle)?;
     Ok(bundle)
 }
 
@@ -311,7 +316,12 @@ impl Lower<'_> {
         if let Some(n) = name(e) {
             let n = self.scoped_binding(n).to_owned();
             if !self.state.contains(&n) {
-                return Err(at(e, "unknown local rowset"));
+                return Err(at(
+                    e,
+                    PythonSourceError::UnknownLocalRowset {
+                        binding: n.to_owned(),
+                    },
+                ));
             }
             let index = self.state.labels[&n];
             let target = self.state.nodes[index].id.clone();
@@ -354,13 +364,13 @@ impl Lower<'_> {
             return self.record_value(e, &id);
         }
         let PyExpr::Call(call) = e else {
-            return Err(at(e, "expected a catalog read or rowset operation"));
+            return Err(at(e, PythonSourceError::ExpectedRowsetExpression));
         };
         if name(&call.func).is_some_and(|n| self.callbacks.contains_key(n)) {
             return self.callback_value_call(e, call, &id);
         }
         let PyExpr::Attribute(attr) = &*call.func else {
-            return Err(at(e, "dynamic calls are not admitted"));
+            return Err(at(e, PythonSourceError::DynamicCall));
         };
         if let Some(token) = name(&attr.value) {
             if let Ok(owner) = self
@@ -403,14 +413,15 @@ impl Lower<'_> {
             .is_ok()
         {
             let source = self.expr(&attr.value, None)?;
-            let contract =
-                super::binding_contract(&self.state, &source).ok_or("missing receiver contract")?;
+            let contract = super::binding_contract(&self.state, &source).ok_or(
+                crate::program_rejection::PythonLoweringInvariantError::ReceiverContractMissing,
+            )?;
             if !contract.supports_method_invoke()
                 || !contract.row_cardinality.permits_scalar_field_extract()
             {
                 return Err(at(
                     e,
-                    "write receiver requires a proven singleton with entity identity",
+                    PythonSourceError::WriteReceiverNeedsIdentitySingleton,
                 ));
             }
             let owner = plasm_core::symbol_tuning::EntityBinding {
@@ -425,12 +436,24 @@ impl Lower<'_> {
                 &owner,
             )?;
             let catalog_operations::ResolvedCatalogMethod::Write(write) = resolved else {
-                return Err(at(e, "method is not a mutation or action"));
+                return Err(at(
+                    e,
+                    PythonSourceError::ExpectedWriteMethod {
+                        method: attr.attr.to_string(),
+                    },
+                ));
             };
             return self.write(e, call, owner, write, Some(&source), &id);
         }
-        let operation = row_operations::RowOperation::parse(attr.attr.as_str())
-            .ok_or_else(|| at(e, "unsupported rowset operation"))?;
+        let operation =
+            row_operations::RowOperation::parse(attr.attr.as_str()).ok_or_else(|| {
+                at(
+                    e,
+                    PythonSourceError::UnknownRowOperation {
+                        operation: attr.attr.to_string(),
+                    },
+                )
+            })?;
         self.row_operation(operation, e, call, &attr.value, &id)
     }
 }
@@ -447,39 +470,43 @@ fn string(e: &PyExpr) -> Result<String, PythonLoweringError> {
         PyExpr::BinOp(binary) if binary.op == ruff_python_ast::Operator::Add => {
             Ok(string(&binary.left)? + &string(&binary.right)?)
         }
-        _ => Err(at(e, "expected a string literal or literal concatenation")),
+        _ => Err(at(e, PythonSourceError::ExpectedStringLiteral)),
     }
 }
 
 fn integer(e: &PyExpr) -> Result<i64, PythonLoweringError> {
     if let PyExpr::NumberLiteral(n) = e {
         if let ruff_python_ast::Number::Int(i) = &n.value {
-            return i
-                .to_string()
-                .parse()
-                .map_err(|_| at(e, "integer out of range"));
+            return i.to_string().parse().map_err(|source| {
+                at(
+                    e,
+                    PythonSourceError::IntegerOutOfRange {
+                        literal: i.to_string(),
+                        source,
+                    },
+                )
+            });
         }
     }
-    Err(at(e, "expected an integer literal"))
+    Err(at(e, PythonSourceError::ExpectedIntegerLiteral))
 }
 fn literal(e: &PyExpr) -> Result<plasm_core::Value, PythonLoweringError> {
     literal_operands::LiteralOperand::classify(e)
-        .ok_or_else(|| {
-            at(
-                e,
-                "expected a string, finite number, boolean or null literal",
-            )
-        })?
+        .ok_or_else(|| at(e, PythonSourceError::ExpectedScalarLiteral))?
         .scalar(e)
 }
 
-fn at(n: &impl Ranged, message: &str) -> PythonLoweringError {
-    let start = u32::from(n.start());
-    let end = u32::from(n.end());
-    PythonLoweringError::Source {
-        message: format!("Python bytes {start}..{end}: {message}"),
-        span: Some((start, end)),
-    }
+fn at(n: &impl Ranged, error: impl Into<PythonLoweringError>) -> PythonLoweringError {
+    error
+        .into()
+        .with_span((u32::from(n.start()), u32::from(n.end())))
+}
+
+fn input_at(
+    n: &impl Ranged,
+    error: crate::program_rejection::PythonInputError,
+) -> PythonLoweringError {
+    PythonLoweringError::input_at(error, (u32::from(n.start()), u32::from(n.end())))
 }
 
 fn span(n: &impl Ranged) -> serde_json::Value {

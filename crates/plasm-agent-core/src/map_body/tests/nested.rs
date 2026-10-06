@@ -161,7 +161,10 @@ fn nested_maps_reject_invalid_later_bodies_before_any_io() {
         let shadow = nested_source(&es, "{'title': parent.title}", 8)
             .replace("lambda child:", "lambda parent:");
         let error = compile_python_program(&es, &shadow).await.unwrap_err();
-        assert!(error.contains("not a row field on `Tag`"), "{error}");
+        assert!(
+            error.to_string().contains("not a row field on `Tag`"),
+            "{error}"
+        );
         assert!(calls.lock().unwrap().is_empty());
     });
 }

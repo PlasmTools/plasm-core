@@ -80,27 +80,17 @@ pub(crate) struct PreparedResolvedPlan {
     pub source_program: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub(crate) enum ResolvedPlanReject {
+    #[error("unsupported protocol_version {got} (expected {expected})")]
     UnsupportedProtocolVersion { got: u16, expected: u16 },
+    #[error(transparent)]
     CatalogPins(CatalogPinError),
-    InvalidPlan(String),
+    #[error(transparent)]
+    InvalidComp(#[from] crate::plasm_comp_wire::PlasmCompArtifactError),
+    #[error(transparent)]
+    InvalidBundle(#[from] crate::plasm_comp_bundle::PlasmCompBundleError),
 }
-
-impl fmt::Display for ResolvedPlanReject {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::UnsupportedProtocolVersion { got, expected } => write!(
-                f,
-                "unsupported protocol_version {got} (expected {expected})"
-            ),
-            Self::CatalogPins(e) => e.fmt(f),
-            Self::InvalidPlan(msg) => f.write_str(msg),
-        }
-    }
-}
-
-use std::fmt;
 
 /// Validate wire request against an execute session and lift to [`PreparedResolvedPlan`].
 pub(crate) fn prepare_resolved_plan_request(
@@ -110,10 +100,9 @@ pub(crate) fn prepare_resolved_plan_request(
     ResolvedPlanProtocolVersion::from_wire(req.protocol_version)?;
     sess.validate_catalog_pins(&req.catalog_pins)
         .map_err(ResolvedPlanReject::CatalogPins)?;
-    let artifact =
-        plasm_comp_artifact_from_comp(req.comp).map_err(ResolvedPlanReject::InvalidPlan)?;
+    let artifact = plasm_comp_artifact_from_comp(req.comp)?;
     Ok(PreparedResolvedPlan {
-        bundle: PlasmCompBundle::new(artifact).map_err(ResolvedPlanReject::InvalidPlan)?,
+        bundle: PlasmCompBundle::new(artifact)?,
         mode: req.mode,
         source_program: req.source_program,
     })

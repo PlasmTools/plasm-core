@@ -294,14 +294,14 @@ async fn view_rowsets_unavailable_and_wrong_identity_do_not_become_empty_complet
                 },
             )
             .await;
-        let error = result
-            .expect_err("unestablished traversal must surface an error")
-            .to_string();
+        let error = result.expect_err("unestablished traversal must surface an error");
         let expected = match fault {
-            Fault::MissingRelation => "did not establish relation",
-            Fault::WrongIdentity => "identity mismatch",
+            Fault::MissingRelation => {
+                matches!(&error, RuntimeError::CacheError(crate::CacheError::RelationUnobserved { reference, relation }) if reference.entity_type == "Collection" && relation == "items")
+            }
+            Fault::WrongIdentity => matches!(&error, RuntimeError::GetIdentityMismatch { .. }),
         };
-        assert!(error.contains(expected), "unexpected boundary: {error}");
+        assert!(expected, "unexpected boundary: {error}");
         assert!(
             mat.get(&plasm_core::Ref::new("Library", "test-token"))
                 .is_none(),

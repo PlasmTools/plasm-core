@@ -10,7 +10,7 @@ pub(super) fn check_definition(source: &str, stubs: &str) -> Result<(), Compilat
         targets: Vec::new(),
         limits: AnalysisLimits::default(),
     })
-    .map_err(host_error)?;
+    .map_err(crate::compilation_error::PythonCheckerError::Analysis)?;
     match result.outcome {
         AnalysisOutcome::Inferred(_) => {
             // Upstream typing and runtime syntax support are distinct checks.
@@ -47,7 +47,7 @@ pub(super) async fn check_definitions(
     let permit = CAPACITY
         .acquire()
         .await
-        .map_err(|e| host_error(e.to_string()))?;
+        .map_err(crate::compilation_error::PythonCheckerError::Capacity)?;
     tokio::task::spawn_blocking(move || {
         // Keep the permit until the CPU task finishes, even if its caller cancels.
         let _permit = permit;
@@ -57,7 +57,7 @@ pub(super) async fn check_definitions(
         Ok(())
     })
     .await
-    .map_err(|e| host_error(e.to_string()))?
+    .map_err(crate::compilation_error::PythonCheckerError::Worker)?
 }
 
 pub(crate) fn render_analysis_diagnostics(
@@ -98,14 +98,6 @@ fn format_diagnostic(
                 .unwrap_or_default()
         });
     format!("{location}{}: {}", error.code, error.message)
-}
-
-fn host_error(message: String) -> CompilationError {
-    CompilationError::Host(plasm_runtime::ExecutionFailure::new(
-        plasm_runtime::FailureCause::Runtime,
-        "python_checker_failure",
-        message,
-    ))
 }
 
 #[cfg(test)]

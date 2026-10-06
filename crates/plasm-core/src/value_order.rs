@@ -19,8 +19,36 @@ pub enum OrderingError {
     IncompatibleAwareness,
     #[error("value does not inhabit declared ordering domain")]
     InvalidRepresentation,
-    #[error("invalid ordered value: {0}")]
-    InvalidValue(String),
+    #[error("invalid temporal ordered value")]
+    InvalidTemporalValue(#[source] TemporalValueError),
+    #[error(transparent)]
+    Expression(#[from] crate::value_expression::ComparisonError),
+    #[error("invalid monetary comparison")]
+    InvalidMoney(#[source] crate::money::CrossCurrencyError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum TemporalValueError {
+    #[error("value does not inhabit temporal union")]
+    UnionUnmatched,
+    #[error("ambiguous temporal union representation")]
+    AmbiguousUnion,
+    #[error("temporal contract missing")]
+    MissingContract,
+    #[error("missing temporal component `{0}`")]
+    MissingComponent(&'static str),
+    #[error("invalid temporal component `{0}`")]
+    InvalidComponent(&'static str),
+    #[error("invalid temporal calendar date")]
+    InvalidCalendarDate,
+    #[error("timezone offset is absent")]
+    MissingTimezoneOffset,
+    #[error("expected {0}")]
+    Expected(&'static str),
+    #[error("temporal kind mismatch")]
+    KindMismatch,
+    #[error(transparent)]
+    InvalidRepresentation(#[from] crate::temporal_value::TemporalValueError),
 }
 
 pub trait Orderable {
@@ -106,7 +134,7 @@ impl ValueOrdering<'_> {
         if self.family == Family::Money {
             self.validate(value)?;
             return crate::money::values_ord(value, literal)
-                .map_err(|e| OrderingError::InvalidValue(e.to_string()))?
+                .map_err(OrderingError::InvalidMoney)?
                 .ok_or(OrderingError::InvalidRepresentation);
         }
         self.compare(value, literal)
@@ -115,16 +143,15 @@ impl ValueOrdering<'_> {
     /// Equality does not impose orderability between naive and aware values.
     pub fn equal_literal(&self, value: &Value, literal: &Value) -> Result<bool, OrderingError> {
         if let Family::Temporal(kind) = self.family {
-            let left =
-                temporal_key(self.contract, value, kind).map_err(OrderingError::InvalidValue)?;
-            let right =
-                temporal_key(self.contract, literal, kind).map_err(OrderingError::InvalidValue)?;
+            let left = temporal_key(self.contract, value, kind)
+                .map_err(OrderingError::InvalidTemporalValue)?;
+            let right = temporal_key(self.contract, literal, kind)
+                .map_err(OrderingError::InvalidTemporalValue)?;
             return Ok(left == right);
         }
         if self.family == Family::Money {
             self.validate(value)?;
-            return crate::money::values_eq(value, literal)
-                .map_err(|e| OrderingError::InvalidValue(e.to_string()));
+            return crate::money::values_eq(value, literal).map_err(OrderingError::InvalidMoney);
         }
         self.compare_literal(value, literal)
             .map(|order| order.is_eq())
@@ -137,10 +164,10 @@ impl ValueOrdering<'_> {
         }
         match self.family {
             Family::Temporal(kind) => {
-                let a =
-                    temporal_key(self.contract, left, kind).map_err(OrderingError::InvalidValue)?;
+                let a = temporal_key(self.contract, left, kind)
+                    .map_err(OrderingError::InvalidTemporalValue)?;
                 let b = temporal_key(self.contract, right, kind)
-                    .map_err(OrderingError::InvalidValue)?;
+                    .map_err(OrderingError::InvalidTemporalValue)?;
                 if a.0 != b.0 {
                     return Err(OrderingError::IncompatibleAwareness);
                 }
@@ -157,8 +184,7 @@ impl ValueOrdering<'_> {
                 if !valid(left) || !valid(right) {
                     return Err(OrderingError::InvalidRepresentation);
                 }
-                crate::value_expression::ordering(left, right)
-                    .map_err(OrderingError::InvalidValue)?
+                crate::value_expression::ordering(left, right)?
                     .ok_or(OrderingError::InvalidRepresentation)
             }
         }
@@ -169,32 +195,45 @@ pub(crate) fn temporal_key(
     contract: &ValueContract,
     value: &Value,
     kind: TemporalKind,
-) -> Result<(bool, i128), String> {
+) -> Result<(bool, i128), TemporalValueError> {
     if let ValueShape::Union { variants } = &contract.shape {
         let mut keys = variants
             .iter()
             .filter_map(|v| temporal_key(v, value, kind).ok());
-        let first = keys.next().ok_or("value does not inhabit temporal union")?;
+        let first = keys.next().ok_or(TemporalValueError::UnionUnmatched)?;
         if keys.any(|key| key != first) {
-            return Err("ambiguous temporal union representation".into());
+            return Err(TemporalValueError::AmbiguousUnion);
         }
         return Ok(first);
     }
     let ValueShape::Temporal { wire, .. } = contract.shape else {
-        return Err("temporal contract missing".into());
+        return Err(TemporalValueError::MissingContract);
     };
-    let c = crate::temporal_value::components(value, kind, wire)?;
+    let c = crate::temporal_value::components(value, kind, wire)
+        .map_err(TemporalValueError::InvalidRepresentation)?;
     if kind == TemporalKind::Timezone {
         return c
             .get("offset_seconds")
             .and_then(Value::as_integer)
             .map(|offset| (true, i128::from(offset)))
-            .ok_or_else(|| "missing timezone offset".into());
+            .ok_or(TemporalValueError::MissingTimezoneOffset);
     }
     let n = |name: &str| {
         c.get(name)
             .and_then(Value::as_integer)
-            .ok_or_else(|| format!("missing temporal {name}"))
+            .ok_or(TemporalValueError::MissingComponent(match name {
+                "year" => "year",
+                "month" => "month",
+                "day" => "day",
+                "hour" => "hour",
+                "minute" => "minute",
+                "second" => "second",
+                "microsecond" => "microsecond",
+                "days" => "days",
+                "seconds" => "seconds",
+                "microseconds" => "microseconds",
+                _ => "unknown",
+            }))
     };
     let offset = c.get("offset_seconds").and_then(Value::as_integer);
     let day = match kind {
@@ -204,7 +243,7 @@ pub(crate) fn temporal_key(
                 n("month")? as u32,
                 n("day")? as u32,
             )
-            .ok_or("invalid date")?;
+            .ok_or(TemporalValueError::InvalidCalendarDate)?;
             i128::from(chrono::Datelike::num_days_from_ce(&date))
         }
         TemporalKind::Timedelta => i128::from(n("days")?),
@@ -229,6 +268,18 @@ pub(crate) fn temporal_key(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn monetary_ordering_retains_currency_conflict_source() {
+        let error = super::OrderingError::InvalidMoney(
+            crate::money::currency_conflict(Some("USD"), Some("EUR")).unwrap_err(),
+        );
+        let source = std::error::Error::source(&error)
+            .unwrap()
+            .downcast_ref::<crate::money::CrossCurrencyError>()
+            .unwrap();
+        assert_eq!(source.left(), "USD");
+        assert_eq!(source.right(), "EUR");
+    }
     use super::*;
     use crate::TemporalWireFormat;
     #[test]
@@ -245,6 +296,10 @@ mod tests {
         let same = Value::String("2023-12-31T23:00:00Z".into());
         assert_eq!(order.compare(&a, &same).unwrap(), Ordering::Equal);
         assert!(order.validate(&Value::String("invalid".into())).is_err());
+        assert!(matches!(
+            order.validate(&Value::String("invalid".into())),
+            Err(OrderingError::InvalidTemporalValue(_))
+        ));
     }
     #[test]
     fn numeric_order_laws_cover_signed_unsigned_and_float_boundaries() {

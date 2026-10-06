@@ -62,13 +62,14 @@ fn relations(comp: &PlasmComp, correlated: bool) -> Vec<(PlanRelationTraversal, 
 fn validate(
     rules: &[Rule],
     evidence: &BTreeMap<String, Vec<(PlanRelationTraversal, bool)>>,
-) -> Result<(), String> {
+) -> Result<(), super::constructor_registry::build::RegistryError> {
+    use super::constructor_registry::build::RegistryError;
     let expected: BTreeSet<_> = PythonRelationOperation::ALL
         .iter()
         .map(|op| op.name())
         .collect();
     if expected.len() != PythonRelationOperation::ALL.len() {
-        return Err("duplicate production name".into());
+        return Err(RegistryError::DuplicateProduction);
     }
     let laws = super::literate_contract::parse(include_str!(
         "../../../../doc-site/docs/reference/python-conformance.md"
@@ -76,7 +77,9 @@ fn validate(
     let mut actual = BTreeSet::new();
     for rule in rules {
         if !actual.insert(rule.operation.as_str()) {
-            return Err("duplicate rule".into());
+            return Err(RegistryError::DuplicateRule {
+                operation: rule.operation.clone(),
+            });
         }
         if rule.premise.trim().is_empty()
             || rule.transfer.trim().is_empty()
@@ -88,7 +91,9 @@ fn validate(
                 .iter()
                 .any(|n| n.body.trim().is_empty() || n.error.trim().is_empty())
         {
-            return Err("missing obligation".into());
+            return Err(RegistryError::MissingObligation {
+                operation: rule.operation.clone(),
+            });
         }
         for witness in &rule.witnesses {
             if !evidence.get(&witness.id).is_some_and(|nodes| {
@@ -101,12 +106,14 @@ fn validate(
                         && (!witness.scoped || !node.binding_proofs.is_empty())
                 })
             }) {
-                return Err("witness does not prove relation contract".into());
+                return Err(RegistryError::RelationWitness {
+                    id: witness.id.clone(),
+                });
             }
         }
     }
     if actual != expected {
-        return Err("production/rule mismatch".into());
+        return Err(RegistryError::InventoryMismatch);
     }
     Ok(())
 }
@@ -173,7 +180,7 @@ async fn relation_dispatch_requires_recursive_typed_evidence_and_rejections() {
                 .await
                 .expect_err("invalid relation admitted");
             assert!(
-                error.contains(&invalid.error),
+                error.to_string().contains(&invalid.error),
                 "expected {:?}: {error}",
                 invalid.error
             );

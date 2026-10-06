@@ -1,9 +1,9 @@
 //! Row execution uses the shared typed value-expression semantics.
 #[cfg(test)]
 use super::{row, value as json};
+pub(super) use plasm_core::value_expression::evaluate_with as evaluate;
 #[cfg(test)]
 use plasm_core::value_expression::{arithmetic, compare};
-pub(super) use plasm_core::value_expression::{evaluate_with as evaluate, predicate};
 #[cfg(test)]
 use plasm_core::Value;
 #[cfg(test)]
@@ -47,17 +47,17 @@ mod tests {
                 row!({"flag":false,"b":"[1]","out":"[1]"})
             ]
         );
-        assert!(super::super::eval_compute_ops(
+        assert!(matches!(super::super::eval_compute_ops(
             &ops,
             &[row!({"flag":true,"b":"[1]"})],
             &super::super::fixture_contract(&rows)
         )
-        .unwrap_err()
-        .contains("unobserved"));
+        .unwrap_err(), plasm_core::RowComputeError::MissingField { field } if field == "a"));
     }
 
     #[test]
     fn checked_arithmetic_has_no_silent_null_overflow_or_currency_conversion() {
+        use plasm_core::value_expression::ArithmeticError;
         use ArithOp::*;
         for (op, left, right, expected) in [
             (
@@ -73,16 +73,21 @@ mod tests {
         ] {
             assert_eq!(arithmetic(op, left, right).unwrap(), expected);
         }
-        for (op, left, right) in [
-            (Add, json!(i64::MAX), json!(1)),
-            (Sub, json!(i64::MIN), json!(1)),
-            (Mul, json!(i64::MAX), json!(2)),
-            (Mul, json!(f64::MAX), json!(2.0)),
-            (Div, json!(1), json!(0)),
-            (Div, json!(1), json!(-0.0)),
-        ] {
-            assert!(arithmetic(op, left, right).is_err());
-        }
+        assert_eq!(
+            arithmetic(Add, json!(i64::MAX), json!(1)).unwrap_err(),
+            ArithmeticError::IntegerOutOfRange
+        );
+        assert_eq!(
+            arithmetic(Mul, json!(f64::MAX), json!(2.0)).unwrap_err(),
+            ArithmeticError::NonFiniteResult
+        );
+        assert_eq!(
+            arithmetic(Div, json!(1), json!(0)).unwrap_err(),
+            ArithmeticError::DivisionByZero
+        );
+        assert!(arithmetic(Sub, json!(i64::MIN), json!(1)).is_err());
+        assert!(arithmetic(Mul, json!(i64::MAX), json!(2)).is_err());
+        assert!(arithmetic(Div, json!(1), json!(-0.0)).is_err());
         let money = |amount, currency| json!({"__plasm_money":amount,"currency":currency});
         assert_eq!(
             arithmetic(
@@ -93,14 +98,21 @@ mod tests {
             .unwrap(),
             money("3.0000000000000000001", "USD")
         );
-        assert!(arithmetic(Add, money("1", "USD"), money("1", "EUR")).is_err());
-        assert!(arithmetic(Add, money("1", "USD"), json!({"__plasm_money":"1"})).is_err());
+        assert_eq!(
+            arithmetic(Add, money("1", "USD"), money("1", "EUR")).unwrap_err(),
+            ArithmeticError::MoneyCurrencyMismatch
+        );
+        assert_eq!(
+            arithmetic(Add, money("1", "USD"), json!({"__plasm_money":"1"})).unwrap_err(),
+            ArithmeticError::MoneyCurrencyMismatch
+        );
         assert!(arithmetic(Mul, money("1", "USD"), money("1", "USD")).is_err());
         assert!(arithmetic(Div, money("1", "USD"), json!(0)).is_err());
     }
 
     #[test]
     fn conditional_comparison_does_not_round_large_integers() {
+        use plasm_core::value_expression::ComparisonError;
         assert!(compare(
             PlanPredicateOp::Gt,
             &json!(9007199254740993_i64),
@@ -113,5 +125,14 @@ mod tests {
             &json!(9007199254740992_i64)
         )
         .unwrap());
+        assert_eq!(
+            compare(
+                PlanPredicateOp::Gt,
+                &Value::Float(f64::INFINITY),
+                &Value::Float(0.0),
+            )
+            .unwrap_err(),
+            ComparisonError::NonFiniteNumber
+        );
     }
 }

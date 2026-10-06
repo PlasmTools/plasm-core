@@ -36,11 +36,83 @@ pub struct OAuthAuthorizationStart {
 #[derive(Debug, Error)]
 pub enum OAuthConnectError {
     #[error("invalid OAuth URL: {0}")]
-    InvalidUrl(String),
+    InvalidUrl(#[source] url::ParseError),
     #[error("OAuth token exchange failed: {0}")]
-    TokenExchange(String),
+    TokenExchange(#[source] OAuthEndpointError),
     #[error("OAuth device authorization failed: {0}")]
-    DeviceAuthorization(String),
+    DeviceAuthorization(#[source] OAuthEndpointError),
+}
+
+/// Concrete endpoint failures. Formatting deliberately excludes URLs, response bodies,
+/// and provider descriptions; callers may inspect the source explicitly when needed.
+#[derive(Error)]
+pub enum OAuthEndpointError {
+    #[error("HTTP client construction failed")]
+    ClientBuild(#[source] reqwest::Error),
+    #[error("HTTP request failed")]
+    Request(#[source] reqwest::Error),
+    #[error("HTTP {status}: response body read failed")]
+    ResponseBody {
+        status: reqwest::StatusCode,
+        #[source]
+        source: reqwest::Error,
+    },
+    #[error("HTTP {status}: invalid JSON response")]
+    Json {
+        status: reqwest::StatusCode,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("OAuth2 token request failed")]
+    OAuth2(
+        #[source]
+        oauth2::RequestTokenError<
+            oauth2::HttpClientError<reqwest::Error>,
+            oauth2::basic::BasicErrorResponse,
+        >,
+    ),
+    #[error("HTTP {status}: OAuth endpoint rejected the request")]
+    Protocol {
+        status: reqwest::StatusCode,
+        error: Option<String>,
+        error_description: Option<String>,
+        error_uri: Option<String>,
+    },
+    #[error("missing string field {field}")]
+    MissingString { field: &'static str },
+    #[error("empty string field {field}")]
+    EmptyString { field: &'static str },
+    #[error("token response missing access_token")]
+    MissingAccessToken,
+}
+
+impl std::fmt::Debug for OAuthEndpointError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, f)
+    }
+}
+
+async fn endpoint_response_json(
+    response: reqwest::Response,
+) -> Result<(reqwest::StatusCode, Value), OAuthEndpointError> {
+    let status = response.status();
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|source| OAuthEndpointError::ResponseBody { status, source })?;
+    let body = serde_json::from_slice(&bytes)
+        .map_err(|source| OAuthEndpointError::Json { status, source })?;
+    Ok((status, body))
+}
+
+fn endpoint_protocol_error(status: reqwest::StatusCode, body: &Value) -> OAuthEndpointError {
+    let string = |key| body.get(key).and_then(Value::as_str).map(str::to_owned);
+    OAuthEndpointError::Protocol {
+        status,
+        error: string("error"),
+        error_description: string("error_description"),
+        error_uri: string("error_uri"),
+    }
 }
 
 /// Build an OAuth2 Basic client and produce an authorization URL with PKCE (S256).
@@ -52,12 +124,10 @@ pub fn begin_authorization_code_pkce(
     redirect_uri: &str,
     scopes: &[String],
 ) -> Result<OAuthAuthorizationStart, OAuthConnectError> {
-    let auth = AuthUrl::new(auth_url.to_string())
-        .map_err(|e| OAuthConnectError::InvalidUrl(e.to_string()))?;
-    let token = TokenUrl::new(token_url.to_string())
-        .map_err(|e| OAuthConnectError::InvalidUrl(e.to_string()))?;
-    let redirect = RedirectUrl::new(redirect_uri.to_string())
-        .map_err(|e| OAuthConnectError::InvalidUrl(e.to_string()))?;
+    let auth = AuthUrl::new(auth_url.to_string()).map_err(OAuthConnectError::InvalidUrl)?;
+    let token = TokenUrl::new(token_url.to_string()).map_err(OAuthConnectError::InvalidUrl)?;
+    let redirect =
+        RedirectUrl::new(redirect_uri.to_string()).map_err(OAuthConnectError::InvalidUrl)?;
 
     let mut client = BasicClient::new(ClientId::new(client_id.to_string()))
         .set_auth_uri(auth)
@@ -110,7 +180,7 @@ fn oauth_reqwest_client() -> Result<reqwest::Client, OAuthConnectError> {
     reqwest::Client::builder()
         .redirect(Policy::none())
         .build()
-        .map_err(|e| OAuthConnectError::TokenExchange(e.to_string()))
+        .map_err(|e| OAuthConnectError::TokenExchange(OAuthEndpointError::ClientBuild(e)))
 }
 
 /// Exchange an authorization code for tokens (async). `pkce_verifier` must be the secret saved from
@@ -124,12 +194,10 @@ pub async fn exchange_authorization_code(
     code: &str,
     pkce_verifier: &str,
 ) -> Result<String, OAuthConnectError> {
-    let auth = AuthUrl::new(auth_url.to_string())
-        .map_err(|e| OAuthConnectError::InvalidUrl(e.to_string()))?;
-    let token = TokenUrl::new(token_url.to_string())
-        .map_err(|e| OAuthConnectError::InvalidUrl(e.to_string()))?;
-    let redirect = RedirectUrl::new(redirect_uri.to_string())
-        .map_err(|e| OAuthConnectError::InvalidUrl(e.to_string()))?;
+    let auth = AuthUrl::new(auth_url.to_string()).map_err(OAuthConnectError::InvalidUrl)?;
+    let token = TokenUrl::new(token_url.to_string()).map_err(OAuthConnectError::InvalidUrl)?;
+    let redirect =
+        RedirectUrl::new(redirect_uri.to_string()).map_err(OAuthConnectError::InvalidUrl)?;
 
     let mut client = BasicClient::new(ClientId::new(client_id.to_string()))
         .set_auth_uri(auth)
@@ -148,7 +216,7 @@ pub async fn exchange_authorization_code(
         .set_pkce_verifier(verifier)
         .request_async(&http)
         .await
-        .map_err(|e| OAuthConnectError::TokenExchange(e.to_string()))?;
+        .map_err(|e| OAuthConnectError::TokenExchange(OAuthEndpointError::OAuth2(e)))?;
 
     Ok(token.access_token().secret().to_string())
 }
@@ -203,19 +271,16 @@ pub async fn request_oauth_device_authorization(
         .timeout(timeout)
         .send()
         .await
-        .map_err(|e| OAuthConnectError::DeviceAuthorization(e.to_string()))?;
+        .map_err(|e| OAuthConnectError::DeviceAuthorization(OAuthEndpointError::Request(e)))?;
 
-    let status = response.status();
-    let body: Value = response
-        .json()
+    let (status, body) = endpoint_response_json(response)
         .await
-        .map_err(|e| OAuthConnectError::DeviceAuthorization(format!("invalid JSON: {e}")))?;
+        .map_err(OAuthConnectError::DeviceAuthorization)?;
 
     if !status.is_success() {
-        let msg = device_oauth_error_summary(&body);
-        return Err(OAuthConnectError::DeviceAuthorization(format!(
-            "HTTP {status}: {msg}"
-        )));
+        return Err(OAuthConnectError::DeviceAuthorization(
+            endpoint_protocol_error(status, &body),
+        ));
     }
 
     let device_code = json_required_string(&body, "device_code")?;
@@ -250,31 +315,19 @@ pub async fn request_oauth_device_authorization(
     })
 }
 
-fn json_required_string(body: &Value, key: &str) -> Result<String, OAuthConnectError> {
+fn json_required_string(body: &Value, key: &'static str) -> Result<String, OAuthConnectError> {
     let Some(v) = body.get(key).and_then(|v| v.as_str()) else {
-        return Err(OAuthConnectError::DeviceAuthorization(format!(
-            "missing string field {key:?}"
-        )));
+        return Err(OAuthConnectError::DeviceAuthorization(
+            OAuthEndpointError::MissingString { field: key },
+        ));
     };
     let t = v.trim();
     if t.is_empty() {
-        return Err(OAuthConnectError::DeviceAuthorization(format!(
-            "empty string field {key:?}"
-        )));
+        return Err(OAuthConnectError::DeviceAuthorization(
+            OAuthEndpointError::EmptyString { field: key },
+        ));
     }
     Ok(t.to_string())
-}
-
-fn device_oauth_error_summary(body: &Value) -> String {
-    let code = body
-        .get("error")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown_error");
-    let desc = body
-        .get("error_description")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    format!("{code} {desc}").trim().to_string()
 }
 
 /// Poll the token endpoint once using `grant_type=urn:ietf:params:oauth:grant-type:device_code`.
@@ -304,13 +357,11 @@ pub async fn poll_oauth_device_token_once(
         .timeout(timeout)
         .send()
         .await
-        .map_err(|e| OAuthConnectError::TokenExchange(e.to_string()))?;
+        .map_err(|e| OAuthConnectError::TokenExchange(OAuthEndpointError::Request(e)))?;
 
-    let status = response.status();
-    let body: Value = response
-        .json()
+    let (status, body) = endpoint_response_json(response)
         .await
-        .map_err(|e| OAuthConnectError::TokenExchange(format!("invalid JSON: {e}")))?;
+        .map_err(OAuthConnectError::TokenExchange)?;
 
     if status.is_success() && body.get("access_token").is_some() {
         return Ok(OAuthDeviceTokenPoll::Success(body));
@@ -324,7 +375,7 @@ pub async fn poll_oauth_device_token_once(
 
     match err_code {
         "" if status.is_success() => Err(OAuthConnectError::TokenExchange(
-            "token response missing access_token".into(),
+            OAuthEndpointError::MissingAccessToken,
         )),
         "authorization_pending" => Ok(OAuthDeviceTokenPoll::AuthorizationPending),
         "slow_down" => {
@@ -349,9 +400,8 @@ pub async fn poll_oauth_device_token_once(
                 error_description: desc,
             })
         }
-        _ => Err(OAuthConnectError::TokenExchange(format!(
-            "HTTP {status}: {}",
-            device_oauth_error_summary(&body)
+        _ => Err(OAuthConnectError::TokenExchange(endpoint_protocol_error(
+            status, &body,
         ))),
     }
 }
@@ -359,8 +409,119 @@ pub async fn poll_oauth_device_token_once(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::error::Error;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use url::Url;
+
+    #[test]
+    fn invalid_url_preserves_parse_source() {
+        let error = begin_authorization_code_pkce(
+            "cid",
+            None,
+            "not a URL",
+            "https://example.com/token",
+            "https://example.com/callback",
+            &[],
+        )
+        .unwrap_err();
+        assert!(matches!(error, OAuthConnectError::InvalidUrl(_)));
+        assert!(error.source().unwrap().is::<url::ParseError>());
+    }
+
+    #[test]
+    fn endpoint_errors_preserve_concrete_sources() {
+        let request = reqwest::Client::new().get("not a URL").build().unwrap_err();
+        let error = OAuthConnectError::TokenExchange(OAuthEndpointError::Request(request));
+        let endpoint = error.source().unwrap();
+        assert!(endpoint.is::<OAuthEndpointError>());
+        assert!(endpoint.source().unwrap().is::<reqwest::Error>());
+
+        let source = serde_json::from_str::<Value>("{").unwrap_err();
+        let error = OAuthConnectError::DeviceAuthorization(OAuthEndpointError::Json {
+            status: reqwest::StatusCode::BAD_GATEWAY,
+            source,
+        });
+        assert!(error
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .is::<serde_json::Error>());
+    }
+
+    #[test]
+    fn oauth2_source_retains_provider_metadata_without_formatting_it() {
+        let response = oauth2::basic::BasicErrorResponse::new(
+            oauth2::basic::BasicErrorResponseType::InvalidGrant,
+            Some("sensitive-provider-description".into()),
+            Some("https://example.com/error?secret=sensitive".into()),
+        );
+        let error = OAuthConnectError::TokenExchange(OAuthEndpointError::OAuth2(
+            oauth2::RequestTokenError::ServerResponse(response),
+        ));
+        let source = error.source().unwrap().source().unwrap();
+        type TokenError = oauth2::RequestTokenError<
+            oauth2::HttpClientError<reqwest::Error>,
+            oauth2::basic::BasicErrorResponse,
+        >;
+        let Some(TokenError::ServerResponse(response)) = source.downcast_ref::<TokenError>() else {
+            panic!("expected the original OAuth2 source");
+        };
+        assert_eq!(
+            response.error_description().unwrap(),
+            "sensitive-provider-description"
+        );
+        assert!(!error.to_string().contains("sensitive"));
+        assert!(!format!("{error:?}").contains("sensitive"));
+    }
+
+    #[test]
+    fn protocol_metadata_is_retained_but_redacted_from_diagnostics() {
+        let body = serde_json::json!({
+            "error": "invalid_client",
+            "error_description": "sensitive-description",
+            "error_uri": "https://example.com/?secret=sensitive",
+            "access_token": "sensitive-token",
+        });
+        let error = endpoint_protocol_error(reqwest::StatusCode::UNAUTHORIZED, &body);
+        assert!(!error.to_string().contains("sensitive"));
+        assert!(!format!("{error:?}").contains("sensitive"));
+        let OAuthEndpointError::Protocol {
+            status,
+            error,
+            error_description,
+            error_uri,
+        } = error
+        else {
+            panic!("expected protocol metadata");
+        };
+        assert_eq!(status, reqwest::StatusCode::UNAUTHORIZED);
+        assert_eq!(error.as_deref(), Some("invalid_client"));
+        assert_eq!(error_description.as_deref(), Some("sensitive-description"));
+        assert_eq!(
+            error_uri.as_deref(),
+            Some("https://example.com/?secret=sensitive")
+        );
+    }
+
+    #[test]
+    fn required_device_fields_have_semantic_errors() {
+        let missing = json_required_string(&serde_json::json!({}), "device_code").unwrap_err();
+        assert!(matches!(
+            missing,
+            OAuthConnectError::DeviceAuthorization(OAuthEndpointError::MissingString {
+                field: "device_code"
+            })
+        ));
+        let empty = json_required_string(&serde_json::json!({"device_code": "  "}), "device_code")
+            .unwrap_err();
+        assert!(matches!(
+            empty,
+            OAuthConnectError::DeviceAuthorization(OAuthEndpointError::EmptyString {
+                field: "device_code"
+            })
+        ));
+    }
 
     #[tokio::test]
     async fn poll_device_token_authorization_pending() {

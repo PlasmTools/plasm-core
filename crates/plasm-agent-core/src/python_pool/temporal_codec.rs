@@ -5,12 +5,15 @@ use plasm_core::{
     Value,
 };
 
-pub(super) fn to_monty(c: &Value, kind: K) -> Result<MontyObject, String> {
+pub(super) fn to_monty(
+    c: &Value,
+    kind: K,
+) -> Result<MontyObject, super::PythonValueConversionError> {
     temporal_value::validate_components(c, kind)?;
-    let integer = |name: &str| {
+    let integer = |name: &'static str| {
         c.get(name)
             .and_then(Value::as_integer)
-            .ok_or_else(|| format!("invalid temporal {name}"))
+            .ok_or(super::PythonValueConversionError::MissingTemporalComponent { name })
     };
     let text = |name: &str| c.get(name).and_then(Value::as_str).map(str::to_owned);
     Ok(match kind {
@@ -56,7 +59,9 @@ pub(super) fn to_monty(c: &Value, kind: K) -> Result<MontyObject, String> {
         }),
     })
 }
-pub(super) fn from_monty(value: ObjectRef<'_>) -> Result<Option<Value>, String> {
+pub(super) fn from_monty(
+    value: ObjectRef<'_>,
+) -> Result<Option<Value>, super::PythonValueConversionError> {
     use monty_types::unstable::{node, MontyNode};
     let (kind, components) = match node(value) {
         MontyNode::Date(v) => (

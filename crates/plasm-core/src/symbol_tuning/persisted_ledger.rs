@@ -8,7 +8,7 @@ use std::sync::Arc;
 use crate::schema::CGS;
 
 use super::capability_surface_params::loaded_catalog_entry_ids;
-use super::persisted_ident_metadata::PersistedIdentMetadata;
+use super::persisted_ident_metadata::{PersistedIdentMetadata, PersistedIdentMetadataError};
 use super::session_bindings::{EntityBinding, MethodBinding, RelationBinding};
 use super::tables::{SymbolLedger, SymbolTables};
 use super::{
@@ -127,9 +127,9 @@ fn meta_map_from_wire(
             let fingerprint = k.clone();
             v.into_ident_metadata()
                 .map(|meta| (k, meta))
-                .map_err(|reason| PersistedSymbolLedgerDecodeError::IdentMetadata {
+                .map_err(|source| PersistedSymbolLedgerDecodeError::IdentMetadata {
                     fingerprint,
-                    reason,
+                    source,
                 })
         })
         .collect()
@@ -259,10 +259,8 @@ impl PersistedSymbolLedgerV2 {
 
 #[derive(Debug, thiserror::Error)]
 pub enum PersistedSymbolLedgerEncodeError {
-    #[error("postcard encode failed: {0}")]
-    Postcard(String),
-    #[error("ident metadata encode failed: {0}")]
-    IdentMetadata(String),
+    #[error("postcard encode failed")]
+    Postcard(#[source] postcard::Error),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -273,10 +271,16 @@ pub enum PersistedSymbolLedgerDecodeError {
     BadMagic,
     #[error("unsupported symbol ledger version {0}")]
     UnsupportedVersion(u8),
-    #[error("postcard decode failed: {0}")]
-    Postcard(String),
-    #[error("ident metadata decode failed for fingerprint `{fingerprint}`: {reason}")]
-    IdentMetadata { fingerprint: String, reason: String },
+    #[error("postcard decode failed")]
+    Postcard(#[source] postcard::Error),
+    #[error("persisted entity/catalog pairing lengths differ")]
+    EntityCatalogPairingLengthMismatch,
+    #[error("ident metadata decode failed for fingerprint `{fingerprint}`")]
+    IdentMetadata {
+        fingerprint: String,
+        #[source]
+        source: PersistedIdentMetadataError,
+    },
 }
 
 impl PersistedSymbolLedger {
@@ -300,9 +304,7 @@ impl PersistedSymbolLedger {
         catalog_cgs: &IndexMap<String, Arc<CGS>>,
     ) -> Result<TeachingExposureSession, PersistedSymbolLedgerDecodeError> {
         if self.entities.len() != self.entity_catalog_entry_ids.len() {
-            return Err(PersistedSymbolLedgerDecodeError::Postcard(
-                "persisted entity/catalog pairing length mismatch".into(),
-            ));
+            return Err(PersistedSymbolLedgerDecodeError::EntityCatalogPairingLengthMismatch);
         }
         let mut session = TeachingExposureSession::from_persisted(
             self.surface.clone().into(),
@@ -317,8 +319,8 @@ impl PersistedSymbolLedger {
     }
 
     pub fn encode(&self) -> Result<Vec<u8>, PersistedSymbolLedgerEncodeError> {
-        let body = postcard::to_allocvec(self)
-            .map_err(|e| PersistedSymbolLedgerEncodeError::Postcard(e.to_string()))?;
+        let body =
+            postcard::to_allocvec(self).map_err(PersistedSymbolLedgerEncodeError::Postcard)?;
         let mut out = Vec::with_capacity(MAGIC.len() + 1 + body.len());
         out.extend_from_slice(MAGIC);
         out.push(PERSISTED_SYMBOL_LEDGER_VERSION);
@@ -336,11 +338,12 @@ impl PersistedSymbolLedger {
         let wire_version = bytes[MAGIC.len()];
         let body = &bytes[MAGIC.len() + 1..];
         match wire_version {
-            PERSISTED_SYMBOL_LEDGER_VERSION => postcard::from_bytes(body)
-                .map_err(|e| PersistedSymbolLedgerDecodeError::Postcard(e.to_string())),
+            PERSISTED_SYMBOL_LEDGER_VERSION => {
+                postcard::from_bytes(body).map_err(PersistedSymbolLedgerDecodeError::Postcard)
+            }
             PERSISTED_SYMBOL_LEDGER_VERSION_V2 => {
                 let v2: PersistedSymbolLedgerV2 = postcard::from_bytes(body)
-                    .map_err(|e| PersistedSymbolLedgerDecodeError::Postcard(e.to_string()))?;
+                    .map_err(PersistedSymbolLedgerDecodeError::Postcard)?;
                 Ok(v2.into_v3())
             }
             other => Err(PersistedSymbolLedgerDecodeError::UnsupportedVersion(other)),
@@ -468,6 +471,33 @@ mod tests {
         assert!(matches!(
             PersistedSymbolLedger::decode(&bytes),
             Err(PersistedSymbolLedgerDecodeError::UnsupportedVersion(99))
+        ));
+    }
+
+    #[test]
+    fn postcard_decode_failure_remains_a_typed_source() {
+        let mut bytes = MAGIC.to_vec();
+        bytes.push(PERSISTED_SYMBOL_LEDGER_VERSION);
+        let error = PersistedSymbolLedger::decode(&bytes).unwrap_err();
+        assert!(matches!(
+            error,
+            PersistedSymbolLedgerDecodeError::Postcard(_)
+        ));
+        assert!(std::error::Error::source(&error).is_some());
+    }
+
+    #[test]
+    fn entity_catalog_length_mismatch_is_not_reported_as_postcard_failure() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(&dir).expect("matrix");
+        let exp = TeachingExposureSession::new(&cgs, "langmatrix", &["HomographRowA"]);
+        let mut snapshot =
+            PersistedSymbolLedger::from_session(&exp, IndexMap::new()).expect("from_session");
+        snapshot.entity_catalog_entry_ids.clear();
+        assert!(matches!(
+            snapshot.hydrate(&IndexMap::new()),
+            Err(PersistedSymbolLedgerDecodeError::EntityCatalogPairingLengthMismatch)
         ));
     }
 

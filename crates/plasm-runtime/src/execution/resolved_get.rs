@@ -58,11 +58,9 @@ impl<'a> ResolvedGet<'a> {
         })?;
         if capability.kind != CapabilityKind::Get || capability.domain != get.reference.entity_type
         {
-            return Err(RuntimeError::ConfigurationError {
-                message: format!(
-                    "capability '{}' must be kind get for entity {}",
-                    capability.name, get.reference.entity_type
-                ),
+            return Err(RuntimeError::GetCapabilityRequired {
+                capability: capability.name.to_string(),
+                entity: get.reference.entity_type.to_string(),
             });
         }
         let mut bindings = primary.bindings_for(get, cgs);
@@ -73,8 +71,8 @@ impl<'a> ResolvedGet<'a> {
         ambient.capability_params = bindings.clone();
         let target = cgs
             .get_entity(get.reference.entity_type.as_str())
-            .ok_or_else(|| RuntimeError::ConfigurationError {
-                message: format!("unknown Get entity {}", get.reference.entity_type),
+            .ok_or_else(|| RuntimeError::EntityUnknown {
+                entity: get.reference.entity_type.to_string(),
             })?;
         let mut env = CmlEnv::new();
         populate_template_path_env(
@@ -85,11 +83,7 @@ impl<'a> ResolvedGet<'a> {
             Some(&Value::Object(bindings)),
         )?;
         normalize_cml_env_inputs(&mut env, cgs, capability)?;
-        plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|error| {
-            RuntimeError::ConfigurationError {
-                message: error.to_string(),
-            }
-        })?;
+        plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability)?;
         if matches!(purpose, GetPurpose::Authored) {
             merge_plasm_execute_session_env(&mut env);
         }

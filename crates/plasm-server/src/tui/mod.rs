@@ -64,7 +64,7 @@ pub fn run_control_station(
     state: Arc<PlasmHostState>,
     running: Arc<AtomicBool>,
     listen: plasm_agent_core::listen_endpoint::TcpListenEndpoint,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), io::Error> {
     enable_raw_mode()?;
     let mut buffer = stdout();
     execute!(buffer, EnterAlternateScreen)?;
@@ -262,7 +262,11 @@ mod tests {
         let err_notice = copy_notice(
             "API key secret copied",
             "copy failed",
-            Err("clipboard missing".into()),
+            Err(clipboard::ClipboardError::Initialize(
+                arboard::Error::Unknown {
+                    description: "clipboard missing".into(),
+                },
+            )),
         );
 
         assert_eq!(ok_notice.title, "API key secret copied");
@@ -323,6 +327,7 @@ mod tests {
             summary_status: "old-status".into(),
             enabled_api_count: 0,
             key_count: 0,
+            key_load_warning: None,
         };
         state.resources.admin.start_refresh(7);
         let deps = test_deps(None);
@@ -333,6 +338,7 @@ mod tests {
                 summary_status: "ready".into(),
                 enabled_api_count: 1,
                 key_count: 0,
+                key_load_warning: None,
             },
             config_id: Some(Uuid::nil()),
             catalog_rows: Vec::new(),
@@ -632,6 +638,7 @@ mod tests {
             session_graph_persistence: None,
             oss_local_filesystem_defaults: false,
         })
+        .expect("valid fixed catalog fixture")
     }
 
     #[test]

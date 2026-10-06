@@ -1,6 +1,5 @@
 //! OpenRouter embedding acquisition shared by publication and query retrieval.
 
-use anyhow::{bail, Context, Result};
 use plasm_core::catalog_discovery::{
     embedding_cache_key, validate_embedding, CapabilityDocument, EmbeddedCapability,
     EmbeddingProfile,
@@ -8,6 +7,63 @@ use plasm_core::catalog_discovery::{
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::Duration;
+use thiserror::Error;
+
+type Result<T> = std::result::Result<T, EmbeddingAcquisitionError>;
+
+#[derive(Debug, Error)]
+pub enum EmbeddingAcquisitionError {
+    #[error("OPENROUTER_API_KEY is required for embedding acquisition")]
+    MissingApiKey(#[source] std::env::VarError),
+    #[error("OPENROUTER_API_KEY must not be empty")]
+    EmptyApiKey,
+    #[error("embedding request must contain between one and 32 inputs")]
+    InvalidBatchSize,
+    #[error("embedding input must not be empty")]
+    EmptyInput,
+    #[error(transparent)]
+    HttpClient(#[from] reqwest::Error),
+    #[error("OpenRouter embedding request failed with HTTP {status}")]
+    HttpStatus { status: reqwest::StatusCode },
+    #[error("embedding response JSON is invalid")]
+    InvalidResponseJson(#[source] reqwest::Error),
+    #[error("embedding attempts exhausted")]
+    AttemptsExhausted,
+    #[error("embedding response model does not match the requested profile")]
+    ResponseModelMismatch,
+    #[error("embedding response count does not match the request")]
+    ResponseCountMismatch,
+    #[error("embedding vector does not satisfy the declared profile")]
+    InvalidVector,
+    #[error("embedding response index is outside the requested batch")]
+    ResponseIndexOutOfRange,
+    #[error("embedding response contains a duplicate index")]
+    DuplicateResponseIndex,
+    #[error("embedding response omits an index")]
+    MissingResponseIndex,
+    #[error("cache lock task was cancelled")]
+    LockTaskCancelled(#[from] tokio::task::JoinError),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error("embedding cache JSON is invalid")]
+    InvalidCacheJson(#[source] serde_json::Error),
+    #[error("embedding cache identity does not match its requested document")]
+    CacheIdentityMismatch,
+    #[error("embedding artifact profile is unsupported")]
+    UnsupportedProfile,
+    #[error("embedding artifact uses a different document renderer")]
+    RendererVersionMismatch,
+    #[error("embedding artifact document hash does not match its canonical text")]
+    DocumentHashMismatch,
+    #[error("embedding artifact and existing cache vector disagree")]
+    ArtifactCacheMismatch,
+    #[error("embedding acquisition returned a different number of vectors than requested")]
+    AcquisitionCountMismatch,
+    #[error("embedding cache serialization failed")]
+    CacheSerialization(#[source] serde_json::Error),
+    #[error("embedding acquisition did not produce every requested vector")]
+    IncompleteAcquisition,
+}
 
 const BATCH_SIZE: usize = 32;
 const MAX_ATTEMPTS: u32 = 4;
@@ -41,9 +97,9 @@ struct CachedEmbedding {
 impl EmbeddingClient {
     pub fn from_env() -> Result<Self> {
         let api_key = std::env::var("OPENROUTER_API_KEY")
-            .context("OPENROUTER_API_KEY is required for embedding acquisition")?;
+            .map_err(EmbeddingAcquisitionError::MissingApiKey)?;
         if api_key.trim().is_empty() {
-            bail!("OPENROUTER_API_KEY must not be empty");
+            return Err(EmbeddingAcquisitionError::EmptyApiKey);
         }
         Ok(Self {
             client: reqwest::Client::builder()
@@ -56,10 +112,10 @@ impl EmbeddingClient {
 
     pub async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
         if texts.is_empty() || texts.len() > BATCH_SIZE {
-            bail!("embedding requests require 1..={BATCH_SIZE} inputs");
+            return Err(EmbeddingAcquisitionError::InvalidBatchSize);
         }
         if texts.iter().any(|text| text.trim().is_empty()) {
-            bail!("embedding inputs must not be empty");
+            return Err(EmbeddingAcquisitionError::EmptyInput);
         }
         for attempt in 0..MAX_ATTEMPTS {
             let response = self
@@ -79,7 +135,7 @@ impl EmbeddingClient {
                     let body: EmbeddingResponse = response
                         .json()
                         .await
-                        .context("invalid OpenRouter embedding response")?;
+                        .map_err(EmbeddingAcquisitionError::InvalidResponseJson)?;
                     return validate_response(body, texts.len(), &self.profile);
                 }
                 Ok(response) => {
@@ -87,7 +143,7 @@ impl EmbeddingClient {
                     if !(status.as_u16() == 429 || status.is_server_error())
                         || attempt + 1 == MAX_ATTEMPTS
                     {
-                        bail!("OpenRouter embedding request failed: HTTP {status}");
+                        return Err(EmbeddingAcquisitionError::HttpStatus { status });
                     }
                 }
                 Err(error) if attempt + 1 == MAX_ATTEMPTS => return Err(error.into()),
@@ -95,7 +151,7 @@ impl EmbeddingClient {
             }
             tokio::time::sleep(Duration::from_millis(250 * (1 << attempt))).await;
         }
-        bail!("embedding attempts exhausted")
+        Err(EmbeddingAcquisitionError::AttemptsExhausted)
     }
 }
 
@@ -109,25 +165,26 @@ fn validate_response(
     let matches_native_id = profile.model == "openai/text-embedding-3-small"
         && response.model == "text-embedding-3-small";
     if response.model != profile.model && !matches_native_id {
-        bail!("embedding response model does not match the requested profile");
+        return Err(EmbeddingAcquisitionError::ResponseModelMismatch);
     }
     if response.data.len() != count {
-        bail!("embedding response count mismatch");
+        return Err(EmbeddingAcquisitionError::ResponseCountMismatch);
     }
     let mut ordered = vec![None; count];
     for row in response.data {
-        validate_embedding(&row.embedding, profile.dimensions).map_err(anyhow::Error::msg)?;
+        validate_embedding(&row.embedding, profile.dimensions)
+            .map_err(|_| EmbeddingAcquisitionError::InvalidVector)?;
         let slot = ordered
             .get_mut(row.index)
-            .context("embedding response index out of range")?;
+            .ok_or(EmbeddingAcquisitionError::ResponseIndexOutOfRange)?;
         if slot.is_some() {
-            bail!("duplicate embedding response index");
+            return Err(EmbeddingAcquisitionError::DuplicateResponseIndex);
         }
         *slot = Some(row.embedding);
     }
     ordered
         .into_iter()
-        .map(|row| row.context("missing embedding response index"))
+        .map(|row| row.ok_or(EmbeddingAcquisitionError::MissingResponseIndex))
         .collect()
 }
 
@@ -178,12 +235,13 @@ fn read_cached_vector(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
-    let cached: CachedEmbedding = serde_json::from_slice(&bytes)
-        .with_context(|| format!("invalid embedding cache entry {}", path.display()))?;
+    let cached: CachedEmbedding =
+        serde_json::from_slice(&bytes).map_err(EmbeddingAcquisitionError::InvalidCacheJson)?;
     if cached.key != key || &cached.profile != profile {
-        bail!("embedding cache identity mismatch at {}", path.display());
+        return Err(EmbeddingAcquisitionError::CacheIdentityMismatch);
     }
-    validate_embedding(&cached.vector, profile.dimensions).map_err(anyhow::Error::msg)?;
+    validate_embedding(&cached.vector, profile.dimensions)
+        .map_err(|_| EmbeddingAcquisitionError::InvalidVector)?;
     Ok(Some(cached.vector))
 }
 
@@ -193,24 +251,27 @@ pub async fn cache_artifact(
     cache_dir: &Path,
 ) -> Result<()> {
     let _lease = lock_cache(cache_dir).await?;
-    artifact.profile.validate().map_err(anyhow::Error::msg)?;
+    artifact
+        .profile
+        .validate()
+        .map_err(|_| EmbeddingAcquisitionError::UnsupportedProfile)?;
     if artifact.renderer_version != plasm_core::catalog_discovery::DISCOVERY_RENDERER_VERSION {
-        bail!("cannot reuse embeddings from another document renderer");
+        return Err(EmbeddingAcquisitionError::RendererVersionMismatch);
     }
     std::fs::create_dir_all(cache_dir)?;
     for capability in &artifact.capabilities {
         validate_embedding(&capability.embedding, artifact.profile.dimensions)
-            .map_err(anyhow::Error::msg)?;
+            .map_err(|_| EmbeddingAcquisitionError::InvalidVector)?;
         if plasm_core::catalog_discovery::content_hash(capability.document.text.as_bytes())
             != capability.document.text_hash
         {
-            bail!("artifact document hash does not match canonical text");
+            return Err(EmbeddingAcquisitionError::DocumentHashMismatch);
         }
         let key = embedding_cache_key(&capability.document, &artifact.profile);
         let path = cache_dir.join(format!("{key}.json"));
         if let Some(existing) = read_cached_vector(&path, &key, &artifact.profile)? {
             if existing != capability.embedding {
-                bail!("artifact and cache disagree for embedding key {key}");
+                return Err(EmbeddingAcquisitionError::ArtifactCacheMismatch);
             }
         } else {
             atomic_write(
@@ -219,7 +280,8 @@ pub async fn cache_artifact(
                     key,
                     profile: artifact.profile.clone(),
                     vector: capability.embedding.clone(),
-                })?,
+                })
+                .map_err(EmbeddingAcquisitionError::CacheSerialization)?,
             )?;
         }
     }
@@ -245,7 +307,7 @@ where
         if plasm_core::catalog_discovery::content_hash(document.text.as_bytes())
             != document.text_hash
         {
-            bail!("document hash does not match canonical text");
+            return Err(EmbeddingAcquisitionError::DocumentHashMismatch);
         }
         let key = embedding_cache_key(document, &profile);
         let path = cache_dir.join(format!("{key}.json"));
@@ -267,11 +329,12 @@ where
         let acquired = acquire(texts).await?;
         requests += 1;
         if acquired.len() != batch.len() {
-            bail!("embedding acquisition count mismatch");
+            return Err(EmbeddingAcquisitionError::AcquisitionCountMismatch);
         }
         // Validate the entire response before storing any member of this batch.
         for vector in &acquired {
-            validate_embedding(vector, profile.dimensions).map_err(anyhow::Error::msg)?;
+            validate_embedding(vector, profile.dimensions)
+                .map_err(|_| EmbeddingAcquisitionError::InvalidVector)?;
         }
         for ((key, indices), vector) in batch.iter().zip(acquired) {
             atomic_write(
@@ -280,7 +343,8 @@ where
                     key: key.clone(),
                     profile: profile.clone(),
                     vector: vector.clone(),
-                })?,
+                })
+                .map_err(EmbeddingAcquisitionError::CacheSerialization)?,
             )?;
             for &index in indices {
                 vectors[index] = Some(vector.clone());
@@ -293,7 +357,7 @@ where
         .map(|(document, vector)| {
             Ok(EmbeddedCapability {
                 document,
-                embedding: vector.context("embedding acquisition incomplete")?,
+                embedding: vector.ok_or(EmbeddingAcquisitionError::IncompleteAcquisition)?,
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -478,7 +542,7 @@ mod tests {
         let failed = embed_documents_with(docs.clone(), cache.path(), |texts| {
             calls += 1;
             std::future::ready(if calls == 2 {
-                Err(anyhow::anyhow!("transient acquisition exhausted"))
+                Err(EmbeddingAcquisitionError::AttemptsExhausted)
             } else {
                 Ok(texts.iter().map(|_| vec![0.5; 1536]).collect())
             })

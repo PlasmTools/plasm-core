@@ -4,6 +4,17 @@ use crate::execute_session::ExecuteSession;
 use crate::plasm_plan::{FieldPath, PlanPredicate, PlanPredicateOp, PlanValue, QualifiedEntityKey};
 use plasm_core::SymbolMapCrossRequestCache;
 use plasm_core::{CompOp, RowPredicate, TypedComparisonValue};
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum RowPredicateLoweringError {
+    #[error(transparent)]
+    WireField(#[from] crate::plasm_plan_run::WireFieldTokenError),
+    #[error(transparent)]
+    FieldPath(#[from] plasm_core::plasm_monad::PlanAtomError),
+    #[error(transparent)]
+    Value(#[from] plasm_core::PlasmDataValueError),
+}
 
 pub(crate) fn lower_row_predicate_to_plan(
     pred: &RowPredicate,
@@ -11,7 +22,7 @@ pub(crate) fn lower_row_predicate_to_plan(
     qe: &QualifiedEntityKey,
     cross_cache: Option<&SymbolMapCrossRequestCache>,
     row_schema_fields: &[String],
-) -> Result<Vec<PlanPredicate>, String> {
+) -> Result<Vec<PlanPredicate>, RowPredicateLoweringError> {
     pred.0
         .iter()
         .map(|c| {
@@ -48,6 +59,8 @@ fn comp_op_to_plan(op: CompOp) -> PlanPredicateOp {
     }
 }
 
-fn typed_comparison_to_plan_value(v: &TypedComparisonValue) -> Result<PlanValue, String> {
+fn typed_comparison_to_plan_value(
+    v: &TypedComparisonValue,
+) -> Result<PlanValue, plasm_core::PlasmDataValueError> {
     PlanValue::try_from(v.to_value())
 }

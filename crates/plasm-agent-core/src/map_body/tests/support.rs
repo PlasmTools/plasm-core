@@ -152,7 +152,8 @@ fn fixture_with_evidence(
         run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
-    });
+    })
+    .expect("valid catalog fixture");
     (es, host, calls)
 }
 pub(super) fn id(s: &str) -> StepId {
@@ -352,7 +353,7 @@ pub(super) fn on_runtime(f: impl std::future::Future<Output = ()> + Send + 'stat
 pub(super) fn compose(
     root: PlasmCompBundle,
     body: CorrelatedBody,
-) -> Result<PlasmCompBundle, String> {
+) -> Result<PlasmCompBundle, MapBodyTestError> {
     let mut comp = root.artifact().comp.clone();
     comp.bind
         .deps
@@ -361,14 +362,32 @@ pub(super) fn compose(
         .insert("result".into(), PlasmStepPayload::MapBody(Box::new(body)));
     comp.bind.topo.push(id("result"));
     comp.return_ = PlasmReturn::Step { step: id("result") };
-    PlasmCompBundle::new(crate::plasm_comp_wire::plasm_comp_artifact_from_comp(comp)?)
+    Ok(PlasmCompBundle::new(
+        crate::plasm_comp_wire::plasm_comp_artifact_from_comp(comp)?,
+    )?)
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(super) enum MapBodyTestError {
+    #[error(transparent)]
+    Artifact(#[from] crate::plasm_comp_wire::PlasmCompArtifactError),
+    #[error(transparent)]
+    Bundle(#[from] crate::plasm_comp_bundle::PlasmCompBundleError),
+    #[error("test admission failed: {0}")]
+    Admission(String),
 }
 pub(super) async fn execute(
     es: &ExecuteSession,
     host: &PlasmHostState,
     bundle: &PlasmCompBundle,
 ) -> Result<crate::plasm_plan_run::PlasmPlanRunResult, plasm_runtime::ExecutionFailure> {
-    let dry = evaluate_plasm_comp_dry(es, bundle).map_err(|e| e.to_string())?;
+    let dry = evaluate_plasm_comp_dry(es, bundle).map_err(|e| {
+        plasm_runtime::ExecutionFailure::new(
+            plasm_runtime::FailureCause::Program,
+            "test_dry_run_failed",
+            e.to_string(),
+        )
+    })?;
     Box::pin(run_plasm_comp(
         es,
         host,

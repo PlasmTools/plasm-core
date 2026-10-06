@@ -7,6 +7,46 @@ use crate::schema::CGS;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+#[derive(Debug, thiserror::Error)]
+pub enum CatalogIlError {
+    #[error("catalog artifact IO failed")]
+    Io(#[from] std::io::Error),
+    #[error("catalog artifact JSON is invalid")]
+    Json(#[from] serde_json::Error),
+    #[error("catalog schema validation failed")]
+    Schema(#[from] crate::error::SchemaError),
+    #[error("catalog format version is unsupported: {actual}")]
+    UnsupportedFormat { actual: u32 },
+    #[error("catalog set must contain manifests")]
+    EmptyCatalogSet,
+    #[error("catalog set contains an invalid or duplicate manifest name")]
+    InvalidCatalogManifestName,
+    #[error("catalog manifest entry identifier is empty")]
+    EmptyEntryId,
+    #[error("catalog manifest version must be nonzero")]
+    ZeroVersion,
+    #[error("catalog manifest digest is invalid: {field}")]
+    InvalidDigest { field: &'static str },
+    #[error("catalog artifact name must be a basename: {field}")]
+    InvalidArtifactName { field: &'static str },
+    #[error("catalog artifact digest does not match manifest: {field}")]
+    DigestMismatch { field: &'static str },
+    #[error("catalog embedding profile is unsupported")]
+    EmbeddingProfile,
+    #[error("catalog embedding profiles disagree")]
+    EmbeddingProfileMismatch,
+    #[error("catalog format version {actual} is unsupported")]
+    ManifestFormat { actual: u32 },
+    #[error("catalog artifact `{name}` is missing")]
+    MissingArtifact { name: String },
+    #[error("catalog version differs from its manifest")]
+    VersionMismatch { manifest: u64, catalog: u64 },
+    #[error("catalog entry identifier differs from its manifest")]
+    EntryIdMismatch,
+    #[error(transparent)]
+    Discovery(#[from] crate::catalog_discovery::CatalogDiscoveryError),
+}
+
 /// Current compiled-catalog wire format version (manifest + JSON body).
 pub const PLASM_CATALOG_FORMAT_VERSION: u32 = 3;
 
@@ -21,12 +61,16 @@ pub struct CatalogSetManifest {
     pub manifests: Vec<String>,
 }
 
-pub fn read_catalog_set(dir: &Path) -> Result<Vec<std::path::PathBuf>, String> {
-    let bytes = std::fs::read(dir.join("catalog-set.json"))
-        .map_err(|e| format!("read complete catalog set: {e}"))?;
-    let set: CatalogSetManifest = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
-    if set.format_version != PLASM_CATALOG_FORMAT_VERSION || set.manifests.is_empty() {
-        return Err("catalog set must be nonempty format 3; repack authoring inputs".into());
+pub fn read_catalog_set(dir: &Path) -> Result<Vec<std::path::PathBuf>, CatalogIlError> {
+    let bytes = std::fs::read(dir.join("catalog-set.json"))?;
+    let set: CatalogSetManifest = serde_json::from_slice(&bytes)?;
+    if set.format_version != PLASM_CATALOG_FORMAT_VERSION {
+        return Err(CatalogIlError::UnsupportedFormat {
+            actual: set.format_version,
+        });
+    }
+    if set.manifests.is_empty() {
+        return Err(CatalogIlError::EmptyCatalogSet);
     }
     let mut names = std::collections::BTreeSet::new();
     for name in &set.manifests {
@@ -34,7 +78,7 @@ pub fn read_catalog_set(dir: &Path) -> Result<Vec<std::path::PathBuf>, String> {
             || !name.ends_with(".manifest.json")
             || !names.insert(name)
         {
-            return Err("catalog set contains invalid or duplicate manifest name".into());
+            return Err(CatalogIlError::InvalidCatalogManifestName);
         }
     }
     Ok(set
@@ -68,69 +112,63 @@ pub struct CatalogManifest {
 }
 
 impl CatalogManifest {
-    pub fn validate_format(&self) -> Result<(), String> {
-        self.embedding_profile.validate()?;
+    pub fn validate_format(&self) -> Result<(), CatalogIlError> {
+        self.embedding_profile
+            .validate()
+            .map_err(|_| CatalogIlError::EmbeddingProfile)?;
         if self.format_version != PLASM_CATALOG_FORMAT_VERSION {
-            return Err(format!(
-                "unsupported catalog format_version {} (expected {PLASM_CATALOG_FORMAT_VERSION})",
-                self.format_version
-            ));
+            return Err(CatalogIlError::ManifestFormat {
+                actual: self.format_version,
+            });
         }
         if self.entry_id.is_empty() {
-            return Err("catalog manifest entry_id must be non-empty".into());
+            return Err(CatalogIlError::EmptyEntryId);
         }
         if self.version == 0 {
-            return Err(format!(
-                "catalog manifest version must be > 0 for `{}`",
-                self.entry_id
-            ));
+            return Err(CatalogIlError::ZeroVersion);
         }
         if self.cgs_hash.len() != 64 || !self.cgs_hash.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Err(format!(
-                "catalog manifest cgs_hash must be 64 hex chars for `{}`",
-                self.entry_id
-            ));
+            return Err(CatalogIlError::InvalidDigest { field: "cgs_hash" });
         }
         if self.cgs_json.is_empty() {
-            return Err(format!(
-                "catalog manifest cgs_json must be non-empty for `{}`",
-                self.entry_id
-            ));
+            return Err(CatalogIlError::InvalidArtifactName { field: "cgs_json" });
         }
         for name in [&self.cgs_json, &self.recipes_json, &self.discovery_json] {
             if name.is_empty() || Path::new(name).file_name().and_then(|n| n.to_str()) != Some(name)
             {
-                return Err("catalog artifact names must be basenames".into());
+                return Err(CatalogIlError::InvalidArtifactName { field: "manifest" });
             }
         }
         if self.recipes_hash.len() != 64
             || !self.recipes_hash.bytes().all(|b| b.is_ascii_hexdigit())
         {
-            return Err("recipes_hash must be a SHA-256 hex digest".into());
+            return Err(CatalogIlError::InvalidDigest {
+                field: "recipes_hash",
+            });
         }
         if self.discovery_hash.len() != 64
             || !self.discovery_hash.bytes().all(|b| b.is_ascii_hexdigit())
         {
-            return Err("discovery_hash must be a SHA-256 hex digest".into());
+            return Err(CatalogIlError::InvalidDigest {
+                field: "discovery_hash",
+            });
         }
         Ok(())
     }
 }
 
 /// Serialize a validated CGS to compiled JSON IL bytes.
-pub fn cgs_to_catalog_il_bytes(cgs: &CGS) -> Result<Vec<u8>, String> {
-    serde_json::to_vec(cgs).map_err(|e| format!("CGS JSON encode failed: {e}"))
+pub fn cgs_to_catalog_il_bytes(cgs: &CGS) -> Result<Vec<u8>, CatalogIlError> {
+    Ok(serde_json::to_vec(cgs)?)
 }
 
 /// Decode compiled JSON IL bytes into a CGS and run full validation.
-pub fn load_catalog_il_bytes(bytes: &[u8]) -> Result<CGS, String> {
+pub fn load_catalog_il_bytes(bytes: &[u8]) -> Result<CGS, CatalogIlError> {
     let span = crate::spans::catalog_load_il(bytes.len());
     let _guard = span.enter();
-    let mut cgs: CGS =
-        serde_json::from_slice(bytes).map_err(|e| format!("CGS JSON decode failed: {e}"))?;
+    let mut cgs: CGS = serde_json::from_slice(bytes)?;
     cgs.stamp_entity_ref_catalogs();
-    cgs.validate()
-        .map_err(|e| format!("CGS validation failed after JSON decode: {e}"))?;
+    cgs.validate()?;
     Ok(cgs)
 }
 
@@ -139,87 +177,60 @@ pub fn load_discovery_artifact(
     dir: &Path,
     manifest: &CatalogManifest,
     cgs: &CGS,
-) -> Result<crate::catalog_discovery::CatalogDiscoveryArtifact, String> {
+) -> Result<crate::catalog_discovery::CatalogDiscoveryArtifact, CatalogIlError> {
     manifest.validate_format()?;
-    let bytes = std::fs::read(dir.join(&manifest.discovery_json)).map_err(|e| e.to_string())?;
+    let bytes = std::fs::read(dir.join(&manifest.discovery_json))?;
     if crate::catalog_discovery::content_hash(&bytes) != manifest.discovery_hash {
-        return Err("discovery artifact digest mismatch".into());
+        return Err(CatalogIlError::DigestMismatch { field: "discovery" });
     }
     let artifact: crate::catalog_discovery::CatalogDiscoveryArtifact =
-        serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+        serde_json::from_slice(&bytes)?;
     if artifact.profile != manifest.embedding_profile {
-        return Err("manifest and discovery embedding profiles disagree".into());
+        return Err(CatalogIlError::EmbeddingProfileMismatch);
     }
     artifact.validate(cgs)?;
     Ok(artifact)
 }
 
 /// Decode JSON IL and verify digest matches the manifest `cgs_hash`.
-pub fn load_catalog_il_verified(bytes: &[u8], expected_hash: &str) -> Result<CGS, String> {
+pub fn load_catalog_il_verified(bytes: &[u8], expected_hash: &str) -> Result<CGS, CatalogIlError> {
     let cgs = load_catalog_il_bytes(bytes)?;
     let actual = cgs.catalog_cgs_hash_hex();
     if actual != expected_hash {
-        return Err(format!(
-            "catalog cgs_hash mismatch: manifest {expected_hash}, decoded CGS {actual}"
-        ));
+        return Err(CatalogIlError::DigestMismatch { field: "cgs_hash" });
     }
     Ok(cgs)
 }
 
-fn stale_catalog_hint(detail: &str) -> &'static str {
-    if detail.contains("value_ref") || detail.contains("input_type") {
-        " Remove stale catalog artifacts under the catalog dir or rebuild: `cargo run -p plasm --bin plasm-pack-catalogs -- --workspace . --apis-root apis --output-dir target/plasm-catalogs --force`"
-    } else {
-        ""
-    }
-}
-
 /// Read and parse a catalog manifest JSON file, validating wire-format fields.
-pub fn read_catalog_manifest(path: &Path) -> Result<CatalogManifest, String> {
-    let raw = std::fs::read_to_string(path)
-        .map_err(|e| format!("read manifest {}: {e}", path.display()))?;
-    let manifest: CatalogManifest = serde_json::from_str(&raw)
-        .map_err(|e| format!("parse manifest JSON {}: {e}", path.display()))?;
-    manifest
-        .validate_format()
-        .map_err(|e| format!("{}: {e}", path.display()))?;
+pub fn read_catalog_manifest(path: &Path) -> Result<CatalogManifest, CatalogIlError> {
+    let raw = std::fs::read_to_string(path)?;
+    let manifest: CatalogManifest = serde_json::from_str(&raw)?;
+    manifest.validate_format()?;
     Ok(manifest)
 }
 
 /// Load CGS from a manifest sidecar and its JSON artifact in `dir`.
-pub fn load_catalog_artifact(dir: &Path, manifest: &CatalogManifest) -> Result<CGS, String> {
+pub fn load_catalog_artifact(
+    dir: &Path,
+    manifest: &CatalogManifest,
+) -> Result<CGS, CatalogIlError> {
     let json_path = dir.join(&manifest.cgs_json);
     if !json_path.is_file() {
-        return Err(format!(
-            "missing JSON artifact `{}` for entry `{}`",
-            manifest.cgs_json, manifest.entry_id
-        ));
+        return Err(CatalogIlError::MissingArtifact {
+            name: manifest.cgs_json.clone(),
+        });
     }
-    let bytes =
-        std::fs::read(&json_path).map_err(|e| format!("read JSON {}: {e}", json_path.display()))?;
-    let cgs = match load_catalog_il_verified(&bytes, &manifest.cgs_hash) {
-        Ok(cgs) => cgs,
-        Err(e) => {
-            let detail = e.to_string();
-            return Err(format!(
-                "{}: decode JSON IL: {}{}",
-                manifest.entry_id,
-                detail,
-                stale_catalog_hint(&detail)
-            ));
-        }
-    };
+    let bytes = std::fs::read(&json_path)?;
+    let cgs = load_catalog_il_verified(&bytes, &manifest.cgs_hash)?;
     if cgs.version != manifest.version {
-        return Err(format!(
-            "version mismatch for entry `{}`: manifest {}, CGS {}",
-            manifest.entry_id, manifest.version, cgs.version
-        ));
+        return Err(CatalogIlError::VersionMismatch {
+            manifest: manifest.version,
+            catalog: cgs.version,
+        });
     }
     if cgs.entry_id.as_deref() != Some(manifest.entry_id.as_str()) {
-        return Err(format!(
-            "entry_id mismatch for `{}`: manifest vs CGS {:?}",
-            manifest.entry_id, cgs.entry_id
-        ));
+        return Err(CatalogIlError::EntryIdMismatch);
     }
     load_discovery_artifact(dir, manifest, &cgs)?;
     Ok(cgs)

@@ -170,7 +170,7 @@ impl<'a> Parser<'a> {
                         }
                         return Value::program_string(content).map_err(|error| {
                             self.err(ParseErrorKind::InvalidProgramString {
-                                message: error.to_string(),
+                                source: std::sync::Arc::new(error),
                             })
                         });
                     }
@@ -178,7 +178,7 @@ impl<'a> Parser<'a> {
                         self.pos = line_start + leading_ws + tag.len();
                         return Value::program_string(content).map_err(|error| {
                             self.err(ParseErrorKind::InvalidProgramString {
-                                message: error.to_string(),
+                                source: std::sync::Arc::new(error),
                             })
                         });
                     }
@@ -223,7 +223,7 @@ impl<'a> Parser<'a> {
                 self.reject_unfilled_teaching_hole(&s)?;
                 Value::program_string(s).map_err(|error| {
                     self.err(ParseErrorKind::InvalidProgramString {
-                        message: error.to_string(),
+                        source: std::sync::Arc::new(error),
                     })
                 })
             }
@@ -260,13 +260,19 @@ impl<'a> Parser<'a> {
                         self.pos += 1;
                     }
                     let s = &self.input[start..self.pos];
-                    s.parse::<f64>()
-                        .map(Value::Float)
-                        .map_err(|_| self.err(ParseErrorKind::InvalidFloat { raw: s.to_string() }))
+                    s.parse::<f64>().map(Value::Float).map_err(|source| {
+                        self.err(ParseErrorKind::InvalidFloat {
+                            raw: s.to_string(),
+                            source,
+                        })
+                    })
                 } else {
                     let s = &self.input[start..self.pos];
-                    s.parse::<i64>().map(Value::Integer).map_err(|_| {
-                        self.err(ParseErrorKind::InvalidInteger { raw: s.to_string() })
+                    s.parse::<i64>().map(Value::Integer).map_err(|source| {
+                        self.err(ParseErrorKind::InvalidInteger {
+                            raw: s.to_string(),
+                            source,
+                        })
                     })
                 }
             }
@@ -292,13 +298,19 @@ impl<'a> Parser<'a> {
                         self.pos += 1;
                     }
                     let s = &self.input[start..self.pos];
-                    s.parse::<f64>()
-                        .map(Value::Float)
-                        .map_err(|_| self.err(ParseErrorKind::InvalidFloat { raw: s.to_string() }))
+                    s.parse::<f64>().map(Value::Float).map_err(|source| {
+                        self.err(ParseErrorKind::InvalidFloat {
+                            raw: s.to_string(),
+                            source,
+                        })
+                    })
                 } else {
                     let s = &self.input[start..self.pos];
-                    s.parse::<i64>().map(Value::Integer).map_err(|_| {
-                        self.err(ParseErrorKind::InvalidInteger { raw: s.to_string() })
+                    s.parse::<i64>().map(Value::Integer).map_err(|source| {
+                        self.err(ParseErrorKind::InvalidInteger {
+                            raw: s.to_string(),
+                            source,
+                        })
                     })
                 }
             }
@@ -320,8 +332,8 @@ impl<'a> Parser<'a> {
                     if self.cgs_for_entity(&canon).is_some() {
                         return self.parse_entity_constructor_value_after_open_paren(&canon);
                     }
-                    return Err(self.err(ParseErrorKind::Other {
-                        message: format!("unknown value constructor `{token}`; use a declared entity constructor, a binding reference, or quoted literal text"),
+                    return Err(self.err(ParseErrorKind::UnknownValueConstructor {
+                        token: token.to_string(),
                     }));
                 }
                 Ok(Value::String(token))
@@ -658,8 +670,8 @@ impl<'a> Parser<'a> {
             self.pos += 1;
             let val = self.parse_union_ctor_field_rhs()?;
             if m.insert(key.clone(), val).is_some() {
-                return Err(self.err(ParseErrorKind::Other {
-                    message: format!("duplicate key `{key}` in constructor object"),
+                return Err(self.err(ParseErrorKind::DuplicateConstructorKey {
+                    key: key.to_string(),
                 }));
             }
             self.skip_ws();
@@ -754,8 +766,6 @@ impl<'a> Parser<'a> {
         if ch.is_alphanumeric() || ch == '_' || ch == '-' || ch.is_whitespace() || ch == '$' {
             return Ok(());
         }
-        Err(self.err(ParseErrorKind::Other {
-            message: format!("unexpected `{ch}` in an unquoted value: use a declared binding/field reference, or quote literal text. String transformations belong inside a quoted Minijinja template, for example \"{{{{ path | split_part('/', 0) }}}}\", not an argument pipe"),
-        }))
+        Err(self.err(ParseErrorKind::UnquotedValueCharacter { character: ch }))
     }
 }

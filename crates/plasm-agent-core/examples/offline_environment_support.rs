@@ -16,7 +16,7 @@ struct Input {
 }
 fn main() -> Result<()> {
     let input: Input = serde_json::from_reader(std::io::stdin())?;
-    let mut cgs = plasm_core::load_schema(&input.schema).map_err(anyhow::Error::msg)?;
+    let mut cgs = plasm_core::load_schema(&input.schema)?;
     cgs.entry_id = Some(input.catalog);
     let catalog = cgs
         .entry_id

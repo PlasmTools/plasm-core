@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use thiserror::Error;
 
 use plasm_runtime::{eval_compute_ops, ComputeEvalOutcome};
 
@@ -6,6 +7,120 @@ use crate::plasm_plan::OutputName;
 use crate::plasm_render_compile::render_context_hint;
 
 use super::super::*;
+
+#[derive(Debug, Error)]
+pub(crate) enum BindingRowsError {
+    #[error(transparent)]
+    NodeId(#[from] crate::plasm_plan::PlanAtomError),
+    #[error("binding `{label}` references a node that is not materialized")]
+    NodeUnavailable { label: String },
+    #[error("binding `{label}` requires inline materialized rows")]
+    RowsUnavailable { label: String },
+    #[error(transparent)]
+    Collection(#[from] plasm_core::collection_codec::CollectionFault),
+    #[error(transparent)]
+    FilterBinding(#[from] FilterBindingError),
+}
+
+#[derive(Debug, Error)]
+pub(crate) enum ComputeEvaluationError {
+    #[error("conditional branch `{node}` was not materialized")]
+    ConditionalBranchUnavailable { node: String },
+    #[error("conditional branches must produce exactly one total value; got {total}")]
+    ConditionalBranchCardinality { total: usize },
+    #[error("union RHS `{node}` has not been materialized (RA-14)")]
+    UnionBranchUnavailable { node: String },
+    #[error("row union failed: {0}")]
+    Union(#[from] plasm_core::row_contract::RowUnionError),
+    #[error("filter binding failed: {0}")]
+    FilterBinding(#[from] FilterBindingError),
+    #[error(transparent)]
+    RowCompute(#[from] plasm_core::RowComputeError),
+    #[error(transparent)]
+    Render(#[from] RenderComputeError),
+    #[error("render compute output schema has no fields")]
+    MissingRenderOutputField,
+}
+
+#[derive(Debug, Error)]
+pub(crate) enum RenderComputeError {
+    #[error("render input has {actual} rows; the maximum is {maximum}; apply Plan.limit")]
+    InputRowLimitExceeded { actual: usize, maximum: usize },
+    #[error(transparent)]
+    ColumnProjection(#[from] crate::plasm_plan_run::RenderColumnsError),
+    #[error(
+        "template rendering failed for binding `{binding}` at row {row_index}: {source}; {hint}"
+    )]
+    Template {
+        binding: String,
+        row_index: usize,
+        hint: String,
+        #[source]
+        source: plasm_core::program_string_template::ProgramStringError,
+    },
+    #[error(
+        "template output for binding `{binding}` at row {row_index} exceeded {maximum} characters"
+    )]
+    OutputLimitExceeded {
+        binding: String,
+        row_index: usize,
+        maximum: usize,
+    },
+}
+
+#[derive(Debug, Error)]
+pub(crate) enum FilterBindingError {
+    #[error("membership RHS `{binding}` has not been materialized (RA-13)")]
+    MembershipUnavailable { binding: String },
+    #[error("membership RHS could not be projected: {0}")]
+    MembershipProjection(#[source] MembershipProjectionError),
+    #[error("predicate operand `{node}` has not been materialized")]
+    OperandUnavailable { node: String },
+    #[error("scalar predicate operand `{node}` has {actual} rows; expected exactly one")]
+    ScalarCardinality { node: String, actual: usize },
+    #[error("scalar predicate operand `{node}` has no field `{field_path}`")]
+    OperandFieldMissing { node: String, field_path: String },
+    #[error("predicate operand contains an unresolved runtime value")]
+    UnresolvedOperandValue,
+    #[error("identity is not a scalar predicate operand")]
+    IdentityOperandUnsupported,
+    #[error("template input `{binding}` is unavailable")]
+    TemplateBindingUnavailable { binding: String },
+    #[error(transparent)]
+    Template(#[from] plasm_core::program_string_template::ProgramStringError),
+}
+
+#[derive(Debug, Error)]
+pub(crate) enum MembershipProjectionError {
+    #[error("membership RHS `{binding}` row is not an object")]
+    RowNotObject { binding: String },
+    #[error("membership RHS `{binding}` must contain exactly one column")]
+    MustBeSingleColumn { binding: String },
+    #[error("membership RHS `{binding}` has no column `{field}`")]
+    ColumnMissing { binding: String, field: String },
+    #[error(transparent)]
+    Hash(#[from] plasm_core::ValueHashError),
+}
+
+#[derive(Debug, Error)]
+pub(crate) enum DataPlanValueError {
+    #[error("plain template binding `{binding}` has not been materialized")]
+    TemplateBindingUnavailable { binding: String },
+    #[error(transparent)]
+    Template(#[from] plasm_core::program_string_template::ProgramStringError),
+    #[error(transparent)]
+    Operand(#[from] super::DataOperandError),
+}
+
+#[derive(Debug, Error)]
+pub(crate) enum ComputeFingerprintError {
+    #[error("compute operation could not be serialized for fingerprinting")]
+    Serialization(#[source] serde_json::Error),
+    #[error("fingerprint value shapes do not match rows")]
+    ValueShapeCountMismatch,
+    #[error(transparent)]
+    ValueHash(#[from] plasm_core::ValueHashError),
+}
 
 /// Output correspondence uses source occurrences, never value-based identity reconstruction.
 #[derive(Debug)]
@@ -34,9 +149,23 @@ pub(crate) async fn eval_compute_with_row_source(
     } else {
         None
     };
-    let rows = rehydrator.resolve_row_source_rows(row_source, cap).await?;
-    eval_compute_from_rows(compute, &rows, cross_binding_rows, input_contract)
-        .map_err(ExecutionFailure::from)
+    let rows = rehydrator
+        .resolve_row_source_rows(row_source, cap)
+        .await
+        .map_err(|diagnostic| {
+            ExecutionFailure::new(
+                plasm_runtime::FailureCause::Runtime,
+                "compute_input_rehydration_failed",
+                diagnostic.to_string(),
+            )
+        })?;
+    eval_compute_from_rows(compute, &rows, cross_binding_rows, input_contract).map_err(|error| {
+        ExecutionFailure::new(
+            plasm_runtime::FailureCause::Program,
+            "compute_evaluation_failed",
+            error.to_string(),
+        )
+    })
 }
 
 pub(crate) fn eval_compute_from_rows(
@@ -44,13 +173,16 @@ pub(crate) fn eval_compute_from_rows(
     rows: &[plasm_core::ValueRow],
     cross_binding_rows: &BTreeMap<String, Vec<plasm_core::ValueRow>>,
     input_contract: &plasm_core::value_contract::ValueContract,
-) -> Result<ComputedRows, String> {
+) -> Result<ComputedRows, ComputeEvaluationError> {
     if let ComputeOp::MergeBranches { other } = &compute.op {
-        let right = cross_binding_rows
-            .get(other.as_str())
-            .ok_or("conditional branch not materialized")?;
-        if rows.len() + right.len() != 1 {
-            return Err("conditional branches must produce exactly one total value".into());
+        let right = cross_binding_rows.get(other.as_str()).ok_or_else(|| {
+            ComputeEvaluationError::ConditionalBranchUnavailable {
+                node: other.as_str().to_owned(),
+            }
+        })?;
+        let total = rows.len() + right.len();
+        if total != 1 {
+            return Err(ComputeEvaluationError::ConditionalBranchCardinality { total });
         }
         return Ok(ComputedRows::synthetic(
             rows.iter().chain(right.iter()).cloned().collect(),
@@ -58,13 +190,13 @@ pub(crate) fn eval_compute_from_rows(
     }
     if let ComputeOp::Union { other } = &compute.op {
         let right = cross_binding_rows.get(other.as_str()).ok_or_else(|| {
-            format!(
-                "union RHS `{}` has not been materialized (RA-14)",
-                other.as_str()
-            )
+            ComputeEvaluationError::UnionBranchUnavailable {
+                node: other.as_str().to_owned(),
+            }
         })?;
         let (rows, occurrences) = plasm_core::row_contract::PublicRowSchema::new(&compute.schema)
-            .union_with_occurrences(rows, right)?;
+            .union_with_occurrences(rows, right)
+            .map_err(ComputeEvaluationError::Union)?;
         return Ok(ComputedRows {
             rows,
             occurrences: occurrences.into_iter().map(Some).collect(),
@@ -88,7 +220,7 @@ pub(crate) fn eval_compute_from_rows(
                 .schema
                 .fields
                 .first()
-                .ok_or("render output field missing")?
+                .ok_or(ComputeEvaluationError::MissingRenderOutputField)?
                 .name
                 .as_str(),
             primary_rows: &rows,
@@ -100,6 +232,7 @@ pub(crate) fn eval_compute_from_rows(
             render_bindings: &render_bindings,
             binding_rows: cross_binding_rows,
         })
+        .map_err(ComputeEvaluationError::Render)
         .map(ComputedRows::synthetic),
     }
 }
@@ -132,13 +265,13 @@ fn effective_render_binding_labels(
 
 pub(crate) fn render_compute(
     input: &RenderComputeInput<'_>,
-) -> Result<Vec<plasm_core::ValueRow>, String> {
+) -> Result<Vec<plasm_core::ValueRow>, RenderComputeError> {
     let rows = input.primary_rows;
     if rows.len() > PLAN_RENDER_MAX_ROWS {
-        return Err(format!(
-            "Plan.render source has {} rows; use Plan.limit(...) to stay at or below {PLAN_RENDER_MAX_ROWS}",
-            rows.len()
-        ));
+        return Err(RenderComputeError::InputRowLimitExceeded {
+            actual: rows.len(),
+            maximum: PLAN_RENDER_MAX_ROWS,
+        });
     }
     let source_label = input
         .collection_alias
@@ -163,17 +296,20 @@ pub(crate) fn render_compute(
         } else {
             plasm_core::ValueRow::from(input.columns.project_row(row, row_index)?)
         };
-        let rendered = plasm_core::render_minijinja(input.template, Some(&projected), &named_bindings)
-            .map_err(|e| {
-                let hint = render_context_hint(input.columns, Some(source_label));
-                format!(
-                    "template render failed on binding `{source_label}` at row {row_index}: {e}. {hint}"
-                )
-            })?;
+        let rendered =
+            plasm_core::render_minijinja(input.template, Some(&projected), &named_bindings)
+                .map_err(|source| RenderComputeError::Template {
+                    binding: source_label.to_owned(),
+                    row_index,
+                    hint: render_context_hint(input.columns, Some(source_label)),
+                    source,
+                })?;
         if rendered.chars().count() > PLAN_RENDER_MAX_OUTPUT_CHARS {
-            return Err(format!(
-                "template render failed on binding `{source_label}` at row {row_index}: output exceeds {PLAN_RENDER_MAX_OUTPUT_CHARS} characters"
-            ));
+            return Err(RenderComputeError::OutputLimitExceeded {
+                binding: source_label.to_owned(),
+                row_index,
+                maximum: PLAN_RENDER_MAX_OUTPUT_CHARS,
+            });
         }
         out.push(
             [(
@@ -190,22 +326,24 @@ pub(crate) fn render_compute(
 pub(crate) fn binding_rows_for_compute(
     compute: &ComputeTemplate,
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
-) -> Result<BTreeMap<String, Vec<plasm_core::ValueRow>>, String> {
+) -> Result<BTreeMap<String, Vec<plasm_core::ValueRow>>, BindingRowsError> {
     let mut out = binding_rows_for_render(compute, materialized)?;
     for label in compute_binding_labels(&compute.op) {
         if out.contains_key(&label) {
             continue;
         }
         let node_id = PlanNodeId::new(label.clone())?;
-        let mat = materialized.get(&node_id).ok_or_else(|| {
-            format!("membership binding `{label}`: node `{label}` has not been materialized")
-        })?;
+        let mat = materialized
+            .get(&node_id)
+            .ok_or_else(|| BindingRowsError::NodeUnavailable {
+                label: label.clone(),
+            })?;
         let rows = mat
             .row_source
             .inline_rows()
             .map(|r| r.to_vec())
-            .ok_or_else(|| {
-                format!("membership binding `{label}`: node `{label}` is not inline materialized")
+            .ok_or_else(|| BindingRowsError::RowsUnavailable {
+                label: label.clone(),
             })?;
         out.insert(label, rows);
     }
@@ -215,33 +353,36 @@ pub(crate) fn binding_rows_for_compute(
 pub(crate) fn resolve_filter_predicates_with_materialized(
     predicates: &plasm_core::BooleanExpr<crate::plasm_plan::PlanPredicate>,
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
-) -> Result<plasm_core::BooleanExpr<crate::plasm_plan::PlanPredicate>, String> {
+) -> Result<plasm_core::BooleanExpr<crate::plasm_plan::PlanPredicate>, BindingRowsError> {
     let mut binding_rows = BTreeMap::new();
     for label in compute_binding_labels(&ComputeOp::Filter {
         predicates: predicates.clone(),
     }) {
         let node_id = PlanNodeId::new(label.clone())?;
-        let mat = materialized.get(&node_id).ok_or_else(|| {
-            format!("membership binding `{label}`: node `{label}` has not been materialized")
-        })?;
-        crate::python_compute::require_complete_collection(&mat.result)
-            .map_err(|error| error.to_string())?;
+        let mat = materialized
+            .get(&node_id)
+            .ok_or_else(|| BindingRowsError::NodeUnavailable {
+                label: label.clone(),
+            })?;
+        crate::python_compute::require_complete_collection(&mat.result)?;
         let rows = mat
             .row_source
             .inline_rows()
             .map(|r| r.to_vec())
-            .ok_or_else(|| {
-                format!("membership binding `{label}`: node `{label}` is not inline materialized")
+            .ok_or_else(|| BindingRowsError::RowsUnavailable {
+                label: label.clone(),
             })?;
         binding_rows.insert(label, rows);
     }
-    predicates.try_map(&mut |p| bind_filter_predicate(p, &binding_rows))
+    predicates
+        .try_map(&mut |p| bind_filter_predicate(p, &binding_rows))
+        .map_err(BindingRowsError::FilterBinding)
 }
 
 fn bind_filter_op(
     op: &ComputeOp,
     binding_rows: &BTreeMap<String, Vec<plasm_core::ValueRow>>,
-) -> Result<ComputeOp, String> {
+) -> Result<ComputeOp, FilterBindingError> {
     let ComputeOp::Filter { predicates } = op else {
         return Ok(op.clone());
     };
@@ -254,7 +395,7 @@ fn bind_filter_op(
 fn bind_filter_predicate(
     pred: &crate::plasm_plan::PlanPredicate,
     binding_rows: &BTreeMap<String, Vec<plasm_core::ValueRow>>,
-) -> Result<crate::plasm_plan::PlanPredicate, String> {
+) -> Result<crate::plasm_plan::PlanPredicate, FilterBindingError> {
     use plasm_core::operand_binding::{BindOperands, ResolvedValue};
     if let crate::plasm_plan::PlanValue::BindingSymbol { binding, path } = &pred.value {
         if matches!(
@@ -262,7 +403,9 @@ fn bind_filter_predicate(
             crate::plasm_plan::PlanPredicateOp::In | crate::plasm_plan::PlanPredicateOp::NotIn
         ) {
             let rows = binding_rows.get(binding).ok_or_else(|| {
-                format!("membership RHS `{binding}` has not been materialized (RA-13)")
+                FilterBindingError::MembershipUnavailable {
+                    binding: binding.clone(),
+                }
             })?;
             let values = collect_membership_column(binding, path, rows)?;
             return Ok(crate::plasm_plan::PlanPredicate {
@@ -270,7 +413,7 @@ fn bind_filter_predicate(
                 op: pred.op,
                 value: crate::plasm_plan::PlanValue::Literal {
                     value: ResolvedValue::new(plasm_core::Value::Array(values))
-                        .map_err(str::to_owned)?,
+                        .map_err(|_| FilterBindingError::UnresolvedOperandValue)?,
                 },
             });
         }
@@ -282,62 +425,62 @@ struct PredicateOperands<'a> {
     rows: &'a BTreeMap<String, Vec<plasm_core::ValueRow>>,
 }
 impl PredicateOperands<'_> {
-    fn singleton(&self, node: &str) -> Result<&plasm_core::Value, String> {
+    fn singleton(&self, node: &str) -> Result<&plasm_core::Value, FilterBindingError> {
         let rows = self
             .rows
             .get(node)
-            .ok_or_else(|| format!("predicate operand `{node}` has not been materialized"))?;
+            .ok_or_else(|| FilterBindingError::OperandUnavailable {
+                node: node.to_owned(),
+            })?;
         match rows.as_slice() {
             [row] => Ok(row),
-            [] => Err(format!(
-                "scalar predicate operand `{node}` has zero rows; expected exactly one"
-            )),
-            _ => Err(format!(
-                "scalar predicate operand `{node}` has {} rows; expected exactly one",
-                rows.len()
-            )),
+            _ => Err(FilterBindingError::ScalarCardinality {
+                node: node.to_owned(),
+                actual: rows.len(),
+            }),
         }
     }
 }
 impl plasm_core::operand_binding::OperandResolver for PredicateOperands<'_> {
-    type Error = String;
+    type Error = FilterBindingError;
     fn resolve(
         &mut self,
         reference: &plasm_core::PlasmInputRef,
-    ) -> Result<plasm_core::operand_binding::ResolvedValue, String> {
+    ) -> Result<plasm_core::operand_binding::ResolvedValue, FilterBindingError> {
         let (node, path) = match reference {
             plasm_core::PlasmInputRef::NodeInput { node, path } => (node, path),
             plasm_core::PlasmInputRef::RowBinding { binding, path } => (binding, path),
         };
         let mut value = self.singleton(node)?;
         for field in path {
-            value = value.get(field).ok_or_else(|| {
-                format!(
-                    "scalar predicate operand `{node}` has no field `{}`",
-                    path.join(".")
-                )
-            })?;
+            value = value
+                .get(field)
+                .ok_or_else(|| FilterBindingError::OperandFieldMissing {
+                    node: node.clone(),
+                    field_path: path.join("."),
+                })?;
         }
-        plasm_core::operand_binding::ResolvedValue::new(value.clone()).map_err(str::to_owned)
+        plasm_core::operand_binding::ResolvedValue::new(value.clone())
+            .map_err(|_| FilterBindingError::UnresolvedOperandValue)
     }
     fn identity(
         &mut self,
         _: plasm_core::operand_binding::IdentityTarget<'_>,
         _: &plasm_core::PlasmInputRef,
-    ) -> Result<plasm_core::EntityId, String> {
-        Err("identity is not a scalar predicate operand".into())
+    ) -> Result<plasm_core::EntityId, FilterBindingError> {
+        Err(FilterBindingError::IdentityOperandUnsupported)
     }
     fn string(
         &mut self,
         template: &plasm_core::program_string_template::CompiledProgramString,
-    ) -> Result<String, String> {
+    ) -> Result<String, FilterBindingError> {
         self.template(template, &[])
     }
     fn template(
         &mut self,
         template: &plasm_core::program_string_template::CompiledProgramString,
         bindings: &[plasm_core::PlanInputBinding],
-    ) -> Result<String, String> {
+    ) -> Result<String, FilterBindingError> {
         let mut named = BTreeMap::new();
         for root in template.roots() {
             let node = bindings
@@ -347,14 +490,14 @@ impl plasm_core::operand_binding::OperandResolver for PredicateOperands<'_> {
                 .unwrap_or(root);
             named.insert(
                 root.clone(),
-                vec![plasm_core::ValueRow::try_from(
+                vec![plasm_core::ValueRow::from_output(
                     self.singleton(node)?.clone(),
-                )?],
+                )],
             );
         }
         template
             .render_minijinja_context(&plasm_core::unified_template_context(None, &named))
-            .map_err(|e| e.to_string())
+            .map_err(FilterBindingError::Template)
     }
 }
 
@@ -362,7 +505,7 @@ fn collect_membership_column(
     binding: &str,
     path: &[String],
     rows: &[plasm_core::ValueRow],
-) -> Result<Vec<plasm_core::Value>, String> {
+) -> Result<Vec<plasm_core::Value>, FilterBindingError> {
     let mut out = Vec::new();
     let mut seen: std::collections::HashMap<u64, Vec<usize>> = std::collections::HashMap::new();
     for row in rows {
@@ -372,7 +515,9 @@ fn collect_membership_column(
         }
         use std::hash::Hasher;
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        plasm_core::hash_resolved_value(&cell, &mut hasher)?;
+        plasm_core::hash_resolved_value(&cell, &mut hasher)
+            .map_err(MembershipProjectionError::Hash)
+            .map_err(FilterBindingError::MembershipProjection)?;
         let bucket = seen.entry(hasher.finish()).or_default();
         if !bucket.iter().any(|&index| out[index] == cell) {
             bucket.push(out.len());
@@ -386,14 +531,18 @@ fn membership_cell(
     binding: &str,
     path: &[String],
     row: &plasm_core::Value,
-) -> Result<plasm_core::Value, String> {
+) -> Result<plasm_core::Value, FilterBindingError> {
     if path.is_empty() {
-        let obj = row
-            .as_object()
-            .ok_or_else(|| format!("membership RHS `{binding}` row is not an object"))?;
+        let obj = row.as_object().ok_or_else(|| {
+            FilterBindingError::MembershipProjection(MembershipProjectionError::RowNotObject {
+                binding: binding.to_owned(),
+            })
+        })?;
         if obj.len() != 1 {
-            return Err(format!(
-                "membership RHS `{binding}` must be one column; write `({binding} | select field)` (RA-13)"
+            return Err(FilterBindingError::MembershipProjection(
+                MembershipProjectionError::MustBeSingleColumn {
+                    binding: binding.to_owned(),
+                },
             ));
         }
         return Ok(obj
@@ -404,9 +553,12 @@ fn membership_cell(
     }
     let mut cur = row;
     for key in path {
-        cur = cur
-            .get(key)
-            .ok_or_else(|| format!("membership RHS `{binding}` has no column `{key}`"))?;
+        cur = cur.get(key).ok_or_else(|| {
+            FilterBindingError::MembershipProjection(MembershipProjectionError::ColumnMissing {
+                binding: binding.to_owned(),
+                field: key.clone(),
+            })
+        })?;
     }
     Ok(cur.clone())
 }
@@ -414,7 +566,7 @@ fn membership_cell(
 pub(crate) fn binding_rows_for_render(
     compute: &ComputeTemplate,
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
-) -> Result<BTreeMap<String, Vec<plasm_core::ValueRow>>, String> {
+) -> Result<BTreeMap<String, Vec<plasm_core::ValueRow>>, BindingRowsError> {
     let ComputeOp::Render {
         render_bindings, ..
     } = &compute.op
@@ -426,15 +578,17 @@ pub(crate) fn binding_rows_for_render(
     let mut out = BTreeMap::new();
     for label in labels {
         let node_id = PlanNodeId::new(label.clone())?;
-        let mat = materialized.get(&node_id).ok_or_else(|| {
-            format!("Plan.render binding `{label}`: node `{label}` has not been materialized")
-        })?;
+        let mat = materialized
+            .get(&node_id)
+            .ok_or_else(|| BindingRowsError::NodeUnavailable {
+                label: label.clone(),
+            })?;
         let rows = mat
             .row_source
             .inline_rows()
             .map(|r| r.to_vec())
-            .ok_or_else(|| {
-                format!("Plan.render binding `{label}`: node `{label}` is not inline materialized")
+            .ok_or_else(|| BindingRowsError::RowsUnavailable {
+                label: label.clone(),
             })?;
         out.insert(label, rows);
     }
@@ -444,26 +598,22 @@ pub(crate) fn binding_rows_for_render(
 pub(crate) fn binding_rows_for_data_uses(
     uses: &[crate::plasm_plan::PlanResultUse],
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
-) -> Result<BTreeMap<String, Vec<plasm_core::ValueRow>>, String> {
+) -> Result<BTreeMap<String, Vec<plasm_core::ValueRow>>, BindingRowsError> {
     let mut out = BTreeMap::new();
     for use_ref in uses {
         let label = use_ref.r#as.as_str();
         let node_id = PlanNodeId::new(use_ref.node.clone())?;
-        let mat = materialized.get(&node_id).ok_or_else(|| {
-            format!(
-                "plain template binding `{label}`: node `{}` has not been materialized",
-                use_ref.node
-            )
-        })?;
+        let mat = materialized
+            .get(&node_id)
+            .ok_or_else(|| BindingRowsError::NodeUnavailable {
+                label: label.to_owned(),
+            })?;
         let rows = mat
             .row_source
             .inline_rows()
             .map(|r| r.to_vec())
-            .ok_or_else(|| {
-                format!(
-                    "plain template binding `{label}`: node `{}` is not inline materialized",
-                    use_ref.node
-                )
+            .ok_or_else(|| BindingRowsError::RowsUnavailable {
+                label: label.to_owned(),
             })?;
         out.insert(label.to_string(), rows);
     }
@@ -473,7 +623,7 @@ pub(crate) fn binding_rows_for_data_uses(
 pub(crate) fn eval_data_plan_value(
     value: &crate::plasm_plan::PlanValue,
     binding_rows: &BTreeMap<String, Vec<plasm_core::ValueRow>>,
-) -> Result<(Vec<plasm_core::ValueRow>, Vec<MaterializedValueShape>), String> {
+) -> Result<(Vec<plasm_core::ValueRow>, Vec<MaterializedValueShape>), DataPlanValueError> {
     match value {
         crate::plasm_plan::PlanValue::Template {
             template,
@@ -482,16 +632,14 @@ pub(crate) fn eval_data_plan_value(
             let mut named = BTreeMap::new();
             for binding in input_bindings {
                 let rows = binding_rows.get(&binding.from).cloned().ok_or_else(|| {
-                    format!(
-                        "plain template binding `{}` has not been materialized",
-                        binding.from
-                    )
+                    DataPlanValueError::TemplateBindingUnavailable {
+                        binding: binding.from.clone(),
+                    }
                 })?;
                 named.insert(binding.to.clone(), rows);
             }
             let rendered = template
-                .render_minijinja_context(&plasm_core::unified_template_context(None, &named))
-                .map_err(|e| e.to_string())?;
+                .render_minijinja_context(&plasm_core::unified_template_context(None, &named))?;
             Ok((
                 vec![plasm_core::ValueRow::from_output(
                     plasm_core::Value::String(rendered),
@@ -499,7 +647,7 @@ pub(crate) fn eval_data_plan_value(
                 vec![MaterializedValueShape::ScalarColumn],
             ))
         }
-        other => plan_value_to_rows(other),
+        other => plan_value_to_rows(other).map_err(Into::into),
     }
 }
 
@@ -507,12 +655,14 @@ pub(crate) fn compute_fingerprint(
     node: &ValidatedPlanNode,
     rows: &[plasm_core::ValueRow],
     value_shapes: &[MaterializedValueShape],
-) -> Result<String, String> {
+) -> Result<String, ComputeFingerprintError> {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(node.id().as_str().as_bytes());
     if let ValidatedPlanNode::Compute(compute) = node {
-        hasher.update(serde_json::to_vec(&compute.compute).map_err(|e| e.to_string())?);
+        hasher.update(
+            serde_json::to_vec(&compute.compute).map_err(ComputeFingerprintError::Serialization)?,
+        );
     }
     if let ValidatedPlanNode::MapBody(map) = node {
         hasher.update(
@@ -522,12 +672,12 @@ pub(crate) fn compute_fingerprint(
                 "parent_schema": map.body.parent_schema, "parent_entity_authority": map.body.parent_entity_authority,
                 "body": plasm_core::plasm_comp_commit_canonical(&map.body.body),
             }))
-            .map_err(|e| e.to_string())?,
+            .map_err(ComputeFingerprintError::Serialization)?,
         );
     }
     hasher.update((rows.len() as u64).to_le_bytes());
     if !value_shapes.is_empty() && value_shapes.len() != rows.len() {
-        return Err("fingerprint value shapes do not match rows".into());
+        return Err(ComputeFingerprintError::ValueShapeCountMismatch);
     }
     for (i, row) in rows.iter().enumerate() {
         hasher.update([u8::from(
@@ -585,6 +735,7 @@ mod scalar_operand_tests {
                 &compute.schema.row_contract().unwrap()
             )
             .unwrap_err()
+            .to_string()
             .contains("exactly one"));
         }
         assert!(eval_compute_from_rows(
@@ -594,6 +745,7 @@ mod scalar_operand_tests {
             &compute.schema.row_contract().unwrap()
         )
         .unwrap_err()
+        .to_string()
         .contains("not materialized"));
     }
 

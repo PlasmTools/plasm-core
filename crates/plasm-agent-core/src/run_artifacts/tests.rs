@@ -63,7 +63,31 @@ fn strip_plasm_resource_read_source_preserves_other_query_params() {
 
 #[test]
 fn run_artifact_wire_rejects_uuid_shape() {
-    assert!(RunArtifactWire::from_str("550e8400-e29b-41d4-a716-446655440000").is_err());
+    let supplied = "550e8400-e29b-41d4-a716-446655440000";
+    let error: RunArtifactWireError = RunArtifactWire::from_str(supplied).unwrap_err();
+    assert_eq!(error.preview, supplied);
+    assert_eq!(
+        error.to_string(),
+        format!("invalid `run_id`: expected `pr` + 64 hex digits (got {supplied:?})")
+    );
+}
+
+#[test]
+fn run_artifact_wire_rejection_bounds_unicode_preview() {
+    let error = RunArtifactWire::from_str(&"é".repeat(100)).unwrap_err();
+    assert_eq!(error.preview, "é".repeat(80));
+}
+
+#[test]
+fn run_artifact_wire_rejects_invalid_prefix_length_and_hex() {
+    for wire in [
+        format!("xx{}", "ab".repeat(32)),
+        format!("pr{}", "ab".repeat(31)),
+        format!("pr{}g", "a".repeat(63)),
+    ] {
+        let error: RunArtifactWireError = wire.parse::<RunArtifactWire>().unwrap_err();
+        assert_eq!(error.preview, wire);
+    }
 }
 
 #[test]
@@ -76,6 +100,12 @@ fn run_artifact_wire_accepts_uppercase_hex() {
     let mixed = format!("{RUN_ARTIFACT_WIRE_PREFIX}{upper_hex}");
     let w = RunArtifactWire::from_str(&mixed).expect("parse uppercase hex");
     assert_eq!(w.0, sample_run_id());
+    assert_eq!(
+        RunArtifactWire::from_str(&format!(" \t{mixed}\n"))
+            .unwrap()
+            .0,
+        sample_run_id()
+    );
 }
 
 #[test]

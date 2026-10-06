@@ -11,8 +11,7 @@ use crate::execute_session::ExecuteSession;
 use crate::mcp_agent_present::{AgentContent, PlanTokenRefs};
 use crate::plan_dry_display::PlanDryVerdict;
 use crate::plasm_plan_run::{
-    format_session_symbolic_parse_error, parse_plasm_surface_line_program,
-    typecheck_parsed_for_session, DryPlasmPlanEvaluation, PlasmPlanRunResult,
+    parse_plasm_surface_line_program, DryPlasmPlanEvaluation, PlasmPlanRunResult,
 };
 use crate::program_reject_memory::RejectReplay;
 use plasm_core::{PromptPipelineConfig, SymbolMapCrossRequestCache};
@@ -40,14 +39,27 @@ impl ProgramErrorCategory {
 }
 
 /// Typed failure from compile / dry-eval / flow gate — category is structural, not heuristic.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum ProgramStageError {
+    Dispatch {
+        error: std::sync::Arc<crate::execute_pipeline::DispatchError>,
+    },
+    SessionCatalog {
+        error: crate::error::SessionCatalogNotLoaded,
+    },
     Parse {
         correction: String,
         span_offset: Option<usize>,
+        error: std::sync::Arc<ProgramParseError>,
     },
     PythonLowering {
         error: crate::program_rejection::PythonLoweringError,
+    },
+    CatalogOwnership {
+        error: crate::catalog_ownership::CatalogOwnershipError,
+    },
+    SessionProvision {
+        error: crate::plan_session_provisions::SessionProvisionError,
     },
     PythonCompute {
         error: crate::program_rejection::PythonComputeRejection,
@@ -67,38 +79,97 @@ pub enum ProgramStageError {
         error: plasm_core::row_plan::RowComputeError,
     },
     Plan {
-        correction: String,
+        error: std::sync::Arc<PlanStageError>,
     },
     Flow {
         denial: crate::plan_flow::FlowDenial,
     },
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum ProgramParseError {
+    #[error(transparent)]
+    Dag(std::sync::Arc<crate::error::DagCompilationError>),
+    #[error("Submit a Python Program subclass with build(self).")]
+    EmptyProgram,
+    #[error("Python program exceeds 32 KiB source budget")]
+    SourceBudgetExceeded,
+    #[error("Python syntax: {0}")]
+    Python(#[source] ruff_python_parser::ParseError),
+    #[error(transparent)]
+    Surface(#[from] plasm_core::expr_parser::ParseError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum PlanStageError {
+    #[error(transparent)]
+    Dag(#[from] crate::error::DagCompilationError),
+    #[error(transparent)]
+    DryValidation(#[from] crate::plasm_plan_run::DryPlanValidationError),
+    #[error(transparent)]
+    Bundle(#[from] crate::plasm_comp_bundle::PlasmCompBundleError),
+    #[error(transparent)]
+    Validation(#[from] crate::plasm_plan::PlanValidationError),
+    #[error("evidence comp_committed: {0}")]
+    Evidence(#[from] crate::evidence_chain::EvidenceEmitError),
+    #[error(transparent)]
+    Preparation(#[from] crate::plasm_step_convert::StepPayloadLiftError),
+    #[error(transparent)]
+    WireField(#[from] crate::plasm_plan_run::WireFieldTokenError),
+    #[error(transparent)]
+    Scope(#[from] crate::map_body::MapBodyValidationError),
+    #[error("entity `{entity}` is not defined in the resolved catalog")]
+    EntityMissing { entity: String },
+    #[error("projection field `{field}` (wire `{wire}`) is not declared on entity `{entity}`")]
+    ProjectionFieldMissing {
+        field: String,
+        wire: String,
+        entity: String,
+    },
+    #[error("plan.nodes[{index}] requires ir or ir_template for executable surface")]
+    ExecutableSurfaceMissing { index: usize },
+    #[error("relation traversal requires federated session dispatch")]
+    FederationRequired,
+    #[error("plan dry-run preflight failed — fix errors before run_ref")]
+    PreflightFailed,
+    #[error("{0}")]
+    DryStaging(#[source] plasm_runtime::ExecutionFailure),
+}
+
 impl ProgramStageError {
-    pub fn plan(correction: impl Into<String>) -> Self {
+    pub fn plan(error: impl Into<PlanStageError>) -> Self {
         Self::Plan {
-            correction: correction.into(),
+            error: std::sync::Arc::new(error.into()),
         }
     }
 
     pub fn category(&self) -> ProgramErrorCategory {
         match self {
+            Self::Dispatch { .. } => ProgramErrorCategory::Plan,
+            Self::SessionCatalog { .. } => ProgramErrorCategory::Plan,
             Self::Parse { .. } | Self::PythonSyntax { .. } => ProgramErrorCategory::Parse,
             Self::PythonLowering { .. }
             | Self::PythonCompute { .. }
+            | Self::CatalogOwnership { .. }
             | Self::PythonAnalysis { .. }
             | Self::CoreType { .. }
             | Self::RowCompute { .. } => ProgramErrorCategory::Type,
             Self::Plan { .. } => ProgramErrorCategory::Plan,
+            Self::SessionProvision { .. } => ProgramErrorCategory::Plan,
             Self::Flow { .. } => ProgramErrorCategory::Flow,
         }
     }
 
     pub fn correction(&self) -> Cow<'_, str> {
         match self {
-            Self::Parse { correction, .. } | Self::Plan { correction } => Cow::Borrowed(correction),
-            Self::PythonLowering { error } => Cow::Borrowed(error.message()),
-            Self::PythonCompute { error } => Cow::Borrowed(error.correction()),
+            Self::Dispatch { error } => Cow::Owned(error.to_string()),
+            Self::SessionCatalog { error } => Cow::Owned(error.to_string()),
+            Self::Parse { correction, .. } => Cow::Borrowed(correction),
+            Self::Plan { error } => Cow::Owned(error.to_string()),
+            Self::PythonLowering { error } => Cow::Owned(error.to_string()),
+            Self::CatalogOwnership { error } => Cow::Owned(error.to_string()),
+            Self::SessionProvision { error } => Cow::Owned(error.to_string()),
+            Self::PythonCompute { error } => Cow::Owned(error.correction().into_owned()),
             Self::PythonAnalysis {
                 diagnostics,
                 source,
@@ -117,8 +188,13 @@ impl ProgramStageError {
 
     pub fn into_correction(self) -> String {
         match self {
-            Self::Parse { correction, .. } | Self::Plan { correction } => correction,
+            Self::Dispatch { error } => error.to_string(),
+            Self::SessionCatalog { error } => error.to_string(),
+            Self::Parse { correction, .. } => correction,
+            Self::Plan { error } => error.to_string(),
             Self::PythonLowering { error } => error.into_message(),
+            Self::CatalogOwnership { error } => error.to_string(),
+            Self::SessionProvision { error } => error.to_string(),
             Self::PythonCompute { error } => error.into_correction(),
             Self::PythonAnalysis {
                 diagnostics,
@@ -151,6 +227,54 @@ impl ProgramStageError {
 impl std::fmt::Display for ProgramStageError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.correction())
+    }
+}
+
+impl std::error::Error for ProgramStageError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Parse { error, .. } => Some(error.as_ref()),
+            Self::Plan { error } => Some(error.as_ref()),
+            Self::Dispatch { error } => Some(error.as_ref()),
+            Self::PythonLowering { error } => Some(error),
+            Self::SessionCatalog { error } => Some(error),
+            Self::CatalogOwnership { error } => Some(error),
+            Self::SessionProvision { error } => Some(error),
+            Self::PythonCompute { error } => Some(error),
+            Self::CoreType { error } => Some(error),
+            Self::RowCompute { error } => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<crate::execute_pipeline::DispatchError> for ProgramStageError {
+    fn from(error: crate::execute_pipeline::DispatchError) -> Self {
+        Self::Dispatch {
+            error: std::sync::Arc::new(error),
+        }
+    }
+}
+
+impl From<crate::error::DagCompilationError> for ProgramStageError {
+    fn from(error: crate::error::DagCompilationError) -> Self {
+        use crate::error::DagCompilationError as E;
+        match error {
+            E::Type(error) => Self::CoreType { error },
+            error @ (E::SurfaceParse(_)
+            | E::ExprNode(_)
+            | E::SurfaceSyntax(_)
+            | E::Pipe(_)
+            | E::CollectMeta(_)
+            | E::TemplateSyntax(_)
+            | E::Iteration(_)
+            | E::MembershipRhs(_)) => Self::Parse {
+                correction: error.to_string(),
+                span_offset: None,
+                error: std::sync::Arc::new(ProgramParseError::Dag(std::sync::Arc::new(error))),
+            },
+            error => Self::plan(error),
+        }
     }
 }
 
@@ -237,72 +361,6 @@ pub struct ProgramDiagnostic {
 }
 
 /// Classify a compile `String` via typed parse/typecheck — bridge until DAG returns staged errors.
-/// Prefer [`crate::plasm_compile::compile_plasm_expression`] which already returns [`ProgramStageError`].
-///
-/// Multi-statement programs keep the original compile message as [`ProgramStageError::Plan`]:
-/// re-walking lines mis-classifies binding refs (`rows`) as entity parse failures.
-pub(crate) fn diagnose_compile_failure(
-    pipeline: &PromptPipelineConfig,
-    symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
-    session: &ExecuteSession,
-    program: &str,
-    compile_msg: String,
-) -> ProgramStageError {
-    let Ok(stmts) = collect_program_statement_lines(program) else {
-        return ProgramStageError::Parse {
-            correction: compile_msg,
-            span_offset: None,
-        };
-    };
-    let nonempty: Vec<&str> = stmts
-        .iter()
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .collect();
-    if nonempty.is_empty() {
-        return ProgramStageError::Parse {
-            correction: compile_msg,
-            span_offset: None,
-        };
-    }
-    // A row program must keep its own diagnostic; reparsing it as one catalog
-    // expression can only diagnose a prefix and hide the offending row operation.
-    if nonempty.len() > 1 || crate::plasm_dag::is_plasm_dag_source(program) {
-        return ProgramStageError::Plan {
-            correction: compile_msg,
-        };
-    }
-    let trimmed = nonempty[0];
-    match parse_plasm_surface_line_program(
-        session,
-        symbol_map_cross_cache,
-        pipeline,
-        trimmed,
-        None,
-        false,
-    ) {
-        Err(err) => ProgramStageError::Parse {
-            correction: format_session_symbolic_parse_error(
-                session,
-                symbol_map_cross_cache,
-                pipeline,
-                trimmed,
-                &err,
-            ),
-            span_offset: None,
-        },
-        Ok(parsed) => {
-            if let Err(te) = typecheck_parsed_for_session(session, &parsed) {
-                ProgramStageError::CoreType { error: te }
-            } else {
-                ProgramStageError::Plan {
-                    correction: compile_msg,
-                }
-            }
-        }
-    }
-}
-
 /// Best-effort prefix salvage for multi-statement programs.
 pub fn salvage_understood_prefix(
     pipeline: &PromptPipelineConfig,
@@ -639,6 +697,36 @@ mod tests {
     use plasm_core::PromptPipelineConfig;
 
     #[test]
+    fn plan_stage_clone_preserves_semantic_cause() {
+        use std::error::Error;
+        let stage = ProgramStageError::plan(PlanStageError::ExecutableSurfaceMissing { index: 7 });
+        let cloned = stage.clone();
+        assert!(matches!(
+            cloned.source().unwrap().downcast_ref::<PlanStageError>(),
+            Some(PlanStageError::ExecutableSurfaceMissing { index: 7 })
+        ));
+        assert_eq!(cloned.category(), ProgramErrorCategory::Plan);
+    }
+
+    #[test]
+    fn python_parse_stage_retains_original_parser_cause() {
+        use std::error::Error;
+        let error = ruff_python_parser::parse_module("def :").unwrap_err();
+        let stage = ProgramStageError::Parse {
+            correction: format!("Python syntax: {error}"),
+            span_offset: Some(u32::from(error.location.start()) as usize),
+            error: std::sync::Arc::new(ProgramParseError::Python(error)),
+        };
+        assert!(stage
+            .source()
+            .unwrap()
+            .source()
+            .unwrap()
+            .is::<ruff_python_parser::ParseError>());
+        assert_eq!(stage.category(), ProgramErrorCategory::Parse);
+    }
+
+    #[test]
     fn score_weights_parse_type_plan() {
         let s = ProgramScore::from_stages(1.0, 0.0, 0.0);
         assert!((s.overall - 0.4).abs() < f64::EPSILON);
@@ -652,6 +740,7 @@ mod tests {
             stage: ProgramStageError::Parse {
                 correction: "Change `e99` to a taught entity.".into(),
                 span_offset: Some(0),
+                error: std::sync::Arc::new(ProgramParseError::SourceBudgetExceeded),
             },
             score: ProgramScore::from_stages(0.0, 0.0, 0.0),
             understood: None,
@@ -669,6 +758,7 @@ mod tests {
             stage: ProgramStageError::Parse {
                 correction: "Fix spelling of entity.".into(),
                 span_offset: None,
+                error: std::sync::Arc::new(ProgramParseError::SourceBudgetExceeded),
             },
             score: ProgramScore::from_stages(0.5, 0.0, 0.0),
             understood: Some(UnderstoodSketch {
@@ -740,12 +830,15 @@ mod tests {
         let stages = [
             ProgramStageError::PythonLowering {
                 error: crate::program_rejection::PythonLoweringError::Source {
-                    message: "Python bytes 5..8: use a typed input".into(),
+                    error: std::sync::Arc::new(
+                        crate::program_rejection::PythonSourceError::ExpectedFieldDependency,
+                    ),
                     span: Some((5, 8)),
                 },
             },
             ProgramStageError::PythonCompute {
-                error: "expected entity e1".into(),
+                error: crate::program_rejection::PythonComputeError::AnnotationSourceMismatch
+                    .into(),
             },
             ProgramStageError::CoreType {
                 error: plasm_core::TypeError::RequiredParameterOmitted {
@@ -821,7 +914,7 @@ mod tests {
         let pipeline = PromptPipelineConfig::default();
         let program = "rows = e1\nout = rows | select dest = (id | split_part('/', 0))";
         let stage = ProgramStageError::Plan {
-            correction: "unknown pipe stage `split_part('/', 0)`".into(),
+            error: std::sync::Arc::new(PlanStageError::PreflightFailed),
         };
         let first =
             ProgramDiagnostic::from_stage(&pipeline, None, &session, program, stage.clone());

@@ -1,6 +1,13 @@
 //! Native computation records. A row is always an object; absence is not null.
 use crate::Value;
 use indexmap::IndexMap;
+use thiserror::Error;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum ValueRowError {
+    #[error("row requires a record value")]
+    ExpectedRecord,
+}
 use std::ops::{Deref, Index};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -82,11 +89,11 @@ impl From<ValueRow> for IndexMap<String, Value> {
     }
 }
 impl TryFrom<Value> for ValueRow {
-    type Error = String;
-    fn try_from(value: Value) -> Result<Self, String> {
+    type Error = ValueRowError;
+    fn try_from(value: Value) -> Result<Self, ValueRowError> {
         match value {
             Value::Object(_) => Ok(Self(value)),
-            _ => Err("row requires a record value".into()),
+            _ => Err(ValueRowError::ExpectedRecord),
         }
     }
 }

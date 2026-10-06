@@ -8,12 +8,12 @@ use crate::plasm_plan::{
     PlanInputBinding, PlanNode, PlanResultUse, ResultShape,
 };
 
-pub(in crate::plasm_dag) fn lower_plan_node(node: &DagNode) -> Result<PlanNode, String> {
+pub(in crate::plasm_dag) fn lower_plan_node(node: &DagNode) -> PlanNode {
     node.source.emit_plan_node(node)
 }
 
 impl DagNodeSource {
-    fn emit_plan_node(&self, node: &DagNode) -> Result<PlanNode, String> {
+    fn emit_plan_node(&self, node: &DagNode) -> PlanNode {
         // This is an untrusted structural plan node. Admission owns checked construction.
         let mut out = PlanNode {
             until_scope: None,
@@ -261,7 +261,7 @@ impl DagNodeSource {
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
-        Ok(out)
+        out
     }
 }
 

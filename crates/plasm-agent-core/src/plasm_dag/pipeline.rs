@@ -2,6 +2,7 @@
 
 use super::binding_continuation;
 use super::binding_contract::binding_contract;
+use super::error::DagCompilationError;
 use super::invoke_cardinality::validate_invoke_scalar_field_refs;
 use super::plan_serialize::{
     collect_template_uses_from_expr, expression_template, infer_surface_contract, lower_plan_node,
@@ -43,7 +44,7 @@ pub(crate) fn compile_surface_fixture_json(
     session: &ExecuteSession,
     name: &str,
     source: &str,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, DagCompilationError> {
     let plan = compile_plasm_surface_line_to_plan(
         pipeline,
         symbol_map_cross_cache,
@@ -51,7 +52,7 @@ pub(crate) fn compile_surface_fixture_json(
         name,
         source,
     )?;
-    serde_json::to_value(plan).map_err(|error| format!("fixture artifact serialization: {error}"))
+    serde_json::to_value(plan).map_err(DagCompilationError::from)
 }
 
 /// Serialize a compiled fixture for tests that assert the artifact wire contract.
@@ -62,10 +63,10 @@ pub(crate) fn compile_plasm_dag_to_plan(
     session: &ExecuteSession,
     name: &str,
     source: &str,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, DagCompilationError> {
     let plan =
         compile_plasm_dag_to_plan_inner(pipeline, symbol_map_cross_cache, session, name, source)?;
-    serde_json::to_value(plan).map_err(|error| format!("fixture artifact serialization: {error}"))
+    serde_json::to_value(plan).map_err(DagCompilationError::from)
 }
 
 // compile_plasm_program / compile_plasm_expression live in plasm_compile.rs
@@ -76,12 +77,14 @@ pub(crate) fn compile_plasm_dag_to_plan_inner(
     session: &ExecuteSession,
     name: &str,
     source: &str,
-) -> Result<crate::plasm_plan::Plan, String> {
+) -> Result<crate::plasm_plan::Plan, DagCompilationError> {
     let mut state = CompileState::new(pipeline, symbol_map_cross_cache);
-    let flattened = expand_flattened_program_statements(&collect_program_statement_lines(source)?);
+    let physical_statements = collect_program_statement_lines(source)?;
+    validate_program_statement_order(&physical_statements)?;
+    let flattened = expand_flattened_program_statements(&physical_statements);
     let statements = flattened.statements;
     if statements.is_empty() {
-        return Err(program_empty_error());
+        return Err(DagCompilationError::EmptyProgram);
     }
     validate_program_statement_order(&statements)?;
     let mut final_roots: Option<Vec<String>> = None;
@@ -90,7 +93,9 @@ pub(crate) fn compile_plasm_dag_to_plan_inner(
             let (id, rhs) = match assignment {
                 TopLevelAssignment::Binding { label, rhs } => (label, rhs),
                 TopLevelAssignment::InvalidLabel { label } => {
-                    return Err(program_invalid_binding_label_error(label));
+                    return Err(DagCompilationError::InvalidBindingLabel {
+                        label: label.to_owned(),
+                    });
                 }
             };
             for node in compile_node_expr(session, &state, id, rhs.trim())? {
@@ -98,21 +103,33 @@ pub(crate) fn compile_plasm_dag_to_plan_inner(
             }
         } else {
             let stmt = stmt.trim();
+            if final_roots.is_some() && !state.labels.contains_key(stmt) {
+                return Err(
+                    plasm_core::expr_parser::SurfaceSyntaxError::IntermediateStepRequiresBinding {
+                        binding: stmt
+                            .split([' ', '.', '|'])
+                            .next()
+                            .unwrap_or("step")
+                            .to_owned(),
+                    }
+                    .into(),
+                );
+            }
             if stmt.starts_with("return ") {
-                return Err(program_return_keyword_error());
+                return Err(DagCompilationError::ReturnKeyword);
             }
             final_roots = Some(split_return_list(stmt, &mut state, session)?);
         }
     }
-    let roots = final_roots.ok_or_else(missing_program_roots_error)?;
+    let roots = final_roots.ok_or(DagCompilationError::MissingRoots)?;
     if roots.is_empty() {
-        return Err("Plasm program final roots list is empty".to_string());
+        return Err(DagCompilationError::EmptyRoots);
     }
     let nodes = state
         .nodes
         .iter()
         .map(|n| lower_plan_node(n.as_ref()))
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Vec<_>>();
     let return_value = if roots.len() == 1 {
         crate::plasm_plan::PlanReturn::Node {
             node: roots[0].clone(),
@@ -142,7 +159,7 @@ pub(crate) fn compile_plasm_surface_line_to_plan(
     session: &ExecuteSession,
     name: &str,
     line: &str,
-) -> Result<crate::plasm_plan::Plan, String> {
+) -> Result<crate::plasm_plan::Plan, DagCompilationError> {
     let trimmed = line.trim();
     if is_plasm_dag_source(trimmed) {
         return compile_plasm_dag_to_plan_inner(
@@ -155,18 +172,18 @@ pub(crate) fn compile_plasm_surface_line_to_plan(
     }
     let mut state = CompileState::new(pipeline, symbol_map_cross_cache);
     if trimmed.starts_with("return ") {
-        return Err(program_return_keyword_error());
+        return Err(DagCompilationError::ReturnKeyword);
     }
     reject_bare_literal_noop_root(trimmed)?;
     let roots = split_return_list(trimmed, &mut state, session)?;
     if roots.is_empty() {
-        return Err("expression is empty".to_string());
+        return Err(DagCompilationError::EmptyRoots);
     }
     let nodes = state
         .nodes
         .iter()
         .map(|n| lower_plan_node(n.as_ref()))
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Vec<_>>();
     let return_value = if roots.len() == 1 {
         crate::plasm_plan::PlanReturn::Node {
             node: roots[0].clone(),
@@ -188,7 +205,7 @@ pub(in crate::plasm_dag) fn compile_node_expr(
     state: &CompileState<'_>,
     id: &str,
     rhs: &str,
-) -> Result<Vec<DagNode>, String> {
+) -> Result<Vec<DagNode>, DagCompilationError> {
     let rhs_display = rhs.trim();
     if rhs_display.contains("=>") {
         reject_relation_arrow_trap(rhs_display)?;
@@ -208,12 +225,10 @@ pub(in crate::plasm_dag) fn lower_catalog_application(
     source: &str,
     surface: &str,
     parsed: plasm_core::expr_parser::ParsedExpr,
-) -> Result<Vec<DagNode>, String> {
+) -> Result<Vec<DagNode>, DagCompilationError> {
     if let Expr::Chain(chain) = &parsed.expr {
         if !matches!(chain.step, plasm_core::ChainStep::AutoGet) {
-            return Err(format!(
-                "Plasm program `{id}`: bind the relation rows before applying an explicit continuation"
-            ));
+            return Err(DagCompilationError::ExplicitRelationApplication { id: id.to_owned() });
         }
         let parent_id = format!("__plasm_{id}_apply_parent");
         let mut parent = parsed.clone();
@@ -248,9 +263,7 @@ pub(in crate::plasm_dag) fn lower_catalog_application(
     let (kind, qualified, effect_class, result_shape) =
         infer_surface_contract(session, &parsed.expr)?;
     if !kind.is_template_allowed() {
-        return Err(format!(
-            "Plasm program `{id}` row application must be a catalog read or operation expression"
-        ));
+        return Err(DagCompilationError::InvalidRowApplication { id: id.to_owned() });
     }
     Ok(vec![DagNode {
         id: id.to_string(),
@@ -276,7 +289,7 @@ fn lower_expr_node(
     id: &str,
     display: &str,
     node: ExprNode,
-) -> Result<Vec<DagNode>, String> {
+) -> Result<Vec<DagNode>, DagCompilationError> {
     match node.apply {
         Some(Applicator::Render {
             kind: RenderApplicator::CrossBinding { sources, template },
@@ -377,7 +390,7 @@ fn lower_row_only_expr(
     id: &str,
     display: &str,
     row: RowExpr,
-) -> Result<Vec<DagNode>, String> {
+) -> Result<Vec<DagNode>, DagCompilationError> {
     match row {
         RowExpr::Iterate(it) => lower_iterate_until(session, state, id, display, it),
         RowExpr::Pipe(pipe) => lower_pipe_row_expression(session, state, id, display, pipe),
@@ -412,15 +425,14 @@ fn lower_iterate_until(
     id: &str,
     display: &str,
     it: plasm_core::expr_parser::IterateUntilExpr,
-) -> Result<Vec<DagNode>, String> {
+) -> Result<Vec<DagNode>, DagCompilationError> {
     let seed_is_label = plasm_core::expr_parser::iterate_seed_is_label(it.seed.as_str());
     let seed_id = format!("__plasm_{id}_iterate_seed");
     let mut prefix = if seed_is_label {
         if !state.contains(it.seed.as_str()) {
-            return Err(format!(
-                "Plasm program `{id}`: iterate seed binding `{}` is unknown",
-                it.seed
-            ));
+            return Err(DagCompilationError::UnknownBinding {
+                binding: it.seed.clone(),
+            });
         }
         // Proven binding — require StaticSingleton at binding-contract time; reuse label as seed.
         Vec::new()
@@ -444,7 +456,9 @@ fn lower_iterate_until(
     } else {
         prefix.iter().find(|n| n.id == seed_label)
     }
-    .ok_or_else(|| format!("Plasm program `{id}`: iterate seed `{seed_label}` is unknown"))?;
+    .ok_or_else(|| DagCompilationError::UnknownBinding {
+        binding: seed_label.clone(),
+    })?;
     require_iterate_seed_get_identity(seed_node, seed_label.as_str())?;
 
     let scratch = if prefix.is_empty() {
@@ -472,17 +486,15 @@ fn lower_iterate_until(
         kind,
         PlanNodeKind::Create | PlanNodeKind::Update | PlanNodeKind::Delete | PlanNodeKind::Action
     ) {
-        return Err(format!(
-            "Plasm program `{id}` iterate step must be a write/side-effect expression"
-        ));
+        return Err(DagCompilationError::InvalidIterationStep { id: id.to_owned() });
     }
 
     // Compile until predicate against seed entity (fail closed at lower time).
     let cgs = cgs_for_qualified_entity(session, &qualified).ok_or_else(|| {
-        format!(
-            "catalog `{}` is not loaded for iterate entity `{}`",
-            qualified.entry_id, qualified.entity
-        )
+        DagCompilationError::CatalogMissing {
+            entry_id: qualified.entry_id.to_string(),
+            entity: qualified.entity.to_string(),
+        }
     })?;
     let layer = plasm_core::CgsLayer::new(qualified.entry_id.as_str(), cgs.as_ref());
     let stack = [layer];
@@ -494,25 +506,27 @@ fn lower_iterate_until(
         sym_map,
         &[],
         &state.program_node_id_set(),
-    )
-    .map_err(|e| format!("Plasm program `{id}` iterate until predicate: {e}"))?;
+    )?;
     let until_predicates = crate::row_predicate_lower::lower_row_predicate_to_plan(
         &row_pred,
         session,
         &qualified,
         state.cross_cache,
         &[],
-    )
-    .map_err(|e| format!("Plasm program `{id}` iterate until lower: {e}"))?;
+    )?;
 
     for predicate in &until_predicates {
         for label in predicate.value.dependencies() {
-            let contract = super::binding_contract::binding_contract(state, &label)
-                .ok_or_else(|| format!("unknown until predicate binding `{label}`"))?;
+            let contract =
+                super::binding_contract::binding_contract(state, &label).ok_or_else(|| {
+                    DagCompilationError::UnknownBinding {
+                        binding: label.clone(),
+                    }
+                })?;
             if !contract.row_cardinality.permits_scalar_field_extract() {
-                return Err(format!(
-                    "until predicate binding `{label}` is plural; select exactly one row"
-                ));
+                return Err(DagCompilationError::PluralUntilBinding {
+                    binding: label.clone(),
+                });
             }
             uses.push(super::plan_serialize::result_use(&label, &label));
         }
@@ -554,7 +568,7 @@ fn dag_node_is_get_identity(node: &DagNode) -> bool {
 pub(in crate::plasm_dag) fn require_iterate_seed_get_identity(
     node: &DagNode,
     seed: &str,
-) -> Result<(), String> {
+) -> Result<(), plasm_core::expr_parser::IterateUntilError> {
     if dag_node_is_get_identity(node) {
         return Ok(());
     }
@@ -568,7 +582,7 @@ fn pipe_head_materializes_catalog(
     session: &ExecuteSession,
     state: &CompileState<'_>,
     head: &str,
-) -> Result<bool, String> {
+) -> Result<bool, DagCompilationError> {
     if state.contains(head) {
         return Ok(false);
     }
@@ -578,7 +592,9 @@ fn pipe_head_materializes_catalog(
     if is_valid_program_label(head) {
         return match crate::catalog_ownership::resolve_cgs_for_entity(session, head, None) {
             Ok(_) => Ok(true),
-            Err(_) => Err(format!("unknown binding `{head}`")),
+            Err(_) => Err(DagCompilationError::UnknownBinding {
+                binding: head.to_owned(),
+            }),
         };
     }
     Ok(true)
@@ -591,7 +607,7 @@ pub(in crate::plasm_dag) fn compile_row_expr_nodes(
     id: &str,
     display: &str,
     row: &RowExpr,
-) -> Result<(Vec<DagNode>, String), String> {
+) -> Result<(Vec<DagNode>, String), DagCompilationError> {
     stage_row_expr_to_source(session, state, id, display, row, Some(id))
 }
 
@@ -602,14 +618,14 @@ fn stage_row_expr_to_source(
     display: &str,
     row: &RowExpr,
     final_id: Option<&str>,
-) -> Result<(Vec<DagNode>, String), String> {
+) -> Result<(Vec<DagNode>, String), DagCompilationError> {
     match row {
         RowExpr::Pipe(pipe) => {
             let out_id = final_id
                 .map(str::to_string)
                 .unwrap_or_else(|| format!("__plasm_{id}_apply_src"));
             if state.contains(pipe.head.as_str()) {
-                let suffixes = pipe.row_suffixes()?;
+                let suffixes = pipe.row_suffixes();
                 if suffixes.is_empty() {
                     return Ok((Vec::new(), pipe.head.clone()));
                 }
@@ -627,9 +643,11 @@ fn stage_row_expr_to_source(
                 ));
             }
             if !pipe_head_materializes_catalog(session, state, pipe.head.as_str())? {
-                return Err(format!("unknown binding `{}`", pipe.head));
+                return Err(DagCompilationError::UnknownBinding {
+                    binding: pipe.head.clone(),
+                });
             }
-            let suffixes = pipe.row_suffixes()?;
+            let suffixes = pipe.row_suffixes();
             if suffixes.is_empty() {
                 return Ok((
                     compile_surface_nodes(session, state, &out_id, pipe.head.as_str())?,
@@ -694,9 +712,7 @@ fn stage_row_expr_to_source(
             };
             Ok((nodes, out_id))
         }
-        RowExpr::Iterate(_) => Err(format!(
-            "Plasm program `{id}`: `iterate … until … take N` cannot be staged as an apply left-hand; bind it as its own expression"
-        )),
+        RowExpr::Iterate(_) => Err(DagCompilationError::IterationApplySource { id: id.to_owned() }),
     }
 }
 
@@ -706,14 +722,16 @@ fn lower_pipe_row_expression(
     id: &str,
     display: &str,
     pipe: PipeExpr,
-) -> Result<Vec<DagNode>, String> {
+) -> Result<Vec<DagNode>, DagCompilationError> {
     if state.contains(pipe.head.as_str()) {
         return binding_continuation::lower_pipe_continuation(session, state, id, display, &pipe);
     }
     if !pipe_head_materializes_catalog(session, state, pipe.head.as_str())? {
-        return Err(format!("unknown binding `{}`", pipe.head));
+        return Err(DagCompilationError::UnknownBinding {
+            binding: pipe.head.clone(),
+        });
     }
-    let suffixes = pipe.row_suffixes()?;
+    let suffixes = pipe.row_suffixes();
     let head_id = format!("__plasm_{id}_pipe_head");
     if let Some(mut prefix) =
         try_lower_row_suffix_expression(session, state, &head_id, pipe.head.as_str())?
@@ -790,17 +808,22 @@ pub(in crate::plasm_dag) fn compile_surface_node(
     state: &CompileState<'_>,
     id: &str,
     expr: &str,
-) -> Result<DagNode, String> {
+) -> Result<DagNode, DagCompilationError> {
     let mut nodes = compile_surface_nodes(session, state, id, expr)?;
     if nodes.len() != 1 {
-        return Err(format!(
-            "Plasm program `{id}`: surface `{expr}` lowered to {} nodes — use `compile_surface_nodes` for multi-node surfaces (PLP-1 field-dot extract)",
-            nodes.len()
-        ));
+        return Err(DagCompilationError::SurfaceNodeCount {
+            id: id.to_owned(),
+            expression: expr.to_owned(),
+            actual: nodes.len(),
+        });
     }
     nodes
         .pop()
-        .ok_or_else(|| format!("Plasm program `{id}`: empty surface"))
+        .ok_or_else(|| DagCompilationError::SurfaceNodeCount {
+            id: id.to_owned(),
+            expression: expr.to_owned(),
+            actual: 0,
+        })
 }
 
 /// Compile a catalog / binding-continuation surface; may return Get + scalar Derive (PLP-1).
@@ -809,31 +832,32 @@ pub(in crate::plasm_dag) fn compile_surface_nodes(
     state: &CompileState<'_>,
     id: &str,
     expr: &str,
-) -> Result<Vec<DagNode>, String> {
+) -> Result<Vec<DagNode>, DagCompilationError> {
     if let Some(nodes) = try_lower_row_suffix_expression(session, state, id, expr)? {
         return Ok(nodes);
     }
     if let Some((label, tail)) = longest_matching_bound_prefix(expr, state) {
-        let contract = binding_contract(state, &label).ok_or_else(|| {
-            format!("Plasm program `{id}`: unknown binding `{label}` for continuation")
-        })?;
+        let contract =
+            binding_contract(state, &label).ok_or_else(|| DagCompilationError::UnknownBinding {
+                binding: label.clone(),
+            })?;
         let tail_trim = tail.trim();
         if matches!(contract.continuation, ContinuationCapability::Terminal) {
-            return Err(format!(
-                "Plasm program `{id}`: `{label}` is not a Plasm expression anchor — only surface/relation bindings and row-preserving projection bindings can be extended with `{label}.…`; aggregate/render/derive/data/for_each bindings must use postfix transforms or an explicit entity constructor"
-            ));
+            return Err(DagCompilationError::TerminalContinuation {
+                id: id.to_owned(),
+                binding: label.clone(),
+            });
         }
         if contract.supports_relation_dot() {
             return Ok(vec![binding_continuation::dispatch_binding_continuation(
                 session, state, id, expr, &label, tail_trim, &contract,
             )?]);
         }
-        return Err(plasm_core::plp::plp4_program(
-            id,
-            format!(
-                "binding `{label}` cannot be extended with `{tail_trim}` — use postfix transforms on the binding expression or a CGS relation chain (`label.<relation>`)"
-            ),
-        ));
+        return Err(DagCompilationError::UnsupportedContinuation {
+            id: id.to_owned(),
+            binding: label.clone(),
+            tail: tail_trim.to_owned(),
+        });
     }
     let refs = state.program_node_id_set();
     let mut parsed = parse_plasm_program_surface_for_dag(
@@ -849,8 +873,7 @@ pub(in crate::plasm_dag) fn compile_surface_nodes(
         &mut parsed.expr,
         session.cgs.as_ref(),
         expr,
-    )
-    .map_err(|e| e.to_string())?;
+    )?;
     compile_parsed_nodes(session, state, id, expr, parsed)
 }
 
@@ -860,7 +883,7 @@ pub(in crate::plasm_dag) fn validate_catalog_operands(
     state: &CompileState<'_>,
     id: &str,
     expr: &Expr,
-) -> Result<(), String> {
+) -> Result<(), DagCompilationError> {
     validate_invoke_scalar_field_refs(session, state, id, expr)?;
     super::prerequisite_seats::validate_prerequisite_seat_bind(session, state, id, expr)?;
     Ok(())
@@ -873,7 +896,7 @@ pub(super) fn compile_parsed_nodes(
     id: &str,
     expr: &str,
     mut parsed: plasm_core::expr_parser::ParsedExpr,
-) -> Result<Vec<DagNode>, String> {
+) -> Result<Vec<DagNode>, DagCompilationError> {
     if let Some(wire) = parsed.field_dot_extract.take() {
         return super::scalar_extract::compile_catalog_singleton_field_dot(
             session, state, id, expr, parsed, wire,
@@ -933,7 +956,7 @@ pub(in crate::plasm_dag) fn split_return_list(
     line: &str,
     state: &mut CompileState<'_>,
     session: &ExecuteSession,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>, DagCompilationError> {
     let mut roots = Vec::new();
     let parts = if parse_pipe_expr(line)?.is_some() {
         vec![line]
@@ -963,10 +986,12 @@ pub(in crate::plasm_dag) fn split_return_list(
 pub(in crate::plasm_dag) fn require_node(
     state: &CompileState<'_>,
     node: &str,
-) -> Result<(), String> {
+) -> Result<(), DagCompilationError> {
     if state.contains(node) {
         Ok(())
     } else {
-        Err(format!("unknown Plasm program node `{node}`"))
+        Err(DagCompilationError::UnknownBinding {
+            binding: node.to_owned(),
+        })
     }
 }

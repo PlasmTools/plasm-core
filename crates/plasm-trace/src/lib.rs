@@ -24,4 +24,4 @@ pub use session::{
     SessionTraceData, DEFAULT_TRACE_TIMELINE_MAX_EVENTS,
 };
 pub use totals::{merge_trace_totals, totals_from_session_data, TraceTotals};
-pub use trace_comp::{minimal_trace_comp_json, TraceCompWire};
+pub use trace_comp::{minimal_trace_comp_json, TraceCompError, TraceCompWire};

@@ -12,7 +12,7 @@ pub(crate) fn run_running_mode(
     admin_bridge: Option<AdminBridge>,
     policy_bootstrap_detail: Option<PolicyStoreBootstrapDetail>,
     log_rx: Option<crossbeam_channel::Receiver<appliance_log::ApplianceLogEntry>>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), io::Error> {
     // Signal the async supervisor before the first draw so a full PTY pipe cannot
     // deadlock BOOT→RUN handoff waiting on this frame.
     if let Some(ref tx) = ui_evt_tx {

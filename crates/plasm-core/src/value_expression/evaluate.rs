@@ -5,28 +5,92 @@ use crate::{ArithOp, FieldPath, PlanPredicateOp, WithExpr, WithLiteral};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use std::cmp::Ordering;
+use thiserror::Error;
 
-pub fn evaluate_with(
+#[derive(Debug, Error)]
+pub enum WithEvaluationError<E: std::error::Error + 'static> {
+    #[error(transparent)]
+    Field(E),
+    #[error(transparent)]
+    Arithmetic(#[from] ArithmeticError),
+    #[error("invalid number literal")]
+    InvalidNumberLiteral,
+    #[error("length requires a string, array or record")]
+    InvalidLengthOperand,
+    #[error(transparent)]
+    Comparison(#[from] ComparisonError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum ArithmeticError {
+    #[error("arithmetic result is not finite")]
+    NonFiniteResult,
+    #[error("numeric scalar exceeds decimal range")]
+    DecimalOutOfRange,
+    #[error("expected numeric scalar")]
+    ExpectedNumericScalar,
+    #[error("money arithmetic requires matching currencies")]
+    MoneyCurrencyMismatch,
+    #[error("unsupported money arithmetic dimensions")]
+    UnsupportedMoneyDimensions,
+    #[error("money arithmetic overflow or division by zero")]
+    MoneyOverflow,
+    #[error("temporal arithmetic operand is invalid")]
+    InvalidTemporalOperand,
+    #[error("unsupported string arithmetic")]
+    UnsupportedStringArithmetic,
+    #[error("integer arithmetic overflow")]
+    IntegerOverflow,
+    #[error("integer arithmetic result is outside its storage range")]
+    IntegerOutOfRange,
+    #[error("expected numeric operand")]
+    ExpectedNumericOperand,
+    #[error("division by zero")]
+    DivisionByZero,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum ComparisonError {
+    #[error("comparison requires finite numbers")]
+    NonFiniteNumber,
+    #[error("comparison operands are incomparable")]
+    IncomparableOperands,
+    #[error("unsupported conditional comparison")]
+    UnsupportedComparison,
+    #[error("money comparison has incompatible currencies `{left}` and `{right}`")]
+    MoneyCurrencyMismatch { left: String, right: String },
+    #[error("contains requires two strings")]
+    ContainsRequiresStrings,
+    #[error("string membership requires a string operand")]
+    StringMembershipRequiresString,
+    #[error("membership requires a string or array")]
+    MembershipRequiresCollection,
+}
+
+pub fn evaluate_with<E: std::error::Error + 'static>(
     expr: &WithExpr,
     now: DateTime<Utc>,
-    field: &mut impl FnMut(&FieldPath) -> Result<Value, String>,
-) -> Result<Value, String> {
+    field: &mut impl FnMut(&FieldPath) -> Result<Value, E>,
+) -> Result<Value, WithEvaluationError<E>> {
     Ok(match expr {
-        WithExpr::Field(path) => field(path)?,
+        WithExpr::Field(path) => field(path).map_err(WithEvaluationError::Field)?,
         WithExpr::Now => Value::String(now.to_rfc3339()),
         WithExpr::Literal(literal) => match literal {
             WithLiteral::Null => Value::Null,
             WithLiteral::Bool(v) => Value::from(*v),
             WithLiteral::Integer(v) => Value::from(*v),
-            WithLiteral::Number(v) => finite(v.parse().map_err(|_| "invalid number literal")?)?,
+            WithLiteral::Number(v) => finite(
+                v.parse()
+                    .map_err(|_| WithEvaluationError::InvalidNumberLiteral)?,
+            )?,
             WithLiteral::String(v) => Value::from(v.clone()),
         },
-        WithExpr::Len { field: path } => match field(path)? {
+        WithExpr::Len { field: path } => match field(path).map_err(WithEvaluationError::Field)? {
             Value::Null => Value::Null,
             Value::String(v) => Value::from(v.chars().count()),
             Value::Array(v) => Value::from(v.len()),
             Value::Object(v) => Value::from(v.len()),
-            _ => return Err("length requires a string, array or record".into()),
+            _ => return Err(WithEvaluationError::InvalidLengthOperand),
         },
         WithExpr::Arith { op, lhs, rhs } => arithmetic(
             *op,
@@ -42,30 +106,30 @@ pub fn evaluate_with(
         } => {
             let l = evaluate_with(lhs, now, field)?;
             let r = evaluate_with(rhs, now, field)?;
-            evaluate_with(if compare(*op, &l, &r)? { then } else { else_ }, now, field)?
+            let condition = compare(*op, &l, &r)?;
+            evaluate_with(if condition { then } else { else_ }, now, field)?
         }
     })
 }
 
-fn finite(value: f64) -> Result<Value, String> {
+fn finite(value: f64) -> Result<Value, ArithmeticError> {
     if value.is_finite() {
         Ok(Value::Float(value))
     } else {
-        Err("non-finite arithmetic result".into())
+        Err(ArithmeticError::NonFiniteResult)
     }
 }
 
-fn decimal(value: &Value) -> Result<Decimal, String> {
+fn decimal(value: &Value) -> Result<Decimal, ArithmeticError> {
     match value {
         Value::Integer(v) => Ok(Decimal::from(*v)),
         Value::Unsigned(v) => Ok(Decimal::from(*v)),
-        Value::Float(v) => Decimal::from_f64_retain(*v)
-            .ok_or_else(|| "numeric scalar exceeds decimal range".into()),
-        _ => Err("expected numeric scalar".into()),
+        Value::Float(v) => Decimal::from_f64_retain(*v).ok_or(ArithmeticError::DecimalOutOfRange),
+        _ => Err(ArithmeticError::ExpectedNumericScalar),
     }
 }
 
-pub fn arithmetic(op: ArithOp, l: Value, r: Value) -> Result<Value, String> {
+pub fn arithmetic(op: ArithOp, l: Value, r: Value) -> Result<Value, ArithmeticError> {
     use ArithOp::*;
     if matches!(l, Value::Null) || matches!(r, Value::Null) {
         return Ok(Value::Null);
@@ -77,15 +141,13 @@ pub fn arithmetic(op: ArithOp, l: Value, r: Value) -> Result<Value, String> {
                 if a.currency().map(str::to_ascii_uppercase)
                     != b.currency().map(str::to_ascii_uppercase)
                 {
-                    return Err(
-                        "money arithmetic requires matching currencies (including absence)".into(),
-                    );
+                    return Err(ArithmeticError::MoneyCurrencyMismatch);
                 }
                 (a.amount(), b.amount(), a.currency())
             }
             (Money(a), _, Mul | Div) => (a.amount(), decimal(&r)?, a.currency()),
             (_, Money(b), Mul) => (decimal(&l)?, b.amount(), b.currency()),
-            _ => return Err("unsupported money arithmetic dimensions".into()),
+            _ => return Err(ArithmeticError::UnsupportedMoneyDimensions),
         };
         let amount = match op {
             Add => left.checked_add(right),
@@ -93,7 +155,7 @@ pub fn arithmetic(op: ArithOp, l: Value, r: Value) -> Result<Value, String> {
             Mul => left.checked_mul(right),
             Div => left.checked_div(right),
         }
-        .ok_or("money arithmetic overflow or division by zero")?;
+        .ok_or(ArithmeticError::MoneyOverflow)?;
         return Ok(Value::Money(crate::MoneyValue::new(
             amount.normalize(),
             currency.map(str::to_owned),
@@ -106,11 +168,11 @@ pub fn arithmetic(op: ArithOp, l: Value, r: Value) -> Result<Value, String> {
             Sub => {
                 let parse = |s: &str| {
                     DateTime::parse_from_rfc3339(s)
-                        .map_err(|_| "invalid temporal arithmetic operand")
+                        .map_err(|_| ArithmeticError::InvalidTemporalOperand)
                 };
                 Ok(Value::Integer((parse(l)? - parse(r)?).num_days()))
             }
-            _ => Err("unsupported string arithmetic".into()),
+            _ => Err(ArithmeticError::UnsupportedStringArithmetic),
         };
     }
     if op != Div
@@ -121,7 +183,7 @@ pub fn arithmetic(op: ArithOp, l: Value, r: Value) -> Result<Value, String> {
         let integer = |v: &Value| match v {
             Value::Integer(v) => Ok(i128::from(*v)),
             Value::Unsigned(v) => Ok(i128::from(*v)),
-            _ => Err("invalid integer"),
+            _ => Err(ArithmeticError::ExpectedNumericOperand),
         };
         let (l, r) = (integer(&l)?, integer(&r)?);
         let result = match op {
@@ -130,24 +192,26 @@ pub fn arithmetic(op: ArithOp, l: Value, r: Value) -> Result<Value, String> {
             Mul => l.checked_mul(r),
             Div => unreachable!(),
         }
-        .ok_or("integer arithmetic overflow")?;
+        .ok_or(ArithmeticError::IntegerOverflow)?;
         if unsigned {
             return u64::try_from(result)
                 .map(Value::Unsigned)
-                .map_err(|_| "unsigned arithmetic result outside u64 storage range".into());
+                .map_err(|_| ArithmeticError::IntegerOutOfRange);
         }
         return if let Ok(n) = i64::try_from(result) {
             Ok(Value::Integer(n))
         } else {
-            Err("integer arithmetic result outside i64 storage range".into())
+            Err(ArithmeticError::IntegerOutOfRange)
         };
     }
     let (l, r) = (
-        l.as_number().ok_or("expected numeric operand")?,
-        r.as_number().ok_or("expected numeric operand")?,
+        l.as_number()
+            .ok_or(ArithmeticError::ExpectedNumericOperand)?,
+        r.as_number()
+            .ok_or(ArithmeticError::ExpectedNumericOperand)?,
     );
     if op == Div && r == 0.0 {
-        return Err("division by zero".into());
+        return Err(ArithmeticError::DivisionByZero);
     }
     finite(match op {
         Add => l + r,
@@ -157,7 +221,7 @@ pub fn arithmetic(op: ArithOp, l: Value, r: Value) -> Result<Value, String> {
     })
 }
 
-pub fn compare(op: PlanPredicateOp, l: &Value, r: &Value) -> Result<bool, String> {
+pub fn compare(op: PlanPredicateOp, l: &Value, r: &Value) -> Result<bool, ComparisonError> {
     use PlanPredicateOp::*;
     // Row comparisons retain three-valued null semantics: unknown selects else.
     if matches!(l, Value::Null) || matches!(r, Value::Null) {
@@ -168,7 +232,7 @@ pub fn compare(op: PlanPredicateOp, l: &Value, r: &Value) -> Result<bool, String
         Eq => order == Some(Ordering::Equal) || l == r,
         Ne => !(order == Some(Ordering::Equal) || l == r),
         Lt | Lte | Gt | Gte => {
-            let order = order.ok_or("incomparable conditional operands")?;
+            let order = order.ok_or(ComparisonError::IncomparableOperands)?;
             match op {
                 Lt => order.is_lt(),
                 Lte => order.is_le(),
@@ -176,16 +240,16 @@ pub fn compare(op: PlanPredicateOp, l: &Value, r: &Value) -> Result<bool, String
                 _ => order.is_ge(),
             }
         }
-        _ => return Err("unsupported outer conditional comparison".into()),
+        _ => return Err(ComparisonError::UnsupportedComparison),
     })
 }
 
-pub fn ordering(l: &Value, r: &Value) -> Result<Option<Ordering>, String> {
+pub fn ordering(l: &Value, r: &Value) -> Result<Option<Ordering>, ComparisonError> {
     if [l, r]
         .iter()
         .any(|v| matches!(v, Value::Float(n) if !n.is_finite()))
     {
-        return Err("comparison requires finite numbers".into());
+        return Err(ComparisonError::NonFiniteNumber);
     }
     Ok(if l.is_number() && r.is_number() {
         Some(number_order(l, r))
@@ -195,7 +259,12 @@ pub fn ordering(l: &Value, r: &Value) -> Result<Option<Ordering>, String> {
         Some(l.cmp(&r))
     } else {
         if matches!(l, crate::Value::Money(_)) || matches!(r, crate::Value::Money(_)) {
-            crate::money::values_ord(l, r).map_err(|e| e.to_string())?
+            crate::money::values_ord(l, r).map_err(|error| {
+                ComparisonError::MoneyCurrencyMismatch {
+                    left: error.left().to_owned(),
+                    right: error.right().to_owned(),
+                }
+            })?
         } else {
             None
         }
@@ -230,7 +299,7 @@ fn number_order(l: &Value, r: &Value) -> Ordering {
     }
 }
 
-pub fn predicate(op: PlanPredicateOp, l: &Value, r: &Value) -> Result<bool, String> {
+pub fn predicate(op: PlanPredicateOp, l: &Value, r: &Value) -> Result<bool, ComparisonError> {
     use PlanPredicateOp::*;
     match op {
         Exists => Ok(!matches!(l, Value::Null)),
@@ -238,17 +307,20 @@ pub fn predicate(op: PlanPredicateOp, l: &Value, r: &Value) -> Result<bool, Stri
             .as_str()
             .zip(r.as_str())
             .map(|(l, r)| l.contains(r))
-            .ok_or_else(|| "contains requires strings".into()),
+            .ok_or(ComparisonError::ContainsRequiresStrings),
         In | NotIn => {
             if let Some(haystack) = r.as_str() {
                 let needle = l
                     .as_str()
-                    .ok_or("string membership requires a string operand")?;
+                    .ok_or(ComparisonError::StringMembershipRequiresString)?;
                 let found = haystack.contains(needle);
                 return Ok(if op == In { found } else { !found });
             }
             let mut found = false;
-            for item in r.as_array().ok_or("membership requires array")? {
+            for item in r
+                .as_array()
+                .ok_or(ComparisonError::MembershipRequiresCollection)?
+            {
                 found |= compare(Eq, l, item)?;
             }
             Ok(if op == In { found } else { !found })

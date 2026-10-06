@@ -1,5 +1,6 @@
 //! Surface contract + synthetic schema inference.
 
+use super::super::error::DagCompilationError;
 use super::super::prelude::*;
 use super::super::schema_validate::cgs_for_qualified_entity;
 
@@ -13,12 +14,10 @@ pub(in crate::plasm_dag) fn infer_surface_contract(
         EffectClass,
         crate::plasm_plan::ResultShape,
     ),
-    String,
+    DagCompilationError,
 > {
     if let Expr::Chain(_) = expr {
-        return Err(
-            "internal: relation chains must be lowered before infer_surface_contract".to_string(),
-        );
+        return Err(DagCompilationError::UnloweredRelationChain);
     }
 
     let (mut kind, entity, mut effect, mut shape) = infer_surface_contract_from_expr(expr)?;
@@ -27,15 +26,12 @@ pub(in crate::plasm_dag) fn infer_surface_contract(
             QualifiedEntityKey::from(qe)
         } else if let Expr::Page(p) = expr {
             session.paging_qualified_entity(&p.handle).ok_or_else(|| {
-                format!(
-                    "page handle `{}` is not registered in this session",
-                    p.handle
-                )
+                DagCompilationError::UnknownPageHandle {
+                    handle: p.handle.to_string(),
+                }
             })?
         } else {
-            return Err(
-                "page continuation requires catalog ownership from session e# / binding — not bare wire entity names".to_string(),
-            );
+            return Err(DagCompilationError::PageOwnershipMissing);
         }
     } else if let Some(qe) = expr.qualified_entity_key() {
         QualifiedEntityKey::from(qe)
@@ -51,10 +47,10 @@ pub(in crate::plasm_dag) fn infer_surface_contract(
     if let Expr::Query(q) = expr {
         if let Some(capability_name) = q.capability_name.as_ref() {
             let resolving_cgs = cgs_for_qualified_entity(session, &qe).ok_or_else(|| {
-                format!(
-                    "catalog `{}` is not loaded for entity `{}`",
-                    qe.entry_id, qe.entity
-                )
+                DagCompilationError::CatalogMissing {
+                    entry_id: qe.entry_id.to_string(),
+                    entity: qe.entity.to_string(),
+                }
             })?;
             if let Some(cap) = resolving_cgs.capabilities.get(capability_name.as_str()) {
                 if cap.kind == plasm_core::CapabilityKind::Search {
@@ -67,10 +63,10 @@ pub(in crate::plasm_dag) fn infer_surface_contract(
     // not a bare side-effect ack — required for federated homograph hole fill / CML env.
     if let Expr::Invoke(inv) = expr {
         let resolving_cgs = cgs_for_qualified_entity(session, &qe).ok_or_else(|| {
-            format!(
-                "catalog `{}` is not loaded for entity `{}`",
-                qe.entry_id, qe.entity
-            )
+            DagCompilationError::CatalogMissing {
+                entry_id: qe.entry_id.to_string(),
+                entity: qe.entity.to_string(),
+            }
         })?;
         if let Some(cap) = resolving_cgs.capabilities.get(inv.capability.as_str()) {
             if !cap.provides.is_empty() {
@@ -91,13 +87,10 @@ pub(in crate::plasm_dag) fn infer_surface_contract_from_expr(
         EffectClass,
         crate::plasm_plan::ResultShape,
     ),
-    String,
+    DagCompilationError,
 > {
     match expr {
-        Expr::TeachingValue { .. } => Err(
-            "Expr::TeachingValue is teaching-table-only and cannot appear in execution plans"
-                .to_string(),
-        ),
+        Expr::TeachingValue { .. } => Err(DagCompilationError::TeachingValueInPlan),
         Expr::Query(q) => Ok((
             PlanNodeKind::Query,
             q.entity.as_str().to_string(),
@@ -137,10 +130,7 @@ pub(in crate::plasm_dag) fn infer_surface_contract_from_expr(
             EffectClass::Read,
             crate::plasm_plan::ResultShape::Page,
         )),
-        Expr::Wait(_) | Expr::Cancel(_) => Err(
-            "`wait` / `cancel` are host operation continuations and cannot appear in compiled plan surfaces"
-                .to_string(),
-        ),
+        Expr::Wait(_) | Expr::Cancel(_) => Err(DagCompilationError::HostContinuationInPlan),
     }
 }
 

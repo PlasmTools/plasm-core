@@ -16,7 +16,7 @@ use crate::{CompOp, Predicate, TypedComparisonValue};
 
 use super::{
     BackendSelection, BackendSelectionBinding, InvocationControls, ParentScope, ResolvedRowset,
-    RowSource, RowTerminal,
+    RowSource, RowTerminal, RowsetNormalizeError, SourcePredicateError,
 };
 
 /// Normalize a surface read query into a lane-typed [`ResolvedRowset`].
@@ -27,8 +27,8 @@ pub fn normalize_query_expr_to_rowset(
     query: &QueryExpr,
     cgs: &CGS,
     entry_id: &str,
-) -> Result<ResolvedRowset, String> {
-    let cap = resolve_query_capability(query, cgs).map_err(|e| e.to_string())?;
+) -> Result<ResolvedRowset, RowsetNormalizeError> {
+    let cap = resolve_query_capability(query, cgs)?;
 
     // Root source braces bind wire slots only. Catalog `inputs.selection` and root
     // `inputs.scope` pivots both become [`BackendSelection`] on `ParentScope::Root`
@@ -42,9 +42,9 @@ pub fn normalize_query_expr_to_rowset(
             for (field, op, value) in comparisons {
                 match cap.inputs.query_source_lane(field.as_str()) {
                     Some(QuerySourceInputLane::Control) => {
-                        return Err(format!(
-                            "RA-1: '{field}' is a capability control, not a query selection argument. Omit this control from the source call; use a declared selection/scope argument for backend selection. If sorting returned rows is intended, apply `.order_by(field, descending=True)` to a complete rowset."
-                        ));
+                        return Err(RowsetNormalizeError::CapabilityControl {
+                            field: field.to_string(),
+                        });
                     }
                     Some(QuerySourceInputLane::Scope | QuerySourceInputLane::Selection) => {
                         bindings.push(BackendSelectionBinding {
@@ -54,10 +54,10 @@ pub fn normalize_query_expr_to_rowset(
                         });
                     }
                     None => {
-                        return Err(format!(
-                            "RA-2: '{field}' is not a declared selection/scope parameter of capability '{}'; query/search calls bind backend-selection slots only (filter acquired rows with `.where(lambda row: ...)`)",
-                            cap.name
-                        ));
+                        return Err(RowsetNormalizeError::UndeclaredSelection {
+                            field: field.to_string(),
+                            capability: cap.name.to_string(),
+                        });
                     }
                 }
             }
@@ -70,10 +70,7 @@ pub fn normalize_query_expr_to_rowset(
         Some(fields) => {
             let mut out = Vec::with_capacity(fields.len());
             for f in fields {
-                out.push(
-                    FieldPath::new(vec![f.clone()])
-                        .map_err(|e| format!("projection field '{f}': {e}"))?,
-                );
+                out.push(FieldPath::new(vec![f.clone()])?);
             }
             out
         }
@@ -104,12 +101,10 @@ pub fn normalize_query_expr_to_rowset(
 
 fn collect_source_comparisons(
     pred: &Predicate,
-) -> Result<Vec<(String, CompOp, TypedComparisonValue)>, String> {
+) -> Result<Vec<(String, CompOp, TypedComparisonValue)>, RowsetNormalizeError> {
     match pred {
         Predicate::True => Ok(Vec::new()),
-        Predicate::Comparison { field, op, value } => {
-            Ok(vec![(field.clone(), *op, value.clone())])
-        }
+        Predicate::Comparison { field, op, value } => Ok(vec![(field.clone(), *op, value.clone())]),
         Predicate::And { args } => {
             let mut out = Vec::new();
             for arg in args {
@@ -117,22 +112,18 @@ fn collect_source_comparisons(
             }
             Ok(out)
         }
-        Predicate::False => Err(
-            "source braces do not accept a false predicate; omit braces or use selection comparisons"
-                .into(),
-        ),
-        Predicate::Or { .. } => Err(
-            "source braces do not accept OR; backend selection is a flat conjunction of selection slots"
-                .into(),
-        ),
-        Predicate::Not { .. } => Err(
-            "source braces do not accept NOT; backend selection is a flat conjunction of selection slots"
-                .into(),
-        ),
-        Predicate::ExistsRelation { .. } => Err(
-            "RA-1: exists_relation belongs on materialized rows (.filter), not source braces"
-                .into(),
-        ),
+        Predicate::False => Err(RowsetNormalizeError::InvalidPredicate {
+            reason: SourcePredicateError::False,
+        }),
+        Predicate::Or { .. } => Err(RowsetNormalizeError::InvalidPredicate {
+            reason: SourcePredicateError::Disjunction,
+        }),
+        Predicate::Not { .. } => Err(RowsetNormalizeError::InvalidPredicate {
+            reason: SourcePredicateError::Negation,
+        }),
+        Predicate::ExistsRelation { .. } => Err(RowsetNormalizeError::InvalidPredicate {
+            reason: SourcePredicateError::RelationExistence,
+        }),
     }
 }
 
@@ -297,9 +288,9 @@ mod tests {
         q.capability_name = Some("request_query".into());
 
         let err = normalize_query_expr_to_rowset(&q, &cgs, "app").unwrap_err();
-        assert!(err.contains("RA-2") || err.contains("selection"), "{err}");
-        assert!(err.contains("name"), "{err}");
-        assert!(err.contains(".where(lambda row:"), "{err}");
+        assert!(
+            matches!(err, RowsetNormalizeError::UndeclaredSelection { field, .. } if field == "name")
+        );
     }
 
     #[test]
@@ -326,10 +317,8 @@ mod tests {
         q.capability_name = Some("request_query".into());
 
         let err = normalize_query_expr_to_rowset(&q, &cgs, "app").unwrap_err();
-        assert!(err.contains("RA-1"), "{err}");
         assert!(
-            err.contains("control") || err.contains("page_token"),
-            "{err}"
+            matches!(err, RowsetNormalizeError::CapabilityControl { field } if field == "page_token")
         );
     }
 

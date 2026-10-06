@@ -12,7 +12,9 @@ pub mod types;
 
 pub use config::{McpTransportStoreConfig, DEFAULT_TRANSPORT_TTL_SECS};
 pub use execute_session_registry::ExecuteSessionRegistry;
-pub use host_wiring::{connect_redis_backend, prepare_host_for_serve, wire_host_redis};
+pub use host_wiring::{
+    connect_redis_backend, prepare_host_for_serve, wire_host_redis, HostWiringError,
+};
 pub use logical_execute_bindings::LogicalExecuteBindingRegistry;
 pub use logical_symbol_ledger::{LogicalSymbolLedgerEntry, LogicalSymbolLedgerRegistry};
 pub use persisted_operations::{
@@ -24,5 +26,5 @@ pub use persisted_operations::{
 pub use plasm_transport_redis::PlasmTransportRedisStore;
 pub use redis_backend::RedisBackend;
 pub use redis_session_store::{RedisSessionStore, SessionRuntimeFactory};
-pub use symbol_ledger_archive::SymbolLedgerArchive;
+pub use symbol_ledger_archive::{SymbolLedgerArchive, SymbolLedgerArchiveError};
 pub use types::{PersistedPlasmTransportState, PlasmExecBinding};

@@ -250,7 +250,7 @@ pub async fn execute_plasm_parsed_expr(
 ) -> Result<(ParsedExpr, ExecutionResult, Option<RunArtifactHandle>), plasm_runtime::ExecutionFailure>
 {
     crate::execute_pipeline::PlasmPreflight::preflight_parsed_line(sess, source_label, &parsed)
-        .map_err(|e| run_line_failure(RunLineError::Parse(e.into()), sess))?;
+        .map_err(|e| run_line_failure(RunLineError::Admission(e), sess))?;
     run_parsed_plasm_line(
         source_label,
         sess,
@@ -290,7 +290,7 @@ pub async fn archive_plasm_result_snapshot(
     parsed_preimage: &ParsedExpr,
     result: &ExecutionResult,
     trace: Option<&PlasmTraceContext>,
-) -> Result<RunArtifactHandle, String> {
+) -> Result<RunArtifactHandle, crate::run_artifacts::PersistExecuteRunError> {
     let entry_id = entry_id_override.unwrap_or(sess.entry_id.as_str());
     let source_line = display_lines.join("\n");
     persist_execute_run(PersistExecuteRunInput {
@@ -305,7 +305,14 @@ pub async fn archive_plasm_result_snapshot(
         trace,
     })
     .await
-    .map_err(|e| e.to_string())
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum RunSealRecordError {
+    #[error("stored run artifact `{run_id}` is missing for run_sealed")]
+    MissingArtifact { run_id: String },
+    #[error("artifact decode for run_sealed: {0}")]
+    Decode(#[source] serde_json::Error),
 }
 
 /// Build `RunSealRecord` from the persisted run snapshot (same preimage as `mint_run_artifact_id`).
@@ -316,14 +323,16 @@ pub async fn run_seal_record_for_handle(
     session_id: &str,
     handle: &RunArtifactHandle,
     step_id: Option<String>,
-) -> Result<crate::evidence_chain::RunSealRecord, String> {
+) -> Result<crate::evidence_chain::RunSealRecord, RunSealRecordError> {
     let bytes = st
         .run_artifacts
         .get(prompt_hash, session_id, handle.run_id)
         .await
-        .ok_or_else(|| "stored run artifact missing for run_sealed".to_string())?;
-    let artifact: plasm_evidence::RunArtifactForSeal = serde_json::from_slice(&bytes)
-        .map_err(|e| format!("artifact decode for run_sealed: {e}"))?;
+        .ok_or_else(|| RunSealRecordError::MissingArtifact {
+            run_id: handle.run_id.to_wire(),
+        })?;
+    let artifact: plasm_evidence::RunArtifactForSeal =
+        serde_json::from_slice(&bytes).map_err(RunSealRecordError::Decode)?;
     let source_line = artifact.source_line();
     Ok(crate::evidence_chain::RunSealRecord {
         expected_run_id_wire: handle.run_id.to_wire(),

@@ -40,7 +40,7 @@ impl ViewNodeRunnerAsync for LiveViewNodeRunner<'_> {
                 ctx.cgs.views.get(ctx.view_name).expect("loaded view"),
                 &traverse.node,
             )
-            .map_err(|message| RuntimeError::ConfigurationError { message })?;
+            .map_err(RuntimeError::ViewNodeResolution)?;
         let chain = plasm_core::ChainExpr::auto_get(
             plasm_core::Expr::Query(QueryExpr::all(entity.as_str())),
             &traverse.relation,
@@ -81,22 +81,22 @@ impl ViewNodeRunnerAsync for LiveViewNodeRunner<'_> {
                         .request_fingerprints
                         .extend(observed.request_fingerprints.iter().cloned());
                     let row = observed.entities().first().ok_or_else(|| {
-                        RuntimeError::ConfigurationError {
-                            message: format!("parent GET returned no row for {}", row.reference),
+                        crate::CacheError::EntityMissing {
+                            reference: row.reference.clone(),
                         }
                     })?;
                     if row.reference.entity_type != entity {
-                        return Err(RuntimeError::ConfigurationError {
-                            message: "traversal parent returned a different entity type".into(),
+                        return Err(RuntimeError::TraversalParentTypeMismatch {
+                            expected: entity.to_string(),
+                            actual: row.reference.entity_type.to_string(),
                         });
                     }
                     if !row.relations.contains_key(traverse.relation.as_str()) {
-                        return Err(RuntimeError::ConfigurationError {
-                            message: format!(
-                                "parent GET did not establish relation {}.{}",
-                                row.reference, traverse.relation
-                            ),
-                        });
+                        return Err(crate::CacheError::RelationUnobserved {
+                            reference: row.reference.clone(),
+                            relation: traverse.relation.clone(),
+                        }
+                        .into());
                     }
                     input.collection = input.collection.replace(index, row.clone())?;
                 }

@@ -193,11 +193,14 @@ pub(crate) fn format_coverage_preview_note(
 ) -> String {
     let mut line = if shown < snapshot_rows {
         format!(
-            "{shown}/{snapshot_rows} rows shown · {} coverage.",
+            "{shown}/{snapshot_rows} rows shown · {} coverage for this expression.",
             coverage.as_str()
         )
     } else {
-        format!("{snapshot_rows} rows · {} coverage.", coverage.as_str())
+        format!(
+            "{snapshot_rows} rows · {} coverage for this expression.",
+            coverage.as_str()
+        )
     };
     if shown < snapshot_rows {
         if artifact_access == ArtifactAccessMode::DagCompute {
@@ -281,7 +284,7 @@ mod tests {
             Some("l_page1"),
         );
         assert!(
-            note.contains("10/25 rows shown · partial coverage."),
+            note.contains("10/25 rows shown · partial coverage for this expression."),
             "{note}"
         );
         assert!(note.contains("Details:"), "{note}");
@@ -296,7 +299,7 @@ mod tests {
             None,
         );
         assert!(
-            complete.contains("10/80 rows shown · complete coverage."),
+            complete.contains("10/80 rows shown · complete coverage for this expression."),
             "{complete}"
         );
         assert!(!complete.contains("Continue:"), "{complete}");
@@ -319,7 +322,7 @@ mod tests {
                 ArtifactAccessMode::ResourcesRead,
             );
             assert!(
-                full.contains(&format!("{} coverage.", cov.as_str())),
+                full.contains(&format!("{} coverage for this expression.", cov.as_str())),
                 "Full/empty path missing coverage: {full}"
             );
             let capped = format_coverage_preview_note(
@@ -332,7 +335,7 @@ mod tests {
                 ArtifactAccessMode::ResourcesRead,
             );
             assert!(
-                capped.contains(&format!("{} coverage.", cov.as_str())),
+                capped.contains(&format!("{} coverage for this expression.", cov.as_str())),
                 "Capped path missing coverage: {capped}"
             );
             let snap = format_coverage_preview_note(
@@ -345,7 +348,7 @@ mod tests {
                 ArtifactAccessMode::ResourcesRead,
             );
             assert!(
-                snap.contains(&format!("{} coverage.", cov.as_str())),
+                snap.contains(&format!("{} coverage for this expression.", cov.as_str())),
                 "SnapshotOnly path missing coverage: {snap}"
             );
         }

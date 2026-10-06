@@ -68,7 +68,7 @@ impl GraphPageSpill for AgentGraphPageSpill {
             }
             Err(e) => {
                 crate::graph_cache_metrics::record_graph_delta_page_append_error();
-                Err(RuntimeError::CacheError { message: e })
+                Err(RuntimeError::CacheSource(Box::new(e)))
             }
         }
     }
@@ -77,7 +77,7 @@ impl GraphPageSpill for AgentGraphPageSpill {
         self.persistence
             .read_graph_pages(self.prompt_hash.as_str(), self.session_id.as_str())
             .await
-            .map_err(|e| RuntimeError::CacheError { message: e })
+            .map_err(|error| RuntimeError::CacheSource(Box::new(error)))
     }
 
     fn hot_bounds(&self) -> GraphHotCacheBounds {
@@ -99,7 +99,7 @@ impl SessionGraphPersistence {
         page_index: usize,
         entity_type: &str,
         entities: &plasm_core::collection_codec::SharedRows<CachedEntity>,
-    ) -> Result<(), String> {
+    ) -> Result<(), crate::session_graph_persistence::SessionGraphPersistenceError> {
         #[derive(serde::Serialize)]
         struct Page<'a> {
             kind: &'static str,
@@ -122,7 +122,7 @@ impl SessionGraphPersistence {
                 schema_version: crate::run_artifacts::RUN_ARTIFACT_PAYLOAD_SCHEMA_VERSION,
                 producer: "plasm.graph_page_spill".into(),
             },
-            bytes: axum::body::Bytes::from(serde_json::to_vec(&body).map_err(|e| e.to_string())?),
+            bytes: axum::body::Bytes::from(serde_json::to_vec(&body)?),
         };
         self.append_delta(prompt_hash, session_id, seq, &payload)
             .await

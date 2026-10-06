@@ -3,7 +3,24 @@
 use std::sync::Arc;
 
 use futures::stream::{self, StreamExt};
+use thiserror::Error;
 use tokio::sync::Semaphore;
+
+#[derive(Debug, Error)]
+pub(crate) enum BoundedParallelError {
+    #[error("bounded parallel worker semaphore was closed before job admission")]
+    SemaphoreClosed,
+}
+
+impl From<BoundedParallelError> for plasm_runtime::ExecutionFailure {
+    fn from(error: BoundedParallelError) -> Self {
+        Self::new(
+            plasm_runtime::FailureCause::Runtime,
+            "parallel_job_admission_failed",
+            error.to_string(),
+        )
+    }
+}
 
 /// Shared HTTP concurrency for plan row jobs and relation GET hydrate.
 #[must_use]
@@ -38,7 +55,7 @@ pub(crate) async fn bounded_parallel_map<I, Fut, T, E>(
 ) -> Result<Vec<T>, E>
 where
     Fut: std::future::Future<Output = Result<T, E>> + Send,
-    E: From<String> + Send,
+    E: From<BoundedParallelError> + Send,
     I: Send + 'static,
     T: Send + 'static,
 {
@@ -60,7 +77,7 @@ where
                 let _permit = semaphore
                     .acquire_owned()
                     .await
-                    .map_err(|e| E::from(e.to_string()))?;
+                    .map_err(|_| E::from(BoundedParallelError::SemaphoreClosed))?;
                 Box::pin(f(item)).await
             }
         })
@@ -86,7 +103,7 @@ pub(crate) async fn bounded_parallel_map_partition<I, Fut, T, E>(
     cfg: BoundedParallelConfig,
     admission: BatchAdmission,
     f: impl Fn(I) -> Fut + Send + Sync + Clone,
-) -> Result<(Vec<T>, Vec<E>), String>
+) -> Result<(Vec<T>, Vec<E>), BoundedParallelError>
 where
     Fut: std::future::Future<Output = Result<T, E>> + Send,
     I: Send + 'static,
@@ -116,12 +133,15 @@ where
 
     let semaphore = Arc::new(Semaphore::new(cfg.concurrency));
     let f = Arc::new(f);
-    let outcomes: Vec<Result<Box<Result<T, E>>, String>> = stream::iter(items)
+    let outcomes: Vec<Result<Box<Result<T, E>>, BoundedParallelError>> = stream::iter(items)
         .map(move |item| {
             let f = Arc::clone(&f);
             let semaphore = Arc::clone(&semaphore);
             async move {
-                let _permit = semaphore.acquire_owned().await.map_err(|e| e.to_string())?;
+                let _permit = semaphore
+                    .acquire_owned()
+                    .await
+                    .map_err(|_| BoundedParallelError::SemaphoreClosed)?;
                 Ok(Box::new(Box::pin(f(item)).await))
             }
         })
@@ -200,7 +220,7 @@ mod tests {
         let items: Vec<usize> = (0..20).collect();
         let out = bounded_parallel_map(items, cfg, |i| async move {
             tokio::task::yield_now().await;
-            Ok::<_, String>(i * 2)
+            Ok::<_, BoundedParallelError>(i * 2)
         })
         .await
         .expect("parallel map");

@@ -22,18 +22,25 @@ impl Lower<'_> {
         if !call.arguments.args.is_empty() {
             return Err(at(
                 site,
-                "writes require named arguments; positional payloads are not admitted",
+                PythonSourceError::WritePositionalArguments {
+                    actual: call.arguments.args.len(),
+                },
             ));
         }
         if cap.requires_receiver() && receiver.is_none() {
-            return Err(at(site, "this method requires an entity receiver"));
+            return Err(at(
+                site,
+                PythonSourceError::ReceiverRequired {
+                    capability: resolved.capability.to_string(),
+                },
+            ));
         }
         let mut input = indexmap::IndexMap::new();
         for kw in &call.arguments.keywords {
             let key = kw
                 .arg
                 .as_ref()
-                .ok_or_else(|| at(site, "write argument unpacking is not admitted"))?;
+                .ok_or_else(|| at(site, PythonSourceError::WriteArgumentUnpacking))?;
             let wire = if inputs::is_union_tag(cap, key.as_str()) {
                 key.to_string()
             } else {
@@ -45,18 +52,23 @@ impl Lower<'_> {
                         key.as_str(),
                         cap,
                     )
-                    .map_err(|e| at(site, &e.to_string()))?
+                    .map_err(|e| at(site, e))?
             };
             let value = self.write_value(&kw.value)?;
             if input.insert(wire, value).is_some() {
-                return Err(at(site, "duplicate write argument"));
+                return Err(at(
+                    site,
+                    PythonSourceError::DuplicateWriteArgument {
+                        argument: key.to_string(),
+                    },
+                ));
             }
         }
         let stamp = CatalogEntryStamp::some(owner.entry_id.clone());
         let target = if let Some(receiver) = receiver {
-            let entity = cgs
-                .get_entity(owner.entity.as_str())
-                .ok_or("missing receiver entity")?;
+            let entity = cgs.get_entity(owner.entity.as_str()).ok_or(
+                crate::program_rejection::PythonLoweringInvariantError::ReceiverEntityMissing,
+            )?;
             if entity.key_vars.is_empty() {
                 plasm_core::Ref::simple_binding(
                     owner.entity.as_str(),
@@ -83,7 +95,10 @@ impl Lower<'_> {
             // Same canonical pathless anchor as the existing parser, never a remote Get.
             plasm_core::GetExpr::pathless_nullary(owner.entity.as_str()).reference
         };
-        let value = inputs::normalize(cap, input, cgs).map_err(|error| at(site, &error))?;
+        let value = inputs::normalize(cap, input, cgs).map_err(|error| match error {
+            PythonLoweringError::Input(error) => input_at(site, (*error).clone()),
+            other => at(site, other),
+        })?;
         let expr = match kind {
             CatalogWriteKind::Create => {
                 let mut create =
@@ -153,14 +168,19 @@ impl Lower<'_> {
 
     pub(super) fn field_input(&mut self, e: &PyExpr) -> Result<PlasmInputRef, PythonLoweringError> {
         let PyExpr::Attribute(a) = e else {
-            return Err(at(e, "expected a field dependency"));
+            return Err(at(e, PythonSourceError::ExpectedFieldDependency));
         };
         let source = self.expr(&a.value, None)?;
         let binding = source.as_str();
-        let contract =
-            super::super::binding_contract(&self.state, binding).ok_or("unknown input binding")?;
+        let contract = super::super::binding_contract(&self.state, binding)
+            .ok_or(crate::program_rejection::PythonLoweringInvariantError::InputBindingMissing)?;
         if !contract.row_cardinality.permits_scalar_field_extract() {
-            return Err(at(e, "field input requires a proven singleton"));
+            return Err(at(
+                e,
+                PythonSourceError::FieldInputNeedsSingleton {
+                    binding: binding.to_owned(),
+                },
+            ));
         }
         let row_schema = super::super::schema_validate::resolve_immediate_compute_schema(
             &self.state,
@@ -173,7 +193,8 @@ impl Lower<'_> {
             Some(&contract.row_entity),
             row_schema.as_ref(),
             &FieldPath::from_dotted(a.attr.as_str())?,
-        )?;
+        )
+        .map_err(|error| at(e, super::super::error::DagCompilationError::from(error)))?;
         super::super::schema_validate::validate_compute_paths_for_dag_source(
             self.es,
             &self.state,
@@ -181,7 +202,8 @@ impl Lower<'_> {
             binding,
             std::slice::from_ref(&path),
             "field input",
-        )?;
+        )
+        .map_err(|error| at(e, super::super::error::DagCompilationError::from(error)))?;
         Ok(self.input_ref(binding, path.segments().to_vec()))
     }
 }

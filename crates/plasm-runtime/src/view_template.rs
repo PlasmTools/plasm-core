@@ -8,6 +8,14 @@ use crate::RuntimeError;
 
 const VIEW_TEMPLATE_MAX_CHARS: usize = 32_768;
 
+#[derive(Debug, thiserror::Error)]
+enum WireNumberError {
+    #[error("wire_num: invalid numeric text")]
+    InvalidNumber(#[source] std::num::ParseFloatError),
+    #[error("wire_num: unsupported value kind")]
+    UnsupportedValueKind,
+}
+
 /// Locked banking_knowledge scenario date (matches tau2-bench `get_today()`).
 fn banking_domain_today() -> chrono::NaiveDate {
     chrono::NaiveDate::from_ymd_opt(2025, 11, 14).expect("valid banking domain today")
@@ -49,12 +57,12 @@ fn template_data(v: &Value) -> Result<minijinja::Value, minijinja::Error> {
             return Err(minijinja::Error::new(
                 minijinja::ErrorKind::InvalidOperation,
                 "unresolved operand reached view template",
-            ))
+            ));
         }
     })
 }
 
-fn parse_wire_num_value(v: minijinja::Value) -> Result<f64, String> {
+fn parse_wire_num_value(v: minijinja::Value) -> Result<f64, WireNumberError> {
     match v.kind() {
         ValueKind::Number => {
             if let Some(i) = v.as_i64() {
@@ -62,7 +70,7 @@ fn parse_wire_num_value(v: minijinja::Value) -> Result<f64, String> {
             }
             v.to_string()
                 .parse::<f64>()
-                .map_err(|e| format!("wire_num: {e}"))
+                .map_err(WireNumberError::InvalidNumber)
         }
         ValueKind::String => {
             let mut s = v.as_str().unwrap_or_default().trim().to_string();
@@ -77,10 +85,10 @@ fn parse_wire_num_value(v: minijinja::Value) -> Result<f64, String> {
             if s.is_empty() {
                 return Ok(0.0);
             }
-            s.parse::<f64>().map_err(|e| format!("wire_num: {e}"))
+            s.parse::<f64>().map_err(WireNumberError::InvalidNumber)
         }
         ValueKind::None | ValueKind::Undefined => Ok(0.0),
-        _ => Err(format!("wire_num: unsupported value kind {:?}", v.kind())),
+        _ => Err(WireNumberError::UnsupportedValueKind),
     }
 }
 
@@ -143,8 +151,9 @@ fn register_view_template_filters(env: &mut Environment<'_>) {
     env.add_filter(
         "wire_num",
         |v: minijinja::Value| -> Result<f64, minijinja::Error> {
-            parse_wire_num_value(v)
-                .map_err(|e| minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, e))
+            parse_wire_num_value(v).map_err(|error| {
+                minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, error.to_string())
+            })
         },
     );
     env.add_filter(
@@ -164,11 +173,13 @@ fn register_view_template_filters(env: &mut Environment<'_>) {
     env.add_filter(
         "wire_time",
         |v: minijinja::Value, format: String| -> Result<String, minijinja::Error> {
-            let fmt = temporal_wire_format_from_name(&format)
-                .map_err(|e| minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, e))?;
+            let fmt = temporal_wire_format_from_name(&format).map_err(|error| {
+                minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, error.to_string())
+            })?;
             let plasm = minijinja_to_plasm(v);
-            let out = wire_temporal_value(plasm, fmt)
-                .map_err(|e| minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, e))?;
+            let out = wire_temporal_value(plasm, fmt).map_err(|e| {
+                minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, e.to_string())
+            })?;
             Ok(match out {
                 Value::String(s) | Value::PhraseIdent(s) => s,
                 Value::Integer(i) => i.to_string(),
@@ -187,7 +198,7 @@ fn register_view_template_filters(env: &mut Environment<'_>) {
                     return Err(minijinja::Error::new(
                         minijinja::ErrorKind::InvalidOperation,
                         "unbound operand reached wire_time",
-                    ))
+                    ));
                 }
                 Value::Money(m) => m.display(),
             })
@@ -331,22 +342,16 @@ fn render_view_template_with_nodes(
         .chain(fields_plain.values())
         .chain(node_fields.values().flat_map(|fields| fields.values()))
     {
-        plasm_core::operand_binding::ResolvedValue::new(value.clone()).map_err(|message| {
-            RuntimeError::ConfigurationError {
-                message: message.into(),
-            }
-        })?;
+        plasm_core::operand_binding::ResolvedValue::new(value.clone())?;
     }
     let trimmed = desugar_view_computed_template(template.trim());
     let trimmed = trimmed.trim();
     if trimmed.is_empty() {
-        return Err(RuntimeError::ConfigurationError {
-            message: "computed view template must be non-empty".into(),
-        });
+        return Err(RuntimeError::ViewTemplateEmpty);
     }
     if trimmed.chars().count() > VIEW_TEMPLATE_MAX_CHARS {
-        return Err(RuntimeError::ConfigurationError {
-            message: format!("computed view template exceeds {VIEW_TEMPLATE_MAX_CHARS} characters"),
+        return Err(RuntimeError::ViewTemplateTooLong {
+            max_chars: VIEW_TEMPLATE_MAX_CHARS,
         });
     }
 
@@ -354,16 +359,18 @@ fn render_view_template_with_nodes(
     for (k, v) in scope {
         ctx.insert(
             k.clone(),
-            template_data(v).map_err(|e| RuntimeError::ConfigurationError {
-                message: e.to_string(),
+            template_data(v).map_err(|source| RuntimeError::ViewTemplate {
+                phase: crate::ViewTemplatePhase::BindData,
+                source,
             })?,
         );
     }
     for (k, v) in fields_plain {
         ctx.insert(
             k.clone(),
-            template_data(v).map_err(|e| RuntimeError::ConfigurationError {
-                message: e.to_string(),
+            template_data(v).map_err(|source| RuntimeError::ViewTemplate {
+                phase: crate::ViewTemplatePhase::BindData,
+                source,
             })?,
         );
     }
@@ -373,8 +380,9 @@ fn render_view_template_with_nodes(
         for (fk, fv) in fields {
             field_obj.insert(
                 fk.clone(),
-                template_data(fv).map_err(|e| RuntimeError::ConfigurationError {
-                    message: e.to_string(),
+                template_data(fv).map_err(|source| RuntimeError::ViewTemplate {
+                    phase: crate::ViewTemplatePhase::BindData,
+                    source,
                 })?,
             );
         }
@@ -393,14 +401,16 @@ fn render_view_template_with_nodes(
 
     let tmpl = env
         .template_from_str(trimmed)
-        .map_err(|e| RuntimeError::ConfigurationError {
-            message: format!("computed view template compile error: {e}"),
+        .map_err(|source| RuntimeError::ViewTemplate {
+            phase: crate::ViewTemplatePhase::Compile,
+            source,
         })?;
 
     let rendered = tmpl
         .render(ctx)
-        .map_err(|e| RuntimeError::ConfigurationError {
-            message: format!("computed view template render error: {e}"),
+        .map_err(|source| RuntimeError::ViewTemplate {
+            phase: crate::ViewTemplatePhase::Render,
+            source,
         })?;
 
     // `{{ bool_expr }}` stringifies via Display (`True`/`False`). Boolean entity fields and
@@ -440,6 +450,18 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, Value::String("75.0".into()));
+    }
+
+    #[test]
+    fn wire_num_reports_typed_parse_failures() {
+        assert!(matches!(
+            parse_wire_num_value(minijinja::Value::from("not a number")),
+            Err(WireNumberError::InvalidNumber(_))
+        ));
+        assert!(matches!(
+            parse_wire_num_value(minijinja::Value::from(true)),
+            Err(WireNumberError::UnsupportedValueKind)
+        ));
     }
 
     #[test]

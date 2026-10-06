@@ -124,7 +124,12 @@ async fn recorded_rehydration_rejects_untyped_spill_rows() {
             .rehydrate_rows_locked("Berry", &berry_membership(&["cheri"]))
             .await
             .expect_err("missing typed identity");
-    assert!(error.contains("invalid typed entities"), "{error}");
+    assert!(matches!(
+        error,
+        super::walk::GraphRehydrateError::Persistence(
+            crate::session_graph_persistence::SessionGraphPersistenceError::Serialization(_)
+        )
+    ));
 }
 
 #[tokio::test]

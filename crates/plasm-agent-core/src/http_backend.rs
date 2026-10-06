@@ -18,23 +18,13 @@ pub struct ResolvedHttpOrigin(String);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BindingOriginValue(String);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum ReplHttpOverrideError {
+    #[error("HTTP backend URL must not be empty")]
     Empty,
     /// User pasted catalog placeholder text instead of a real workspace host.
+    #[error("HTTP backend must be a concrete workspace URL, not a catalog placeholder")]
     LiteralCatalogPlaceholder,
-}
-
-impl std::fmt::Display for ReplHttpOverrideError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Empty => write!(f, "HTTP backend URL must not be empty"),
-            Self::LiteralCatalogPlaceholder => write!(
-                f,
-                "HTTP backend must be a concrete workspace URL, not a catalog placeholder"
-            ),
-        }
-    }
 }
 
 impl CatalogHttpBackend {

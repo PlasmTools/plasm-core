@@ -31,14 +31,19 @@ pub fn admin_service_from_host(state: &PlasmHostState) -> Option<McpConfigAdminS
     Some(McpConfigAdminService::new(repo, keys))
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum StandaloneMcpAdminError {
+    #[error("policy store URL missing: set DATABASE_URL, PLASM_MCP_CONFIG_DATABASE_URL, or PLASM_AUTH_STORAGE_URL")]
+    MissingPolicyStoreUrl,
+    #[error("MCP policy store connection or migration failed")]
+    Repository(#[from] plasm_agent_core::mcp_config_repository::McpConfigRepositoryError),
+}
+
 /// CLI / tooling: connect sqlx + MCP transport auth without booting HTTP listeners.
 pub async fn connect_standalone_mcp_admin_service(
-) -> Result<McpConfigAdminService, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<McpConfigAdminService, StandaloneMcpAdminError> {
     let Some(db_url) = plasm_agent_core::mcp_config_repository::mcp_config_database_url() else {
-        return Err(
-            "policy store URL missing: set DATABASE_URL, PLASM_MCP_CONFIG_DATABASE_URL, or PLASM_AUTH_STORAGE_URL"
-                .into(),
-        );
+        return Err(StandaloneMcpAdminError::MissingPolicyStoreUrl);
     };
     let repo = Arc::new(McpConfigRepository::connect_and_migrate(&db_url).await?);
     let keys: Arc<dyn McpTransportAuth> =

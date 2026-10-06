@@ -103,7 +103,7 @@ pub(crate) async fn commit_exposure_wave_delta(
         &exp,
         &sess.python_teaching,
     )
-    .map_err(super::SessionMutateError::from)?;
+    .map_err(super::SessionMutateError::Teaching)?;
     let mut wave = teaching.declarations;
     sess.python_teaching = teaching.next_state;
     let cheat = format_exposure_entity_cheat_sheet(&exp);
@@ -164,7 +164,8 @@ mod tests {
             run_artifacts: Arc::new(RunArtifactStore::memory()),
             session_graph_persistence: None,
             oss_local_filesystem_defaults: false,
-        });
+        })
+        .expect("valid catalog fixture");
         st.oss.execute_session_registry = reg;
         st
     }

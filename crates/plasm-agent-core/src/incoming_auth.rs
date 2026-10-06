@@ -8,6 +8,7 @@ use http_problem::Problem;
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 use serde::Deserialize;
 use subtle::ConstantTimeEq;
+use thiserror::Error;
 
 use crate::http_problem_util::problem_response;
 use crate::http_problem_util::problem_types;
@@ -37,6 +38,48 @@ impl IncomingAuthMode {
 pub enum IncomingAuthMethod {
     Jwt,
     ApiKey,
+}
+
+#[derive(Debug, Error)]
+pub enum IncomingAuthConfigError {
+    #[error("required incoming auth has no JWT secret or API-key file configured")]
+    RequiredVerifierMissing,
+}
+
+#[derive(Debug, Error)]
+pub enum IncomingAuthError {
+    #[error("JWT verification is not configured")]
+    JwtNotConfigured,
+    #[error("only HS256 JWTs are supported for incoming auth")]
+    UnsupportedJwtAlgorithm,
+    #[error("JWT header is invalid: {0}")]
+    JwtHeader(#[source] jsonwebtoken::errors::Error),
+    #[error("JWT claims are invalid: {0}")]
+    JwtClaims(#[source] jsonwebtoken::errors::Error),
+    #[error("JWT must include a tenant_id (or tid) claim")]
+    MissingTenantClaim,
+    #[error("JWT must include a non-empty sub claim")]
+    MissingSubject,
+    #[error("API-key verification is not configured")]
+    ApiKeyNotConfigured,
+    #[error("API key is invalid")]
+    InvalidApiKey,
+    #[error("Bearer token is empty")]
+    EmptyBearerToken,
+    #[error("failed to read API-key file `{path}`: {source}")]
+    ApiKeyFileRead {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("API-key file is invalid JSON: {0}")]
+    ApiKeyFileParse(#[source] serde_json::Error),
+    #[error("API-key file entry {index} has an empty key or tenant id")]
+    InvalidApiKeyEntry { index: usize },
+    #[error("internal authentication state is unavailable")]
+    InternalStateUnavailable,
+    #[error("execute session tenant does not match caller")]
+    SessionTenantMismatch,
 }
 
 /// Verified caller identity for tenant-scoped execute sessions.
@@ -110,17 +153,14 @@ impl IncomingAuthConfig {
     }
 
     /// Fail fast when `required` is set but no verifier is configured.
-    pub fn validate_startup(&self) -> Result<(), String> {
+    pub fn validate_startup(&self) -> Result<(), IncomingAuthConfigError> {
         if self.mode != IncomingAuthMode::Required {
             return Ok(());
         }
         let has_jwt = self.jwt_secret.is_some();
         let has_keys = self.api_keys_file.is_some();
         if !has_jwt && !has_keys {
-            return Err(
-                "PLASM_INCOMING_AUTH_MODE=required but neither PLASM_AUTH_JWT_SECRET nor PLASM_AUTH_API_KEYS_FILE is set"
-                    .into(),
-            );
+            return Err(IncomingAuthConfigError::RequiredVerifierMissing);
         }
         Ok(())
     }
@@ -142,7 +182,7 @@ pub struct IncomingAuthVerifier {
 }
 
 impl IncomingAuthVerifier {
-    pub fn new(config: IncomingAuthConfig) -> Result<Self, String> {
+    pub fn new(config: IncomingAuthConfig) -> Result<Self, IncomingAuthError> {
         let api_keys = load_api_keys(config.api_keys_file.as_deref())?;
         Ok(Self { config, api_keys })
     }
@@ -156,16 +196,16 @@ impl IncomingAuthVerifier {
         &self.config
     }
 
-    fn verify_jwt(&self, token: &str) -> Result<TenantPrincipal, String> {
+    fn verify_jwt(&self, token: &str) -> Result<TenantPrincipal, IncomingAuthError> {
         let secret = self
             .config
             .jwt_secret
             .as_deref()
-            .ok_or_else(|| "JWT verification not configured".to_string())?;
+            .ok_or(IncomingAuthError::JwtNotConfigured)?;
 
-        let header = decode_header(token).map_err(|e| e.to_string())?;
+        let header = decode_header(token).map_err(IncomingAuthError::JwtHeader)?;
         if header.alg != Algorithm::HS256 {
-            return Err("only HS256 JWTs are supported for incoming auth".into());
+            return Err(IncomingAuthError::UnsupportedJwtAlgorithm);
         }
 
         let mut validation = Validation::new(Algorithm::HS256);
@@ -178,15 +218,16 @@ impl IncomingAuthVerifier {
         }
 
         let key = DecodingKey::from_secret(secret.as_bytes());
-        let data = decode::<JwtClaims>(token, &key, &validation).map_err(|e| e.to_string())?;
+        let data =
+            decode::<JwtClaims>(token, &key, &validation).map_err(IncomingAuthError::JwtClaims)?;
         let claims = data.claims;
         let tenant_id = claims
             .tenant_id
             .or(claims.tenant)
             .filter(|s| !s.is_empty())
-            .ok_or_else(|| "JWT must include tenant_id (or tid) claim".to_string())?;
+            .ok_or(IncomingAuthError::MissingTenantClaim)?;
         if claims.sub.is_empty() {
-            return Err("JWT must include non-empty sub claim".into());
+            return Err(IncomingAuthError::MissingSubject);
         }
         Ok(TenantPrincipal {
             tenant_id,
@@ -196,13 +237,13 @@ impl IncomingAuthVerifier {
     }
 
     /// Verify a Bearer JWT and return tenant principal.
-    pub fn verify_bearer_token(&self, token: &str) -> Result<TenantPrincipal, String> {
+    pub fn verify_bearer_token(&self, token: &str) -> Result<TenantPrincipal, IncomingAuthError> {
         self.verify_jwt(token)
     }
 
-    fn verify_api_key(&self, key: &str) -> Result<TenantPrincipal, String> {
+    fn verify_api_key(&self, key: &str) -> Result<TenantPrincipal, IncomingAuthError> {
         if self.api_keys.is_empty() {
-            return Err("API key verification not configured".into());
+            return Err(IncomingAuthError::ApiKeyNotConfigured);
         }
         let k = key.as_bytes();
         for (stored, principal) in &self.api_keys {
@@ -210,11 +251,14 @@ impl IncomingAuthVerifier {
                 return Ok(principal.clone());
             }
         }
-        Err("invalid API key".into())
+        Err(IncomingAuthError::InvalidApiKey)
     }
 
     /// Parse `Authorization` / `X-API-Key` and return a principal, or error string.
-    pub fn verify_headers(&self, headers: &HeaderMap) -> Result<Option<TenantPrincipal>, String> {
+    pub fn verify_headers(
+        &self,
+        headers: &HeaderMap,
+    ) -> Result<Option<TenantPrincipal>, IncomingAuthError> {
         if let Some(h) = headers.get("x-api-key").and_then(|v| v.to_str().ok()) {
             let p = self.verify_api_key(h.trim())?;
             return Ok(Some(p));
@@ -225,7 +269,7 @@ impl IncomingAuthVerifier {
             if auth.len() > prefix.len() && auth[..prefix.len()].eq_ignore_ascii_case(prefix) {
                 let token = auth[prefix.len()..].trim();
                 if token.is_empty() {
-                    return Err("empty Bearer token".into());
+                    return Err(IncomingAuthError::EmptyBearerToken);
                 }
                 let p = self.verify_jwt(token)?;
                 return Ok(Some(p));
@@ -253,7 +297,7 @@ impl IncomingAuthVerifier {
 #[derive(Debug)]
 pub enum IncomingAuthFailure {
     Missing,
-    Invalid(String),
+    Invalid(IncomingAuthError),
 }
 
 /// RFC 7807 response for HTTP (401 / 403).
@@ -280,7 +324,7 @@ pub fn incoming_auth_problem(
                 ProblemStatus::UNAUTHORIZED,
                 problem_types::INCOMING_AUTH_UNAUTHORIZED,
                 "Unauthorized",
-                msg.clone(),
+                msg.to_string(),
             ),
         }
     };
@@ -298,18 +342,21 @@ pub fn tenant_scope(principal: Option<&TenantPrincipal>) -> String {
 
 fn load_api_keys(
     path: Option<&std::path::Path>,
-) -> Result<Vec<(Vec<u8>, TenantPrincipal)>, String> {
+) -> Result<Vec<(Vec<u8>, TenantPrincipal)>, IncomingAuthError> {
     let Some(path) = path else {
         return Ok(Vec::new());
     };
-    let raw = std::fs::read_to_string(path)
-        .map_err(|e| format!("read PLASM_AUTH_API_KEYS_FILE {}: {e}", path.display()))?;
+    let raw =
+        std::fs::read_to_string(path).map_err(|source| IncomingAuthError::ApiKeyFileRead {
+            path: path.to_path_buf(),
+            source,
+        })?;
     let entries: Vec<ApiKeyFileEntry> =
-        serde_json::from_str(&raw).map_err(|e| format!("parse API keys file: {e}"))?;
+        serde_json::from_str(&raw).map_err(IncomingAuthError::ApiKeyFileParse)?;
     let mut out = Vec::with_capacity(entries.len());
-    for e in entries {
+    for (index, e) in entries.into_iter().enumerate() {
         if e.key.is_empty() || e.tenant_id.is_empty() {
-            return Err("API key file: empty key or tenant_id".into());
+            return Err(IncomingAuthError::InvalidApiKeyEntry { index });
         }
         out.push((
             e.key.into_bytes(),
@@ -367,7 +414,7 @@ pub async fn incoming_auth_http_middleware(
                 "incoming_auth_http_middleware: PlasmHostState missing from extensions"
             );
             incoming_auth_problem(
-                IncomingAuthFailure::Invalid("internal server error".into()),
+                IncomingAuthFailure::Invalid(IncomingAuthError::InternalStateUnavailable),
                 false,
             )
         })?;

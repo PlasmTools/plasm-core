@@ -60,17 +60,19 @@ pub fn publish_plasm_result_steps_with_policy(
 }
 
 /// Lock a shared MCP meta index for one publish call (live plan worker pool path).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("meta_index lock poisoned")]
+pub struct MetaIndexPoisoned;
+
 pub(crate) fn publish_with_shared_meta_index(
     cgs: Option<&CGS>,
     meta_index: Option<Arc<Mutex<PlasmMetaIndex>>>,
     steps: &[PublishedResultStep],
     policy: &McpResultTransportPolicy,
-) -> Result<ExecuteRunToolOutput, String> {
+) -> Result<ExecuteRunToolOutput, MetaIndexPoisoned> {
     match meta_index {
         Some(arc) => {
-            let mut guard = arc
-                .lock()
-                .map_err(|e| format!("meta_index lock poisoned: {e}"))?;
+            let mut guard = arc.lock().map_err(|_| MetaIndexPoisoned)?;
             Ok(publish_plasm_result_steps_with_policy(
                 cgs,
                 Some(&mut *guard),
@@ -571,7 +573,8 @@ mod tests {
         );
         let out = publish_plasm_result_steps(None, None, std::slice::from_ref(&step));
         assert!(
-            out.markdown.contains("complete coverage."),
+            out.markdown
+                .contains("complete coverage for this expression."),
             "Full mode must mention coverage: {}",
             out.markdown
         );
@@ -594,7 +597,8 @@ mod tests {
             &policy,
         );
         assert!(
-            out.markdown.contains("partial coverage."),
+            out.markdown
+                .contains("partial coverage for this expression."),
             "CappedInline must mention coverage: {}",
             out.markdown
         );
@@ -623,7 +627,8 @@ mod tests {
         );
         let out = publish_plasm_result_steps(None, None, std::slice::from_ref(&step));
         assert!(
-            out.markdown.contains("partial coverage."),
+            out.markdown
+                .contains("partial coverage for this expression."),
             "SnapshotOnly must mention coverage: {}",
             out.markdown
         );
@@ -637,7 +642,8 @@ mod tests {
         );
         let out = publish_plasm_result_steps(None, None, std::slice::from_ref(&step));
         assert!(
-            out.markdown.contains("complete coverage."),
+            out.markdown
+                .contains("complete coverage for this expression."),
             "empty Full result must mention coverage: {}",
             out.markdown
         );
@@ -659,7 +665,8 @@ mod tests {
             out.markdown
         );
         assert!(
-            out.markdown.contains("unknown coverage."),
+            out.markdown
+                .contains("unknown coverage for this expression."),
             "exactly-full host page must stamp Unknown coverage: {}",
             out.markdown
         );
@@ -678,7 +685,8 @@ mod tests {
         );
         let out = publish_plasm_result_steps(None, None, std::slice::from_ref(&step));
         assert!(
-            out.markdown.contains("partial coverage."),
+            out.markdown
+                .contains("partial coverage for this expression."),
             "Partial host page must stamp coverage: {}",
             out.markdown
         );
@@ -718,8 +726,14 @@ mod tests {
             "morgan section missing: {}",
             out.markdown
         );
-        let unknown_hits = out.markdown.matches("unknown coverage.").count();
-        let partial_hits = out.markdown.matches("partial coverage.").count();
+        let unknown_hits = out
+            .markdown
+            .matches("unknown coverage for this expression.")
+            .count();
+        let partial_hits = out
+            .markdown
+            .matches("partial coverage for this expression.")
+            .count();
         assert_eq!(
             unknown_hits, 1,
             "expected one Unknown stamp: {}",
@@ -756,7 +770,8 @@ mod tests {
             out.markdown
         );
         assert!(
-            out.markdown.contains("unknown coverage."),
+            out.markdown
+                .contains("unknown coverage for this expression."),
             "bounded preview must still stamp coverage: {}",
             out.markdown
         );

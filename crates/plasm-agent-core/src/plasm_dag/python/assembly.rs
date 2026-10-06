@@ -1,5 +1,6 @@
 //! Assemble typed row values and explicit singleton dependencies using ordinary derivation.
 use super::*;
+use crate::program_rejection::PythonLoweringInvariantError;
 
 impl Lower<'_> {
     /// A record is a value, not an implicit traversal of any of its inputs.
@@ -31,7 +32,9 @@ impl Lower<'_> {
                     singleton: true,
                     page_size: None,
                     source: super::super::types::DagNodeSource::Data(PlanValue::Literal {
-                        value: plasm_core::Value::Object(Default::default()).try_into()?,
+                        value: plasm_core::Value::Object(Default::default())
+                            .try_into()
+                            .map_err(|_| PythonLoweringInvariantError::InvalidUnitLiteral)?,
                     }),
                 })?
             }
@@ -52,7 +55,7 @@ impl Lower<'_> {
         let value_type = match &self
             .state
             .get(id)
-            .ok_or("missing constructed value")?
+            .ok_or(PythonLoweringInvariantError::MissingConstructedValue)?
             .source
         {
             super::super::types::DagNodeSource::Derive {

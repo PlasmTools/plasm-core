@@ -9,6 +9,24 @@ use napi::threadsafe_function::ThreadsafeFunction;
 use plasm_compile::{CompiledRequest, HttpBodyFormat, HttpMethod};
 use plasm_runtime::auth::ResolvedAuth;
 use plasm_runtime::error::RuntimeError;
+
+#[derive(Debug, thiserror::Error)]
+enum HostTransportError {
+    #[error("host transport callback failed: {0}")]
+    Callback(#[source] napi::Error),
+    #[error("host transport promise rejected: {0}")]
+    Promise(#[source] napi::Error),
+    #[error("host transport callback does not support multipart bodies")]
+    MultipartUnsupported,
+}
+
+impl From<HostTransportError> for RuntimeError {
+    fn from(error: HostTransportError) -> Self {
+        RuntimeError::HostTransport {
+            source: Box::new(error),
+        }
+    }
+}
 use plasm_runtime::http_transport::{
     compiled_http_url, compiled_template_headers, plasm_value_to_form_urlencoded, HttpTransport,
 };
@@ -89,22 +107,14 @@ impl JsCallbackHttpTransport {
         req: JsTransportRequest,
     ) -> std::result::Result<JsTransportResponse, RuntimeError> {
         tracing::debug!(target: "plasm_node::transport", method = %req.method, "dispatch JS transport callback");
-        let js_promise =
-            self.tsfn
-                .call_async_catch(req)
-                .await
-                .map_err(|e| RuntimeError::RequestError {
-                    message: format!("host transport callback failed: {e}"),
-                    attempts: 1,
-                    status: None,
-                    body: None,
-                })?;
-        js_promise.await.map_err(|e| RuntimeError::RequestError {
-            message: format!("host transport promise rejected: {e}"),
-            attempts: 1,
-            status: None,
-            body: None,
-        })
+        let js_promise = self
+            .tsfn
+            .call_async_catch(req)
+            .await
+            .map_err(HostTransportError::Callback)?;
+        js_promise
+            .await
+            .map_err(|error| HostTransportError::Promise(error).into())
     }
 
     fn build_request(
@@ -186,17 +196,12 @@ fn encode_outbound_body(
     request: &CompiledRequest,
 ) -> std::result::Result<Option<(String, &'static str)>, RuntimeError> {
     match request.body_format {
-        HttpBodyFormat::Multipart => Err(RuntimeError::ConfigurationError {
-            message: "host transport callback does not support multipart bodies yet".into(),
-        }),
+        HttpBodyFormat::Multipart => Err(HostTransportError::MultipartUnsupported.into()),
         HttpBodyFormat::Json => {
             let Some(body) = &request.body else {
                 return Ok(None);
             };
-            let encoded =
-                serde_json::to_string(body).map_err(|e| RuntimeError::SerializationError {
-                    message: format!("JSON encode outbound body: {e}"),
-                })?;
+            let encoded = serde_json::to_string(body).map_err(RuntimeError::from)?;
             Ok(Some((encoded, "application/json; charset=utf-8")))
         }
         HttpBodyFormat::FormUrlencoded => {

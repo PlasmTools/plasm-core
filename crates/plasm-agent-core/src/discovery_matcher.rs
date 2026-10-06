@@ -2,12 +2,52 @@
 use crate::decision_codec::DecisionCodec;
 use crate::discovery_store::RetrievalReceipt;
 use crate::intent_provenance::IntentProvenance;
-use anyhow::{ensure, Context, Result};
 use plasm_core::{catalog_discovery::content_hash, prerequisites::CapabilityRef};
 use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
+use thiserror::Error;
+
+type DecisionProviderError = Box<dyn std::error::Error + Send + Sync + 'static>;
+
+#[derive(Debug, Error)]
+pub enum DiscoveryMatcherError {
+    #[error("Jev model is required")]
+    MissingModel,
+    #[error("judgment candidate bound exceeded")]
+    CandidateBoundExceeded,
+    #[error("duplicate discovery candidate id")]
+    DuplicateCandidate,
+    #[error("duplicate discovery capability reference")]
+    DuplicateCapabilityReference,
+    #[error("relevance batch is empty")]
+    EmptyBatch,
+    #[error("issued relevance page has no pending page")]
+    NoPendingPage,
+    #[error("relevance page rejected because an item is indivisible ({bytes} bytes); reduce its catalog description or supply a model with sufficient context; no selection was committed")]
+    IndivisibleItem { bytes: usize },
+    #[error("Jev request serialization failed")]
+    Encode(#[source] crate::decision_codec::DecisionCodecError),
+    #[error("decision response is invalid")]
+    Response(#[from] crate::decision_codec::DecisionResponseError),
+    #[error("validated relevance answer is missing its issued question")]
+    MissingAnswer,
+    #[error("an accepted candidate has multiple relevance judgments")]
+    MultipleJudgments,
+    #[error("relevance page has unprocessed questions")]
+    UnprocessedPages,
+    #[error("duplicate issued relevance question")]
+    DuplicateIssuedQuestion,
+    #[error("duplicate relevance answer")]
+    DuplicateAnswer,
+    #[error("relevance answers differ from issued questions")]
+    AnswerSetMismatch,
+    #[error("relevance receipt does not cover the candidate universe")]
+    CandidateCoverageMismatch,
+    #[error("provider decision failed")]
+    Provider(#[source] DecisionProviderError),
+}
 pub const JEV_MODEL: &str = "typesafe/jev-1.13";
 // A wire-size packing target for economical requests, NOT a provider context guarantee.
 // Provider rejections drive further typed partitioning, including below this target.
@@ -97,32 +137,33 @@ pub fn issue_batches(
     model: &str,
     intent: &IntentProvenance,
     retrieval: &RetrievalReceipt,
-) -> Result<Vec<IssuedBatch>> {
-    ensure!(!model.trim().is_empty(), "Jev model required");
-    ensure!(
-        retrieval.candidates.len() <= crate::discovery_store::CANDIDATE_LIMIT,
-        "judgment candidate bound exceeded"
-    );
+) -> Result<Vec<IssuedBatch>, DiscoveryMatcherError> {
+    if model.trim().is_empty() {
+        return Err(DiscoveryMatcherError::MissingModel);
+    }
+    if retrieval.candidates.len() > crate::discovery_store::CANDIDATE_LIMIT {
+        return Err(DiscoveryMatcherError::CandidateBoundExceeded);
+    }
     let mut candidates: Vec<_> = retrieval.candidates.iter().collect();
     candidates.sort_by(|a, b| a.reference.cmp(&b.reference));
-    ensure!(
-        candidates
-            .iter()
-            .map(|c| &c.id)
-            .collect::<BTreeSet<_>>()
-            .len()
-            == candidates.len(),
-        "duplicate discovery candidate"
-    );
-    ensure!(
-        candidates
-            .iter()
-            .map(|c| &c.reference)
-            .collect::<BTreeSet<_>>()
-            .len()
-            == candidates.len(),
-        "duplicate discovery capability reference"
-    );
+    if candidates
+        .iter()
+        .map(|c| &c.id)
+        .collect::<BTreeSet<_>>()
+        .len()
+        != candidates.len()
+    {
+        return Err(DiscoveryMatcherError::DuplicateCandidate);
+    }
+    if candidates
+        .iter()
+        .map(|c| &c.reference)
+        .collect::<BTreeSet<_>>()
+        .len()
+        != candidates.len()
+    {
+        return Err(DiscoveryMatcherError::DuplicateCapabilityReference);
+    }
     let mut batches = Vec::new();
     let mut pending = Vec::new();
     for candidate in candidates {
@@ -135,7 +176,7 @@ pub fn issue_batches(
         });
         if pending.len() > 1 && issue_batch(model, intent, &pending)?.body.len() > TARGET_PAGE_BYTES
         {
-            let last = pending.pop().context("empty relevance batch")?;
+            let last = pending.pop().ok_or(DiscoveryMatcherError::EmptyBatch)?;
             batches.push(issue_batch(model, intent, &pending)?);
             pending = vec![last];
         }
@@ -207,19 +248,16 @@ enum ChoiceQuestion {
 }
 impl DecisionCodec for JevCodec {
     type Request<'a> = JevRequest<'a>;
-    type Context = IssuedBatch;
-    type Output = Vec<SelectionAnswer>;
-    fn decode(context: &IssuedBatch, raw: &str) -> Result<Self::Output> {
-        decode_jev(context, raw)
-    }
 }
 
 fn issue_batch(
     model: &str,
     intent: &IntentProvenance,
     questions: &[Question],
-) -> Result<IssuedBatch> {
-    ensure!(!questions.is_empty(), "empty relevance page");
+) -> Result<IssuedBatch, DiscoveryMatcherError> {
+    if questions.is_empty() {
+        return Err(DiscoveryMatcherError::EmptyBatch);
+    }
     let mut cards = BTreeMap::new();
     let mut collections = BTreeMap::new();
     let mut collection_aliases = BTreeMap::new();
@@ -268,7 +306,8 @@ fn issue_batch(
             collections,
         },
         questions: wire_questions,
-    })?;
+    })
+    .map_err(DiscoveryMatcherError::Encode)?;
     Ok(IssuedBatch {
         cache_key: content_hash(format!("jev-relevance-v6\n{body}").as_bytes()),
         body,
@@ -279,9 +318,15 @@ fn issue_batch(
 }
 
 /// Split complete semantic questions. No descriptions are truncated or sliced.
-pub fn repartition(batch: &IssuedBatch, intent: &IntentProvenance) -> Result<[IssuedBatch; 2]> {
-    ensure!(batch.questions.len() > 1,
-        "Jev rejected indivisible relevance item ({} bytes); reduce its catalog description or supply a model with sufficient context; no selection was committed", batch.body.len());
+pub fn repartition(
+    batch: &IssuedBatch,
+    intent: &IntentProvenance,
+) -> Result<[IssuedBatch; 2], DiscoveryMatcherError> {
+    if batch.questions.len() <= 1 {
+        return Err(DiscoveryMatcherError::IndivisibleItem {
+            bytes: batch.body.len(),
+        });
+    }
     let (left, right) = batch.questions.split_at(batch.questions.len() / 2);
     Ok([
         issue_batch(&batch.model, intent, left)?,
@@ -306,19 +351,28 @@ pub async fn judge_candidates<F, Fut>(
     intent: &IntentProvenance,
     retrieval: &RetrievalReceipt,
     mut decide: F,
-) -> Result<CapabilityMatchReceipt>
+) -> Result<CapabilityMatchReceipt, DiscoveryMatcherError>
 where
     F: FnMut(IssuedBatch) -> Fut,
-    Fut: std::future::Future<Output = Result<String>>,
+    Fut: std::future::Future<Output = Result<String, DecisionProviderError>>,
 {
     let mut pages = SelectionPages::new(issue_batches(model, intent, retrieval)?);
     while let Some(issued) = pages.current().cloned() {
         match decide(issued).await {
             Ok(raw) => pages.accept(&raw)?,
-            Err(error) if error.is::<crate::decision_transport::DecisionContextLimit>() => {
+            Err(error)
+                if error
+                    .downcast_ref::<crate::decision_transport::DecisionTransportError>()
+                    .is_some_and(|error| {
+                        matches!(
+                            error,
+                            crate::decision_transport::DecisionTransportError::ContextLimit
+                        )
+                    }) =>
+            {
                 pages.split_current(intent)?;
             }
-            Err(error) => return Err(error),
+            Err(error) => return Err(DiscoveryMatcherError::Provider(error)),
         }
     }
     pages.finish(retrieval)
@@ -339,27 +393,38 @@ impl SelectionPages {
     pub fn current(&self) -> Option<&IssuedBatch> {
         self.pending.front()
     }
-    pub fn accept(&mut self, raw: &str) -> Result<()> {
-        let issued = self.pending.front().context("no pending relevance page")?;
+    pub fn accept(&mut self, raw: &str) -> Result<(), DiscoveryMatcherError> {
+        let issued = self
+            .pending
+            .front()
+            .ok_or(DiscoveryMatcherError::NoPendingPage)?;
         let answers = decode_batch(issued, raw)?;
         self.answers.extend(answers);
         self.accepted
             .push(self.pending.pop_front().expect("validated pending page"));
         Ok(())
     }
-    pub fn split_current(&mut self, intent: &IntentProvenance) -> Result<()> {
-        let batch = self.pending.front().context("no rejected relevance page")?;
+    pub fn split_current(
+        &mut self,
+        intent: &IntentProvenance,
+    ) -> Result<(), DiscoveryMatcherError> {
+        let batch = self
+            .pending
+            .front()
+            .ok_or(DiscoveryMatcherError::NoPendingPage)?;
         let [left, right] = repartition(batch, intent)?;
         self.pending.pop_front();
         self.pending.push_front(right);
         self.pending.push_front(left);
         Ok(())
     }
-    pub fn finish(self, retrieval: &RetrievalReceipt) -> Result<CapabilityMatchReceipt> {
-        ensure!(
-            self.pending.is_empty(),
-            "relevance selection has unprocessed pages"
-        );
+    pub fn finish(
+        self,
+        retrieval: &RetrievalReceipt,
+    ) -> Result<CapabilityMatchReceipt, DiscoveryMatcherError> {
+        if !self.pending.is_empty() {
+            return Err(DiscoveryMatcherError::UnprocessedPages);
+        }
         finish_selection(self.answers, retrieval, &self.accepted)
     }
 }
@@ -374,10 +439,16 @@ pub struct SelectionAnswer {
 fn question_id(batch: &IssuedBatch, key: &str) -> QuestionId {
     QuestionId(format!("{}/{key}", batch.cache_key))
 }
-pub fn decode_batch(issued: &IssuedBatch, raw: &str) -> Result<Vec<SelectionAnswer>> {
-    JevCodec::decode(issued, raw)
+pub fn decode_batch(
+    issued: &IssuedBatch,
+    raw: &str,
+) -> Result<Vec<SelectionAnswer>, DiscoveryMatcherError> {
+    decode_jev(issued, raw)
 }
-fn decode_jev(issued: &IssuedBatch, raw: &str) -> Result<Vec<SelectionAnswer>> {
+fn decode_jev(
+    issued: &IssuedBatch,
+    raw: &str,
+) -> Result<Vec<SelectionAnswer>, DiscoveryMatcherError> {
     let mut answers = crate::decision_codec::decode_jev_choices(
         &issued.model,
         issued.bindings.keys().map(String::as_str),
@@ -388,7 +459,7 @@ fn decode_jev(issued: &IssuedBatch, raw: &str) -> Result<Vec<SelectionAnswer>> {
     for (question, capability_id) in &issued.bindings {
         let answer = answers
             .remove(question)
-            .context("missing validated relevance answer")?;
+            .ok_or(DiscoveryMatcherError::MissingAnswer)?;
         let choice = match answer.choice.as_str() {
             "relevant" => MatchChoice::Relevant,
             "unrelated" => MatchChoice::Unrelated,
@@ -414,41 +485,38 @@ pub fn finish_selection(
     answers: Vec<SelectionAnswer>,
     retrieval: &RetrievalReceipt,
     issued: &[IssuedBatch],
-) -> Result<CapabilityMatchReceipt> {
+) -> Result<CapabilityMatchReceipt, DiscoveryMatcherError> {
     let expected: BTreeSet<_> = issued
         .iter()
         .flat_map(|batch| batch.bindings.keys().map(|key| question_id(batch, key)))
         .collect();
-    ensure!(
-        expected.len() == issued.iter().map(|b| b.bindings.len()).sum::<usize>(),
-        "duplicate issued relevance question"
-    );
+    if expected.len() != issued.iter().map(|b| b.bindings.len()).sum::<usize>() {
+        return Err(DiscoveryMatcherError::DuplicateIssuedQuestion);
+    }
     let mut actual = BTreeSet::new();
     let mut selected = BTreeMap::<String, CapabilityIntentMatch>::new();
     let mut answers = answers;
     answers.sort_by(|a, b| a.question.cmp(&b.question));
     for fragment in answers {
-        ensure!(
-            actual.insert(fragment.question),
-            "duplicate relevance answer"
-        );
+        if !actual.insert(fragment.question) {
+            return Err(DiscoveryMatcherError::DuplicateAnswer);
+        }
         let answer = fragment.matched;
-        ensure!(
-            selected
-                .insert(answer.capability_id.clone(), answer)
-                .is_none(),
-            "candidate received multiple relevance judgments"
-        );
+        if selected
+            .insert(answer.capability_id.clone(), answer)
+            .is_some()
+        {
+            return Err(DiscoveryMatcherError::MultipleJudgments);
+        }
     }
-    ensure!(
-        actual == expected,
-        "relevance answers differ from issued questions"
-    );
-    ensure!(
-        selected.keys().collect::<BTreeSet<_>>()
-            == retrieval.candidates.iter().map(|c| &c.id).collect(),
-        "relevance receipt does not cover candidate universe"
-    );
+    if actual != expected {
+        return Err(DiscoveryMatcherError::AnswerSetMismatch);
+    }
+    let selected_ids: BTreeSet<_> = selected.keys().collect();
+    let candidate_ids: BTreeSet<_> = retrieval.candidates.iter().map(|c| &c.id).collect();
+    if selected_ids != candidate_ids {
+        return Err(DiscoveryMatcherError::CandidateCoverageMismatch);
+    }
     Ok(CapabilityMatchReceipt {
         matches: selected.into_values().collect(),
     })
@@ -547,9 +615,42 @@ mod tests {
         let (intent, retrieval) = fixture();
         let batches = issue_batches(JEV_MODEL, &intent, &retrieval).unwrap();
         let mut pages = SelectionPages::new(batches.clone());
-        assert!(pages.accept("{}").is_err());
+        assert!(matches!(
+            pages.accept("{}"),
+            Err(DiscoveryMatcherError::Response(_))
+        ));
         assert_eq!(pages.current().unwrap().cache_key, batches[0].cache_key);
-        assert!(pages.finish(&retrieval).is_err());
+        assert!(matches!(
+            pages.finish(&retrieval),
+            Err(DiscoveryMatcherError::UnprocessedPages)
+        ));
+    }
+
+    #[test]
+    fn matcher_rejects_invalid_inputs_with_semantic_variants() {
+        let (intent, retrieval) = fixture();
+        assert!(matches!(
+            issue_batches("  ", &intent, &retrieval),
+            Err(DiscoveryMatcherError::MissingModel)
+        ));
+
+        let batch = issue_batches(JEV_MODEL, &intent, &retrieval)
+            .unwrap()
+            .remove(0);
+        assert!(matches!(
+            repartition(&batch, &intent),
+            Err(DiscoveryMatcherError::IndivisibleItem { .. })
+        ));
+
+        let mut pages = SelectionPages::new(Vec::new());
+        assert!(matches!(
+            pages.accept("{}"),
+            Err(DiscoveryMatcherError::NoPendingPage)
+        ));
+        assert!(matches!(
+            pages.split_current(&intent),
+            Err(DiscoveryMatcherError::NoPendingPage)
+        ));
     }
 
     #[tokio::test]
@@ -568,8 +669,10 @@ mod tests {
         let mut accepted = BTreeSet::new();
         let receipt = judge_candidates(JEV_MODEL, &intent, &retrieval, |batch| {
             calls += 1;
-            let result = if batch.questions.len() > 1 {
-                Err(crate::decision_transport::DecisionContextLimit.into())
+            let result: Result<String, DecisionProviderError> = if batch.questions.len() > 1 {
+                Err(Box::new(
+                    crate::decision_transport::DecisionTransportError::ContextLimit,
+                ))
             } else {
                 assert!(accepted.insert(batch.bindings.values().next().unwrap().clone()));
                 Ok(response(&batch, &[MatchChoice::Relevant]))
@@ -585,7 +688,7 @@ mod tests {
         assert!(judge_candidates(JEV_MODEL, &intent, &retrieval, |batch| {
             calls += 1;
             std::future::ready(if calls == 2 {
-                Err(anyhow::anyhow!("provider unavailable"))
+                Err(std::io::Error::other("provider unavailable").into())
             } else {
                 Ok(response(
                     &batch,

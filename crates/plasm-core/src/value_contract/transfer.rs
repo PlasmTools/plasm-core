@@ -8,6 +8,44 @@ use crate::FieldType;
 impl ValueContract {
     /// A disjoint choice of complete contracts, including nested domain pins.
     pub fn join(left: Self, right: Self) -> Self {
+        // An empty materialized collection contributes no element values. It
+        // is a subtype of any unpinned collection of the same kind, so a
+        // return path such as `return []` need not create a second output ABI.
+        fn empty_collection(value: &ValueContract) -> bool {
+            if value.nullable || value.domain.is_some() {
+                return false;
+            }
+            match &value.shape {
+                ValueShape::Array { element } | ValueShape::Set { element } => {
+                    element.shape == ValueShape::Never
+                        && !element.nullable
+                        && element.domain.is_none()
+                }
+                ValueShape::Dictionary { key, value } => {
+                    key.shape == ValueShape::Never
+                        && value.shape == ValueShape::Never
+                        && !key.nullable
+                        && !value.nullable
+                        && key.domain.is_none()
+                        && value.domain.is_none()
+                }
+                _ => false,
+            }
+        }
+        let same_collection = matches!(
+            (&left.shape, &right.shape),
+            (ValueShape::Array { .. }, ValueShape::Array { .. })
+                | (ValueShape::Set { .. }, ValueShape::Set { .. })
+                | (ValueShape::Dictionary { .. }, ValueShape::Dictionary { .. })
+        );
+        if same_collection && left.domain.is_none() && right.domain.is_none() {
+            if empty_collection(&left) && !right.nullable {
+                return right;
+            }
+            if empty_collection(&right) && !left.nullable {
+                return left;
+            }
+        }
         fn append(mut value: ValueContract, out: &mut Vec<ValueContract>, nullable: &mut bool) {
             *nullable |= value.nullable || value.shape == ValueShape::Null;
             value.nullable = false;
@@ -51,7 +89,11 @@ impl ValueContract {
     }
 
     /// Universal distribution: every possible operand pair must admit the operator.
-    pub fn arithmetic(op: ArithOp, left: &Self, right: &Self) -> Result<Self, String> {
+    pub fn arithmetic(
+        op: ArithOp,
+        left: &Self,
+        right: &Self,
+    ) -> Result<Self, crate::value_arithmetic::ArithmeticContractError> {
         crate::value_arithmetic::Arithmetic::binary_result(left, op, right)
     }
 }
@@ -59,6 +101,30 @@ impl ValueContract {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_collections_are_neutral_for_matching_materialized_returns() {
+        let empty = ValueContract {
+            shape: ValueShape::Array {
+                element: Box::new(ValueContract {
+                    shape: ValueShape::Never,
+                    domain: None,
+                    nullable: false,
+                }),
+            },
+            domain: None,
+            nullable: false,
+        };
+        let strings = ValueContract {
+            shape: ValueShape::Array {
+                element: Box::new(ValueContract::scalar(FieldType::String)),
+            },
+            domain: None,
+            nullable: false,
+        };
+        assert_eq!(ValueContract::join(empty.clone(), strings.clone()), strings);
+        assert_eq!(ValueContract::join(strings.clone(), empty), strings);
+    }
 
     #[test]
     fn operator_product_has_explicit_positive_and_negative_laws() {

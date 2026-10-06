@@ -1,6 +1,35 @@
 use super::comp::StepId;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use thiserror::Error;
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum BindGraphError {
+    #[error("bind.topo references unknown step `{step}`")]
+    UnknownTopologicalStep { step: String },
+    #[error("bind.deps references unknown step `{step}`")]
+    UnknownDependencyOwner { step: String },
+    #[error("bind.deps[{step}] references unknown dependency `{dependency}`")]
+    UnknownDependency { step: String, dependency: String },
+    #[error("bind.topo contains duplicate steps")]
+    DuplicateTopologicalStep,
+    #[error("bind graph contains an empty step id")]
+    EmptyStepId,
+    #[error("bind body shadows captured input `{step}`")]
+    CapturedInputShadowed { step: String },
+    #[error("bind.deps[{step}] escapes the body scope")]
+    DependencyEscapesBodyScope { step: String },
+    #[error("bind.primary[{step}] is not a declared dependency")]
+    PrimaryIsNotDependency { step: String },
+    #[error("bind.holes references unknown step `{step}`")]
+    UnknownHoleOwner { step: String },
+    #[error(
+        "bind.holes[{step}] has a duplicate/empty alias or undeclared dependency `{dependency}`"
+    )]
+    InvalidHole { step: String, dependency: String },
+    #[error("plan bind graph has cyclic or unsatisfiable step dependencies")]
+    CyclicOrUnsatisfiableDependencies,
+}
 
 /// Monadic bind witness: execution order + dependency closure for a Plasm program.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -21,19 +50,26 @@ pub struct PlasmHoleUse {
 }
 
 impl PlasmBindGraph {
-    pub fn validate(&self, known: &BTreeSet<String>) -> Result<(), String> {
+    pub fn validate(&self, known: &BTreeSet<String>) -> Result<(), BindGraphError> {
         for id in &self.topo {
             if !known.contains(id.as_str()) {
-                return Err(format!("bind.topo unknown step {id}"));
+                return Err(BindGraphError::UnknownTopologicalStep {
+                    step: id.as_str().to_owned(),
+                });
             }
         }
         for (step, deps) in &self.deps {
             if !known.contains(step.as_str()) {
-                return Err(format!("bind.deps unknown step {step}"));
+                return Err(BindGraphError::UnknownDependencyOwner {
+                    step: step.as_str().to_owned(),
+                });
             }
             for d in deps {
                 if !known.contains(d.as_str()) {
-                    return Err(format!("bind.deps[{step}] references unknown {d}"));
+                    return Err(BindGraphError::UnknownDependency {
+                        step: step.as_str().to_owned(),
+                        dependency: d.as_str().to_owned(),
+                    });
                 }
             }
         }
@@ -43,25 +79,32 @@ impl PlasmBindGraph {
     /// Schedule the existing bind graph with explicitly supplied outer inputs.
     /// Inputs are already materialized and are never scheduled as body steps.
     /// The ordinary program scheduler calls this with an empty input set.
-    pub fn execution_layers(&self, inputs: &BTreeSet<StepId>) -> Result<Vec<Vec<StepId>>, String> {
+    pub fn execution_layers(
+        &self,
+        inputs: &BTreeSet<StepId>,
+    ) -> Result<Vec<Vec<StepId>>, BindGraphError> {
         let scheduled: BTreeSet<_> = self.topo.iter().cloned().collect();
         if scheduled.len() != self.topo.len() {
-            return Err("bind.topo contains duplicate steps".into());
+            return Err(BindGraphError::DuplicateTopologicalStep);
         }
         if scheduled
             .iter()
             .chain(inputs)
             .any(|id| id.as_str().trim().is_empty())
         {
-            return Err("bind graph contains an empty step id".into());
+            return Err(BindGraphError::EmptyStepId);
         }
-        if !scheduled.is_disjoint(inputs) {
-            return Err("bind body shadows a captured input".into());
+        if let Some(step) = scheduled.intersection(inputs).next() {
+            return Err(BindGraphError::CapturedInputShadowed {
+                step: step.as_str().to_owned(),
+            });
         }
         let known: BTreeSet<_> = scheduled.union(inputs).cloned().collect();
         for (step, deps) in &self.deps {
             if !scheduled.contains(step) || !deps.is_subset(&known) {
-                return Err(format!("bind.deps[{step}] escapes the body scope"));
+                return Err(BindGraphError::DependencyEscapesBodyScope {
+                    step: step.as_str().to_owned(),
+                });
             }
         }
         for (step, source) in &self.primary {
@@ -71,12 +114,16 @@ impl PlasmBindGraph {
                     .get(step)
                     .is_some_and(|deps| deps.contains(source))
             {
-                return Err(format!("bind.primary[{step}] is not a declared dependency"));
+                return Err(BindGraphError::PrimaryIsNotDependency {
+                    step: step.as_str().to_owned(),
+                });
             }
         }
         for (step, holes) in &self.holes {
             if !scheduled.contains(step) {
-                return Err(format!("bind.holes references unknown step {step}"));
+                return Err(BindGraphError::UnknownHoleOwner {
+                    step: step.as_str().to_owned(),
+                });
             }
             let mut aliases = BTreeSet::new();
             for hole in holes {
@@ -87,9 +134,10 @@ impl PlasmBindGraph {
                         .get(step)
                         .is_some_and(|deps| deps.contains(&hole.step))
                 {
-                    return Err(format!(
-                        "bind.holes[{step}] has an invalid alias or undeclared dependency"
-                    ));
+                    return Err(BindGraphError::InvalidHole {
+                        step: step.as_str().to_owned(),
+                        dependency: hole.step.as_str().to_owned(),
+                    });
                 }
             }
         }
@@ -107,7 +155,7 @@ impl PlasmBindGraph {
                 .cloned()
                 .collect();
             if layer.is_empty() {
-                return Err("plan bind graph has cyclic or unsatisfiable step dependencies".into());
+                return Err(BindGraphError::CyclicOrUnsatisfiableDependencies);
             }
             for id in &layer {
                 remaining.remove(id);

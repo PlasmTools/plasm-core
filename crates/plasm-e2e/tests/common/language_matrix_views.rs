@@ -108,4 +108,5 @@ pub fn views_matrix_host_state(
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
     })
+    .expect("valid catalog fixture")
 }

@@ -2,6 +2,15 @@
 
 use plasm_core::plasm_monad::PlasmComp;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum TraceCompError {
+    #[error(transparent)]
+    Comp(#[from] plasm_core::plasm_monad::PlasmCompValidationError),
+    #[error("trace comp JSON is invalid")]
+    Json(#[from] serde_json::Error),
+}
 
 /// Canonical code-plan topology on trace rows: validated [`PlasmComp`] plus optional wire extras.
 #[derive(Clone, Debug, PartialEq)]
@@ -25,11 +34,11 @@ impl TraceCompWire {
         self.comp.steps.len().max(self.comp.bind.topo.len())
     }
 
-    pub fn validate(&self) -> Result<(), String> {
-        self.comp.validate()
+    pub fn validate(&self) -> Result<(), TraceCompError> {
+        Ok(self.comp.validate()?)
     }
 
-    pub fn from_json_value(v: serde_json::Value) -> Result<Self, String> {
+    pub fn from_json_value(v: serde_json::Value) -> Result<Self, TraceCompError> {
         let summary = v.get("summary").cloned();
         let returns = v
             .get("returns")
@@ -40,7 +49,7 @@ impl TraceCompWire {
             obj.remove("summary");
             obj.remove("returns");
         }
-        let comp: PlasmComp = serde_json::from_value(comp_value).map_err(|e| e.to_string())?;
+        let comp: PlasmComp = serde_json::from_value(comp_value)?;
         comp.validate()?;
         Ok(Self {
             comp,

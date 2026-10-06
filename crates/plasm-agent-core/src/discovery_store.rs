@@ -1,6 +1,5 @@
 //! PostgreSQL publication and retrieval. No acquisition capabilities execute here.
 
-use anyhow::{bail, ensure, Context, Result};
 use plasm_core::catalog_discovery::{
     content_hash, validate_embedding, CapabilityDocument, CatalogDiscoveryArtifact,
     EmbeddingProfile,
@@ -8,7 +7,9 @@ use plasm_core::catalog_discovery::{
 use plasm_core::catalog_il::{
     load_catalog_artifact, load_discovery_artifact, read_catalog_manifest, CatalogManifest,
 };
-use plasm_core::prerequisites::{prerequisite_closure, CapabilityRef, DeploymentBindings};
+use plasm_core::prerequisites::{
+    prerequisite_closure, CapabilityRef, DeploymentBindings, PrerequisiteError,
+};
 use plasm_core::CGS;
 use serde::{Deserialize, Serialize};
 use sqlx::{Connection, Row};
@@ -21,6 +22,96 @@ use std::sync::Arc;
 
 const CHANNEL_LIMIT: i64 = 64;
 pub const CANDIDATE_LIMIT: usize = 2 * CHANNEL_LIMIT as usize;
+
+type Result<T> = std::result::Result<T, DiscoveryStoreError>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum DiscoveryStoreError {
+    #[error("discovery database admission is closed")]
+    Admission(#[source] tokio::sync::AcquireError),
+    #[error(transparent)]
+    Template(#[from] plasm_compile::CatalogTemplateError),
+    #[error(transparent)]
+    Sqlx(#[from] sqlx::Error),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    CatalogIl(#[from] plasm_core::catalog_il::CatalogIlError),
+    #[error(transparent)]
+    CompiledCatalog(#[from] plasm_compile::CmlError),
+    #[error(transparent)]
+    Prerequisite(#[from] PrerequisiteError),
+    #[error(transparent)]
+    RetrievalValidation(#[from] RetrievalValidationError),
+    #[error(transparent)]
+    Embedding(#[from] crate::discovery_embeddings::EmbeddingAcquisitionError),
+    #[error("manifest path has no containing directory")]
+    ManifestDirectoryMissing,
+    #[error("intent provenance rewrites or omits pinned ancestry")]
+    ProvenanceRewritten,
+    #[error("session has no intent provenance to extend")]
+    MissingPriorProvenance,
+    #[error("the configured database does not provide pgvector")]
+    PgvectorUnavailable(#[source] sqlx::Error),
+    #[error("deployment identifier must not be empty")]
+    EmptyDeploymentId,
+    #[error("a discovery generation requires at least one catalog")]
+    EmptyGeneration,
+    #[error("discovery generation contains a duplicate catalog")]
+    DuplicateCatalog,
+    #[error("deployment binding refers to a missing consumer catalog")]
+    BindingConsumerCatalogMissing,
+    #[error("deployment binding refers to an undeclared requirement")]
+    UndeclaredRequirement,
+    #[error("compiled request recipe digest differs from the catalog manifest")]
+    RecipeDigestMismatch,
+    #[error("catalog revision exists without compiled request recipes")]
+    RevisionRecipesMissing,
+    #[error("catalog revision exists with different compiled request recipes")]
+    RevisionRecipesConflict,
+    #[error("compiled request recipe digest is invalid for a stored catalog")]
+    StoredRecipeDigestMismatch,
+    #[error("discovery generation is unknown")]
+    UnknownGeneration,
+    #[error("session is pinned to a different registry generation")]
+    PinGenerationConflict,
+    #[error("deployment has no active discovery generation")]
+    NoActiveGeneration,
+    #[error("discovery session pin is missing or expired")]
+    PinMissingOrExpired,
+    #[error("discovery session pin is missing, expired, or belongs to another generation")]
+    PinRefreshRejected,
+    #[error("discovery intent must not be empty")]
+    EmptyIntent,
+    #[error("embedding provider returned no vector for the requested intent")]
+    MissingIntentEmbedding,
+    #[error("embedding vector does not satisfy the discovery profile")]
+    InvalidEmbedding(#[source] plasm_core::catalog_discovery::CatalogDiscoveryError),
+    #[error("catalog artifact map does not contain the requested entry")]
+    MissingCatalogEntry,
+}
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum RetrievalValidationError {
+    #[error("retrieval channel exceeds its admission bound")]
+    ChannelBoundExceeded,
+    #[error("retrieval channel contains a duplicate candidate identity")]
+    DuplicateChannelIdentity,
+    #[error("retrieval channels disagree on candidate identity or document")]
+    ChannelDocumentMismatch,
+    #[error("retrieval candidate bound exceeded")]
+    CandidateBoundExceeded,
+    #[error("retrieval candidate is not authorized")]
+    UnauthorizedCandidate,
+    #[error("retrieval contains a duplicate candidate id or capability reference")]
+    DuplicateCandidate,
+    #[error("retrieval document capability differs from its reference")]
+    DocumentIdentityMismatch,
+    #[error("retrieval document text is empty")]
+    EmptyDocument,
+    #[error("retrieval document digest does not match its text")]
+    DocumentDigestMismatch,
+}
 
 /// Server-derived policy applied inside both retrieval channels and prerequisite closure.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,13 +175,11 @@ impl PreparedCatalog {
     pub fn load(manifest_path: &Path) -> Result<Self> {
         let directory = manifest_path
             .parent()
-            .context("manifest has no directory")?;
-        let manifest = read_catalog_manifest(manifest_path).map_err(anyhow::Error::msg)?;
-        let cgs = load_catalog_artifact(directory, &manifest).map_err(anyhow::Error::msg)?;
-        let compiled = plasm_compile::load_compiled_catalog_artifact(directory, &manifest, &cgs)
-            .map_err(anyhow::Error::msg)?;
-        let discovery =
-            load_discovery_artifact(directory, &manifest, &cgs).map_err(anyhow::Error::msg)?;
+            .ok_or(DiscoveryStoreError::ManifestDirectoryMissing)?;
+        let manifest = read_catalog_manifest(manifest_path)?;
+        let cgs = load_catalog_artifact(directory, &manifest)?;
+        let compiled = plasm_compile::load_compiled_catalog_artifact(directory, &manifest, &cgs)?;
+        let discovery = load_discovery_artifact(directory, &manifest, &cgs)?;
         let revision = content_hash(&serde_json::to_vec(&manifest)?);
         Ok(Self {
             manifest,
@@ -127,26 +216,24 @@ pub struct RetrievedCapability {
 fn union_candidates(
     lexical: Vec<RetrievedCapability>,
     vector: Vec<RetrievedCapability>,
-) -> Result<Vec<RetrievedCapability>> {
-    ensure!(
-        lexical.len() <= CHANNEL_LIMIT as usize && vector.len() <= CHANNEL_LIMIT as usize,
-        "retrieval channel exceeds its admission bound"
-    );
+) -> std::result::Result<Vec<RetrievedCapability>, RetrievalValidationError> {
+    if lexical.len() > CHANNEL_LIMIT as usize || vector.len() > CHANNEL_LIMIT as usize {
+        return Err(RetrievalValidationError::ChannelBoundExceeded);
+    }
     let mut union: BTreeMap<String, RetrievedCapability> = BTreeMap::new();
     for (channel, candidates) in [("lexical", lexical), ("vector", vector)] {
         let mut seen = BTreeSet::new();
         for mut candidate in candidates {
-            ensure!(
-                seen.insert(candidate.id.clone()),
-                "duplicate retrieval channel identity"
-            );
+            if !seen.insert(candidate.id.clone()) {
+                return Err(RetrievalValidationError::DuplicateChannelIdentity);
+            }
             candidate.admissions = BTreeSet::from([channel.into()]);
             if let Some(existing) = union.get_mut(&candidate.id) {
-                ensure!(
-                    existing.reference == candidate.reference
-                        && existing.document == candidate.document,
-                    "retrieval channels disagree on candidate identity or document"
-                );
+                if existing.reference != candidate.reference
+                    || existing.document != candidate.document
+                {
+                    return Err(RetrievalValidationError::ChannelDocumentMismatch);
+                }
                 existing.admissions.insert(channel.into());
             } else {
                 union.insert(candidate.id.clone(), candidate);
@@ -158,34 +245,31 @@ fn union_candidates(
 
 impl RetrievalReceipt {
     /// Validate the admission boundary independently of downstream selection.
-    pub fn validate(&self, allowed: &DiscoveryAuthorization) -> Result<()> {
-        ensure!(
-            self.candidates.len() <= CANDIDATE_LIMIT,
-            "retrieval candidate bound exceeded"
-        );
+    pub fn validate(
+        &self,
+        allowed: &DiscoveryAuthorization,
+    ) -> std::result::Result<(), RetrievalValidationError> {
+        if self.candidates.len() > CANDIDATE_LIMIT {
+            return Err(RetrievalValidationError::CandidateBoundExceeded);
+        }
         let mut ids = BTreeSet::new();
         let mut references = BTreeSet::new();
         for candidate in &self.candidates {
-            ensure!(
-                allowed.permits(&candidate.reference),
-                "unauthorized retrieval candidate"
-            );
-            ensure!(
-                ids.insert(&candidate.id) && references.insert(&candidate.reference),
-                "duplicate retrieval candidate"
-            );
-            ensure!(
-                candidate.reference.capability == candidate.document.capability,
-                "retrieval document identity mismatch"
-            );
-            ensure!(
-                !candidate.document.text.trim().is_empty(),
-                "empty retrieval document"
-            );
-            ensure!(
-                content_hash(candidate.document.text.as_bytes()) == candidate.document.text_hash,
-                "retrieval document digest mismatch"
-            );
+            if !allowed.permits(&candidate.reference) {
+                return Err(RetrievalValidationError::UnauthorizedCandidate);
+            }
+            if !ids.insert(&candidate.id) || !references.insert(&candidate.reference) {
+                return Err(RetrievalValidationError::DuplicateCandidate);
+            }
+            if candidate.reference.capability != candidate.document.capability {
+                return Err(RetrievalValidationError::DocumentIdentityMismatch);
+            }
+            if candidate.document.text.trim().is_empty() {
+                return Err(RetrievalValidationError::EmptyDocument);
+            }
+            if content_hash(candidate.document.text.as_bytes()) != candidate.document.text_hash {
+                return Err(RetrievalValidationError::DocumentDigestMismatch);
+            }
         }
         Ok(())
     }
@@ -231,15 +315,13 @@ impl DiscoveryStore {
         .await?;
         if let Some(previous) = previous {
             let previous = serde_json::from_value(previous)?;
-            anyhow::ensure!(
-                provenance.is_continuation_of(&previous),
-                "intent provenance rewrites or omits pinned ancestry"
-            );
+            if !provenance.is_continuation_of(&previous) {
+                return Err(DiscoveryStoreError::ProvenanceRewritten);
+            }
         } else {
-            anyhow::ensure!(
-                !extending,
-                "session has no intent provenance; open a new context"
-            );
+            if extending {
+                return Err(DiscoveryStoreError::MissingPriorProvenance);
+            }
         }
         sqlx::query("INSERT INTO discovery_intent_provenance (session_id,provenance) VALUES ($1,$2) ON CONFLICT (session_id) DO UPDATE SET provenance=EXCLUDED.provenance")
             .bind(session).bind(serde_json::to_value(provenance)?).execute(&mut *tx).await?;
@@ -276,7 +358,7 @@ impl DiscoveryStore {
         sqlx::query("SELECT '[1,0]'::vector <=> '[1,0]'::vector")
             .execute(&mut *self.pool.acquire().await?)
             .await
-            .context("discovery requires the pgvector extension in PostgreSQL")?;
+            .map_err(DiscoveryStoreError::PgvectorUnavailable)?;
         Ok(())
     }
 
@@ -288,10 +370,10 @@ impl DiscoveryStore {
         bindings: &DeploymentBindings,
     ) -> Result<String> {
         if deployment.trim().is_empty() {
-            bail!("deployment identifier must not be empty");
+            return Err(DiscoveryStoreError::EmptyDeploymentId);
         }
         if catalogs.is_empty() {
-            bail!("a discovery generation requires catalogs");
+            return Err(DiscoveryStoreError::EmptyGeneration);
         }
         catalogs.sort_by(|a, b| a.manifest.entry_id.cmp(&b.manifest.entry_id));
         let mut refs = BTreeMap::new();
@@ -300,12 +382,12 @@ impl DiscoveryStore {
                 .insert(catalog.manifest.entry_id.clone(), &catalog.cgs)
                 .is_some()
             {
-                bail!("duplicate catalog in generation");
+                return Err(DiscoveryStoreError::DuplicateCatalog);
             }
             catalog
                 .discovery
                 .validate(&catalog.cgs)
-                .map_err(anyhow::Error::msg)?;
+                .map_err(|error| DiscoveryStoreError::InvalidEmbedding(error))?;
         }
         let allowed = refs.keys().cloned().collect();
         let capabilities: Vec<_> = refs
@@ -317,19 +399,18 @@ impl DiscoveryStore {
                 })
             })
             .collect();
-        prerequisite_closure(&refs, bindings, &capabilities, &allowed)
-            .map_err(anyhow::Error::msg)?;
+        prerequisite_closure(&refs, bindings, &capabilities, &allowed)?;
         for binding in &bindings.bindings {
             let cgs = refs
                 .get(&binding.consumer.catalog)
-                .context("binding consumer catalog missing")?;
+                .ok_or(DiscoveryStoreError::BindingConsumerCatalogMissing)?;
             if !cgs
                 .prerequisites
                 .requirements
                 .get(&binding.consumer.capability)
                 .is_some_and(|rs| rs.iter().any(|r| r.id == binding.requirement))
             {
-                bail!("deployment binding addresses an undeclared requirement");
+                return Err(DiscoveryStoreError::UndeclaredRequirement);
             }
         }
         let mut canonical_bindings = bindings.clone();
@@ -348,10 +429,7 @@ impl DiscoveryStore {
         for catalog in &catalogs {
             let recipe_bytes = serde_json::to_vec(&catalog.compiled)?;
             if content_hash(&recipe_bytes) != catalog.manifest.recipes_hash {
-                bail!(
-                    "compiled request recipe digest does not match manifest for catalog `{}`",
-                    catalog.manifest.entry_id
-                );
+                return Err(DiscoveryStoreError::RecipeDigestMismatch);
             }
             let inserted = sqlx::query("INSERT INTO discovery_revisions (revision_id,entry_id,manifest,cgs,profile) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING")
                 .bind(&catalog.revision).bind(&catalog.manifest.entry_id).bind(serde_json::to_value(&catalog.manifest)?).bind(serde_json::to_vec(&catalog.cgs)?).bind(serde_json::to_value(&catalog.discovery.profile)?)
@@ -364,10 +442,10 @@ impl DiscoveryStore {
                 .fetch_optional(&mut *tx)
                 .await?;
                 let Some(stored_recipes) = stored_recipes else {
-                    bail!("catalog revision exists without compiled request recipes");
+                    return Err(DiscoveryStoreError::RevisionRecipesMissing);
                 };
                 if stored_recipes != recipe_bytes {
-                    bail!("catalog revision exists with different compiled request recipes");
+                    return Err(DiscoveryStoreError::RevisionRecipesConflict);
                 }
                 continue;
             }
@@ -427,15 +505,13 @@ impl DiscoveryStore {
         for row in rows {
             let bytes: Vec<u8> = row.try_get("cgs")?;
             let manifest: CatalogManifest = serde_json::from_value(row.try_get("manifest")?)?;
-            let cgs = plasm_core::catalog_il::load_catalog_il_verified(&bytes, &manifest.cgs_hash)
-                .map_err(anyhow::Error::msg)?;
+            let cgs = plasm_core::catalog_il::load_catalog_il_verified(&bytes, &manifest.cgs_hash)?;
             let entry_id: String = row.try_get("entry_id")?;
             let recipe_bytes: Vec<u8> = row.try_get("recipes")?;
             if content_hash(&recipe_bytes) != manifest.recipes_hash {
-                bail!("compiled request recipe digest mismatch for catalog `{entry_id}`");
+                return Err(DiscoveryStoreError::StoredRecipeDigestMismatch);
             }
-            let compiled = plasm_compile::CompiledCatalog::decode_artifact(&recipe_bytes, &cgs)
-                .map_err(anyhow::Error::msg)?;
+            let compiled = plasm_compile::CompiledCatalog::decode_artifact(&recipe_bytes, &cgs)?;
             catalogs.insert(entry_id.clone(), cgs);
             compiled_catalogs.insert(entry_id, Arc::new(compiled));
         }
@@ -448,7 +524,7 @@ impl DiscoveryStore {
                 .bind(generation)
                 .fetch_optional(&mut *self.pool.acquire().await?)
                 .await?
-                .context("unknown discovery generation")?;
+                .ok_or(DiscoveryStoreError::UnknownGeneration)?;
         Ok(serde_json::from_value(bindings)?)
     }
 
@@ -469,8 +545,7 @@ impl DiscoveryStore {
                 let bytes: Vec<u8> = row.try_get("cgs")?;
                 let manifest: CatalogManifest = serde_json::from_value(row.try_get("manifest")?)?;
                 let cgs =
-                    plasm_core::catalog_il::load_catalog_il_verified(&bytes, &manifest.cgs_hash)
-                        .map_err(anyhow::Error::msg)?;
+                    plasm_core::catalog_il::load_catalog_il_verified(&bytes, &manifest.cgs_hash)?;
                 Ok((row.try_get("entry_id")?, cgs))
             })
             .collect::<Result<BTreeMap<_, _>>>()?;
@@ -486,7 +561,7 @@ impl DiscoveryStore {
         let actual: Option<String> = sqlx::query_scalar("INSERT INTO discovery_session_pins (session_id,generation_id,expires_at) VALUES ($1,$2,$3) ON CONFLICT (session_id) DO UPDATE SET expires_at=GREATEST(discovery_session_pins.expires_at,EXCLUDED.expires_at) WHERE discovery_session_pins.generation_id=EXCLUDED.generation_id RETURNING generation_id")
             .bind(session).bind(generation).bind(expires_at).fetch_optional(&mut *self.pool.acquire().await?).await?;
         if actual.is_none() {
-            bail!("session is pinned to a different registry generation");
+            return Err(DiscoveryStoreError::PinGenerationConflict);
         }
         Ok(())
     }
@@ -499,12 +574,12 @@ impl DiscoveryStore {
     ) -> Result<String> {
         let generation: Option<String> = sqlx::query_scalar("INSERT INTO discovery_session_pins (session_id,generation_id,expires_at) SELECT $1,generation_id,$2 FROM discovery_active WHERE deployment_id=$3 ON CONFLICT (session_id) DO UPDATE SET expires_at=GREATEST(discovery_session_pins.expires_at,EXCLUDED.expires_at) RETURNING generation_id")
             .bind(session).bind(expires_at).bind(deployment).fetch_optional(&mut *self.pool.acquire().await?).await?;
-        generation.context("no active discovery generation")
+        generation.ok_or(DiscoveryStoreError::NoActiveGeneration)
     }
 
     pub async fn pinned_generation(&self, session: &str) -> Result<String> {
         sqlx::query_scalar("SELECT generation_id FROM discovery_session_pins WHERE session_id=$1 AND expires_at > now()")
-            .bind(session).fetch_optional(&mut *self.pool.acquire().await?).await?.context("discovery session pin missing or expired")
+            .bind(session).fetch_optional(&mut *self.pool.acquire().await?).await?.ok_or(DiscoveryStoreError::PinMissingOrExpired)
     }
 
     pub async fn refresh_session_pin(&self, pin: &DiscoverySessionPin) -> Result<()> {
@@ -522,10 +597,9 @@ impl DiscoveryStore {
             .bind(&pin.generation)
             .bind(expires_at)
             .execute(&mut *self.pool.acquire().await?)
-            .await
-            .context("refresh discovery session lease")?;
+            .await?;
         if refreshed.rows_affected() != 1 {
-            bail!("discovery session pin missing, expired or generation mismatch");
+            return Err(DiscoveryStoreError::PinRefreshRejected);
         }
         Ok(())
     }
@@ -537,7 +611,7 @@ impl DiscoveryStore {
         allowed: &DiscoveryAuthorization,
     ) -> Result<RetrievalReceipt> {
         if intent.trim().is_empty() {
-            bail!("discovery intent must not be empty");
+            return Err(DiscoveryStoreError::EmptyIntent);
         }
         let profile = EmbeddingProfile::default();
         let cache_key = content_hash(&serde_json::to_vec(&(intent, &profile))?);
@@ -549,7 +623,11 @@ impl DiscoveryStore {
             let vectors = crate::discovery_embeddings::EmbeddingClient::from_env()?
                 .embed(&[intent.to_owned()])
                 .await?;
-            let vector = vector_literal(vectors.first().context("missing intent embedding")?)?;
+            let vector = vector_literal(
+                vectors
+                    .first()
+                    .ok_or(DiscoveryStoreError::MissingIntentEmbedding)?,
+            )?;
             sqlx::query("INSERT INTO discovery_intent_embeddings VALUES ($1,$2,$3::text::vector) ON CONFLICT DO NOTHING")
                 .bind(&cache_key).bind(serde_json::to_value(&profile)?).bind(&vector).execute(&mut *self.pool.acquire().await?).await?;
             vector
@@ -563,7 +641,7 @@ impl DiscoveryStore {
             .bind(cache_key)
             .fetch_optional(&mut *self.pool.acquire().await?)
             .await
-            .context("read selector cache")
+            .map_err(DiscoveryStoreError::from)
     }
 
     pub async fn store_selector_envelope(&self, cache_key: &str, envelope: &str) -> Result<()> {
@@ -573,8 +651,7 @@ impl DiscoveryStore {
         .bind(cache_key)
         .bind(envelope)
         .execute(&mut *self.pool.acquire().await?)
-        .await
-        .context("write selector cache")?;
+        .await?;
         Ok(())
     }
 
@@ -620,7 +697,7 @@ impl DiscoveryStore {
 }
 
 fn vector_literal(vector: &[f32]) -> Result<String> {
-    validate_embedding(vector, 1536).map_err(anyhow::Error::msg)?;
+    validate_embedding(vector, 1536).map_err(DiscoveryStoreError::InvalidEmbedding)?;
     Ok(serde_json::to_string(vector)?)
 }
 
@@ -679,9 +756,10 @@ mod tests {
         let decoded: RetrievalReceipt =
             serde_json::from_slice(&serde_json::to_vec(&receipt).unwrap()).unwrap();
         decoded.validate(&allowed).unwrap();
-        assert!(decoded
-            .validate(&DiscoveryAuthorization::catalogs(BTreeSet::new()))
-            .is_err());
+        assert_eq!(
+            decoded.validate(&DiscoveryAuthorization::catalogs(BTreeSet::new())),
+            Err(RetrievalValidationError::UnauthorizedCandidate)
+        );
         for defect in 0..5 {
             let mut corrupt: RetrievalReceipt =
                 serde_json::from_slice(&serde_json::to_vec(&decoded).unwrap()).unwrap();
@@ -698,7 +776,14 @@ mod tests {
             }
             let wire: RetrievalReceipt =
                 serde_json::from_slice(&serde_json::to_vec(&corrupt).unwrap()).unwrap();
-            assert!(wire.validate(&allowed).is_err(), "defect {defect}");
+            let expected = match defect {
+                0 => RetrievalValidationError::DocumentDigestMismatch,
+                1 => RetrievalValidationError::DocumentIdentityMismatch,
+                2 => RetrievalValidationError::EmptyDocument,
+                3 | 4 => RetrievalValidationError::DuplicateCandidate,
+                _ => unreachable!(),
+            };
+            assert_eq!(wire.validate(&allowed), Err(expected), "defect {defect}");
         }
     }
 

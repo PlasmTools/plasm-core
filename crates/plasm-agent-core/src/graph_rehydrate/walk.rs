@@ -6,6 +6,19 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use plasm_runtime::CachedEntity;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum GraphRehydrateError {
+    #[error(transparent)]
+    Collection(#[from] plasm_core::collection_codec::CollectionFault),
+    #[error(transparent)]
+    Persistence(#[from] crate::session_graph_persistence::SessionGraphPersistenceError),
+    #[error("canonical row identity count differs from recorded membership")]
+    RowIdentityCountMismatch,
+    #[error("{count} recorded identities are unavailable during graph rehydration")]
+    MissingRecordedIdentities { count: usize },
+}
 
 use super::ctx::GraphSurfaceWalkCtx;
 
@@ -30,7 +43,7 @@ pub(crate) async fn collect_recorded_entities(
     entity_type: &str,
     spill_enabled: bool,
     membership: &plasm_core::collection_codec::RecordedCollection<plasm_core::Ref>,
-) -> Result<plasm_core::collection_codec::SharedRows<CachedEntity>, String> {
+) -> Result<plasm_core::collection_codec::SharedRows<CachedEntity>, GraphRehydrateError> {
     use tracing::Instrument;
     collect_recorded_entities_inner(ctx, hot_snapshot, entity_type, spill_enabled, membership)
         .instrument(crate::spans::execute_graph_rehydrate(
@@ -46,7 +59,7 @@ async fn collect_recorded_entities_inner(
     entity_type: &str,
     spill_enabled: bool,
     membership: &plasm_core::collection_codec::RecordedCollection<plasm_core::Ref>,
-) -> Result<plasm_core::collection_codec::SharedRows<CachedEntity>, String> {
+) -> Result<plasm_core::collection_codec::SharedRows<CachedEntity>, GraphRehydrateError> {
     use plasm_core::collection_codec::SharedRows;
     let started = Instant::now();
     let mut pages_read = 0;
@@ -59,7 +72,7 @@ async fn collect_recorded_entities_inner(
         .enumerate()
         .filter_map(|(i, row)| pending.remove(&row.reference).then_some(i))
         .collect();
-    let mut batches = vec![hot_snapshot.select(selected).map_err(|e| e.to_string())?];
+    let mut batches = vec![hot_snapshot.select(selected)?];
     if !pending.is_empty() && spill_enabled {
         if let Some(persistence) = ctx.st.session_graph_persistence.as_ref() {
             pages_read = persistence
@@ -76,7 +89,9 @@ async fn collect_recorded_entities_inner(
                             .enumerate()
                             .filter_map(|(i, row)| pending.remove(&row.reference).then_some(i))
                             .collect();
-                        batches.push(rows.select(selected).map_err(|e| e.to_string())?);
+                        batches.push(rows.select(selected).map_err(|error| {
+                            Box::new(error) as Box<dyn std::error::Error + Send + Sync>
+                        })?);
                         Ok(if pending.is_empty() {
                             ControlFlow::Break(())
                         } else {
@@ -88,10 +103,9 @@ async fn collect_recorded_entities_inner(
         }
     }
     if !pending.is_empty() {
-        return Err(format!(
-            "{} recorded identities unavailable during graph rehydration",
-            pending.len()
-        ));
+        return Err(GraphRehydrateError::MissingRecordedIdentities {
+            count: pending.len(),
+        });
     }
     crate::graph_cache_metrics::record_graph_rehydrate(
         "recorded",
@@ -111,5 +125,5 @@ async fn collect_recorded_entities_inner(
             .iter()
             .map(|reference| positions[reference]),
     )
-    .map_err(|e| e.to_string())
+    .map_err(GraphRehydrateError::from)
 }

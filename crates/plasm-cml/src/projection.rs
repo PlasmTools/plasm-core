@@ -7,6 +7,58 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use url::Url;
 
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum UrlProjectionError {
+    #[error("URL projection requires at least one approved origin")]
+    NoOrigins,
+    #[error("declared URL origin is invalid")]
+    DeclaredOriginParse(#[source] std::sync::Arc<url::ParseError>),
+    #[error("declared URL origin must use HTTP or HTTPS")]
+    DeclaredOriginScheme,
+    #[error("declared URL origin cannot contain user information")]
+    DeclaredOriginUserInfo,
+    #[error("declared URL origin cannot contain a query")]
+    DeclaredOriginQuery,
+    #[error("declared URL origin cannot contain a fragment")]
+    DeclaredOriginFragment,
+    #[error("declared URL origin must not contain a path")]
+    DeclaredOriginPath,
+    #[error("URL path literal must be one nonempty segment")]
+    InvalidPathLiteral,
+    #[error("URL capture name must be nonempty")]
+    EmptyCaptureName,
+    #[error("URL projection output name {name} is duplicated")]
+    DuplicateOutputName { name: String },
+    #[error("URL projection output name and query parameter must be nonempty")]
+    EmptyQueryName,
+    #[error("URL projection input must be a string or null")]
+    InputType,
+    #[error("URL contains malformed percent encoding")]
+    MalformedPercentEncoding,
+    #[error("URL path contains invalid UTF-8")]
+    InvalidUtf8,
+    #[error("URL contains invalid characters")]
+    InvalidCharacters,
+    #[error("URL must have an explicit HTTP(S) authority")]
+    MissingAuthority,
+    #[error("URL is invalid")]
+    UrlParse(#[source] std::sync::Arc<url::ParseError>),
+    #[error("URL path contains a dot segment")]
+    DotSegment,
+    #[error("URL user information or fragment is not permitted")]
+    UserInfoOrFragment,
+    #[error("URL origin is not permitted")]
+    OriginNotPermitted,
+    #[error("URL has no path")]
+    MissingPath,
+    #[error("URL path does not match the declared shape")]
+    PathShapeMismatch,
+    #[error("URL identity must be a nonempty path segment")]
+    InvalidIdentitySegment,
+    #[error("URL contains duplicate selected query parameter {parameter}")]
+    DuplicateSelectedQueryParameter { parameter: String },
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum UrlPathPart {
@@ -24,13 +76,7 @@ pub struct UrlProjection {
     pub query: IndexMap<String, String>,
 }
 
-fn invalid(message: &str) -> CmlError {
-    CmlError::InvalidTemplate {
-        message: message.into(),
-    }
-}
-
-fn decode_segment(segment: &str) -> Result<String, CmlError> {
+fn decode_segment(segment: &str) -> Result<String, UrlProjectionError> {
     let mut result = Vec::with_capacity(segment.len());
     let mut bytes = segment.bytes();
     while let Some(byte) = bytes.next() {
@@ -39,32 +85,38 @@ fn decode_segment(segment: &str) -> Result<String, CmlError> {
             let low = bytes.next().and_then(|b| (b as char).to_digit(16));
             match (high, low) {
                 (Some(high), Some(low)) => result.push((high * 16 + low) as u8),
-                _ => return Err(invalid("URL contains malformed percent encoding")),
+                _ => return Err(UrlProjectionError::MalformedPercentEncoding),
             }
         } else {
             result.push(byte);
         }
     }
-    String::from_utf8(result).map_err(|_| invalid("URL contains invalid UTF-8"))
+    String::from_utf8(result).map_err(|_| UrlProjectionError::InvalidUtf8)
 }
 
 impl UrlProjection {
-    pub fn validate(&self) -> Result<(), CmlError> {
+    pub fn validate(&self) -> Result<(), UrlProjectionError> {
         if self.origins.is_empty() {
-            return Err(invalid("URL projection requires approved origins"));
+            return Err(UrlProjectionError::NoOrigins);
         }
         for origin in &self.origins {
-            let url = Url::parse(origin).map_err(|_| invalid("invalid declared URL origin"))?;
-            if !matches!(url.scheme(), "http" | "https")
-                || !url.username().is_empty()
-                || url.password().is_some()
-                || url.query().is_some()
-                || url.fragment().is_some()
-                || url.path() != "/"
-            {
-                return Err(invalid(
-                    "URL origin declaration must contain only an HTTP(S) origin",
-                ));
+            let url = Url::parse(origin).map_err(|error| {
+                UrlProjectionError::DeclaredOriginParse(std::sync::Arc::new(error))
+            })?;
+            if !matches!(url.scheme(), "http" | "https") {
+                return Err(UrlProjectionError::DeclaredOriginScheme);
+            }
+            if !url.username().is_empty() || url.password().is_some() {
+                return Err(UrlProjectionError::DeclaredOriginUserInfo);
+            }
+            if url.query().is_some() {
+                return Err(UrlProjectionError::DeclaredOriginQuery);
+            }
+            if url.fragment().is_some() {
+                return Err(UrlProjectionError::DeclaredOriginFragment);
+            }
+            if url.path() != "/" {
+                return Err(UrlProjectionError::DeclaredOriginPath);
             }
         }
         let mut fields = BTreeSet::new();
@@ -75,23 +127,23 @@ impl UrlProjection {
                         || value.contains(['/', '\\'])
                         || matches!(value.as_str(), "." | "..") =>
                 {
-                    return Err(invalid(
-                        "URL path literals must be nonempty individual segments",
-                    ));
+                    return Err(UrlProjectionError::InvalidPathLiteral);
                 }
-                UrlPathPart::Capture { name } if name.is_empty() || !fields.insert(name) => {
-                    return Err(invalid(
-                        "URL projection output names must be nonempty and unique",
-                    ));
+                UrlPathPart::Capture { name } if name.is_empty() => {
+                    return Err(UrlProjectionError::EmptyCaptureName);
+                }
+                UrlPathPart::Capture { name } if !fields.insert(name) => {
+                    return Err(UrlProjectionError::DuplicateOutputName { name: name.clone() });
                 }
                 _ => {}
             }
         }
         for (name, parameter) in &self.query {
-            if name.is_empty() || parameter.is_empty() || !fields.insert(name) {
-                return Err(invalid(
-                    "URL projection output names must be nonempty and unique",
-                ));
+            if name.is_empty() || parameter.is_empty() {
+                return Err(UrlProjectionError::EmptyQueryName);
+            }
+            if !fields.insert(name) {
+                return Err(UrlProjectionError::DuplicateOutputName { name: name.clone() });
             }
         }
         Ok(())
@@ -102,17 +154,18 @@ impl UrlProjection {
         let raw = match value {
             Value::Null => return Ok(Value::Null),
             Value::String(raw) => raw,
-            _ => return Err(invalid("URL projection requires a string or null")),
+            _ => return Err(UrlProjectionError::InputType.into()),
         };
         // Check the input before Url's normalizations can hide malformed escapes or backslashes.
         decode_segment(&raw)?;
         if raw.contains('\\') || raw.chars().any(char::is_control) {
-            return Err(invalid("URL contains invalid characters"));
+            return Err(UrlProjectionError::InvalidCharacters.into());
         }
         if !raw.starts_with("https://") && !raw.starts_with("http://") {
-            return Err(invalid("URL must have an explicit HTTP(S) authority"));
+            return Err(UrlProjectionError::MissingAuthority.into());
         }
-        let url = Url::parse(&raw).map_err(|_| invalid("invalid URL"))?;
+        let url = Url::parse(&raw)
+            .map_err(|error| UrlProjectionError::UrlParse(std::sync::Arc::new(error)))?;
         // Url normalizes dot segments; reject them before normalization so the declared
         // path contract cannot be satisfied through a different raw resource path.
         if let Some((_, authority_and_path)) = raw.split_once("://") {
@@ -120,13 +173,13 @@ impl UrlProjection {
                 let path = path.split(['?', '#']).next().unwrap_or_default();
                 for segment in path.split('/') {
                     if matches!(decode_segment(segment)?.as_str(), "." | "..") {
-                        return Err(invalid("URL dot segments are not permitted"));
+                        return Err(UrlProjectionError::DotSegment.into());
                     }
                 }
             }
         }
         if !url.username().is_empty() || url.password().is_some() || url.fragment().is_some() {
-            return Err(invalid("URL userinfo and fragments are not permitted"));
+            return Err(UrlProjectionError::UserInfoOrFragment.into());
         }
         let origin = url.origin();
         if !self
@@ -134,14 +187,14 @@ impl UrlProjection {
             .iter()
             .any(|allowed| Url::parse(allowed).is_ok_and(|a| a.origin() == origin))
         {
-            return Err(invalid("URL origin is not permitted"));
+            return Err(UrlProjectionError::OriginNotPermitted.into());
         }
         let segments: Vec<_> = url
             .path_segments()
-            .ok_or_else(|| invalid("URL has no path"))?
+            .ok_or(UrlProjectionError::MissingPath)?
             .collect();
         if segments.len() != self.path.len() {
-            return Err(invalid("URL path does not match declared shape"));
+            return Err(UrlProjectionError::PathShapeMismatch.into());
         }
         let mut output = IndexMap::new();
         for (segment, part) in segments.into_iter().zip(&self.path) {
@@ -150,11 +203,11 @@ impl UrlProjection {
                 || segment.contains(['/', '\\'])
                 || segment.chars().any(char::is_control)
             {
-                return Err(invalid("URL identity must be a nonempty path segment"));
+                return Err(UrlProjectionError::InvalidIdentitySegment.into());
             }
             match part {
                 UrlPathPart::Literal { value } if *value != segment => {
-                    return Err(invalid("URL path does not match declared shape"))
+                    return Err(UrlProjectionError::PathShapeMismatch.into())
                 }
                 UrlPathPart::Capture { name } => {
                     output.insert(name.clone(), Value::String(segment));
@@ -166,7 +219,10 @@ impl UrlProjection {
             let mut values = url.query_pairs().filter(|(key, _)| key == parameter);
             if let Some((_, value)) = values.next() {
                 if values.next().is_some() {
-                    return Err(invalid("URL contains duplicate selected query parameters"));
+                    return Err(UrlProjectionError::DuplicateSelectedQueryParameter {
+                        parameter: parameter.clone(),
+                    }
+                    .into());
                 }
                 output.insert(field.clone(), Value::String(value.into_owned()));
             }

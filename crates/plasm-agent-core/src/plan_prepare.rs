@@ -54,7 +54,7 @@ pub(crate) fn prepare_executable_plan_for_session(
     es: &ExecuteSession,
     comp: &PlasmComp,
     executable: &ExecutablePlasmComp,
-) -> Result<PreparedExecutablePlan, String> {
+) -> Result<PreparedExecutablePlan, crate::plasm_step_convert::StepPayloadLiftError> {
     let validated = build_prepared_validated_plan(comp, executable)?;
     let plan = validated.artifact();
     let boundedness = analyze_read_boundedness(plan);
@@ -80,7 +80,7 @@ pub(crate) fn prepare_executable_plan_for_session(
 pub(crate) fn build_prepared_validated_plan(
     comp: &PlasmComp,
     executable: &ExecutablePlasmComp,
-) -> Result<ValidatedPlan, String> {
+) -> Result<ValidatedPlan, crate::plasm_step_convert::StepPayloadLiftError> {
     let mut validated = build_validated_plan_from_executable(comp, executable)?;
     fn prepare_scopes(plan: &mut ValidatedPlan) {
         apply_read_budgets(plan);

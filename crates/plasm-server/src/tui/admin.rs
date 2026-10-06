@@ -64,7 +64,17 @@ pub(crate) fn apply_refreshed_ui_data(state: &mut RunState, data: RefreshedUiDat
     state.resources.snapshot.keys = data.keys;
     state.resources.snapshot.db_allowed = data.db_allowed;
     state.resources.snapshot.oauth_providers = data.oauth_providers;
-    state.resources.snapshot.oauth_binding_hints = data.oauth_binding_hints;
+    state.resources.snapshot.oauth_binding_hints = data
+        .oauth_binding_hints
+        .into_iter()
+        .map(|status| match status {
+            Ok(status) => match status.warning {
+                Some(source) => format!("{} · {source}", status.hint),
+                None => status.hint,
+            },
+            Err(source) => source.to_string(),
+        })
+        .collect();
     state.resources.snapshot.oauth_surface = data.oauth_surface;
 }
 
@@ -110,7 +120,7 @@ pub(crate) fn apply_admin_completion(
                             "API key provision failed",
                             "Could not create a new transport API key.",
                         )
-                        .with_details(vec![e]),
+                        .with_details(vec![e.to_string()]),
                     ),
                 }
                 if let Some(bridge) = bridge {
@@ -140,7 +150,7 @@ pub(crate) fn apply_admin_completion(
                             "API allowlist save failed",
                             "Could not save the selected APIs.",
                         )
-                        .with_details(vec![e]),
+                        .with_details(vec![e.to_string()]),
                     ),
                 }
                 if let Some(bridge) = bridge {
@@ -181,7 +191,7 @@ pub(crate) fn apply_admin_completion(
                             "API key store failed",
                             "Could not store the API key secret.",
                         )
-                        .with_details(vec![e]),
+                        .with_details(vec![e.to_string()]),
                     ),
                 }
                 if let Some(bridge) = bridge {
@@ -212,7 +222,7 @@ pub(crate) fn apply_admin_completion(
                             "Binding store failed",
                             format!("Could not store bindings for {entry_id}."),
                         )
-                        .with_details(vec![e]),
+                        .with_details(vec![e.to_string()]),
                     ),
                 }
                 if let Some(bridge) = bridge {
@@ -242,7 +252,7 @@ pub(crate) fn apply_admin_completion(
                         let entry_id = selected_oauth_entry_id(state)
                             .unwrap_or("selected provider")
                             .to_string();
-                        set_notice(state, device_bind_error_notice(&entry_id, &e));
+                        set_notice(state, device_bind_error_notice(&entry_id, &e.to_string()));
                     }
                 }
                 if let Some(bridge) = bridge {
@@ -269,7 +279,7 @@ pub(crate) fn apply_admin_completion(
                             "OAuth provider save failed",
                             "Could not save the provider configuration.",
                         )
-                        .with_details(vec![e]),
+                        .with_details(vec![e.to_string()]),
                     ),
                 }
                 if let Some(bridge) = bridge {
@@ -296,7 +306,7 @@ pub(crate) fn apply_admin_completion(
                             "OAuth disable failed",
                             "Could not disable the selected provider.",
                         )
-                        .with_details(vec![e]),
+                        .with_details(vec![e.to_string()]),
                     ),
                 }
                 if let Some(bridge) = bridge {
@@ -323,7 +333,7 @@ pub(crate) fn apply_admin_completion(
                             "API key rotate failed",
                             "Could not rotate the selected transport API key.",
                         )
-                        .with_details(vec![e]),
+                        .with_details(vec![e.to_string()]),
                     ),
                 }
                 if let Some(bridge) = bridge {
@@ -350,7 +360,7 @@ pub(crate) fn apply_admin_completion(
                             "API key revoke failed",
                             "Could not revoke the selected transport API key.",
                         )
-                        .with_details(vec![e]),
+                        .with_details(vec![e.to_string()]),
                     ),
                 }
                 if let Some(bridge) = bridge {
@@ -386,7 +396,7 @@ pub(crate) fn apply_admin_completion(
                                     "MCP client config build failed",
                                     "Could not build MCP JSON for clipboard.",
                                 )
-                                .with_details(vec![e]),
+                                .with_details(vec![e.to_string()]),
                             ),
                         }
                     }
@@ -407,7 +417,7 @@ pub(crate) fn apply_admin_completion(
                                     "Plasm CLI profile build failed",
                                     "Could not build ~/.plasm/cgs/profiles JSON for clipboard.",
                                 )
-                                .with_details(vec![e]),
+                                .with_details(vec![e.to_string()]),
                             ),
                         }
                     }
@@ -418,7 +428,7 @@ pub(crate) fn apply_admin_completion(
                             "API key reveal failed",
                             "Could not reveal the selected API key secret.",
                         )
-                        .with_details(vec![e]),
+                        .with_details(vec![e.to_string()]),
                     ),
                     _ => {}
                 }

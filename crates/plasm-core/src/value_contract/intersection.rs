@@ -2,21 +2,21 @@
 //!
 //! Unlike `refined_by`, neither operand is privileged as the original value.
 //! This combines contracts; it does not validate a value or grant domain authority.
-use super::{ValueContract as T, ValueShape as S};
+use super::{ValueContract as T, ValueContractError, ValueShape as S};
 use crate::FieldType;
 
 impl T {
     /// Intersect established constraints, retaining metadata recursively. Conflicting
     /// nominal identities or wire encodings are explicit representation errors.
     /// Use `refined_by` when only the original operand supplies authority.
-    pub fn intersect_constraints(&self, other: &Self) -> Result<Self, String> {
+    pub fn intersect_constraints(&self, other: &Self) -> Result<Self, ValueContractError> {
         intersect(self, other, 0)
     }
 }
 
-fn intersect(a: &T, b: &T, depth: usize) -> Result<T, String> {
+fn intersect(a: &T, b: &T, depth: usize) -> Result<T, ValueContractError> {
     if depth >= 64 {
-        return Err("intersection depth exceeds 64".into());
+        return Err(ValueContractError::IntersectionDepthExceeded);
     }
     let nullable = (a.nullable || a.shape == S::Null) && (b.nullable || b.shape == S::Null);
     let bottom = || T {
@@ -28,9 +28,7 @@ fn intersect(a: &T, b: &T, depth: usize) -> Result<T, String> {
         return Ok(bottom());
     }
     let domain = match (&a.domain, &b.domain) {
-        (Some(a), Some(b)) if a != b => {
-            return Err("intersection contains distinct value domains".into())
-        }
+        (Some(a), Some(b)) if a != b => return Err(ValueContractError::ConflictingValueDomains),
         (Some(d), _) | (_, Some(d)) => Some(d.clone()),
         _ => None,
     };
@@ -99,11 +97,11 @@ fn intersect(a: &T, b: &T, depth: usize) -> Result<T, String> {
             if matches!(a, FieldType::Uuid | FieldType::DigitId | FieldType::Select)
                 && matches!(b, FieldType::Uuid | FieldType::DigitId | FieldType::Select) =>
         {
-            return Err("intersection contains distinct semantic string carriers".into());
+            return Err(ValueContractError::ConflictingSemanticStringTypes);
         }
         (S::Temporal { kind: a, wire: aw }, S::Temporal { kind: b, wire: bw }) if a == b => {
             if aw.is_some() && bw.is_some() && aw != bw {
-                return Err("intersection contains distinct temporal wire encodings".into());
+                return Err(ValueContractError::ConflictingTemporalEncodings);
             }
             S::Temporal {
                 kind: *a,
@@ -173,10 +171,7 @@ fn intersect(a: &T, b: &T, depth: usize) -> Result<T, String> {
                 )
             }) =>
         {
-            return Err(
-                "intersection of specialized carriers requires a representable common contract"
-                    .into(),
-            );
+            return Err(ValueContractError::UnrepresentableSpecializedIntersection);
         }
         _ => return Ok(bottom()),
     };
@@ -281,10 +276,10 @@ mod tests {
             nullable: false,
         };
         for (a, b) in [(a.clone(), b.clone()), (wrap(a), wrap(b))] {
-            assert!(a
-                .intersect_constraints(&b)
-                .unwrap_err()
-                .contains("distinct value domains"));
+            assert!(matches!(
+                a.intersect_constraints(&b),
+                Err(ValueContractError::ConflictingValueDomains)
+            ));
             assert!(b.intersect_constraints(&a).is_err());
         }
         let temporal = |wire| T {

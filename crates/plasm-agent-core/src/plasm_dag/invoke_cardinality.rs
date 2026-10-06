@@ -2,10 +2,11 @@
 //! scalar invoke params (PLP-1).
 
 use super::binding_contract::binding_contract;
+use super::error::DagCompilationError;
 use super::prelude::*;
 use super::schema_validate::cgs_for_qualified_entity;
 use super::types::CompileState;
-use plasm_core::{plp, FieldType, PlasmInputRef, Value};
+use plasm_core::{FieldType, PlasmInputRef, Value};
 
 /// Reject plural / unproven / entity-row refs into scalar stringish invoke/create params (PLP-1).
 pub(in crate::plasm_dag) fn validate_invoke_scalar_field_refs(
@@ -13,7 +14,7 @@ pub(in crate::plasm_dag) fn validate_invoke_scalar_field_refs(
     state: &CompileState<'_>,
     node_id: &str,
     expr: &Expr,
-) -> Result<(), String> {
+) -> Result<(), DagCompilationError> {
     let (capability, entity, catalog_entry_id, input) = match expr {
         Expr::Invoke(inv) => {
             let Some(input) = &inv.input else {
@@ -69,10 +70,10 @@ pub(in crate::plasm_dag) fn validate_invoke_scalar_field_refs(
         entity: entity.to_string(),
     };
     let cgs = cgs_for_qualified_entity(session, &qe).ok_or_else(|| {
-        format!(
-            "catalog `{}` is not loaded for entity `{}`",
-            qe.entry_id, qe.entity
-        )
+        DagCompilationError::CatalogMissing {
+            entry_id: qe.entry_id.to_string(),
+            entity: qe.entity.to_string(),
+        }
     })?;
     let Some(cap) = cgs.get_capability(capability) else {
         return Ok(());
@@ -122,30 +123,28 @@ fn reject_non_scalar_cell_invoke_refs(
     node_id: &str,
     param: &str,
     value: &Value,
-) -> Result<(), String> {
+) -> Result<(), DagCompilationError> {
     match value {
         Value::GetScalarExtract(_) => Ok(()),
         Value::PlasmInputRef(PlasmInputRef::NodeInput { node, path }) if path.is_empty() => {
             if binding_is_scalar_cell(state, node) {
                 Ok(())
             } else {
-                Err(plp::plp4_program(
-                    node_id,
-                    format!(
-                        "param `{param}` expects a scalar cell, but `{node}` does not denote one scalar cell — pass a scalar value or field from a proven singleton"
-                    ),
-                ))
+                Err(DagCompilationError::NonScalarParameter {
+                    id: node_id.to_owned(),
+                    param: param.to_owned(),
+                    binding: node.to_string(),
+                })
             }
         }
         Value::PlasmInputRef(PlasmInputRef::NodeInput { node, path }) if !path.is_empty() => {
             if !binding_permits_scalar_field_extract(state, node) {
-                return Err(plp::plp4_program(
-                    node_id,
-                    format!(
-                        "param `{param}` expects a scalar, but `{node}.{}` is not a singleton field extract — resolve the intended identity with get() before extracting; for every selected row, use a bounded map(lambda row: ..., max_parents=N) and pass `row.{}`",
-                        path.join("."), path.join(".")
-                    ),
-                ));
+                return Err(DagCompilationError::PluralParameterField {
+                    id: node_id.to_owned(),
+                    param: param.to_owned(),
+                    binding: node.to_string(),
+                    path: path.join("."),
+                });
             }
             Ok(())
         }
@@ -187,7 +186,7 @@ fn validate_query_field_refs(
     state: &CompileState<'_>,
     node_id: &str,
     predicate: &plasm_core::Predicate,
-) -> Result<(), String> {
+) -> Result<(), DagCompilationError> {
     use plasm_core::Predicate;
     match predicate {
         Predicate::True | Predicate::False => Ok(()),
@@ -218,11 +217,15 @@ fn validate_query_value_fields(
     node_id: &str,
     param: &str,
     value: &Value,
-) -> Result<(), String> {
+) -> Result<(), DagCompilationError> {
     match value {
         Value::PlasmInputRef(PlasmInputRef::NodeInput { node, path }) if !path.is_empty() => {
             reject_non_scalar_cell_invoke_refs(state, node_id, param, value)?;
-            let contract = binding_contract(state, node).ok_or("unknown query operand binding")?;
+            let contract = binding_contract(state, node).ok_or_else(|| {
+                DagCompilationError::UnknownBinding {
+                    binding: node.to_string(),
+                }
+            })?;
             let path = plasm_core::FieldPath::from_dotted(&path.join("."))?;
             let schema = super::schema_validate::resolve_immediate_compute_schema(state, &[], node);
             let path = super::schema_validate::resolve_schema_field_path(
@@ -232,13 +235,15 @@ fn validate_query_value_fields(
                 schema.as_ref(),
                 &path,
             )?;
-            super::schema_validate::validate_compute_paths_for_dag_source(
-                session,
-                state,
-                &[],
-                node,
-                &[path],
-                "query operand",
+            Ok(
+                super::schema_validate::validate_compute_paths_for_dag_source(
+                    session,
+                    state,
+                    &[],
+                    node,
+                    &[path],
+                    "query operand",
+                )?,
             )
         }
         Value::Array(items) => {

@@ -111,13 +111,10 @@ async fn python_value_contract_matrix_projection_alias_and_review_seal() {
             }
             let mut artifact = compiled.artifact().clone();
             artifact.comp = serde_json::from_value(forged).unwrap();
-            let result =
-                plasm_agent::plasm_compile::PlasmCompBundle::new(artifact).and_then(|bundle| {
-                    plasm_agent::plasm_plan_run::evaluate_plasm_comp_dry(&es, &bundle)
-                        .map(|_| ())
-                        .map_err(|e| e.to_string())
-                });
-            assert!(result.is_err(), "forged recursive domain accepted");
+            assert!(
+                super::python::corrupted_bundle_rejected(&es, artifact),
+                "forged recursive domain accepted"
+            );
         }
     }
 }

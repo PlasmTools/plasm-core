@@ -14,54 +14,51 @@ pub(crate) async fn post_create_execute_session(
             // served by GET on that same path — safe for clients that follow 303 with GET.
             (StatusCode::SEE_OTHER, [(LOCATION, location)]).into_response()
         }
-        Err(e) => {
-            if e == "`entities` must be non-empty" {
-                return problem_response(
-                    Problem::custom(
-                        ProblemStatus::BAD_REQUEST,
-                        Uri::from_static(problem_types::EXECUTE_EMPTY_ENTITIES),
-                    )
-                    .with_title("Bad Request")
-                    .with_detail(e),
-                );
-            }
-            if e.contains("PLASM_AUTH_RESOLUTION=delegated") && e.contains("principal") {
-                return problem_response(
-                    Problem::custom(
-                        ProblemStatus::BAD_REQUEST,
-                        Uri::from_static(problem_types::EXECUTE_PRINCIPAL_REQUIRED),
-                    )
-                    .with_title("Bad Request")
-                    .with_detail(e),
-                );
-            }
-            if e.starts_with("unknown catalog entry:") {
-                return problem_response(
-                    Problem::custom(
-                        ProblemStatus::NOT_FOUND,
-                        Uri::from_static(problem_types::EXECUTE_UNKNOWN_CATALOG_ENTRY),
-                    )
-                    .with_title("Not Found")
-                    .with_detail(e),
-                );
-            }
-            if e.contains("unknown entity `") && e.contains("` in this schema") {
-                return problem_response(
-                    Problem::custom(
-                        ProblemStatus::BAD_REQUEST,
-                        Uri::from_static(problem_types::EXECUTE_UNKNOWN_ENTITY),
-                    )
-                    .with_title("Bad Request")
-                    .with_detail(e),
-                );
-            }
-            problem_response(
-                Problem::custom(
+        Err(error) => {
+            use crate::http_execute::context::SessionMutateError;
+            let (status, problem_type, title) = match &error {
+                SessionMutateError::EmptyEntities => (
                     ProblemStatus::BAD_REQUEST,
-                    Uri::from_static(problem_types::EXECUTE_REGISTRY_ERROR),
+                    problem_types::EXECUTE_EMPTY_ENTITIES,
+                    "Bad Request",
+                ),
+                SessionMutateError::Auth(plasm_runtime::AuthResolutionError::PrincipalRequired) => {
+                    (
+                        ProblemStatus::BAD_REQUEST,
+                        problem_types::EXECUTE_PRINCIPAL_REQUIRED,
+                        "Bad Request",
+                    )
+                }
+                SessionMutateError::Discovery(
+                    plasm_core::discovery::DiscoveryError::UnknownEntry(_),
                 )
-                .with_title("Bad Request")
-                .with_detail(e),
+                | SessionMutateError::Rehydrate(
+                    crate::execute_session_rehydrate::RehydrateError::UnknownEntry(_),
+                ) => (
+                    ProblemStatus::NOT_FOUND,
+                    problem_types::EXECUTE_UNKNOWN_CATALOG_ENTRY,
+                    "Not Found",
+                ),
+                SessionMutateError::UnknownEntity { .. }
+                | SessionMutateError::SeedResolution(
+                    crate::http_execute::context::SeedResolutionError::UnknownEntity { .. }
+                    | crate::http_execute::context::SeedResolutionError::AmbiguousEntity { .. }
+                    | crate::http_execute::context::SeedResolutionError::EmptyEntity,
+                ) => (
+                    ProblemStatus::BAD_REQUEST,
+                    problem_types::EXECUTE_UNKNOWN_ENTITY,
+                    "Bad Request",
+                ),
+                _ => (
+                    ProblemStatus::BAD_REQUEST,
+                    problem_types::EXECUTE_REGISTRY_ERROR,
+                    "Bad Request",
+                ),
+            };
+            problem_response(
+                Problem::custom(status, Uri::from_static(problem_type))
+                    .with_title(title)
+                    .with_detail(error.to_string()),
             )
         }
     }

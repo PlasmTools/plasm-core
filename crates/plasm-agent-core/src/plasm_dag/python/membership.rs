@@ -10,10 +10,7 @@ pub(super) fn validate_closed_rhs(
         .iter()
         .any(|(_, name)| name == outer_parameter)
     {
-        return Err(at(
-            expr,
-            "membership RHS must be closed; it cannot capture the enclosing row",
-        ));
+        return Err(at(expr, PythonSourceError::MembershipCapturesRow));
     }
     Ok(())
 }

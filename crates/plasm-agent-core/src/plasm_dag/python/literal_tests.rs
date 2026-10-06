@@ -1,11 +1,11 @@
 use super::*;
 
-fn parse(source: &str) -> Result<plasm_core::Value, String> {
+fn parse(source: &str) -> Result<plasm_core::Value, PythonLoweringError> {
     let parsed = ruff_python_parser::parse_module(source).unwrap();
     let [Stmt::Expr(expression)] = parsed.suite().as_slice() else {
         panic!("expected expression");
     };
-    literal(&expression.value).map_err(Into::into)
+    literal(&expression.value)
 }
 
 #[test]

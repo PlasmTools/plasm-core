@@ -438,8 +438,11 @@ pub fn type_check_query(query: &QueryExpr, cgs: &CGS) -> Result<(), TypeError> {
             .filter(|s| !s.is_empty())
             .or(cgs.entry_id.as_deref())
             .unwrap_or("");
-        crate::rowset::normalize_query_expr_to_rowset(&for_defaults, cgs, entry_id)
-            .map_err(|message| TypeError::RowsetNormalize { message })?;
+        crate::rowset::normalize_query_expr_to_rowset(&for_defaults, cgs, entry_id).map_err(
+            |source| TypeError::RowsetNormalize {
+                source: Box::new(source),
+            },
+        )?;
     }
 
     Ok(())
@@ -459,10 +462,9 @@ pub fn type_check_get(get: &GetExpr, cgs: &CGS) -> Result<(), TypeError> {
             if entity.key_vars.len() > 1 {
                 return Err(TypeError::RefKeyMismatch {
                     entity: en,
-                    message: format!(
-                        "compound key {:?} required; use named form Entity(key=value, ...)",
-                        entity.key_vars
-                    ),
+                    source: crate::error::ReferenceContractError::CompoundKeyRequired {
+                        keys: entity.key_vars.iter().map(ToString::to_string).collect(),
+                    },
                 });
             }
         }
@@ -470,7 +472,7 @@ pub fn type_check_get(get: &GetExpr, cgs: &CGS) -> Result<(), TypeError> {
             if entity.key_vars.len() <= 1 {
                 return Err(TypeError::RefKeyMismatch {
                     entity: en,
-                    message: "simple id form expected for this entity".into(),
+                    source: crate::error::ReferenceContractError::SimpleKeyRequired,
                 });
             }
             let expected: std::collections::BTreeSet<String> = entity
@@ -482,10 +484,10 @@ pub fn type_check_get(get: &GetExpr, cgs: &CGS) -> Result<(), TypeError> {
             if from_ref != expected {
                 return Err(TypeError::RefKeyMismatch {
                     entity: en,
-                    message: format!(
-                        "expected compound identity keys {:?}, got {:?}",
-                        entity.key_vars, from_ref
-                    ),
+                    source: crate::error::ReferenceContractError::CompoundKeysMismatch {
+                        expected: entity.key_vars.iter().map(ToString::to_string).collect(),
+                        actual: from_ref.into_iter().collect(),
+                    },
                 });
             }
         }
@@ -518,13 +520,15 @@ pub fn type_check_create(create: &CreateExpr, cgs: &CGS) -> Result<(), TypeError
         (Some(expected), _) => {
             return Err(TypeError::RefKeyMismatch {
                 entity: create.entity.to_string(),
-                message: format!("operation requires a `{expected}` receiver"),
+                source: crate::error::ReferenceContractError::ReceiverRequired {
+                    entity: expected.to_string(),
+                },
             })
         }
         (None, Some(Expr::Get(_))) => {
             return Err(TypeError::RefKeyMismatch {
                 entity: create.entity.to_string(),
-                message: "operation has no entity receiver; supply its declared inputs".into(),
+                source: crate::error::ReferenceContractError::UnexpectedReceiver,
             })
         }
         _ => {}
@@ -574,13 +578,15 @@ fn type_check_targeted_call(
         {
             return Err(TypeError::RefKeyMismatch {
                 entity: invoke.target().entity_type.to_string(),
-                message: format!("operation requires a `{expected}` receiver"),
+                source: crate::error::ReferenceContractError::ReceiverRequired {
+                    entity: expected.to_string(),
+                },
             });
         }
         None if !invoke.target().is_pathless_nullary() => {
             return Err(TypeError::RefKeyMismatch {
                 entity: invoke.target().entity_type.to_string(),
-                message: "operation has no entity receiver; supply its declared inputs".into(),
+                source: crate::error::ReferenceContractError::UnexpectedReceiver,
             });
         }
         _ => {}
@@ -1574,7 +1580,7 @@ mod tests {
         );
         let err = type_check_predicate(&pred, &entity, &cap_params, &cgs).unwrap_err();
         assert!(
-            matches!(err, TypeError::IncompatibleValue { ref field, .. } if field == "includeSpamTrash"),
+            matches!(err, TypeError::CoercionFailure { ref field, source: crate::CoercionError::InvalidBooleanLiteral { .. } } if field == "includeSpamTrash"),
             "expected IncompatibleValue for includeSpamTrash, got {err:?}"
         );
     }
@@ -1633,7 +1639,7 @@ mod tests {
         );
         let err = type_check_predicate(&pred, &entity, &cap_params, &cgs).unwrap_err();
         assert!(
-            matches!(err, TypeError::IncompatibleValue { ref field, .. } if field == "q"),
+            matches!(err, TypeError::CoercionFailure { ref field, source: crate::CoercionError::UnsupportedValue { actual: "boolean", .. } } if field == "q"),
             "expected IncompatibleValue for q, got {err:?}"
         );
     }
@@ -1690,7 +1696,7 @@ mod tests {
         );
         let err = type_check_predicate(&pred, &entity, &cap_params, &cgs).unwrap_err();
         assert!(
-            matches!(err, TypeError::IncompatibleValue { ref field, .. } if field == "limit"),
+            matches!(err, TypeError::CoercionFailure { ref field, source: crate::CoercionError::InvalidIntegerLiteral { .. } } if field == "limit"),
             "expected IncompatibleValue for limit, got {err:?}"
         );
         // RA-8: numeric strings coerce to integer (compatible with coerce law).
@@ -1880,14 +1886,13 @@ mod tests {
         // unlike arbitrary `{ name: "x" }` maps which can accidentally satisfy EntityRefPayload shape.
         let pred = Predicate::eq("pet_ref", true);
         let err = type_check_predicate(&pred, visit, &[], &cgs).unwrap_err();
-        let TypeError::IncompatibleValue { field_type, .. } = err else {
-            panic!("expected IncompatibleValue, got {err:?}");
-        };
         assert!(
-            field_type.contains("EntityRef(Pet)"),
-            "field_type={field_type:?}"
+            matches!(err, TypeError::EntityRefCoercionFailure {
+            ref field, ref target,
+            source: crate::CoercionError::UnsupportedValue { actual: "boolean", .. }
+        } if field == "pet_ref" && target == "Pet"),
+            "{err:?}"
         );
-        assert!(field_type.contains("id"), "field_type={field_type:?}");
     }
 
     #[test]
@@ -2131,15 +2136,23 @@ mod tests {
         .unwrap();
         let row = cgs.get_entity("GateRow").unwrap();
 
-        for (field_name, bad) in [
-            ("email", "not-an-email"),
-            ("uuid", "not-a-uuid"),
-            ("code", "bbb"),
+        for (field_name, bad, expected) in [
+            (
+                "email",
+                "not-an-email",
+                crate::ValueDomainViolation::InvalidProfile(crate::ProfileId::Email),
+            ),
+            (
+                "uuid",
+                "not-a-uuid",
+                crate::ValueDomainViolation::InvalidProfile(crate::ProfileId::Uuid),
+            ),
+            ("code", "bbb", crate::ValueDomainViolation::PatternMismatch),
         ] {
             let pred = Predicate::eq(field_name, bad);
             let err = type_check_predicate(&pred, row, &[], &cgs).unwrap_err();
             assert!(
-                matches!(err, TypeError::IncompatibleValue { ref field, .. } if field == field_name),
+                matches!(err, TypeError::ValueDomainViolation { ref field, ref violation, .. } if field == field_name && violation == &expected),
                 "field={field_name} err={err:?}"
             );
         }

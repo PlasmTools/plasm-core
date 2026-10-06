@@ -29,7 +29,15 @@ pub enum DiscoveryCmd {
     ClearOpenrouterKey,
 }
 
-pub fn run(cmd: DiscoveryCmd) -> Result<(), String> {
+#[derive(Debug, thiserror::Error)]
+pub enum DiscoveryCliError {
+    #[error(transparent)]
+    Bootstrap(#[from] crate::discovery_bootstrap::DiscoveryBootstrapError),
+    #[error("read stdin: {0}")]
+    ReadStdin(#[source] std::io::Error),
+}
+
+pub fn run(cmd: DiscoveryCmd) -> Result<(), DiscoveryCliError> {
     let _ = ensure_discovery_bootstrap_at_boot()?;
     match cmd {
         DiscoveryCmd::Status { json } => {
@@ -56,7 +64,7 @@ pub fn run(cmd: DiscoveryCmd) -> Result<(), String> {
                     let mut buf = String::new();
                     std::io::stdin()
                         .read_to_string(&mut buf)
-                        .map_err(|e| format!("read stdin: {e}"))?;
+                        .map_err(DiscoveryCliError::ReadStdin)?;
                     buf
                 }
             };

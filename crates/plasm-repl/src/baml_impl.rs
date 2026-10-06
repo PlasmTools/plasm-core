@@ -46,17 +46,13 @@ pub async fn run_repl_main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("plasm-repl: do not combine --schema with --catalog-dir");
                 std::process::exit(1);
             }
-            let cgs = plasm_core::loader::load_schema(std::path::Path::new(path))
-                .map_err(AgentError::Schema)?;
+            let cgs = plasm_core::loader::load_schema(std::path::Path::new(path))?;
             (path.clone(), cgs, false)
         }
         None => {
             if let Some(pd) = catalog_dir {
-                let reg = catalog_data::load_registry_from_catalog_dir(std::path::Path::new(pd))
-                    .map_err(AgentError::Schema)?;
-                let arc_cgs = reg.first_cgs().ok_or_else(|| {
-                    AgentError::Schema("catalog-dir catalog has no entries".into())
-                })?;
+                let reg = catalog_data::load_registry_from_catalog_dir(std::path::Path::new(pd))?;
+                let arc_cgs = reg.first_cgs().ok_or(AgentError::EmptyCatalogDirectory)?;
                 let cgs = (*arc_cgs).clone();
                 (pd.clone(), cgs, true)
             } else {
@@ -67,8 +63,7 @@ pub async fn run_repl_main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     if !templates_prevalidated {
-        plasm_compile::validate_cgs_capability_templates(&cgs)
-            .map_err(|e| AgentError::Schema(e.to_string()))?;
+        plasm_compile::validate_cgs_capability_templates(&cgs)?;
     }
 
     let app = cli_builder::build_app(&cgs, AgentCliSurface::Repl);
@@ -79,8 +74,7 @@ pub async fn run_repl_main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|s| s.as_str())
         .unwrap_or("http://localhost:1080");
     let backend = backend_normalize::normalize_live_backend_url(schema_path.as_str(), backend_raw);
-    plasm_agent::http_backend::ReplHttpOverride::from_cli_normalized(backend.as_ref())
-        .map_err(|e| AgentError::Argument(e.to_string()))?;
+    plasm_agent::http_backend::ReplHttpOverride::from_cli_normalized(backend.as_ref())?;
 
     let mode = match matches
         .get_one::<String>("mode")

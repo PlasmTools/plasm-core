@@ -1,3 +1,7 @@
+use super::super::validate::compute::{
+    ComputeTemplateValidationError, RenderTemplateValidationError,
+};
+use super::super::validate::{PlanNodeStructureError, PlanValidationError};
 use super::*;
 use crate::plasm_plan::{
     enrich_uses_result_provenance, parse_plan_value, validate_plan_artifact, validate_plan_value,
@@ -74,7 +78,7 @@ fn legacy_expr_list_is_rejected() {
         "nodes": [{ "expr": "x" }],
     });
     let err = parse_plan_value(&v).expect_err("legacy expression list rejected");
-    assert!(err.contains("missing field"), "{err}");
+    assert!(err.to_string().contains("missing field"), "{err}");
 }
 
 #[test]
@@ -93,7 +97,14 @@ fn executable_text_without_ir_is_rejected() {
         "return": { "kind": "node", "node": "n1" }
     });
     let err = validate_plan_value(&v).expect_err("text-only executable rejected");
-    assert!(err.contains("ir or ir_template is required"), "{err}");
+    assert!(
+        format!("{err:?}").contains("MissingExecutableIr"),
+        "{err:?}"
+    );
+    assert!(
+        err.to_string().contains("requires ir or ir_template"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -117,7 +128,10 @@ fn legacy_untagged_returns_are_rejected() {
             "return": return_value
         });
         let err = parse_plan_value(&v).expect_err("untagged return rejected");
-        assert!(err.contains("tag") || err.contains("kind"), "{err}");
+        assert!(
+            err.to_string().contains("tag") || err.to_string().contains("kind"),
+            "{err}"
+        );
     }
 }
 
@@ -145,7 +159,10 @@ fn reject_cycle() {
         ],
         "return": { "kind": "node", "node": "a" }
     });
-    assert!(validate_plan_value(&v).is_err());
+    assert!(matches!(
+        validate_plan_value(&v),
+        Err(PlanValidationError::DependencyCycle)
+    ));
 }
 
 #[test]
@@ -279,7 +296,7 @@ fn display_is_inert_while_value_templates_validate() {
         "return": { "kind": "node", "node": "mapped" }
     });
     let err = validate_plan_value(&bad_template).expect_err("bad template rejected");
-    assert!(err.contains("[object Object]"), "{err}");
+    assert!(err.to_string().contains("[object Object]"), "{err}");
 }
 
 #[test]
@@ -315,7 +332,8 @@ fn reject_malformed_template_substitutions() {
     });
     let err = validate_plan_value(&v).expect_err("empty/dollar substitution rejected");
     assert!(
-        err.contains("abolished") || (err.contains("empty") && err.contains("substitution")),
+        err.to_string().contains("abolished")
+            || (err.to_string().contains("empty") && err.to_string().contains("substitution")),
         "{err}"
     );
 }
@@ -360,7 +378,14 @@ fn reject_unnormalized_entity_ref_wrapper_predicate_values() {
         "return": { "kind": "node", "node": "commits" }
     });
     let err = validate_plan_value(&v).expect_err("unnormalized wrapper rejected");
-    assert!(err.contains("unnormalized entity_ref wrapper"), "{err}");
+    assert!(
+        format!("{err:?}").contains("Value(ValueValidationError"),
+        "{err:?}"
+    );
+    assert!(
+        err.to_string().contains("unnormalized entity_ref wrapper"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -430,7 +455,10 @@ fn predicate_helper_values_are_rejected() {
         "return": { "kind": "node", "node": "n1" }
     });
     let err = validate_plan_value(&v).expect_err("helper predicate rejected");
-    assert!(err.contains("unknown variant `helper`"), "{err}");
+    assert!(
+        err.to_string().contains("unknown variant `helper`"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -577,7 +605,15 @@ fn search_requires_read_list_shape() {
         "return": { "kind": "node", "node": "search" }
     });
     let err = validate_plan_value(&bad_shape).expect_err("bad search shape rejected");
-    assert!(err.contains("search result_shape must be list"), "{err}");
+    assert!(
+        matches!(
+            err,
+            PlanValidationError::Structure(PlanNodeStructureError::SearchMustReturnList {
+                index: 0
+            })
+        ),
+        "{err}"
+    );
 }
 
 #[test]
@@ -749,7 +785,12 @@ fn validate_render_rejects_empty_columns() {
     let err = validate_plan_value(&render_plan(serde_json::json!([]), serde_json::json!("ok")))
         .expect_err("empty columns rejected");
     assert!(
-        err.contains("compute.render.columns must be non-empty"),
+        matches!(
+            err,
+            PlanValidationError::ComputeTemplate(ComputeTemplateValidationError::Render(
+                RenderTemplateValidationError::EmptyColumns { node_index: 1 }
+            ))
+        ),
         "{err}"
     );
 }
@@ -762,7 +803,12 @@ fn validate_render_rejects_empty_template() {
     ))
     .expect_err("empty template rejected");
     assert!(
-        err.contains("compute.render.template must be non-empty"),
+        matches!(
+            err,
+            PlanValidationError::ComputeTemplate(ComputeTemplateValidationError::Render(
+                RenderTemplateValidationError::EmptyTemplate { node_index: 1 }
+            ))
+        ),
         "{err}"
     );
 }
@@ -775,7 +821,7 @@ fn validate_render_rejects_duplicate_columns() {
     ))
     .expect_err("duplicate columns rejected");
     assert!(
-        err.contains("compute.render.columns has duplicate"),
+        matches!(&err, PlanValidationError::ComputeTemplate(ComputeTemplateValidationError::Render(RenderTemplateValidationError::DuplicateColumn { column })) if column == "name"),
         "{err}"
     );
 }
@@ -787,7 +833,15 @@ fn validate_render_rejects_empty_column_name() {
         serde_json::json!("{{ rows }}"),
     ))
     .expect_err("empty column name rejected");
-    assert!(err.contains("OutputName must be non-empty"), "{err}");
+    assert!(
+        matches!(
+            err,
+            PlanValidationError::ComputeTemplate(ComputeTemplateValidationError::Render(
+                RenderTemplateValidationError::InvalidColumnName(_)
+            ))
+        ),
+        "{err}"
+    );
 }
 
 #[test]
@@ -807,7 +861,15 @@ fn validate_render_rejects_template_syntax_errors() {
         serde_json::json!("{{"),
     ))
     .expect_err("bad minijinja syntax rejected");
-    assert!(err.contains("compute.render.template"), "{err}");
+    assert!(
+        matches!(
+            err,
+            PlanValidationError::ComputeTemplate(ComputeTemplateValidationError::Render(
+                RenderTemplateValidationError::InvalidTemplate(_)
+            ))
+        ),
+        "{err}"
+    );
 }
 
 #[test]
@@ -856,7 +918,7 @@ fn for_each_effect_template_rejects_undeclared_interpolation_alias() {
     let plan = parse_plan_value(&v).expect("parse");
     let err = validate_plan_artifact(&plan).expect_err("undeclared alias rejected");
     assert!(
-        err.contains("undeclared alias") || err.contains("missing"),
+        err.to_string().contains("undeclared alias") || err.to_string().contains("missing"),
         "{err}"
     );
 }
@@ -902,8 +964,11 @@ fn render_template_rejects_dollar_interpolation_with_actionable_copy() {
     });
     let plan = parse_plan_value(&v).expect("parse");
     let err = validate_plan_artifact(&plan).expect_err("dollar interpolation rejected");
-    assert!(err.contains("abolished") || err.contains("${"), "{err}");
-    assert!(err.contains("Minijinja"), "{err}");
+    assert!(
+        err.to_string().contains("abolished") || err.to_string().contains("${"),
+        "{err}"
+    );
+    assert!(err.to_string().contains("Minijinja"), "{err}");
 }
 
 #[test]
@@ -929,7 +994,8 @@ fn typed_operand_scope_is_checked_before_plan_admission() {
             plasm_core::EntityKey::Simple(plasm_core::IdentitySlot::binding(reference));
         let error = validate_plan_artifact(&plan).expect_err("unbound operand rejected");
         assert!(
-            error.contains("undeclared input alias") || error.contains("outside its scope"),
+            error.to_string().contains("undeclared input alias")
+                || error.to_string().contains("outside its scope"),
             "{error}"
         );
     }

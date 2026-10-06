@@ -39,6 +39,7 @@ fn test_state() -> PlasmHostState {
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
     })
+    .expect("valid catalog fixture")
 }
 
 fn test_app(st: PlasmHostState) -> Router<()> {

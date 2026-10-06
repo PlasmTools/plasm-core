@@ -3,6 +3,7 @@
 //! See `docs/plasm-language-surface-invariants.md` in the monorepo.
 
 use super::binding_contract::binding_contract;
+use super::error::DagCompilationError;
 use super::pipeline::compile_surface_node;
 use super::prelude::*;
 use super::relation::{
@@ -11,18 +12,15 @@ use super::relation::{
     resolve_relation_segment_for_continuation, resolve_relation_wire_on_entity,
 };
 use super::row_suffix::lower_suffix_stream;
-use super::schema_validate::agent_program_error;
 use super::types::{CompileState, DagNode, DagNodeSource};
 use super::view_embed_proof::resolve_view_embed_proof;
-use plasm_core::plp::{self, PlpId};
 
-pub(in crate::plasm_dag) fn plp4_reject(id: &str, label: &str, tail: &str) -> String {
-    plp::plp4_program(
-        id,
-        format!(
-            "binding `{label}` cannot extend with `{tail}` — use `{label} | …` for row algebra, `{label} => _.r#` for plural relations, or `{label} => _.m#(args)` for per-row invokes"
-        ),
-    )
+pub(in crate::plasm_dag) fn plp4_reject(id: &str, label: &str, tail: &str) -> DagCompilationError {
+    DagCompilationError::UnsupportedContinuation {
+        id: id.to_owned(),
+        binding: label.to_owned(),
+        tail: tail.to_owned(),
+    }
 }
 
 fn is_row_producing_relation_source(state: &CompileState<'_>, label: &str) -> bool {
@@ -106,7 +104,7 @@ fn parse_relation_continuation_expr(
     contract: &ProgramBindingContract,
     segment: &str,
     force_row_hole: bool,
-) -> Result<plasm_core::expr_parser::ParsedExpr, String> {
+) -> Result<plasm_core::expr_parser::ParsedExpr, DagCompilationError> {
     let relation_wire = resolve_relation_segment_for_continuation(
         session,
         state.cross_cache,
@@ -209,13 +207,15 @@ pub(in crate::plasm_dag) fn row_receiver_surface(
     source: &str,
     receiver: &str,
     tail: &str,
-) -> Result<String, String> {
-    let contract = binding_contract(state, source)
-        .ok_or_else(|| format!("unknown receiver binding `{source}`"))?;
+) -> Result<String, DagCompilationError> {
+    let contract =
+        binding_contract(state, source).ok_or_else(|| DagCompilationError::UnknownBinding {
+            binding: source.to_owned(),
+        })?;
     if !contract.supports_method_invoke() {
-        return Err(format!(
-            "`{source}` does not retain entity identity for a method receiver"
-        ));
+        return Err(DagCompilationError::ReceiverIdentityMissing {
+            binding: source.to_owned(),
+        });
     }
     let map = crate::plasm_plan_run::symbol_map_for_plasm_surface_parse(session, state.cross_cache);
     let entity = map.entity_sym_for(
@@ -223,10 +223,14 @@ pub(in crate::plasm_dag) fn row_receiver_surface(
         contract.row_entity.entity.as_str(),
     );
     let cgs = super::relation::resolve_cgs_for_qualified_entity(session, &contract.row_entity)
-        .ok_or_else(|| format!("receiver catalog is unavailable for `{source}`"))?;
+        .ok_or_else(|| DagCompilationError::ReceiverCatalogMissing {
+            binding: source.to_owned(),
+        })?;
     let definition = cgs
         .get_entity(contract.row_entity.entity.as_str())
-        .ok_or_else(|| format!("receiver entity is unavailable for `{source}`"))?;
+        .ok_or_else(|| DagCompilationError::ReceiverEntityMissing {
+            binding: source.to_owned(),
+        })?;
     let identity = if definition.key_vars.len() > 1 {
         definition
             .key_vars
@@ -251,14 +255,12 @@ fn lower_method_invoke_continuation(
     label: &str,
     contract: &ProgramBindingContract,
     tail: &str,
-) -> Result<DagNode, String> {
+) -> Result<DagNode, DagCompilationError> {
     if !contract.row_cardinality.permits_identity_receiver() {
-        return Err(plp::plp4_program(
-            id,
-            format!(
-                "method invoke `{label}.{tail}` requires an identity-preserving singleton — use `{label} => _.{tail}` for per-row application"
-            ),
-        ));
+        return Err(DagCompilationError::MethodReceiverCardinality {
+            id: id.to_owned(),
+            binding: label.to_owned(),
+        });
     }
     let expanded = row_receiver_surface(session, state, label, label, tail)?;
     compile_surface_node(session, state, id, &expanded)
@@ -284,7 +286,7 @@ pub(in crate::plasm_dag) fn lower_relation_continuation(
     expr: &str,
     source_label: &str,
     tail: &str,
-) -> Result<DagNode, String> {
+) -> Result<DagNode, DagCompilationError> {
     lower_relation_continuation_inner(session, state, id, expr, source_label, tail, true)
 }
 
@@ -295,7 +297,7 @@ pub(in crate::plasm_dag) fn lower_relation_application(
     expr: &str,
     source_label: &str,
     tail: &str,
-) -> Result<DagNode, String> {
+) -> Result<DagNode, DagCompilationError> {
     lower_relation_continuation_inner(session, state, id, expr, source_label, tail, false)
 }
 
@@ -307,21 +309,19 @@ fn lower_relation_continuation_inner(
     source_label: &str,
     tail: &str,
     require_singleton: bool,
-) -> Result<DagNode, String> {
+) -> Result<DagNode, DagCompilationError> {
     let segment = tail.split('.').next().unwrap_or(tail).trim();
     if segment.is_empty() || tail.contains('.') {
-        return Err(plp::plp4_program(
-            id,
-            format!(
-                "`{source_label}.{tail}` — node-ref continuation supports a single CGS relation segment only"
-            ),
-        ));
+        return Err(DagCompilationError::RelationSegmentRequired {
+            id: id.to_owned(),
+            binding: source_label.to_owned(),
+            tail: tail.to_owned(),
+        });
     }
     let contract = binding_contract(state, source_label).ok_or_else(|| {
-        plp::plp4_program(
-            id,
-            format!("unknown binding `{source_label}` for relation continuation"),
-        )
+        DagCompilationError::UnknownBinding {
+            binding: source_label.to_owned(),
+        }
     })?;
     if require_singleton
         && !matches!(
@@ -329,28 +329,25 @@ fn lower_relation_continuation_inner(
             RowCardinalityProof::StaticSingleton | RowCardinalityProof::BoundedSingleton { .. }
         )
     {
-        return Err(plp::plp4_program(
-            id,
-            format!(
-                "relation continuation `{source_label}.{segment}` requires a singleton binding — use `{source_label} => _.r#` for plural relation fanout"
-            ),
-        ));
+        return Err(DagCompilationError::RelationReceiverCardinality {
+            id: id.to_owned(),
+            binding: source_label.to_owned(),
+        });
     }
     if !contract.supports_relation_dot() || !contract.anchor.is_present() {
-        return Err(plp::plp4_program(
-            id,
-            format!(
-                "`{source_label}.{segment}` requires entity continuation evidence on `{source_label}`; rowsets without common catalog authority cannot regain it through filtering, projection or take — traverse relations from the originating entity bindings before combining the resulting rowsets"
-            ),
-        ));
+        return Err(DagCompilationError::RelationEvidenceMissing {
+            id: id.to_owned(),
+            binding: source_label.to_owned(),
+        });
     }
     let parsed =
         parse_relation_continuation_expr(session, state, &contract, segment, !require_singleton)?;
     let Expr::Chain(ref chain) = parsed.expr else {
-        return Err(plp::plp4_program(
-            id,
-            format!("`{source_label}.{segment}` did not lower to a relation chain"),
-        ));
+        return Err(DagCompilationError::RelationChainRequired {
+            id: id.to_owned(),
+            binding: source_label.to_owned(),
+            segment: segment.to_owned(),
+        });
     };
     let Some(wire) = resolve_relation_wire_on_entity(
         session,
@@ -359,18 +356,18 @@ fn lower_relation_continuation_inner(
         segment,
         Some(plasm_core::ProgramBindingLabel(source_label)),
     ) else {
-        return Err(plp::plp4_program(
-            id,
-            format!(
-                "`{segment}` is not a field or relation on `{source_label}` — use wire field names or `r#` relation hops from the language card"
-            ),
-        ));
+        return Err(DagCompilationError::RelationSegmentUnknown {
+            id: id.to_owned(),
+            binding: source_label.to_owned(),
+            segment: segment.to_owned(),
+        });
     };
     if chain.selector.as_str() != wire.as_str() {
-        return Err(plp::plp4_program(
-            id,
-            format!("relation wire mismatch for `{source_label}.{segment}`"),
-        ));
+        return Err(DagCompilationError::RelationWireMismatch {
+            id: id.to_owned(),
+            binding: source_label.to_owned(),
+            segment: segment.to_owned(),
+        });
     }
     let (target_qe, rel_cardinality) = lookup_relation_chain_meta(
         session,
@@ -389,8 +386,7 @@ fn lower_relation_continuation_inner(
         display_expr: Some(expr.to_string()),
     };
     let binding_proofs =
-        relation_binding_proofs_for_lower(session, &contract.row_entity, wire.as_str())
-            .unwrap_or_default();
+        relation_binding_proofs_for_lower(session, &contract.row_entity, wire.as_str())?;
     let materialize = relation_materialize_for_lower(session, &contract.row_entity, wire.as_str())?;
     let view_embed_proof = view_embed_proof_for_materialize(
         session,
@@ -447,7 +443,7 @@ fn looks_like_collect_meta_tail(tail: &str) -> bool {
 
 fn parse_collect_meta_tail(
     tail: &str,
-) -> Result<Option<Vec<plasm_core::expr_parser::CollectMeta>>, String> {
+) -> Result<Option<Vec<plasm_core::expr_parser::CollectMeta>>, DagCompilationError> {
     let mut rest = tail.trim();
     if rest.is_empty() {
         return Ok(None);
@@ -463,13 +459,17 @@ fn parse_collect_meta_tail(
         } else if let Some(stripped) = rest.strip_prefix("page_size(") {
             let close = stripped
                 .find(')')
-                .ok_or_else(|| "page_size(...) requires a closing `)`".to_string())?;
+                .ok_or(DagCompilationError::PageSizeClosingDelimiter)?;
             let n_raw = stripped[..close].trim();
             let n = n_raw
                 .parse::<usize>()
-                .map_err(|_| "page_size(...) requires a positive integer".to_string())?;
+                .map_err(|_| DagCompilationError::InvalidPageSize {
+                    value: n_raw.to_owned(),
+                })?;
             if n == 0 {
-                return Err("page_size(...) requires a positive integer".to_string());
+                return Err(DagCompilationError::InvalidPageSize {
+                    value: n_raw.to_owned(),
+                });
             }
             out.push(plasm_core::expr_parser::CollectMeta::PageSize(n));
             rest = stripped[close + 1..].trim_start();
@@ -480,22 +480,17 @@ fn parse_collect_meta_tail(
             break;
         }
         if !rest.starts_with('.') {
-            return Err("collect-meta tails must chain as `.page_size(N).singleton()`".to_string());
+            return Err(DagCompilationError::InvalidCollectMetaChain);
         }
     }
     Ok(Some(out))
 }
 
-fn unknown_row_transform_error(id: &str, tail: &str) -> String {
-    plp::surface_err(
-        PlpId::Continuation,
-        agent_program_error(
-            format!("Unknown dotted row transform `{tail}` on `{id}`."),
-            Some(
-                "Dotted row algebra was removed. Use `label | where … | select … | summarize … | order by … | take N | distinct`.",
-            ),
-        ),
-    )
+fn unknown_row_transform_error(id: &str, tail: &str) -> DagCompilationError {
+    DagCompilationError::UnknownRowTransform {
+        id: id.to_owned(),
+        tail: tail.to_owned(),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -517,8 +512,8 @@ pub(in crate::plasm_dag) fn lower_pipe_continuation(
     id: &str,
     expr: &str,
     pipe: &PipeExpr,
-) -> Result<Vec<DagNode>, String> {
-    let suffixes = pipe.row_suffixes()?;
+) -> Result<Vec<DagNode>, DagCompilationError> {
+    let suffixes = pipe.row_suffixes();
     lower_suffix_stream(
         session,
         state,
@@ -554,7 +549,7 @@ fn classify_binding_continuation_route(
     label: &str,
     tail_trim: &str,
     contract: &ProgramBindingContract,
-) -> Result<BindingContinuationRoute, String> {
+) -> Result<BindingContinuationRoute, DagCompilationError> {
     if contract.supports_method_invoke()
         && looks_like_method_invoke_continuation_tail(session, state, contract, tail_trim)
     {
@@ -605,14 +600,13 @@ fn lower_multi_segment_relation_continuation(
     label: &str,
     tail_trim: &str,
     contract: &ProgramBindingContract,
-) -> Result<DagNode, String> {
+) -> Result<DagNode, DagCompilationError> {
     let expanded = contract
         .continuation_text_expansion(tail_trim)
-        .ok_or_else(|| {
-            plp::plp4_program(
-                id,
-                format!("`{label}` has no continuation anchor for `{tail_trim}`"),
-            )
+        .ok_or_else(|| DagCompilationError::ContinuationAnchorMissing {
+            id: id.to_owned(),
+            binding: label.to_owned(),
+            tail: tail_trim.to_owned(),
         })?;
     let refs = state.program_node_id_set();
     let parsed = parse_plasm_program_surface_for_dag(
@@ -642,8 +636,7 @@ fn lower_multi_segment_relation_continuation(
             session,
             &contract.row_entity,
             chain.selector.as_str(),
-        )
-        .unwrap_or_default();
+        )?;
         let materialize =
             relation_materialize_for_lower(session, &contract.row_entity, chain.selector.as_str())?;
         let view_embed_proof = view_embed_proof_for_materialize(
@@ -681,12 +674,10 @@ fn lower_multi_segment_relation_continuation(
             },
         });
     }
-    Err(plp::plp4_program(
-        id,
-        format!(
-            "`{label}.…` expands to a non-relation Plasm expression; node-ref continuation supports CGS relation chains (`label.<relation>`) only"
-        ),
-    ))
+    Err(DagCompilationError::NonRelationContinuation {
+        id: id.to_owned(),
+        binding: label.to_owned(),
+    })
 }
 
 pub(in crate::plasm_dag) fn dispatch_binding_continuation(
@@ -697,7 +688,7 @@ pub(in crate::plasm_dag) fn dispatch_binding_continuation(
     label: &str,
     tail_trim: &str,
     contract: &ProgramBindingContract,
-) -> Result<DagNode, String> {
+) -> Result<DagNode, DagCompilationError> {
     match classify_binding_continuation_route(session, state, id, label, tail_trim, contract)? {
         BindingContinuationRoute::MethodInvoke => {
             lower_method_invoke_continuation(session, state, id, expr, label, contract, tail_trim)
@@ -712,8 +703,9 @@ pub(in crate::plasm_dag) fn dispatch_binding_continuation(
             Some(id),
         )?
         .pop()
-        .ok_or_else(|| {
-            format!("Plasm program `{id}`: collect-meta continuation `{expr}` produced no nodes")
+        .ok_or_else(|| DagCompilationError::EmptyContinuation {
+            id: id.to_owned(),
+            expression: expr.to_owned(),
         }),
         BindingContinuationRoute::FieldExtract { wire } => {
             super::scalar_extract::lower_binding_scalar_field_dot(
@@ -741,7 +733,7 @@ fn view_embed_proof_for_materialize(
     source_label: &str,
     materialize: &plasm_core::RelationMaterialization,
     relation_wire: &str,
-) -> Result<Option<plasm_core::ValidatedViewEmbedProof>, String> {
+) -> Result<Option<plasm_core::ValidatedViewEmbedProof>, DagCompilationError> {
     match materialize {
         plasm_core::RelationMaterialization::ViewEmbed { view } => Ok(Some(
             resolve_view_embed_proof(session, state, source_label, view.as_str(), relation_wire)?,

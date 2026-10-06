@@ -1,4 +1,17 @@
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum PlanAtomError {
+    #[error("{kind} must be non-empty")]
+    Empty { kind: &'static str },
+    #[error("{kind} contains JavaScript object string coercion ([object Object])")]
+    ObjectCoercion { kind: &'static str },
+    #[error("FieldPath must contain at least one segment")]
+    EmptyPath,
+    #[error("FieldPath segments must be non-empty")]
+    EmptyPathSegment,
+}
 
 macro_rules! plan_string_atom {
     ($(#[$meta:meta])* $name:ident) => {
@@ -8,16 +21,13 @@ macro_rules! plan_string_atom {
         pub struct $name(String);
 
         impl $name {
-            pub fn new(value: impl Into<String>) -> Result<Self, String> {
+            pub fn new(value: impl Into<String>) -> Result<Self, PlanAtomError> {
                 let value = value.into();
                 if value.trim().is_empty() {
-                    return Err(format!("{} must be non-empty", stringify!($name)));
+                    return Err(PlanAtomError::Empty { kind: stringify!($name) });
                 }
                 if value.contains("[object Object]") {
-                    return Err(format!(
-                        "{} contains JavaScript object string coercion ([object Object])",
-                        stringify!($name)
-                    ));
+                    return Err(PlanAtomError::ObjectCoercion { kind: stringify!($name) });
                 }
                 Ok(Self(value))
             }
@@ -61,14 +71,17 @@ plan_string_atom! {
 pub struct FieldPath(Vec<String>);
 
 impl FieldPath {
-    pub fn new(segments: Vec<String>) -> Result<Self, String> {
-        if segments.is_empty() || segments.iter().any(|s| s.trim().is_empty()) {
-            return Err("FieldPath must contain non-empty segments".to_string());
+    pub fn new(segments: Vec<String>) -> Result<Self, PlanAtomError> {
+        if segments.is_empty() {
+            return Err(PlanAtomError::EmptyPath);
+        }
+        if segments.iter().any(|s| s.trim().is_empty()) {
+            return Err(PlanAtomError::EmptyPathSegment);
         }
         Ok(Self(segments))
     }
 
-    pub fn from_dotted(path: &str) -> Result<Self, String> {
+    pub fn from_dotted(path: &str) -> Result<Self, PlanAtomError> {
         Self::new(path.split('.').map(str::to_string).collect())
     }
 
@@ -100,5 +113,32 @@ impl From<crate::QualifiedEntityKey> for PlanQualifiedEntityKey {
 impl From<PlanQualifiedEntityKey> for crate::QualifiedEntityKey {
     fn from(q: PlanQualifiedEntityKey) -> Self {
         crate::QualifiedEntityKey::new(q.entry_id, q.entity)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn atom_constructors_report_semantic_failures() {
+        assert_eq!(
+            BindingName::new(" ").unwrap_err(),
+            PlanAtomError::Empty {
+                kind: "BindingName"
+            }
+        );
+        assert_eq!(
+            OutputName::new("[object Object]").unwrap_err(),
+            PlanAtomError::ObjectCoercion { kind: "OutputName" }
+        );
+        assert_eq!(
+            FieldPath::new(vec![]).unwrap_err(),
+            PlanAtomError::EmptyPath
+        );
+        assert_eq!(
+            FieldPath::new(vec!["name".into(), " ".into()]).unwrap_err(),
+            PlanAtomError::EmptyPathSegment
+        );
     }
 }

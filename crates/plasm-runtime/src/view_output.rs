@@ -20,17 +20,13 @@ pub fn resolve_output_binding(
         ViewOutputBinding::NodeRowCount { node } => {
             let r = node_results
                 .get(node)
-                .ok_or_else(|| RuntimeError::ConfigurationError {
-                    message: format!("view output references unknown node `{node}`"),
-                })?;
+                .ok_or_else(|| RuntimeError::ViewNodeMissing { node: node.clone() })?;
             Ok(Value::Integer(r.count() as i64))
         }
         ViewOutputBinding::NodeField { node, field } => {
             let r = node_results
                 .get(node)
-                .ok_or_else(|| RuntimeError::ConfigurationError {
-                    message: format!("view output references unknown node `{node}`"),
-                })?;
+                .ok_or_else(|| RuntimeError::ViewNodeMissing { node: node.clone() })?;
             let Some(row) = r.entities().first() else {
                 return Ok(Value::Null);
             };
@@ -43,9 +39,7 @@ pub fn resolve_output_binding(
         ViewOutputBinding::NodeFieldHistogramJson { node, field } => {
             let r = node_results
                 .get(node)
-                .ok_or_else(|| RuntimeError::ConfigurationError {
-                    message: format!("view output references unknown node `{node}`"),
-                })?;
+                .ok_or_else(|| RuntimeError::ViewNodeMissing { node: node.clone() })?;
             Ok(field_histogram_json(r.entities(), field.as_str()))
         }
         ViewOutputBinding::NodeAnyRowFieldEquals {
@@ -55,9 +49,7 @@ pub fn resolve_output_binding(
         } => {
             let r = node_results
                 .get(node)
-                .ok_or_else(|| RuntimeError::ConfigurationError {
-                    message: format!("view output references unknown node `{node}`"),
-                })?;
+                .ok_or_else(|| RuntimeError::ViewNodeMissing { node: node.clone() })?;
             let hit = r.entities().iter().any(|row| {
                 let v = row
                     .fields
@@ -71,9 +63,7 @@ pub fn resolve_output_binding(
         ViewOutputBinding::NodeRowCountPositive { node } => {
             let r = node_results
                 .get(node)
-                .ok_or_else(|| RuntimeError::ConfigurationError {
-                    message: format!("view output references unknown node `{node}`"),
-                })?;
+                .ok_or_else(|| RuntimeError::ViewNodeMissing { node: node.clone() })?;
             Ok(Value::Bool(r.count() > 0))
         }
         ViewOutputBinding::WriteCreated { node } => Ok(Value::Bool(matches!(
@@ -88,9 +78,7 @@ pub fn resolve_output_binding(
             write_outcomes.get(node),
             Some(WriteOutcome::Skipped)
         ))),
-        ViewOutputBinding::Computed { .. } => Err(RuntimeError::ConfigurationError {
-            message: "computed output bindings are resolved in a separate phase".into(),
-        }),
+        ViewOutputBinding::Computed { .. } => Err(RuntimeError::ComputedOutputPhaseRequired),
     }
 }
 

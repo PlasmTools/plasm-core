@@ -31,13 +31,18 @@ pub struct ResolvedRunningOp {
     pub source: RunningOpSource,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RunProgressError {
-    BadLogicalRef(String),
+    #[error("invalid logical session reference: {0}")]
+    BadLogicalRef(#[source] crate::mcp_logical_ref::LogicalSessionWireRefError),
+    #[error("logical session binding not found or expired")]
     BindingNotFound,
+    #[error("execute session not found or expired")]
     SessionNotFound,
+    #[error("no running operation")]
     NoRunningOperation,
-    BadHandle(String),
+    #[error("invalid operation handle: {0}")]
+    BadHandle(#[source] plasm_core::OperationHandleParseError),
 }
 
 struct RunningOpPick {
@@ -52,7 +57,7 @@ impl PlasmHostState {
         query: RunningOpQuery,
     ) -> Result<ResolvedRunningOp, RunProgressError> {
         let logical_id = parse_logical_session_wire_ref(query.logical_session_ref.as_str())
-            .map_err(|e| RunProgressError::BadLogicalRef(e.to_string()))?;
+            .map_err(RunProgressError::BadLogicalRef)?;
         let Some((prompt_hash, session_id)) = self
             .logical_execute_bindings
             .get(&logical_id.as_uuid())
@@ -94,7 +99,7 @@ impl PlasmHostState {
             return Err(RunProgressError::NoRunningOperation);
         };
         let handle = OperationHandle::parse(persisted.handle.as_str())
-            .map_err(|e| RunProgressError::BadHandle(e.to_string()))?;
+            .map_err(RunProgressError::BadHandle)?;
         Ok(ResolvedRunningOp {
             handle,
             live_session,
@@ -271,21 +276,24 @@ mod tests {
     #[tokio::test]
     async fn resolve_bound_logical_session_returns_running_op() {
         let cgs = Arc::new(CGS::new());
-        let st = Arc::new(build_plasm_host_state(PlasmHostBootstrap {
-            engine: ExecutionEngine::new(Default::default()).expect("engine"),
-            mode: ExecutionMode::Live,
-            registry: Arc::new(CgsRegistry::from_pairs(vec![(
-                "default".into(),
-                "Default".into(),
-                vec!["default".into()],
-                cgs.clone(),
-            )])),
-            catalog_bootstrap: crate::server_state::CatalogBootstrap::Fixed,
-            incoming_auth: None,
-            run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
-            session_graph_persistence: None,
-            oss_local_filesystem_defaults: false,
-        }));
+        let st = Arc::new(
+            build_plasm_host_state(PlasmHostBootstrap {
+                engine: ExecutionEngine::new(Default::default()).expect("engine"),
+                mode: ExecutionMode::Live,
+                registry: Arc::new(CgsRegistry::from_pairs(vec![(
+                    "default".into(),
+                    "Default".into(),
+                    vec!["default".into()],
+                    cgs.clone(),
+                )])),
+                catalog_bootstrap: crate::server_state::CatalogBootstrap::Fixed,
+                incoming_auth: None,
+                run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
+                session_graph_persistence: None,
+                oss_local_filesystem_defaults: false,
+            })
+            .expect("valid catalog fixture"),
+        );
 
         let ref_str = "l_AAAAAAAAQACAAAAAAAAAAQ";
         let logical_id = parse_logical_session_wire_ref(ref_str).expect("logical ref");

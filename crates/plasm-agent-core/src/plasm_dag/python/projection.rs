@@ -12,7 +12,7 @@ impl Lower<'_> {
     ) -> Result<String, PythonLoweringError> {
         let parameter = self.fresh_parameter("projection");
         let parsed = ruff_python_parser::parse_expression(&format!("lambda {parameter}: {{}}"))
-            .map_err(|e| e.to_string())?;
+            .map_err(PythonLoweringError::parse_error)?;
         let PyExpr::Lambda(mut lambda) = *parsed.into_syntax().body else {
             unreachable!()
         };
@@ -23,21 +23,24 @@ impl Lower<'_> {
         for argument in &call.arguments.args {
             let field = string(argument)?;
             let expr = ruff_python_parser::parse_expression(&format!("{parameter}.field"))
-                .map_err(|e| e.to_string())?;
+                .map_err(PythonLoweringError::parse_error)?;
             let mut expr = *expr.into_syntax().body;
             let PyExpr::Attribute(attr) = &mut expr else {
                 unreachable!()
             };
             attr.attr = ruff_python_ast::Identifier::new(field.clone(), site.range());
-            if fields.insert(field, expr).is_some() {
-                return Err(at(site, "duplicate projection column"));
+            if fields.insert(field.clone(), expr).is_some() {
+                return Err(at(
+                    site,
+                    PythonSourceError::DuplicateProjectionColumn { column: field },
+                ));
             }
         }
         for keyword in &call.arguments.keywords {
             let alias = keyword
                 .arg
                 .as_ref()
-                .ok_or("projection unpacking is not admitted")?
+                .ok_or(crate::program_rejection::PythonLoweringInvariantError::ProjectionUnpackingNotAdmitted)?
                 .to_string();
             let expression = if matches!(&keyword.value, PyExpr::Lambda(_))
                 || name(&keyword.value).is_some_and(|n| self.callbacks.contains_key(n))
@@ -46,13 +49,13 @@ impl Lower<'_> {
                 let callable = self.fresh_parameter("projection_callback");
                 self.callbacks.insert(callable.clone(), callback);
                 *ruff_python_parser::parse_expression(&format!("{callable}({parameter})"))
-                    .map_err(|e| e.to_string())?
+                    .map_err(PythonLoweringError::parse_error)?
                     .into_syntax()
                     .body
             } else {
                 let field = string(&keyword.value)?;
                 let expr = ruff_python_parser::parse_expression(&format!("{parameter}.field"))
-                    .map_err(|e| e.to_string())?;
+                    .map_err(PythonLoweringError::parse_error)?;
                 let mut expr = *expr.into_syntax().body;
                 let PyExpr::Attribute(attr) = &mut expr else {
                     unreachable!()
@@ -60,15 +63,20 @@ impl Lower<'_> {
                 attr.attr = ruff_python_ast::Identifier::new(field, site.range());
                 expr
             };
-            if fields.insert(alias, expression).is_some() {
-                return Err(at(site, "duplicate projection column"));
+            if fields.insert(alias.clone(), expression).is_some() {
+                return Err(at(
+                    site,
+                    PythonSourceError::DuplicateProjectionColumn { column: alias },
+                ));
             }
         }
         for (alias, value) in fields {
             let key = ruff_python_parser::parse_expression(
-                &serde_json::to_string(&alias).map_err(|e| e.to_string())?,
+                &serde_json::to_string(&alias).map_err(|source| {
+                    crate::program_rejection::PythonLoweringInvariantError::ProjectionAliasSerialization(source.into())
+                })?,
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(PythonLoweringError::parse_error)?;
             dict.items.push(ruff_python_ast::DictItem {
                 key: Some(*key.into_syntax().body),
                 value,
@@ -85,7 +93,7 @@ impl Lower<'_> {
             body.effect_class(),
             EffectClass::Read | EffectClass::ArtifactRead
         ) {
-            return Err(at(site, "projection expressions cannot introduce effects"));
+            return Err(at(site, PythonSourceError::ProjectionEffects));
         }
         let schema = crate::map_body_schema::output_schema(self.es, &body)?;
         self.insert(DagNode {
@@ -108,7 +116,12 @@ impl Lower<'_> {
     ) -> Result<PlasmDataValue, PythonLoweringError> {
         let schema = super::text::inferred_schema(self.es, &self.state, source, 0)?;
         if !schema.fields.iter().any(|f| f.name.as_str() == field) {
-            return Err(format!("unknown projected field {field}").into());
+            return Err(
+                crate::program_rejection::PythonProgramError::UnknownProjectedField {
+                    field: field.to_owned(),
+                }
+                .into(),
+            );
         }
         Ok(PlasmDataValue::BindingSymbol {
             binding: "_".into(),
@@ -133,19 +146,25 @@ impl Lower<'_> {
         for argument in &call.arguments.args {
             let name = string(argument)?;
             let value = self.projection_field(source, &name)?;
-            if fields.insert(name, value).is_some() {
-                return Err(at(site, "duplicate projection column"));
+            if fields.insert(name.clone(), value).is_some() {
+                return Err(at(
+                    site,
+                    PythonSourceError::DuplicateProjectionColumn { column: name },
+                ));
             }
         }
         for keyword in &call.arguments.keywords {
             let alias = keyword
                 .arg
                 .as_ref()
-                .ok_or("projection unpacking is not admitted")?
+                .ok_or(crate::program_rejection::PythonLoweringInvariantError::ProjectionUnpackingNotAdmitted)?
                 .to_string();
             let value = self.projection_field(source, &string(&keyword.value)?)?;
-            if fields.insert(alias, value).is_some() {
-                return Err(at(site, "duplicate projection column"));
+            if fields.insert(alias.clone(), value).is_some() {
+                return Err(at(
+                    site,
+                    PythonSourceError::DuplicateProjectionColumn { column: alias },
+                ));
             }
         }
         let previous = self.frame.row.replace(source.into());
@@ -158,25 +177,28 @@ impl Lower<'_> {
 pub(super) fn projection_parameter(
     lambda: &ruff_python_ast::ExprLambda,
 ) -> Result<&str, PythonLoweringError> {
-    let p = lambda
-        .parameters
-        .as_ref()
-        .ok_or("projection requires one row parameter")?;
+    let p = lambda.parameters.as_ref().ok_or(
+        crate::program_rejection::PythonLoweringInvariantError::ProjectionRowParameterMissing,
+    )?;
     let binding = monty_analysis::bind_one_positional(&callable_signature(lambda)?)?;
     if binding.variadic {
-        return Err("a variadic tuple cannot carry a direct DAG row receiver".into());
+        return Err(crate::program_rejection::PythonProgramError::VariadicTupleReceiver.into());
     }
     let row = p
         .posonlyargs
         .iter()
         .chain(&p.args)
         .find(|p| p.parameter.name.as_str() == binding.parameter)
-        .ok_or("upstream row binding has no source parameter")?
+        .ok_or(
+            crate::program_rejection::PythonLoweringInvariantError::UpstreamSourceParameterMissing,
+        )?
         .parameter
         .name
         .as_str();
     if row == "self" || row.starts_with("__") {
-        return Err("reserved projection parameter".into());
+        return Err(
+            crate::program_rejection::PythonProgramError::ReservedProjectionParameter.into(),
+        );
     }
     Ok(row)
 }
@@ -187,9 +209,9 @@ pub(super) fn callable_signature(
     let parameters = lambda
         .parameters
         .as_ref()
-        .ok_or("missing callback parameters")?;
+        .ok_or(crate::program_rejection::PythonLoweringInvariantError::CallbackParametersMissing)?;
     let parsed = ruff_python_parser::parse_module("def callback(row):\n    pass\n")
-        .map_err(|e| e.to_string())?;
+        .map_err(PythonLoweringError::parse_error)?;
     let mut statement = parsed.into_syntax().body.remove(0);
     let Stmt::FunctionDef(def) = &mut statement else {
         unreachable!()

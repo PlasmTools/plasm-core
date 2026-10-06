@@ -25,10 +25,11 @@ fn validate(
     rules: &[Rule],
     evidence: &BTreeMap<String, BTreeSet<String>>,
     inventory: &[&str],
-) -> Result<(), String> {
+) -> Result<(), super::constructor_registry::build::RegistryError> {
+    use super::constructor_registry::build::RegistryError;
     let expected: BTreeSet<_> = inventory.iter().copied().collect();
     if expected.len() != inventory.len() {
-        return Err("duplicate production name".into());
+        return Err(RegistryError::DuplicateProduction);
     }
     let laws = super::literate_contract::parse(include_str!(
         "../../../../doc-site/docs/reference/python-conformance.md"
@@ -36,7 +37,9 @@ fn validate(
     let mut actual = BTreeSet::new();
     for rule in rules {
         if !actual.insert(rule.operation.as_str()) {
-            return Err("duplicate rule".into());
+            return Err(RegistryError::DuplicateRule {
+                operation: rule.operation.clone(),
+            });
         }
         if rule.premise.trim().is_empty()
             || rule.transfer.trim().is_empty()
@@ -48,22 +51,24 @@ fn validate(
                 .iter()
                 .any(|n| n.body.trim().is_empty() || n.error.trim().is_empty())
         {
-            return Err("missing obligation".into());
+            return Err(RegistryError::MissingObligation {
+                operation: rule.operation.clone(),
+            });
         }
         for witness in &rule.witnesses {
             if !evidence
                 .get(witness)
                 .is_some_and(|kinds| kinds.contains(&rule.operation))
             {
-                return Err(format!(
-                    "witness {witness} omits constructor {}",
-                    rule.operation
-                ));
+                return Err(RegistryError::WitnessOmitsConstructor {
+                    id: witness.clone(),
+                    operation: rule.operation.clone(),
+                });
             }
         }
     }
     if actual != expected {
-        return Err("production/rule mismatch".into());
+        return Err(RegistryError::InventoryMismatch);
     }
     Ok(())
 }
@@ -166,10 +171,9 @@ async fn assert_invalid(rules: Vec<Rule>) {
                     "{} admitted invalid program: {source}",
                     rule.operation
                 )),
-                Err(error) if !error.contains(&invalid.error) => failures.push(format!(
-                    "{} expected {:?}: {error}",
-                    rule.operation, invalid.error
-                )),
+                Err(error) if !error.to_string().contains(&invalid.error) => failures.push(
+                    format!("{} expected {:?}: {error}", rule.operation, invalid.error),
+                ),
                 Err(_) => {}
             }
         }

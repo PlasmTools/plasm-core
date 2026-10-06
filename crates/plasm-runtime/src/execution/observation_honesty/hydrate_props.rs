@@ -192,23 +192,24 @@ fn assert_order_invariant_against_backend(
     seeds: &[NoteSeed],
     out: &[CachedEntity],
     faults: &BTreeMap<String, ResponseFault>,
-) -> Result<(), String> {
+) -> Result<(), ObservationHonestyError> {
     for s in seeds {
         if faults.get(&s.id) == Some(&ResponseFault::WrongIdentity) {
             // Retained as summary; must not carry injected membership as Complete.
             let row = out
                 .iter()
                 .find(|e| e.reference.primary_slot_str() == s.id)
-                .ok_or_else(|| format!("missing row {}", s.id))?;
+                .ok_or_else(|| ObservationHonestyError::ReferenceRowMissing {
+                    identity: s.id.clone(),
+                })?;
             if row.completeness == EntityCompleteness::Complete
                 && row.fields.get("body").map(|f| f.to_value())
                     != Some(Value::String(s.body.clone()))
             {
                 // Complete with non-backend body would be contamination; Summary is ok.
-                return Err(format!(
-                    "OPH-1/2: wrong-identity row {} upgraded dishonestly",
-                    s.id
-                ));
+                return Err(ObservationHonestyError::WrongIdentityRowUpgraded {
+                    identity: s.id.clone(),
+                });
             }
             continue;
         }
@@ -219,23 +220,22 @@ fn assert_order_invariant_against_backend(
         let row = out
             .iter()
             .find(|e| e.reference.primary_slot_str() == s.id)
-            .ok_or_else(|| format!("missing published row {}", s.id))?;
+            .ok_or_else(|| ObservationHonestyError::PublishedRowMissing {
+                identity: s.id.clone(),
+            })?;
         let title = row.fields.get("title").map(|f| f.to_value());
         let body = row.fields.get("body").map(|f| f.to_value());
         if title != Some(Value::String(s.title.clone()))
             || body != Some(Value::String(s.body.clone()))
         {
-            return Err(format!(
-                "OPH-2 order invariance: row {} got title={title:?} body={body:?}, \
-                 expected title={} body={}",
-                s.id, s.title, s.body
-            ));
+            return Err(ObservationHonestyError::OrderInvariantFieldsMismatch {
+                identity: s.id.clone(),
+            });
         }
         if row.completeness != EntityCompleteness::Complete {
-            return Err(format!(
-                "OPH-2: well-behaved hydrate for {} should be Complete",
-                s.id
-            ));
+            return Err(ObservationHonestyError::HydratedRowNotComplete {
+                identity: s.id.clone(),
+            });
         }
     }
     Ok(())

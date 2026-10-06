@@ -45,6 +45,7 @@ fn matrix_host() -> plasm_agent_core::server_state::PlasmHostState {
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
     })
+    .expect("valid catalog fixture")
 }
 
 fn app() -> Router {

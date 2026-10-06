@@ -23,22 +23,21 @@ async fn commit_expand_wave(
 ) -> Result<ExpandTeachingWaveResult, super::SessionMutateError> {
     let seeds = normalize_capability_seeds(seeds);
     if seeds.is_empty() {
-        return Err("`seeds` must be non-empty".into());
+        return Err(super::SessionMutateError::EmptySeeds);
     }
 
     let Some(sess_arc) = st
         .try_get_execute_session(prompt_hash_p.as_str(), session_id_p.as_str())
-        .await
-        .map_err(|error| error.to_string())?
+        .await?
     else {
-        return Err("unknown or expired execute session".into());
+        return Err(super::SessionMutateError::UnknownOrExpiredSession);
     };
     let mut sess = (*sess_arc).clone();
     if !session_allows_principal(&sess, principal) {
-        return Err("forbidden: execute session tenant does not match caller".into());
+        return Err(super::SessionMutateError::TenantMismatch);
     }
     let Some(mut exp) = sess.teaching_exposure.take() else {
-        return Err("session has no incremental exposure state".into());
+        return Err(super::SessionMutateError::MissingExposureState);
     };
 
     let slots_before = exp.surface.slots.clone();
@@ -53,11 +52,9 @@ async fn commit_expand_wave(
     let mut groups: IndexMap<String, Vec<String>> = IndexMap::new();
     for seed in &seeds {
         let Some(ctx) = sess.contexts_by_entry.get(&seed.entry_id) else {
-            return Err(format!(
-                "unknown catalog entry `{}` in loaded session schemas",
-                seed.entry_id
-            )
-            .into());
+            return Err(super::SessionMutateError::UnknownCatalogEntry {
+                entry_id: seed.entry_id.clone(),
+            });
         };
         if ctx.get_entity(&seed.entity).is_none() {
             let hints = crate::http_execute::context::seed_resolve::nearest_entity_names(
@@ -65,20 +62,11 @@ async fn commit_expand_wave(
                 seed.entity.as_str(),
                 5,
             );
-            return Err(if hints.is_empty() {
-                format!(
-                    "unknown entity `{}` in catalog `{}`",
-                    seed.entity, seed.entry_id
-                )
-            } else {
-                format!(
-                    "unknown entity `{}` in catalog `{}` — nearest: {}",
-                    seed.entity,
-                    seed.entry_id,
-                    hints.join(", ")
-                )
-            }
-            .into());
+            return Err(super::SessionMutateError::UnknownSeedEntity {
+                entry_id: seed.entry_id.clone(),
+                entity: seed.entity.clone(),
+                nearest: hints,
+            });
         }
         groups
             .entry(seed.entry_id.clone())
@@ -105,11 +93,13 @@ async fn commit_expand_wave(
     let eid_order = process_order_for_expand_group(&groups);
     for eid in eid_order {
         let Some(ctx) = sess.contexts_by_entry.get(&eid) else {
-            return Err(format!("unknown catalog entry `{eid}` in loaded session schemas").into());
+            return Err(super::SessionMutateError::UnknownCatalogEntry { entry_id: eid });
         };
         let group = groups
             .get(&eid)
-            .ok_or_else(|| format!("internal error: missing seed group for `{eid}`"))?
+            .ok_or_else(|| super::SessionMutateError::MissingSeedGroup {
+                entry_id: eid.clone(),
+            })?
             .clone();
         let normalized = dedup_preserve_arrival_order(group);
         let refs: Vec<&str> = normalized.iter().map(|s| s.as_str()).collect();
@@ -146,10 +136,10 @@ pub async fn expand_execute_teaching_session(
 ) -> Result<ExpandTeachingWaveResult, super::SessionMutateError> {
     let prompt_hash_p: PromptHashHex = prompt_hash
         .parse()
-        .map_err(|e: &'static str| super::SessionMutateError::from(e))?;
+        .map_err(|_| super::SessionMutateError::InvalidPromptHash)?;
     let session_id_p: ExecuteSessionId = session_id
         .parse()
-        .map_err(|e: &'static str| super::SessionMutateError::from(e))?;
+        .map_err(|_| super::SessionMutateError::InvalidSessionId)?;
     let key = ExecuteCoordKey {
         prompt_hash: prompt_hash.to_string(),
         session_id: session_id.to_string(),

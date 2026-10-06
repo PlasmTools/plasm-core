@@ -534,7 +534,7 @@ async fn compute_values_have_no_reserved_content_accessor() {
             let invalid = source.replace(use_value, "content.content");
             let error = compile_python_program(&es, &invalid).await.unwrap_err();
             assert!(
-                error.contains("attribute") && error.contains("content"),
+                error.to_string().contains("attribute") && error.to_string().contains("content"),
                 "{error}"
             );
         }

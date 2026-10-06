@@ -16,6 +16,124 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use sha2::{Digest, Sha256};
 
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum OverlayValidationError {
+    #[error("projection.mode column_schema is not implemented")]
+    ColumnSchemaUnsupported,
+    #[error("source.capability or source.steps is required")]
+    SourceMissing,
+    #[error("source.capability and source.bind must be omitted when source.steps is set")]
+    ConflictingSourceForms,
+    #[error("source.steps[{index}] must declare exactly one of collect or for_each")]
+    StepMode { index: usize },
+    #[error("source.steps[{index}] collect '{name}' requires items_path")]
+    CollectItemsPathMissing { index: usize, name: String },
+    #[error("source.steps[{index}] collect step must not declare bind or merge")]
+    CollectBindOrMerge { index: usize },
+    #[error("duplicate source collect name '{name}'")]
+    DuplicateCollect { name: String },
+    #[error("source.steps[{index}] for_each '{name}' has no prior collect step")]
+    CollectNotEarlier { index: usize, name: String },
+    #[error("source.steps[{index}] for_each step requires merge")]
+    MergeMissing { index: usize },
+    #[error("projection.nested_items_path must be non-empty when set")]
+    NestedItemsPathEmpty,
+    #[error("from_template entity '{entity}' not found")]
+    TemplateEntityMissing { entity: String },
+    #[error("decode.scope.params must be non-empty when decode.scope.key references ambient")]
+    AmbientScopeParamsMissing,
+    #[error("{lane} value_ref '{value_ref}' not in values:")]
+    ValueMissing {
+        lane: OverlayValueLane,
+        value_ref: String,
+    },
+    #[error("invalid {location} template: {source}")]
+    Template {
+        location: OverlayTemplateLocation,
+        #[source]
+        source: std::sync::Arc<minijinja::Error>,
+    },
+    #[error("source capability '{capability}' not found")]
+    SourceCapabilityMissing { capability: String },
+    #[error("source capability '{capability}' must be query, get, or search (got {actual:?})")]
+    SourceCapabilityKind {
+        capability: String,
+        actual: CapabilityKind,
+    },
+    #[error("invalid source bind '{param}' template: {source}")]
+    BindTemplate {
+        param: String,
+        #[source]
+        source: std::sync::Arc<minijinja::Error>,
+    },
+    #[error("{context}: unknown bind references {wires:?} — allowed: bind.catalog_http_origin")]
+    UnknownBindingWires { context: String, wires: Vec<String> },
+    #[error("source bind param '{param}' is not declared on capability '{capability}'")]
+    BindParamUnknown { param: String, capability: String },
+}
+
+#[derive(Debug, Clone, Copy, thiserror::Error)]
+pub enum OverlayValueLane {
+    #[error("static_fields")]
+    Static,
+    #[error("dynamic_fields type_map")]
+    DynamicTypeMap,
+    #[error("dynamic_fields default")]
+    DynamicDefault,
+}
+
+#[derive(Debug, Clone, Copy, thiserror::Error)]
+pub enum OverlayTemplateLocation {
+    #[error("Minijinja")]
+    EntityOrScope,
+    #[error("dynamic_fields.name")]
+    DynamicName,
+    #[error("dynamic_fields.extract.match_equals")]
+    DynamicMatch,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum SchemaOverlayError {
+    #[error("overlay source bind {parameter} resolved to an empty value")]
+    EmptySourceBind { parameter: String },
+    #[error("JSON path {path:?} is missing key {segment}")]
+    JsonPathMissingKey { path: Vec<String>, segment: String },
+    #[error("JSON path {path:?} must resolve to an array")]
+    JsonPathExpectedArray { path: Vec<String> },
+    #[error("JSON path {path:?} must resolve to an object")]
+    JsonPathExpectedObject { path: Vec<String> },
+    #[error("JSON path {path:?} must resolve to a string")]
+    JsonPathExpectedString { path: Vec<String> },
+    #[error("overlay append-array merge path must not be empty")]
+    EmptyAppendArrayPath,
+    #[error("overlay append-array accumulator entry must be an array")]
+    AppendArrayAccumulatorType,
+    #[error("overlay projection mode column_schema is unsupported")]
+    ColumnSchemaUnsupported,
+    #[error("overlay template entity {entity} does not exist in the base schema")]
+    TemplateEntityMissing { entity: String },
+    #[error("overlay entity name {name} is not a valid Plasm identifier")]
+    InvalidEntityName { name: String },
+    #[error("overlay entity name {name} collides with an existing entity")]
+    EntityNameCollision { name: String },
+    #[error("overlay scope key {key} is duplicated")]
+    DuplicateScopeKey { key: String },
+    #[error("overlay field references unknown value domain {value_ref}")]
+    UnknownValueRef { value_ref: String },
+    #[error("overlay value-domain key is invalid")]
+    ValueDomainKey(#[source] crate::schema::ValueDomainKeyError),
+    #[error("no dynamic field mapping exists for wire type {wire_type}")]
+    WireTypeUnmapped { wire_type: String },
+    #[error("wire name path is empty and the field has no object-map key")]
+    WireNameUnavailable,
+    #[error("overlay template compilation failed")]
+    TemplateCompile(#[source] minijinja::Error),
+    #[error("overlay template rendering failed")]
+    TemplateRender(#[source] minijinja::Error),
+    #[error("overlay JSON canonicalization failed")]
+    CanonicalJson(#[source] serde_json::Error),
+}
+
 /// Declarative overlay spec authored in `domain.yaml`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SchemaOverlaySpec {
@@ -212,7 +330,7 @@ pub fn resolve_overlay_row_bind(
     row: &JsonValue,
     parent: Option<&JsonValue>,
     session_bind: Option<&IndexMap<String, String>>,
-) -> Result<IndexMap<String, String>, String> {
+) -> Result<IndexMap<String, String>, SchemaOverlayError> {
     if bind.is_empty() {
         return Ok(IndexMap::new());
     }
@@ -239,7 +357,9 @@ pub fn resolve_overlay_row_bind(
             template.clone()
         };
         if value.trim().is_empty() {
-            return Err(format!("source bind '{param}' resolved to empty string"));
+            return Err(SchemaOverlayError::EmptySourceBind {
+                parameter: param.clone(),
+            });
         }
         out.insert(param.clone(), value);
     }
@@ -250,11 +370,13 @@ pub fn resolve_overlay_row_bind(
 pub fn overlay_collect_rows(
     response: &JsonValue,
     items_path: &[String],
-) -> Result<Vec<JsonValue>, String> {
+) -> Result<Vec<JsonValue>, SchemaOverlayError> {
     let items = walk_json_path(response, items_path)?;
     let arr = items
         .as_array()
-        .ok_or_else(|| format!("collect items_path {items_path:?} must resolve to a JSON array"))?;
+        .ok_or_else(|| SchemaOverlayError::JsonPathExpectedArray {
+            path: items_path.to_vec(),
+        })?;
     Ok(arr.clone())
 }
 
@@ -263,27 +385,27 @@ pub fn overlay_merge_step_response(
     accumulator: &mut JsonValue,
     merge: &OverlayStepMergeSpec,
     response: &JsonValue,
-) -> Result<(), String> {
+) -> Result<(), SchemaOverlayError> {
     match merge {
         OverlayStepMergeSpec::AppendArray { path } => {
             let incoming = walk_json_path(response, path)?;
-            let incoming_arr = incoming.as_array().ok_or_else(|| {
-                format!("merge append_array path {path:?} must resolve to a JSON array")
-            })?;
+            let incoming_arr = incoming
+                .as_array()
+                .ok_or_else(|| SchemaOverlayError::JsonPathExpectedArray { path: path.clone() })?;
             if !accumulator.is_object() {
                 *accumulator = serde_json::json!({});
             }
             let acc_obj = accumulator.as_object_mut().expect("object");
             let key = path
                 .last()
-                .ok_or("merge append_array path must be non-empty")?
+                .ok_or(SchemaOverlayError::EmptyAppendArrayPath)?
                 .clone();
             let entry = acc_obj
                 .entry(key)
                 .or_insert_with(|| JsonValue::Array(Vec::new()));
-            let acc_arr = entry.as_array_mut().ok_or_else(|| {
-                "merge append_array accumulator path must be a JSON array".to_string()
-            })?;
+            let acc_arr = entry
+                .as_array_mut()
+                .ok_or(SchemaOverlayError::AppendArrayAccumulatorType)?;
             for item in incoming_arr {
                 acc_arr.push(item.clone());
             }
@@ -331,19 +453,24 @@ fn overlay_row_context(row: &JsonValue, parent: Option<&JsonValue>) -> JsonValue
 fn collect_overlay_generator_rows<'a>(
     source_response: &'a JsonValue,
     projection: &OverlayProjectionSpec,
-) -> Result<Vec<OverlayGeneratorRow<'a>>, String> {
+) -> Result<Vec<OverlayGeneratorRow<'a>>, SchemaOverlayError> {
     let items = walk_json_path(source_response, &projection.items_path)?;
     let top_rows = items
         .as_array()
-        .ok_or("projection.items_path must resolve to a JSON array")?;
+        .ok_or_else(|| SchemaOverlayError::JsonPathExpectedArray {
+            path: projection.items_path.clone(),
+        })?;
 
     if let Some(nested_path) = &projection.nested_items_path {
         let mut out = Vec::new();
         for parent in top_rows {
             let nested = walk_json_path(parent, nested_path)?;
-            let child_rows = nested
-                .as_array()
-                .ok_or("projection.nested_items_path must resolve to a JSON array")?;
+            let child_rows =
+                nested
+                    .as_array()
+                    .ok_or_else(|| SchemaOverlayError::JsonPathExpectedArray {
+                        path: nested_path.clone(),
+                    })?;
             for row in child_rows {
                 out.push(OverlayGeneratorRow {
                     row,
@@ -380,21 +507,29 @@ pub fn build_decode_scope_key(
 }
 
 /// Walk a JSON value along a path of object keys (same semantics as CML `items_path`).
-pub fn walk_json_path<'a>(value: &'a JsonValue, path: &[String]) -> Result<&'a JsonValue, String> {
+pub fn walk_json_path<'a>(
+    value: &'a JsonValue,
+    path: &[String],
+) -> Result<&'a JsonValue, SchemaOverlayError> {
     let mut cur = value;
     for seg in path {
         cur = cur
             .get(seg.as_str())
-            .ok_or_else(|| format!("items_path missing key '{seg}'"))?;
+            .ok_or_else(|| SchemaOverlayError::JsonPathMissingKey {
+                path: path.to_vec(),
+                segment: seg.clone(),
+            })?;
     }
     Ok(cur)
 }
 
-fn walk_json_path_string(value: &JsonValue, path: &[String]) -> Result<String, String> {
+fn walk_json_path_string(value: &JsonValue, path: &[String]) -> Result<String, SchemaOverlayError> {
     let v = walk_json_path(value, path)?;
     v.as_str()
         .map(str::to_string)
-        .ok_or_else(|| format!("expected string at path [{}]", path.join(".")))
+        .ok_or_else(|| SchemaOverlayError::JsonPathExpectedString {
+            path: path.to_vec(),
+        })
 }
 
 fn sanitize_identifier_segment(segment: &str) -> String {
@@ -461,21 +596,21 @@ fn render_overlay_template(
     env: &Environment<'_>,
     template: &str,
     ctx: &JsonValue,
-) -> Result<String, String> {
+) -> Result<String, SchemaOverlayError> {
     let compiled = env
         .template_from_str(template)
-        .map_err(|e| format!("template compile: {e}"))?;
+        .map_err(SchemaOverlayError::TemplateCompile)?;
     let mj_ctx = MjValue::from_serialize(ctx);
     compiled
         .render(mj_ctx)
-        .map_err(|e| format!("template render: {e}"))
+        .map_err(SchemaOverlayError::TemplateRender)
 }
 
 fn render_path_segments(
     env: &Environment<'_>,
     segments: &[String],
     ctx: &JsonValue,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>, SchemaOverlayError> {
     segments
         .iter()
         .map(|seg| {
@@ -504,13 +639,17 @@ fn field_from_value_ref(
     wire_path: Option<Vec<String>>,
     derive: Option<FieldDeriveRule>,
     description: &str,
-) -> Result<FieldSchema, String> {
+) -> Result<FieldSchema, SchemaOverlayError> {
     if !base.values.contains_key(value_ref) {
-        return Err(format!("unknown value_ref '{value_ref}'"));
+        return Err(SchemaOverlayError::UnknownValueRef {
+            value_ref: value_ref.to_owned(),
+        });
     }
     Ok(FieldSchema {
         name: EntityFieldName::from(field_name),
-        kind: FieldValueKind::Registry(ValueDomainKey::new(value_ref).map_err(|e| e.to_string())?),
+        kind: FieldValueKind::Registry(
+            ValueDomainKey::new(value_ref).map_err(SchemaOverlayError::ValueDomainKey)?,
+        ),
         description: description.to_string(),
         required: false,
         agent_presentation: None,
@@ -527,23 +666,25 @@ fn resolve_type_map_key(
     type_map: &IndexMap<String, String>,
     default: Option<&String>,
     wire_type: &str,
-) -> Result<String, String> {
+) -> Result<String, SchemaOverlayError> {
     type_map
         .get(wire_type)
         .cloned()
         .or_else(|| default.cloned())
-        .ok_or_else(|| format!("no type_map entry for wire type '{wire_type}'"))
+        .ok_or_else(|| SchemaOverlayError::WireTypeUnmapped {
+            wire_type: wire_type.to_owned(),
+        })
 }
 
 fn wire_name_from_field(
     field_row: &JsonValue,
     field_key: Option<&str>,
     wire_name_path: &[String],
-) -> Result<String, String> {
+) -> Result<String, SchemaOverlayError> {
     if wire_name_path.is_empty() {
         field_key
             .map(str::to_string)
-            .ok_or_else(|| "wire_name_path empty and no object_map key".to_string())
+            .ok_or(SchemaOverlayError::WireNameUnavailable)
     } else {
         walk_json_path_string(field_row, wire_name_path)
     }
@@ -566,7 +707,7 @@ struct FieldCatalogEntry<'a> {
 fn iter_field_catalog<'a>(
     row: &'a JsonValue,
     from: &FieldCatalogSource,
-) -> Result<Vec<FieldCatalogEntry<'a>>, String> {
+) -> Result<Vec<FieldCatalogEntry<'a>>, SchemaOverlayError> {
     match from {
         FieldCatalogSource::Array { path } => {
             if path.is_empty() {
@@ -578,7 +719,7 @@ fn iter_field_catalog<'a>(
             let nested = walk_json_path(row, path)?;
             let field_rows = nested
                 .as_array()
-                .ok_or("dynamic_fields.from array path must resolve to a JSON array")?;
+                .ok_or_else(|| SchemaOverlayError::JsonPathExpectedArray { path: path.clone() })?;
             Ok(field_rows
                 .iter()
                 .map(|field_row| FieldCatalogEntry {
@@ -591,7 +732,7 @@ fn iter_field_catalog<'a>(
             let nested = walk_json_path(row, path)?;
             let map = nested
                 .as_object()
-                .ok_or("dynamic_fields.from object_map path must resolve to a JSON object")?;
+                .ok_or_else(|| SchemaOverlayError::JsonPathExpectedObject { path: path.clone() })?;
             Ok(map
                 .iter()
                 .map(|(key, field_row)| FieldCatalogEntry {
@@ -608,7 +749,7 @@ fn extract_wire_path_and_derive(
     extract: &FieldExtractSpec,
     field_ctx: &JsonValue,
     wire_name: &str,
-) -> Result<(Option<Vec<String>>, Option<FieldDeriveRule>), String> {
+) -> Result<(Option<Vec<String>>, Option<FieldDeriveRule>), SchemaOverlayError> {
     match extract {
         FieldExtractSpec::TopLevelKey => Ok((Some(vec![wire_name.to_string()]), None)),
         FieldExtractSpec::PathSegments { segments } => {
@@ -641,7 +782,7 @@ fn project_dynamic_fields(
     ent: &mut EntityDef,
     row: &JsonValue,
     df: &OverlayDynamicFieldsSpec,
-) -> Result<(), String> {
+) -> Result<(), SchemaOverlayError> {
     let entries = iter_field_catalog(row, &df.from)?;
     for FieldCatalogEntry {
         field_row,
@@ -693,18 +834,15 @@ pub fn build_schema_overlay(
     spec: &SchemaOverlaySpec,
     base_cgs: &CGS,
     source_response: &JsonValue,
-) -> Result<SchemaOverlay, String> {
+) -> Result<SchemaOverlay, SchemaOverlayError> {
     if matches!(spec.projection.mode, OverlayProjectionMode::ColumnSchema) {
-        return Err("projection.mode column_schema is not implemented".to_string());
+        return Err(SchemaOverlayError::ColumnSchemaUnsupported);
     }
 
     let template = base_cgs
         .get_entity(&spec.entity.from_template)
-        .ok_or_else(|| {
-            format!(
-                "from_template entity '{}' not found",
-                spec.entity.from_template
-            )
+        .ok_or_else(|| SchemaOverlayError::TemplateEntityMissing {
+            entity: spec.entity.from_template.clone(),
         })?;
 
     let generator_rows = collect_overlay_generator_rows(source_response, &spec.projection)?;
@@ -721,18 +859,14 @@ pub fn build_schema_overlay(
                 let entity_name =
                     render_overlay_template(&env, &spec.entity.name.template, &row_ctx)?;
                 if !is_valid_plasm_entity_name(&entity_name) {
-                    return Err(format!(
-                        "overlay entity name '{entity_name}' is not a valid Plasm identifier"
-                    ));
+                    return Err(SchemaOverlayError::InvalidEntityName { name: entity_name });
                 }
                 if base_cgs
                     .entities
                     .contains_key(&EntityName::from(entity_name.as_str()))
                     || entities.contains_key(&EntityName::from(entity_name.as_str()))
                 {
-                    return Err(format!(
-                        "overlay entity name '{entity_name}' collides with an existing entity"
-                    ));
+                    return Err(SchemaOverlayError::EntityNameCollision { name: entity_name });
                 }
 
                 let mut aliases = Vec::new();
@@ -747,7 +881,7 @@ pub fn build_schema_overlay(
                 let scope_key =
                     render_overlay_template(&env, &spec.entity.scope_key.template, &row_ctx)?;
                 if scope_index.contains_key(&scope_key) {
-                    return Err(format!("duplicate scope_key '{scope_key}'"));
+                    return Err(SchemaOverlayError::DuplicateScopeKey { key: scope_key });
                 }
                 scope_index.insert(scope_key.clone(), EntityName::from(entity_name.as_str()));
 
@@ -782,9 +916,7 @@ pub fn build_schema_overlay(
         OverlayProjectionMode::AugmentBase => {
             let entity_name = spec.entity.from_template.clone();
             if !is_valid_plasm_entity_name(&entity_name) {
-                return Err(format!(
-                    "augment_base from_template '{entity_name}' is not a valid Plasm identifier"
-                ));
+                return Err(SchemaOverlayError::InvalidEntityName { name: entity_name });
             }
 
             let mut ent = template.clone();
@@ -836,7 +968,7 @@ pub fn build_schema_overlay(
             "entities": entities.keys().collect::<Vec<_>>(),
             "scope_index": keys,
         });
-        let bytes = serde_json::to_vec(&canonical).map_err(|e| e.to_string())?;
+        let bytes = serde_json::to_vec(&canonical).map_err(SchemaOverlayError::CanonicalJson)?;
         hex::encode(Sha256::digest(bytes))
     };
 
@@ -918,14 +1050,14 @@ impl CGS {
 
         if matches!(spec.projection.mode, OverlayProjectionMode::ColumnSchema) {
             return Err(SchemaError::SchemaOverlayInvalid {
-                detail: "projection.mode column_schema is not implemented".into(),
+                source: OverlayValidationError::ColumnSchemaUnsupported,
             });
         }
 
         if spec.source.steps.is_empty() {
             if spec.source.capability.trim().is_empty() {
                 return Err(SchemaError::SchemaOverlayInvalid {
-                    detail: "source.capability or source.steps is required".into(),
+                    source: OverlayValidationError::SourceMissing,
                 });
             }
             self.validate_overlay_source_capability(&spec.source.capability)?;
@@ -935,9 +1067,7 @@ impl CGS {
         } else {
             if !spec.source.capability.is_empty() || !spec.source.bind.is_empty() {
                 return Err(SchemaError::SchemaOverlayInvalid {
-                    detail:
-                        "source.capability and source.bind must be omitted when source.steps is set"
-                            .into(),
+                    source: OverlayValidationError::ConflictingSourceForms,
                 });
             }
             let mut seen_collects = IndexMap::<String, ()>::new();
@@ -947,30 +1077,27 @@ impl CGS {
                 let is_for_each = step.for_each.is_some();
                 if is_collect == is_for_each {
                     return Err(SchemaError::SchemaOverlayInvalid {
-                        detail: format!(
-                            "source.steps[{idx}] must declare exactly one of collect or for_each"
-                        ),
+                        source: OverlayValidationError::StepMode { index: idx },
                     });
                 }
                 if is_collect {
                     let name = step.collect.as_ref().expect("collect");
                     if step.items_path.as_ref().is_none_or(|p| p.is_empty()) {
                         return Err(SchemaError::SchemaOverlayInvalid {
-                            detail: format!(
-                                "source.steps[{idx}] collect '{name}' requires items_path"
-                            ),
+                            source: OverlayValidationError::CollectItemsPathMissing {
+                                index: idx,
+                                name: name.clone(),
+                            },
                         });
                     }
                     if step.merge.is_some() || !step.bind.is_empty() {
                         return Err(SchemaError::SchemaOverlayInvalid {
-                            detail: format!(
-                                "source.steps[{idx}] collect step must not declare bind or merge"
-                            ),
+                            source: OverlayValidationError::CollectBindOrMerge { index: idx },
                         });
                     }
                     if seen_collects.contains_key(name) {
                         return Err(SchemaError::SchemaOverlayInvalid {
-                            detail: format!("duplicate source collect name '{name}'"),
+                            source: OverlayValidationError::DuplicateCollect { name: name.clone() },
                         });
                     }
                     seen_collects.insert(name.clone(), ());
@@ -978,14 +1105,15 @@ impl CGS {
                     let name = step.for_each.as_ref().expect("for_each");
                     if !seen_collects.contains_key(name) {
                         return Err(SchemaError::SchemaOverlayInvalid {
-                            detail: format!(
-                                "source.steps[{idx}] for_each '{name}' has no prior collect step"
-                            ),
+                            source: OverlayValidationError::CollectNotEarlier {
+                                index: idx,
+                                name: name.clone(),
+                            },
                         });
                     }
                     if step.merge.is_none() {
                         return Err(SchemaError::SchemaOverlayInvalid {
-                            detail: format!("source.steps[{idx}] for_each step requires merge"),
+                            source: OverlayValidationError::MergeMissing { index: idx },
                         });
                     }
                     for (param, template) in &step.bind {
@@ -998,7 +1126,7 @@ impl CGS {
         if let Some(nested) = &spec.projection.nested_items_path {
             if nested.is_empty() {
                 return Err(SchemaError::SchemaOverlayInvalid {
-                    detail: "projection.nested_items_path must be non-empty when set".into(),
+                    source: OverlayValidationError::NestedItemsPathEmpty,
                 });
             }
         }
@@ -1008,26 +1136,26 @@ impl CGS {
             .contains_key(&EntityName::from(spec.entity.from_template.as_str()))
         {
             return Err(SchemaError::SchemaOverlayInvalid {
-                detail: format!(
-                    "from_template entity '{}' not found",
-                    spec.entity.from_template
-                ),
+                source: OverlayValidationError::TemplateEntityMissing {
+                    entity: spec.entity.from_template.clone(),
+                },
             });
         }
 
         if spec.decode.scope.params.is_empty() && spec.decode.scope.key.template.contains("ambient")
         {
             return Err(SchemaError::SchemaOverlayInvalid {
-                detail:
-                    "decode.scope.params must be non-empty when decode.scope.key references ambient"
-                        .into(),
+                source: OverlayValidationError::AmbientScopeParamsMissing,
             });
         }
 
         for sf in spec.entity.static_fields.values() {
             if !self.values.contains_key(&sf.value_ref) {
                 return Err(SchemaError::SchemaOverlayInvalid {
-                    detail: format!("static_fields value_ref '{}' not in values:", sf.value_ref),
+                    source: OverlayValidationError::ValueMissing {
+                        lane: OverlayValueLane::Static,
+                        value_ref: sf.value_ref.to_string(),
+                    },
                 });
             }
         }
@@ -1036,14 +1164,20 @@ impl CGS {
             for vr in df.type_map.values() {
                 if !self.values.contains_key(vr) {
                     return Err(SchemaError::SchemaOverlayInvalid {
-                        detail: format!("dynamic_fields type_map value_ref '{vr}' not in values:"),
+                        source: OverlayValidationError::ValueMissing {
+                            lane: OverlayValueLane::DynamicTypeMap,
+                            value_ref: vr.to_string(),
+                        },
                     });
                 }
             }
             if let Some(ref d) = df.default {
                 if !self.values.contains_key(d) {
                     return Err(SchemaError::SchemaOverlayInvalid {
-                        detail: format!("dynamic_fields default value_ref '{d}' not in values:"),
+                        source: OverlayValidationError::ValueMissing {
+                            lane: OverlayValueLane::DynamicDefault,
+                            value_ref: d.to_string(),
+                        },
                     });
                 }
             }
@@ -1057,7 +1191,10 @@ impl CGS {
         {
             env.template_from_str(tmpl)
                 .map_err(|e| SchemaError::SchemaOverlayInvalid {
-                    detail: format!("invalid Minijinja template '{tmpl}': {e}"),
+                    source: OverlayValidationError::Template {
+                        location: OverlayTemplateLocation::EntityOrScope,
+                        source: std::sync::Arc::new(e),
+                    },
                 })?;
             crate::bind_wire_validate::validate_bind_wire_refs(
                 tmpl,
@@ -1067,15 +1204,19 @@ impl CGS {
         if let Some(df) = &spec.entity.dynamic_fields {
             env.template_from_str(&df.name.template).map_err(|e| {
                 SchemaError::SchemaOverlayInvalid {
-                    detail: format!("invalid dynamic_fields.name template: {e}"),
+                    source: OverlayValidationError::Template {
+                        location: OverlayTemplateLocation::DynamicName,
+                        source: std::sync::Arc::new(e),
+                    },
                 }
             })?;
             if let FieldExtractSpec::NameValueArray { match_equals, .. } = &df.extract {
                 env.template_from_str(&match_equals.template).map_err(|e| {
                     SchemaError::SchemaOverlayInvalid {
-                        detail: format!(
-                            "invalid dynamic_fields.extract.match_equals template: {e}"
-                        ),
+                        source: OverlayValidationError::Template {
+                            location: OverlayTemplateLocation::DynamicMatch,
+                            source: std::sync::Arc::new(e),
+                        },
                     }
                 })?;
             }
@@ -1089,17 +1230,19 @@ impl CGS {
             self.capabilities
                 .get(capability)
                 .ok_or_else(|| SchemaError::SchemaOverlayInvalid {
-                    detail: format!("source capability '{capability}' not found"),
+                    source: OverlayValidationError::SourceCapabilityMissing {
+                        capability: capability.to_owned(),
+                    },
                 })?;
         if !matches!(
             cap.kind,
             CapabilityKind::Query | CapabilityKind::Get | CapabilityKind::Search
         ) {
             return Err(SchemaError::SchemaOverlayInvalid {
-                detail: format!(
-                    "source capability '{capability}' must be query, get, or search (got {:?})",
-                    cap.kind
-                ),
+                source: OverlayValidationError::SourceCapabilityKind {
+                    capability: capability.to_owned(),
+                    actual: cap.kind,
+                },
             });
         }
         Ok(())
@@ -1115,12 +1258,17 @@ impl CGS {
             self.capabilities
                 .get(capability)
                 .ok_or_else(|| SchemaError::SchemaOverlayInvalid {
-                    detail: format!("source capability '{capability}' not found"),
+                    source: OverlayValidationError::SourceCapabilityMissing {
+                        capability: capability.to_owned(),
+                    },
                 })?;
         overlay_template_environment()
             .template_from_str(template)
             .map_err(|e| SchemaError::SchemaOverlayInvalid {
-                detail: format!("invalid source bind '{param}' template: {e}"),
+                source: OverlayValidationError::BindTemplate {
+                    param: param.to_owned(),
+                    source: std::sync::Arc::new(e),
+                },
             })?;
         crate::bind_wire_validate::validate_bind_wire_refs(
             template,
@@ -1129,9 +1277,10 @@ impl CGS {
         let input_fields = capability_input_field_names(cap);
         if !input_fields.is_empty() && !input_fields.iter().any(|name| name == param) {
             return Err(SchemaError::SchemaOverlayInvalid {
-                detail: format!(
-                    "source bind param '{param}' is not declared on capability '{capability}'"
-                ),
+                source: OverlayValidationError::BindParamUnknown {
+                    param: param.to_owned(),
+                    capability: capability.to_owned(),
+                },
             });
         }
         Ok(())

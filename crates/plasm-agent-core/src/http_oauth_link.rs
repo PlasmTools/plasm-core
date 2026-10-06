@@ -15,7 +15,7 @@ use axum::{Json, Router};
 use plasm_runtime::{
     begin_authorization_code_pkce, build_oauth_token_http_client, poll_oauth_device_token_once,
     request_oauth_device_authorization, ApplyTokenError, OAuthAuthorizationStart,
-    OAuthConnectError, OAuthDeviceTokenPoll, OutboundOAuthKvV1,
+    OAuthDeviceTokenPoll, OutboundOAuthKvV1,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -352,16 +352,12 @@ async fn start_handler_inner(
     ) {
         Ok(s) => s,
         Err(e) => {
-            let msg = match &e {
-                OAuthConnectError::InvalidUrl(m) => m.as_str(),
-                OAuthConnectError::TokenExchange(m) => m.as_str(),
-                OAuthConnectError::DeviceAuthorization(m) => m.as_str(),
-            };
+            let msg = e.to_string();
             tracing::warn!(error = %e, "oauth link: begin_authorization_code_pkce failed");
             return Err(oauth_start_json_err(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal_error",
-                msg,
+                &msg,
                 Some(entry_id),
             ));
         }

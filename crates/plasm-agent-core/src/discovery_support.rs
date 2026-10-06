@@ -1,5 +1,4 @@
 //! Environment-level support is independent of capability relevance and execution.
-use anyhow::{ensure, Context, Result};
 use plasm_core::{
     catalog_discovery::{capability_documents, CapabilityDocument},
     prerequisites::CapabilityRef,
@@ -7,6 +6,29 @@ use plasm_core::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use thiserror::Error;
+
+type Result<T> = std::result::Result<T, DiscoverySupportError>;
+
+#[derive(Debug, Error)]
+pub enum DiscoverySupportError {
+    #[error("support judgment requires a model")]
+    MissingModel,
+    #[error("authorized support catalog is unavailable")]
+    MissingCatalog,
+    #[error("authorized support capability is unavailable")]
+    MissingCapability,
+    #[error("environment support request exceeds its byte bound")]
+    RequestTooLarge,
+    #[error("environment support response omits the issued answer")]
+    MissingAnswer,
+    #[error(transparent)]
+    CatalogDiscovery(#[from] plasm_core::catalog_discovery::CatalogDiscoveryError),
+    #[error(transparent)]
+    DecisionResponse(#[from] crate::decision_codec::DecisionResponseError),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+}
 
 const RULE: &str = "Judge the current intent jointly with the supplied available operation contracts. Earlier intent turns provide context; the last turn is current. Do the supplied contracts establish that these operations can fulfil the intent for the requested target, without assuming any unspecified identity association? Assess established support, not whether success might be possible. Missing identity evidence means support is not established; it does not prove execution impossible. Derive intermediate needs from this environment, not a fixed workflow. Do not infer identity from matching scalar types or neighboring fields. Judge capability-level support, not runtime data existence, execution permission or guaranteed success. This judgment does not remove relevant capabilities.";
 const CHOICES: [&str; 3] = ["established", "not_established", "undetermined"];
@@ -71,22 +93,23 @@ pub fn issue(
     available: &BTreeSet<CapabilityRef>,
     catalogs: &BTreeMap<String, CGS>,
 ) -> Result<IssuedSupport> {
-    ensure!(!model.trim().is_empty(), "support model required");
+    if model.trim().is_empty() {
+        return Err(DiscoverySupportError::MissingModel);
+    }
     let mut cards = Vec::new();
     let catalog_ids: BTreeSet<_> = available.iter().map(|r| &r.catalog).collect();
     for catalog in catalog_ids {
         let cgs = catalogs
             .get(catalog)
-            .context("support catalog unavailable")?;
-        let mut documents: BTreeMap<_, _> = capability_documents(cgs)
-            .map_err(anyhow::Error::msg)?
+            .ok_or(DiscoverySupportError::MissingCatalog)?;
+        let mut documents: BTreeMap<_, _> = capability_documents(cgs)?
             .into_iter()
             .map(|d| (d.capability.clone(), d))
             .collect();
         for reference in available.iter().filter(|r| &r.catalog == catalog) {
             let document = documents
                 .remove(reference.capability.as_str())
-                .context("support capability unavailable")?;
+                .ok_or(DiscoverySupportError::MissingCapability)?;
             cards.push(Card {
                 reference: reference.clone(),
                 document,
@@ -100,10 +123,9 @@ pub fn issue(
     ]) })]) };
     let body = serde_json::to_string(&request)?;
     // A whole-environment judgment cannot be truthfully replaced by independent pages.
-    ensure!(
-        body.len() <= 128_000,
-        "environment support request exceeds 128000-byte bound; no assessment committed"
-    );
+    if body.len() > 128_000 {
+        return Err(DiscoverySupportError::RequestTooLarge);
+    }
     let cache_key = format!(
         "jev-environment-support-v1:{}",
         plasm_core::catalog_discovery::content_hash(body.as_bytes())
@@ -120,7 +142,7 @@ pub fn decode(issued: &IssuedSupport, raw: &str) -> Result<EnvironmentSupport> {
         crate::decision_codec::decode_jev_choices(&issued.model, ["support"], &CHOICES, raw)?;
     let answer = answers
         .remove("support")
-        .context("missing validated support answer")?;
+        .ok_or(DiscoverySupportError::MissingAnswer)?;
     let choice = match answer.choice.as_str() {
         "established" => SupportChoice::Established,
         "not_established" => SupportChoice::NotEstablished,

@@ -9,35 +9,18 @@ use crate::value::Value;
 use crate::CompOp;
 
 /// Identity brace → Get lowering failed for a recognized Get-identity form.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum IdentityLoweringError {
     /// Exact `id_field` brace but multiple Get capabilities and no primary.
+    #[error("identity brace on `{entity}` is ambiguous (multiple Gets; set primary_read)")]
     AmbiguousGet { entity: String },
     /// Owning CGS could not be resolved for a stamped/ambiguous entity.
+    #[error("identity brace on `{entity}`: cannot resolve owning catalog")]
     UnresolvedCatalog { entity: String },
-    /// Identity value could not be stringified.
-    InvalidIdentity { entity: String, detail: String },
+    /// Identity requires a scalar literal or a binding reference.
+    #[error("identity brace on `{entity}`: identity value must be a scalar")]
+    NonScalarIdentity { entity: String },
 }
-
-impl std::fmt::Display for IdentityLoweringError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::AmbiguousGet { entity } => write!(
-                f,
-                "identity brace on `{entity}` is ambiguous (multiple Gets; set primary_read)"
-            ),
-            Self::UnresolvedCatalog { entity } => write!(
-                f,
-                "identity brace on `{entity}`: cannot resolve owning catalog"
-            ),
-            Self::InvalidIdentity { entity, detail } => {
-                write!(f, "identity brace on `{entity}`: {detail}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for IdentityLoweringError {}
 
 /// When `Entity{id_field=value}` is a sole equality on the entity's `id_field`, lower to Get.
 ///
@@ -149,9 +132,8 @@ fn try_brace_query_to_get(
     }
 
     let slot = identity_slot_from_predicate_value(&value).ok_or_else(|| {
-        IdentityLoweringError::InvalidIdentity {
+        IdentityLoweringError::NonScalarIdentity {
             entity: q.entity.to_string(),
-            detail: "identity value must be a scalar".into(),
         }
     })?;
 
@@ -210,6 +192,30 @@ mod tests {
     use crate::cgs_federation::CgsLayer;
     use crate::loader::load_schema_dir;
     use crate::CatalogEntryStamp;
+
+    #[test]
+    fn non_scalar_identity_retains_semantic_cause() {
+        use std::error::Error;
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(&dir).expect("language matrix");
+        for value in [Value::Null, Value::Array(vec![Value::String("id".into())])] {
+            let query = QueryExpr::filtered("LangItem", Predicate::eq("id", value));
+            let source = lower_id_field_brace_to_get(Expr::Query(query), &cgs).unwrap_err();
+            assert!(
+                matches!(&source, IdentityLoweringError::NonScalarIdentity { entity } if entity == "LangItem")
+            );
+            let error = crate::expr_parser::ParseError {
+                kind: crate::expr_parser::ParseErrorKind::IdentityBraceLowering { source },
+                offset: 9,
+            };
+            assert!(matches!(
+                error.source().unwrap().downcast_ref::<IdentityLoweringError>(),
+                Some(IdentityLoweringError::NonScalarIdentity { entity }) if entity == "LangItem"
+            ));
+            assert_eq!(error.offset, 9);
+        }
+    }
 
     #[test]
     fn single_catalog_parse_preserves_bound_catalog_for_brace_lowering() {

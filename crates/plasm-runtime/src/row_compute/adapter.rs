@@ -46,8 +46,7 @@ impl<'a> IngestRows<'a> for ValueRowEngine<'a> {
             | ScanSource::Fixture { schema, .. }
             | ScanSource::Graph { schema, .. } => schema,
         };
-        let mut state = ingest_rows(batch.rows, schema.contract())
-            .map_err(|e| RowComputeError::Execution(e.to_string()))?;
+        let mut state = ingest_rows(batch.rows, schema.contract());
         state.shape = schema.shape().clone();
         let id = FrameId::new(self.next_frame.get());
         self.next_frame.set(id.as_u64() + 1);
@@ -89,14 +88,13 @@ impl CollectRows for ValueRowEngine<'_> {
             .cloned()
             .ok_or(ScanError::UnboundFrame)?;
         drop(frames);
-        apply_stored_plan(plan, &mut state)
-            .map_err(|e| RowComputeError::Execution(e.to_string()))?;
-        let rows = collect_rows(&state).map_err(|e| RowComputeError::Execution(e.to_string()))?;
+        apply_stored_plan(plan, &mut state)?;
+        let rows = collect_rows(&state);
         let occurrences = state.rows.iter().map(|row| row.1).collect();
         Ok(CollectedFrame {
             occurrences,
             schema: PlasmFrameSchema::new(state.shape, state.contract)
-                .map_err(RowComputeError::Contract)?,
+                .map_err(RowComputeError::Schema)?,
             rows,
         })
     }

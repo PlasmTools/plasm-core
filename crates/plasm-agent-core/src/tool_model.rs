@@ -88,9 +88,9 @@ impl ToolModelFocusMode {
         if raw.eq_ignore_ascii_case("seeds") {
             return Ok(Self::Seeds);
         }
-        Err(ToolModelBuildError::BadRequest(
-            "focus must be all, single, or seeds".into(),
-        ))
+        Err(ToolModelBuildError::InvalidFocus {
+            focus: raw.to_owned(),
+        })
     }
 
     const fn as_str(self) -> &'static str {
@@ -102,20 +102,17 @@ impl ToolModelFocusMode {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ToolModelBuildError {
-    BadRequest(String),
+    #[error("focus must be all, single, or seeds (received `{focus}`)")]
+    InvalidFocus { focus: String },
+    #[error("unknown entity `{entity}` for this catalog")]
+    UnknownEntity { entity: String },
+    #[error("all accepts no entities; single needs one; seeds needs at least one (received `{focus}` with {entity_count} entities)")]
+    FocusEntityCount { focus: String, entity_count: usize },
+    #[error(transparent)]
+    Teaching(plasm_core::prompt_render::python::PythonTeachingError),
 }
-
-impl std::fmt::Display for ToolModelBuildError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ToolModelBuildError::BadRequest(s) => write!(f, "{s}"),
-        }
-    }
-}
-
-impl std::error::Error for ToolModelBuildError {}
 
 /// Focus echoed back with resolved entity names for the slice.
 #[derive(Debug, Serialize)]
@@ -991,9 +988,7 @@ fn materialization_view(m: &RelationMaterialization) -> ExplorerRelationMaterial
 fn validate_entity_names(cgs: &CGS, names: &[String]) -> Result<(), ToolModelBuildError> {
     for n in names {
         if !cgs.entities.contains_key(n.as_str()) {
-            return Err(ToolModelBuildError::BadRequest(format!(
-                "unknown entity `{n}` for this catalog"
-            )));
+            return Err(ToolModelBuildError::UnknownEntity { entity: n.clone() });
         }
     }
     Ok(())
@@ -1012,9 +1007,10 @@ fn render_bundle_for_tool_model(
         ToolModelFocusMode::Single if q.entity.len() == 1 => q.entity.clone(),
         ToolModelFocusMode::Seeds if !q.entity.is_empty() => q.entity.clone(),
         _ => {
-            return Err(ToolModelBuildError::BadRequest(
-                "all accepts no entities; single needs one; seeds needs at least one".into(),
-            ))
+            return Err(ToolModelBuildError::FocusEntityCount {
+                focus: q.focus.clone(),
+                entity_count: q.entity.len(),
+            })
         }
     };
     names.sort();
@@ -1024,7 +1020,7 @@ fn render_bundle_for_tool_model(
         &exposure,
         &Default::default(),
     )
-    .map_err(ToolModelBuildError::BadRequest)?;
+    .map_err(ToolModelBuildError::Teaching)?;
     let mut model = TeachingPromptModel::default();
     for name in names {
         let symbol = exposure

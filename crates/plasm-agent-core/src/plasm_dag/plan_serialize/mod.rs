@@ -1,6 +1,6 @@
 //! Plan JSON serialization, template uses, surface contract inference.
 
-mod parse_helpers;
+pub(crate) mod parse_helpers;
 mod plan_emit;
 mod surface_infer;
 mod template_uses;
@@ -9,7 +9,8 @@ mod template_uses;
 pub(in crate::plasm_dag) use parse_helpers::{
     parse_aggregates, parse_field_list, parse_group_by_key_and_aggregate_tail,
     parse_one_aggregate_spec, parse_plan_value_expr, parse_sort_direction_token,
-    parse_sort_field_and_direction,
+    parse_sort_field_and_direction, AggregateSpecError, GroupByError, PlanValueExpressionError,
+    SortSpecError,
 };
 #[allow(unused_imports)]
 pub(in crate::plasm_dag) use plan_emit::{expression_template, lower_plan_node};

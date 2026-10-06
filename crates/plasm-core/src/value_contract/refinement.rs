@@ -1,15 +1,18 @@
 //! Intersection with inferred evidence preserves the original value's metadata.
-use super::{ValueContract as T, ValueShape as S};
+use super::{ValueContract as T, ValueContractError, ValueShape as S};
 impl T {
-    pub fn refined_by(&self, evidence: &Self) -> Result<Self, String> {
+    pub fn refined_by(&self, evidence: &Self) -> Result<Self, ValueContractError> {
         meet(self, evidence, 0)
     }
     /// Check representation after a branch selection. Domains remain guaranteed
     /// by the original validated value; a refinement cannot manufacture a domain.
-    pub fn validate_refinement_value(&self, value: &crate::Value) -> Result<(), String> {
-        fn erase(t: &mut T, depth: usize) -> Result<(), String> {
+    pub fn validate_refinement_value(
+        &self,
+        value: &crate::Value,
+    ) -> Result<(), ValueContractError> {
+        fn erase(t: &mut T, depth: usize) -> Result<(), ValueContractError> {
             if depth >= 64 {
-                return Err("refinement depth exceeds 64".into());
+                return Err(ValueContractError::RefinementDepthExceeded);
             }
             t.domain = None;
             match &mut t.shape {
@@ -49,9 +52,9 @@ fn bottom() -> T {
         nullable: false,
     }
 }
-fn meet(original: &T, evidence: &T, depth: usize) -> Result<T, String> {
+fn meet(original: &T, evidence: &T, depth: usize) -> Result<T, ValueContractError> {
     if depth >= 64 {
-        return Err("refinement depth exceeds 64".into());
+        return Err(ValueContractError::RefinementDepthExceeded);
     }
     let nullable = (original.nullable || original.shape == S::Null)
         && (evidence.nullable || evidence.shape == S::Null);

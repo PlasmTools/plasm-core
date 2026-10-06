@@ -30,12 +30,7 @@ pub(crate) fn populate_template_path_env(
     ctx: plasm_core::IdentityProjectionCtx<'_>,
     input_overlay: Option<&Value>,
 ) -> Result<(), RuntimeError> {
-    let projected =
-        plasm_core::project_capability_identity_env(cap, reference, ctx).map_err(|e| {
-            RuntimeError::ConfigurationError {
-                message: e.to_string(),
-            }
-        })?;
+    let projected = plasm_core::project_capability_identity_env(cap, reference, ctx)?;
     let mut inputs = env.clone();
     if let Some(Value::Object(map)) = input_overlay {
         inputs.extend(map.clone());
@@ -51,21 +46,15 @@ pub(crate) fn normalize_cml_env_inputs(
     capability: &CapabilitySchema,
 ) -> Result<(), RuntimeError> {
     let mut values = Value::Object(env.clone());
-    plasm_core::temporal_input::encode_capability_temporals(&mut values, capability, cgs)
-        .map_err(|message| RuntimeError::ConfigurationError { message })?;
+    plasm_core::temporal_input::encode_capability_temporals(&mut values, capability, cgs)?;
     if let Value::Object(values) = values {
         *env = values;
     }
     if let Some(input) = env.get_mut("input") {
-        plasm_core::temporal_input::encode_capability_temporals(input, capability, cgs)
-            .map_err(|message| RuntimeError::ConfigurationError { message })?;
+        plasm_core::temporal_input::encode_capability_temporals(input, capability, cgs)?;
     }
     for field in capability.scope_params() {
-        let nv = field
-            .named_value(cgs)
-            .map_err(|e| RuntimeError::ConfigurationError {
-                message: format!("capability `{}`: {e}", capability.name),
-            })?;
+        let nv = field.named_value(cgs)?;
         let FieldType::EntityRef { target, .. } = &nv.field_type else {
             continue;
         };

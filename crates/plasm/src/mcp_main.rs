@@ -108,7 +108,7 @@ pub async fn run_mcp_main() -> Result<(), Box<dyn std::error::Error>> {
     let use_mcp = matches.get_flag("mcp");
     let endpoint =
         plasm_agent_core::listen_endpoint::TcpListenEndpoint::from_clap_matches(&matches)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
 
     if !use_http && !use_mcp {
         eprintln!("plasm-mcp: pass --http and/or --mcp");
@@ -150,16 +150,13 @@ pub async fn run_mcp_main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("plasm-mcp: shutting down");
             }
             res = async {
-                let listener = listen.bind_tcp_listener().await.map_err(|e| {
-                    std::io::Error::other(format!("plasm-mcp bind {}: {e}", listen.display_addr()))
-                })?;
+                let listener = listen.bind_tcp_listener().await?;
                 plasm_agent_core::http::serve_discovery_execute_and_mcp_unified(
                     listener,
                     state,
                     plasm_agent_core::http::DiscoveryHttpServeOpts::default(),
                 )
                 .await
-                .map_err(|e| std::io::Error::other(format!("plasm-mcp unified server: {e}")))
             } => {
                 res?;
             }
@@ -174,22 +171,21 @@ pub async fn run_mcp_main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("plasm-mcp: shutting down");
             }
             r = plasm_agent_core::http::serve_http_listener(app_state, listen) => {
-                r.map_err(|e| std::io::Error::other(format!("{e}")))?;
+                r?;
             }
         }
         shutdown_embedded_pg(&mut embedded_pg).await;
         return Ok(());
     }
     let host = endpoint.host.clone();
-    let app_state = plasm_agent_core::mcp_transport_store::prepare_host_for_serve(app_state)
-        .await
-        .map_err(|e| std::io::Error::other(format!("Redis wiring: {e}")))?;
+    let app_state =
+        plasm_agent_core::mcp_transport_store::prepare_host_for_serve(app_state).await?;
     tokio::select! {
         _ = shutdown_signal() => {
             eprintln!("plasm-mcp: shutting down");
         }
         r = plasm_agent_core::mcp_server::run_mcp_server(&host, mcp_port, std::sync::Arc::new(app_state)) => {
-            r.map_err(|e| std::io::Error::other(format!("plasm-mcp MCP server: {e}")))?;
+            r?;
         }
     }
     shutdown_embedded_pg(&mut embedded_pg).await;

@@ -1,5 +1,4 @@
 //! Local Python DAG authoring. Source is buffered losslessly and compiled by the host.
-use anyhow::Context;
 use plasm_agent::output::{format_result_with_cgs, OutputFormat};
 use plasm_agent::{
     http::{build_plasm_host_state, PlasmHostBootstrap},
@@ -17,6 +16,18 @@ use plasm_eval::{
 use plasm_runtime::{ExecutionEngine, ExecutionMode, SessionMaterialization};
 use rustyline::{error::ReadlineError, DefaultEditor};
 use std::sync::Arc;
+
+#[derive(Debug, thiserror::Error)]
+enum TranslateError {
+    #[error("OPENROUTER_API_KEY is required for `:llm`")]
+    ApiKeyMissing,
+    #[error("select a model before invoking `:llm`")]
+    ModelMissing,
+    #[error("BAML TranslatePlan call failed: {0}")]
+    Client(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error("Python program still needs correction: {feedback}")]
+    CorrectionsExhausted { feedback: String },
+}
 
 #[derive(Clone, Default)]
 struct LlmState {
@@ -48,7 +59,7 @@ pub async fn run_repl(
         run_artifacts: Arc::new(plasm_agent::run_artifacts::RunArtifactStore::memory()),
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
-    });
+    })?;
     println!(
         "{}\nEnter a Python Program, then :plan or :run. :help lists commands.",
         session.prompt()
@@ -214,15 +225,15 @@ async fn translate(
     session: &ProgramSession,
     state: &LlmState,
     goal: &str,
-) -> anyhow::Result<(String, Vec<PlanChatTurn>)> {
-    let key = std::env::var("OPENROUTER_API_KEY").context("set OPENROUTER_API_KEY for :llm")?;
+) -> Result<(String, Vec<PlanChatTurn>), TranslateError> {
+    let key = std::env::var("OPENROUTER_API_KEY").map_err(|_| TranslateError::ApiKeyMissing)?;
     plasm_eval::baml_client::init();
     let mut registry = ClientRegistry::new();
     registry.add_llm_client(
         "EvalModel",
         "openai-generic",
         openrouter_eval_llm_options(
-            state.model.as_deref().context("model")?,
+            state.model.as_deref().ok_or(TranslateError::ModelMissing)?,
             &key,
             DEFAULT_OPENROUTER_EVAL_TEMPERATURE,
             DEFAULT_OPENROUTER_EVAL_SEED,
@@ -249,7 +260,7 @@ async fn translate(
             .with_client_registry(&registry)
             .call(&messages)
             .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            .map_err(|error| TranslateError::Client(Box::new(error)))?;
         turns.push(PlanChatTurn {
             role: Union2KassistantOrKuser::Kassistant,
             content: plan.text.clone(),
@@ -266,7 +277,7 @@ async fn translate(
             }
         }
     }
-    anyhow::bail!("Python program still needs correction: {feedback}")
+    Err(TranslateError::CorrectionsExhausted { feedback })
 }
 
 fn print_help() {

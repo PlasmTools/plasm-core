@@ -6,7 +6,6 @@
 //! Hosted Docker builds use `--package-list deploy/saas-packaged-apis.txt`; OSS release tarballs use
 //! `plasm-oss/scripts/oss-packaged-apis.txt`.
 
-use anyhow::{bail, Context, Result};
 use clap::Parser;
 use plasm_compile::{
     compile_cgs_capability_templates, load_compiled_catalog_artifact,
@@ -21,6 +20,91 @@ use plasm_core::schema::CGS;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use thiserror::Error;
+
+type Result<T> = std::result::Result<T, PackError>;
+
+#[derive(Debug, Error)]
+enum PackError {
+    #[error("filesystem operation failed: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("catalog artifact JSON is invalid: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("embedding acquisition failed: {0}")]
+    Embedding(#[from] plasm_agent::discovery_embeddings::EmbeddingAcquisitionError),
+    #[error("catalog {stage} failed for `{entry_id}`: {source}")]
+    CatalogDiagnostic {
+        stage: CatalogStage,
+        entry_id: String,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+    #[error("CGS entry_id `{actual}` does not match directory name `{expected}`")]
+    EntryIdMismatch { actual: String, expected: String },
+    #[error("CGS version must be explicitly set (> 0) for `{entry_id}`")]
+    MissingVersion { entry_id: String },
+    #[error("invalid package list entry `{entry}` in {path}")]
+    InvalidPackageListEntry { entry: String, path: PathBuf },
+    #[error("package list {0} is empty after removing comments and blanks")]
+    EmptyPackageList(PathBuf),
+    #[error("discovery artifact hash mismatch for `{entry_id}`")]
+    DiscoveryHashMismatch { entry_id: String },
+    #[error("duplicate catalog `{entry_id}` in publication")]
+    DuplicateCatalog { entry_id: String },
+    #[error("publication manifest filename is not valid UTF-8: {0}")]
+    InvalidManifestFilename(PathBuf),
+    #[error("--package-list: no usable apis/<name>/ under {apis_root} for: {missing}")]
+    MissingPackagedCatalogs { apis_root: PathBuf, missing: String },
+    #[error("no API packages under {apis_root}{package_list_hint}")]
+    NoCatalogsFound {
+        apis_root: PathBuf,
+        package_list_hint: &'static str,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Error)]
+enum CatalogStage {
+    #[error("schema load")]
+    SchemaLoad,
+    #[error("capability validation")]
+    CapabilityValidation,
+    #[error("OpenAPI pagination validation")]
+    OpenApiPagination,
+    #[error("view validation")]
+    ViewValidation,
+    #[error("CGS validation")]
+    CgsValidation,
+    #[error("catalog set read")]
+    CatalogSetRead,
+    #[error("manifest validation")]
+    ManifestValidation,
+    #[error("catalog artifact read")]
+    CatalogArtifactRead,
+    #[error("compiled artifact read")]
+    CompiledArtifactRead,
+    #[error("discovery artifact read")]
+    DiscoveryArtifactRead,
+    #[error("capability document rendering")]
+    CapabilityDocumentRendering,
+    #[error("discovery validation")]
+    DiscoveryValidation,
+    #[error("CGS JSON IL encoding")]
+    CgsJsonIlEncoding,
+    #[error("request recipe compilation")]
+    RequestRecipeCompilation,
+}
+
+fn catalog_failure(
+    stage: CatalogStage,
+    entry_id: impl Into<String>,
+    source: impl std::error::Error + Send + Sync + 'static,
+) -> PackError {
+    PackError::CatalogDiagnostic {
+        stage,
+        entry_id: entry_id.into(),
+        source: Box::new(source),
+    }
+}
 
 #[derive(clap::Parser, Debug)]
 #[command(name = "plasm-pack-catalogs")]
@@ -58,37 +142,38 @@ fn packed_json_name(entry_id: &str, version: u64, cgs_hash_hex: &str) -> String 
 
 fn prepare_cgs_for_catalog(api_dir: &Path, entry_id: &str) -> Result<CGS> {
     let mut cgs = load_schema_dir_unvalidated(api_dir)
-        .map_err(|e| anyhow::anyhow!("load_schema {}: {e}", api_dir.display()))?;
+        .map_err(|error| catalog_failure(CatalogStage::SchemaLoad, entry_id, error))?;
     validate_cgs_capability_templates(&cgs)
-        .map_err(|e| anyhow::anyhow!("validate {entry_id}: {e}"))?;
-    plasm_compile::validate_catalog_openapi_pagination(&cgs, api_dir)?;
-    validate_cgs_views(&cgs).map_err(|e| anyhow::anyhow!("validate views {entry_id}: {e}"))?;
+        .map_err(|error| catalog_failure(CatalogStage::CapabilityValidation, entry_id, error))?;
+    plasm_compile::validate_catalog_openapi_pagination(&cgs, api_dir)
+        .map_err(|error| catalog_failure(CatalogStage::OpenApiPagination, entry_id, error))?;
+    validate_cgs_views(&cgs)
+        .map_err(|error| catalog_failure(CatalogStage::ViewValidation, entry_id, error))?;
 
     if let Some(ref eid) = cgs.entry_id {
         if eid != entry_id {
-            bail!(
-                "CGS entry_id {:?} does not match directory name {:?}",
-                eid,
-                entry_id
-            );
+            return Err(PackError::EntryIdMismatch {
+                actual: eid.clone(),
+                expected: entry_id.to_owned(),
+            });
         }
     }
 
     cgs.bind_registry_entry_id(entry_id);
     if cgs.version == 0 {
-        bail!(
-            "CGS version must be explicitly set (> 0) for `{}` (no defaulting)",
-            entry_id
-        );
+        return Err(PackError::MissingVersion {
+            entry_id: entry_id.to_owned(),
+        });
     }
 
-    finalize_cgs_load(&mut cgs).map_err(|e| anyhow::anyhow!("CGS validate {entry_id}: {e}"))?;
+    finalize_cgs_load(&mut cgs)
+        .map_err(|error| catalog_failure(CatalogStage::CgsValidation, entry_id, error))?;
 
     Ok(cgs)
 }
 
 fn load_package_list(path: &Path) -> Result<HashSet<String>> {
-    let raw = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let raw = fs::read_to_string(path)?;
     let mut out = HashSet::new();
     for line in raw.lines() {
         let line = line.split('#').next().unwrap_or("").trim();
@@ -96,19 +181,15 @@ fn load_package_list(path: &Path) -> Result<HashSet<String>> {
             continue;
         }
         if line.contains('/') || line.contains('\\') || line.contains("..") {
-            bail!(
-                "invalid package list entry {:?} in {} (expected a single directory name under apis/)",
-                line,
-                path.display()
-            );
+            return Err(PackError::InvalidPackageListEntry {
+                entry: line.to_owned(),
+                path: path.to_owned(),
+            });
         }
         out.insert(line.to_string());
     }
     if out.is_empty() {
-        bail!(
-            "package list {} is empty after removing comments and blanks",
-            path.display()
-        );
+        return Err(PackError::EmptyPackageList(path.to_owned()));
     }
     Ok(out)
 }
@@ -122,7 +203,9 @@ async fn reusable_catalogs(
     if !out_dir.join("catalog-set.json").exists() {
         return Ok(reusable);
     }
-    for path in plasm_core::catalog_il::read_catalog_set(out_dir).map_err(anyhow::Error::msg)? {
+    for path in plasm_core::catalog_il::read_catalog_set(out_dir)
+        .map_err(|error| catalog_failure(CatalogStage::CatalogSetRead, "publication", error))?
+    {
         let manifest: CatalogManifest = match serde_json::from_slice(&fs::read(&path)?) {
             Ok(manifest) => manifest,
             Err(error) => {
@@ -139,31 +222,49 @@ async fn reusable_catalogs(
         {
             continue;
         }
-        manifest.validate_format().map_err(anyhow::Error::msg)?;
+        manifest.validate_format().map_err(|error| {
+            catalog_failure(CatalogStage::ManifestValidation, &manifest.entry_id, error)
+        })?;
         let discovery_bytes = fs::read(out_dir.join(&manifest.discovery_json))?;
         if plasm_core::catalog_discovery::content_hash(&discovery_bytes) != manifest.discovery_hash
         {
-            bail!("discovery artifact hash mismatch for {}", manifest.entry_id);
+            return Err(PackError::DiscoveryHashMismatch {
+                entry_id: manifest.entry_id,
+            });
         }
         let artifact: plasm_core::catalog_discovery::CatalogDiscoveryArtifact =
             serde_json::from_slice(&discovery_bytes)?;
         if artifact.renderer_version != plasm_core::catalog_discovery::DISCOVERY_RENDERER_VERSION {
             continue;
         }
-        let cgs = plasm_core::catalog_il::load_catalog_artifact(out_dir, &manifest)
-            .map_err(anyhow::Error::msg)?;
-        load_compiled_catalog_artifact(out_dir, &manifest, &cgs).map_err(anyhow::Error::msg)?;
+        let cgs =
+            plasm_core::catalog_il::load_catalog_artifact(out_dir, &manifest).map_err(|error| {
+                catalog_failure(CatalogStage::CatalogArtifactRead, &manifest.entry_id, error)
+            })?;
+        load_compiled_catalog_artifact(out_dir, &manifest, &cgs).map_err(|error| {
+            catalog_failure(
+                CatalogStage::CompiledArtifactRead,
+                &manifest.entry_id,
+                error,
+            )
+        })?;
         let artifact = plasm_core::catalog_il::load_discovery_artifact(out_dir, &manifest, &cgs)
-            .map_err(anyhow::Error::msg)?;
+            .map_err(|error| {
+                catalog_failure(
+                    CatalogStage::DiscoveryArtifactRead,
+                    &manifest.entry_id,
+                    error,
+                )
+            })?;
         plasm_agent::discovery_embeddings::cache_artifact(&artifact, embedding_cache).await?;
         let name = path
             .file_name()
             .and_then(|name| name.to_str())
-            .context("manifest filename")?
+            .ok_or_else(|| PackError::InvalidManifestFilename(path.clone()))?
             .to_string();
         let entry = manifest.entry_id.clone();
         if reusable.insert(entry.clone(), (name, manifest)).is_some() {
-            bail!("duplicate catalog {entry} in publication");
+            return Err(PackError::DuplicateCatalog { entry_id: entry });
         }
     }
     Ok(reusable)
@@ -176,8 +277,7 @@ fn prepare_catalogs(
 ) -> Result<Vec<(String, CGS)>> {
     let mut catalogs = Vec::new();
     let mut seen_allowed = HashSet::new();
-    let mut paths = fs::read_dir(apis_root)
-        .with_context(|| format!("read_dir {}", apis_root.display()))?
+    let mut paths = fs::read_dir(apis_root)?
         .map(|entry| entry.map(|entry| entry.path()))
         .collect::<std::io::Result<Vec<_>>>()?;
     paths.sort();
@@ -215,24 +315,22 @@ fn prepare_catalogs(
                 .map(|s| s.as_str())
                 .collect::<Vec<_>>()
                 .join(", ");
-            bail!(
-                "--package-list: no usable apis/<name>/ under {} for: {} (each needs domain.yaml + mappings.yaml)",
-                apis_root.display(),
-                msg
-            );
+            return Err(PackError::MissingPackagedCatalogs {
+                apis_root: apis_root.to_owned(),
+                missing: msg,
+            });
         }
     }
 
     if catalogs.is_empty() {
-        bail!(
-            "no API packages under {}: expected subdirs with domain.yaml and mappings.yaml{}",
-            apis_root.display(),
-            if allowed.is_some() {
+        return Err(PackError::NoCatalogsFound {
+            apis_root: apis_root.to_owned(),
+            package_list_hint: if allowed.is_some() {
                 " (check --package-list)"
             } else {
-                ""
-            }
-        );
+                ": expected subdirs with domain.yaml and mappings.yaml"
+            },
+        });
     }
 
     Ok(catalogs)
@@ -245,21 +343,20 @@ async fn main() -> Result<()> {
 }
 
 async fn pack(args: Args) -> Result<()> {
-    let workspace = fs::canonicalize(&args.workspace).context("workspace path")?;
+    let workspace = fs::canonicalize(&args.workspace)?;
     let apis_root = if args.apis_root.is_absolute() {
         args.apis_root.clone()
     } else {
         workspace.join(&args.apis_root)
     };
-    let apis_root = fs::canonicalize(apis_root).context("apis_root")?;
+    let apis_root = fs::canonicalize(apis_root)?;
 
     let out_dir = if args.output_dir.is_absolute() {
         args.output_dir.clone()
     } else {
         workspace.join(&args.output_dir)
     };
-    fs::create_dir_all(&out_dir)
-        .with_context(|| format!("create_dir_all {}", out_dir.display()))?;
+    fs::create_dir_all(&out_dir)?;
 
     let allowed: Option<HashSet<String>> = match &args.package_list {
         Some(p) => {
@@ -285,8 +382,7 @@ async fn pack(args: Args) -> Result<()> {
     let mut packed = 0usize;
     let mut skipped = 0usize;
     let cache_dir = out_dir.join(".plasm-pack-cache");
-    fs::create_dir_all(&cache_dir)
-        .with_context(|| format!("create_dir_all {}", cache_dir.display()))?;
+    fs::create_dir_all(&cache_dir)?;
 
     let embedding_cache_dir = args
         .embedding_cache_dir
@@ -324,12 +420,12 @@ async fn pack(args: Args) -> Result<()> {
 
         eprintln!("plasm-pack-catalogs: packing `{name}` …");
         let json_bytes = cgs_to_catalog_il_bytes(&cgs)
-            .map_err(|e| anyhow::anyhow!("encode CGS JSON IL: {e}"))?;
-        plasm_agent::discovery_embeddings::atomic_write(&json_dest, &json_bytes)
-            .with_context(|| format!("write {}", json_dest.display()))?;
+            .map_err(|error| catalog_failure(CatalogStage::CgsJsonIlEncoding, name, error))?;
+        plasm_agent::discovery_embeddings::atomic_write(&json_dest, &json_bytes)?;
 
-        let recipes = compile_cgs_capability_templates(&cgs)
-            .map_err(|error| anyhow::anyhow!("compile request recipes for {name}: {error}"))?;
+        let recipes = compile_cgs_capability_templates(&cgs).map_err(|error| {
+            catalog_failure(CatalogStage::RequestRecipeCompilation, name, error)
+        })?;
         let recipes_bytes = serde_json::to_vec(&recipes)?;
         let recipes_hash = plasm_core::catalog_discovery::content_hash(&recipes_bytes);
         let recipes_json = format!(
@@ -342,8 +438,10 @@ async fn pack(args: Args) -> Result<()> {
             &recipes_bytes,
         )?;
 
-        let documents = plasm_core::catalog_discovery::capability_documents(&cgs)
-            .map_err(anyhow::Error::msg)?;
+        let documents =
+            plasm_core::catalog_discovery::capability_documents(&cgs).map_err(|error| {
+                catalog_failure(CatalogStage::CapabilityDocumentRendering, name, error)
+            })?;
         let embedded =
             plasm_agent::discovery_embeddings::embed_documents(documents, &embedding_cache_dir)
                 .await?;
@@ -360,7 +458,9 @@ async fn pack(args: Args) -> Result<()> {
             capabilities: embedded.capabilities,
             prerequisites: cgs.prerequisites.clone(),
         };
-        discovery.validate(&cgs).map_err(anyhow::Error::msg)?;
+        discovery
+            .validate(&cgs)
+            .map_err(|error| catalog_failure(CatalogStage::DiscoveryValidation, name, error))?;
         let discovery_bytes = serde_json::to_vec(&discovery)?;
         let discovery_hash = plasm_core::catalog_discovery::content_hash(&discovery_bytes);
         let discovery_json = format!(
@@ -389,16 +489,15 @@ async fn pack(args: Args) -> Result<()> {
         };
         manifest
             .validate_format()
-            .map_err(|e| anyhow::anyhow!("manifest validate: {e}"))?;
-        let manifest_json = serde_json::to_string_pretty(&manifest).context("manifest json")?;
+            .map_err(|error| catalog_failure(CatalogStage::ManifestValidation, name, error))?;
+        let manifest_json = serde_json::to_string_pretty(&manifest)?;
         let manifest_name = format!(
             "{}.{}.manifest.json",
             catalog_artifact_stem(name, cgs.version, &cgs_hash),
             manifest.discovery_hash
         );
         let manifest_dest = out_dir.join(&manifest_name);
-        plasm_agent::discovery_embeddings::atomic_write(&manifest_dest, manifest_json.as_bytes())
-            .with_context(|| format!("write {}", manifest_dest.display()))?;
+        plasm_agent::discovery_embeddings::atomic_write(&manifest_dest, manifest_json.as_bytes())?;
 
         published_manifests.push(manifest_name);
 
@@ -441,6 +540,77 @@ mod tests {
     use super::*;
     use plasm_core::prerequisites::{prerequisite_closure, CapabilityRef, DeploymentBindings};
     use std::collections::{BTreeMap, BTreeSet};
+
+    #[test]
+    fn catalog_failure_preserves_stage_and_concrete_source_chain() {
+        use std::error::Error as _;
+        let error = catalog_failure(
+            CatalogStage::CatalogArtifactRead,
+            "fixture",
+            plasm_core::catalog_il::CatalogIlError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "missing artifact",
+            )),
+        );
+        assert!(matches!(
+            &error,
+            PackError::CatalogDiagnostic {
+                stage: CatalogStage::CatalogArtifactRead,
+                entry_id,
+                ..
+            } if entry_id == "fixture"
+        ));
+        let source = error.source().unwrap();
+        assert!(source.is::<plasm_core::catalog_il::CatalogIlError>());
+        assert_eq!(
+            source
+                .source()
+                .unwrap()
+                .downcast_ref::<std::io::Error>()
+                .unwrap()
+                .kind(),
+            std::io::ErrorKind::NotFound
+        );
+        assert!(error
+            .to_string()
+            .contains("catalog artifact read failed for `fixture`"));
+    }
+
+    #[test]
+    fn pack_preflight_preserves_schema_load_source() {
+        use std::error::Error as _;
+        let directory = tempfile::tempdir().unwrap();
+        let error = prepare_cgs_for_catalog(directory.path(), "fixture").unwrap_err();
+        assert!(matches!(
+            &error,
+            PackError::CatalogDiagnostic {
+                stage: CatalogStage::SchemaLoad,
+                ..
+            }
+        ));
+        assert!(error
+            .source()
+            .unwrap()
+            .is::<plasm_core::loader::SchemaLoadError>());
+    }
+
+    #[test]
+    fn package_list_rejections_are_semantic_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let invalid = dir.path().join("invalid.txt");
+        fs::write(&invalid, "api/child\n").unwrap();
+        assert!(matches!(
+            load_package_list(&invalid),
+            Err(PackError::InvalidPackageListEntry { entry, .. }) if entry == "api/child"
+        ));
+
+        let empty = dir.path().join("empty.txt");
+        fs::write(&empty, "# comment\n  \n").unwrap();
+        assert!(matches!(
+            load_package_list(&empty),
+            Err(PackError::EmptyPackageList(path)) if path == empty
+        ));
+    }
 
     #[test]
     fn all_catalog_packages_pass_pack_preflight() {

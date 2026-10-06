@@ -133,9 +133,11 @@ pub mod result_gloss;
 pub mod row_composition;
 pub mod row_contract;
 mod value_hash;
-pub use value_hash::{hash_resolved_value, visit_resolved_value_bytes, visit_stored_value_bytes};
+pub use value_hash::{
+    hash_resolved_value, visit_resolved_value_bytes, visit_stored_value_bytes, ValueHashError,
+};
 mod value_row;
-pub use value_row::ValueRow;
+pub use value_row::{ValueRow, ValueRowError};
 pub mod row_membership;
 pub mod row_plan;
 pub mod row_predicate;
@@ -210,7 +212,7 @@ pub use entity_ref_value::{
     normalize_entity_ref_value_for_target, try_narrow_entity_row_to_entity_ref_value,
     EntityRefAtom, EntityRefPayload, EntityRefValueError, ScopeEntityRefNormalizeError,
 };
-pub use error::{NormalizationError, SchemaError, TypeError};
+pub use error::{NormalizationError, SchemaError, TypeError, ValueDomainViolation};
 pub use expr::{
     lift_invoke_payloads_in_expr, CancelExpr, ChainExpr, ChainStep, CreateExpr, DeleteExpr,
     EntityKey, Expr, GetExpr, IdentitySlot, InvokeExpr, PageExpr, QueryExpr, QueryPagination, Ref,
@@ -226,7 +228,9 @@ pub use identity::{
 };
 pub use loader::{
     finalize_cgs_load, load_schema, load_schema_dir, load_schema_dir_unvalidated,
-    load_split_schema, plasm_cgs_fast_load_enabled, PathSchemaSource, SchemaSource,
+    load_split_schema, plasm_cgs_fast_load_enabled, CapabilityInputAssemblyError,
+    CapabilityParameterError, DomainArrayItemsError, PathSchemaSource, SchemaAssemblyError,
+    SchemaFileKind, SchemaFileReadError, SchemaLoadError, SchemaSource,
 };
 pub use normalizer::{is_normalized, normalize};
 pub use operation_handle::{OperationHandle, OperationHandleParseError};
@@ -244,7 +248,7 @@ pub use path_env::{
 pub use phrase_ident::{
     is_identifier_phrase, lower_program_phrase_idents_in_expr,
     lower_program_phrase_idents_in_expr_federated, quoted_literal_hint,
-    unquote_single_string_literal, PhraseIdentFieldContext,
+    unquote_single_string_literal, PhraseIdentError, PhraseIdentFieldContext,
 };
 pub use plan_commit::{PlanCommitId, PlanCommitRef};
 pub use plasm_monad::{
@@ -256,10 +260,11 @@ pub use plasm_monad::{
     InvokePayload, MapPayload, OutputName, PlanDataInput, PlanExprIr, PlanExprTemplate,
     PlanInputBinding, PlanPredicate, PlanPredicateOp, PlanQualifiedEntityKey,
     PlanRelationTraversal, PlanResultUse, PlasmBindGraph, PlasmComp, PlasmCompArtifact,
-    PlasmDataValue, PlasmHoleUse, PlasmReturn, PlasmStep, PlasmStepKind, PlasmStepPayload,
-    PurePayload, RelationCardinality, RelationSourceCardinality, ResultShape, RewritePolicy,
-    StepId, SurfaceKind, SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind,
-    UnfoldUntilPayload, WithColumn, WithExpr, WithExprError, WithLiteral, PLASM_COMP_WIRE_VERSION,
+    PlasmDataValue, PlasmDataValueError, PlasmDataValueEvaluationError, PlasmHoleUse, PlasmReturn,
+    PlasmStep, PlasmStepKind, PlasmStepPayload, PurePayload, RelationCardinality,
+    RelationSourceCardinality, ResultShape, RewritePolicy, StepId, SurfaceKind,
+    SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind, UnfoldUntilPayload,
+    WithColumn, WithExpr, WithExprError, WithLiteral, PLASM_COMP_WIRE_VERSION,
 };
 pub use predicate::Predicate;
 pub use preflight::{
@@ -291,7 +296,8 @@ pub use query_defaults::{
 pub use query_resolve::{
     normalize_expr_query_capabilities, normalize_expr_query_capabilities_federated,
     required_scope_param_names, resolve_query_capability, sole_nullary_singleton_get,
-    sole_nullary_singleton_get_for_bare_query, QueryCapabilityResolveError,
+    sole_nullary_singleton_get_for_bare_query, QueryCapabilityResolveError, QueryMatchError,
+    QueryScopeRequirement,
 };
 pub use resolved_identity::{IdentityProjectionCtx, ResolvedIdentity};
 pub use row_composition::{
@@ -300,17 +306,18 @@ pub use row_composition::{
 };
 pub use row_membership::{
     parse_closed_rowset_ref, parse_membership_clause, split_where_and_clauses, MembershipRhs,
-    RowMembership,
+    RowMembership, RowMembershipParseError,
 };
 pub use row_plan::{
     fold_compute_ops, parse_with_body, CatalogFilter, CollectCardinality, CollectReason,
     CollectRows, CollectedFrame, CompileRowPlan, EnginePlanId, FrameId, FrameShape, IngestBatch,
-    IngestRows, PlanNode, PlasmFrameSchema, ProjectSpec, RowComputeEngine, RowComputeError,
-    RowFilter, RowPlan, ScanError, ScanSource, TypedAggregate,
+    IngestRows, PlanNode, PlasmFrameSchema, PredicateCompileError, ProjectSpec, RowComputeEngine,
+    RowComputeError, RowCorrespondenceError, RowFilter, RowPlan, ScanError, ScanSource,
+    TypedAggregate,
 };
 pub use row_predicate::{
     entity_def_for_row_predicate, parse_row_predicate_list, row_predicate_from_expr,
-    type_check_row_predicate, RowComparison, RowPredicate, RowPredicateTypeCtx,
+    type_check_row_predicate, RowComparison, RowPredicate, RowPredicateError, RowPredicateTypeCtx,
 };
 pub use row_union::union_rowsets;
 pub use rowset::{
@@ -330,7 +337,9 @@ pub use wire_coercion::{
     field_type_assignable_for_relation_binding, identity_slot_to_json, identity_slot_to_value,
     json_value_to_plasm_value, parent_entity_field_type, plasm_value_to_json,
     relation_binding_assignable, restore_id_field_from_compound_ref, try_plasm_value_to_json,
-    value_compatible_with_field_type, DecodeFieldDiagnostic, RelationBindingProof,
+    value_compatible_with_field_type, CoercionError, DecodeFieldCause, DecodeFieldDiagnostic,
+    DigitIdCoercionError, ParentFieldTypeError, RelationBindingProof, RelationBindingProofError,
+    WireEncodingError,
 };
 pub mod relation_materialize;
 pub mod view_embed_proof;
@@ -357,7 +366,8 @@ pub use relation_materialize::{
     extract_from_parent_get_value, flatten_from_parent_get_source_rows,
     from_parent_get_embed_edges, partition_prefer_resolutions, prefer_hydrate_embed_path,
     relation_refs_fully_resolved, resolve_relation_row_resolution,
-    validate_from_parent_get_embed_acyclic, RelationRowResolution, MAX_FROM_PARENT_GET_EMBED_DEPTH,
+    validate_from_parent_get_embed_acyclic, EntityCycle, RelationRowResolution,
+    MAX_FROM_PARENT_GET_EMBED_DEPTH,
 };
 pub use relation_segment::{
     relation_segment_wrong_role_message, resolve_relation_segment, ProgramBindingLabel,
@@ -379,14 +389,15 @@ pub use schema::{
     OauthExtension, OauthRequirements, OauthScopeEntry, OutputSchema, OutputType,
     ParentScopeSchema, RelationMaterialization, RelationSchema, RelationScopedFallback,
     ResourceSchema, ScopeAggregateKeyPolicy, ScopeRequirement, SelectionEffect, SinkClassName,
-    ValueDomainKey, ValueDomainSlot, ViewDefinition, ViewNodeSpec, ViewOutputBinding,
-    ViewParamBinding, ViewRelationBinding, ViewRelationOutputSpec, ViewScopeInject, ViewScopeParam,
-    ViewTraversal, WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
+    ValueDomainKey, ValueDomainKeyError, ValueDomainSlot, ViewDefinition, ViewNodeSpec,
+    ViewOutputBinding, ViewParamBinding, ViewRelationBinding, ViewRelationOutputSpec,
+    ViewScopeInject, ViewScopeParam, ViewTraversal, WireVariantDiscriminator, CGS,
+    DEFAULT_HTTP_BACKEND,
 };
 pub use schema_overlay::{
     build_decode_scope_key, build_schema_overlay, overlay_bind_cache_suffix, overlay_collect_rows,
     overlay_entity_for_scope, overlay_merge_step_response, overlay_pipeline_cache_suffix,
-    resolve_overlay_row_bind, walk_json_path, SchemaOverlay, SchemaOverlaySpec,
+    resolve_overlay_row_bind, walk_json_path, SchemaOverlay, SchemaOverlayError, SchemaOverlaySpec,
 };
 pub use scope_entity_ref_infer::{
     effective_capability_input, prepare_create_capability_input, prepare_targeted_capability_input,
@@ -415,27 +426,31 @@ pub use symbol_tuning::{
 pub use template_ref::{RefKind, TemplateRefContext};
 pub use temporal::{
     normalize_temporal_value, parse_temporal_now_env, temporal_reference_now,
-    temporal_wire_format_from_name, wire_temporal_value,
+    temporal_wire_format_from_name, wire_temporal_value, TemporalNormalizationError,
+    TemporalNowError, TemporalPatternError, TemporalWireFormatError,
 };
+pub use temporal_value::{TemporalComponent, TemporalKind, TemporalValueError};
 pub use type_checker::{
     reject_domain_placeholder_in_executable, type_check_chain, type_check_create,
     type_check_delete, type_check_expr, type_check_expr_federated, type_check_get,
     type_check_invoke, type_check_predicate, type_check_query,
 };
-pub use typed_invoke::{InvokeInputPayload, TypedInvokeInput};
+pub use typed_invoke::{
+    InvokeInputPayload, TypedInvokeInput, TypedInvokeInputError, TypedInvokeLiftError,
+};
 pub use typed_literal::{TypedComparisonValue, TypedLiteral, TypedLiteralError};
 pub use typed_row::TypedFieldValue;
 pub use value::{
     CompOp, FieldType, GetScalarExtract, PlasmInputRef, TemporalWireFormat, Value,
-    ValueTableCellBudget, ValueWireFormat, PLASM_ATTACHMENT_KEY,
+    ValueBudgetError, ValueTableCellBudget, ValueWireFormat, PLASM_ATTACHMENT_KEY,
 };
 pub use value_domain::{
     compile_pattern, parse_type_name, validate_constraints_on_number,
     validate_constraints_on_string, validate_number_constraints, validate_string_constraints,
     validate_string_profile, Constraints, EnumMembership, KernelKind, ProfileId, ValueDomain,
-    ENUM_GLOSS_FORBIDDEN_CHARS,
+    ValueDomainError, ENUM_GLOSS_FORBIDDEN_CHARS,
 };
-pub use view_embed_proof::ValidatedViewEmbedProof;
+pub use view_embed_proof::{ValidatedViewEmbedProof, ViewEmbedProofError};
 pub use workflow_identity::{
     ReconcileBindSource, ReconcileSpec, ViewNodeCondition, ViewNodeWhen, WorkflowConflict,
     WorkflowConflictKind, WriteOutcome,
@@ -447,7 +462,7 @@ pub mod boolean_expr;
 pub use boolean_expr::BooleanExpr;
 
 pub mod boolean_surface;
-pub use boolean_surface::parse_boolean_filter;
+pub use boolean_surface::{parse_boolean_filter, BooleanFilterError};
 
 pub mod entity_projection;
 

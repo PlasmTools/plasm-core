@@ -77,7 +77,7 @@ fn python_wave(cgs: &CGS) -> Result<PythonTeachingWave, SchemaError> {
     prepare_python_teaching_wave(&exposure, &Default::default()).map_err(|detail| {
         SchemaError::EntityExpressionIncomplete {
             entity: "<catalog>".into(),
-            detail,
+            source: crate::error::EntityExpressionError::Teaching(std::sync::Arc::new(detail)),
         }
     })
 }
@@ -131,7 +131,7 @@ fn validate_python_surface(cgs: &CGS) -> Result<(), SchemaError> {
         {
             return Err(SchemaError::EntityExpressionIncomplete {
                 entity: name.to_string(),
-                detail: "No declared root capability or relation produces a receiver; add a get, query, search, create or declared entity output.".into(),
+                source: crate::error::EntityExpressionError::ReceiverUnavailable,
             });
         }
     }

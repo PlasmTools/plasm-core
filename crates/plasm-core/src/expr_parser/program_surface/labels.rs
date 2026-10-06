@@ -1,5 +1,6 @@
 //! Program labels and pipe-head catalog surface checks.
 
+#[cfg(test)]
 use super::errors::program_invalid_binding_label_error;
 
 /// Whole binding names in these numbered symbol families are reserved.
@@ -48,10 +49,10 @@ pub fn pipe_head_has_catalog_surface_syntax(head: &str) -> bool {
 }
 
 /// Parse-time pipe head: catalog-shaped surface or plain binding label.
-pub fn validate_pipe_head_syntax(head: &str) -> Result<(), String> {
+pub fn validate_pipe_head_syntax(head: &str) -> Result<(), super::SurfaceSyntaxError> {
     let head = head.trim();
     if head.is_empty() {
-        return Err("pipe head must not be empty".into());
+        return Err(super::SurfaceSyntaxError::EmptyPipeHead);
     }
     if pipe_head_has_catalog_surface_syntax(head) {
         return Ok(());
@@ -59,14 +60,16 @@ pub fn validate_pipe_head_syntax(head: &str) -> Result<(), String> {
     if is_valid_program_label(head) {
         return Ok(());
     }
-    Err(format!(
-        "unknown pipe head `{head}`; use a catalog source (`e#{{…}} | …`) or a binding label (`rows | …`)"
-    ))
+    Err(super::SurfaceSyntaxError::UnknownPipeHead {
+        head: head.to_owned(),
+    })
 }
 
-pub fn validate_program_label(label: &str) -> Result<(), String> {
+pub fn validate_program_label(label: &str) -> Result<(), super::SurfaceSyntaxError> {
     if !is_valid_program_label(label) || matches!(label, "_" | "$" | "return") {
-        return Err(program_invalid_binding_label_error(label));
+        return Err(super::SurfaceSyntaxError::InvalidBindingLabel {
+            label: label.to_owned(),
+        });
     }
     Ok(())
 }

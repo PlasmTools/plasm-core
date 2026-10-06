@@ -28,13 +28,13 @@ impl DiscoveryDatabase {
         })
     }
 
-    pub(super) async fn acquire(&self) -> Result<DiscoveryConnection, sqlx::Error> {
+    pub(super) async fn acquire(&self) -> Result<DiscoveryConnection, super::DiscoveryStoreError> {
         let permit = self
             .admission
             .clone()
             .acquire_owned()
             .await
-            .map_err(|_| sqlx::Error::PoolClosed)?;
+            .map_err(super::DiscoveryStoreError::Admission)?;
         let connection = self.pool.acquire().await?;
         Ok(DiscoveryConnection {
             connection,
@@ -81,6 +81,28 @@ mod tests {
     use std::time::Duration;
 
     #[tokio::test]
+    async fn closed_admission_retains_acquire_source() {
+        let db = DiscoveryDatabase {
+            pool: PgPoolOptions::new()
+                .connect_lazy("postgresql://localhost/discovery_test")
+                .unwrap(),
+            admission: Arc::new(Semaphore::new(1)),
+        };
+        db.admission.close();
+        let error = match db.acquire().await {
+            Err(error) => error,
+            Ok(_) => panic!("closed admission accepted a connection"),
+        };
+        assert!(matches!(
+            error,
+            super::super::DiscoveryStoreError::Admission(_)
+        ));
+        assert!(std::error::Error::source(&error)
+            .unwrap()
+            .is::<tokio::sync::AcquireError>());
+    }
+
+    #[tokio::test]
     #[ignore = "requires PLASM_TEST_POSTGRES_URL"]
     async fn discovery_database_burst_waits_without_pool_timeouts() {
         let url = std::env::var("PLASM_TEST_POSTGRES_URL").unwrap();
@@ -107,6 +129,7 @@ mod tests {
                 sqlx::query_scalar::<_, i32>("SELECT 1")
                     .fetch_one(&mut *db.acquire().await?)
                     .await
+                    .map_err(super::super::DiscoveryStoreError::from)
             });
         }
         tokio::time::sleep(Duration::from_millis(300)).await;

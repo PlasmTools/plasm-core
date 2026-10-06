@@ -8,8 +8,76 @@ use crate::python_row_shape::PythonRowShape;
 use crate::symbol_tuning::{SymbolMap, TeachingExposureSession};
 use crate::value_contract::ValueContract;
 use crate::{CapabilityKind, FieldType, InputFieldWire, OutputType, ValueDomainKey, CGS};
+use thiserror::Error;
 
 pub const LANGUAGE: &str = include_str!("assets/python-plasm-dag.txt");
+
+#[derive(Debug, Error)]
+pub enum PythonTeachingError {
+    #[error("Python teaching language changed within a pinned session")]
+    LanguageChanged,
+    #[error("member symbol `{symbol}` changed ownership or disappeared")]
+    MemberSymbolChanged { symbol: String },
+    #[error("entity symbol `{symbol}` changed ownership")]
+    EntitySymbolChanged { symbol: String },
+    #[error("catalog `{entry}` is absent from teaching exposure")]
+    MissingCatalog { entry: String },
+    #[error("catalog `{entry}` changed within a Python session")]
+    CatalogChanged { entry: String },
+    #[error("teaching removed previously delivered members from `{symbol}`")]
+    RemovedMembers { symbol: String },
+    #[error("teaching removed declaration `{symbol}`")]
+    RemovedDeclaration { symbol: String },
+    #[error("value symbol `{symbol}` changed meaning")]
+    ValueSymbolChanged { symbol: String },
+    #[error("declaration `{symbol}` changed without adding members")]
+    DeclarationChangedWithoutMembers { symbol: String },
+    #[error("named value `{key}` is absent from catalog")]
+    MissingValue { key: String },
+    #[error("named value `{key}` has an invalid typed contract: {source}")]
+    InvalidValueContract {
+        key: String,
+        #[source]
+        source: crate::value_contract::ValueContractError,
+    },
+    #[error("named value `{key}` cannot be serialized")]
+    SerializeValueDomain {
+        key: String,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("domain declaration `{symbol}` conflicts with an earlier declaration")]
+    ConflictingDomainDeclaration { symbol: String },
+    #[error("entity `{entity}` is absent from catalog")]
+    MissingEntity { entity: String },
+    #[error("wire name `{name}` is not a valid Python identifier")]
+    InvalidPythonIdentifier { name: String },
+    #[error("capability `{capability}` is absent from catalog")]
+    MissingCapability { capability: String },
+    #[error("generated capability signature has no opening parenthesis")]
+    InvalidGeneratedSignature,
+    #[error("generated capability signature has no receiver")]
+    MissingGeneratedReceiver,
+    #[error("generated capability signature has no body")]
+    MissingGeneratedSignatureBody,
+    #[error("input declaration exceeds the supported nesting depth")]
+    InputNestingLimit,
+    #[error("generated input schema is invalid")]
+    InvalidGeneratedInputSchema {
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("Get capability `{capability}` has no entity")]
+    MissingGetEntity { capability: String },
+    #[error("identity field `{field}` is not typed on entity `{entity}`")]
+    MissingIdentityField { entity: String, field: String },
+    #[error("capability `{capability}` requires a closed-object signature witness")]
+    MissingInvocationSignatureWitness { capability: String },
+    #[error("output entity `{entity}` is not exposed")]
+    OutputEntityNotExposed { entity: String },
+    #[error("custom/status output requires a typed return witness")]
+    MissingTypedReturnWitness { capability: String },
+}
 
 /// Catalog identity of a delivered member, independent of presentation layout.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
@@ -91,9 +159,9 @@ pub fn capability_method_name(
 pub fn prepare_python_teaching_wave(
     exposure: &TeachingExposureSession,
     previous: &PythonTeachingState,
-) -> Result<PythonTeachingWave, String> {
+) -> Result<PythonTeachingWave, PythonTeachingError> {
     if !previous.language.is_empty() && previous.language != LANGUAGE {
-        return Err("Python language changed; open a new language-pinned session".into());
+        return Err(PythonTeachingError::LanguageChanged);
     }
     let symbols = exposure.to_symbol_map();
     let mut member_bindings = BTreeMap::new();
@@ -123,7 +191,9 @@ pub fn prepare_python_teaching_wave(
     }
     for (symbol, binding) in &previous.member_bindings {
         if member_bindings.get(symbol) != Some(binding) {
-            return Err(format!("member symbol {symbol} changed or was removed"));
+            return Err(PythonTeachingError::MemberSymbolChanged {
+                symbol: symbol.clone(),
+            });
         }
     }
     let mut renderer = Renderer {
@@ -145,29 +215,34 @@ pub fn prepare_python_teaching_wave(
             .get(&row.symbol)
             .is_some_and(|old| old != &binding)
         {
-            return Err(format!("entity symbol {} changed ownership", row.symbol));
+            return Err(PythonTeachingError::EntitySymbolChanged {
+                symbol: row.symbol.clone(),
+            });
         }
         entity_bindings.insert(row.symbol.clone(), binding);
         let cgs = exposure
             .catalog_cgs_for_entry(&row.entry_id)
-            .ok_or("missing catalog")?;
+            .ok_or_else(|| PythonTeachingError::MissingCatalog {
+                entry: row.entry_id.clone(),
+            })?;
         let hash = cgs.catalog_cgs_hash_hex();
         if previous
             .catalog_hashes
             .get(&row.entry_id)
             .is_some_and(|old| old != &hash)
         {
-            return Err(format!(
-                "catalog {} changed within a Python session",
-                row.entry_id
-            ));
+            return Err(PythonTeachingError::CatalogChanged {
+                entry: row.entry_id.clone(),
+            });
         }
         hashes.insert(row.entry_id.clone(), hash);
         let complete = renderer.entity(cgs, &row.entry_id, &row.entity, &row.symbol, None)?;
         if let Some(delivered) = previous.delivered_members.get(&row.symbol) {
             let current = &renderer.delivered_members[&row.symbol];
             if !delivered.is_subset(current) {
-                return Err(format!("teaching removed members of {}", row.symbol));
+                return Err(PythonTeachingError::RemovedMembers {
+                    symbol: row.symbol.clone(),
+                });
             }
             if current != delivered {
                 entity_deltas.insert(
@@ -185,12 +260,15 @@ pub fn prepare_python_teaching_wave(
         renderer.definitions.insert(row.symbol.clone(), complete);
     }
     for (symbol, old) in &previous.declarations {
-        let new = renderer
-            .definitions
-            .get(symbol)
-            .ok_or_else(|| format!("teaching removed {symbol}"))?;
+        let new = renderer.definitions.get(symbol).ok_or_else(|| {
+            PythonTeachingError::RemovedDeclaration {
+                symbol: symbol.clone(),
+            }
+        })?;
         if symbol.starts_with('v') && old != new {
-            return Err(format!("value symbol {symbol} changed meaning"));
+            return Err(PythonTeachingError::ValueSymbolChanged {
+                symbol: symbol.clone(),
+            });
         }
     }
     let mut declarations = String::new();
@@ -202,9 +280,9 @@ pub fn prepare_python_teaching_wave(
                     if let Some(delta) = entity_deltas.get(symbol) {
                         declarations.push_str(delta);
                     } else {
-                        return Err(format!(
-                            "declaration {symbol} changed without added members"
-                        ));
+                        return Err(PythonTeachingError::DeclarationChangedWithoutMembers {
+                            symbol: symbol.clone(),
+                        });
                     }
                 } else {
                     declarations.push_str(body);
@@ -251,7 +329,7 @@ impl Renderer<'_> {
         _entity: &str,
         _wire: &str,
         key: &ValueDomainKey,
-    ) -> Result<String, String> {
+    ) -> Result<String, PythonTeachingError> {
         // Existing TSV v# names deduplicate structural shapes across domains.
         // Python aliases carry nominal domain identity, so allocate them separately
         // within this language-pinned session. e#/m#/r# remain shared allocations.
@@ -261,8 +339,18 @@ impl Renderer<'_> {
             .entry((entry.into(), key.as_str().into()))
             .or_insert(next)
             .clone();
-        let value = cgs.values.get(key.as_str()).ok_or("missing named value")?;
-        let contract = ValueContract::from_domain(cgs, entry, key)?;
+        let value =
+            cgs.values
+                .get(key.as_str())
+                .ok_or_else(|| PythonTeachingError::MissingValue {
+                    key: key.as_str().to_owned(),
+                })?;
+        let contract = ValueContract::from_domain(cgs, entry, key).map_err(|source| {
+            PythonTeachingError::InvalidValueContract {
+                key: key.as_str().to_owned(),
+                source,
+            }
+        })?;
         self.value_contracts
             .insert(symbol.clone(), contract.clone());
         let mut ty = contract.python_type();
@@ -289,7 +377,12 @@ impl Renderer<'_> {
         body.push_str(&format!("{symbol}: {ty}"));
         // Shape is already in the alias. Keep non-redundant profile/constraint
         // meaning in comments; the complete recursive contract remains structured.
-        let mut details = serde_json::to_value(&value.domain).map_err(|e| e.to_string())?;
+        let mut details = serde_json::to_value(&value.domain).map_err(|source| {
+            PythonTeachingError::SerializeValueDomain {
+                key: key.as_str().to_owned(),
+                source,
+            }
+        })?;
         if let Some(fields) = details.as_object_mut() {
             if !matches!(value.field_type, FieldType::EntityRef { .. }) {
                 fields.remove("kernel");
@@ -321,7 +414,7 @@ impl Renderer<'_> {
         body.push('\n');
         if let Some(existing) = self.definitions.insert(symbol.clone(), body.clone()) {
             if existing != body {
-                return Err(format!("conflicting domain declarations for {symbol}"));
+                return Err(PythonTeachingError::ConflictingDomainDeclaration { symbol });
             }
         }
         Ok(symbol)
@@ -334,8 +427,12 @@ impl Renderer<'_> {
         name: &str,
         symbol: &str,
         delivered: Option<&BTreeSet<DeliveredMember>>,
-    ) -> Result<String, String> {
-        let entity = cgs.get_entity(name).ok_or("missing entity")?;
+    ) -> Result<String, PythonTeachingError> {
+        let entity = cgs
+            .get_entity(name)
+            .ok_or_else(|| PythonTeachingError::MissingEntity {
+                entity: name.to_owned(),
+            })?;
         let mut body = String::new();
         if delivered.is_some() {
             body.push_str(&format!(
@@ -442,9 +539,11 @@ impl Renderer<'_> {
             if delivered.is_some_and(|members| members.contains(&member)) {
                 continue;
             }
-            let cap = cgs
-                .get_capability(key.capability.as_str())
-                .ok_or("missing capability")?;
+            let cap = cgs.get_capability(key.capability.as_str()).ok_or_else(|| {
+                PythonTeachingError::MissingCapability {
+                    capability: key.capability.to_string(),
+                }
+            })?;
             let mut meaning = String::new();
             comment(&mut meaning, "", &cap.description);
             let result = self.signature(cgs, entry, symbol, cap);
@@ -483,16 +582,16 @@ impl Renderer<'_> {
                         if let Some(declaration) = line.strip_prefix("def ") {
                             let (method, arguments) = declaration
                                 .split_once('(')
-                                .ok_or("invalid generated signature")?;
+                                .ok_or(PythonTeachingError::InvalidGeneratedSignature)?;
                             let arguments = arguments
                                 .strip_prefix("cls, ")
                                 .or_else(|| arguments.strip_prefix("self, "))
                                 .or_else(|| arguments.strip_prefix("cls"))
                                 .or_else(|| arguments.strip_prefix("self"))
-                                .ok_or("missing generated receiver")?;
+                                .ok_or(PythonTeachingError::MissingGeneratedReceiver)?;
                             let arguments = arguments
                                 .strip_suffix(": ...")
-                                .ok_or("invalid generated signature body")?;
+                                .ok_or(PythonTeachingError::MissingGeneratedSignatureBody)?;
                             // Reference cards teach named inputs once in the tool contract.
                             // Preserve the executable signature in coverage metadata.
                             let arguments = arguments.strip_prefix("*, ").unwrap_or(arguments);
@@ -503,6 +602,7 @@ impl Renderer<'_> {
                     None
                 }
                 Err(reason) => {
+                    let reason = reason.to_string();
                     body.push_str(&meaning);
                     comment(
                         &mut body,
@@ -548,7 +648,7 @@ impl Renderer<'_> {
         path: &str,
         field: &crate::InputFieldSchema,
         depth: usize,
-    ) -> Result<String, String> {
+    ) -> Result<String, PythonTeachingError> {
         match &field.wire {
             InputFieldWire::Registry(key) => self.domain(cgs, entry, entity, &field.name, key),
             InputFieldWire::Inline(ty) => self.input_type(cgs, entry, entity, path, ty, depth + 1),
@@ -563,10 +663,10 @@ impl Renderer<'_> {
         path: &str,
         ty: &crate::InputType,
         depth: usize,
-    ) -> Result<String, String> {
+    ) -> Result<String, PythonTeachingError> {
         use crate::InputType;
         if depth > 64 {
-            return Err("input declaration exceeds nesting budget".into());
+            return Err(PythonTeachingError::InputNestingLimit);
         }
         Ok(match ty {
             InputType::None => "None".into(),
@@ -671,7 +771,7 @@ impl Renderer<'_> {
                 let mut types = Vec::new();
                 for variant in variants {
                     let mut fields = variant.fields.clone();
-                    let discriminator: crate::InputFieldSchema = serde_json::from_value(serde_json::json!({"name":variant.wire.field,"required":true,"input_type":{"type":"value","field_type":"string","allowed_values":[variant.wire.value]}})).map_err(|e| e.to_string())?;
+                    let discriminator: crate::InputFieldSchema = serde_json::from_value(serde_json::json!({"name":variant.wire.field,"required":true,"input_type":{"type":"value","field_type":"string","allowed_values":[variant.wire.value]}})).map_err(|source| PythonTeachingError::InvalidGeneratedInputSchema { source })?;
                     fields.push(discriminator);
                     types.push(self.input_type(
                         cgs,
@@ -696,7 +796,7 @@ impl Renderer<'_> {
         entry: &str,
         owner: &str,
         cap: &crate::CapabilitySchema,
-    ) -> Result<String, String> {
+    ) -> Result<String, PythonTeachingError> {
         self.signature_with_path(cgs, entry, owner, cap, cap.name.as_str())
     }
 
@@ -707,7 +807,7 @@ impl Renderer<'_> {
         owner: &str,
         cap: &crate::CapabilitySchema,
         signature_path: &str,
-    ) -> Result<String, String> {
+    ) -> Result<String, PythonTeachingError> {
         // Root variants are overloads, never a flattened set of optional fields.
         for payload in [true, false] {
             let schema = if payload {
@@ -732,7 +832,7 @@ impl Renderer<'_> {
                     fields.insert(0, serde_json::from_value(serde_json::json!({
                         "name": variant.wire.field, "required": true,
                         "input_type": {"type": "value", "field_type": "string", "allowed_values": [variant.wire.value]}
-                    })).map_err(|error| error.to_string())?);
+                    })).map_err(|source| PythonTeachingError::InvalidGeneratedInputSchema { source })?);
                     lane.as_mut().unwrap().input_type = crate::InputType::Object {
                         fields,
                         additional_fields: false,
@@ -758,9 +858,11 @@ impl Renderer<'_> {
         ) || !cap.requires_receiver();
         let method = capability_method_name(cgs, self.symbols, entry, cap);
         if cap.kind == CapabilityKind::Get && cap.get_requires_identity_anchor(cgs) {
-            let entity = cgs
-                .get_entity(cap.domain.as_str())
-                .ok_or("missing Get entity")?;
+            let entity = cgs.get_entity(cap.domain.as_str()).ok_or_else(|| {
+                PythonTeachingError::MissingGetEntity {
+                    capability: cap.name.to_string(),
+                }
+            })?;
             let keys = if entity.key_vars.len() > 1 {
                 entity.key_vars.clone()
             } else {
@@ -770,10 +872,12 @@ impl Renderer<'_> {
                 params.push("*".into());
             }
             for key in keys {
-                let field = entity
-                    .fields
-                    .get(key.as_str())
-                    .ok_or("identity has no typed field")?;
+                let field = entity.fields.get(key.as_str()).ok_or_else(|| {
+                    PythonTeachingError::MissingIdentityField {
+                        entity: entity.name.to_string(),
+                        field: key.to_string(),
+                    }
+                })?;
                 let ty = self.domain(
                     cgs,
                     entry,
@@ -822,7 +926,9 @@ impl Renderer<'_> {
                         ..
                     } | crate::InputType::None
                 ) {
-                    return Err("non-closed-object invocation requires a signature witness".into());
+                    return Err(PythonTeachingError::MissingInvocationSignatureWitness {
+                        capability: cap.name.to_string(),
+                    });
                 }
             }
             let source_call = matches!(cap.kind, CapabilityKind::Query | CapabilityKind::Search);
@@ -888,7 +994,9 @@ impl Renderer<'_> {
                 let target = self
                     .exposure
                     .qualified_entity_symbol(entry, entity_type)
-                    .ok_or("output entity is not exposed")?;
+                    .ok_or_else(|| PythonTeachingError::OutputEntityNotExposed {
+                        entity: entity_type.to_string(),
+                    })?;
                 let many = matches!(
                     cap.output_schema.as_ref().map(|s| &s.output_type),
                     Some(OutputType::Collection { .. })
@@ -900,7 +1008,11 @@ impl Renderer<'_> {
                 }
                 .card_annotation(&target)
             }
-            Some(_) => return Err("custom/status output requires a typed return witness".into()),
+            Some(_) => {
+                return Err(PythonTeachingError::MissingTypedReturnWitness {
+                    capability: cap.name.to_string(),
+                })
+            }
             None => match cap.kind {
                 CapabilityKind::Get => PythonRowShape::Singleton.card_annotation(owner),
                 CapabilityKind::Query | CapabilityKind::Search => {
@@ -983,7 +1095,7 @@ fn comment(out: &mut String, indent: &str, text: &str) {
     }
 }
 
-fn identifier(value: &str) -> Result<(), String> {
+fn identifier(value: &str) -> Result<(), PythonTeachingError> {
     let mut chars = value.chars();
     if !chars
         .next()
@@ -997,7 +1109,9 @@ fn identifier(value: &str) -> Result<(), String> {
         ]
         .contains(&value)
     {
-        return Err(format!("wire name {value:?} is not a Python identifier"));
+        return Err(PythonTeachingError::InvalidPythonIdentifier {
+            name: value.to_owned(),
+        });
     }
     Ok(())
 }

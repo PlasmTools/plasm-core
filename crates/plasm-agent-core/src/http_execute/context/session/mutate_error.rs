@@ -1,46 +1,71 @@
-//! Typed errors for execute-session mutation (extend / federate / intent).
+//! Semantic failures while opening or extending execute-session teaching state.
 
-use crate::mcp_transport_store::execute_session_registry::ExecuteSessionPersistError;
-
-/// Failures while mutating a live execute session (durable persist or validation).
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum SessionMutateError {
-    Persist(ExecuteSessionPersistError),
-    Message(String),
-}
-
-impl std::fmt::Display for SessionMutateError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Persist(e) => write!(f, "{e}"),
-            Self::Message(m) => write!(f, "{m}"),
-        }
-    }
-}
-
-impl std::error::Error for SessionMutateError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Persist(e) => Some(e),
-            Self::Message(_) => None,
-        }
-    }
-}
-
-impl From<ExecuteSessionPersistError> for SessionMutateError {
-    fn from(e: ExecuteSessionPersistError) -> Self {
-        Self::Persist(e)
-    }
-}
-
-impl From<String> for SessionMutateError {
-    fn from(m: String) -> Self {
-        Self::Message(m)
-    }
-}
-
-impl From<&str> for SessionMutateError {
-    fn from(m: &str) -> Self {
-        Self::Message(m.to_string())
-    }
+    #[error(transparent)]
+    Persist(
+        #[from] crate::mcp_transport_store::execute_session_registry::ExecuteSessionPersistError,
+    ),
+    #[error(transparent)]
+    Teaching(#[from] plasm_core::prompt_render::python::PythonTeachingError),
+    #[error(transparent)]
+    Catalog(#[from] crate::catalog_runtime::CatalogRuntimeError),
+    #[error(transparent)]
+    CapabilitySurface(#[from] plasm_core::capability_exposure::CapabilityExposureError),
+    #[error(transparent)]
+    Materialize(#[from] crate::execute_session_materialize::MaterializeError),
+    #[error(transparent)]
+    Discovery(#[from] plasm_core::discovery::DiscoveryError),
+    #[error(transparent)]
+    SeedResolution(#[from] crate::http_execute::context::seed_resolve::SeedResolutionError),
+    #[error(transparent)]
+    Rehydrate(#[from] crate::execute_session_rehydrate::RehydrateError),
+    #[error(transparent)]
+    HttpBackend(#[from] crate::http_backend::ReplHttpOverrideError),
+    #[error(transparent)]
+    Binding(#[from] crate::binding_store::BindingLoadError),
+    #[error(transparent)]
+    Auth(#[from] plasm_runtime::AuthResolutionError),
+    #[error("execute session has no entities")]
+    EmptyEntities,
+    #[error("execute session expansion has no seeds")]
+    EmptySeeds,
+    #[error("unknown entity `{entity}` in catalog `{entry_id}`")]
+    UnknownEntity { entry_id: String, entity: String },
+    #[error(
+        "unknown entity `{entity}` in catalog `{entry_id}`; nearest entity names: {nearest:?}"
+    )]
+    UnknownSeedEntity {
+        entry_id: String,
+        entity: String,
+        nearest: Vec<String>,
+    },
+    #[error("unknown catalog entry `{entry_id}` in the loaded session")]
+    UnknownCatalogEntry { entry_id: String },
+    #[error("execute session is unknown or expired")]
+    UnknownOrExpiredSession,
+    #[error("execute session already includes catalog entry `{entry_id}`")]
+    CatalogAlreadyIncluded { entry_id: String },
+    #[error("execute session has no incremental exposure state")]
+    MissingExposureState,
+    #[error("execute session tenant does not match the caller")]
+    TenantMismatch,
+    #[error("routed execute binding is unavailable")]
+    RoutedBindingUnavailable,
+    #[error("seed group for catalog `{entry_id}` is missing after grouping")]
+    MissingSeedGroup { entry_id: String },
+    #[error("routing selected no capabilities for a new context")]
+    EmptyRoutedCapabilityPlan,
+    #[error("routed execution session expired before it could be reused")]
+    RoutedSessionExpired,
+    #[error("routed execution session has no teaching exposure")]
+    RoutedTeachingExposureMissing,
+    #[error("capability exposure plan has no entries")]
+    EmptyCapabilityExposurePlan,
+    #[error("primary catalog `{entry_id}` has no entity seeds")]
+    MissingPrimaryEntities { entry_id: String },
+    #[error("prompt hash is invalid")]
+    InvalidPromptHash,
+    #[error("execute session id is invalid")]
+    InvalidSessionId,
 }

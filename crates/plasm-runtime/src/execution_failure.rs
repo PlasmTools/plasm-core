@@ -80,9 +80,86 @@ impl From<plasm_core::collection_codec::CollectionFault> for ExecutionFailure {
             CollectionFault::InputMismatch { .. } => "collection_input_mismatch",
             CollectionFault::IdentityMismatch => "collection_identity_mismatch",
             CollectionFault::Incomplete { .. } => "collection_incomplete",
-            CollectionFault::Frame(_) => "collection_frame",
+            CollectionFault::ObservationJson { .. }
+            | CollectionFault::DerivationJson { .. }
+            | CollectionFault::ExpressionJson { .. }
+            | CollectionFault::CatalogDigestHex { .. }
+            | CollectionFault::FrameEncodeJson { .. }
+            | CollectionFault::FrameDecodeJson { .. }
+            | CollectionFault::FrameTooShort { .. }
+            | CollectionFault::FrameHeader
+            | CollectionFault::FrameDigestMismatch
+            | CollectionFault::FrameEvidenceInconsistent => "collection_frame",
         };
         Self::new(FailureCause::ResponseContract, code, fault.to_string())
+    }
+}
+
+impl From<plasm_core::plasm_monad::CorrelatedBodyError> for ExecutionFailure {
+    fn from(error: plasm_core::plasm_monad::CorrelatedBodyError) -> Self {
+        use plasm_core::plasm_monad::CorrelatedBodyError as E;
+        let code = match &error {
+            E::NestingDepthExceeded => "scope_nesting_depth_exceeded",
+            E::ParentBoundExceeded | E::ParentCountExceeded { .. } => "scope_parent_bound_exceeded",
+            E::InvalidParentCapture | E::InvalidCapture => "scope_capture_invalid",
+            E::UnsupportedWireVersion => "scope_wire_version_invalid",
+            E::StepsTopologyMismatch => "scope_topology_mismatch",
+            E::EffectfulPredicateScope => "scope_predicate_effect_forbidden",
+            E::ReadEffectMismatch | E::MutationEffectMismatch => "scope_effect_mismatch",
+            E::UndeclaredDependency { .. } => "scope_dependency_undeclared",
+            E::ParallelReturn => "scope_parallel_return_forbidden",
+            E::ReturnOutsideScope | E::ReturnNotLocal => "scope_return_invalid",
+            E::OutputCardinalityMismatch | E::OutputCountMismatch { .. } => {
+                "scope_output_cardinality_invalid"
+            }
+            E::OutputHasEntityAuthority => "scope_output_authority_invalid",
+            E::BindGraph(_) => "scope_bind_graph_invalid",
+            E::Scope(_) => "scope_operand_invalid",
+        };
+        Self::new(FailureCause::Program, code, error.to_string())
+    }
+}
+
+impl From<plasm_core::plasm_monad::PlasmCompValidationError> for ExecutionFailure {
+    fn from(error: plasm_core::plasm_monad::PlasmCompValidationError) -> Self {
+        use plasm_core::plasm_monad::PlasmCompValidationError as E;
+        let code = match &error {
+            E::UnsupportedVersion { .. } => "comp_version_unsupported",
+            E::EmptySteps => "comp_steps_empty",
+            E::EmptyTopology => "comp_topology_empty",
+            E::UnknownTopologicalStep { .. } => "comp_topology_step_unknown",
+            E::IterationEffectContractMismatch => "comp_iteration_contract_mismatch",
+            E::MissingIterationDependency { .. } => "comp_iteration_dependency_missing",
+            E::InvalidIterationPredicate => "comp_iteration_predicate_invalid",
+            E::MissingMapBodyParentDependency { .. } => "comp_map_parent_dependency_missing",
+            E::BindGraph(_) => "comp_bind_graph_invalid",
+            E::CorrelatedBody(_) => "comp_correlated_body_invalid",
+            E::IterationEffect(_) => "comp_iteration_effect_invalid",
+        };
+        Self::new(FailureCause::Program, code, error.to_string())
+    }
+}
+impl From<plasm_core::plasm_monad::BindGraphError> for ExecutionFailure {
+    fn from(error: plasm_core::plasm_monad::BindGraphError) -> Self {
+        Self::new(
+            FailureCause::Program,
+            "bind_graph_invalid",
+            error.to_string(),
+        )
+    }
+}
+impl From<plasm_core::plasm_monad::IterationStepEffectError> for ExecutionFailure {
+    fn from(error: plasm_core::plasm_monad::IterationStepEffectError) -> Self {
+        Self::new(
+            FailureCause::Program,
+            "iteration_step_effect_invalid",
+            error.to_string(),
+        )
+    }
+}
+impl From<plasm_core::plasm_monad::StepIdError> for ExecutionFailure {
+    fn from(error: plasm_core::plasm_monad::StepIdError) -> Self {
+        Self::new(FailureCause::Program, "step_id_invalid", error.to_string())
     }
 }
 impl ExecutionFailure {
@@ -181,15 +258,6 @@ impl ExecutionFailure {
         self
     }
 }
-impl From<String> for ExecutionFailure {
-    fn from(detail: String) -> Self {
-        Self::new(
-            FailureCause::Unclassified,
-            "unclassified_execution_failure",
-            detail,
-        )
-    }
-}
 impl From<crate::RuntimeError> for ExecutionFailure {
     fn from(error: crate::RuntimeError) -> Self {
         use crate::RuntimeError::*;
@@ -209,16 +277,21 @@ impl From<crate::RuntimeError> for ExecutionFailure {
                 FailureCause::ResponseContract,
                 "pagination_progress_violation",
             ),
-            CompilationError { .. } | CmlError { .. } | CapabilityNotFound { .. } => {
-                (FailureCause::Catalog, "catalog_contract_violation")
-            }
+            CatalogTemplate(_)
+            | CompilationError { .. }
+            | CmlError { .. }
+            | CapabilityNotFound { .. } => (FailureCause::Catalog, "catalog_contract_violation"),
             TypeError { .. } => (FailureCause::Runtime, "runtime_type_violation"),
             RequestError {
                 status: Some(_), ..
             }
             | RateLimited { .. } => (FailureCause::Upstream, "upstream_rejection"),
-            RequestError { .. } => (FailureCause::Transport, "transport_failure"),
-            AuthenticationError { .. } => (FailureCause::Authorization, "authorization_required"),
+            HostTransport { .. } | HttpTransport { .. } | RequestError { .. } => {
+                (FailureCause::Transport, "transport_failure")
+            }
+            CredentialProvider { .. } | AuthenticationError(_) => {
+                (FailureCause::Authorization, "authorization_required")
+            }
             Cancelled => (FailureCause::Cancelled, "execution_cancelled"),
             _ => (FailureCause::Unclassified, "unclassified_execution_failure"),
         };
@@ -228,9 +301,6 @@ impl From<crate::RuntimeError> for ExecutionFailure {
             DecodeError { source } => match source {
                 plasm_compile::DecodeError::FieldContract { field, .. } => {
                     format!("Response field '{field}' violates its declared type")
-                }
-                plasm_compile::DecodeError::TransformFailed { transform, .. } => {
-                    format!("Response transform '{transform}' failed")
                 }
                 _ => source.to_string(),
             },
@@ -293,19 +363,31 @@ mod tests {
     }
     #[test]
     fn decoder_diagnostics_preserve_structure_but_not_raw_field_values() {
-        let failure = ExecutionFailure::from(crate::RuntimeError::from(
+        let error = plasm_compile::DecodeError::FieldContract {
+            field: "email".into(),
+            source: plasm_core::DecodeFieldCause::Domain(
+                plasm_core::ValueDomainViolation::InvalidProfile(
+                    plasm_core::value_domain::ProfileId::Email,
+                ),
+            ),
+        };
+        assert!(matches!(
+            &error,
             plasm_compile::DecodeError::FieldContract {
-                field: "amount".into(),
-                reason: "invalid raw-secret-value".into(),
-            },
+                source: plasm_core::DecodeFieldCause::Domain(
+                    plasm_core::ValueDomainViolation::InvalidProfile(
+                        plasm_core::value_domain::ProfileId::Email
+                    )
+                ),
+                ..
+            }
         ));
+        let failure = ExecutionFailure::from(crate::RuntimeError::from(error));
         let wire = serde_json::to_string(&failure).unwrap();
-        assert!(wire.contains("amount"));
+        assert!(wire.contains("email"));
         assert!(!wire.contains("raw-secret-value"));
         let missing = ExecutionFailure::from(crate::RuntimeError::from(
-            plasm_compile::DecodeError::InvalidStructure {
-                message: "No valid ID field found in source object".into(),
-            },
+            plasm_compile::DecodeError::IdentityMissing,
         ));
         assert!(missing.diagnostic().contains("No valid ID"));
         assert_eq!(missing.recovery, RecoveryDisposition::Stop);
@@ -320,7 +402,7 @@ mod tests {
             "repair program",
         ] {
             let failure = ExecutionFailure::from(crate::RuntimeError::RequestError {
-                message: message.into(),
+                source: crate::HttpStatusFailure::without_request(422, message.into()).into(),
                 attempts: 1,
                 status: Some(422),
                 body: Some(serde_json::json!({"message": message})),
@@ -335,8 +417,10 @@ mod tests {
 
     #[test]
     fn failure_wire_preserves_diagnostic_without_granting_repair_by_message() {
-        let failure = ExecutionFailure::from(
-            "repair program: service rejected the requested state".to_string(),
+        let failure = ExecutionFailure::new(
+            FailureCause::Runtime,
+            "service_rejected",
+            "repair program: service rejected the requested state",
         );
         let wire = serde_json::to_string(&failure).unwrap();
         assert!(wire.contains("service rejected the requested state"));
@@ -367,12 +451,6 @@ mod tests {
             failure.recovery_instructions(),
             Some("Some dispatched effects have an unknown outcome. Reconcile them before retrying; this execution did not roll back.")
         );
-    }
-}
-
-impl From<&str> for ExecutionFailure {
-    fn from(detail: &str) -> Self {
-        detail.to_owned().into()
     }
 }
 

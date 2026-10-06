@@ -1,5 +1,6 @@
 //! Python tagged records retain the selected CGS variant before wire lowering.
 use super::PythonLoweringError;
+use crate::program_rejection::PythonInputError;
 use plasm_core::{CapabilitySchema, InputFieldWire, InputType, TypedInvokeInput, Value, CGS};
 
 pub(super) fn is_union_tag(cap: &CapabilitySchema, name: &str) -> bool {
@@ -52,7 +53,7 @@ pub(super) fn normalize(
                         .chain(variant.fields.iter().map(|field| field.name.clone()))
                 })
                 .collect(),
-            _ => return Err("multiple invocation lanes require record inputs".into()),
+            _ => return Err(PythonInputError::MultipleLanesRequireRecords.into()),
         };
         let mut part = indexmap::IndexMap::new();
         for key in keys {
@@ -62,11 +63,11 @@ pub(super) fn normalize(
         }
         let Value::Object(part) = normalize_type(Value::Object(part), &schema.input_type, cgs, 0)?
         else {
-            return Err("invocation lane must normalize to a record".into());
+            return Err(PythonInputError::LaneMustNormalizeToRecord.into());
         };
         for (key, value) in part {
             if normalized.insert(key.clone(), value).is_some() {
-                return Err(format!("input lanes overlap at {key}").into());
+                return Err(PythonInputError::OverlappingLanes { field: key }.into());
             }
         }
     }
@@ -82,7 +83,7 @@ fn normalize_type(
     depth: usize,
 ) -> Result<Value, PythonLoweringError> {
     if depth >= 64 {
-        return Err("input type nesting exceeds 64".into());
+        return Err(PythonInputError::NestingLimitExceeded { max_depth: 64 }.into());
     }
     match (value, ty) {
         (Value::Array(items), InputType::Array { element_type, .. }) => Ok(Value::Array(
@@ -112,7 +113,7 @@ fn normalize_type(
                 })
                 .collect::<Vec<_>>();
             let [(index, variant)] = matching.as_slice() else {
-                return Err("union input requires exactly one declared literal discriminator and its variant fields".into());
+                return Err(PythonInputError::InvalidUnionDiscriminator.into());
             };
             object.shift_remove(&variant.wire.field);
             let logical = normalize_type(
@@ -126,5 +127,38 @@ fn normalize_type(
                 .map_err(Into::into)
         }
         (value, _) => Ok(value),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn excessive_input_type_depth_has_a_typed_failure() {
+        let mut input_type = InputType::Value {
+            field_type: plasm_core::FieldType::String,
+            allowed_values: None,
+        };
+        let mut value = Value::Null;
+        for _ in 0..64 {
+            input_type = InputType::Array {
+                element_type: Box::new(input_type),
+                min_length: None,
+                max_length: None,
+            };
+            value = Value::Array(vec![value]);
+        }
+
+        assert!(matches!(
+            normalize_type(value, &input_type, &CGS::default(), 0),
+            Err(PythonLoweringError::Input(error))
+                if *error == PythonInputError::NestingLimitExceeded { max_depth: 64 }
+        ));
+
+        let located =
+            PythonLoweringError::input_at(PythonInputError::InvalidUnionDiscriminator, (12, 24));
+        assert_eq!(located.span_offset(), Some(12));
+        assert!(located.to_string().contains("Python bytes 12..24"));
     }
 }

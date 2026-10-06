@@ -1,6 +1,62 @@
 //! Derive and validate materialized scalar fields at the Python boundary.
 use super::*;
 
+#[derive(Debug, thiserror::Error)]
+pub enum PythonSchemaError {
+    #[error("Python source schema dependency depth exceeded")]
+    DependencyDepthExceeded,
+    #[error("Python source schema node is absent")]
+    SourceNodeMissing,
+    #[error("Python source schema owner is absent")]
+    SourceOwnerMissing,
+    #[error("Python source field is absent")]
+    SourceFieldMissing,
+    #[error("Python source field is absent from its port schema")]
+    PortFieldMissing,
+    #[error("Python compute input row is missing required field {field}")]
+    InputFieldMissing { field: String },
+    #[error("Python source field is excluded by its projection")]
+    FieldExcludedByProjection,
+    #[error("Python source has no schema owner")]
+    SchemaOwnerMissing,
+    #[error("Python source field is unknown to its catalog entity")]
+    CatalogFieldMissing,
+    #[error("Python source schema cannot represent the requested operation")]
+    UnsupportedSource,
+    #[error("Python union field contracts are incompatible")]
+    UnionFieldMismatch,
+    #[error("Python input catalog ownership does not match its source")]
+    CatalogOwnershipMismatch,
+    #[error("Python schema owner does not match its input contract")]
+    InputSchemaOwnershipMismatch,
+    #[error("Python source has no recursive record schema")]
+    RecursiveSchemaMissing,
+    #[error(transparent)]
+    ValueContract(#[from] plasm_core::value_contract::ValueContractError),
+    #[error(transparent)]
+    RowContract(#[from] plasm_core::row_plan::contracts::RowContractError),
+    #[error(transparent)]
+    Arithmetic(#[from] plasm_core::value_arithmetic::ArithmeticContractError),
+    #[error(transparent)]
+    CatalogOwnership(#[from] crate::catalog_ownership::CatalogOwnershipError),
+    #[error(transparent)]
+    SyntheticSchema(#[from] plasm_core::plasm_monad::SyntheticResultSchemaError),
+    #[error(transparent)]
+    InputBudget(#[from] ComputeInputBudgetError),
+    #[error("Python input value could not be observed: {0}")]
+    ObservedValue(#[source] plasm_core::value_contract::ValueContractError),
+    #[error("Python input value violates its declared contract: {0}")]
+    InvalidValue(#[source] plasm_core::value_contract::ValueContractError),
+    #[error("correlated map-body schema failed")]
+    MapBody(#[source] Box<crate::map_body_schema::MapBodySchemaError>),
+}
+
+impl From<crate::map_body_schema::MapBodySchemaError> for PythonSchemaError {
+    fn from(error: crate::map_body_schema::MapBodySchemaError) -> Self {
+        Self::MapBody(Box::new(error))
+    }
+}
+
 #[cfg(test)]
 fn test_membership(
     complete: bool,
@@ -28,7 +84,7 @@ pub(super) fn materialize_rows(
     rows: &[ValueRow],
     cgs: &CGS,
     entry: &str,
-) -> Result<crate::python_pool::TypedRecords, String> {
+) -> Result<crate::python_pool::TypedRecords, PythonSchemaError> {
     materialize_rows_in(fields, optional_fields, rows, cgs, entry, &BTreeMap::new())
 }
 
@@ -39,7 +95,7 @@ pub(super) fn materialize_rows_in(
     cgs: &CGS,
     entry: &str,
     catalogs: &BTreeMap<String, std::sync::Arc<CGS>>,
-) -> Result<crate::python_pool::TypedRecords, String> {
+) -> Result<crate::python_pool::TypedRecords, PythonSchemaError> {
     validate_input_budget(rows)?;
 
     rows.iter()
@@ -48,12 +104,17 @@ pub(super) fn materialize_rows_in(
                 .iter()
                 .filter(|(name, _)| row.get(name).is_some() || !optional_fields.contains(*name))
                 .map(|(name, kind)| {
-                    let value = row
-                        .get(name)
-                        .ok_or_else(|| format!("compute input missing {name}"))?;
+                    let value =
+                        row.get(name)
+                            .ok_or_else(|| PythonSchemaError::InputFieldMissing {
+                                field: name.clone(),
+                            })?;
                     let lookup = |entry: &str| catalogs.get(entry).map(AsRef::as_ref);
-                    let value = kind.observed_value_in(value, cgs, entry, &lookup)?;
-                    kind.validate_in(&value, cgs, entry, name, &lookup)?;
+                    let value = kind
+                        .observed_value_in(value, cgs, entry, &lookup)
+                        .map_err(PythonSchemaError::ObservedValue)?;
+                    kind.validate_in(&value, cgs, entry, name, &lookup)
+                        .map_err(PythonSchemaError::InvalidValue)?;
                     Ok((name.clone(), value))
                 })
                 .collect()
@@ -67,11 +128,11 @@ pub(crate) fn source_field_kind(
     id: &str,
     field: &str,
     depth: usize,
-) -> Result<plasm_core::value_contract::ValueContract, String> {
+) -> Result<plasm_core::value_contract::ValueContract, PythonSchemaError> {
     use crate::plasm_plan::ValidatedPlanNode as Node;
     use plasm_core::plasm_monad::ComputeOp;
     if depth > 256 {
-        return Err("Python source schema depth exceeded".into());
+        return Err(PythonSchemaError::DependencyDepthExceeded);
     }
     if let Some((head, tail)) = field.split_once('.') {
         let mut value = source_field_kind(es, nodes, id, head, depth + 1)?;
@@ -83,11 +144,11 @@ pub(crate) fn source_field_kind(
     let node = nodes
         .iter()
         .find(|n| n.id().as_str() == id)
-        .ok_or("missing Python schema source")?;
+        .ok_or(PythonSchemaError::SourceNodeMissing)?;
     let owner = match node {
         Node::Capture(c) => {
             if let Some(value) = &c.value_contract {
-                return value.field(field);
+                return value.field(field).map_err(Into::into);
             }
             if let Some(schema) = &c.schema {
                 return schema
@@ -95,15 +156,17 @@ pub(crate) fn source_field_kind(
                     .iter()
                     .find(|f| f.name.as_str() == field)
                     .and_then(|f| f.value_type.clone())
-                    .ok_or_else(|| format!("captured field {field} missing from port schema"));
+                    .ok_or(PythonSchemaError::PortFieldMissing);
             }
             &c.entity
         }
         Node::Surface(s) => {
             if !s.projection.is_empty() && !s.projection.iter().any(|f| f == field) {
-                return Err("Python field omitted by source projection".into());
+                return Err(PythonSchemaError::FieldExcludedByProjection);
             }
-            s.qualified_entity.as_ref().ok_or("missing schema owner")?
+            s.qualified_entity
+                .as_ref()
+                .ok_or(PythonSchemaError::SchemaOwnerMissing)?
         }
         Node::RelationTraversal(s) => {
             if s.relation
@@ -112,14 +175,14 @@ pub(crate) fn source_field_kind(
                 .as_ref()
                 .is_some_and(|p| !p.iter().any(|f| f == field))
             {
-                return Err("Python field omitted by relation projection".into());
+                return Err(PythonSchemaError::FieldExcludedByProjection);
             }
             &s.relation.target
         }
         Node::ForEach(source) => {
             for projection in [&source.projection, &source.effect_template.projection] {
                 if !projection.is_empty() && !projection.iter().any(|f| f == field) {
-                    return Err("Python field omitted by fanout projection".into());
+                    return Err(PythonSchemaError::FieldExcludedByProjection);
                 }
             }
             &source.effect_template.qualified_entity
@@ -128,12 +191,14 @@ pub(crate) fn source_field_kind(
             return source_field_kind(es, nodes, iteration.source.as_str(), field, depth + 1)
         }
         Node::MapBody(map) => {
-            return crate::map_body_schema::output_schema(es, &map.body)?
+            return crate::map_body_schema::output_schema(es, &map.body)
+                .map_err(|error| PythonSchemaError::MapBody(Box::new(error)))?
                 .fields
                 .into_iter()
                 .find(|f| f.name.as_str() == field)
                 .and_then(|f| f.value_type)
-                .ok_or("unknown correlated output field".into());
+                .ok_or(PythonSchemaError::SourceFieldMissing)
+                .map_err(Into::into);
         }
         Node::Data(_) | Node::Derive(_) => {
             let t =
@@ -143,7 +208,7 @@ pub(crate) fn source_field_kind(
                 .into_iter()
                 .find(|f| f.name.as_str() == field)
                 .and_then(|f| f.value_type)
-                .ok_or_else(|| format!("missing materialized value field {field}"));
+                .ok_or(PythonSchemaError::SourceFieldMissing);
         }
         Node::Compute(c) => {
             let next =
@@ -153,7 +218,7 @@ pub(crate) fn source_field_kind(
                     &fields
                         .iter()
                         .find(|(k, _)| k.as_str() == field)
-                        .ok_or("unknown projected Python field")?
+                        .ok_or(PythonSchemaError::SourceFieldMissing)?
                         .1
                         .dotted(),
                 ),
@@ -176,11 +241,12 @@ pub(crate) fn source_field_kind(
                             a.function,
                             input.as_ref(),
                         )
+                        .map_err(Into::into)
                     } else if matches!(&c.compute.op, ComputeOp::GroupBy { keys, .. } if keys.iter().any(|k| k.dotted() == field))
                     {
                         next(field)
                     } else {
-                        Err("unknown aggregate Python field".into())
+                        Err(PythonSchemaError::SourceFieldMissing)
                     }
                 }
                 ComputeOp::Filter { .. }
@@ -197,7 +263,7 @@ pub(crate) fn source_field_kind(
                     let left = next(field)?;
                     let right = source_field_kind(es, nodes, other.as_str(), field, depth + 1)?;
                     if left.shape != right.shape {
-                        return Err("Python union field type mismatch".into());
+                        return Err(PythonSchemaError::UnionFieldMismatch);
                     }
                     Ok(plasm_core::value_contract::ValueContract::join(left, right))
                 }
@@ -208,7 +274,7 @@ pub(crate) fn source_field_kind(
                     .iter()
                     .find(|f| f.name.as_str() == field)
                     .and_then(|f| f.value_type.clone())
-                    .ok_or_else(|| format!("unknown Python output field {field}")),
+                    .ok_or(PythonSchemaError::SourceFieldMissing),
                 ComputeOp::Render { .. }
                     if c.compute
                         .schema
@@ -220,7 +286,7 @@ pub(crate) fn source_field_kind(
                         FieldType::String,
                     ))
                 }
-                _ => Err("unsupported Python row schema source".into()),
+                _ => Err(PythonSchemaError::UnsupportedSource),
             };
         }
     };
@@ -228,7 +294,7 @@ pub(crate) fn source_field_kind(
         crate::catalog_ownership::resolve_cgs_for_entry_entity(es, &owner.entry_id, &owner.entity)?;
     let entity = cgs
         .get_entity(&owner.entity)
-        .ok_or("unknown Python row entity")?;
+        .ok_or(PythonSchemaError::SourceOwnerMissing)?;
     if let Some(relation) = entity
         .relations
         .get(field)
@@ -236,7 +302,10 @@ pub(crate) fn source_field_kind(
     {
         return Ok(super::observed_relation_type(relation, &owner.entry_id));
     }
-    let f = entity.fields.get(field).ok_or("unknown Python row field")?;
+    let f = entity
+        .fields
+        .get(field)
+        .ok_or(PythonSchemaError::CatalogFieldMissing)?;
     let mut t = plasm_core::value_contract::ValueContract::from_domain(
         cgs,
         &owner.entry_id,
@@ -250,7 +319,7 @@ pub(super) fn validate_source_owner<'a>(
     nodes: &'a [crate::plasm_plan::ValidatedPlanNode],
     id: &'a str,
     expected: &EntityBinding,
-) -> Result<(), String> {
+) -> Result<(), PythonSchemaError> {
     validate_source_owner_at(nodes, id, expected, 0)
 }
 
@@ -259,13 +328,13 @@ fn validate_source_owner_at<'a>(
     mut id: &'a str,
     expected: &EntityBinding,
     depth: usize,
-) -> Result<(), String> {
+) -> Result<(), PythonSchemaError> {
     use crate::plasm_plan::ValidatedPlanNode as Node;
     for depth in depth..256 {
         let node = nodes
             .iter()
             .find(|n| n.id().as_str() == id)
-            .ok_or("missing Python schema source")?;
+            .ok_or(PythonSchemaError::SourceNodeMissing)?;
         let owner = match node {
             Node::MapBody(map) => {
                 if let plasm_core::plasm_monad::ScopedOutput::Rows { entity, .. } = &map.body.output
@@ -275,7 +344,7 @@ fn validate_source_owner_at<'a>(
                     {
                         Ok(())
                     } else {
-                        Err("Python input catalog ownership mismatch".into())
+                        Err(PythonSchemaError::CatalogOwnershipMismatch)
                     };
                 }
                 id = map.body.parent.source.as_str();
@@ -306,18 +375,18 @@ fn validate_source_owner_at<'a>(
             Node::Surface(s) => s
                 .qualified_entity
                 .as_ref()
-                .ok_or("missing Python source owner")?,
+                .ok_or(PythonSchemaError::SourceOwnerMissing)?,
             Node::RelationTraversal(s) => &s.relation.target,
             Node::ForEach(s) => &s.effect_template.qualified_entity,
-            _ => return Err("unsupported Python schema owner".into()),
+            _ => return Err(PythonSchemaError::UnsupportedSource),
         };
         if owner.entry_id != expected.entry_id.as_str() || owner.entity != expected.entity.as_str()
         {
-            return Err("Python input schema catalog ownership mismatch".into());
+            return Err(PythonSchemaError::InputSchemaOwnershipMismatch);
         }
         return Ok(());
     }
-    Err("Python schema ownership depth exceeded".into())
+    Err(PythonSchemaError::DependencyDepthExceeded)
 }
 
 #[cfg(test)]
@@ -423,16 +492,18 @@ mod tests {
             let source = format!(
                 "@compute\ndef render(row: Value[{token}]) -> str:\n    return str({expression})\n"
             );
-            assert!(PreparedCompute::prepare_input(
+            let rejected = match PreparedCompute::prepare_input(
                 &source,
                 &cgs,
                 "matrix",
                 symbols.as_ref(),
                 Some((&schema, &token)),
-                ComputeInputMode::Singleton
-            )
-            .and_then(|prepared| prepared.admit().map_err(|e| e.to_string()))
-            .is_err());
+                ComputeInputMode::Singleton,
+            ) {
+                Ok(prepared) => prepared.admit().is_err(),
+                Err(_) => true,
+            };
+            assert!(rejected);
         }
     }
 
@@ -552,12 +623,38 @@ mod tests {
                 Value::String(expected.into())
             );
         }
+        let invalid_row = json!({"records": [{"n": true}]});
+        let fields = BTreeMap::from([(
+            "records".into(),
+            schema.fields[0].value_type.clone().unwrap(),
+        )]);
+        let schema_error = materialize_rows(
+            &fields,
+            &schema.optional_fields,
+            std::slice::from_ref(&invalid_row),
+            &cgs,
+            "types",
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &schema_error,
+                PythonSchemaError::InvalidValue(
+                    plasm_core::value_contract::ValueContractError::MaterializedValueMismatch { path }
+                ) if path == "records[0].n"
+            ),
+            "{schema_error:?}"
+        );
+        assert!(schema_error.to_string().contains("records[0].n"));
+        assert!(std::error::Error::source(&schema_error)
+            .unwrap()
+            .is::<plasm_core::value_contract::ValueContractError>());
         let bad = checked
             .run(
                 &pool,
                 &checked.contract.as_ref().unwrap().owner,
                 &test_membership(true),
-                &[json!({"records": [{"n": true}]})],
+                &[invalid_row],
             )
             .await
             .unwrap_err();
@@ -730,6 +827,15 @@ mod tests {
             "test"
         )
         .is_err());
-        assert!(validate_input_budget(&[json!({"s": "x".repeat(1_048_576)})]).is_err());
+        assert!(matches!(
+            validate_input_budget(&[json!({"s": "x".repeat(1_048_576)})]),
+            Err(ComputeInputBudgetError::Value(
+                plasm_core::ValueBudgetError::BytesExceeded
+            ))
+        ));
+        assert!(matches!(
+            validate_input_budget(&vec![json!({}); MAX_INPUT_ROWS + 1]),
+            Err(ComputeInputBudgetError::RowCountExceeded)
+        ));
     }
 }

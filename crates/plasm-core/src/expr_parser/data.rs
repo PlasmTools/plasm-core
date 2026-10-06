@@ -2,7 +2,31 @@
 //! Syntax is parsed before scope resolution; unknown syntax never becomes text.
 use crate::operand_binding::ResolvedValue;
 use std::collections::BTreeMap;
+use thiserror::Error;
 
+#[derive(Debug, Clone, Error)]
+pub enum DataExpressionError {
+    #[error("unexpected syntax after data expression at byte {offset}")]
+    UnexpectedTrailingSyntax { offset: usize },
+    #[error("expected `{expected}` at byte {offset}")]
+    ExpectedCharacter { offset: usize, expected: char },
+    #[error("expected identifier at byte {offset}")]
+    ExpectedIdentifier { offset: usize },
+    #[error("duplicate object key `{key}` at byte {offset}")]
+    DuplicateObjectKey { offset: usize, key: String },
+    #[error("expected a data value at byte {offset}")]
+    ExpectedValue { offset: usize },
+    #[error("invalid number literal at byte {offset}")]
+    InvalidNumber {
+        offset: usize,
+        #[source]
+        source: std::sync::Arc<serde_json::Error>,
+    },
+    #[error(transparent)]
+    QuotedString(#[from] super::ParseError),
+    #[error(transparent)]
+    ResolvedValue(#[from] crate::operand_binding::ResolvedValueError),
+}
 #[derive(Debug, Clone, PartialEq)]
 pub enum DataExpr {
     Literal(ResolvedValue),
@@ -11,12 +35,14 @@ pub enum DataExpr {
     Array(Vec<DataExpr>),
 }
 
-pub fn parse_data_expression(text: &str) -> Result<DataExpr, String> {
+pub fn parse_data_expression(text: &str) -> Result<DataExpr, DataExpressionError> {
     let mut parser = DataParser { text, offset: 0 };
     let value = parser.value()?;
     parser.space();
     if parser.offset != text.len() {
-        return Err(parser.error("unexpected syntax after data expression"));
+        return Err(DataExpressionError::UnexpectedTrailingSyntax {
+            offset: parser.offset,
+        });
     }
     Ok(value)
 }
@@ -26,9 +52,6 @@ struct DataParser<'a> {
     offset: usize,
 }
 impl DataParser<'_> {
-    fn error(&self, reason: &str) -> String {
-        format!("data expression at byte {}: {reason}; use literals or declared field/binding references. Bind catalog reads and relation traversals as separate rowset operations", self.offset)
-    }
     fn peek(&self) -> Option<char> {
         self.text[self.offset..].chars().next()
     }
@@ -42,21 +65,24 @@ impl DataParser<'_> {
             self.bump();
         }
     }
-    fn expect(&mut self, c: char) -> Result<(), String> {
+    fn expect(&mut self, c: char) -> Result<(), DataExpressionError> {
         self.space();
         if self.bump() == Some(c) {
             Ok(())
         } else {
-            Err(self.error(&format!("expected `{c}`")))
+            Err(DataExpressionError::ExpectedCharacter {
+                offset: self.offset,
+                expected: c,
+            })
         }
     }
-    fn identifier(&mut self) -> Result<String, String> {
+    fn identifier(&mut self) -> Result<String, DataExpressionError> {
         let start = self.offset;
         if !self
             .peek()
             .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
         {
-            return Err(self.error("expected identifier"));
+            return Err(DataExpressionError::ExpectedIdentifier { offset: start });
         }
         self.bump();
         while self
@@ -67,10 +93,10 @@ impl DataParser<'_> {
         }
         Ok(self.text[start..self.offset].into())
     }
-    fn quoted(&mut self) -> Result<String, String> {
-        super::quoted::parse(self.text, &mut self.offset).map_err(|e| e.to_string())
+    fn quoted(&mut self) -> Result<String, DataExpressionError> {
+        Ok(super::quoted::parse(self.text, &mut self.offset)?)
     }
-    fn value(&mut self) -> Result<DataExpr, String> {
+    fn value(&mut self) -> Result<DataExpr, DataExpressionError> {
         self.space();
         match self.peek() {
             Some('{') => {
@@ -91,7 +117,10 @@ impl DataParser<'_> {
                     self.expect(':')?;
                     let value = self.value()?;
                     if fields.insert(key.clone(), value).is_some() {
-                        return Err(self.error(&format!("duplicate object key `{key}`")));
+                        return Err(DataExpressionError::DuplicateObjectKey {
+                            offset: self.offset,
+                            key,
+                        });
                     }
                     self.space();
                     if self.peek() == Some('}') {
@@ -123,9 +152,7 @@ impl DataParser<'_> {
             }
             Some('"' | '\'') => {
                 let text = self.quoted()?;
-                Ok(DataExpr::Literal(
-                    ResolvedValue::new(crate::Value::String(text)).map_err(str::to_owned)?,
-                ))
+                Ok(DataExpr::Literal(ResolvedValue::string(text)))
             }
             Some(c) if c == '-' || c.is_ascii_digit() => {
                 let start = self.offset;
@@ -136,15 +163,22 @@ impl DataParser<'_> {
                     self.bump();
                 }
                 let literal = serde_json::from_str::<ResolvedValue>(&self.text[start..self.offset])
-                    .map_err(|e| self.error(&format!("invalid number: {e}")))?;
+                    .map_err(|source| DataExpressionError::InvalidNumber {
+                        offset: start,
+                        source: std::sync::Arc::new(source),
+                    })?;
                 Ok(DataExpr::Literal(literal))
             }
             Some(_) => {
                 let root = self.identifier()?;
                 if matches!(root.as_str(), "null" | "true" | "false") {
-                    return serde_json::from_str(&root)
-                        .map(DataExpr::Literal)
-                        .map_err(|e| self.error(&e.to_string()));
+                    let value = match root.as_str() {
+                        "null" => ResolvedValue::null(),
+                        "true" => ResolvedValue::boolean(true),
+                        "false" => ResolvedValue::boolean(false),
+                        _ => unreachable!("only known data literals reach this branch"),
+                    };
+                    return Ok(DataExpr::Literal(value));
                 }
                 let mut path = Vec::new();
                 while self.peek() == Some('.') {
@@ -153,7 +187,9 @@ impl DataParser<'_> {
                 }
                 Ok(DataExpr::Reference { root, path })
             }
-            None => Err(self.error("expected value")),
+            None => Err(DataExpressionError::ExpectedValue {
+                offset: self.offset,
+            }),
         }
     }
 }
@@ -177,6 +213,22 @@ mod tests {
             assert!(parsed.is_err(), "{text}: {parsed:?}");
         }
     }
+
+    #[test]
+    fn malformed_data_expressions_report_typed_faults() {
+        assert!(matches!(
+            parse_data_expression("[1] trailing"),
+            Err(DataExpressionError::UnexpectedTrailingSyntax { offset: 4 })
+        ));
+        assert!(matches!(
+            parse_data_expression("{item: 1, item: 2}"),
+            Err(DataExpressionError::DuplicateObjectKey { key, .. }) if key == "item"
+        ));
+        assert!(matches!(
+            parse_data_expression("1e"),
+            Err(DataExpressionError::InvalidNumber { offset: 0, .. })
+        ));
+    }
     #[test]
     fn quote_styles_share_escape_laws() {
         for text in [r#"'a\n\u0042'"#, r#""a\n\u0042""#] {
@@ -186,7 +238,14 @@ mod tests {
             assert_eq!(value.as_str(), Some("a\nB"));
         }
         for text in [r#"'\q'"#, r#""\q""#] {
-            assert!(parse_data_expression(text).is_err());
+            let error = parse_data_expression(text).expect_err("unknown escape is invalid");
+            assert!(matches!(
+                error.clone(),
+                DataExpressionError::QuotedString(super::super::ParseError {
+                    kind: super::super::ParseErrorKind::UnknownEscape { escape: 'q' },
+                    ..
+                })
+            ));
         }
     }
     #[test]

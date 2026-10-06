@@ -1,6 +1,6 @@
 use super::*;
 use crate::credentials::{
-    credential_error, CredentialReference, CredentialScope, SessionCredentialStore,
+    CredentialError, CredentialReference, CredentialScope, SessionCredentialStore,
 };
 use crate::http_transport::HttpTransport;
 use async_trait::async_trait;
@@ -37,7 +37,7 @@ impl SessionCredentialStore for Store {
         scope: &CredentialScope,
     ) -> Result<CredentialSource, RuntimeError> {
         if self.expired.load(Ordering::SeqCst) {
-            return Err(credential_error("expired"));
+            return Err(CredentialError::Expired.into());
         }
         let index = usize::from_str_radix(&reference.as_str()[2..], 16).unwrap();
         self.records
@@ -46,7 +46,7 @@ impl SessionCredentialStore for Store {
             .get(index)
             .filter(|entry| &entry.0 == scope)
             .map(|entry| entry.1)
-            .ok_or_else(|| credential_error("scope mismatch"))
+            .ok_or_else(|| CredentialError::ScopeMismatch.into())
     }
 }
 

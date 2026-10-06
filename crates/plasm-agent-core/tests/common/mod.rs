@@ -14,16 +14,19 @@ use plasm_runtime::{CancelSignal, ExecutionConfig, ExecutionEngine, ExecutionMod
 
 pub fn minimal_host() -> Arc<PlasmHostState> {
     let engine = ExecutionEngine::new(ExecutionConfig::default()).expect("engine");
-    Arc::new(build_plasm_host_state(PlasmHostBootstrap {
-        engine,
-        mode: ExecutionMode::Live,
-        registry: Arc::new(CgsRegistry::from_pairs(Vec::new())),
-        catalog_bootstrap: CatalogBootstrap::Fixed,
-        incoming_auth: None,
-        run_artifacts: Arc::new(RunArtifactStore::memory()),
-        session_graph_persistence: None,
-        oss_local_filesystem_defaults: false,
-    }))
+    Arc::new(
+        build_plasm_host_state(PlasmHostBootstrap {
+            engine,
+            mode: ExecutionMode::Live,
+            registry: Arc::new(CgsRegistry::from_pairs(Vec::new())),
+            catalog_bootstrap: CatalogBootstrap::Fixed,
+            incoming_auth: None,
+            run_artifacts: Arc::new(RunArtifactStore::memory()),
+            session_graph_persistence: None,
+            oss_local_filesystem_defaults: false,
+        })
+        .expect("valid catalog fixture"),
+    )
 }
 
 pub fn empty_session() -> Arc<ExecuteSession> {

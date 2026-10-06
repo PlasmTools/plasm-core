@@ -28,23 +28,32 @@ impl Lower<'_> {
                 .resolve_session_entity(label)
                 .is_ok()
         {
-            return Err(at(def, "reserved callback binding name"));
+            return Err(at(
+                def,
+                PythonSourceError::ReservedCallbackName {
+                    name: label.to_owned(),
+                },
+            ));
         }
         if def
             .decorator_list
             .iter()
             .any(|d| name(&d.expression) == Some("compute"))
         {
-            return Err(at(def, "@compute must be a Program class method with self and a typed input; call it as self.method(rows). A nested def is a scoped callback"));
+            return Err(at(def, PythonSourceError::NestedComputeDeclaration));
         }
         if def.is_async || def.type_params.is_some() || !def.decorator_list.is_empty() {
             return Err(at(
                 def,
-                "DAG callbacks require a synchronous undecorated callable",
+                PythonSourceError::CallbackDeclarationShape {
+                    is_async: def.is_async,
+                    decorators: def.decorator_list.len(),
+                    has_type_parameters: def.type_params.is_some(),
+                },
             ));
         }
-        let parsed =
-            ruff_python_parser::parse_expression("lambda row: None").map_err(|e| e.to_string())?;
+        let parsed = ruff_python_parser::parse_expression("lambda row: None")
+            .map_err(PythonLoweringError::parse_error)?;
         let PyExpr::Lambda(mut lambda) = *parsed.into_syntax().body else {
             unreachable!()
         };
@@ -118,7 +127,7 @@ impl Lower<'_> {
             let name = keyword
                 .arg
                 .as_ref()
-                .ok_or("expanded callback arguments require a materialized mapping")?;
+                .ok_or(crate::program_rejection::PythonLoweringInvariantError::CallbackArgumentMappingMissing)?;
             arguments.push((Some(name.to_string()), &keyword.value));
         }
         let shape = arguments
@@ -131,16 +140,19 @@ impl Lower<'_> {
         )?;
         let row = projection::projection_parameter(&callback.lambda)?;
         if binding.len() != 1 || binding[0].variadic || binding[0].parameter != row {
-            return Err(at(site, "callback value nodes have one row port; capture other dependencies in the callback closure"));
-        }
-        let source = self.expr(arguments[0].1, None)?;
-        let contract = super::super::binding_contract(&self.state, &source)
-            .ok_or("callback input contract missing")?;
-        if !contract.row_cardinality.permits_scalar_field_extract() {
             return Err(at(
                 site,
-                "callback value invocation requires a singleton row",
+                PythonSourceError::CallbackValuePortShape {
+                    ports: binding.len(),
+                },
             ));
+        }
+        let source = self.expr(arguments[0].1, None)?;
+        let contract = super::super::binding_contract(&self.state, &source).ok_or(
+            crate::program_rejection::PythonLoweringInvariantError::CallbackInputContractMissing,
+        )?;
+        if !contract.row_cardinality.permits_scalar_field_extract() {
+            return Err(at(site, PythonSourceError::CallbackValueNeedsSingleton));
         }
         let body = self.scoped_callback_body(
             site,
@@ -153,10 +165,7 @@ impl Lower<'_> {
             body.effect_class(),
             EffectClass::Read | EffectClass::ArtifactRead
         ) {
-            return Err(at(
-                site,
-                "callback value expressions cannot introduce effects",
-            ));
+            return Err(at(site, PythonSourceError::CallbackValueEffects));
         }
         let schema = crate::map_body_schema::output_schema(self.es, &body)?;
         let scope = self.fresh();
@@ -219,11 +228,15 @@ impl Lower<'_> {
                 .callbacks
                 .get(name.id.as_str())
                 .cloned()
-                .ok_or_else(|| at(expression, "unknown scoped callback")),
-            _ => Err(at(
-                expression,
-                "expected a lambda or a declared scoped callback",
-            )),
+                .ok_or_else(|| {
+                    at(
+                        expression,
+                        PythonSourceError::UnknownScopedCallback {
+                            name: name.id.to_string(),
+                        },
+                    )
+                }),
+            _ => Err(at(expression, PythonSourceError::ExpectedScopedCallback)),
         }
     }
 }
@@ -240,7 +253,7 @@ impl Callback {
         closure: BTreeMap<String, String>,
     ) -> Result<Self, PythonLoweringError> {
         let parsed = ruff_python_parser::parse_expression(&format!("lambda {parameter}: None"))
-            .map_err(|e| e.to_string())?;
+            .map_err(PythonLoweringError::parse_error)?;
         let PyExpr::Lambda(lambda) = *parsed.into_syntax().body else {
             unreachable!()
         };

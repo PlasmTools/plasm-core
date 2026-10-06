@@ -30,6 +30,7 @@
 
 use super::heredoc_surface::{heredoc_surface_step_at, HeredocSurfaceStep};
 use super::program_surface::split_top_level;
+use super::SurfaceSyntaxError;
 
 /// `Entity{preds}` where `Entity` has no `(` or `.` — i.e. query brace form, not get/chain.
 ///
@@ -57,7 +58,7 @@ pub struct PredicateSurfaceClause {
     pub value: String,
 }
 
-fn split_predicate_clauses(body: &str) -> Result<Vec<&str>, String> {
+fn split_predicate_clauses(body: &str) -> Result<Vec<&str>, SurfaceSyntaxError> {
     split_top_level(body.trim(), ',')
 }
 
@@ -159,7 +160,9 @@ pub(crate) fn find_top_level_comparison_op(s: &str) -> Option<(usize, usize)> {
 }
 
 /// Parse loose predicate clauses from a brace body (comma split + operator scan).
-pub fn parse_loose_query_predicate_body(body: &str) -> Result<Vec<PredicateSurfaceClause>, String> {
+pub fn parse_loose_query_predicate_body(
+    body: &str,
+) -> Result<Vec<PredicateSurfaceClause>, SurfaceSyntaxError> {
     let mut out = Vec::new();
     for part in split_predicate_clauses(body)? {
         let raw = part.trim();

@@ -4,12 +4,102 @@ use super::input_rows::materialized_result_use_inputs;
 use plasm_core::operand_binding::{BindOperands, OperandResolver};
 use std::collections::BTreeMap;
 
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum RuntimeOperandError {
+    #[error(transparent)]
+    Identity(#[from] plasm_core::operand_binding::IdentityCodecError),
+    #[error("materialized plan input is invalid")]
+    MaterializedInput(#[source] MaterializedInputError),
+    #[error("row binding `{binding}` was used outside a row scope")]
+    BindingOutsideRowScope { binding: String },
+    #[error("row binding `{binding}` does not match active binding `{active}`")]
+    BindingMismatch { binding: String, active: String },
+    #[error("input alias `{alias}` is invalid")]
+    InvalidAlias { alias: String },
+    #[error("node input alias `{alias}` is unavailable")]
+    UnavailableAlias { alias: String },
+    #[error("node input field `{alias}.{path}` is unavailable in {entry_id}:{entity}")]
+    MissingInputField {
+        alias: String,
+        path: String,
+        entry_id: String,
+        entity: String,
+    },
+    #[error("node input field `{alias}.{path}` produced no values in {entry_id}:{entity}")]
+    EmptyInputValues {
+        alias: String,
+        path: String,
+        entry_id: String,
+        entity: String,
+    },
+    #[error("program string interpolation failed: {0}")]
+    StringInterpolation(#[source] plasm_core::program_string_template::ProgramStringError),
+    #[error("resolved operand contains a value that is not runtime data")]
+    OperandValue,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum DataOperandError {
+    #[error("unknown row binding `{binding}`")]
+    UnknownRowBinding { binding: String },
+    #[error("row binding `{binding}` field `{field_path}` is unobserved")]
+    RowFieldUnobserved { binding: String, field_path: String },
+    #[error(transparent)]
+    InputAlias(#[from] crate::plasm_plan::PlanAtomError),
+    #[error("input alias `{alias}` is unavailable")]
+    InputAliasUnavailable { alias: String },
+    #[error("input alias `{alias}` is bound to `{actual}`, not `{expected}`")]
+    InputAliasNodeMismatch {
+        alias: String,
+        actual: String,
+        expected: String,
+    },
+    #[error("input `{node}` has no field `{field_path}`")]
+    InputFieldMissing { node: String, field_path: String },
+    #[error("data operands do not encode catalog identities")]
+    IdentityUnsupported,
+    #[error("data operand contains an unresolved runtime value")]
+    UnresolvedOperandValue,
+    #[error("plan data value evaluation failed")]
+    DataValueEvaluation(#[source] Box<plasm_core::PlasmDataValueEvaluationError<DataOperandError>>),
+    #[error(transparent)]
+    ValueProjection(#[from] super::input_rows::ValueProjectionError),
+    #[error("template input `{binding}` is unavailable")]
+    TemplateInputUnavailable { binding: String },
+    #[error(transparent)]
+    Template(#[from] plasm_core::program_string_template::ProgramStringError),
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("materialized plan input could not be bound")]
+pub(crate) struct MaterializedInputError;
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum WireCoercionContextError {
+    #[error("input alias `{alias}` references unloaded catalog `{entry_id}` for `{entity}`")]
+    CatalogUnavailable {
+        alias: String,
+        entry_id: String,
+        entity: String,
+    },
+}
+
+impl From<RuntimeOperandError> for plasm_runtime::ExecutionFailure {
+    fn from(error: RuntimeOperandError) -> Self {
+        Self::new(
+            plasm_runtime::FailureCause::Runtime,
+            "operand_binding",
+            error.to_string(),
+        )
+    }
+}
+
 pub(crate) fn instantiate_parsed_expr_plan_inputs_with_rows(
     parsed: ParsedExpr,
     target_cgs: &CGS,
     input_rows: &BTreeMap<InputAlias, MaterializedInputRow>,
     wire_coercion_by_alias: &BTreeMap<InputAlias, WireCoercionCtx<'_>>,
-) -> Result<ParsedExpr, String> {
+) -> Result<ParsedExpr, RuntimeOperandError> {
     let scope = EvalScope::Root {
         row: &plasm_core::Value::Null,
     };
@@ -35,11 +125,12 @@ pub(crate) fn instantiate_parsed_expr_plan_inputs(
     target_cgs: &CGS,
     uses_result: &[PlanResultUse],
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
-) -> Result<ParsedExpr, String> {
+) -> Result<ParsedExpr, RuntimeOperandError> {
     if uses_result.is_empty() {
         return Ok(parsed);
     }
-    let input_rows = materialized_result_use_inputs(materialized, uses_result, None)?;
+    let input_rows = materialized_result_use_inputs(materialized, uses_result, None)
+        .map_err(|_| RuntimeOperandError::MaterializedInput(MaterializedInputError))?;
     let empty = BTreeMap::new();
     instantiate_parsed_expr_plan_inputs_with_rows(parsed, target_cgs, &input_rows, &empty)
 }
@@ -60,7 +151,7 @@ pub(crate) fn wire_coercion_ctx_for_source_entity<'a>(
 pub(crate) fn wire_coercion_by_alias_from_inputs<'a>(
     es: &'a ExecuteSession,
     input_rows: &mut BTreeMap<InputAlias, MaterializedInputRow>,
-) -> Result<BTreeMap<InputAlias, WireCoercionCtx<'a>>, String> {
+) -> Result<BTreeMap<InputAlias, WireCoercionCtx<'a>>, WireCoercionContextError> {
     let mut out = BTreeMap::new();
     for (alias, row) in input_rows.iter_mut() {
         let entry_id = row.qualified_entity.entry_id.as_str();
@@ -73,13 +164,10 @@ pub(crate) fn wire_coercion_by_alias_from_inputs<'a>(
             .contexts_by_entry
             .get(entry_id)
             .map(|c| c.cgs.as_ref())
-            .ok_or_else(|| {
-                format!(
-                    "alias {:?} qualified_entity {}:{}: catalog entry not loaded in session (no primary-catalog fallback)",
-                    alias.as_str(),
-                    entry_id,
-                    entity
-                )
+            .ok_or_else(|| WireCoercionContextError::CatalogUnavailable {
+                alias: alias.as_str().to_owned(),
+                entry_id: entry_id.to_owned(),
+                entity: entity.to_owned(),
             })?;
         // Plan-computed / render synthetics have no EntityDef; retain their native fields.
         if let Some(ctx) = wire_coercion_ctx_for_source_entity(cgs, entity) {
@@ -93,7 +181,7 @@ pub(crate) fn instantiate_expr_template(
     template: &ValidatedPlanExprTemplate,
     env: &PlanEvalEnv<'_>,
     target_cgs: &CGS,
-) -> Result<ParsedExpr, String> {
+) -> Result<ParsedExpr, RuntimeOperandError> {
     Ok(ParsedExpr {
         expr: template
             .expr
@@ -106,29 +194,30 @@ pub(crate) fn instantiate_expr_template(
 struct RuntimeOperands<'a, 'b>(&'a PlanEvalEnv<'b>, &'a CGS);
 
 impl OperandResolver for RuntimeOperands<'_, '_> {
-    type Error = String;
+    type Error = RuntimeOperandError;
     fn resolve(
         &mut self,
         reference: &plasm_core::PlasmInputRef,
-    ) -> Result<plasm_core::operand_binding::ResolvedValue, String> {
+    ) -> Result<plasm_core::operand_binding::ResolvedValue, RuntimeOperandError> {
         let value = resolve_input_reference(reference, self.0)?;
-        plasm_core::operand_binding::ResolvedValue::new(value).map_err(str::to_owned)
+        plasm_core::operand_binding::ResolvedValue::new(value)
+            .map_err(|_| RuntimeOperandError::OperandValue)
     }
     fn identity(
         &mut self,
         target: plasm_core::operand_binding::IdentityTarget<'_>,
         reference: &plasm_core::PlasmInputRef,
-    ) -> Result<plasm_core::EntityId, String> {
+    ) -> Result<plasm_core::EntityId, RuntimeOperandError> {
         let codec = plasm_core::operand_binding::IdentityCodec::compile(self.1, target)?;
-        codec.encode(&resolve_input_reference(reference, self.0)?)
+        Ok(codec.encode(&resolve_input_reference(reference, self.0)?)?)
     }
     fn string(
         &mut self,
         value: &plasm_core::program_string_template::CompiledProgramString,
-    ) -> Result<String, String> {
+    ) -> Result<String, RuntimeOperandError> {
         value
             .render(&plan_binding_scope_owned(self.0))
-            .map_err(|e| format!("string interpolation: {e}"))
+            .map_err(RuntimeOperandError::StringInterpolation)
     }
 }
 
@@ -246,7 +335,7 @@ pub(crate) fn node_input_hole_from_identity(
 pub(crate) fn resolve_input_reference(
     reference: &plasm_core::PlasmInputRef,
     env: &PlanEvalEnv<'_>,
-) -> Result<plasm_core::Value, String> {
+) -> Result<plasm_core::Value, RuntimeOperandError> {
     match reference {
         plasm_core::PlasmInputRef::RowBinding { binding, path } => {
             let EvalScope::Bound {
@@ -254,13 +343,15 @@ pub(crate) fn resolve_input_reference(
                 ..
             } = &env.scope
             else {
-                return Err("binding IR hole cannot be used outside a row scope".to_string());
+                return Err(RuntimeOperandError::BindingOutsideRowScope {
+                    binding: binding.clone(),
+                });
             };
             if binding != scope_binding.as_str() {
-                return Err(format!(
-                    "binding IR hole references {binding:?}, but active binding is {:?}",
-                    scope_binding.as_str()
-                ));
+                return Err(RuntimeOperandError::BindingMismatch {
+                    binding: binding.clone(),
+                    active: scope_binding.to_string(),
+                });
             }
             Ok(value_at_segments(env.scope.row(), path)
                 .cloned()
@@ -268,9 +359,15 @@ pub(crate) fn resolve_input_reference(
         }
         plasm_core::PlasmInputRef::NodeInput { node, path } => {
             let alias = node;
-            let alias = InputAlias::new(alias.to_string())?;
+            let alias = InputAlias::new(alias.to_string()).map_err(|_| {
+                RuntimeOperandError::InvalidAlias {
+                    alias: alias.to_string(),
+                }
+            })?;
             let input = env.inputs.rows.get(&alias).ok_or_else(|| {
-                format!("node_input IR hole references unavailable alias {alias:?}")
+                RuntimeOperandError::UnavailableAlias {
+                    alias: alias.to_string(),
+                }
             })?;
             let wire_ctx = env.wire_coercion_for_alias(&alias);
             let id_field = wire_ctx
@@ -284,27 +381,23 @@ pub(crate) fn resolve_input_reference(
                         .or_else(|| {
                             node_input_hole_from_identity(wire_ctx, id_field, ident, path, row)
                         })
-                        .ok_or_else(|| {
-                            format!(
-                                "node_input hole {:?}.{} unresolved on catalog {}:{} (missing row field and id_field identity)",
-                                alias.as_str(),
-                                path.join("."),
-                                input.qualified_entity.entry_id,
-                                input.qualified_entity.entity
-                            )
+                        .ok_or_else(|| RuntimeOperandError::MissingInputField {
+                            alias: alias.to_string(),
+                            path: path.join("."),
+                            entry_id: input.qualified_entity.entry_id.clone(),
+                            entity: input.qualified_entity.entity.clone(),
                         })?;
                     if !cell.is_null() {
                         values.push(coerce_node_input_value(wire_ctx, path, cell));
                     }
                 }
                 if values.is_empty() {
-                    return Err(format!(
-                        "node_input hole {:?}.{} produced no values from catalog {}:{}",
-                        alias.as_str(),
-                        path.join("."),
-                        input.qualified_entity.entry_id,
-                        input.qualified_entity.entity
-                    ));
+                    return Err(RuntimeOperandError::EmptyInputValues {
+                        alias: alias.to_string(),
+                        path: path.join("."),
+                        entry_id: input.qualified_entity.entry_id.clone(),
+                        entity: input.qualified_entity.entity.clone(),
+                    });
                 }
                 return Ok(plasm_core::Value::Array(values));
             }
@@ -342,21 +435,19 @@ pub(crate) fn resolve_input_reference(
                     return Ok(value);
                 }
             }
-            Err(format!(
-                "node_input hole {:?}.{} unresolved on catalog {}:{} (row field missing or null; id_field={})",
-                alias.as_str(),
-                path.join("."),
-                input.qualified_entity.entry_id,
-                input.qualified_entity.entity,
-                id_field
-            ))
+            Err(RuntimeOperandError::MissingInputField {
+                alias: alias.to_string(),
+                path: path.join("."),
+                entry_id: input.qualified_entity.entry_id.clone(),
+                entity: input.qualified_entity.entity.clone(),
+            })
         }
     }
 }
 /// Keep the scalar/record distinction explicit while storing every row as a native record.
 fn native_output_rows(
     values: Vec<plasm_core::Value>,
-) -> Result<(Vec<plasm_core::ValueRow>, Vec<MaterializedValueShape>), String> {
+) -> (Vec<plasm_core::ValueRow>, Vec<MaterializedValueShape>) {
     let shapes = values
         .iter()
         .map(|value| {
@@ -367,18 +458,18 @@ fn native_output_rows(
             }
         })
         .collect();
-    Ok((
+    (
         values
             .into_iter()
             .map(plasm_core::ValueRow::from_output)
             .collect(),
         shapes,
-    ))
+    )
 }
 
 pub(crate) fn plan_value_to_rows(
     value: &PlanValue,
-) -> Result<(Vec<plasm_core::ValueRow>, Vec<MaterializedValueShape>), String> {
+) -> Result<(Vec<plasm_core::ValueRow>, Vec<MaterializedValueShape>), DataOperandError> {
     let inputs = BTreeMap::new();
     let scope = EvalScope::Root {
         row: &plasm_core::Value::Null,
@@ -392,8 +483,8 @@ pub(crate) fn plan_value_to_rows(
     };
     let value = eval_plan_value(value, &env)?;
     match value {
-        plasm_core::Value::Array(items) => native_output_rows(items),
-        value => native_output_rows(vec![value]),
+        plasm_core::Value::Array(items) => Ok(native_output_rows(items)),
+        value => Ok(native_output_rows(vec![value])),
     }
 }
 
@@ -407,7 +498,7 @@ pub(crate) fn derive_node_rows(
     value: &PlanValue,
     source_rows: &[plasm_core::ValueRow],
     input_rows: &BTreeMap<InputAlias, MaterializedInputRow>,
-) -> Result<(Vec<plasm_core::ValueRow>, Vec<MaterializedValueShape>), String> {
+) -> Result<(Vec<plasm_core::ValueRow>, Vec<MaterializedValueShape>), DataOperandError> {
     let empty_coercion = BTreeMap::new();
     let mut rows = Vec::with_capacity(source_rows.len());
     for row in source_rows {
@@ -431,7 +522,7 @@ pub(crate) fn derive_node_rows(
             .collect();
         Ok((rows, shapes))
     } else {
-        native_output_rows(rows)
+        Ok(native_output_rows(rows))
     }
 }
 
@@ -478,17 +569,20 @@ impl<'a> PlanEvalEnv<'a> {
 pub(crate) fn eval_plan_value(
     value: &PlanValue,
     env: &PlanEvalEnv<'_>,
-) -> Result<plasm_core::Value, String> {
-    Ok(value.evaluate(&mut DataOperands(env))?.into_value())
+) -> Result<plasm_core::Value, DataOperandError> {
+    value
+        .evaluate(&mut DataOperands(env))
+        .map(plasm_core::operand_binding::ResolvedValue::into_value)
+        .map_err(|error| DataOperandError::DataValueEvaluation(Box::new(error)))
 }
 
 struct DataOperands<'a, 'b>(&'a PlanEvalEnv<'b>);
 impl plasm_core::operand_binding::OperandResolver for DataOperands<'_, '_> {
-    type Error = String;
+    type Error = DataOperandError;
     fn resolve(
         &mut self,
         reference: &plasm_core::PlasmInputRef,
-    ) -> Result<plasm_core::operand_binding::ResolvedValue, String> {
+    ) -> Result<plasm_core::operand_binding::ResolvedValue, DataOperandError> {
         use plasm_core::PlasmInputRef;
         match reference {
             PlasmInputRef::NodeInput { node, path } => self.node(node, node, path),
@@ -501,13 +595,20 @@ impl plasm_core::operand_binding::OperandResolver for DataOperands<'_, '_> {
                     } if binding == "_" || binding == actual.as_str() => {
                         strip_binding(&dotted, actual)
                     }
-                    _ => return Err(format!("unknown row binding `{binding}`")),
+                    _ => {
+                        return Err(DataOperandError::UnknownRowBinding {
+                            binding: binding.clone(),
+                        });
+                    }
                 };
                 let value = value_at_dotted(self.0.scope.row(), path).ok_or_else(|| {
-                    format!("row binding `{binding}` field `{path}` is unobserved (not null)")
+                    DataOperandError::RowFieldUnobserved {
+                        binding: binding.clone(),
+                        field_path: path.to_owned(),
+                    }
                 })?;
                 plasm_core::operand_binding::ResolvedValue::new(value.clone())
-                    .map_err(str::to_owned)
+                    .map_err(|_| DataOperandError::UnresolvedOperandValue)
             }
         }
     }
@@ -516,18 +617,19 @@ impl plasm_core::operand_binding::OperandResolver for DataOperands<'_, '_> {
         node: &str,
         alias: &str,
         path: &[String],
-    ) -> Result<plasm_core::operand_binding::ResolvedValue, String> {
-        let input = self
-            .0
-            .inputs
-            .rows
-            .get(&InputAlias::new(alias.to_owned())?)
-            .ok_or_else(|| format!("missing input alias `{alias}`"))?;
+    ) -> Result<plasm_core::operand_binding::ResolvedValue, DataOperandError> {
+        let input_alias = InputAlias::new(alias.to_owned())?;
+        let input = self.0.inputs.rows.get(&input_alias).ok_or_else(|| {
+            DataOperandError::InputAliasUnavailable {
+                alias: alias.to_owned(),
+            }
+        })?;
         if input.node.as_str() != node {
-            return Err(format!(
-                "input alias `{alias}` is bound to `{}`, not `{node}`",
-                input.node.as_str()
-            ));
+            return Err(DataOperandError::InputAliasNodeMismatch {
+                alias: alias.to_owned(),
+                actual: input.node.to_string(),
+                expected: node.to_owned(),
+            });
         }
         match input.proof {
             crate::plasm_plan::InputCardinalityProof::Acknowledgement
@@ -535,8 +637,12 @@ impl plasm_core::operand_binding::OperandResolver for DataOperands<'_, '_> {
             | crate::plasm_plan::InputCardinalityProof::StaticSingleton
             | crate::plasm_plan::InputCardinalityProof::RuntimeCheckedSingleton => {}
         }
-        let value = value_at_segments(&input.row, path)
-            .ok_or_else(|| format!("input `{node}` has no field `{}`", path.join(".")))?;
+        let value = value_at_segments(&input.row, path).ok_or_else(|| {
+            DataOperandError::InputFieldMissing {
+                node: node.to_owned(),
+                field_path: path.join("."),
+            }
+        })?;
         let value = if path.is_empty() {
             match &input.value_projection {
                 Some(fields) => {
@@ -547,35 +653,38 @@ impl plasm_core::operand_binding::OperandResolver for DataOperands<'_, '_> {
         } else {
             value.clone()
         };
-        plasm_core::operand_binding::ResolvedValue::new(value).map_err(str::to_owned)
+        plasm_core::operand_binding::ResolvedValue::new(value)
+            .map_err(|_| DataOperandError::UnresolvedOperandValue)
     }
     fn identity(
         &mut self,
         _: plasm_core::operand_binding::IdentityTarget<'_>,
         _: &plasm_core::PlasmInputRef,
-    ) -> Result<plasm_core::EntityId, String> {
-        Err("data operands do not encode catalog identities".into())
+    ) -> Result<plasm_core::EntityId, DataOperandError> {
+        Err(DataOperandError::IdentityUnsupported)
     }
     fn string(
         &mut self,
         template: &plasm_core::program_string_template::CompiledProgramString,
-    ) -> Result<String, String> {
+    ) -> Result<String, DataOperandError> {
         render_template(template, self.0)
     }
     fn template(
         &mut self,
         template: &plasm_core::program_string_template::CompiledProgramString,
         bindings: &[plasm_core::PlanInputBinding],
-    ) -> Result<String, String> {
+    ) -> Result<String, DataOperandError> {
         let mut scope = plan_binding_scope_owned(self.0);
         let original = scope.clone();
         for binding in bindings {
-            let value = original
-                .get(&binding.from)
-                .ok_or_else(|| format!("template input `{}` is missing", binding.from))?;
+            let value = original.get(&binding.from).ok_or_else(|| {
+                DataOperandError::TemplateInputUnavailable {
+                    binding: binding.from.clone(),
+                }
+            })?;
             scope.insert(binding.to.clone(), value.clone());
         }
-        template.render(&scope).map_err(|e| e.to_string())
+        template.render(&scope).map_err(DataOperandError::Template)
     }
 }
 
@@ -593,7 +702,7 @@ pub(crate) fn strip_binding<'a>(path: &'a str, binding: &BindingName) -> &'a str
 pub(crate) fn render_template(
     template: &plasm_core::program_string_template::CompiledProgramString,
     env: &PlanEvalEnv<'_>,
-) -> Result<String, String> {
+) -> Result<String, DataOperandError> {
     let current_row = match env.scope {
         EvalScope::Bound { row, .. } => Some(row),
         EvalScope::Root { .. } => None,
@@ -617,7 +726,7 @@ pub(crate) fn render_template(
     }
     template
         .render_minijinja_context(&ctx)
-        .map_err(|e| e.to_string())
+        .map_err(DataOperandError::Template)
 }
 
 pub(crate) fn synthetic_projection(node: &ValidatedPlanNode) -> Option<Vec<String>> {
@@ -646,7 +755,7 @@ mod native_output_shape_tests {
     use super::*;
     #[test]
     fn row_scoped_derivation_binds_records_and_requires_explicit_scalar_extraction() {
-        let (source, _) = native_output_rows(vec![plasm_core::Value::Integer(7)]).unwrap();
+        let (source, _) = native_output_rows(vec![plasm_core::Value::Integer(7)]);
         let binding = BindingName::new("item").unwrap();
         let reference = |path| PlanValue::BindingSymbol {
             binding: "item".into(),
@@ -715,7 +824,7 @@ mod native_output_shape_tests {
             "value".into(),
             Value::Integer(7),
         )]));
-        let (rows, shapes) = native_output_rows(vec![Value::Integer(7), record]).unwrap();
+        let (rows, shapes) = native_output_rows(vec![Value::Integer(7), record]);
         assert_eq!(rows[0], rows[1]);
         assert_eq!(
             shapes,

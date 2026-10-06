@@ -14,10 +14,22 @@ struct Case {
     id: String,
     sources: Vec<String>,
 }
-fn read<T: serde::de::DeserializeOwned>(path: impl AsRef<Path>) -> Result<T> {
+#[derive(Debug, thiserror::Error)]
+enum ReplayFileError {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+}
+fn read<T: serde::de::DeserializeOwned>(
+    path: impl AsRef<Path>,
+) -> std::result::Result<T, ReplayFileError> {
     Ok(serde_json::from_slice(&std::fs::read(path)?)?)
 }
-fn save(path: impl AsRef<Path>, value: &impl serde::Serialize) -> Result<()> {
+fn save(
+    path: impl AsRef<Path>,
+    value: &impl serde::Serialize,
+) -> std::result::Result<(), ReplayFileError> {
     std::fs::write(path, serde_json::to_vec(value)?)?;
     Ok(())
 }

@@ -55,7 +55,7 @@ impl Lower<'_> {
             } => self.callback_choice(test, *selected, yes, no, row, mode),
             monty_analysis::FlowExit::Return(value) => {
                 let none = *ruff_python_parser::parse_expression("None")
-                    .map_err(|e| e.to_string())?
+                    .map_err(PythonLoweringError::parse_error)?
                     .into_syntax()
                     .body;
                 self.callback_return(value.as_ref().unwrap_or(&none), row, mode)
@@ -131,7 +131,7 @@ impl Lower<'_> {
                 return Ok(raw);
             }
             let value = *ruff_python_parser::parse_expression(&format!("{raw}.value"))
-                .map_err(|e| e.to_string())?
+                .map_err(PythonLoweringError::parse_error)?
                 .into_syntax()
                 .body;
             let check = self.return_check.take();
@@ -147,7 +147,9 @@ impl Lower<'_> {
                 let mut sequence = EffectSequence::Empty;
                 for item in &items.elts {
                     let id = self.expr(item, None)?;
-                    let node = self.state.get(&id).ok_or("missing effect sequence item")?;
+                    let node = self.state.get(&id).ok_or(
+                        crate::program_rejection::PythonLoweringInvariantError::EffectSequenceItemMissing,
+                    )?;
                     sequence.observe(&node.source);
                 }
                 if sequence == EffectSequence::Effects {
@@ -155,16 +157,13 @@ impl Lower<'_> {
                     // is neither a rowset nor another acknowledgement; returning
                     // it contributes no data rows.
                     let none = *ruff_python_parser::parse_expression("None")
-                        .map_err(|error| error.to_string())?
+                        .map_err(PythonLoweringError::parse_error)?
                         .into_syntax()
                         .body;
                     return self.callback_return(&none, row, mode);
                 }
                 if sequence == EffectSequence::Mixed {
-                    return Err(at(
-                        expression,
-                        "a callback result cannot mix effects and values",
-                    ));
+                    return Err(at(expression, PythonSourceError::MixedCallbackResult));
                 }
             }
             if matches!(expression, PyExpr::NoneLiteral(_)) {
@@ -254,7 +253,9 @@ impl Lower<'_> {
                             field_path: FieldPath::new(vec!["predicate".into()])?,
                             op: PlanPredicateOp::Eq,
                             value: PlasmDataValue::Literal {
-                                value: plasm_core::Value::Bool(selected).try_into()?,
+                                value: plasm_core::Value::Bool(selected).try_into().map_err(
+                                    |_| crate::program_rejection::PythonLoweringInvariantError::InvalidResolvedLiteral,
+                                )?,
                             },
                         }]
                         .into(),
@@ -349,7 +350,9 @@ impl Lower<'_> {
                 return Ok(right.0);
             }
             if left.2 != right.2 {
-                return Err("callback branches cannot mix rows and acknowledgements".into());
+                return Err(
+                    crate::program_rejection::PythonProgramError::CallbackBranchKindMismatch.into(),
+                );
             }
             let id = self.fresh();
             let node = super::super::row_suffix_to_compute(
@@ -371,7 +374,9 @@ impl Lower<'_> {
             .collect::<BTreeSet<_>>()
             != right.1.fields.iter().map(|f| &f.name).collect()
         {
-            return Err("callback branches must return the same record fields".into());
+            return Err(
+                crate::program_rejection::PythonProgramError::CallbackBranchFieldMismatch.into(),
+            );
         }
         for field in &mut schema.fields {
             let other = right
@@ -384,11 +389,11 @@ impl Lower<'_> {
                 field
                     .value_type
                     .take()
-                    .ok_or("missing callback return type")?,
+                    .ok_or(crate::program_rejection::PythonLoweringInvariantError::CallbackReturnValueContractMissing)?,
                 other
                     .value_type
                     .clone()
-                    .ok_or("missing callback return type")?,
+                    .ok_or(crate::program_rejection::PythonLoweringInvariantError::CallbackReturnValueContractMissing)?,
             );
             field.value_kind = value.summary();
             field.value_type = Some(value);

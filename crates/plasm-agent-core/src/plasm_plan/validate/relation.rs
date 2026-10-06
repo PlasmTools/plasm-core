@@ -1,23 +1,65 @@
 use super::*;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum PlanRelationValidationError {
+    #[error("plan node {node_index} relation source `{source_id}` is unknown")]
+    UnknownSource {
+        node_index: usize,
+        source_id: String,
+    },
+    #[error("plan node {node_index} relation name is invalid")]
+    InvalidRelationName {
+        node_index: usize,
+        source: PlanAtomError,
+    },
+    #[error("plan node {node_index} relation target requires non-empty catalog and entity names")]
+    InvalidTarget { node_index: usize },
+    #[error(transparent)]
+    Operand(#[from] compute::OperandValidationError),
+    #[error(
+        "plan node {node_index} relation source `{source_id}` is not statically singleton; use Plan.singleton(...) for runtime-checked traversal"
+    )]
+    SourceNotStaticallySingleton {
+        node_index: usize,
+        source_id: String,
+    },
+    #[error(transparent)]
+    ViewEmbedProof(#[from] plasm_core::ViewEmbedProofError),
+    #[error("plan node {node_index} relation source `{source_id}` is not view-produced by node `{producer}` for view `{view}`")]
+    SourceDoesNotReachProducer {
+        node_index: usize,
+        source_id: String,
+        producer: String,
+        view: String,
+    },
+    #[error(
+        "plan node {node_index} view producer `{producer}` must be a surface root (got {kind:?})"
+    )]
+    ProducerIsNotSurfaceRoot {
+        node_index: usize,
+        producer: String,
+        kind: PlanNodeKind,
+    },
+}
 
 pub(super) fn validate_relation_traversal(
     plan: &Plan,
     relation: &PlanRelationTraversal,
     node_index: usize,
     by_id: &HashMap<String, usize>,
-) -> Result<(), String> {
+) -> Result<(), PlanRelationValidationError> {
     if relation.source.trim().is_empty() || !by_id.contains_key(&relation.source) {
-        return Err(format!(
-            "plan.nodes[{node_index}].relation.source references unknown id {:?}",
-            relation.source
-        ));
+        return Err(PlanRelationValidationError::UnknownSource {
+            node_index,
+            source_id: relation.source.clone(),
+        });
     }
-    RelationName::new(relation.relation.clone())
-        .map_err(|e| format!("plan.nodes[{node_index}].relation.relation: {e}"))?;
+    RelationName::new(relation.relation.clone()).map_err(|source| {
+        PlanRelationValidationError::InvalidRelationName { node_index, source }
+    })?;
     if relation.target.entry_id.trim().is_empty() || relation.target.entity.trim().is_empty() {
-        return Err(format!(
-            "plan.nodes[{node_index}].relation.target must include non-empty entry_id and entity"
-        ));
+        return Err(PlanRelationValidationError::InvalidTarget { node_index });
     }
     let input_aliases: Vec<_> = plan.nodes[node_index]
         .uses_result
@@ -32,7 +74,7 @@ pub(super) fn validate_relation_traversal(
             input_aliases: &input_aliases,
         },
     )?;
-    // A one-cardinality relation over a *plural* source is a valid 1:1 flat-map (one target per
+    // A one-cardinality relation over a plural source is a valid 1:1 flat-map (one target per
     // parent → a list aligned with the parents); it lowers to per-row fanout exactly like the
     // many-relation case. `Plan.singleton(...)` is a narrowing assertion, never a prerequisite for
     // traversal. See the cardinality lattice in `docs/plasm-language-definition.md`.
@@ -41,10 +83,10 @@ pub(super) fn validate_relation_traversal(
         && !cardinality::analyze_static_cardinality(plan, by_id, relation.source.as_str())
             .is_static_singleton()
     {
-        return Err(format!(
-            "plan.nodes[{node_index}].relation source {:?} is not statically singleton; use Plan.singleton(...) for runtime-checked traversal",
-            relation.source
-        ));
+        return Err(PlanRelationValidationError::SourceNotStaticallySingleton {
+            node_index,
+            source_id: relation.source.clone(),
+        });
     }
     validate_view_embed_relation(plan, relation, node_index, by_id)?;
     Ok(())
@@ -55,7 +97,7 @@ fn validate_view_embed_relation(
     relation: &PlanRelationTraversal,
     node_index: usize,
     by_id: &HashMap<String, usize>,
-) -> Result<(), String> {
+) -> Result<(), PlanRelationValidationError> {
     let context = format!("plan.nodes[{node_index}]");
     let Some(proof) = plasm_core::ValidatedViewEmbedProof::require_for_materialize(
         relation.materialize.as_ref(),
@@ -72,21 +114,24 @@ fn validate_view_embed_relation(
         by_id,
         relation.source.as_str(),
         proof.producer_node.as_str(),
-    )? {
-        return Err(format!(
-            "plan.nodes[{node_index}].relation source {:?} is not view-produced by node {:?} for view `{}`",
-            relation.source, proof.producer_node, proof.view
-        ));
+    ) {
+        return Err(PlanRelationValidationError::SourceDoesNotReachProducer {
+            node_index,
+            source_id: relation.source.clone(),
+            producer: proof.producer_node.clone(),
+            view: proof.view.clone(),
+        });
     }
     let producer_idx = by_id[proof.producer_node.as_str()];
     let producer = &plan.nodes[producer_idx];
     if producer.kind.has_surface_expr() {
         return Ok(());
     }
-    Err(format!(
-        "plan.nodes[{node_index}].relation.view_embed_proof.producer_node {:?} must be a surface view root (got {:?})",
-        proof.producer_node, producer.kind
-    ))
+    Err(PlanRelationValidationError::ProducerIsNotSurfaceRoot {
+        node_index,
+        producer: proof.producer_node.clone(),
+        kind: producer.kind,
+    })
 }
 
 fn plan_node_reaches_view_producer(
@@ -94,18 +139,18 @@ fn plan_node_reaches_view_producer(
     by_id: &HashMap<String, usize>,
     start: &str,
     producer: &str,
-) -> Result<bool, String> {
+) -> bool {
     let mut cur = start.to_string();
     let mut visited = std::collections::HashSet::new();
     for _ in 0..64 {
         if cur == producer {
-            return Ok(true);
+            return true;
         }
         if !visited.insert(cur.clone()) {
-            return Ok(false);
+            return false;
         }
         let Some(idx) = by_id.get(cur.as_str()) else {
-            return Ok(false);
+            return false;
         };
         let node = &plan.nodes[*idx];
         cur = match node.kind {
@@ -133,11 +178,11 @@ fn plan_node_reaches_view_producer(
                 {
                     body.parent.source.to_string()
                 }
-                _ => return Ok(false),
+                _ => return false,
             },
-            PlanNodeKind::Data => return Ok(false),
-            _ => return Ok(false),
+            PlanNodeKind::Data => return false,
+            _ => return false,
         };
     }
-    Ok(false)
+    false
 }

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::Subcommand;
-use plasm_agent_core::error::AgentError;
+use plasm_agent_core::error::AgentArgumentError;
 use plasm_agent_core::mcp_config_admin::McpConfigAdminService;
 use plasm_agent_core::mcp_host_bootstrap;
 use plasm_core::discovery::CgsRegistry;
@@ -99,6 +99,14 @@ pub enum KeysCmd {
     },
 }
 
+#[derive(Debug, thiserror::Error)]
+enum McpCliFault {
+    #[error("pass at most one of --schema or --catalog-dir for mcp commands")]
+    ConflictingCatalogSources,
+    #[error("runtime snapshot missing for config {config_id}")]
+    MissingRuntimeSnapshot { config_id: Uuid },
+}
+
 pub async fn run_mcp(cli: McpCliRoot) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if matches!(&cli.command, McpCmd::MigrateDb) {
         return crate::run_migrate_mcp_config_db().await;
@@ -137,7 +145,7 @@ pub async fn run_mcp(cli: McpCliRoot) -> Result<(), Box<dyn std::error::Error + 
             let runtime = svc
                 .load_runtime_snapshot(id)
                 .await?
-                .ok_or_else(|| format!("runtime snapshot missing for config {id}"))?;
+                .ok_or(McpCliFault::MissingRuntimeSnapshot { config_id: id })?;
             let optional = svc.load_auth_optional_set(id).await?;
             let rows = if let Some(reg) = registry.as_ref() {
                 McpConfigAdminService::catalog_rows(reg, &runtime, &optional)
@@ -199,7 +207,7 @@ pub async fn run_mcp(cli: McpCliRoot) -> Result<(), Box<dyn std::error::Error + 
                     let runtime = svc
                         .load_runtime_snapshot(id)
                         .await?
-                        .ok_or_else(|| format!("runtime snapshot missing for config {id}"))?;
+                        .ok_or(McpCliFault::MissingRuntimeSnapshot { config_id: id })?;
                     let optional = svc.load_auth_optional_set(id).await?;
                     let empty_reg = CgsRegistry::from_pairs(vec![]);
                     let reg_ref: &CgsRegistry = match registry.as_ref() {
@@ -303,9 +311,7 @@ async fn load_optional_registry(
 ) -> Result<Option<Arc<CgsRegistry>>, Box<dyn std::error::Error + Send + Sync>> {
     match (&cli.schema, &cli.catalog_dir) {
         (None, None) => Ok(None),
-        (Some(_), Some(_)) => {
-            Err("pass at most one of --schema or --catalog-dir for mcp commands".into())
-        }
+        (Some(_), Some(_)) => Err(Box::new(McpCliFault::ConflictingCatalogSources)),
         (schema_path, catalog_dir) => {
             let mut argv = vec![std::ffi::OsString::from("plasm-server-mcp-catalog")];
             if let Some(pd) = catalog_dir {
@@ -322,7 +328,7 @@ async fn load_optional_registry(
             let reg = tokio::task::spawn_blocking(move || {
                 let pre = mcp_host_bootstrap::preparse_mcp_command()
                     .try_get_matches_from(&argv)
-                    .map_err(|e| AgentError::Argument(format!("mcp catalog argv: {e:#}")))?;
+                    .map_err(AgentArgumentError::CatalogCliArguments)?;
                 let outcome = mcp_host_bootstrap::load_catalog_for_mcp_server(&pre, false)?;
                 mcp_host_bootstrap::validate_catalog_templates(&outcome)?;
                 mcp_host_bootstrap::build_registry_arc(&pre, &outcome)

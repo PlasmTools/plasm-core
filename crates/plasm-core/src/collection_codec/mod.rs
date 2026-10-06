@@ -61,9 +61,11 @@ impl CollectionIdentity {
     pub fn for_untyped_observation(context: &impl Serialize) -> Result<Self, CollectionFault> {
         Ok(Self {
             catalog: Sha256::digest(b"plasm.untyped.observation.namespace.v1").into(),
-            expression: Sha256::digest(
-                serde_json::to_vec(context).map_err(|e| CollectionFault::Frame(e.to_string()))?,
-            )
+            expression: Sha256::digest(serde_json::to_vec(context).map_err(|source| {
+                CollectionFault::ObservationJson {
+                    source: source.into(),
+                }
+            })?)
             .into(),
             epoch: 0,
         })
@@ -74,9 +76,11 @@ impl CollectionIdentity {
         let mut hash = Sha256::new();
         hash.update(b"plasm.collection.derivation.v1");
         hash.update(self.expression);
-        hash.update(
-            serde_json::to_vec(operator).map_err(|e| CollectionFault::Frame(e.to_string()))?,
-        );
+        hash.update(serde_json::to_vec(operator).map_err(|source| {
+            CollectionFault::DerivationJson {
+                source: source.into(),
+            }
+        })?);
         Ok(Self {
             catalog: self.catalog,
             expression: hash.finalize().into(),
@@ -108,9 +112,11 @@ impl CollectionIdentity {
     ) -> Result<Self, CollectionFault> {
         let mut catalog = [0; 32];
         hex::decode_to_slice(cgs.catalog_cgs_hash_hex(), &mut catalog)
-            .map_err(|error| CollectionFault::Frame(error.to_string()))?;
-        let bytes = serde_json::to_vec(expression)
-            .map_err(|error| CollectionFault::Frame(error.to_string()))?;
+            .map_err(|source| CollectionFault::CatalogDigestHex { source })?;
+        let bytes =
+            serde_json::to_vec(expression).map_err(|source| CollectionFault::ExpressionJson {
+                source: source.into(),
+            })?;
         Ok(Self {
             catalog,
             expression: Sha256::digest(bytes).into(),
@@ -330,7 +336,7 @@ pub enum Demand {
     Whole,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum CollectionFault {
     #[error("collection occurrence conservation failed")]
     Conservation,
@@ -348,8 +354,44 @@ pub enum CollectionFault {
         coverage: ResultCoverage,
         gaps: BTreeSet<EvidenceGap>,
     },
-    #[error("invalid collection frame: {0}")]
-    Frame(String),
+    #[error("collection observation cannot be encoded as JSON")]
+    ObservationJson {
+        #[source]
+        source: std::sync::Arc<serde_json::Error>,
+    },
+    #[error("collection derivation cannot be encoded as JSON")]
+    DerivationJson {
+        #[source]
+        source: std::sync::Arc<serde_json::Error>,
+    },
+    #[error("collection expression cannot be encoded as JSON")]
+    ExpressionJson {
+        #[source]
+        source: std::sync::Arc<serde_json::Error>,
+    },
+    #[error("collection catalog digest is not valid hex")]
+    CatalogDigestHex {
+        #[source]
+        source: hex::FromHexError,
+    },
+    #[error("collection frame payload cannot be encoded as JSON")]
+    FrameEncodeJson {
+        #[source]
+        source: std::sync::Arc<serde_json::Error>,
+    },
+    #[error("collection frame payload is not valid collection JSON")]
+    FrameDecodeJson {
+        #[source]
+        source: std::sync::Arc<serde_json::Error>,
+    },
+    #[error("collection frame is too short: {actual} bytes; at least 36 required")]
+    FrameTooShort { actual: usize },
+    #[error("collection frame magic or version is unsupported")]
+    FrameHeader,
+    #[error("collection frame digest does not match its payload")]
+    FrameDigestMismatch,
+    #[error("collection frame coverage and gaps are inconsistent")]
+    FrameEvidenceInconsistent,
 }
 
 /// One production evidence implementation. Adapters consume this interface rather
@@ -625,7 +667,9 @@ impl<R: PartialEq + Serialize + DeserializeOwned> CollectionCodec for RecordingC
     }
     fn encode(&self, collection: &RecordedCollection<R>) -> Result<Vec<u8>, CollectionFault> {
         let payload =
-            serde_json::to_vec(collection).map_err(|e| CollectionFault::Frame(e.to_string()))?;
+            serde_json::to_vec(collection).map_err(|source| CollectionFault::FrameEncodeJson {
+                source: source.into(),
+            })?;
         let mut frame = b"PCC\x01".to_vec();
         frame.extend_from_slice(&Sha256::digest(&payload));
         frame.extend(payload);
@@ -636,12 +680,17 @@ impl<R: PartialEq + Serialize + DeserializeOwned> CollectionCodec for RecordingC
         bytes: &[u8],
         expected: &CollectionIdentity,
     ) -> Result<RecordedCollection<R>, CollectionFault> {
-        if bytes.len() < 36 || &bytes[..4] != b"PCC\x01" {
-            return Err(CollectionFault::Frame("version or length".into()));
+        if bytes.len() < 36 {
+            return Err(CollectionFault::FrameTooShort {
+                actual: bytes.len(),
+            });
+        }
+        if &bytes[..4] != b"PCC\x01" {
+            return Err(CollectionFault::FrameHeader);
         }
         let payload = &bytes[36..];
         if Sha256::digest(payload)[..] != bytes[4..36] {
-            return Err(CollectionFault::Frame("digest".into()));
+            return Err(CollectionFault::FrameDigestMismatch);
         }
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
@@ -651,14 +700,16 @@ impl<R: PartialEq + Serialize + DeserializeOwned> CollectionCodec for RecordingC
             evidence: Evidence,
         }
         let stored: Stored<R> =
-            serde_json::from_slice(payload).map_err(|e| CollectionFault::Frame(e.to_string()))?;
+            serde_json::from_slice(payload).map_err(|source| CollectionFault::FrameDecodeJson {
+                source: source.into(),
+            })?;
         let collection =
             RecordedCollection::from_parts(stored.identity, stored.rows.into(), stored.evidence);
         if &collection.identity != expected {
             return Err(CollectionFault::IdentityMismatch);
         }
         if (collection.coverage() == ResultCoverage::Complete) != collection.gaps().is_empty() {
-            return Err(CollectionFault::Frame("inconsistent evidence".into()));
+            return Err(CollectionFault::FrameEvidenceInconsistent);
         }
         Ok(collection)
     }

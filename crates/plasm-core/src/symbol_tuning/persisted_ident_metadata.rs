@@ -11,6 +11,14 @@ use crate::ValueWireFormat;
 
 use super::IdentMetadata;
 
+#[derive(Debug, thiserror::Error)]
+pub enum PersistedIdentMetadataError {
+    #[error("persisted array-items value domain key is invalid")]
+    ArrayItemsValueDomainKey(#[source] crate::ValueDomainKeyError),
+    #[error("persisted value domain key is invalid")]
+    ValueDomainKey(#[source] crate::ValueDomainKeyError),
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PersistedArrayItemsSchema {
     pub value_ref: String,
@@ -75,8 +83,11 @@ impl PersistedArrayItemsSchema {
         }
     }
 
-    fn into_schema(self) -> Result<ArrayItemsSchema, String> {
-        let kind = FieldValueKind::Registry(ValueDomainKey::new(self.value_ref)?);
+    fn into_schema(self) -> Result<ArrayItemsSchema, PersistedIdentMetadataError> {
+        let kind = FieldValueKind::Registry(
+            ValueDomainKey::new(self.value_ref)
+                .map_err(PersistedIdentMetadataError::ArrayItemsValueDomainKey)?,
+        );
         Ok(ArrayItemsSchema {
             kind,
             field_type: self.field_type,
@@ -163,7 +174,7 @@ impl From<&IdentMetadata> for PersistedIdentMetadata {
 }
 
 impl PersistedIdentMetadata {
-    pub fn into_ident_metadata(self) -> Result<IdentMetadata, String> {
+    pub fn into_ident_metadata(self) -> Result<IdentMetadata, PersistedIdentMetadataError> {
         Ok(match self {
             Self::RegistryBacked {
                 catalog_entry_id,
@@ -187,7 +198,8 @@ impl PersistedIdentMetadata {
                         }
                     }
                 },
-                value_registry_key: ValueDomainKey::new(value_registry_key)?,
+                value_registry_key: ValueDomainKey::new(value_registry_key)
+                    .map_err(PersistedIdentMetadataError::ValueDomainKey)?,
                 field_type,
                 profile,
                 array_items: array_items
@@ -235,5 +247,45 @@ impl PersistedIdentMetadata {
                 description,
             },
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_persisted_value_domain_keys_have_semantic_errors() {
+        let array_items = PersistedArrayItemsSchema {
+            value_ref: "   ".into(),
+            field_type: FieldType::String,
+            value_format: None,
+            allowed_values: None,
+        };
+        assert!(matches!(
+            array_items.into_schema(),
+            Err(PersistedIdentMetadataError::ArrayItemsValueDomainKey(
+                crate::ValueDomainKeyError::Empty
+            ))
+        ));
+
+        let metadata = PersistedIdentMetadata::RegistryBacked {
+            catalog_entry_id: "catalog".into(),
+            entity: "entity".into(),
+            role: PersistedIdentRegistryRole::EntityField,
+            value_registry_key: "".into(),
+            field_type: FieldType::String,
+            profile: None,
+            array_items: None,
+            allowed_values: None,
+            wire_name: "field".into(),
+            description: String::new(),
+        };
+        assert!(matches!(
+            metadata.into_ident_metadata(),
+            Err(PersistedIdentMetadataError::ValueDomainKey(
+                crate::ValueDomainKeyError::Empty
+            ))
+        ));
     }
 }

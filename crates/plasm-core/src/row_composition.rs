@@ -201,20 +201,27 @@ pub fn row_identity_from_ref(
 }
 
 /// Resolve relation target [`Ref`] from a canonical row identity (shared by runtime chain GET and plan holes).
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("relation `{relation}` has no target id on row for entity `{entity}`")]
+pub struct MissingRelationTargetId {
+    pub relation: String,
+    pub entity: String,
+}
+
 pub fn resolve_relation_target_id(
     source: &RowIdentity,
     relation_wire: &str,
     target_ent: &crate::schema::EntityDef,
-) -> Result<Ref, String> {
+) -> Result<Ref, MissingRelationTargetId> {
     if let Some(v) = source.ambient.get(relation_wire) {
         if !v.is_empty() {
             return Ok(Ref::new(target_ent.name.clone(), v.clone()));
         }
     }
-    Err(format!(
-        "relation `{relation_wire}` has no target id on row for entity `{}`",
-        source.qualified_entity.entity
-    ))
+    Err(MissingRelationTargetId {
+        relation: relation_wire.to_owned(),
+        entity: source.qualified_entity.entity.to_string(),
+    })
 }
 
 #[cfg(test)]

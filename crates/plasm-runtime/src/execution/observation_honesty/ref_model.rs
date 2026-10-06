@@ -4,6 +4,56 @@
 //! outputs against this ledger.
 
 use std::collections::{BTreeMap, BTreeSet};
+use thiserror::Error;
+
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum ObservationHonestyError {
+    #[error("OPH-3 partial-write visibility: observed={observed:?} backend={backend:?} committed_ledger={committed_ledger:?}")]
+    PartialWriteVisibility {
+        observed: BTreeSet<String>,
+        backend: BTreeSet<String>,
+        committed_ledger: BTreeSet<String>,
+    },
+    #[error(
+        "OPH-6 acknowledgment honesty: reported completed={reported} != committed={committed}"
+    )]
+    ReportedCompletionMismatch { reported: usize, committed: usize },
+    #[error("OPH-6 acknowledgment honesty: failed batch reported no completed effects after {committed} commits")]
+    FailedBatchLostAcknowledgments { committed: usize },
+    #[error("OPH-5 coverage honesty: Complete but observed={observed:?} != backend={backend:?}")]
+    CompleteCoverageMismatch {
+        observed: BTreeSet<String>,
+        backend: BTreeSet<String>,
+    },
+    #[error("OPH-5 coverage honesty: {coverage:?} invented ids beyond backend: observed={observed:?} backend={backend:?}")]
+    InventedObservedIds {
+        coverage: ObservationCoverage,
+        observed: BTreeSet<String>,
+        backend: BTreeSet<String>,
+    },
+    #[error("OPH-1 identity isolation: wrong-identity body `{body_identity}` for request `{requested_identity}` was published")]
+    WrongIdentityPublished {
+        body_identity: String,
+        requested_identity: String,
+    },
+    #[error("OPH-1 identity isolation: injected field `{field}` contaminated retained request identity `{requested_identity}`")]
+    InjectedFieldContamination {
+        field: String,
+        requested_identity: String,
+    },
+    #[error("backend reference row `{identity}` is missing")]
+    ReferenceRowMissing { identity: String },
+    #[error("published row `{identity}` is missing")]
+    PublishedRowMissing { identity: String },
+    #[error("OPH-1/2: wrong-identity row `{identity}` was upgraded dishonestly")]
+    WrongIdentityRowUpgraded { identity: String },
+    #[error(
+        "OPH-2 order invariance: row `{identity}` has fields differing from the reference snapshot"
+    )]
+    OrderInvariantFieldsMismatch { identity: String },
+    #[error("OPH-2: hydrated row `{identity}` should be Complete")]
+    HydratedRowNotComplete { identity: String },
+}
 
 /// Stable property ids — mirrored in `docs/concurrent-execute-invariants.md`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -185,14 +235,14 @@ impl ReferenceModel {
         &self,
         group_id: &str,
         observed_ids: &BTreeSet<String>,
-    ) -> Result<(), String> {
+    ) -> Result<(), ObservationHonestyError> {
         let expected = self.backend.expenses_for_group(group_id);
         if observed_ids != &expected {
-            return Err(format!(
-                "OPH-3 partial-write visibility: observed={observed_ids:?} backend={expected:?} \
-                 committed_ledger={:?}",
-                self.committed_ids_for_group(group_id)
-            ));
+            return Err(ObservationHonestyError::PartialWriteVisibility {
+                observed: observed_ids.clone(),
+                backend: expected,
+                committed_ledger: self.committed_ids_for_group(group_id),
+            });
         }
         Ok(())
     }
@@ -205,18 +255,17 @@ impl ReferenceModel {
         &self,
         capability: &str,
         plan_failed: bool,
-    ) -> Result<(), String> {
+    ) -> Result<(), ObservationHonestyError> {
         let completed = self.total_reported_completed(capability);
         let committed = self.committed_writes.len();
         if completed != committed {
-            return Err(format!(
-                "OPH-6 ack honesty: reported completed={completed} != committed={committed}"
-            ));
+            return Err(ObservationHonestyError::ReportedCompletionMismatch {
+                reported: completed,
+                committed,
+            });
         }
         if plan_failed && committed > 0 && completed == 0 {
-            return Err(
-                "OPH-6 ack honesty: failed batch implied rollback (completed wiped)".into(),
-            );
+            return Err(ObservationHonestyError::FailedBatchLostAcknowledgments { committed });
         }
         let _ = self.total_reported_failed(capability);
         Ok(())
@@ -229,25 +278,26 @@ impl ReferenceModel {
         group_id: &str,
         coverage: ObservationCoverage,
         observed_ids: &BTreeSet<String>,
-    ) -> Result<(), String> {
+    ) -> Result<(), ObservationHonestyError> {
         let expected = self.backend.expenses_for_group(group_id);
         match coverage {
             ObservationCoverage::Complete => {
                 if observed_ids != &expected {
-                    return Err(format!(
-                        "OPH-5 coverage honesty: Complete but observed={observed_ids:?} \
-                         != backend={expected:?}"
-                    ));
+                    return Err(ObservationHonestyError::CompleteCoverageMismatch {
+                        observed: observed_ids.clone(),
+                        backend: expected,
+                    });
                 }
             }
             ObservationCoverage::Partial | ObservationCoverage::Unknown => {
                 // Missing acquisition must not silently claim Complete — already enforced
                 // by the match arm above. Partial/Unknown may under-report.
                 if !observed_ids.is_subset(&expected) {
-                    return Err(format!(
-                        "OPH-5 coverage honesty: {coverage:?} invented ids beyond backend: \
-                         observed={observed_ids:?} backend={expected:?}"
-                    ));
+                    return Err(ObservationHonestyError::InventedObservedIds {
+                        coverage,
+                        observed: observed_ids.clone(),
+                        backend: expected,
+                    });
                 }
             }
         }
@@ -258,7 +308,7 @@ impl ReferenceModel {
     pub fn check_identity_isolation(
         published: &BTreeMap<String, BTreeMap<String, String>>,
         responses: &[ResponseRecord],
-    ) -> Result<(), String> {
+    ) -> Result<(), ObservationHonestyError> {
         for resp in responses {
             if resp.fault != ResponseFault::WrongIdentity {
                 continue;
@@ -267,21 +317,19 @@ impl ReferenceModel {
             if published.contains_key(&resp.body_identity)
                 && resp.body_identity != resp.requested_identity
             {
-                return Err(format!(
-                    "OPH-1 identity isolation: wrong-identity body `{}` for request `{}` \
-                     was published",
-                    resp.body_identity, resp.requested_identity
-                ));
+                return Err(ObservationHonestyError::WrongIdentityPublished {
+                    body_identity: resp.body_identity.clone(),
+                    requested_identity: resp.requested_identity.clone(),
+                });
             }
             // Contaminate: requested row must not carry the injected foreign fields.
             if let Some(fields) = published.get(&resp.requested_identity) {
                 for (k, v) in &resp.fields {
                     if fields.get(k) == Some(v) {
-                        return Err(format!(
-                            "OPH-1 identity isolation: injected field {k}={v} landed on \
-                             retained request identity {}",
-                            resp.requested_identity
-                        ));
+                        return Err(ObservationHonestyError::InjectedFieldContamination {
+                            field: k.clone(),
+                            requested_identity: resp.requested_identity.clone(),
+                        });
                     }
                 }
             }

@@ -194,7 +194,11 @@ impl PlasmMcpHandler {
                 .get_execute_session(&b.prompt_hash, &b.session_id)
                 .await
             else {
-                return Err(HostFault::from(MCP_EXECUTE_SESSION_UNAVAILABLE));
+                return Err(HostFault(plasm_runtime::ExecutionFailure::new(
+                    plasm_runtime::FailureCause::Runtime,
+                    "execute_session_unavailable",
+                    MCP_EXECUTE_SESSION_UNAVAILABLE,
+                )));
             };
             if let Some(program) = invocation.program() {
                 if let Some(op_result) = try_dispatch_operation_program(
@@ -210,9 +214,13 @@ impl PlasmMcpHandler {
                 }
             }
             if run_live {
-                let run_target = invocation
-                    .run_target()
-                    .ok_or_else(|| HostFault("missing `run_ref` on plasm_run invocation".into()))?;
+                let run_target = invocation.run_target().ok_or_else(|| {
+                    HostFault(plasm_runtime::ExecutionFailure::new(
+                        plasm_runtime::FailureCause::Program,
+                        "plasm_run_reference_missing",
+                        "plasm_run invocation requires a run_ref",
+                    ))
+                })?;
                 let ingress = committed_plasm_run::resolve_mcp_live_run_ingress(
                     &es,
                     &mcp_trace,
@@ -253,7 +261,11 @@ impl PlasmMcpHandler {
                 .map_err(HostFault::from)
             } else {
                 let program = invocation.program().ok_or_else(|| {
-                    HostFault("missing `program`: call `plasm` with a program".into())
+                    HostFault(plasm_runtime::ExecutionFailure::new(
+                        plasm_runtime::FailureCause::Program,
+                        "plasm_program_missing",
+                        "plasm invocation requires a program",
+                    ))
                 })?;
                 plasm_tool_dry_run::execute_plasm_tool_dry_run(
                     plasm_tool_dry_run::PlasmDryRunContext {

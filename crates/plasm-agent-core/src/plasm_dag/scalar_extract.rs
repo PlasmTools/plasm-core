@@ -1,5 +1,6 @@
 //! PLP-1 singleton field-dot → scalar cell extract (shared DAG node + lowerers).
 
+use super::error::DagCompilationError;
 use super::plan_serialize::{collect_template_uses_from_expr, infer_surface_contract};
 use super::schema_validate::validate_surface_inline_projection;
 use super::types::{CompileState, DagNode, DagNodeSource};
@@ -7,7 +8,6 @@ use crate::execute_session::ExecuteSession;
 use crate::plasm_plan::PlanNodeKind;
 use crate::program_binding::RowCardinalityProof;
 use plasm_core::expr_parser::ParsedExpr;
-use plasm_core::plp;
 use plasm_core::Expr;
 
 /// DAG node for a singleton field cell (`ℓ.wire`), checked for exactly one row at runtime.
@@ -33,13 +33,12 @@ pub(in crate::plasm_dag) fn reject_non_singleton_field_dot(
     id: &str,
     expr_hint: &str,
     wire: &str,
-) -> String {
-    plp::plp4_program(
-        id,
-        format!(
-            "`{expr_hint}` field-dot requires a singleton — resolve the intended identity with Get before extracting, or use `| select {wire}` to preserve all selected rows"
-        ),
-    )
+) -> DagCompilationError {
+    DagCompilationError::PluralFieldExtract {
+        id: id.to_owned(),
+        expression: expr_hint.to_owned(),
+        wire: wire.to_owned(),
+    }
 }
 
 /// Binding continuation: `label.wire` for static or bounded singletons.
@@ -49,7 +48,7 @@ pub(in crate::plasm_dag) fn lower_binding_scalar_field_dot(
     label: &str,
     wire: String,
     row_cardinality: RowCardinalityProof,
-) -> Result<DagNode, String> {
+) -> Result<DagNode, DagCompilationError> {
     if !row_cardinality.permits_scalar_field_extract() {
         return Err(reject_non_singleton_field_dot(
             id,
@@ -68,7 +67,7 @@ pub(in crate::plasm_dag) fn compile_catalog_singleton_field_dot(
     expr: &str,
     parsed: ParsedExpr,
     wire: String,
-) -> Result<Vec<DagNode>, String> {
+) -> Result<Vec<DagNode>, DagCompilationError> {
     let uses = collect_template_uses_from_expr(&parsed.expr, None, &state.program_node_id_set());
     let (kind, qualified_entity, effect_class, result_shape) =
         infer_surface_contract(session, &parsed.expr)?;
@@ -103,7 +102,7 @@ pub(in crate::plasm_dag) fn expand_get_scalar_extracts_in_expr(
     state: &CompileState<'_>,
     node_id: &str,
     expr: &mut Expr,
-) -> Result<Vec<DagNode>, String> {
+) -> Result<Vec<DagNode>, DagCompilationError> {
     let mut extras = Vec::new();
     let mut n = 0u32;
     walk_expr_get_extracts(session, state, node_id, expr, &mut extras, &mut n)?;
@@ -117,7 +116,7 @@ fn walk_expr_get_extracts(
     expr: &mut Expr,
     extras: &mut Vec<DagNode>,
     n: &mut u32,
-) -> Result<(), String> {
+) -> Result<(), DagCompilationError> {
     match expr {
         Expr::Invoke(inv) => {
             if let Some(input) = inv.input.as_mut() {
@@ -150,7 +149,7 @@ fn walk_payload_get_extracts(
     payload: &mut plasm_core::InvokeInputPayload,
     extras: &mut Vec<DagNode>,
     n: &mut u32,
-) -> Result<(), String> {
+) -> Result<(), DagCompilationError> {
     match payload {
         plasm_core::InvokeInputPayload::Raw(v) => {
             walk_value_get_extracts(session, state, node_id, v, extras, n)
@@ -171,7 +170,7 @@ fn walk_value_get_extracts(
     value: &mut plasm_core::Value,
     extras: &mut Vec<DagNode>,
     n: &mut u32,
-) -> Result<(), String> {
+) -> Result<(), DagCompilationError> {
     match value {
         plasm_core::Value::GetScalarExtract(extract) => {
             let extract = extract.clone();
@@ -217,7 +216,9 @@ fn walk_value_get_extracts(
     }
 }
 
-fn get_expr_from_extract(extract: &plasm_core::GetScalarExtract) -> Result<Expr, String> {
+fn get_expr_from_extract(
+    extract: &plasm_core::GetScalarExtract,
+) -> Result<Expr, DagCompilationError> {
     use plasm_core::{GetExpr, Ref};
     let mut get = match extract.identity.as_ref() {
         plasm_core::Value::String(s) | plasm_core::Value::PhraseIdent(s) => {
@@ -228,12 +229,11 @@ fn get_expr_from_extract(extract: &plasm_core::GetScalarExtract) -> Result<Expr,
             GetExpr::from_ref(Ref::simple_binding(extract.entity.as_str(), r.clone()))
         }
         other => {
-            return Err(format!(
-                "PLP-1: `{}.{}` Get identity must be a literal or binding, got {}",
-                extract.entity,
-                extract.wire,
-                other.type_name()
-            ))
+            return Err(DagCompilationError::InvalidGetIdentity {
+                entity: extract.entity.to_string(),
+                wire: extract.wire.clone(),
+                actual: other.type_name(),
+            })
         }
     };
     if let Some(entry) = extract.catalog_entry_id.as_deref() {

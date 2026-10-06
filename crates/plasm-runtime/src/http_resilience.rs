@@ -95,16 +95,17 @@ impl ResilientHttpTransport {
         let host = label.to_string();
         tokio::time::timeout(timeout, sem.acquire())
             .await
-            .map_err(|_| RuntimeError::RateLimited {
+            .map_err(|source| RuntimeError::RateLimited {
                 status: 429,
                 host,
                 retry_after: Some(timeout),
                 attempts: 0,
-                message: format!("HTTP concurrency queue timeout waiting for {label}"),
+                source: crate::RateLimitCause::QueueTimeout {
+                    scope: label.to_owned(),
+                    source,
+                },
             })?
-            .map_err(|_| RuntimeError::ConfigurationError {
-                message: format!("HTTP concurrency semaphore closed ({label})"),
-            })
+            .map_err(|source| crate::HttpLimiterError::Closed(source).into())
     }
 
     async fn host_semaphore(&self, host: &str) -> Arc<Semaphore> {
@@ -141,7 +142,7 @@ impl ResilientHttpTransport {
             Ok(HttpAttemptResult::Retryable {
                 status,
                 retry_after,
-                message,
+                mut failure,
             }) => {
                 if !safe || attempt >= max {
                     return Err(finalize_retryable_failure(
@@ -149,16 +150,17 @@ impl ResilientHttpTransport {
                         host,
                         retry_after,
                         attempt,
-                        message,
+                        failure,
                     ));
                 }
                 if started.elapsed() >= self.policy.total_retry_budget {
+                    failure.retry_budget_exhausted = true;
                     return Err(finalize_retryable_failure(
                         status,
                         host,
                         retry_after,
                         attempt,
-                        format!("{message} (retry budget exhausted)"),
+                        failure,
                     ));
                 }
                 let delay = self.compute_delay(attempt, retry_after, url);
@@ -246,20 +248,20 @@ fn finalize_retryable_failure(
     host: &str,
     retry_after: Option<Duration>,
     attempts: u32,
-    message: String,
+    failure: crate::HttpStatusFailure,
 ) -> RuntimeError {
-    if http_retryable_is_rate_limited(status, retry_after, &message) {
+    if http_retryable_is_rate_limited(status, retry_after, &failure.detail) {
         crate::runtime_metrics::record_http_rate_limited();
         RuntimeError::RateLimited {
             status,
             host: host.to_string(),
             retry_after,
             attempts,
-            message,
+            source: crate::RateLimitCause::Upstream(failure),
         }
     } else {
         RuntimeError::RequestError {
-            message,
+            source: crate::RequestFailure::HttpStatus(failure),
             attempts,
             status: Some(status),
             body: None,
@@ -269,13 +271,7 @@ fn finalize_retryable_failure(
 
 fn transport_error_is_retryable(err: &RuntimeError) -> bool {
     match err {
-        RuntimeError::RequestError { message, .. } => {
-            message.contains("timeout")
-                || message.contains("timed out")
-                || message.contains("connection")
-                || message.contains("dns")
-                || message.contains("connect")
-        }
+        RuntimeError::HttpTransport { source, .. } => source.is_timeout() || source.is_connect(),
         _ => false,
     }
 }
@@ -389,13 +385,19 @@ mod tests {
                     "fixture",
                     None,
                     3,
-                    "service rejected request".into(),
+                    crate::HttpStatusFailure::without_request(
+                        status,
+                        "service rejected request".into(),
+                    ),
                 ),
                 crate::http_transport::attempt_result_into_result(
                     crate::http_transport::HttpAttemptResult::Retryable {
                         status,
                         retry_after: None,
-                        message: "service rejected request".into(),
+                        failure: crate::HttpStatusFailure::without_request(
+                            status,
+                            "service rejected request".into(),
+                        ),
                     },
                     1,
                 )
@@ -639,8 +641,11 @@ mod tests {
             "queue wait should fail fast"
         );
         match err {
-            RuntimeError::RateLimited { message, .. } => {
-                assert!(message.contains("HTTP concurrency queue timeout"));
+            RuntimeError::RateLimited {
+                source: crate::RateLimitCause::QueueTimeout { scope, .. },
+                ..
+            } => {
+                assert_eq!(scope, "test-global");
             }
             other => panic!("expected RateLimited, got {other:?}"),
         }
@@ -745,7 +750,11 @@ mod tests {
             let n = self.hits.fetch_add(1, Ordering::SeqCst);
             if n == 0 {
                 return Err(RuntimeError::RequestError {
-                    message: format!("HTTP {}", self.fail_status),
+                    source: crate::HttpStatusFailure::without_request(
+                        self.fail_status,
+                        String::new(),
+                    )
+                    .into(),
                     attempts: 1,
                     status: Some(self.fail_status),
                     body: None,
@@ -759,8 +768,8 @@ mod tests {
             _url: &str,
             _auth: Option<ResolvedAuth>,
         ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
-            Err(RuntimeError::ConfigurationError {
-                message: "absolute GET unused".into(),
+            Err(RuntimeError::ContinuationDispatchRequired {
+                kind: crate::ContinuationKind::Page,
             })
         }
     }

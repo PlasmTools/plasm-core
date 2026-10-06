@@ -293,6 +293,16 @@ fn python_lowering_rejects_invalid_roots_and_captures_without_io() {
             assert!(compile_python_program(&es,&src).await.is_err(),"accepted {case}");
             assert!(calls.lock().unwrap().is_empty());
         }
+        let missing_bound =
+            compile_python_program(&es, &valid.replace("            max_parents=256,\n", ""))
+                .await
+                .unwrap_err();
+        assert!(
+            missing_bound
+                .to_string()
+                .contains("map requires max_parents=<positive bound>"),
+            "{missing_bound}"
+        );
         let expected = compile_python_program(&es, &valid).await.unwrap();
         let unreachable =
             compile_python_program(&es, &format!("{valid}        items = e1.query()\n"))
@@ -646,7 +656,7 @@ fn upstream_admission_rejects_later_compute_before_any_write_and_on_replay() {
             )
             .replace("row.title + \":\" + row.labels", "row.absent");
         let error = compile_python_program(&es, &bad).await.unwrap_err();
-        assert!(error.contains("absent"), "{error}");
+        assert!(error.to_string().contains("absent"), "{error}");
         assert!(calls.lock().unwrap().is_empty());
         let bundle = compile_python_program(&es, &valid).await.unwrap();
         for change_profile in [false, true] {
@@ -1015,12 +1025,21 @@ fn python_per_row_values_compose_without_a_result_field() {
         let (es, host, _) = fixture(3);
         let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
         let item = symbols.entity_sym_for("fixture", "Item");
-        let source = format!("class Values(Program):\n    @compute\n    def title(self, row: Row) -> str:\n        return row.title\n    @compute\n    def upper(self, text: str) -> str:\n        return text.upper()\n    def build(self):\n        titles = self.title({item}.query().select('title'))\n        upper = self.upper(titles)\n        return {{'titles': titles, 'upper': upper}}\n");
+        let source = format!("class Values(Program):\n    @compute\n    def title(self, row: Row) -> str:\n        return row.title\n    @compute\n    def upper(self, text: str) -> str:\n        return text.upper()\n    def build(self):\n        return {item}.query().select('title').map(lambda row: {{'title': self.title(row), 'upper': self.upper(self.title(row))}}, max_parents=8)\n");
         let bundle = compile_python_program(&es, &source).await.unwrap();
         let run = execute(&es, &host, &bundle).await.unwrap();
         assert_eq!(
-            serde_json::to_value(&run.return_steps[0].result.entities()[0].fields).unwrap(),
-            json!({"titles":["Title 0","Title 1","Title 2"], "upper":["TITLE 0","TITLE 1","TITLE 2"]})
+            run.return_steps[0]
+                .result
+                .entities()
+                .iter()
+                .map(|row| serde_json::to_value(&row.fields).unwrap())
+                .collect::<Vec<_>>(),
+            vec![
+                json!({"title": "Title 0", "upper": "TITLE 0"}),
+                json!({"title": "Title 1", "upper": "TITLE 1"}),
+                json!({"title": "Title 2", "upper": "TITLE 2"}),
+            ]
         );
     });
 }
@@ -1109,6 +1128,7 @@ fn python_compute_infers_structural_return_at_public_admission() {
         assert!(compile_python_program(&es, &nested)
             .await
             .unwrap_err()
+            .to_string()
             .contains("Program class method"));
         let invalid = source.replace(
             "        return [",
@@ -1215,16 +1235,66 @@ fn python_expanded_lists_are_upstream_expressions() {
 }
 
 #[test]
+fn python_compute_rejects_implicit_input_shape_adaptation() {
+    use crate::compilation_error::CompilationError;
+    use crate::program_diagnostic::ProgramStageError;
+    use crate::program_rejection::{PythonComputeRejection, PythonLoweringError};
+    use crate::python_compute::arguments::PythonArgumentError;
+
+    on_runtime(async {
+        let (es, _, calls) = fixture(3);
+        let item = es
+            .teaching_exposure
+            .as_ref()
+            .unwrap()
+            .to_symbol_map()
+            .entity_sym_for("fixture", "Item");
+        let cases = [
+            (
+                format!("class P(Program):\n    @compute\n    def title(self, row: Row) -> str:\n        return row.title\n    def build(self):\n        return self.title({item}.query().select('title'))\n"),
+                true,
+            ),
+            (
+                "class P(Program):\n    @compute\n    def show(self, rows: list[dict]) -> str:\n        return rows[0].get('name', '') + str(rows[0]['count'])\n    def build(self):\n        return self.show({'name': 'a', 'count': 2})\n".into(),
+                false,
+            ),
+        ];
+        for (source, plural) in cases {
+            let error = compile_python_program(&es, &source)
+                .await
+                .expect_err("input annotations cannot implicitly adapt source shape");
+            let CompilationError::Program(ProgramStageError::PythonLowering {
+                error: PythonLoweringError::Compute(PythonComputeRejection::Argument(error)),
+            }) = error
+            else {
+                panic!("expected a typed argument rejection, got {error:?}");
+            };
+            assert!(
+                matches!(
+                    (plural, error.as_ref()),
+                    (true, PythonArgumentError::PluralSourceRequiresMapCallback)
+                        | (false, PythonArgumentError::ValueSourceRequiresOneColumn)
+                ),
+                "unexpected argument rejection: {error:?}"
+            );
+        }
+        assert!(calls.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
 fn python_reasonable_structural_input_and_set_capture() {
     on_runtime(async {
         let (es, host, _) = fixture(1);
         for (source, expected) in [
             ("class P(Program):\n    @compute\n    def make(self, value: int) -> dict[str, int]:\n        return {'n': value}\n    @compute\n    def read(self, data: dict[str, int]) -> int:\n        return data['n']\n    def build(self):\n        return self.read(self.make(2))\n", json!({"value":2})),
             ("class P(Program):\n    @compute\n    def show(self, rows: list[dict], suffix: str) -> str:\n        return rows[0].get('name', '') + suffix\n    def build(self):\n        return self.show([{'name': 'a', 'count': 2}], '!')\n", json!({"value":"a!"})),
-            ("class P(Program):\n    @compute\n    def show(self, rows: list[dict]) -> str:\n        return rows[0].get('name', '') + str(rows[0]['count'])\n    def build(self):\n        return self.show({'name': 'a', 'count': 2})\n", json!({"value":"a2"})),
+            ("class P(Program):\n    @compute\n    def show(self, data: dict[str, str | int]) -> str:\n        return str(data['name']) + str(data['count'])\n    def build(self):\n        return self.show({'name': 'a', 'count': 2})\n", json!({"value":"a2"})),
             ("class P(Program):\n    def build(self):\n        names = {'a', 'a', 'b'}\n        return {'count': len(names), 'member': 'a' in names}\n", json!({"count":2,"member":true})),
         ] {
-            let bundle = compile_python_program(&es, source).await.unwrap();
+            let bundle = compile_python_program(&es, source)
+                .await
+                .unwrap_or_else(|error| panic!("structural input admission failed: {error:?}\n{source}"));
             let run = execute(&es, &host, &bundle).await.unwrap();
             assert_eq!(serde_json::to_value(&run.return_steps[0].result.entities()[0].fields).unwrap(), expected);
         }

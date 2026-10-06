@@ -107,6 +107,8 @@ pub(super) fn assert_supplemental(id: &str, run: &PlasmPlanRunResult) {
         "compute_inferred_callsite_inputs" => {
             json!([{"titles": ["Alpha", "Beta"], "first": "Alpha"}])
         }
+        "compute_inferred_guarded_empty_list" => json!([{"value": ["alice"]}]),
+        "compute_inferred_mutated_set" => json!([{"value": ["alice", "bob"]}]),
         "predicate_truth_string" | "predicate_truth_and" | "predicate_truth_iteration" => {
             json!([{ "id": "i1" }])
         }

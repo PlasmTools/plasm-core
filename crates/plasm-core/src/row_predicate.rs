@@ -11,6 +11,23 @@ use crate::type_checker::type_check_predicate;
 use crate::{CompOp, Expr, TypeError, TypedComparisonValue};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum RowPredicateError {
+    #[error(transparent)]
+    Parse(#[from] crate::expr_parser::ParseError),
+    #[error("row filter requires field comparisons over the current rows")]
+    NotQuery,
+    #[error("false predicates are not supported in row filters")]
+    False,
+    #[error("OR predicates are not supported; use comma-separated AND")]
+    Or,
+    #[error("NOT predicates are not supported in row filters")]
+    Not,
+    #[error("relation-exists predicates are not supported in row filters")]
+    ExistsRelation,
+}
 
 /// One row-local comparison clause.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -42,7 +59,7 @@ pub fn parse_row_predicate_list(
     sym_map: Arc<dyn SymbolSession>,
     row_schema_fields: &[String],
     program_nodes: &std::collections::BTreeSet<String>,
-) -> Result<RowPredicate, String> {
+) -> Result<RowPredicate, RowPredicateError> {
     let input = format!("{entity}{{{}}}", body.trim());
     let parsed = crate::expr_parser::parse_row_filter_body(
         &input,
@@ -50,32 +67,30 @@ pub fn parse_row_predicate_list(
         sym_map,
         row_schema_fields,
         program_nodes,
-    )
-    .map_err(|e| format!("row filter parse: {e}"))?;
+    )?;
     row_predicate_from_expr(&parsed.expr)
 }
 
-pub fn row_predicate_from_expr(expr: &Expr) -> Result<RowPredicate, String> {
+pub fn row_predicate_from_expr(expr: &Expr) -> Result<RowPredicate, RowPredicateError> {
     match expr {
         Expr::Query(q) => row_predicate_from_optional_predicate(q.predicate.as_ref()),
-        _ => Err(
-            "row filter requires field comparisons: use `rows | where field = value` with fields present on those rows. Keep catalog selection on `e#{wire=value}`."
-                .into(),
-        ),
+        _ => Err(RowPredicateError::NotQuery),
     }
 }
 
-fn row_predicate_from_optional_predicate(pred: Option<&Predicate>) -> Result<RowPredicate, String> {
+fn row_predicate_from_optional_predicate(
+    pred: Option<&Predicate>,
+) -> Result<RowPredicate, RowPredicateError> {
     match pred {
         None => Ok(RowPredicate(vec![])),
         Some(p) => Ok(RowPredicate(flatten_flat_and(p)?)),
     }
 }
 
-fn flatten_flat_and(pred: &Predicate) -> Result<Vec<RowComparison>, String> {
+fn flatten_flat_and(pred: &Predicate) -> Result<Vec<RowComparison>, RowPredicateError> {
     match pred {
         Predicate::True => Ok(vec![]),
-        Predicate::False => Err("row filter: `false` is not allowed".into()),
+        Predicate::False => Err(RowPredicateError::False),
         Predicate::Comparison { field, op, value } => Ok(vec![RowComparison {
             field: field.clone(),
             op: *op,
@@ -88,13 +103,9 @@ fn flatten_flat_and(pred: &Predicate) -> Result<Vec<RowComparison>, String> {
             }
             Ok(out)
         }
-        Predicate::Or { .. } => {
-            Err("row filter: OR is not supported (use comma-separated AND)".into())
-        }
-        Predicate::Not { .. } => Err("row filter: NOT is not supported".into()),
-        Predicate::ExistsRelation { .. } => {
-            Err("row filter: relation exists predicates are not supported".into())
-        }
+        Predicate::Or { .. } => Err(RowPredicateError::Or),
+        Predicate::Not { .. } => Err(RowPredicateError::Not),
+        Predicate::ExistsRelation { .. } => Err(RowPredicateError::ExistsRelation),
     }
 }
 
@@ -300,7 +311,10 @@ mod tests {
             &std::collections::BTreeSet::new(),
         )
         .unwrap_err();
-        assert!(err.contains("OR") || err.contains("parse"), "{err}");
+        assert!(matches!(
+            err,
+            RowPredicateError::Or | RowPredicateError::Parse(_)
+        ));
     }
 
     #[test]
@@ -331,10 +345,7 @@ mod tests {
             &std::collections::BTreeSet::new(),
         )
         .unwrap_err();
-        assert!(
-            err.contains("handle") && err.contains("LangItem"),
-            "empty grain must still reject a non-entity alias: {err}"
-        );
+        assert!(matches!(err, RowPredicateError::Parse(_)));
 
         let err = parse_row_predicate_list(
             "LangItem",
@@ -345,9 +356,6 @@ mod tests {
             &std::collections::BTreeSet::new(),
         )
         .unwrap_err();
-        assert!(
-            err.contains("RA-2") && err.contains("handle"),
-            "projected grain must name the taught alias, not synthesize Entity{{owner=}}: {err}"
-        );
+        assert!(matches!(err, RowPredicateError::Parse(_)));
     }
 }

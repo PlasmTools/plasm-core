@@ -2,6 +2,13 @@
 
 use plasm_core::{PagingHandle, PlanCommitRef};
 use rust_mcp_sdk::schema::{CallToolError, CallToolResult};
+use thiserror::Error;
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[error("expected `pcN` from a prior `plasm` dry-run, or a page handle from a prior result's \"more pages\" line (got `{token}`)")]
+pub(crate) struct McpRunRefParseError {
+    token: String,
+}
 
 #[derive(Debug, Clone)]
 pub(crate) enum McpPlasmRunTarget {
@@ -47,7 +54,7 @@ fn strip_page_program_wrapper(raw: &str) -> &str {
         .unwrap_or(s)
 }
 
-fn parse_mcp_run_ref(raw: &str) -> Result<McpPlasmRunTarget, String> {
+fn parse_mcp_run_ref(raw: &str) -> Result<McpPlasmRunTarget, McpRunRefParseError> {
     let token = strip_page_program_wrapper(raw);
     if let Ok(handle) = PagingHandle::parse(token) {
         return Ok(McpPlasmRunTarget::Page(handle));
@@ -55,9 +62,9 @@ fn parse_mcp_run_ref(raw: &str) -> Result<McpPlasmRunTarget, String> {
     if let Some(pc) = PlanCommitRef::parse(token) {
         return Ok(McpPlasmRunTarget::Commit(pc));
     }
-    Err(format!(
-        "expected `pcN` from a prior `plasm` dry-run, or a page handle from a prior result's \"more pages\" line (got `{token}`)"
-    ))
+    Err(McpRunRefParseError {
+        token: token.to_owned(),
+    })
 }
 
 fn program_looks_like_paging_continuation(program: &str) -> bool {
@@ -148,5 +155,21 @@ pub(crate) fn parse_mcp_plasm_invocation(
         Some(raw) => parse_mcp_run_ref(raw)
             .map(McpPlasmInvocation::Run)
             .map_err(|e| invalid(tool_name, format!("invalid `run_ref`: {e}"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_mcp_run_ref, McpRunRefParseError};
+
+    #[test]
+    fn invalid_run_ref_is_typed_and_retains_the_token() {
+        let error = parse_mcp_run_ref("not-a-run-ref").expect_err("invalid run ref");
+        assert_eq!(
+            error,
+            McpRunRefParseError {
+                token: "not-a-run-ref".to_owned(),
+            }
+        );
     }
 }

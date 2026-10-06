@@ -68,21 +68,9 @@ impl RedisBackend {
             .await
     }
 
-    pub(crate) async fn get_json_strict<T: serde::de::DeserializeOwned>(
-        &self,
-        key: &str,
-    ) -> redis::RedisResult<Option<T>> {
+    pub(crate) async fn get_string_strict(&self, key: &str) -> redis::RedisResult<Option<String>> {
         let mut conn = self.conn.clone();
-        let raw: Option<String> = conn.get(key).await?;
-        raw.map(|raw| {
-            serde_json::from_str(&raw).map_err(|_| {
-                redis::RedisError::from((
-                    redis::ErrorKind::TypeError,
-                    "invalid stored credential record",
-                ))
-            })
-        })
-        .transpose()
+        conn.get(key).await
     }
 
     pub async fn get_json<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {

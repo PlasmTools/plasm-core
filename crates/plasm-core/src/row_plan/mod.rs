@@ -4,6 +4,7 @@
 //! execute-time IR over declared Plasm value contracts.
 
 mod collect;
+pub mod contracts;
 mod engine;
 mod error;
 mod expr;
@@ -20,8 +21,8 @@ pub use engine::{
     ScanSource,
 };
 pub use error::{
-    CollectError, FrameSchemaError, FusionError, RowComputeError, RowFilterError, RowTypeError,
-    ScanError,
+    CollectError, FrameSchemaError, FusionError, PredicateCompileError, RowComputeError,
+    RowCorrespondenceError, RowFilterError, RowTypeError, ScanError,
 };
 pub use expr::{ArithOp, ProjectSpec, WithColumn, WithExpr, WithExprError, WithLiteral};
 pub use filter::{CatalogFilter, RowFilter};
@@ -36,6 +37,18 @@ mod tests {
     use super::*;
     use crate::plasm_monad::payload::PlasmDataValue;
     use crate::plasm_monad::{ComputeOp, FieldPath, OutputName, PlanPredicate, PlanPredicateOp};
+
+    #[test]
+    fn frame_schema_rejects_non_record_contract_semantically() {
+        let error = PlasmFrameSchema::new(
+            FrameShape::Remapped {
+                reason: RemapReason::Project,
+            },
+            crate::value_contract::ValueContract::scalar(crate::FieldType::String),
+        )
+        .unwrap_err();
+        assert_eq!(error, FrameSchemaError::RequiresRecord);
+    }
 
     #[test]
     fn plan_node_has_no_render_or_join_variants() {
@@ -203,5 +216,3 @@ mod tests {
         assert!(msg.contains("surface"));
     }
 }
-
-pub mod contracts;

@@ -314,11 +314,9 @@ async fn simulate_handler(
     .await
     .map_err(map_simulate_err)?;
 
-    let value = serde_json::to_value(&result).map_err(|e| {
-        map_simulate_err(SimulateError::Other(format!(
-            "simulate response encode failed: {e}"
-        )))
-    })?;
+    let value = serde_json::to_value(&result)
+        .map_err(SimulateError::ResponseSerialization)
+        .map_err(map_simulate_err)?;
     Ok(Json(value))
 }
 
@@ -368,7 +366,8 @@ fn row_to_wire(row: &crate::flow_policy_repository::FlowPolicyRow) -> Value {
 
 fn map_repo_err(e: FlowPolicyRepositoryError) -> StatusCode {
     match e {
-        FlowPolicyRepositoryError::InvalidInput(_) => StatusCode::BAD_REQUEST,
+        FlowPolicyRepositoryError::Serialization(_)
+        | FlowPolicyRepositoryError::StoredPolicyInvalid(_) => StatusCode::BAD_REQUEST,
         FlowPolicyRepositoryError::NoDraft | FlowPolicyRepositoryError::ValidateRequired => {
             StatusCode::CONFLICT
         }

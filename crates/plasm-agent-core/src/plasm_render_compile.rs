@@ -1,6 +1,7 @@
 //! Row-to-text template compile helpers (column token inference and field-list resolution).
 
 use std::collections::{BTreeMap, BTreeSet};
+use thiserror::Error;
 
 use crate::execute_session::ExecuteSession;
 use crate::plasm_plan::{OutputName, QualifiedEntityKey};
@@ -13,6 +14,30 @@ use plasm_core::SymbolMapCrossRequestCache;
 /// Minijinja identifiers that iterate over engine builtins / globals, not render-source bindings.
 /// Loop iterables rooted at these must never be treated as required render sources.
 const TEMPLATE_ITERABLE_BUILTINS: &[&str] = plasm_core::MINIJINJA_TEMPLATE_BUILTINS;
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum TemplateNameClassificationError {
+    #[error("template name `{name}` is both a row field and a program binding in `{program_id}`")]
+    FieldBindingAmbiguity { name: String, program_id: String },
+    #[error("template name `{name}` is not a current-row field or an in-scope binding in `{program_id}`")]
+    NameOutOfScope { name: String, program_id: String },
+}
+
+#[derive(Debug, Error)]
+pub enum RenderFieldListError {
+    #[error("render field delimiters are invalid: {0}")]
+    Delimiter(#[source] plasm_core::expr_parser::SurfaceSyntaxError),
+    #[error(transparent)]
+    NestedProjection(#[from] plasm_core::expr_parser::CollectMetaError),
+    #[error("render field token `{token}` could not be resolved")]
+    TokenResolution {
+        token: String,
+        #[source]
+        source: crate::plasm_plan_run::WireFieldTokenError,
+    },
+    #[error("render field list must contain at least one field")]
+    Empty,
+}
 
 /// Locals introduced by `{% for … %}` / `{% set … %}` inside a row-to-text template.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -219,7 +244,7 @@ pub(crate) fn classify_per_row_template_names(
     source_fields: &BTreeSet<String>,
     binding_names: &BTreeSet<String>,
     program_id: &str,
-) -> Result<(Vec<String>, Vec<String>), String> {
+) -> Result<(Vec<String>, Vec<String>), TemplateNameClassificationError> {
     let refs = infer_template_field_refs(template);
     let mut roots: BTreeSet<String> = BTreeSet::new();
     for root in refs.bare_roots.iter().chain(refs.label_fields.keys()) {
@@ -245,16 +270,18 @@ pub(crate) fn classify_per_row_template_names(
         let in_bind = binding_names.contains(&root);
         match (in_row, in_bind) {
             (true, true) => {
-                return Err(plasm_core::plp::plp12_per_row_apply(format!(
-                    "Plasm program `{program_id}`: template name `{root}` is both a row field and a program binding — rename the binding or project the field away"
-                )));
+                return Err(TemplateNameClassificationError::FieldBindingAmbiguity {
+                    name: root,
+                    program_id: program_id.to_string(),
+                });
             }
             (true, false) => row_fields.push(root),
             (false, true) => binding_labels.push(root),
             (false, false) => {
-                return Err(plasm_core::plp::plp12_per_row_apply(format!(
-                    "Plasm program `{program_id}`: template references `{root}` which is not a current-row field or an in-scope program binding"
-                )));
+                return Err(TemplateNameClassificationError::NameOutOfScope {
+                    name: root,
+                    program_id: program_id.to_string(),
+                });
             }
         }
     }
@@ -266,8 +293,9 @@ pub(crate) fn parse_field_list_with_tokens(
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     qe: Option<&QualifiedEntityKey>,
     fields: &str,
-) -> Result<Vec<(String, String)>, String> {
-    let out = split_top_level(fields, ',')?
+) -> Result<Vec<(String, String)>, RenderFieldListError> {
+    let out = split_top_level(fields, ',')
+        .map_err(RenderFieldListError::Delimiter)?
         .into_iter()
         .map(|s| {
             let t = s.trim();
@@ -281,8 +309,12 @@ pub(crate) fn parse_field_list_with_tokens(
                 symbol_map_cross_cache,
                 qe,
                 raw.as_str(),
-            )?;
-            Ok::<(String, String), String>((raw, wire))
+            )
+            .map_err(|source| RenderFieldListError::TokenResolution {
+                token: raw.clone(),
+                source,
+            })?;
+            Ok::<(String, String), RenderFieldListError>((raw, wire))
         })
         .collect::<Result<Vec<_>, _>>()?;
     let out: Vec<(String, String)> = out
@@ -290,7 +322,7 @@ pub(crate) fn parse_field_list_with_tokens(
         .filter(|(_, wire)| !wire.is_empty())
         .collect();
     if out.is_empty() {
-        return Err("field list must be non-empty".to_string());
+        return Err(RenderFieldListError::Empty);
     }
     Ok(out)
 }
@@ -387,8 +419,9 @@ mod tests {
         let binds = BTreeSet::from(["items".to_string()]);
         let err = classify_per_row_template_names("{{ ghost.field }}", &fields, &binds, "prog")
             .expect_err("unknown name");
-        assert!(err.contains("ghost"), "{err}");
-        assert!(err.contains("PLP-12"), "{err}");
+        assert!(
+            matches!(err, TemplateNameClassificationError::NameOutOfScope { name, program_id } if name == "ghost" && program_id == "prog")
+        );
     }
 
     #[test]
@@ -398,10 +431,8 @@ mod tests {
         let err = classify_per_row_template_names("{{ title }}", &fields, &binds, "prog")
             .expect_err("collision");
         assert!(
-            err.contains("both a row field and a program binding"),
-            "{err}"
+            matches!(err, TemplateNameClassificationError::FieldBindingAmbiguity { name, program_id } if name == "title" && program_id == "prog")
         );
-        assert!(err.contains("PLP-12"), "{err}");
     }
 
     #[test]
@@ -448,7 +479,9 @@ mod tests {
             "prog",
         )
         .expect_err("iterating an out-of-scope binding must fail");
-        assert!(err.contains("ghost"), "{err}");
+        assert!(
+            matches!(err, TemplateNameClassificationError::NameOutOfScope { name, .. } if name == "ghost")
+        );
     }
 
     #[test]

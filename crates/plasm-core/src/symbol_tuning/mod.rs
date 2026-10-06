@@ -53,6 +53,7 @@ pub use capability_surface_params::{
     exposed_mutator_capability_keys, input_field_is_array, loaded_catalog_entry_ids,
     optional_legend_param_syms, CapabilityParamSurfaceFilter,
 };
+pub use persisted_ident_metadata::PersistedIdentMetadataError;
 pub use persisted_ledger::{
     catalog_cgs_hashes_from_session, catalog_pins_match, PersistedSymbolLedger,
     PersistedSymbolLedgerDecodeError, PersistedSymbolLedgerEncodeError, PersistedSymbolLedgerState,

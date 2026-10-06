@@ -3,8 +3,8 @@
 use auth_framework::storage::AuthStorage;
 use indexmap::IndexMap;
 use plasm_runtime::binding_kv::{
-    binding_kv_key_from_uuid, parse_binding_kv_v1_scoped, BindingKvV1, BindingScopeV1,
-    BINDING_KV_VERSION,
+    binding_kv_key_from_uuid, parse_binding_kv_v1_scoped, BindingKvParseError, BindingKvV1,
+    BindingScopeV1, BINDING_KV_VERSION,
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -21,26 +21,35 @@ use crate::mcp_runtime_config::McpRuntimeConfig;
 pub enum BindingLoadError {
     #[error("binding pointer lookup failed: {0}")]
     PointerLookup(#[from] sqlx::Error),
-    #[error("binding KV read failed: {0}")]
-    KvRead(String),
+    #[error("binding KV read failed")]
+    KvRead {
+        #[source]
+        source: auth_framework::AuthError,
+    },
     #[error("binding KV missing for key {0}")]
     KvMissing(String),
-    #[error("binding envelope invalid: {0}")]
-    Parse(String),
-    #[error("binding not configured for catalog `{0}`")]
-    NotConfigured(String),
-    #[error("binding incomplete for catalog `{0}`")]
-    Incomplete(String),
+    #[error("binding envelope is invalid")]
+    Parse(#[from] BindingKvParseError),
+    #[error("binding is not configured for catalog `{entry_id}`")]
+    NotConfigured { entry_id: String },
+    #[error("binding is incomplete for catalog `{entry_id}`")]
+    Incomplete { entry_id: String },
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum BindingStoreError {
-    #[error("binding store failed: {0}")]
-    KvStore(String),
+    #[error("binding KV store failed: {source}")]
+    KvStore {
+        #[source]
+        source: auth_framework::AuthError,
+    },
     #[error("binding pointer upsert failed: {0}")]
     PointerUpsert(#[from] sqlx::Error),
-    #[error("serialization failed")]
-    Serialize,
+    #[error("serialization failed: {source}")]
+    Serialize {
+        #[source]
+        source: serde_json::Error,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -80,10 +89,10 @@ pub async fn load_binding_values_scoped(
         return Ok(None);
     };
     let key_trim = key.trim();
-    let Some(bytes) = storage
-        .get_kv(key_trim)
-        .await
-        .map_err(|e| BindingLoadError::KvRead(e.to_string()))?
+    let Some(bytes) = storage.get_kv(key_trim).await.map_err(|error| {
+        tracing::warn!(error = %error, "binding KV read failed");
+        BindingLoadError::KvRead { source: error }
+    })?
     else {
         return Err(BindingLoadError::KvMissing(key));
     };
@@ -93,8 +102,7 @@ pub async fn load_binding_values_scoped(
         &scope.tenant_id,
         &mcp_config_id,
         &scope.entry_id,
-    )
-    .map_err(|e| BindingLoadError::Parse(e.to_string()))?;
+    )?;
     Ok(Some(env.values.into_iter().collect()))
 }
 
@@ -132,11 +140,15 @@ pub async fn store_scoped_binding_envelope(
         scope: BindingScopeV1::from(&scope),
         values: values.into_iter().collect::<HashMap<_, _>>(),
     };
-    let json = serde_json::to_string(&envelope).map_err(|_| BindingStoreError::Serialize)?;
+    let json = serde_json::to_string(&envelope)
+        .map_err(|source| BindingStoreError::Serialize { source })?;
     storage
         .store_kv(key.as_str(), json.as_bytes(), None)
         .await
-        .map_err(|e| BindingStoreError::KvStore(e.to_string()))?;
+        .map_err(|error| {
+            tracing::warn!(error = %error, "binding KV store failed");
+            BindingStoreError::KvStore { source: error }
+        })?;
     repo.upsert_entry_binding(scope, key.as_str()).await?;
     if let Some(old) = old_key {
         let old_trim = old.trim();
@@ -243,10 +255,96 @@ mod tests {
     use super::*;
 
     #[test]
+    fn binding_read_fault_preserves_auth_storage_source() {
+        use std::error::Error;
+        let error = BindingLoadError::KvRead {
+            source: auth_framework::AuthError::Storage(
+                auth_framework::errors::StorageError::BackendUnavailable,
+            ),
+        };
+        let source = error.source().unwrap();
+        assert!(matches!(
+            source.downcast_ref::<auth_framework::AuthError>(),
+            Some(auth_framework::AuthError::Storage(
+                auth_framework::errors::StorageError::BackendUnavailable
+            ))
+        ));
+        assert!(matches!(
+            source
+                .source()
+                .unwrap()
+                .downcast_ref::<auth_framework::errors::StorageError>(),
+            Some(auth_framework::errors::StorageError::BackendUnavailable)
+        ));
+    }
+
+    #[test]
+    fn binding_store_faults_preserve_concrete_source_chains() {
+        use std::error::Error;
+        let error = BindingStoreError::KvStore {
+            source: auth_framework::AuthError::Storage(
+                auth_framework::errors::StorageError::BackendUnavailable,
+            ),
+        };
+        let auth = error
+            .source()
+            .unwrap()
+            .downcast_ref::<auth_framework::AuthError>()
+            .unwrap();
+        assert!(matches!(
+            auth,
+            auth_framework::AuthError::Storage(
+                auth_framework::errors::StorageError::BackendUnavailable
+            )
+        ));
+        assert!(matches!(
+            auth.source()
+                .unwrap()
+                .downcast_ref::<auth_framework::errors::StorageError>(),
+            Some(auth_framework::errors::StorageError::BackendUnavailable)
+        ));
+
+        let source = serde_json::from_str::<serde_json::Value>("{").unwrap_err();
+        let position = (source.line(), source.column(), source.classify());
+        let error = BindingStoreError::Serialize { source };
+        let source = error
+            .source()
+            .unwrap()
+            .downcast_ref::<serde_json::Error>()
+            .unwrap();
+        assert_eq!(
+            (source.line(), source.column(), source.classify()),
+            position
+        );
+    }
+
+    #[test]
     fn scope_v1_from_binding_scope() {
         let scope = BindingScope::new("t1", Uuid::nil(), "fibery");
         let v1 = BindingScopeV1::from(&scope);
         assert_eq!(v1.tenant_id, "t1");
         assert_eq!(v1.entry_id, "fibery");
+    }
+
+    #[test]
+    fn binding_load_preserves_typed_scope_mismatch_source() {
+        use std::error::Error;
+
+        let raw = r#"{"version":1,"scope":{"tenant_id":"t1","mcp_config_id":"c1","entry_id":"fibery"},"values":{}}"#;
+        let error = BindingLoadError::from(
+            parse_binding_kv_v1_scoped(raw, "t2", "c1", "fibery").unwrap_err(),
+        );
+        let source = error
+            .source()
+            .unwrap()
+            .downcast_ref::<BindingKvParseError>()
+            .unwrap();
+        assert!(matches!(
+            source,
+            BindingKvParseError::ScopeMismatch { expected, actual }
+                if expected.tenant_id == "t2" && actual.tenant_id == "t1"
+                    && expected.mcp_config_id == actual.mcp_config_id
+                    && expected.entry_id == actual.entry_id
+        ));
     }
 }

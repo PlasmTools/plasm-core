@@ -65,9 +65,12 @@ impl<'a, T> RowComputeEngine<'a> for T where T: IngestRows<'a> + CompileRowPlan 
 
 impl CollectedFrame {
     /// Validate the correspondence returned across the row-engine boundary.
-    pub fn validate_correspondence(&self, input_len: usize) -> Result<(), String> {
+    pub fn validate_correspondence(
+        &self,
+        input_len: usize,
+    ) -> Result<(), super::error::RowCorrespondenceError> {
         if self.rows.len() != self.occurrences.len() {
-            return Err("row correspondence length does not match output rows".into());
+            return Err(super::error::RowCorrespondenceError::LengthMismatch);
         }
         if self
             .occurrences
@@ -75,7 +78,7 @@ impl CollectedFrame {
             .flatten()
             .any(|index| *index >= input_len)
         {
-            return Err("row correspondence index is outside the input batch".into());
+            return Err(super::error::RowCorrespondenceError::InputIndexOutOfBounds);
         }
         Ok(())
     }

@@ -145,7 +145,7 @@ async fn compare_program(
     };
     let bundle = compile_python_program(&es, &python)
         .await
-        .map_err(|e| fail(FailureKind::Admission, e))?;
+        .map_err(|e| fail(FailureKind::Admission, e.to_string()))?;
     let dry = super::evaluate_plasm_comp_dry(&es, &bundle)
         .map_err(|e| fail(FailureKind::Dry, e.to_string()))?;
     super::assert_comp_witness(&dry).map_err(|e| fail(FailureKind::Dry, e))?;

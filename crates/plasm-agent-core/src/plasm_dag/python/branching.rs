@@ -6,10 +6,10 @@ use crate::plasm_plan::{InputCardinality, PlanDataInput};
 use std::num::NonZeroU32;
 
 fn lambda(source: &str) -> Result<ruff_python_ast::ExprLambda, PythonLoweringError> {
-    let parsed = ruff_python_parser::parse_expression(source)
-        .map_err(|e| format!("internal branch expression: {e}"))?;
+    let parsed =
+        ruff_python_parser::parse_expression(source).map_err(PythonLoweringError::parse_error)?;
     let PyExpr::Lambda(lambda) = *parsed.into_syntax().body else {
-        return Err("internal branch template is not a lambda".into());
+        return Err(crate::program_rejection::PythonProgramError::InvalidBranchTemplate.into());
     };
     Ok(lambda)
 }
@@ -17,7 +17,7 @@ fn lambda(source: &str) -> Result<ruff_python_ast::ExprLambda, PythonLoweringErr
 /// Python owns truth conversion; DAG consumers require its Boolean result.
 pub(super) fn truth_test(expression: &PyExpr) -> Result<PyExpr, PythonLoweringError> {
     let mut truth = *ruff_python_parser::parse_expression("bool(None)")
-        .map_err(|e| e.to_string())?
+        .map_err(PythonLoweringError::parse_error)?
         .into_syntax()
         .body;
     let PyExpr::Call(call) = &mut truth else {
@@ -36,15 +36,12 @@ impl Lower<'_> {
         let start = self.state.nodes.len();
         let value = self.scoped_value(expression, inputs)?;
         for node in &self.state.nodes[start..] {
-            let node = super::super::plan_serialize::lower_plan_node(node)?;
+            let node = super::super::plan_serialize::lower_plan_node(node);
             if !matches!(
                 node.effect_class,
                 EffectClass::Read | EffectClass::ArtifactRead
             ) {
-                return Err(at(
-                    expression,
-                    "lazy value expressions cannot introduce effects",
-                ));
+                return Err(at(expression, PythonSourceError::LazyValueEffects));
             }
         }
         Ok(value)
@@ -75,7 +72,7 @@ impl Lower<'_> {
             self.emit_value(value, dependencies.into_values().collect(), &id)?;
             operands.push(
                 *ruff_python_parser::parse_expression(&id)
-                    .map_err(|e| e.to_string())?
+                    .map_err(PythonLoweringError::parse_error)?
                     .into_syntax()
                     .body,
             );
@@ -129,7 +126,7 @@ impl Lower<'_> {
                 !value.nullable && value.summary() == SyntheticValueKind::Boolean
             })
         }) {
-            return Err(at(site, "condition requires a boolean value"));
+            return Err(at(site, PythonSourceError::ConditionRequiresBoolean));
         }
         let mut branches = Vec::new();
         let mut schemas = Vec::new();
@@ -148,7 +145,9 @@ impl Lower<'_> {
                             field_path: FieldPath::new(vec!["predicate".into()])?,
                             op: PlanPredicateOp::Eq,
                             value: PlasmDataValue::Literal {
-                                value: plasm_core::Value::Bool(selected).try_into()?,
+                                value: plasm_core::Value::Bool(selected).try_into().map_err(
+                                    |_| crate::program_rejection::PythonLoweringInvariantError::InvalidResolvedLiteral,
+                                )?,
                             },
                         }]
                         .into(),
@@ -182,7 +181,7 @@ impl Lower<'_> {
                 body.effect_class(),
                 EffectClass::Read | EffectClass::ArtifactRead
             ) {
-                return Err(at(site, "lazy value expressions cannot introduce effects"));
+                return Err(at(site, PythonSourceError::LazyValueEffects));
             }
             let schema = crate::map_body_schema::output_schema(self.es, &body)?;
             if predicate
@@ -192,7 +191,7 @@ impl Lower<'_> {
                     })
                 })
             {
-                return Err(at(site, "condition requires a boolean value"));
+                return Err(at(site, PythonSourceError::ConditionRequiresBoolean));
             }
             let id = self.fresh();
             self.insert(DagNode {
@@ -209,14 +208,12 @@ impl Lower<'_> {
             schemas.push(schema);
         }
         let mut schema = schemas.remove(0);
-        let left = schema.fields[0]
-            .value_type
-            .take()
-            .ok_or("conditional branch type missing")?;
-        let right = schemas[0].fields[0]
-            .value_type
-            .clone()
-            .ok_or("conditional branch type missing")?;
+        let left = schema.fields[0].value_type.take().ok_or(
+            crate::program_rejection::PythonLoweringInvariantError::ConditionalBranchTypeMissing,
+        )?;
+        let right = schemas[0].fields[0].value_type.clone().ok_or(
+            crate::program_rejection::PythonLoweringInvariantError::ConditionalBranchTypeMissing,
+        )?;
         let joined = plasm_core::value_contract::ValueContract::join(left, right);
         schema.fields[0].value_kind = joined.summary();
         schema.fields[0].value_type = Some(joined);

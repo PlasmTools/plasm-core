@@ -2,14 +2,14 @@ mod admission;
 pub(crate) use admission::render_analysis_diagnostics;
 #[cfg(test)]
 mod analysis_tests;
-mod arguments;
+pub(crate) mod arguments;
 mod multiple;
 pub(crate) use arguments::is_row as is_row_annotation;
-mod inference;
+pub(crate) mod inference;
 mod returns;
 mod upstream;
 pub(crate) use upstream::admit_bundle;
-mod schema;
+pub(crate) mod schema;
 pub(crate) use schema::source_field_kind;
 use schema::validate_source_owner;
 // Restricted pure Python compute boundary for the experimental DAG slice.
@@ -24,7 +24,7 @@ use ruff_python_ast::{Expr, Stmt};
 use ruff_text_size::Ranged;
 use std::collections::BTreeMap;
 
-use crate::program_rejection::PythonComputeRejection;
+use crate::program_rejection::{PythonComputeError, PythonComputeRejection};
 
 /// Infer a pure helper's materialization port from the already typed DAG
 /// dependency. `Row` denotes the complete incoming record contract; Monty
@@ -33,13 +33,17 @@ pub(crate) fn inferred_helper_input_annotation(
     row: &plasm_core::value_contract::ValueContract,
     scalar_cell: bool,
     collection: bool,
-) -> Result<String, String> {
+) -> Result<String, crate::program_rejection::PythonProgramError> {
     let value = if scalar_cell {
-        row.field("value")?
+        row.field("value").map_err(|_| {
+            crate::program_rejection::PythonProgramError::HelperScalarCellValueMissing
+        })?
     } else {
         row.clone()
     };
-    fn annotation(value: &plasm_core::value_contract::ValueContract) -> Result<String, String> {
+    fn annotation(
+        value: &plasm_core::value_contract::ValueContract,
+    ) -> Result<String, crate::program_rejection::PythonProgramError> {
         use plasm_core::value_contract::ValueShape;
         let mut required = value.clone();
         required.nullable = false;
@@ -57,10 +61,10 @@ pub(crate) fn inferred_helper_input_annotation(
                 FieldType::MultiSelect => "list[str]",
                 FieldType::Money => "PlasmMoney",
                 FieldType::Date | FieldType::Array => {
-                    return Err("helper input needs a concrete temporal or array contract".into());
+                    return Err(crate::program_rejection::PythonProgramError::HelperInputRequiresTemporalOrArrayContract);
                 }
                 FieldType::EntityRef { .. } | FieldType::Json | FieldType::Blob => {
-                    return Err("helper input needs a concrete materialized value contract".into());
+                    return Err(crate::program_rejection::PythonProgramError::HelperInputRequiresMaterializedValueContract);
                 }
                 _ => "str",
             }
@@ -74,7 +78,7 @@ pub(crate) fn inferred_helper_input_annotation(
             ValueShape::Null => "None".into(),
             ValueShape::Never => "Never".into(),
             ValueShape::MappingRecord { .. } => {
-                return Err("helper input needs an explicit mapping annotation".into());
+                return Err(crate::program_rejection::PythonProgramError::HelperInputRequiresMappingAnnotation);
             }
         };
         Ok(
@@ -114,7 +118,7 @@ pub(crate) fn check_callback_return(
     let context = session
         .contexts_by_entry
         .get(&session.entry_id)
-        .ok_or("callback context missing")?;
+        .ok_or(PythonComputeError::CallbackContextMissing)?;
     let symbols = crate::plasm_plan_run::symbol_map_for_plasm_surface_parse(session, None);
     let domains = return_domains(session)?;
     let annotation = returns::prepare(
@@ -126,8 +130,11 @@ pub(crate) fn check_callback_return(
         &session.entry_id,
         symbols.as_ref(),
         imports,
-    )?;
-    annotation.check(actual).map_err(Into::into)
+    )
+    .map_err(PythonComputeRejection::from)?;
+    annotation
+        .check(actual)
+        .map_err(PythonComputeRejection::from)
 }
 
 pub(crate) fn check_callback_closed_return(
@@ -140,7 +147,7 @@ pub(crate) fn check_callback_closed_return(
     let context = session
         .contexts_by_entry
         .get(&session.entry_id)
-        .ok_or("callback context missing")?;
+        .ok_or(PythonComputeError::CallbackContextMissing)?;
     let symbols = crate::plasm_plan_run::symbol_map_for_plasm_surface_parse(session, None);
     let domains = return_domains(session)?;
     let annotation = returns::prepare(
@@ -152,7 +159,8 @@ pub(crate) fn check_callback_closed_return(
         &session.entry_id,
         symbols.as_ref(),
         imports,
-    )?;
+    )
+    .map_err(PythonComputeRejection::from)?;
     annotation
         .check_body(
             &format!("\n    return ({})\n", monty::expression_source(expression)),
@@ -160,7 +168,7 @@ pub(crate) fn check_callback_closed_return(
             &context.cgs,
             &domains.catalogs,
         )
-        .map_err(Into::into)
+        .map_err(PythonComputeRejection::from)
 }
 
 /// A DAG record literal is a Python dictionary expression before its fields are
@@ -175,7 +183,7 @@ pub(crate) fn check_callback_record_return(
     let context = session
         .contexts_by_entry
         .get(&session.entry_id)
-        .ok_or("callback context missing")?;
+        .ok_or(PythonComputeError::CallbackContextMissing)?;
     let symbols = crate::plasm_plan_run::symbol_map_for_plasm_surface_parse(session, None);
     let domains = return_domains(session)?;
     let annotation = returns::prepare(
@@ -187,17 +195,20 @@ pub(crate) fn check_callback_record_return(
         &session.entry_id,
         symbols.as_ref(),
         imports,
-    )?;
+    )
+    .map_err(PythonComputeRejection::from)?;
     let plasm_core::value_contract::ValueShape::Record { fields } = &actual.shape else {
-        return Err("record constructor contract missing".into());
+        return Err(PythonComputeError::CallbackRecordContractMissing.into());
     };
     let entries = fields
         .keys()
         .map(|name| {
-            let key = serde_json::to_string(name).map_err(|e| e.to_string())?;
+            let key = serde_json::to_string(name).map_err(|source| {
+                PythonComputeError::ValueContractLiteralEncoding(source.into())
+            })?;
             Ok(format!("{key}: result[{key}]"))
         })
-        .collect::<Result<Vec<_>, String>>()?
+        .collect::<Result<Vec<_>, PythonComputeError>>()?
         .join(", ");
     annotation
         .check_body(
@@ -206,7 +217,7 @@ pub(crate) fn check_callback_record_return(
             &context.cgs,
             &domains.catalogs,
         )
-        .map_err(Into::into)
+        .map_err(PythonComputeRejection::from)
 }
 
 pub(crate) const LANGUAGE_PROFILE: &str =
@@ -215,6 +226,14 @@ pub(crate) const LANGUAGE_PROFILE: &str =
 pub(crate) const CONTRACT_VERSION: u32 = 12;
 
 pub(crate) const MAX_INPUT_ROWS: usize = 256;
+
+#[derive(Debug, thiserror::Error)]
+pub enum ComputeInputBudgetError {
+    #[error("compute input row budget exceeded")]
+    RowCountExceeded,
+    #[error(transparent)]
+    Value(#[from] plasm_core::ValueBudgetError),
+}
 
 #[derive(Debug, Clone)]
 pub struct ValueContract {
@@ -238,24 +257,31 @@ impl ValueContract {
         entry: &str,
         symbols: &dyn SymbolResolve,
         token: &str,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, PythonComputeError> {
         let owner = symbols
             .resolve_session_entity(token)
-            .map_err(|e| e.to_string())?;
+            .map_err(PythonComputeError::ValueContractSymbol)?;
         if owner.entry_id.as_str() != entry {
-            return Err("value contract catalog ownership mismatch".into());
+            return Err(PythonComputeError::ValueContractOwnerMismatch);
         }
-        let entity = cgs
-            .get_entity(owner.entity.as_str())
-            .ok_or("unknown entity")?;
+        let entity = cgs.get_entity(owner.entity.as_str()).ok_or_else(|| {
+            PythonComputeError::ValueContractEntityMissing {
+                entity: owner.entity.to_string(),
+            }
+        })?;
         let mut fields = BTreeMap::new();
         for field in entity.fields.values() {
-            let value = field.named_value(cgs).map_err(|e| e.to_string())?;
+            let value = field.named_value(cgs).map_err(|_| {
+                PythonComputeError::ValueContractFieldMissing {
+                    field: field.name.to_string(),
+                }
+            })?;
             let mut value_type = plasm_core::value_contract::ValueContract::from_domain(
                 cgs,
                 entry,
                 field.kind.registry_key(),
-            )?;
+            )
+            .map_err(PythonComputeError::from)?;
             value_type.nullable = !field.required;
             fields.insert(
                 field.name.to_string(),
@@ -292,7 +318,10 @@ impl ValueContract {
 
     /// Render the concrete materialized view used by this probe from the same descriptor.
     /// Value symbols remain representation aliases; catalog/entity ownership is checked separately.
-    pub fn declaration(&self, symbols: &plasm_core::SymbolMap) -> Result<String, String> {
+    pub fn declaration(
+        &self,
+        symbols: &plasm_core::SymbolMap,
+    ) -> Result<String, PythonComputeError> {
         let token =
             symbols.entity_sym_for(self.owner.entry_id.as_str(), self.owner.entity.as_str());
         let mut aliases = BTreeMap::new();
@@ -309,7 +338,9 @@ impl ValueContract {
                         .iter()
                         .map(serde_json::to_string)
                         .collect::<Result<Vec<_>, _>>()
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|source| {
+                            PythonComputeError::ValueContractLiteralEncoding(source.into())
+                        })?;
                     let literal = format!("Literal[{}]", tokens.join(", "));
                     if matches!(
                         value.value_type.shape,
@@ -335,7 +366,11 @@ impl ValueContract {
                     alias
                 }
                 None if value.domain.is_none() => representation,
-                None => return Err("missing allocated value symbol".into()),
+                None => {
+                    return Err(PythonComputeError::ValueContractSymbolMissing {
+                        field: field_name.clone(),
+                    })
+                }
             };
             for line in value.description.lines() {
                 members.push_str(&format!("    # {line}\n"));
@@ -361,15 +396,20 @@ impl ValueContract {
         owner: &EntityBinding,
         membership: &RecordedCollection<plasm_core::Ref>,
         rows: &[ValueRow],
-    ) -> Result<crate::python_pool::TypedRecords, String> {
+    ) -> Result<crate::python_pool::TypedRecords, PythonComputeError> {
         if owner != &self.owner {
-            return Err("compute input catalog/entity ownership mismatch".into());
+            return Err(PythonComputeError::ComputeInputOwnerMismatch);
         }
-        validate_collection_input(membership, rows.len()).map_err(|e| e.to_string())?;
-        if rows.len() > MAX_INPUT_ROWS {
-            return Err("compute input row budget exceeded".into());
-        }
-        validate_input_budget(rows)?;
+        validate_collection_input(membership, rows.len())
+            .map_err(PythonComputeError::ComputeInputMembership)?;
+        validate_input_budget(rows).map_err(|error| match error {
+            ComputeInputBudgetError::RowCountExceeded => {
+                PythonComputeError::ComputeInputRowBudgetExceeded
+            }
+            ComputeInputBudgetError::Value(error) => {
+                PythonComputeError::ComputeInputValueBudget(error)
+            }
+        })?;
         let mut values = Vec::with_capacity(rows.len());
         for row in rows {
             let mut attrs = BTreeMap::new();
@@ -381,17 +421,14 @@ impl ValueContract {
                     attrs.insert(field.clone(), Value::Null);
                     continue;
                 }
-                let value = contract.value_type.observed_value(
-                    value,
-                    &self.cgs,
-                    self.owner.entry_id.as_str(),
-                )?;
-                contract.value_type.validate(
-                    &value,
-                    &self.cgs,
-                    self.owner.entry_id.as_str(),
-                    field,
-                )?;
+                let value = contract
+                    .value_type
+                    .observed_value(value, &self.cgs, self.owner.entry_id.as_str())
+                    .map_err(PythonComputeError::ValueContractDefinition)?;
+                contract
+                    .value_type
+                    .validate(&value, &self.cgs, self.owner.entry_id.as_str(), field)
+                    .map_err(PythonComputeError::ValueContractDefinition)?;
                 attrs.insert(field.clone(), value);
             }
             values.push(attrs);
@@ -433,7 +470,7 @@ pub(crate) fn definition_body(
     let start = def
         .body
         .first()
-        .ok_or("empty compute body")?
+        .ok_or(PythonComputeError::ComputeBodyMissing)?
         .start()
         .to_usize();
     let lines = source[def.name.start().to_usize()..start]
@@ -503,7 +540,7 @@ impl PreparedCompute {
         entry: &str,
         symbols: &dyn SymbolResolve,
         mode: ComputeInputMode,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, PythonComputeRejection> {
         Self::prepare_input(source, cgs, entry, symbols, None, mode)
     }
 
@@ -514,7 +551,7 @@ impl PreparedCompute {
         symbols: &dyn SymbolResolve,
         rows: Option<(&SyntheticResultSchema, &str)>,
         mode: ComputeInputMode,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, PythonComputeRejection> {
         Self::prepare_typed(
             source,
             cgs,
@@ -537,28 +574,29 @@ impl PreparedCompute {
         mode: ComputeInputMode,
     ) -> Result<Self, PythonComputeRejection> {
         if source.len() > 4096 {
-            return Err("compute source budget exceeded".into());
+            return Err(PythonComputeError::SourceBudgetExceeded.into());
         }
-        let ast = ruff_python_parser::parse_module(source).map_err(|e| e.to_string())?;
-        let (imports, suite) = crate::python_datetime::Imports::split(source, ast.suite())?;
+        let ast =
+            ruff_python_parser::parse_module(source).map_err(PythonComputeRejection::Parse)?;
+        let (imports, suite) = crate::python_datetime::Imports::split(source, ast.suite())
+            .map_err(PythonComputeRejection::from)?;
         let [Stmt::FunctionDef(def)] = suite else {
-            return Err("expected one compute function".into());
+            return Err(PythonComputeError::FunctionCount.into());
         };
         if def.is_async
             || def.type_params.is_some()
             || def.decorator_list.len() != 1
             || name(&def.decorator_list[0].expression) != Some("compute")
         {
-            return Err("expected a synchronous @compute function".into());
+            return Err(PythonComputeError::FunctionShape.into());
         }
         if def.parameters.args.len() > 1 {
             if mode != ComputeInputMode::Singleton {
-                return Err("compute dependency packet must be a singleton".into());
+                return Err(PythonComputeError::DependencyPacketNotSingleton.into());
             }
             return Self::prepare_multiple(
                 source, def, &imports, cgs, entry, symbols, rows, domains,
-            )
-            .map_err(Into::into);
+            );
         }
         let p = &def.parameters;
         if !p.posonlyargs.is_empty()
@@ -568,13 +606,13 @@ impl PreparedCompute {
             || p.args.len() != 1
             || p.args[0].default.is_some()
         {
-            return Err("compute expects one required positional input".into());
+            return Err(PythonComputeError::InputParameterShape.into());
         }
         let param = &p.args[0].parameter;
         let ann = param
             .annotation
             .as_deref()
-            .ok_or("missing input annotation")?;
+            .ok_or(PythonComputeError::ComputeInputAnnotationMissing)?;
         let value = match ann {
             Expr::Subscript(s) if name(&s.value) == Some("list") => &*s.slice,
             _ => ann,
@@ -582,15 +620,18 @@ impl PreparedCompute {
         let row_annotation = arguments::is_row(value);
         let token = if let Some((_, token)) = rows {
             if row_annotation && name(value) != Some("Row") {
-                let annotated =
-                    name(entity_record_argument(value)?).ok_or("expected entity symbol")?;
+                let annotated = name(entity_record_argument(value)?)
+                    .ok_or(PythonComputeError::ExpectedEntitySymbol)?;
                 if annotated != token {
-                    return Err("compute annotation does not match source entity".into());
+                    return Err(PythonComputeError::AnnotationSourceMismatch.into());
                 }
             }
             (!token.is_empty()).then_some(token)
         } else {
-            Some(name(entity_record_argument(value)?).ok_or("expected entity symbol")?)
+            Some(
+                name(entity_record_argument(value)?)
+                    .ok_or(PythonComputeError::ExpectedEntitySymbol)?,
+            )
         };
         let mut contract = token
             .map(|token| ValueContract::from_cgs(cgs, entry, symbols, token))
@@ -602,7 +643,7 @@ impl PreparedCompute {
                     .as_ref()
                     .is_some_and(|t| t.summary() != field.value_kind)
                 {
-                    return Err("synthetic type summary differs from recursive contract".into());
+                    return Err(PythonComputeError::SyntheticContractMismatch.into());
                 }
             }
         }
@@ -612,18 +653,17 @@ impl PreparedCompute {
                 .iter()
                 .map(|f| {
                     let ty = f.value_type.clone().ok_or_else(|| {
-                        format!(
-                            "Python input field {} requires a recursive contract",
-                            f.name
-                        )
+                        PythonComputeError::RecursiveInputContractMissing {
+                            field: f.name.to_string(),
+                        }
                     })?;
-                    Ok((f.name.to_string(), ty))
+                    Ok::<_, PythonComputeError>((f.name.to_string(), ty))
                 })
-                .collect::<Result<BTreeMap<_, _>, String>>()?
+                .collect::<Result<BTreeMap<_, _>, _>>()?
         } else {
             contract
                 .as_ref()
-                .ok_or("nominal compute requires an entity")?
+                .ok_or(PythonComputeError::NominalInputEntityMissing)?
                 .fields
                 .iter()
                 .filter(|(_, f)| f.domain.is_some())
@@ -635,7 +675,7 @@ impl PreparedCompute {
         if rows.is_none() {
             contract
                 .as_mut()
-                .ok_or("nominal compute requires an entity")?
+                .ok_or(PythonComputeError::NominalInputEntityMissing)?
                 .fields
                 .retain(|_, field| field.domain.is_some());
         }
@@ -654,7 +694,8 @@ impl PreparedCompute {
             symbols,
             &imports.source,
             mode,
-        )?;
+        )
+        .map_err(PythonComputeRejection::from)?;
         let per_row = argument.per_row;
         let body_imports = diagnostic_imports(source, def, &imports.source);
         let annotation = def
@@ -672,11 +713,13 @@ impl PreparedCompute {
                     &body_imports,
                 )
             })
-            .transpose()?;
+            .transpose()
+            .map_err(PythonComputeRejection::from)?;
         let declared_output = annotation
             .as_ref()
             .map(|a| a.contract())
-            .transpose()?
+            .transpose()
+            .map_err(PythonComputeRejection::from)?
             .flatten();
         let input_type = if argument.field.is_some() || argument.mapping.is_some() {
             argument.value_type.clone()
@@ -692,19 +735,24 @@ impl PreparedCompute {
             }
         };
         if let Some(annotation) = &annotation {
-            annotation.check_body(
-                &definition_body(source, def)?,
-                &[(param.name.as_str(), &input_type)],
-                cgs,
-                &domains.catalogs,
-            )?;
+            annotation
+                .check_body(
+                    &definition_body(source, def)?,
+                    &[(param.name.as_str(), &input_type)],
+                    cgs,
+                    &domains.catalogs,
+                )
+                .map_err(PythonComputeRejection::from)?;
         }
         let inferred = if declared_output.is_none() {
-            Some(inference::infer_body(
-                &definition_body(source, def)?,
-                &[(param.name.as_str(), &input_type)],
-                &body_imports,
-            )?)
+            Some(
+                inference::infer_body(
+                    &definition_body(source, def)?,
+                    &[(param.name.as_str(), &input_type)],
+                    &body_imports,
+                )
+                .map_err(PythonComputeRejection::from)?,
+            )
         } else {
             None
         };
@@ -712,18 +760,24 @@ impl PreparedCompute {
             (Some(output), _) => output,
             (None, Some(output)) => {
                 if let Some(annotation) = &annotation {
-                    annotation.check(&output)?;
+                    annotation
+                        .check(&output)
+                        .map_err(PythonComputeRejection::from)?;
                 }
                 output
             }
-            _ => return Err("missing compute output contract".into()),
+            _ => return Err(PythonComputeError::OutputContractMissing.into()),
         };
-        let mut stubs = upstream::stubs_in(&fields, cgs, &domains.catalogs)?;
-        upstream::domain_aliases(&domains.types, cgs, &domains.catalogs, &mut stubs)?;
-        let output_type = upstream::output_type(&output, cgs, &domains.catalogs, &mut stubs)?;
+        let mut stubs = upstream::stubs_in(&fields, cgs, &domains.catalogs)
+            .map_err(PythonComputeRejection::from)?;
+        upstream::domain_aliases(&domains.types, cgs, &domains.catalogs, &mut stubs)
+            .map_err(PythonComputeRejection::from)?;
+        let output_type = upstream::output_type(&output, cgs, &domains.catalogs, &mut stubs)
+            .map_err(PythonComputeRejection::from)?;
         let body = definition_body(source, def)?;
         let argument_type = if argument.field.is_some() || argument.mapping.is_some() {
-            upstream::input_type(&argument.value_type, cgs, &domains.catalogs, &mut stubs)?
+            upstream::input_type(&argument.value_type, cgs, &domains.catalogs, &mut stubs)
+                .map_err(PythonComputeRejection::from)?
         } else if per_row {
             "PlasmInput".into()
         } else {
@@ -777,7 +831,11 @@ impl PreparedCompute {
     ) -> Result<Value, plasm_runtime::ExecutionFailure> {
         if let Some(contract) = &self.contract {
             if self.row_fields.is_none() && owner != &contract.owner {
-                return Err("compute input catalog/entity ownership mismatch".into());
+                return Err(plasm_runtime::ExecutionFailure::new(
+                    plasm_runtime::FailureCause::Program,
+                    "compute_input_owner_mismatch",
+                    "compute input catalog/entity ownership differs from its admitted contract",
+                ));
             }
         }
         validate_collection_input(membership, rows.len())?;
@@ -790,12 +848,32 @@ impl PreparedCompute {
                 &self.context,
                 self.entry.as_str(),
                 &self.catalogs,
-            )?
+            )
+            .map_err(|diagnostic| {
+                plasm_runtime::ExecutionFailure::new(
+                    plasm_runtime::FailureCause::Program,
+                    "compute_input_schema_invalid",
+                    diagnostic.to_string(),
+                )
+            })?
         } else {
             self.contract
                 .as_ref()
-                .ok_or("missing nominal input contract")?
-                .materialize(owner, membership, rows)?
+                .ok_or_else(|| {
+                    plasm_runtime::ExecutionFailure::new(
+                        plasm_runtime::FailureCause::Program,
+                        "compute_input_contract_missing",
+                        "nominal compute input contract is absent",
+                    )
+                })?
+                .materialize(owner, membership, rows)
+                .map_err(|diagnostic| {
+                    plasm_runtime::ExecutionFailure::new(
+                        plasm_runtime::FailureCause::Program,
+                        "compute_input_contract_invalid",
+                        diagnostic.to_string(),
+                    )
+                })?
         };
         if self.independent_inputs {
             input
@@ -809,7 +887,13 @@ impl PreparedCompute {
                     count
                         .checked_add(rows)
                         .filter(|count| *count <= MAX_INPUT_ROWS)
-                        .ok_or("compute input row budget exceeded")
+                        .ok_or_else(|| {
+                            plasm_runtime::ExecutionFailure::new(
+                                plasm_runtime::FailureCause::Program,
+                                "compute_input_row_budget_exceeded",
+                                "compute input row budget exceeded",
+                            )
+                        })
                 })?;
         }
         let types = match &self.row_fields {
@@ -817,14 +901,27 @@ impl PreparedCompute {
             None => self
                 .contract
                 .as_ref()
-                .ok_or("missing nominal input contract")?
+                .ok_or_else(|| {
+                    plasm_runtime::ExecutionFailure::new(
+                        plasm_runtime::FailureCause::Program,
+                        "compute_input_contract_missing",
+                        "nominal compute input contract is absent",
+                    )
+                })?
                 .fields
                 .iter()
                 .map(|(k, f)| (k.clone(), f.value_type.clone()))
                 .collect(),
         };
         self.argument
-            .validate(&input, &self.context, &self.entry, &self.catalogs)?;
+            .validate(&input, &self.context, &self.entry, &self.catalogs)
+            .map_err(|error| {
+                plasm_runtime::ExecutionFailure::new(
+                    plasm_runtime::FailureCause::Program,
+                    "compute_argument_invalid",
+                    error.to_string(),
+                )
+            })?;
         let value = pool
             .compute_value(self.executable.clone(), input, &types, |value| {
                 let value = self.encode_domain_output(value, &self.output)?;
@@ -847,7 +944,7 @@ impl PreparedCompute {
         &self,
         value: Value,
         contract: &plasm_core::value_contract::ValueContract,
-    ) -> Result<Value, String> {
+    ) -> Result<Value, crate::python_pool::PythonReturnValueError> {
         use plasm_core::value_contract::ValueShape;
         if value.is_null() {
             return Ok(value);
@@ -863,7 +960,11 @@ impl PreparedCompute {
                     } else {
                         self.catalogs
                             .get(&domain.entry_id)
-                            .ok_or("money catalog is absent")?
+                            .ok_or_else(|| {
+                                crate::python_pool::PythonReturnValueError::MoneyCatalogMissing {
+                                    entry_id: domain.entry_id.clone(),
+                                }
+                            })?
                             .as_ref()
                     };
                     if let Some(plasm_core::ValueWireFormat::Money(format)) = cgs
@@ -883,19 +984,19 @@ impl PreparedCompute {
                     } else {
                         plasm_core::TemporalWireFormat::Rfc3339
                     });
-                plasm_core::temporal_value::encode(&value, wire)
+                Ok(plasm_core::temporal_value::encode(&value, wire)?)
             }
             ValueShape::MappingRecord { record } => self.encode_domain_output(value, record),
             ValueShape::Array { element } | ValueShape::Set { element } => value
                 .as_array()
-                .ok_or("expected array output")?
+                .ok_or(crate::python_pool::PythonReturnValueError::ExpectedArray)?
                 .iter()
                 .map(|v| self.encode_domain_output(v.clone(), element))
                 .collect::<Result<Vec<_>, _>>()
                 .map(Value::Array),
             ValueShape::Dictionary { value: element, .. } => value
                 .as_object()
-                .ok_or("expected dictionary output")?
+                .ok_or(crate::python_pool::PythonReturnValueError::ExpectedDictionary)?
                 .iter()
                 .map(|(k, v)| {
                     self.encode_domain_output(v.clone(), element)
@@ -905,18 +1006,22 @@ impl PreparedCompute {
                 .map(Value::Object),
             ValueShape::Record { fields } | ValueShape::ObservedRecord { fields, .. } => value
                 .as_object()
-                .ok_or("expected record output")?
+                .ok_or(crate::python_pool::PythonReturnValueError::ExpectedRecord)?
                 .iter()
                 .map(|(k, v)| {
                     Ok((
                         k.clone(),
                         self.encode_domain_output(
                             v.clone(),
-                            fields.get(k).ok_or("unknown output field")?,
+                            fields.get(k).ok_or_else(|| {
+                                crate::python_pool::PythonReturnValueError::UnknownRecordField {
+                                    field: k.clone(),
+                                }
+                            })?,
                         )?,
                     ))
                 })
-                .collect::<Result<indexmap::IndexMap<_, _>, String>>()
+                .collect::<Result<indexmap::IndexMap<_, _>, _>>()
                 .map(Value::Object),
             ValueShape::Union { variants } => {
                 for variant in variants {
@@ -935,7 +1040,7 @@ impl PreparedCompute {
                         }
                     }
                 }
-                Err("unmatched output union".into())
+                Err(crate::python_pool::PythonReturnValueError::UnmatchedUnion)
             }
             _ => Ok(value),
         }
@@ -953,10 +1058,12 @@ pub(crate) fn is_entity_record_type(head: &str) -> bool {
     matches!(head, "Value" | "Row")
 }
 
-fn entity_record_argument(expr: &Expr) -> Result<&Expr, String> {
+fn entity_record_argument(
+    expr: &Expr,
+) -> Result<&Expr, crate::program_rejection::PythonComputeError> {
     match expr {
         Expr::Subscript(s) if name(&s.value).is_some_and(is_entity_record_type) => Ok(&s.slice),
-        _ => Err("expected Value[eN] or Row[eN] annotation".into()),
+        _ => Err(crate::program_rejection::PythonComputeError::ExpectedEntityRecordAnnotation),
     }
 }
 
@@ -978,22 +1085,27 @@ pub(crate) fn check_op(
         per_row,
     } = op
     else {
-        return Err("expected Python compute".into());
+        return Err(PythonComputeError::ExpectedPythonCompute.into());
     };
     if *contract_version != CONTRACT_VERSION || language_profile != LANGUAGE_PROFILE {
-        return Err("unsupported Python compute contract version".into());
+        return Err(PythonComputeError::UnsupportedContractVersion.into());
     }
-    let ctx = es
-        .contexts_by_entry
-        .get(entry_id)
-        .ok_or("Python compute catalog is not loaded")?;
+    let ctx =
+        es.contexts_by_entry
+            .get(entry_id)
+            .ok_or_else(|| PythonComputeError::CatalogNotLoaded {
+                entry_id: entry_id.clone(),
+            })?;
     if ctx.cgs.catalog_cgs_hash_hex() != *catalog_hash {
-        return Err("Python compute catalog pin mismatch".into());
+        return Err(PythonComputeError::CatalogPinMismatch {
+            entry_id: entry_id.clone(),
+        }
+        .into());
     }
     let exposure = es
         .teaching_exposure
         .as_ref()
-        .ok_or("Python compute requires session symbols")?;
+        .ok_or(PythonComputeError::SessionSymbolsMissing)?;
     let symbols = exposure.to_symbol_map();
     let token = entity
         .as_ref()
@@ -1013,13 +1125,13 @@ pub(crate) fn check_op(
         },
     )?;
     if checked.contract.as_ref().map(|c| c.owner.entity.as_str()) != entity.as_deref() {
-        return Err("Python compute annotated entity does not match declared owner".into());
+        return Err(PythonComputeError::DeclaredOwnerMismatch.into());
     }
     if checked.per_row != *per_row {
-        return Err("Python compute input mode differs from its source".into());
+        return Err(PythonComputeError::StoredInputModeMismatch.into());
     }
     if &checked.output != output_type {
-        return Err("Python output type differs from checked return contract".into());
+        return Err(PythonComputeError::StoredOutputTypeMismatch.into());
     }
     Ok(checked)
 }
@@ -1040,18 +1152,19 @@ pub(crate) fn validate_plan_compute(
         ComputeInputMode::Collection
     };
     if checked.per_row != source_mode.per_row() {
-        return Err("Python compute input mode differs from source cardinality".into());
+        return Err(PythonComputeError::InputModeMismatch.into());
     }
     if compute.compute.schema
-        != plasm_core::plasm_monad::SyntheticResultSchema::for_value(checked.output.clone())?
+        != plasm_core::plasm_monad::SyntheticResultSchema::for_value(checked.output.clone())
+            .map_err(PythonComputeRejection::from)?
     {
-        return Err("Python output schema differs from declared return contract".into());
+        return Err(PythonComputeError::OutputSchemaMismatch.into());
     }
     if checked.per_row && compute.result_shape != plasm_core::plasm_monad::ResultShape::List {
-        return Err("per-row Python rendering must declare a rowset result".into());
+        return Err(PythonComputeError::PerRowRenderRequiresRowset.into());
     }
     if !checked.per_row && compute.result_shape != plasm_core::plasm_monad::ResultShape::Single {
-        return Err("Python reduction must declare a singleton result".into());
+        return Err(PythonComputeError::ReductionRequiresSingleton.into());
     }
 
     if let plasm_core::plasm_monad::ComputeOp::Python {
@@ -1062,7 +1175,7 @@ pub(crate) fn validate_plan_compute(
         let source = nodes
             .iter()
             .find(|n| n.id().as_str() == compute.compute.source.as_str())
-            .ok_or("Python source absent")?;
+            .ok_or(PythonComputeError::SourceNodeAbsent)?;
         if let ValidatedPlanNode::Compute(source) = source {
             // Row-preserving operators retain navigation capabilities, but those
             // capabilities are not implicitly materialized compute values.
@@ -1074,7 +1187,7 @@ pub(crate) fn validate_plan_compute(
                     | plasm_core::plasm_monad::ComputeOp::DedupeBy { .. }
             );
             if !preserves_entity && &source.compute.schema != schema {
-                return Err("Python input schema differs from its source".into());
+                return Err(PythonComputeError::InputSchemaMismatch.into());
             }
         }
         if matches!(
@@ -1082,15 +1195,22 @@ pub(crate) fn validate_plan_compute(
             ValidatedPlanNode::Data(_) | ValidatedPlanNode::Derive(_)
         ) {
             let actual =
-                crate::map_body_schema::row_contract(es, nodes, compute.compute.source.as_str())?;
-            if plasm_core::plasm_monad::SyntheticResultSchema::for_value(actual)?.row_contract()?
-                != schema.row_contract()?
+                crate::map_body_schema::row_contract(es, nodes, compute.compute.source.as_str())
+                    .map_err(PythonComputeRejection::from)?;
+            if plasm_core::plasm_monad::SyntheticResultSchema::for_value(actual)
+                .map_err(PythonComputeRejection::from)?
+                .row_contract()
+                .map_err(PythonComputeRejection::from)?
+                != schema
+                    .row_contract()
+                    .map_err(PythonComputeRejection::from)?
             {
-                return Err("Python input schema differs from its structural source".into());
+                return Err(PythonComputeError::StructuralInputSchemaMismatch.into());
             }
         }
         if let Some(contract) = &checked.contract {
-            validate_source_owner(nodes, compute.compute.source.as_str(), &contract.owner)?;
+            validate_source_owner(nodes, compute.compute.source.as_str(), &contract.owner)
+                .map_err(PythonComputeRejection::from)?;
         }
         for field in checked
             .row_fields
@@ -1098,7 +1218,8 @@ pub(crate) fn validate_plan_compute(
             .into_iter()
             .flat_map(|f| f.keys())
         {
-            let actual = source_field_kind(es, nodes, compute.compute.source.as_str(), field, 0)?;
+            let actual = source_field_kind(es, nodes, compute.compute.source.as_str(), field, 0)
+                .map_err(PythonComputeRejection::from)?;
             if Some(actual)
                 != checked
                     .row_fields
@@ -1106,9 +1227,10 @@ pub(crate) fn validate_plan_compute(
                     .and_then(|f| f.get(field))
                     .cloned()
             {
-                return Err(
-                    format!("Python input field {field} differs from its derived type").into(),
-                );
+                return Err(PythonComputeError::DerivedInputTypeMismatch {
+                    field: field.clone(),
+                }
+                .into());
             }
         }
         return Ok(());
@@ -1116,13 +1238,15 @@ pub(crate) fn validate_plan_compute(
     let contract = checked
         .contract
         .as_ref()
-        .ok_or("structural compute requires an explicit input schema")?;
+        .ok_or(PythonComputeError::ExplicitInputSchemaRequired)?;
     let mut source_id = compute.compute.source.as_str();
     let owner = loop {
         let source = nodes
             .iter()
             .find(|node| node.id().as_str() == source_id)
-            .ok_or("Python compute source is absent")?;
+            .ok_or_else(|| PythonComputeError::SourceNodeMissing {
+                source_id: source_id.to_owned(),
+            })?;
         match source {
             ValidatedPlanNode::Surface(source) => {
                 if !source.projection.is_empty()
@@ -1131,26 +1255,30 @@ pub(crate) fn validate_plan_compute(
                         .keys()
                         .any(|name| !source.projection.contains(name))
                 {
-                    return Err(
-                        "Python compute input projection omits a required value field".into(),
-                    );
+                    let field = contract
+                        .fields
+                        .keys()
+                        .find(|name| !source.projection.contains(*name))
+                        .expect("missing projected field was checked");
+                    return Err(PythonComputeError::ProjectionOmitsRequiredValue {
+                        field: field.clone(),
+                    }
+                    .into());
                 }
                 break source
                     .qualified_entity
                     .as_ref()
-                    .ok_or("Python compute requires catalog ownership")?;
+                    .ok_or(PythonComputeError::CatalogOwnershipRequired)?;
             }
             ValidatedPlanNode::RelationTraversal(source) => {
-                if source
-                    .relation
-                    .ir
-                    .projection
-                    .as_ref()
-                    .is_some_and(|fields| contract.fields.keys().any(|name| !fields.contains(name)))
-                {
-                    return Err(
-                        "Python compute input projection omits a required value field".into(),
-                    );
+                if let Some(fields) = &source.relation.ir.projection {
+                    if let Some(field) = contract.fields.keys().find(|name| !fields.contains(*name))
+                    {
+                        return Err(PythonComputeError::ProjectionOmitsRequiredValue {
+                            field: field.clone(),
+                        }
+                        .into());
+                    }
                 }
                 break &source.relation.target;
             }
@@ -1163,19 +1291,26 @@ pub(crate) fn validate_plan_compute(
                                 .iter()
                                 .any(|(out, path)| out.as_str() == name && path.dotted() == *name)
                         }) {
-                            return Err("Python compute projection must preserve each consumed catalog field".into());
+                            let field = contract
+                                .fields
+                                .keys()
+                                .find(|name| {
+                                    !fields.iter().any(|(out, path)| {
+                                        out.as_str() == *name && path.dotted() == **name
+                                    })
+                                })
+                                .expect("missing projected field was checked");
+                            return Err(PythonComputeError::ProjectionDropsConsumedField {
+                                field: field.clone(),
+                            }
+                            .into());
                         }
                     }
                     ComputeOp::Filter { .. }
                     | ComputeOp::Sort { .. }
                     | ComputeOp::Limit { .. }
                     | ComputeOp::DedupeBy { .. } => {}
-                    _ => {
-                        return Err(
-                            "Python compute requires rows preserving the annotated catalog type"
-                                .into(),
-                        )
-                    }
+                    _ => return Err(PythonComputeError::CatalogRowsRequired.into()),
                 }
                 source_id = &source.compute.source;
             }
@@ -1187,20 +1322,26 @@ pub(crate) fn validate_plan_compute(
                     if !fields.is_empty()
                         && contract.fields.keys().any(|name| !fields.contains(name))
                     {
-                        return Err(
-                            "Python compute fanout projection omits a required value field".into(),
-                        );
+                        let field = contract
+                            .fields
+                            .keys()
+                            .find(|name| !fields.contains(*name))
+                            .expect("missing projected field was checked");
+                        return Err(PythonComputeError::FanoutProjectionOmitsRequiredValue {
+                            field: field.clone(),
+                        }
+                        .into());
                     }
                 }
                 break &source.effect_template.qualified_entity;
             }
-            _ => return Err("Python compute requires typed entity rows".into()),
+            _ => return Err(PythonComputeError::TypedEntityRowsRequired.into()),
         }
     };
     if owner.entry_id != contract.owner.entry_id.as_str()
         || owner.entity != contract.owner.entity.as_str()
     {
-        return Err("Python compute source catalog/entity ownership mismatch".into());
+        return Err(PythonComputeError::SourceOwnershipMismatch.into());
     }
     Ok(())
 }
@@ -1227,7 +1368,7 @@ pub(crate) async fn run_worker(
     await_checked(scope, checked.run(pool, &owner, membership, &rows)).await
 }
 
-pub(crate) async fn await_checked<T, E: From<String>>(
+pub(crate) async fn await_checked<T, E: From<plasm_runtime::ExecutionFailure>>(
     scope: Option<&crate::operation::ExecutionScope>,
     future: impl std::future::Future<Output = Result<T, E>>,
 ) -> Result<T, E> {
@@ -1241,7 +1382,7 @@ pub(crate) async fn await_checked<T, E: From<String>>(
     loop {
         tokio::select! {
             biased;
-            _ = token.cancelled() => return Err(E::from("operation cancelled".to_string())),
+            _ = token.cancelled() => return Err(E::from(crate::operation::ExecutionScope::cancelled_failure())),
             _ = tick.tick() => scope.check()?,
             value = &mut future => {
                 // Preserve a completed failure and its effect evidence before checking
@@ -1254,9 +1395,9 @@ pub(crate) async fn await_checked<T, E: From<String>>(
     }
 }
 
-pub(crate) fn validate_input_budget(rows: &[ValueRow]) -> Result<(), String> {
+pub(crate) fn validate_input_budget(rows: &[ValueRow]) -> Result<(), ComputeInputBudgetError> {
     if rows.len() > MAX_INPUT_ROWS {
-        return Err("compute input row budget exceeded".into());
+        return Err(ComputeInputBudgetError::RowCountExceeded);
     }
     let mut remaining = 1_048_576;
     for row in rows {
@@ -1277,7 +1418,7 @@ pub(crate) fn return_domains(
     let exposure = es
         .teaching_exposure
         .as_ref()
-        .ok_or("Python compute requires session symbols")?;
+        .ok_or(PythonComputeError::SessionSymbolsMissing)?;
     Ok(ReturnDomains {
         types: plasm_core::prompt_render::python::prepare_python_teaching_wave(
             exposure,
@@ -1303,4 +1444,32 @@ fn validate_collection_input(
         return Err(CollectionFault::Conservation);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod typed_helper_input_error_tests {
+    use super::*;
+
+    #[test]
+    fn helper_input_contract_failures_are_semantic() {
+        use crate::program_rejection::PythonProgramError;
+        use plasm_core::value_contract::ValueContract;
+
+        assert!(matches!(
+            inferred_helper_input_annotation(
+                &ValueContract::scalar(FieldType::Array),
+                false,
+                false,
+            ),
+            Err(PythonProgramError::HelperInputRequiresTemporalOrArrayContract)
+        ));
+        assert!(matches!(
+            inferred_helper_input_annotation(
+                &ValueContract::record(BTreeMap::new(), Default::default()),
+                true,
+                false,
+            ),
+            Err(PythonProgramError::HelperScalarCellValueMissing)
+        ));
+    }
 }

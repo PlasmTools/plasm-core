@@ -25,9 +25,24 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
     let RelationMaterialization::PreferFromParentGet { fallback, .. } =
         &relation.relation.materialize
     else {
-        return Err("expected PreferFromParentGet relation".into());
+        return Err(ExecutionFailure::new(
+            plasm_runtime::FailureCause::Program,
+            "relation_materialization_policy_mismatch",
+            format!(
+                "relation `{}` is not configured for PreferFromParentGet",
+                relation.id
+            ),
+        ));
     };
-    let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
+    let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target)).map_err(
+        |diagnostic| {
+            ExecutionFailure::new(
+                plasm_runtime::FailureCause::Program,
+                "relation_catalog_scope_unavailable",
+                diagnostic.to_string(),
+            )
+        },
+    )?;
     let read_cap = crate::plan_read_bounds::effective_relation_read_cap(relation);
     let rel_name = relation.relation.relation.as_str();
     let target_entity = relation.relation.target.entity.as_str();
@@ -39,7 +54,14 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
     );
     let parents = source_mat
         .resolve_materialized_source_parents(&rehydrator)
-        .await?;
+        .await
+        .map_err(|diagnostic| {
+            ExecutionFailure::new(
+                plasm_runtime::FailureCause::Runtime,
+                "relation_parent_rehydration_failed",
+                diagnostic.to_string(),
+            )
+        })?;
     if parents.len() != source_rows.len() || parents.len() != source_mat.result.count() {
         return Err(plasm_core::collection_codec::CollectionFault::Conservation.into());
     }
@@ -100,10 +122,11 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
             fallback,
             plasm_core::RelationScopedFallback::HydrateFromEmbedPath { .. }
         ) {
-            return Err(format!(
-                "relation `{rel_name}` lacks a decoded membership observation for parent {index}"
-            )
-            .into());
+            return Err(ExecutionFailure::new(
+                plasm_runtime::FailureCause::Runtime,
+                "relation_membership_observation_missing",
+                format!("relation `{rel_name}` lacks a decoded membership observation for parent {index}"),
+            ));
         }
         let row_identity = source_mat
             .row_identities
@@ -117,7 +140,14 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
             &source_rows[index],
             row_identity,
         )?;
-        let coercions = wire_coercion_by_alias_from_inputs(es, &mut input_rows)?;
+        let coercions =
+            wire_coercion_by_alias_from_inputs(es, &mut input_rows).map_err(|diagnostic| {
+                ExecutionFailure::new(
+                    plasm_runtime::FailureCause::Program,
+                    "relation_input_coercion_failed",
+                    diagnostic.to_string(),
+                )
+            })?;
         let parsed = instantiate_parsed_expr_plan_inputs_with_rows(
             ParsedExpr {
                 expr: relation.relation.ir.expr.clone(),
@@ -127,7 +157,8 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
             &scoped_es.cgs,
             &input_rows,
             &coercions,
-        )?;
+        )
+        .map_err(ExecutionFailure::from)?;
         fanout::push_verified_row_job(
             &mut jobs,
             &scoped_es,

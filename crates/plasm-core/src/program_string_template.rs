@@ -47,12 +47,12 @@ pub const DEFAULT_MAX_INTERPOLATED_LEN: usize = 512 * 1024;
 
 const DOLLAR_HARD_ERROR: &str = "abolished `${…}` / `$$` string interpolation; use Minijinja `{{ path }}` (filters: `| split_part`) or a typed value `param=binding`";
 
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Error)]
 pub enum ProgramStringError {
-    #[error("{0}")]
-    DollarForbidden(String),
+    #[error("{DOLLAR_HARD_ERROR} (found near {span:?})")]
+    DollarForbidden { span: String },
     #[error("template render: {0}")]
-    Render(String),
+    Render(#[source] minijinja::Error),
     #[error("interpolated string exceeds maximum length ({max} bytes)")]
     MaxLengthExceeded { max: usize },
 }
@@ -106,16 +106,16 @@ impl CompiledProgramString {
         let mut environment = program_string_env();
         environment
             .add_template_owned("operand", source.clone())
-            .map_err(|error| ProgramStringError::Render(error.to_string()))?;
+            .map_err(ProgramStringError::Render)?;
         let roots = environment
             .get_template("operand")
-            .map_err(|error| ProgramStringError::Render(error.to_string()))?
+            .map_err(ProgramStringError::Render)?
             .undeclared_variables(false)
             .into_iter()
             .collect();
         let paths = environment
             .get_template("operand")
-            .map_err(|error| ProgramStringError::Render(error.to_string()))?
+            .map_err(ProgramStringError::Render)?
             .undeclared_variables(true)
             .into_iter()
             .collect::<std::collections::BTreeSet<_>>()
@@ -153,9 +153,9 @@ impl CompiledProgramString {
         let output = self
             .environment
             .get_template("operand")
-            .map_err(|error| ProgramStringError::Render(error.to_string()))?
+            .map_err(ProgramStringError::Render)?
             .render(context)
-            .map_err(|error| ProgramStringError::Render(error.to_string()))?;
+            .map_err(ProgramStringError::Render)?;
         if output.len() > DEFAULT_MAX_INTERPOLATED_LEN {
             return Err(ProgramStringError::MaxLengthExceeded {
                 max: DEFAULT_MAX_INTERPOLATED_LEN,
@@ -206,9 +206,7 @@ pub fn contains_minijinja_markers(s: &str) -> bool {
 pub fn reject_dollar_interpolation(s: &str) -> Result<(), ProgramStringError> {
     if let Some(idx) = s.find("${") {
         let span = s[idx..].chars().take(48).collect::<String>();
-        return Err(ProgramStringError::DollarForbidden(format!(
-            "{DOLLAR_HARD_ERROR} (found near {span:?})"
-        )));
+        return Err(ProgramStringError::DollarForbidden { span });
     }
     Ok(())
 }
@@ -357,11 +355,9 @@ pub fn render_minijinja(
     let env = shared_minijinja_environment();
     let tmpl = env
         .template_from_str(template)
-        .map_err(|e| ProgramStringError::Render(e.to_string()))?;
+        .map_err(ProgramStringError::Render)?;
     let ctx = unified_template_context(current_row, bindings);
-    let out = tmpl
-        .render(ctx)
-        .map_err(|e| ProgramStringError::Render(e.to_string()))?;
+    let out = tmpl.render(ctx).map_err(ProgramStringError::Render)?;
     if out.len() > DEFAULT_MAX_INTERPOLATED_LEN {
         return Err(ProgramStringError::MaxLengthExceeded {
             max: DEFAULT_MAX_INTERPOLATED_LEN,
@@ -421,14 +417,12 @@ pub fn render_program_string_with_max(
     let env = program_string_env();
     let tmpl = env
         .template_from_str(input)
-        .map_err(|e| ProgramStringError::Render(e.to_string()))?;
+        .map_err(ProgramStringError::Render)?;
     let mut ctx = BTreeMap::new();
     for (k, v) in scope {
         ctx.insert(k.clone(), plasm_to_mj(v));
     }
-    let out = tmpl
-        .render(ctx)
-        .map_err(|e| ProgramStringError::Render(e.to_string()))?;
+    let out = tmpl.render(ctx).map_err(ProgramStringError::Render)?;
     if out.len() > max_len {
         return Err(ProgramStringError::MaxLengthExceeded { max: max_len });
     }
@@ -501,20 +495,24 @@ pub fn for_each_interpolation_path<F: FnMut(&str)>(s: &str, mut f: F) {
 }
 
 /// Reject dollar; parse-check Minijinja when markers are present.
-pub fn validate_interpolation_syntax(
-    s: &str,
-    error: impl Fn(String) -> String,
-) -> Result<(), String> {
-    if let Err(e) = reject_dollar_interpolation(s) {
-        return Err(error(e.to_string()));
-    }
+#[derive(Debug, Error)]
+pub enum TemplateSyntaxError {
+    #[error("{DOLLAR_HARD_ERROR}")]
+    DollarInterpolationForbidden,
+    #[error("invalid Minijinja template: {0}")]
+    InvalidTemplate(#[source] minijinja::Error),
+}
+
+pub fn validate_interpolation_syntax(s: &str) -> Result<(), TemplateSyntaxError> {
+    reject_dollar_interpolation(s)
+        .map_err(|_| TemplateSyntaxError::DollarInterpolationForbidden)?;
     if !contains_minijinja_markers(s) {
         return Ok(());
     }
     let env = program_string_env();
     env.template_from_str(s)
         .map(|_| ())
-        .map_err(|e| error(format!("invalid Minijinja template: {e}")))
+        .map_err(TemplateSyntaxError::InvalidTemplate)
 }
 
 #[cfg(test)]
@@ -545,7 +543,7 @@ mod tests {
     #[test]
     fn dollar_hard_errors() {
         let err = render_program_string("${title}", &scope_title()).unwrap_err();
-        assert!(matches!(err, ProgramStringError::DollarForbidden(_)));
+        assert!(matches!(err, ProgramStringError::DollarForbidden { .. }));
     }
 
     #[test]

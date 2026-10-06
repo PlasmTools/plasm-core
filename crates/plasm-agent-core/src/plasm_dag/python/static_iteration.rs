@@ -39,7 +39,7 @@ impl Lower<'_> {
                 .map(|items| LiteralIds { items }),
             _ => LiteralIds::literal(iter),
         };
-        known.ok_or_else(|| at(iter, "build iteration requires a literal list or tuple of string/integer IDs; use a rowset callback for data-dependent iteration"))
+        known.ok_or_else(|| at(iter, PythonSourceError::StaticIterationRequiresLiteralIds))
     }
 
     pub(super) fn remember_static_sequence(&mut self, binding: &str, expression: &PyExpr) {
@@ -49,8 +49,8 @@ impl Lower<'_> {
     }
 
     fn static_target(&self, target: &PyExpr) -> Result<String, PythonLoweringError> {
-        let label =
-            name(target).ok_or_else(|| at(target, "build iteration requires one local name"))?;
+        let label = name(target)
+            .ok_or_else(|| at(target, PythonSourceError::StaticIterationTargetShape))?;
         if matches!(
             label,
             "self" | "Program" | "compute" | "Value" | "agg" | "_"
@@ -62,7 +62,12 @@ impl Lower<'_> {
                 .resolve_session_entity(label)
                 .is_ok()
         {
-            return Err(at(target, "reserved build iteration name"));
+            return Err(at(
+                target,
+                PythonSourceError::ReservedStaticIterationName {
+                    name: label.to_owned(),
+                },
+            ));
         }
         Ok(label.to_owned())
     }
@@ -70,7 +75,13 @@ impl Lower<'_> {
     fn bind_static_item(&mut self, label: &str, item: &PyExpr) -> Result<(), PythonLoweringError> {
         self.static_expansions += 1;
         if self.static_expansions > MAX_STATIC_EXPANSIONS {
-            return Err(at(item, "build literal expansion exceeds 256 iterations"));
+            return Err(at(
+                item,
+                PythonSourceError::StaticExpansionLimit {
+                    max: MAX_STATIC_EXPANSIONS,
+                    actual: self.static_expansions,
+                },
+            ));
         }
         let binding = self.fresh();
         self.expr(item, Some(&binding))?;
@@ -86,7 +97,10 @@ impl Lower<'_> {
         if statement.is_async || !statement.orelse.is_empty() {
             return Err(at(
                 statement,
-                "build iteration does not admit async or for-else",
+                PythonSourceError::StaticForShape {
+                    is_async: statement.is_async,
+                    has_else: !statement.orelse.is_empty(),
+                },
             ));
         }
         let label = self.static_target(&statement.target)?;
@@ -95,10 +109,7 @@ impl Lower<'_> {
             self.bind_static_item(&label, &item)?;
             for body in &statement.body {
                 if self.statement(body)?.is_some() {
-                    return Err(at(
-                        body,
-                        "return inside build iteration is not a DAG return; return after the loop",
-                    ));
+                    return Err(at(body, PythonSourceError::StaticIterationReturn));
                 }
             }
         }
@@ -114,13 +125,18 @@ impl Lower<'_> {
         let [generator] = comprehension.generators.as_slice() else {
             return Err(at(
                 expression,
-                "build list comprehension requires one literal iterator",
+                PythonSourceError::StaticComprehensionIteratorCount {
+                    actual: comprehension.generators.len(),
+                },
             ));
         };
         if generator.is_async || !generator.ifs.is_empty() {
             return Err(at(
                 expression,
-                "build list comprehension does not admit async or filters; filter rows with where",
+                PythonSourceError::StaticComprehensionShape {
+                    is_async: generator.is_async,
+                    filters: generator.ifs.len(),
+                },
             ));
         }
         let label = self.static_target(&generator.target)?;

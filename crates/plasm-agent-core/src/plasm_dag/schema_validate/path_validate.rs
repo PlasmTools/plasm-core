@@ -3,14 +3,44 @@
 use super::super::prelude::*;
 use super::super::types::{CompileState, DagNode, DagNodeSource};
 use super::catalog::{
-    agent_program_error, capability_for_surface_expr, cgs_for_qualified_entity,
-    is_opaque_passthrough_compute_schema, logical_row_field_paths_for_entity,
-    row_contract_field_error, single_segment_teaching_field_hint,
+    capability_for_surface_expr, cgs_for_qualified_entity, is_opaque_passthrough_compute_schema,
+    logical_row_field_paths_for_entity, row_contract_field_error,
+    single_segment_teaching_field_hint,
 };
 use super::dag_lookup::{
     logical_row_field_paths_for_surface_node, resolve_immediate_compute_schema,
     resolve_qualified_entity_for_dag_source, resolve_surface_dag_node,
 };
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum SchemaPathValidationError {
+    #[error("field token resolution failed: {0}")]
+    FieldToken(#[from] crate::plasm_plan_run::WireFieldTokenError),
+    #[error("field path is invalid: {0}")]
+    FieldPath(#[from] plasm_core::plasm_monad::PlanAtomError),
+    #[error("catalog `{entry_id}` is not loaded for entity `{entity}`")]
+    CatalogNotLoaded { entry_id: String, entity: String },
+    #[error("entity `{entity}` is not defined in catalog `{entry_id}`")]
+    EntityNotFound { entry_id: String, entity: String },
+    #[error("field `{field}` is not a row field on this binding's compute output")]
+    ComputeOutputFieldNotFound { field: String },
+    #[error("expected a surface or relation-traversal DAG node")]
+    SurfaceNodeRequired,
+    #[error("field `{field}` is not a row field for operation `{operation}` on entity `{entity}` in catalog `{entry_id}`")]
+    EntityFieldNotFound {
+        field: String,
+        operation: String,
+        entity: String,
+        entry_id: String,
+    },
+    #[error("catalog capability resolution failed: {0}")]
+    CatalogCapability(#[source] super::catalog::SchemaCatalogError),
+    #[error("row contract rejected field: {0}")]
+    RowContract(#[source] super::catalog::RowContractFieldError),
+    #[error("surface row-field resolution failed: {0}")]
+    SurfaceResolution(#[source] super::catalog::SchemaCatalogError),
+}
 
 pub(in crate::plasm_dag) fn validate_compute_paths_for_schema(
     session: &ExecuteSession,
@@ -19,7 +49,7 @@ pub(in crate::plasm_dag) fn validate_compute_paths_for_schema(
     schema: &SyntheticResultSchema,
     paths: &[FieldPath],
     _op_label: &str,
-) -> Result<(), String> {
+) -> Result<(), SchemaPathValidationError> {
     let allowed: std::collections::BTreeSet<String> = schema
         .fields
         .iter()
@@ -46,12 +76,7 @@ pub(in crate::plasm_dag) fn validate_compute_paths_for_schema(
         if allowed.contains(&wire) {
             continue;
         }
-        return Err(agent_program_error(
-            format!("`{wire}` is not a row field on this binding's compute output."),
-            Some(
-                "Use wire field names from the language card (e.g. `.sort(height)`, `[title,…]`).",
-            ),
-        ));
+        return Err(SchemaPathValidationError::ComputeOutputFieldNotFound { field: wire });
     }
     Ok(())
 }
@@ -62,7 +87,7 @@ pub(in crate::plasm_dag) fn validate_compute_paths_for_dag_source(
     source_id: &str,
     paths: &[FieldPath],
     op_label: &str,
-) -> Result<(), String> {
+) -> Result<(), SchemaPathValidationError> {
     if let Some(schema) = resolve_immediate_compute_schema(state, staged, source_id) {
         if !is_opaque_passthrough_compute_schema(&schema) {
             let qe = resolve_qualified_entity_for_dag_source(state, staged, source_id.to_string());
@@ -77,7 +102,9 @@ pub(in crate::plasm_dag) fn validate_compute_paths_for_dag_source(
         }
     }
     if let Some(surface) = resolve_surface_dag_node(state, staged, source_id.to_string()) {
-        if let Some(allowed) = logical_row_field_paths_for_surface_node(session, surface)? {
+        if let Some(allowed) = logical_row_field_paths_for_surface_node(session, surface)
+            .map_err(SchemaPathValidationError::SurfaceResolution)?
+        {
             return validate_compute_paths_for_allowed_set(
                 session,
                 state.cross_cache,
@@ -98,7 +125,7 @@ pub(in crate::plasm_dag) fn validate_surface_inline_projection(
     session: &ExecuteSession,
     state: &CompileState<'_>,
     node: &DagNode,
-) -> Result<(), String> {
+) -> Result<(), SchemaPathValidationError> {
     let parsed = match &node.source {
         DagNodeSource::Surface { parsed, .. } | DagNodeSource::RelationTraversal { parsed, .. } => {
             parsed
@@ -113,9 +140,11 @@ pub(in crate::plasm_dag) fn validate_surface_inline_projection(
     }
     let paths: Vec<FieldPath> = fields
         .iter()
-        .map(|f| FieldPath::from_dotted(f.as_str()))
+        .map(|f| FieldPath::from_dotted(f.as_str()).map_err(SchemaPathValidationError::FieldPath))
         .collect::<Result<_, _>>()?;
-    if let Some(allowed) = logical_row_field_paths_for_surface_node(session, node)? {
+    if let Some(allowed) = logical_row_field_paths_for_surface_node(session, node)
+        .map_err(SchemaPathValidationError::SurfaceResolution)?
+    {
         validate_compute_paths_for_allowed_set(
             session,
             state.cross_cache,
@@ -135,7 +164,7 @@ pub(in crate::plasm_dag) fn validate_compute_paths_for_allowed_set(
     allowed: &BTreeSet<Vec<String>>,
     paths: &[FieldPath],
     op_label: &str,
-) -> Result<(), String> {
+) -> Result<(), SchemaPathValidationError> {
     let qe = match &surface_node.source {
         DagNodeSource::Surface {
             qualified_entity, ..
@@ -144,21 +173,19 @@ pub(in crate::plasm_dag) fn validate_compute_paths_for_allowed_set(
             qualified_entity, ..
         } => qualified_entity,
         _ => {
-            return Err(
-                "Plasm program internal: validate_compute_paths_for_allowed_set requires surface"
-                    .into(),
-            );
+            return Err(SchemaPathValidationError::SurfaceNodeRequired);
         }
     };
     let cgs = cgs_for_qualified_entity(session, qe).ok_or_else(|| {
-        format!(
-            "catalog `{}` is not loaded for entity `{}`",
-            qe.entry_id, qe.entity
-        )
+        SchemaPathValidationError::CatalogNotLoaded {
+            entry_id: qe.entry_id.to_string(),
+            entity: qe.entity.to_string(),
+        }
     })?;
     let cap = match &surface_node.source {
         DagNodeSource::Surface { parsed, .. } | DagNodeSource::RelationTraversal { parsed, .. } => {
-            capability_for_surface_expr(cgs.as_ref(), &parsed.expr)?
+            capability_for_surface_expr(cgs.as_ref(), &parsed.expr)
+                .map_err(SchemaPathValidationError::CatalogCapability)?
         }
         _ => None,
     };
@@ -185,15 +212,17 @@ pub(in crate::plasm_dag) fn validate_compute_paths_for_allowed_set(
         } else {
             wire.as_str()
         };
-        return Err(row_contract_field_error(
-            session,
-            symbol_map_cross_cache,
-            qe,
-            cap,
-            path,
-            wire_for_input,
-            &cols,
-            op_label,
+        return Err(SchemaPathValidationError::RowContract(
+            row_contract_field_error(
+                session,
+                symbol_map_cross_cache,
+                qe,
+                cap,
+                path,
+                wire_for_input,
+                &cols,
+                op_label,
+            ),
         ));
     }
     Ok(())
@@ -205,18 +234,18 @@ pub(in crate::plasm_dag) fn validate_compute_paths_for_entity(
     qe: &QualifiedEntityKey,
     paths: &[FieldPath],
     op_label: &str,
-) -> Result<(), String> {
+) -> Result<(), SchemaPathValidationError> {
     let cgs = cgs_for_qualified_entity(session, qe).ok_or_else(|| {
-        format!(
-            "Plasm program internal: catalog `{}` is not loaded for entity `{}`",
-            qe.entry_id, qe.entity
-        )
+        SchemaPathValidationError::CatalogNotLoaded {
+            entry_id: qe.entry_id.to_string(),
+            entity: qe.entity.to_string(),
+        }
     })?;
     let ent = cgs.get_entity(qe.entity.as_str()).ok_or_else(|| {
-        format!(
-            "Plasm program internal: unknown entity `{}` in catalog `{}`",
-            qe.entity, qe.entry_id
-        )
+        SchemaPathValidationError::EntityNotFound {
+            entry_id: qe.entry_id.to_string(),
+            entity: qe.entity.to_string(),
+        }
     })?;
     let allowed = logical_row_field_paths_for_entity(ent);
     for path in paths {
@@ -234,12 +263,12 @@ pub(in crate::plasm_dag) fn validate_compute_paths_for_entity(
             continue;
         }
         let hint = single_segment_teaching_field_hint(session, symbol_map_cross_cache, qe, path);
-        return Err(format!(
-            "Plasm program {op_label}: field path `{}` is not a row field of entity `{}` (catalog entry `{}`). Use wire field names (and taught `r#` for relations) from the active TSV for this entity — mixing another entity's symbols yields null columns.{hint}",
-            path.dotted(),
-            qe.entity,
-            qe.entry_id
-        ));
+        return Err(SchemaPathValidationError::EntityFieldNotFound {
+            field: format!("{}{hint}", path.dotted()),
+            operation: op_label.to_string(),
+            entity: qe.entity.to_string(),
+            entry_id: qe.entry_id.to_string(),
+        });
     }
     Ok(())
 }

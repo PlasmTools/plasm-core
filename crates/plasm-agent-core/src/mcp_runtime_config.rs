@@ -2,6 +2,7 @@
 
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
+use thiserror::Error;
 use uuid::Uuid;
 
 /// Runtime snapshot for one MCP configuration (mirrors Phoenix `ProjectMcp.payload_for_agent/1`).
@@ -113,6 +114,30 @@ impl McpConfigUpsertJson {
     }
 }
 
+#[derive(Debug, Error)]
+pub enum McpRuntimeConfigError {
+    #[error("endpoint_secret_hash_hex is not valid hexadecimal: {source}")]
+    EndpointSecretHashHex {
+        #[source]
+        source: hex::FromHexError,
+    },
+    #[error("endpoint_secret_hash_hex must be 32 bytes; got {actual}")]
+    EndpointSecretHashLength { actual: usize },
+    #[error("credential hash is not valid hexadecimal: {source}")]
+    CredentialHashHex {
+        #[source]
+        source: hex::FromHexError,
+    },
+    #[error("credential hash must be 32 bytes; got {actual}")]
+    CredentialHashLength { actual: usize },
+    #[error("auth_config_by_entry[{entry_id}] is not a valid UUID: {source}")]
+    AuthConfigId {
+        entry_id: String,
+        #[source]
+        source: uuid::Error,
+    },
+}
+
 fn default_space_type() -> String {
     "organization".to_string()
 }
@@ -122,15 +147,17 @@ fn default_status_active() -> String {
 }
 
 impl TryFrom<McpConfigUpsertJson> for McpRuntimeConfig {
-    type Error = String;
+    type Error = McpRuntimeConfigError;
 
     fn try_from(j: McpConfigUpsertJson) -> Result<Self, Self::Error> {
         let workspace_slug = j.workspace_slug_resolved().to_string();
         let project_slug = j.project_slug_resolved().to_string();
         let bytes = hex::decode(j.endpoint_secret_hash_hex.trim())
-            .map_err(|e| format!("endpoint_secret_hash_hex: {e}"))?;
+            .map_err(|source| McpRuntimeConfigError::EndpointSecretHashHex { source })?;
         if bytes.len() != 32 {
-            return Err("endpoint_secret_hash_hex must be 32 bytes".into());
+            return Err(McpRuntimeConfigError::EndpointSecretHashLength {
+                actual: bytes.len(),
+            });
         }
         let mut endpoint_secret_hash = [0u8; 32];
         endpoint_secret_hash.copy_from_slice(&bytes);
@@ -143,9 +170,12 @@ impl TryFrom<McpConfigUpsertJson> for McpRuntimeConfig {
         }
         let mut credential_secret_hashes: HashSet<[u8; 32]> = HashSet::new();
         for hex_s in j.credential_secret_hashes_hex {
-            let bytes = hex::decode(hex_s.trim()).map_err(|e| format!("credential hash: {e}"))?;
+            let bytes = hex::decode(hex_s.trim())
+                .map_err(|source| McpRuntimeConfigError::CredentialHashHex { source })?;
             if bytes.len() != 32 {
-                return Err("credential hash must be 32 bytes".into());
+                return Err(McpRuntimeConfigError::CredentialHashLength {
+                    actual: bytes.len(),
+                });
             }
             let mut h = [0u8; 32];
             h.copy_from_slice(&bytes);
@@ -156,8 +186,12 @@ impl TryFrom<McpConfigUpsertJson> for McpRuntimeConfig {
             if entry_id.is_empty() {
                 continue;
             }
-            let u = Uuid::parse_str(uuid_s.trim())
-                .map_err(|e| format!("auth_config_by_entry[{entry_id}]: {e}"))?;
+            let u = Uuid::parse_str(uuid_s.trim()).map_err(|source| {
+                McpRuntimeConfigError::AuthConfigId {
+                    entry_id: entry_id.clone(),
+                    source,
+                }
+            })?;
             auth_config_by_entry.insert(entry_id, u);
         }
         Ok(McpRuntimeConfig {
@@ -210,10 +244,17 @@ mod tests {
             status: String::new(),
             auth_optional_entry_ids: vec![],
         };
-        let cfg: McpRuntimeConfig = j.try_into().expect("ok");
+        let cfg: McpRuntimeConfig = j.clone().try_into().expect("ok");
         assert!(cfg.credential_secret_hashes.is_empty());
         assert!(cfg.auth_config_by_entry.is_empty());
         assert_eq!(cfg.space_type, "organization");
+
+        let mut invalid = j;
+        invalid.credential_secret_hashes_hex.push("not-hex".into());
+        assert!(matches!(
+            McpRuntimeConfig::try_from(invalid),
+            Err(McpRuntimeConfigError::CredentialHashHex { .. })
+        ));
     }
 
     #[test]

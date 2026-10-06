@@ -1,51 +1,258 @@
 //! Validation and typed conversion for Plan artifacts.
 
-mod compute;
+pub(crate) mod compute;
 mod relation;
-mod value;
+pub(crate) mod value;
 
 use super::*;
 use compute::*;
 use relation::*;
 use std::collections::{BTreeMap, HashMap};
+use thiserror::Error;
 use value::*;
 
+pub use compute::{
+    ComputeTemplateValidationError, OperandValidationError, PlanValueInputError,
+    RenderTemplateValidationError,
+};
+pub use relation::PlanRelationValidationError;
+
+#[derive(Debug, Error)]
+pub enum PlanNodeStructureError {
+    #[error("plan node {index} has an empty id")]
+    EmptyNodeId { index: usize },
+    #[error("plan node {index} id is invalid: {source}")]
+    InvalidNodeId {
+        index: usize,
+        #[source]
+        source: PlanAtomError,
+    },
+    #[error("plan node {index} repeats a uses_result alias `{alias}`")]
+    DuplicateInputAlias { index: usize, alias: String },
+    #[error("map_body node is missing its scoped payload")]
+    MissingMapBodyPayload,
+    #[error("map_body node is missing its parent body")]
+    MissingMapBody,
+    #[error(
+        "map_body node must carry only its scoped payload and transitive effect/list contract"
+    )]
+    InvalidMapBodyPayload,
+    #[error("map_body node must depend on its parent source")]
+    MapBodyMissingParentDependency,
+    #[error("map_body payload is only valid for a map_body node")]
+    MapBodyPayloadOnOtherNode,
+    #[error("until_scope and step_scope are only valid for iterate_until nodes")]
+    IterationScopeOnOtherNode,
+    #[error("executable node {index} ({kind:?}) requires ir or ir_template")]
+    MissingExecutableIr { index: usize, kind: PlanNodeKind },
+    #[error("plan node {index} cannot carry both ir and ir_template")]
+    MultipleExecutableIr { index: usize },
+    #[error("executable node {index} ({kind:?}) requires a qualified entity unless it is a page")]
+    MissingQualifiedEntity { index: usize, kind: PlanNodeKind },
+    #[error("search node {index} must have read effect")]
+    SearchMustBeRead { index: usize },
+    #[error("search node {index} must return a list")]
+    SearchMustReturnList { index: usize },
+    #[error("derive node {index} cannot carry executable expression fields")]
+    DeriveCarriesExpression { index: usize },
+    #[error("data node {index} is missing its value")]
+    MissingDataValue { index: usize },
+    #[error("data node {index} cannot carry executable expression fields")]
+    DataCarriesExpression { index: usize },
+    #[error("compute node {index} carries fields owned by other node kinds")]
+    ComputeCarriesForeignPayload { index: usize },
+    #[error("compute payload is only valid on compute nodes")]
+    ComputePayloadOnOtherNode,
+    #[error("relation node {index} must have read effect")]
+    RelationMustBeRead { index: usize },
+    #[error("relation node {index} must return one or many rows")]
+    InvalidRelationResultShape { index: usize },
+    #[error("relation node {index} carries fields owned by other node kinds")]
+    RelationCarriesForeignPayload { index: usize },
+    #[error("relation payload is only valid on relation nodes")]
+    RelationPayloadOnOtherNode,
+    #[error("derive node {index} references unknown source `{source_id}`")]
+    UnknownDeriveSource { index: usize, source_id: String },
+    #[error("derive node {index} requires an item binding for map/cell derivation")]
+    MissingDeriveItemBinding { index: usize },
+    #[error("derive node {index} input `{source_id}` is not statically singleton and has no explicit singleton proof")]
+    UnprovenDeriveBroadcast { index: usize, source_id: String },
+}
+
+#[derive(Debug, Error)]
+pub enum PlanValidationError {
+    #[error("serialized plan is invalid: {0}")]
+    Deserialize(#[from] serde_json::Error),
+    #[error("invalid Plan identifier: {0}")]
+    Atom(#[source] PlanAtomError),
+    #[error(transparent)]
+    Correlated(#[from] plasm_core::plasm_monad::CorrelatedBodyError),
+    #[error("invalid bind graph: {0}")]
+    BindGraph(#[source] plasm_core::plasm_monad::BindGraphError),
+    #[error("Plan lowering failed: {0}")]
+    Lift(#[source] crate::plasm_step_convert::StepPayloadLiftError),
+    #[error("unsupported Plan version {actual}; expected {expected}")]
+    UnsupportedVersion { expected: u32, actual: u32 },
+    #[error("Plan contains no executable nodes")]
+    EmptyNodes,
+    #[error("plan node `{node}` duplicates an existing id")]
+    DuplicateNode { node: String },
+    #[error("required Plan field `{field}` is missing")]
+    MissingField { field: String },
+    #[error("iterate_until seed `{node}` is not a replayable Get identity")]
+    InvalidIterateSeed { node: String },
+    #[error("Plan return must name at least one node")]
+    EmptyReturn,
+    #[error("Plan return references unknown node `{node}`")]
+    UnknownReturnNode { node: String },
+    #[error("iterate_until requires an explicit positive hard bound")]
+    InvalidIterateBound,
+    #[error("{kind} source `{source_id}` is not present in the Plan")]
+    UnknownRowEffectSource { kind: String, source_id: String },
+    #[error("{kind} requires a non-empty item binding")]
+    MissingRowEffectBinding { kind: String },
+    #[error(transparent)]
+    Value(#[from] value::ValueValidationError),
+    #[error(transparent)]
+    DataInput(#[from] compute::PlanDataInputError),
+    #[error(transparent)]
+    Operand(#[from] compute::OperandValidationError),
+    #[error(transparent)]
+    ValueInput(#[from] compute::PlanValueInputError),
+    #[error(transparent)]
+    ComputeTemplate(#[from] compute::ComputeTemplateValidationError),
+    #[error(transparent)]
+    Relation(#[from] relation::PlanRelationValidationError),
+    #[error(transparent)]
+    Structure(#[from] PlanNodeStructureError),
+    #[error(transparent)]
+    IterationEffect(#[from] plasm_core::plasm_monad::correlated::IterationStepEffectError),
+    #[error("iterate step differs from its sealed owner or expression")]
+    IterationStepMismatch,
+    #[error("{0}")]
+    Compute(#[source] compute::PlanExpressionError),
+    #[error("plan node {index} references unknown {reference:?} source `{node}`")]
+    UnknownDependency {
+        index: usize,
+        reference: PlanDependencyKind,
+        node: String,
+    },
+    #[error("plan dependency graph has a cycle")]
+    DependencyCycle,
+    #[error("plan node {index} effect binding `{source_id}` does not reference item binding `{binding}`")]
+    InvalidEffectBindingSource {
+        index: usize,
+        source_id: String,
+        binding: String,
+    },
+    #[error("plan node {index} iterate_until requires a stop predicate")]
+    MissingIterationPredicate { index: usize },
+    #[error("uses_result provenance references unknown node `{node}`")]
+    UnknownProvenanceNode { node: String },
+    #[error("uses_result provenance node `{node}` has no catalog domain")]
+    MissingProvenanceDomain { node: String },
+    #[error("uses_result provenance exceeded source walk depth from `{node}`")]
+    ProvenanceDepthExceeded { node: String },
+    #[error(
+        "plan node `{consumer}` alias `{alias}` has contradictory provenance for source `{node}`"
+    )]
+    ContradictoryProvenance {
+        consumer: String,
+        alias: String,
+        node: String,
+        expected: QualifiedEntityKey,
+        actual: QualifiedEntityKey,
+    },
+    #[error("capture ports require a scoped body")]
+    UnscopedCapture,
+    #[error("acknowledgement input `{node}` requires a side-effect acknowledgement source")]
+    InvalidAcknowledgementSource { node: String },
+    #[error("input `{node}` is not statically singleton and lacks explicit singleton proof")]
+    UnprovenInputBroadcast { node: String },
+    #[error(transparent)]
+    SessionProvision(#[from] crate::plan_session_provisions::SessionProvisionError),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlanDependencyKind {
+    ExplicitDependency,
+    ResultUse,
+    Source,
+    DeriveSource,
+    DeriveInput,
+    ComputeSource,
+    UnionSource,
+    RelationSource,
+}
+
+impl PlanValidationError {
+    pub fn diagnostic(&self) -> String {
+        self.to_string()
+    }
+}
+
+impl From<PlanAtomError> for PlanValidationError {
+    fn from(error: PlanAtomError) -> Self {
+        Self::Atom(error)
+    }
+}
+
+impl From<crate::plasm_step_convert::StepPayloadLiftError> for PlanValidationError {
+    fn from(error: crate::plasm_step_convert::StepPayloadLiftError) -> Self {
+        Self::Lift(error)
+    }
+}
+impl From<plasm_core::plasm_monad::BindGraphError> for PlanValidationError {
+    fn from(error: plasm_core::plasm_monad::BindGraphError) -> Self {
+        Self::BindGraph(error)
+    }
+}
+
+impl From<compute::PlanExpressionError> for PlanValidationError {
+    fn from(error: compute::PlanExpressionError) -> Self {
+        Self::Compute(error)
+    }
+}
+
 /// Deserialize a program-shaped [`Plan`] from a JSON value (same IR shape as evaluation archives).
-pub fn parse_plan_value(plan: &serde_json::Value) -> Result<Plan, String> {
-    serde_json::from_value(plan.clone()).map_err(|e| format!("invalid serialized plan: {e}"))
+pub fn parse_plan_value(plan: &serde_json::Value) -> Result<Plan, PlanValidationError> {
+    Ok(serde_json::from_value(plan.clone())?)
 }
 
 /// Deserialize and validate a serialized plan JSON value (HTTP resolved-plan, MCP, CLI).
-pub fn parse_and_validate_plan_json(plan: &serde_json::Value) -> Result<ValidatedPlan, String> {
+pub fn parse_and_validate_plan_json(
+    plan: &serde_json::Value,
+) -> Result<ValidatedPlan, PlanValidationError> {
     let plan_typed = parse_plan_value(plan)?;
     validate_plan_artifact(&plan_typed)
 }
 
 /// Parse and validate one program-shaped Plan.
-pub fn validate_plan(plan: &Plan) -> Result<(), String> {
+pub fn validate_plan(plan: &Plan) -> Result<(), PlanValidationError> {
     validate_plan_artifact(plan).map(|_| ())
 }
 
 /// Parse and validate one program-shaped Plan, returning typed execution metadata.
-pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
+pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, PlanValidationError> {
     if plan.version != 1 {
-        return Err(format!("unsupported Plan version: {}", plan.version));
+        return Err(PlanValidationError::UnsupportedVersion {
+            expected: 1,
+            actual: plan.version,
+        });
     }
     if plan.nodes.is_empty() {
-        return Err(
-            "plan.nodes must be non-empty: a Plasm program must include at least one executable DAG node (taught `query` / `get` / search / relation forms per teaching table); a literal-only final roots line is not executable alone"
-                .to_string(),
-        );
+        return Err(PlanValidationError::EmptyNodes);
     }
     let mut by_id: HashMap<String, usize> = HashMap::new();
     for (i, n) in plan.nodes.iter().enumerate() {
         if n.id.trim().is_empty() {
-            return Err(format!("plan.nodes[{i}].id is empty"));
+            return Err(PlanNodeStructureError::EmptyNodeId { index: i }.into());
         }
         if by_id.insert(n.id.clone(), i).is_some() {
-            return Err(format!("duplicate plan node id: {}", n.id));
+            return Err(PlanValidationError::DuplicateNode { node: n.id.clone() });
         }
-        PlanNodeId::new(n.id.clone()).map_err(|e| format!("plan.nodes[{i}].id: {e}"))?;
+        PlanNodeId::new(n.id.clone())
+            .map_err(|source| PlanNodeStructureError::InvalidNodeId { index: i, source })?;
     }
 
     for (i, n) in plan.nodes.iter().enumerate() {
@@ -53,19 +260,23 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
         for input in &n.uses_result {
             InputAlias::new(input.r#as.clone())?;
             if !aliases.insert(input.r#as.as_str()) {
-                return Err(format!(
-                    "plan.nodes[{i}].uses_result duplicate alias {:?}",
-                    input.r#as
-                ));
+                return Err(PlanNodeStructureError::DuplicateInputAlias {
+                    index: i,
+                    alias: input.r#as.to_string(),
+                }
+                .into());
             }
         }
         if n.kind == PlanNodeKind::MapBody {
-            let body = n.map_body.as_ref().ok_or("map_body payload is required")?;
+            let body = n
+                .map_body
+                .as_ref()
+                .ok_or(PlanNodeStructureError::MissingMapBodyPayload)?;
             body.execution_layers()?;
             if n.effect_class
                 != n.map_body
                     .as_ref()
-                    .ok_or("map body missing")?
+                    .ok_or(PlanNodeStructureError::MissingMapBody)?
                     .effect_class()
                 || n.result_shape != body.result_shape()
                 || n.ir.is_some()
@@ -77,36 +288,33 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
                 || n.effect_template.is_some()
                 || n.relation.is_some()
             {
-                return Err(
-                    "map_body requires its transitive effect/list contract and only its scoped payload".into(),
-                );
+                return Err(PlanNodeStructureError::InvalidMapBodyPayload.into());
             }
             if !n
                 .depends_on
                 .iter()
                 .any(|id| id == body.parent.source.as_str())
             {
-                return Err("map_body must depend on its parent source".into());
+                return Err(PlanNodeStructureError::MapBodyMissingParentDependency.into());
             }
         } else if n.map_body.is_some() {
-            return Err("map_body payload requires map_body kind".into());
+            return Err(PlanNodeStructureError::MapBodyPayloadOnOtherNode.into());
         }
         if (n.until_scope.is_some() || n.step_scope.is_some())
             && n.kind != PlanNodeKind::IterateUntil
         {
-            return Err("until_scope requires iterate_until kind".into());
+            return Err(PlanNodeStructureError::IterationScopeOnOtherNode.into());
         }
         if n.kind.has_surface_expr() {
             if n.ir.is_none() && n.ir_template.is_none() {
-                return Err(format!(
-                    "plan.nodes[{i}].ir or ir_template is required for executable node {:?}",
-                    n.kind
-                ));
+                return Err(PlanNodeStructureError::MissingExecutableIr {
+                    index: i,
+                    kind: n.kind,
+                }
+                .into());
             }
             if n.ir.is_some() && n.ir_template.is_some() {
-                return Err(format!(
-                    "plan.nodes[{i}] must not carry both ir and ir_template"
-                ));
+                return Err(PlanNodeStructureError::MultipleExecutableIr { index: i }.into());
             }
             let input_aliases: Vec<_> = n
                 .uses_result
@@ -121,46 +329,46 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
                 validate_expression_operands(&ir.expr, i, &ctx)?;
             }
             if let Some(template) = &n.ir_template {
-                validate_plan_expr_template(template, i, "ir_template")?;
+                validate_plan_expr_template(template, i, "ir_template")
+                    .map_err(PlanValidationError::Compute)?;
                 validate_expression_operands(&template.expr, i, &ctx)?;
             }
             if n.qualified_entity.is_none() && n.result_shape != ResultShape::Page {
-                return Err(format!(
-                    "plan.nodes[{i}].qualified_entity is required for executable node {:?}",
-                    n.kind
-                ));
+                return Err(PlanNodeStructureError::MissingQualifiedEntity {
+                    index: i,
+                    kind: n.kind,
+                }
+                .into());
             }
             if n.kind == PlanNodeKind::Search {
                 if n.effect_class != EffectClass::Read {
-                    return Err(format!("plan.nodes[{i}].search effect_class must be read"));
+                    return Err(PlanNodeStructureError::SearchMustBeRead { index: i }.into());
                 }
                 if n.result_shape != ResultShape::List {
-                    return Err(format!("plan.nodes[{i}].search result_shape must be list"));
+                    return Err(PlanNodeStructureError::SearchMustReturnList { index: i }.into());
                 }
             }
         }
         if n.kind == PlanNodeKind::Derive
             && (n.expr.is_some() || n.ir.is_some() || n.ir_template.is_some())
         {
-            return Err(format!(
-                "plan.nodes[{i}].derive must not carry expr, ir, or ir_template"
-            ));
+            return Err(PlanNodeStructureError::DeriveCarriesExpression { index: i }.into());
         }
         if n.kind == PlanNodeKind::Data {
             if n.data.is_none() {
-                return Err(format!("plan.nodes[{i}].data is required for data nodes"));
+                return Err(PlanNodeStructureError::MissingDataValue { index: i }.into());
             }
             if n.expr.is_some() || n.ir.is_some() || n.ir_template.is_some() {
-                return Err(format!(
-                    "plan.nodes[{i}].data must not carry expr, ir, or ir_template"
-                ));
+                return Err(PlanNodeStructureError::DataCarriesExpression { index: i }.into());
             }
         }
         if n.kind == PlanNodeKind::Compute {
             let compute = n
                 .compute
                 .as_ref()
-                .ok_or_else(|| format!("plan.nodes[{i}].compute is required for compute nodes"))?;
+                .ok_or_else(|| PlanValidationError::MissingField {
+                    field: format!("plan.nodes[{i}].compute"),
+                })?;
             if n.expr.is_some()
                 || n.ir.is_some()
                 || n.ir_template.is_some()
@@ -168,29 +376,31 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
                 || n.effect_template.is_some()
                 || n.relation.is_some()
             {
-                return Err(format!(
-                    "plan.nodes[{i}].compute must not carry expr, ir, ir_template, data, effect_template, or relation"
-                ));
+                return Err(
+                    PlanNodeStructureError::ComputeCarriesForeignPayload { index: i }.into(),
+                );
+            }
+            if let ComputeOp::Filter { predicates } = &compute.op {
+                for (predicate_index, predicate) in predicates.iter().enumerate() {
+                    validate_predicate(predicate, i, predicate_index)?;
+                }
             }
             validate_compute_template(compute, i, &by_id)?;
         } else if n.compute.is_some() {
-            return Err(format!(
-                "plan.nodes[{i}].compute is only valid for compute nodes"
-            ));
+            return Err(PlanNodeStructureError::ComputePayloadOnOtherNode.into());
         }
         if n.kind == PlanNodeKind::Relation {
-            let relation = n.relation.as_ref().ok_or_else(|| {
-                format!("plan.nodes[{i}].relation is required for relation nodes")
-            })?;
+            let relation =
+                n.relation
+                    .as_ref()
+                    .ok_or_else(|| PlanValidationError::MissingField {
+                        field: format!("plan.nodes[{i}].relation"),
+                    })?;
             if n.effect_class != EffectClass::Read {
-                return Err(format!(
-                    "plan.nodes[{i}].relation effect_class must be read"
-                ));
+                return Err(PlanNodeStructureError::RelationMustBeRead { index: i }.into());
             }
             if !matches!(n.result_shape, ResultShape::List | ResultShape::Single) {
-                return Err(format!(
-                    "plan.nodes[{i}].relation result_shape must be list or single"
-                ));
+                return Err(PlanNodeStructureError::InvalidRelationResultShape { index: i }.into());
             }
             if n.expr.is_some()
                 || n.ir.is_some()
@@ -199,15 +409,13 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
                 || n.effect_template.is_some()
                 || n.compute.is_some()
             {
-                return Err(format!(
-                    "plan.nodes[{i}].relation must not carry expr, ir, ir_template, data, effect_template, or compute"
-                ));
+                return Err(
+                    PlanNodeStructureError::RelationCarriesForeignPayload { index: i }.into(),
+                );
             }
             validate_relation_traversal(plan, relation, i, &by_id)?;
         } else if n.relation.is_some() {
-            return Err(format!(
-                "plan.nodes[{i}].relation is only valid for relation nodes"
-            ));
+            return Err(PlanNodeStructureError::RelationPayloadOnOtherNode.into());
         }
         if let Some(data) = &n.data {
             validate_plan_value_expr(data, i, "data")?;
@@ -217,15 +425,17 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
             if matches!(derive_template.kind, DeriveKind::Map | DeriveKind::Cell) {
                 let source = derive_template.source.as_deref().unwrap_or_default();
                 if source.trim().is_empty() || !by_id.contains_key(source) {
-                    return Err(format!(
-                        "plan.nodes[{i}].derive_template.source references unknown id {source:?}"
-                    ));
+                    return Err(PlanNodeStructureError::UnknownDeriveSource {
+                        index: i,
+                        source_id: source.to_owned(),
+                    }
+                    .into());
                 }
                 let binding = derive_template.item_binding.as_deref().unwrap_or_default();
                 if binding.trim().is_empty() {
-                    return Err(format!(
-                        "plan.nodes[{i}].derive_template.item_binding is required for map"
-                    ));
+                    return Err(
+                        PlanNodeStructureError::MissingDeriveItemBinding { index: i }.into(),
+                    );
                 }
             }
             for input in &derive_template.inputs {
@@ -234,10 +444,11 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
                     && !cardinality::analyze_static_cardinality(plan, &by_id, input.node.as_str())
                         .permits_auto_broadcast()
                 {
-                    return Err(format!(
-                        "plan.nodes[{i}].derive_template.inputs node {:?} is not statically singleton; wrap it with Plan.singleton(...) to request runtime-checked broadcast",
-                        input.node
-                    ));
+                    return Err(PlanNodeStructureError::UnprovenDeriveBroadcast {
+                        index: i,
+                        source_id: input.node.to_string(),
+                    }
+                    .into());
                 }
             }
             validate_derive_value_inputs(derive_template, i)?;
@@ -253,10 +464,11 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
                     && b.from.as_str() != binding
                     && !b.from.contains('.')
                 {
-                    return Err(format!(
-                        "plan.nodes[{i}].effect_template.input_bindings source {:?} does not reference item binding {:?}",
-                        b.from, binding
-                    ));
+                    return Err(PlanValidationError::InvalidEffectBindingSource {
+                        index: i,
+                        source_id: b.from.to_string(),
+                        binding: binding.to_string(),
+                    });
                 }
             }
         }
@@ -269,9 +481,7 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
                 && n.predicates.is_empty()
                 && n.until_scope.is_none()
             {
-                return Err(format!(
-                    "plan.nodes[{i}].until / predicates required for iterate_until"
-                ));
+                return Err(PlanValidationError::MissingIterationPredicate { index: i });
             }
             let _ = validate_row_effect_source_and_template(n, i, &by_id, "iterate_until")?;
         }
@@ -282,45 +492,58 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
         for d in &n.depends_on {
             let t = *by_id
                 .get(d)
-                .ok_or_else(|| format!("plan.nodes[{i}].depends_on references unknown id {d:?}"))?;
+                .ok_or_else(|| PlanValidationError::UnknownDependency {
+                    index: i,
+                    reference: PlanDependencyKind::ExplicitDependency,
+                    node: d.as_str().to_owned(),
+                })?;
             adj[i].push(t);
         }
         for u in &n.uses_result {
-            let t = *by_id.get(&u.node).ok_or_else(|| {
-                format!(
-                    "plan.nodes[{i}].uses_result.node {:?} is not a known id",
-                    u.node
-                )
-            })?;
+            let t = *by_id
+                .get(&u.node)
+                .ok_or_else(|| PlanValidationError::UnknownDependency {
+                    index: i,
+                    reference: PlanDependencyKind::ResultUse,
+                    node: u.node.as_str().to_owned(),
+                })?;
             if !adj[i].contains(&t) {
                 adj[i].push(t);
             }
         }
         if let Some(source) = &n.source {
-            let t = *by_id.get(source).ok_or_else(|| {
-                format!("plan.nodes[{i}].source references unknown id {source:?}")
-            })?;
+            let t = *by_id
+                .get(source)
+                .ok_or_else(|| PlanValidationError::UnknownDependency {
+                    index: i,
+                    reference: PlanDependencyKind::Source,
+                    node: source.as_str().to_owned(),
+                })?;
             if !adj[i].contains(&t) {
                 adj[i].push(t);
             }
         }
         if let Some(derive_template) = &n.derive_template {
             if let Some(source) = &derive_template.source {
-                let t = *by_id.get(source).ok_or_else(|| {
-                    format!(
-                        "plan.nodes[{i}].derive_template.source references unknown id {source:?}"
-                    )
-                })?;
+                let t =
+                    *by_id
+                        .get(source)
+                        .ok_or_else(|| PlanValidationError::UnknownDependency {
+                            index: i,
+                            reference: PlanDependencyKind::DeriveSource,
+                            node: source.as_str().to_owned(),
+                        })?;
                 if !adj[i].contains(&t) {
                     adj[i].push(t);
                 }
             }
             for input in &derive_template.inputs {
                 let t = *by_id.get(&input.node).ok_or_else(|| {
-                    format!(
-                        "plan.nodes[{i}].derive_template.inputs references unknown id {:?}",
-                        input.node
-                    )
+                    PlanValidationError::UnknownDependency {
+                        index: i,
+                        reference: PlanDependencyKind::DeriveInput,
+                        node: input.node.as_str().to_owned(),
+                    }
                 })?;
                 if !adj[i].contains(&t) {
                     adj[i].push(t);
@@ -329,20 +552,22 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
         }
         if let Some(compute) = &n.compute {
             let t = *by_id.get(&compute.source).ok_or_else(|| {
-                format!(
-                    "plan.nodes[{i}].compute.source references unknown id {:?}",
-                    compute.source
-                )
+                PlanValidationError::UnknownDependency {
+                    index: i,
+                    reference: PlanDependencyKind::ComputeSource,
+                    node: compute.source.as_str().to_owned(),
+                }
             })?;
             if !adj[i].contains(&t) {
                 adj[i].push(t);
             }
             if let ComputeOp::Union { other } | ComputeOp::MergeBranches { other } = &compute.op {
                 let t = *by_id.get(other.as_str()).ok_or_else(|| {
-                    format!(
-                        "plan.nodes[{i}].compute.union.other references unknown id {:?}",
-                        other.as_str()
-                    )
+                    PlanValidationError::UnknownDependency {
+                        index: i,
+                        reference: PlanDependencyKind::UnionSource,
+                        node: other.as_str().to_owned(),
+                    }
                 })?;
                 if !adj[i].contains(&t) {
                     adj[i].push(t);
@@ -351,10 +576,11 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
         }
         if let Some(relation) = &n.relation {
             let t = *by_id.get(&relation.source).ok_or_else(|| {
-                format!(
-                    "plan.nodes[{i}].relation.source references unknown id {:?}",
-                    relation.source
-                )
+                PlanValidationError::UnknownDependency {
+                    index: i,
+                    reference: PlanDependencyKind::RelationSource,
+                    node: relation.source.as_str().to_owned(),
+                }
             })?;
             if !adj[i].contains(&t) {
                 adj[i].push(t);
@@ -362,7 +588,7 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
         }
     }
     if has_cycle(&adj) {
-        return Err("plan: depends_on has a cycle".to_string());
+        return Err(PlanValidationError::DependencyCycle);
     }
     let return_value = validate_return_refs(&plan.return_value, &by_id)?;
     let topo = topological_order(plan, &adj)?;
@@ -411,13 +637,13 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
 pub fn resolve_plan_node_qualified_entity(
     plan: &Plan,
     node_id: &str,
-) -> Result<Option<QualifiedEntityKey>, String> {
+) -> Result<Option<QualifiedEntityKey>, PlanValidationError> {
     let by_id: HashMap<&str, &PlanNode> = plan.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
     let mut cur = node_id.to_string();
     for _ in 0..512 {
         let n = by_id
             .get(cur.as_str())
-            .ok_or_else(|| format!("uses_result provenance: unknown plan node {cur:?}"))?;
+            .ok_or_else(|| PlanValidationError::UnknownProvenanceNode { node: cur.clone() })?;
         if n.kind == PlanNodeKind::Data {
             return Ok(None);
         }
@@ -448,13 +674,11 @@ pub fn resolve_plan_node_qualified_entity(
             cur = src.clone();
             continue;
         }
-        return Err(format!(
-            "uses_result provenance: plan node {cur:?} has no qualified_entity (catalog domain required)"
-        ));
+        return Err(PlanValidationError::MissingProvenanceDomain { node: cur.clone() });
     }
-    Err(format!(
-        "uses_result provenance: exceeded source walk depth from {node_id:?}"
-    ))
+    Err(PlanValidationError::ProvenanceDepthExceeded {
+        node: node_id.to_owned(),
+    })
 }
 
 /// Stamp each `uses_result` edge with the source node's [`QualifiedEntityKey`] when the source is
@@ -463,22 +687,19 @@ pub fn enrich_uses_result_provenance(
     uses: &[PlanResultUse],
     plan: &Plan,
     consumer_id: &str,
-) -> Result<Vec<PlanResultUse>, String> {
+) -> Result<Vec<PlanResultUse>, PlanValidationError> {
     let mut out = Vec::with_capacity(uses.len());
     for u in uses {
-        let resolved = resolve_plan_node_qualified_entity(plan, u.node.as_str())
-            .map_err(|e| format!("plan node {consumer_id:?} uses_result[{:?}]: {e}", u.r#as))?;
+        let resolved = resolve_plan_node_qualified_entity(plan, u.node.as_str())?;
         match (u.qualified_entity.as_ref(), resolved) {
             (Some(existing), Some(resolved)) if existing != &resolved => {
-                return Err(format!(
-                    "plan node {consumer_id:?} uses_result[{:?}] contradictory qualified_entity: edge has {}:{} but source {:?} resolves to {}:{}",
-                    u.r#as,
-                    existing.entry_id,
-                    existing.entity,
-                    u.node,
-                    resolved.entry_id,
-                    resolved.entity
-                ));
+                return Err(PlanValidationError::ContradictoryProvenance {
+                    consumer: consumer_id.to_owned(),
+                    alias: u.r#as.to_string(),
+                    node: u.node.to_string(),
+                    expected: resolved.clone(),
+                    actual: existing.clone(),
+                });
             }
             (_, Some(resolved)) => {
                 out.push(PlanResultUse {
@@ -504,16 +725,15 @@ fn validated_node_from_raw(
     node: &PlanNode,
     node_index: usize,
     by_id: &HashMap<String, usize>,
-) -> Result<ValidatedPlanNode, String> {
+) -> Result<ValidatedPlanNode, PlanValidationError> {
     let id = PlanNodeId::new(node.id.clone())?;
     let depends_on = typed_node_ids(&node.depends_on)?;
     let uses_result = enrich_uses_result_provenance(&node.uses_result, plan, node.id.as_str())?;
     match node.kind {
         PlanNodeKind::MapBody => {
-            let body = node
-                .map_body
-                .as_ref()
-                .ok_or("map_body payload is required")?;
+            let body = node.map_body.as_ref().ok_or_else(|| {
+                PlanValidationError::Structure(PlanNodeStructureError::MissingMapBodyPayload)
+            })?;
             Ok(ValidatedPlanNode::MapBody(ValidatedMapBodyNode {
                 id,
                 body: body.clone(),
@@ -522,7 +742,7 @@ fn validated_node_from_raw(
                 uses_result,
             }))
         }
-        PlanNodeKind::Capture => Err("capture ports require a scoped body".into()),
+        PlanNodeKind::Capture => Err(PlanValidationError::UnscopedCapture),
         kind @ (PlanNodeKind::Query
         | PlanNodeKind::Search
         | PlanNodeKind::Get
@@ -564,29 +784,33 @@ fn validated_node_from_raw(
             data: node
                 .data
                 .clone()
-                .ok_or_else(|| format!("plan.nodes[{node_index}].data is required"))?,
+                .ok_or_else(|| PlanValidationError::MissingField {
+                    field: format!("plan.nodes[{node_index}].data"),
+                })?,
             depends_on,
             uses_result,
         })),
         PlanNodeKind::Derive => {
-            let template = node
-                .derive_template
-                .as_ref()
-                .ok_or_else(|| format!("plan.nodes[{node_index}].derive_template is required"))?;
-            let source = template
-                .source
-                .as_ref()
-                .ok_or_else(|| {
-                    format!("plan.nodes[{node_index}].derive_template.source is required")
-                })
-                .and_then(|s| PlanNodeId::new(s.clone()))?;
-            let item_binding = template
-                .item_binding
-                .as_ref()
-                .ok_or_else(|| {
-                    format!("plan.nodes[{node_index}].derive_template.item_binding is required")
-                })
-                .and_then(|s| BindingName::new(s.clone()))?;
+            let template =
+                node.derive_template
+                    .as_ref()
+                    .ok_or_else(|| PlanValidationError::MissingField {
+                        field: format!("plan.nodes[{node_index}].derive_template"),
+                    })?;
+            let source =
+                template
+                    .source
+                    .as_ref()
+                    .ok_or_else(|| PlanValidationError::MissingField {
+                        field: format!("plan.nodes[{node_index}].derive_template.source"),
+                    })?;
+            let source = PlanNodeId::new(source.clone())?;
+            let item_binding = template.item_binding.as_ref().ok_or_else(|| {
+                PlanValidationError::MissingField {
+                    field: format!("plan.nodes[{node_index}].derive_template.item_binding"),
+                }
+            })?;
+            let item_binding = BindingName::new(item_binding.clone())?;
             let inputs = template
                 .inputs
                 .iter()
@@ -610,7 +834,9 @@ fn validated_node_from_raw(
                 &node
                     .compute
                     .as_ref()
-                    .ok_or_else(|| format!("plan.nodes[{node_index}].compute is required"))?
+                    .ok_or_else(|| PlanValidationError::MissingField {
+                        field: format!("plan.nodes[{node_index}].compute"),
+                    })?
                     .source,
             )?,
             id,
@@ -619,15 +845,19 @@ fn validated_node_from_raw(
             compute: node
                 .compute
                 .clone()
-                .ok_or_else(|| format!("plan.nodes[{node_index}].compute is required"))?,
+                .ok_or_else(|| PlanValidationError::MissingField {
+                    field: format!("plan.nodes[{node_index}].compute"),
+                })?,
             depends_on,
             uses_result,
         })),
         PlanNodeKind::Relation => {
-            let relation = node
-                .relation
-                .as_ref()
-                .ok_or_else(|| format!("plan.nodes[{node_index}].relation is required"))?;
+            let relation =
+                node.relation
+                    .as_ref()
+                    .ok_or_else(|| PlanValidationError::MissingField {
+                        field: format!("plan.nodes[{node_index}].relation"),
+                    })?;
             Ok(ValidatedPlanNode::RelationTraversal(
                 ValidatedRelationTraversalNode {
                     id,
@@ -657,22 +887,30 @@ fn validated_node_from_raw(
             let source = node
                 .source
                 .as_ref()
-                .ok_or_else(|| format!("plan.nodes[{node_index}].source is required"))
-                .and_then(|s| PlanNodeId::new(s.clone()))?;
+                .ok_or_else(|| PlanValidationError::MissingField {
+                    field: format!("plan.nodes[{node_index}].source"),
+                })?;
+            let source = PlanNodeId::new(source.clone())?;
+            let item_binding =
+                node.item_binding
+                    .as_ref()
+                    .ok_or_else(|| PlanValidationError::MissingField {
+                        field: format!("plan.nodes[{node_index}].item_binding"),
+                    })?;
+            let item_binding = BindingName::new(item_binding.clone())?;
             Ok(ValidatedPlanNode::ForEach(ValidatedForEachNode {
                 id,
                 effect_class: node.effect_class,
                 result_shape: node.result_shape,
                 source,
-                item_binding: node
-                    .item_binding
-                    .as_ref()
-                    .ok_or_else(|| format!("plan.nodes[{node_index}].item_binding is required"))
-                    .and_then(|s| BindingName::new(s.clone()))?,
+                item_binding,
                 effect_template: validated_effect_template(
-                    node.effect_template.as_ref().ok_or_else(|| {
-                        format!("plan.nodes[{node_index}].effect_template is required")
-                    })?,
+                    node.effect_template
+                        .as_ref()
+                        .ok_or_else(|| {
+                            format!("plan.nodes[{node_index}].effect_template is required")
+                        })
+                        .map_err(|field| PlanValidationError::MissingField { field })?,
                     node_index,
                 )?,
                 projection: node.projection.clone(),
@@ -686,28 +924,34 @@ fn validated_node_from_raw(
             let source = node
                 .source
                 .as_ref()
-                .ok_or_else(|| format!("plan.nodes[{node_index}].source is required"))
-                .and_then(|s| PlanNodeId::new(s.clone()))?;
+                .ok_or_else(|| PlanValidationError::MissingField {
+                    field: format!("plan.nodes[{node_index}].source"),
+                })?;
+            let source = PlanNodeId::new(source.clone())?;
+            let item_binding =
+                node.item_binding
+                    .as_ref()
+                    .ok_or_else(|| PlanValidationError::MissingField {
+                        field: format!("plan.nodes[{node_index}].item_binding"),
+                    })?;
+            let item_binding = BindingName::new(item_binding.clone())?;
             let take = require_iterate_hard_bound(node, node_index)?;
             if node.predicates.is_empty() && node.until_scope.is_none() {
-                return Err(format!(
-                    "plan.nodes[{node_index}].predicates required for iterate_until"
-                ));
+                return Err(PlanValidationError::MissingIterationPredicate { index: node_index });
             }
             Ok(ValidatedPlanNode::IterateUntil(ValidatedIterateUntilNode {
                 id,
                 effect_class: node.effect_class,
                 result_shape: node.result_shape,
                 source: source.clone(),
-                item_binding: node
-                    .item_binding
-                    .as_ref()
-                    .ok_or_else(|| format!("plan.nodes[{node_index}].item_binding is required"))
-                    .and_then(|s| BindingName::new(s.clone()))?,
+                item_binding,
                 effect_template: validated_effect_template(
-                    node.effect_template.as_ref().ok_or_else(|| {
-                        format!("plan.nodes[{node_index}].effect_template is required")
-                    })?,
+                    node.effect_template
+                        .as_ref()
+                        .ok_or_else(|| {
+                            format!("plan.nodes[{node_index}].effect_template is required")
+                        })
+                        .map_err(|field| PlanValidationError::MissingField { field })?,
                     node_index,
                 )?,
                 until_predicates: node.predicates.clone(),
@@ -731,15 +975,13 @@ fn validated_node_from_raw(
                         .nodes
                         .iter()
                         .find(|n| n.id == source.as_str())
-                        .ok_or_else(|| {
-                            plasm_core::expr_parser::iterate_seed_must_be_get_identity(
-                                source.as_str(),
-                            )
+                        .ok_or_else(|| PlanValidationError::InvalidIterateSeed {
+                            node: source.as_str().to_owned(),
                         })?;
                     if seed_node.kind != PlanNodeKind::Get {
-                        return Err(plasm_core::expr_parser::iterate_seed_must_be_get_identity(
-                            source.as_str(),
-                        ));
+                        return Err(PlanValidationError::InvalidIterateSeed {
+                            node: source.as_str().to_owned(),
+                        });
                     }
                     // Bound identity is `ir_template` at plan time; literal identity is `ir`.
                     // Iterate replays either form (template + binding), not `uses_result.is_empty()`.
@@ -752,9 +994,9 @@ fn validated_node_from_raw(
                             display_expr: template.display_expr.clone(),
                         }
                     } else {
-                        return Err(plasm_core::expr_parser::iterate_seed_must_be_get_identity(
-                            source.as_str(),
-                        ));
+                        return Err(PlanValidationError::InvalidIterateSeed {
+                            node: source.as_str().to_owned(),
+                        });
                     };
                     validated_plan_expr_ir(&seed_replay, node_index, "iterate_until.seed_ir")?
                 }),
@@ -766,15 +1008,19 @@ fn validated_node_from_raw(
     }
 }
 
-fn typed_node_ids(raw: &[String]) -> Result<Vec<PlanNodeId>, String> {
-    raw.iter().cloned().map(PlanNodeId::new).collect()
+fn typed_node_ids(raw: &[String]) -> Result<Vec<PlanNodeId>, PlanValidationError> {
+    raw.iter()
+        .cloned()
+        .map(PlanNodeId::new)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(PlanValidationError::from)
 }
 
 fn validated_data_input(
     plan: &Plan,
     input: &PlanDataInput,
     by_id: &HashMap<String, usize>,
-) -> Result<ValidatedPlanDataInput, String> {
+) -> Result<ValidatedPlanDataInput, PlanValidationError> {
     let proof = match input.cardinality {
         InputCardinality::Acknowledgement => {
             if by_id
@@ -782,9 +1028,9 @@ fn validated_data_input(
                 .map(|index| plan.nodes[*index].result_shape)
                 != Some(ResultShape::SideEffectAck)
             {
-                return Err(
-                    "acknowledgement input requires a side-effect acknowledgement source".into(),
-                );
+                return Err(PlanValidationError::InvalidAcknowledgementSource {
+                    node: input.node.to_string(),
+                });
             }
             InputCardinalityProof::Acknowledgement
         }
@@ -793,11 +1039,8 @@ fn validated_data_input(
         InputCardinality::Auto => {
             cardinality::analyze_static_cardinality(plan, by_id, input.node.as_str())
                 .try_auto_broadcast_input_proof()
-                .ok_or_else(|| {
-                    format!(
-                        "input {:?} is not statically singleton and lacks explicit singleton proof",
-                        input.node
-                    )
+                .ok_or_else(|| PlanValidationError::UnprovenInputBroadcast {
+                    node: input.node.to_string(),
                 })?
         }
     };
@@ -811,19 +1054,21 @@ fn validated_data_input(
 fn validate_return_refs(
     ret: &PlanReturn,
     by_id: &HashMap<String, usize>,
-) -> Result<ValidatedPlanReturn, String> {
+) -> Result<ValidatedPlanReturn, PlanValidationError> {
     match ret {
         PlanReturn::Node { node } if node.trim().is_empty() => {
-            return Err("plan.return node id must be non-empty".to_string());
+            return Err(PlanValidationError::EmptyReturn)
         }
         PlanReturn::Parallel { nodes } if nodes.is_empty() => {
-            return Err("plan.return.nodes must contain at least one node".to_string());
+            return Err(PlanValidationError::EmptyReturn);
         }
         _ => {}
     }
     for id in return_refs(ret) {
         if !by_id.contains_key(id) {
-            return Err(format!("plan.return references unknown id {id:?}"));
+            return Err(PlanValidationError::UnknownReturnNode {
+                node: id.to_owned(),
+            });
         }
     }
     match ret {
@@ -833,19 +1078,19 @@ fn validate_return_refs(
                 .iter()
                 .cloned()
                 .map(PlanNodeId::new)
-                .collect::<Result<Vec<_>, _>>()?,
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(PlanValidationError::from)?,
         }),
     }
 }
 
-fn require_iterate_hard_bound(node: &PlanNode, node_index: usize) -> Result<u32, String> {
-    let take = node.take.ok_or_else(|| {
-        format!("plan.nodes[{node_index}].take is required for iterate_until (hard bound; PLP-8)")
-    })?;
+fn require_iterate_hard_bound(
+    node: &PlanNode,
+    _node_index: usize,
+) -> Result<u32, PlanValidationError> {
+    let take = node.take.ok_or(PlanValidationError::InvalidIterateBound)?;
     if take == 0 {
-        return Err(format!(
-            "plan.nodes[{node_index}].take must be ≥ 1 for iterate_until"
-        ));
+        return Err(PlanValidationError::InvalidIterateBound);
     }
     Ok(take)
 }
@@ -856,27 +1101,32 @@ fn validate_row_effect_source_and_template<'a>(
     i: usize,
     by_id: &HashMap<String, usize>,
     kind: &str,
-) -> Result<(&'a str, &'a EffectTemplate), String> {
+) -> Result<(&'a str, &'a EffectTemplate), PlanValidationError> {
     let source = n
         .source
         .as_ref()
-        .ok_or_else(|| format!("plan.nodes[{i}].source is required for {kind}"))?;
+        .ok_or_else(|| PlanValidationError::MissingField {
+            field: format!("plan.nodes[{i}].source for {kind}"),
+        })?;
     if !by_id.contains_key(source) {
-        return Err(format!(
-            "plan.nodes[{i}].source references unknown id {source:?}"
-        ));
+        return Err(PlanValidationError::UnknownRowEffectSource {
+            kind: kind.to_owned(),
+            source_id: source.clone(),
+        });
     }
     let binding = n.item_binding.as_deref().unwrap_or_default();
     if binding.trim().is_empty() {
-        return Err(format!(
-            "plan.nodes[{i}].item_binding is required for {kind}"
-        ));
+        return Err(PlanValidationError::MissingRowEffectBinding {
+            kind: kind.to_owned(),
+        });
     }
     let template = n
         .effect_template
         .as_ref()
-        .ok_or_else(|| format!("plan.nodes[{i}].effect_template is required"))?;
-    validate_effect_template(template, i)?;
+        .ok_or_else(|| PlanValidationError::MissingField {
+            field: format!("plan.nodes[{i}].effect_template"),
+        })?;
+    validate_effect_template(template, i).map_err(PlanValidationError::Compute)?;
     if let Some(body) = &n.step_scope {
         let effect = plasm_core::plasm_monad::correlated::iteration_step_effect(body)?;
         if body.parent.source.as_str() != source
@@ -884,7 +1134,7 @@ fn validate_row_effect_source_and_template<'a>(
             || effect.qualified_entity.entry_id != template.qualified_entity.entry_id
             || effect.qualified_entity.entity != template.qualified_entity.entity
         {
-            return Err("iteration step differs from its sealed owner or expression".into());
+            return Err(PlanValidationError::IterationStepMismatch);
         }
         return Ok((binding, template));
     }
@@ -902,19 +1152,22 @@ fn validate_row_effect_source_and_template<'a>(
     Ok((binding, template))
 }
 
-fn topological_order(plan: &Plan, adj: &[Vec<usize>]) -> Result<Vec<PlanNodeId>, String> {
+fn topological_order(
+    plan: &Plan,
+    adj: &[Vec<usize>],
+) -> Result<Vec<PlanNodeId>, PlanValidationError> {
     fn visit(
         i: usize,
         plan: &Plan,
         adj: &[Vec<usize>],
         mark: &mut [u8],
         out: &mut Vec<PlanNodeId>,
-    ) -> Result<(), String> {
+    ) -> Result<(), PlanValidationError> {
         if mark[i] == 2 {
             return Ok(());
         }
         if mark[i] == 1 {
-            return Err("plan: depends_on has a cycle".to_string());
+            return Err(PlanValidationError::DependencyCycle);
         }
         mark[i] = 1;
         for &d in &adj[i] {
@@ -934,7 +1187,7 @@ fn topological_order(plan: &Plan, adj: &[Vec<usize>]) -> Result<Vec<PlanNodeId>,
 }
 
 /// Deserialize and validate a program-shaped plan value (same serialized IR as traces/archives).
-pub fn validate_plan_value(plan: &serde_json::Value) -> Result<(), String> {
+pub fn validate_plan_value(plan: &serde_json::Value) -> Result<(), PlanValidationError> {
     let plan = parse_plan_value(plan)?;
     validate_plan(&plan)
 }

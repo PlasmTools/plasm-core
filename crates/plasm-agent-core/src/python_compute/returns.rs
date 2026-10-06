@@ -20,7 +20,9 @@ pub(super) fn uses_row_placeholder(expr: &Expr) -> bool {
     found.0
 }
 
-pub(super) fn inferred_row_binding(output: &Type) -> Result<Type, String> {
+pub(super) fn inferred_row_binding(
+    output: &Type,
+) -> Result<Type, crate::program_rejection::PythonComputeError> {
     use plasm_core::value_contract::ValueShape;
     let record = match &output.shape {
         ValueShape::Array { element } => element.as_ref(),
@@ -34,7 +36,7 @@ pub(super) fn inferred_row_binding(output: &Type) -> Result<Type, String> {
         record.shape,
         ValueShape::Record { .. } | ValueShape::ObservedRecord { .. }
     ) {
-        return Err("return Row requires an inferred record or collection of records".into());
+        return Err(crate::program_rejection::PythonComputeError::ReturnRowRequiresRecord);
     }
     let mut row = record.clone();
     // The authored annotation, checked by Monty, owns outer nullability.
@@ -51,10 +53,12 @@ pub(super) fn resolve(
     entry: &str,
     symbols: &dyn SymbolResolve,
     imports: &str,
-) -> Result<Type, String> {
+) -> Result<Type, inference::InferenceError> {
     prepare(expr, input, domains, catalogs, cgs, entry, symbols, imports)?
         .contract()?
-        .ok_or("annotation requires inferred value types".into())
+        .ok_or(inference::InferenceError::Return(
+            inference::ReturnContractError::UnresolvedAnnotation,
+        ))
 }
 
 pub(super) struct Annotation {
@@ -63,7 +67,7 @@ pub(super) struct Annotation {
     imports: String,
 }
 impl Annotation {
-    pub fn contract(&self) -> Result<Option<Type>, String> {
+    pub fn contract(&self) -> Result<Option<Type>, inference::InferenceError> {
         inference::annotation_with_imports(&self.source, &self.aliases, &self.imports, None)
     }
     pub fn check_body(
@@ -72,7 +76,7 @@ impl Annotation {
         inputs: &[(&str, &Type)],
         cgs: &CGS,
         catalogs: &BTreeMap<String, std::sync::Arc<CGS>>,
-    ) -> Result<(), String> {
+    ) -> Result<(), inference::InferenceError> {
         inference::check_annotated_body(
             body,
             inputs,
@@ -83,7 +87,7 @@ impl Annotation {
             catalogs,
         )
     }
-    pub fn check(&self, actual: &Type) -> Result<(), String> {
+    pub fn check(&self, actual: &Type) -> Result<(), inference::InferenceError> {
         inference::annotation_with_imports(&self.source, &self.aliases, &self.imports, Some(actual))
             .map(|_| ())
     }
@@ -98,7 +102,7 @@ pub(super) fn prepare(
     entry: &str,
     symbols: &dyn SymbolResolve,
     imports: &str,
-) -> Result<Annotation, String> {
+) -> Result<Annotation, inference::InferenceError> {
     // Catalog references and record-type field selection are Plasm operations.
     // Collect those leaves only; never interpret unions, generics or builtins.
     struct Leaves<'a> {
@@ -123,10 +127,10 @@ pub(super) fn prepare(
     for leaf in leaves.values {
         let contract = match leaf {
             Expr::Subscript(s) => {
-                let token = name(&s.slice).ok_or("expected entity symbol")?;
-                let owner = symbols
-                    .resolve_session_entity(token)
-                    .map_err(|e| e.to_string())?;
+                let token = name(&s.slice).ok_or(inference::InferenceError::Return(
+                    inference::ReturnContractError::UnresolvedAnnotation,
+                ))?;
+                let owner = symbols.resolve_session_entity(token)?;
                 let (cgs, entry) = if owner.entry_id.as_str() == entry {
                     (cgs, entry)
                 } else {
@@ -134,7 +138,9 @@ pub(super) fn prepare(
                         catalogs
                             .get(owner.entry_id.as_str())
                             .map(AsRef::as_ref)
-                            .ok_or("return entity catalog is not loaded")?,
+                            .ok_or_else(|| inference::InferenceError::ReturnCatalogMissing {
+                                entry_id: owner.entry_id.as_str().to_owned(),
+                            })?,
                         owner.entry_id.as_str(),
                     )
                 };
@@ -199,5 +205,18 @@ fn annotation_root(expr: &Expr) -> Option<&str> {
         Expr::Attribute(a) => annotation_root(&a.value),
         Expr::Subscript(s) => annotation_root(&s.value),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn row_return_requires_an_inferred_record_contract() {
+        assert!(matches!(
+            inferred_row_binding(&Type::scalar(plasm_core::FieldType::String)),
+            Err(crate::program_rejection::PythonComputeError::ReturnRowRequiresRecord)
+        ));
     }
 }

@@ -71,17 +71,20 @@ pub mod program;
 pub mod value_expr;
 
 pub use applicator::{parse_applicator, split_apply_expr, Applicator, RenderApplicator};
-pub use collect_meta::{normalize_nested_projection_field, peel_collect_meta, CollectMeta};
+pub use collect_meta::{
+    normalize_nested_projection_field, peel_collect_meta, CollectMeta, CollectMetaError,
+};
 pub use heredoc_surface::{
     parse_tagged_heredoc_literal, tagged_heredoc_close_kind, HeredocCloseLineKind,
 };
 pub use iterate_until::{
     iterate_seed_is_label, iterate_seed_must_be_get_identity, try_parse_iterate_until,
-    IterateUntilExpr, ITERATE_SEED_GET_FAMILY,
+    IterateUntilError, IterateUntilExpr, ITERATE_SEED_GET_FAMILY,
 };
-pub use pipe::{parse_pipe_expr, PipeExpr, PipeStage};
+pub use pipe::{parse_pipe_expr, PipeExpr, PipeParseError, PipeStage};
 pub use program::{
-    parse_expr_node, parse_program_shape, ExprNode, ParsedProgram, RowExpr, Statement,
+    parse_expr_node, parse_program_shape, ExprNode, ExprNodeParseError, ParsedProgram, RowExpr,
+    Statement,
 };
 pub use program_surface::{
     classify_top_level_assignment, collect_program_statement_lines,
@@ -92,7 +95,8 @@ pub use program_surface::{
     scan_physical_line_stmt_state, split_assignment_at_top_level, split_assignment_for_binding,
     split_flattened_program_line, split_token_top_level, split_top_level, strip_line_comment,
     validate_pipe_head_syntax, validate_program_label, validate_program_statement_order,
-    FlattenedProgram, FlattenedProgramLine, PhysicalLineStmtState, TopLevelAssignment,
+    FlattenedProgram, FlattenedProgramLine, PhysicalLineStmtState, SurfaceSyntaxError,
+    TopLevelAssignment,
 };
 pub use value_expr::{RenderExpr, ValueExpr};
 
@@ -122,8 +126,22 @@ use std::sync::Arc;
 
 /// Structured reason for a [`ParseError`] — drives [`crate::error_render::render_parse_error`]
 /// without substring matching on ad hoc messages.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum ParseErrorKind {
+    QueryResolution {
+        #[source]
+        source: crate::QueryCapabilityResolveError,
+    },
+    PhraseIdentifier {
+        #[source]
+        source: crate::phrase_ident::PhraseIdentError,
+    },
+    ValueCoercion {
+        field: String,
+        field_type: FieldType,
+        #[source]
+        source: crate::wire_coercion::CoercionError,
+    },
     ExpectedChar {
         expected: char,
         got: Option<char>,
@@ -139,9 +157,13 @@ pub enum ParseErrorKind {
     },
     InvalidFloat {
         raw: String,
+        #[source]
+        source: std::num::ParseFloatError,
     },
     InvalidInteger {
         raw: String,
+        #[source]
+        source: std::num::ParseIntError,
     },
     UnknownEntity {
         name: String,
@@ -237,10 +259,6 @@ pub enum ParseErrorKind {
     AmbiguousEntityCatalog {
         entity: String,
     },
-    /// Exact `id_field` brace could not lower to Get (no Get / ambiguous / unresolved catalog).
-    IdentityBraceGetFailed {
-        message: String,
-    },
     CapabilityMissingInternal {
         name: String,
     },
@@ -254,25 +272,182 @@ pub enum ParseErrorKind {
         tail: String,
     },
     InvalidProgramString {
-        message: String,
-    },
-    InvalidTemporalValue {
-        message: String,
+        #[source]
+        source: Arc<crate::program_string_template::ProgramStringError>,
     },
     /// Angle-bracket teaching hole used as a program value (PLP-10).
     UnfilledTeachingHole {
         hole: String,
     },
-    /// Prefer adding a variant above.
-    Other {
-        message: String,
+    IdentityBraceLowering {
+        #[source]
+        source: crate::expr_sugar::IdentityLoweringError,
+    },
+    EmptyCatalogLayers,
+    TrailingSyntax {
+        head: char,
+    },
+    QueryBracesAfterGet {
+        expression: String,
+    },
+    SymbolResolution {
+        #[source]
+        source: crate::SymbolResolveError,
+    },
+    InvokeCatalogOwnership {
+        #[source]
+        source: crate::catalog_ownership::CatalogOwnershipError,
+    },
+    InvokeArgumentResolution {
+        capability: String,
+        hint: String,
+        #[source]
+        source: crate::SymbolResolveError,
+    },
+    UnknownInvokeArgument {
+        argument: String,
+        capability: String,
+        hint: String,
+    },
+    DuplicateInvokeArgument {
+        argument: String,
+        capability: String,
+    },
+    DuplicateNestedUnionField {
+        field: String,
+        parent: String,
+    },
+    DuplicateUnionField {
+        field: String,
+        constructor: String,
+    },
+    DuplicateCompoundKey {
+        key: String,
+        entity: String,
+    },
+    ExpectedCompoundKeySeparator,
+    CompoundKeySetMismatch {
+        entity: String,
+        expected: Vec<String>,
+        actual: Vec<String>,
+    },
+    InvalidNamedIdentityKey {
+        entity: String,
+        key: String,
+        identity_field: String,
+    },
+    FloatIdentity,
+    IdentitySlotSerialization {
+        #[source]
+        source: Arc<serde_json::Error>,
+    },
+    BindingUsedAsLiteral {
+        binding: String,
+    },
+    ExpectedRestArgumentClose,
+    ExpectedTrailingRestArgumentClose,
+    ExpectedArgumentSeparator,
+    ParameterValueResolution {
+        parameter: String,
+        #[source]
+        source: Arc<crate::SchemaError>,
+    },
+    ReadCapabilityInvoked {
+        method: String,
+        capability: String,
+        entity: String,
+        kind: CapabilityKind,
+        pathless: bool,
+    },
+    MissingInvokePayloadSchema,
+    UnexpectedUnionPayload,
+    ExpectedUnionPayload,
+    UnsupportedDottedCapabilityKind {
+        kind: CapabilityKind,
+    },
+    UnionPayloadRequiresUnionInput,
+    UnionPayloadNotSoleArgument,
+    CatalogEntityMissing {
+        entity: String,
+    },
+    AmbiguousScopedQuery {
+        label: String,
+        anchor: String,
+    },
+    ScopedQueryMissingScopeField {
+        capability: String,
+    },
+    PagingHandle {
+        #[source]
+        source: crate::paging_handle::PagingHandleParseError,
+    },
+    UnexpectedPagingArgument {
+        key: String,
+    },
+    OperationHandle {
+        #[source]
+        source: crate::operation_handle::OperationHandleParseError,
+    },
+    GetWrapper,
+    CompoundIdentityRequiresNamedKeys {
+        entity: String,
+        keys: Vec<String>,
+    },
+    SimpleIdentityRequiresPositional {
+        entity: String,
+    },
+    AmbiguousSearch {
+        entity: String,
+    },
+    SearchMissingSelectionParameter {
+        capability: String,
+    },
+    RelationQueryBraces {
+        relation: String,
+    },
+    CompoundKeyResolution {
+        entity: String,
+        key: String,
+        #[source]
+        source: crate::SymbolResolveError,
+    },
+    InvalidUnicodeEscape {
+        digit_index: usize,
+        got: Option<char>,
+    },
+    MissingLowSurrogate {
+        high: u16,
+    },
+    InvalidLowSurrogate {
+        unit: u16,
+    },
+    InvalidUnicodeCodepoint {
+        codepoint: u32,
+    },
+    UnknownValueConstructor {
+        token: String,
+    },
+    DuplicateConstructorKey {
+        key: String,
+    },
+    UnquotedValueCharacter {
+        character: char,
     },
 }
 
 impl fmt::Display for ParseErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ParseErrorKind::InvalidProgramString { message } => write!(f, "invalid program string: {message}"),
+            ParseErrorKind::QueryResolution { source } => source.fmt(f),
+            ParseErrorKind::PhraseIdentifier { source } => source.fmt(f),
+            ParseErrorKind::ValueCoercion { field, field_type, source } => {
+                if matches!(field_type, FieldType::Date) {
+                    write!(f, "invalid date/time value for `{field}`: {source}")
+                } else {
+                    write!(f, "invalid value for `{field}` ({field_type:?}): {source}")
+                }
+            }
+            ParseErrorKind::InvalidProgramString { source } => write!(f, "invalid program string: {source}"),
             ParseErrorKind::ExpectedChar { expected, got } => match got {
                 Some(g) => write!(f, "expected '{expected}', got '{g}'"),
                 None => write!(f, "expected '{expected}', got end of input"),
@@ -288,8 +463,8 @@ impl fmt::Display for ParseErrorKind {
                 f,
                 "unknown escape `\\{escape}` in quoted string; use JSON-style `\\n`/`\\t`/`\\\\`/`\\\"`/`\\uXXXX`, or a tagged heredoc (`<<TAG` … `TAG`) for multiline bodies"
             ),
-            ParseErrorKind::InvalidFloat { raw } => write!(f, "invalid float: {raw}"),
-            ParseErrorKind::InvalidInteger { raw } => write!(f, "invalid integer: {raw}"),
+            ParseErrorKind::InvalidFloat { raw, .. } => write!(f, "invalid float: {raw}"),
+            ParseErrorKind::InvalidInteger { raw, .. } => write!(f, "invalid integer: {raw}"),
             ParseErrorKind::UnknownEntity { name, .. } => write!(f, "unknown entity '{name}'"),
             ParseErrorKind::IdMustBeStringOrNumber => write!(f, "ID must be a string or number"),
             ParseErrorKind::EmptyGetParens { entity } => write!(
@@ -374,7 +549,6 @@ impl fmt::Display for ParseErrorKind {
                 f,
                 "ambiguous entity `{entity}` across loaded catalogs — use session `e#` (catalog ownership stamp), not bare wire entity name"
             ),
-            ParseErrorKind::IdentityBraceGetFailed { message } => f.write_str(message),
             ParseErrorKind::CapabilityMissingInternal { name } => {
                 write!(f, "internal: capability '{name}' missing")
             }
@@ -385,14 +559,68 @@ impl fmt::Display for ParseErrorKind {
             ParseErrorKind::UnexpectedTrailingInput { tail } => {
                 write!(f, "unexpected input after expression: '{tail}'")
             }
-            ParseErrorKind::InvalidTemporalValue { message } => {
-                write!(f, "invalid date/time value: {message}")
-            }
             ParseErrorKind::UnfilledTeachingHole { hole } => write!(
                 f,
                 "PLP-10: unfilled teaching hole `{hole}` is not an identifier or literal; fill it with a bound value, a row field, or a string of that sort"
             ),
-            ParseErrorKind::Other { message } => f.write_str(message),
+            ParseErrorKind::IdentityBraceLowering { source } => write!(f, "{source}"),
+            ParseErrorKind::EmptyCatalogLayers => write!(f, "parse_with_cgs_layers: empty CGS layer list"),
+            ParseErrorKind::TrailingSyntax { head } => write!(f, "unexpected trailing syntax starting with `{head}`"),
+            ParseErrorKind::QueryBracesAfterGet { expression } => write!(f, "unexpected trailing query braces after Get `{expression}`: Get accepts identity only. Bind required provisions through their declared capabilities before this Get; use `| where` for row selection. Do not discard selection criteria during repair."),
+            ParseErrorKind::SymbolResolution { source } => write!(f, "{source}"),
+            ParseErrorKind::InvokeCatalogOwnership { source } => write!(f, "{source}"),
+            ParseErrorKind::InvokeArgumentResolution { capability, hint, source } => write!(f, "{source} on `{capability}`{hint}"),
+            ParseErrorKind::UnknownInvokeArgument { argument, capability, hint } => write!(f, "unknown argument `{argument}` for capability `{capability}`{hint}"),
+            ParseErrorKind::DuplicateInvokeArgument { argument, capability } => write!(f, "duplicate invoke argument `{argument}` on capability `{capability}`"),
+            ParseErrorKind::DuplicateNestedUnionField { field, parent } => write!(f, "duplicate union constructor field `{field}` under `{parent}`"),
+            ParseErrorKind::DuplicateUnionField { field, constructor } => write!(f, "duplicate union constructor field `{field}` in `{constructor}`"),
+            ParseErrorKind::DuplicateCompoundKey { key, entity } => write!(f, "duplicate key `{key}` in compound constructor for `{entity}`"),
+            ParseErrorKind::ExpectedCompoundKeySeparator => write!(f, "expected `,` or `)` after key=value in compound constructor"),
+            ParseErrorKind::CompoundKeySetMismatch { entity, expected, actual } => write!(f, "compound constructor for `{entity}` must supply exactly keys {expected:?}, got {actual:?}"),
+            ParseErrorKind::InvalidNamedIdentityKey { entity, key, identity_field } => write!(f, "entity `{entity}` uses a simple id; `{key}=…` is only accepted when `{key}` is the identity field `{identity_field}` — otherwise use `{entity}(value)`"),
+            ParseErrorKind::FloatIdentity => write!(f, "IEEE float is not an identity literal; use quoted digits or an exact integer"),
+            ParseErrorKind::IdentitySlotSerialization { source } => write!(f, "compound get slot must be JSON-serializable: {source}"),
+            ParseErrorKind::BindingUsedAsLiteral { binding } => write!(f, "`{binding}` names a program binding in this plan — use `{binding}` or `{binding}.<field>` as a binding reference, not an unquoted literal"),
+            ParseErrorKind::ExpectedRestArgumentClose => write!(f, "expected `)` after `..` in argument list"),
+            ParseErrorKind::ExpectedTrailingRestArgumentClose => write!(f, "expected `)` after `,..` in argument list"),
+            ParseErrorKind::ExpectedArgumentSeparator => write!(f, "expected `,` or `)` after `key=value` in argument list"),
+            ParseErrorKind::ParameterValueResolution { parameter, source } => write!(f, "internal: unknown value_ref for parameter `{parameter}`: {source}"),
+            ParseErrorKind::ReadCapabilityInvoked { method, capability, entity, kind, pathless } => {
+                let kind_name = kind.as_str();
+                match kind {
+                    CapabilityKind::Get if *pathless => write!(f, "`{method}` is {kind_name} `{capability}` — fetch is pathless `{entity}` / `{entity}[…]`, not `{entity}.{method}(…)`"),
+                    CapabilityKind::Get => write!(f, "`{method}` is {kind_name} `{capability}` — fetch is `{entity}(<id>)`, not `{entity}.{method}(…)`"),
+                    CapabilityKind::Query => write!(f, "`{method}` is {kind_name} `{capability}` — list with `{entity}{{…}}`, not `{entity}.{method}(…)`"),
+                    CapabilityKind::Search => write!(f, "`{method}` is {kind_name} `{capability}` — search with `{entity}~\"<query>\"`, not `{entity}.{method}(…)`"),
+                    _ => write!(f, "`{method}` is {kind_name} `{capability}`, not a mutator"),
+                }
+            }
+            ParseErrorKind::MissingInvokePayloadSchema => write!(f, "this capability has no payload schema — use `key=value` arguments"),
+            ParseErrorKind::UnexpectedUnionPayload => write!(f, "this capability expects `key=value` arguments, not a sole `v#{{…}}` constructor"),
+            ParseErrorKind::ExpectedUnionPayload => write!(f, "expected `v#{{…}}` union constructor for this invoke"),
+            ParseErrorKind::UnsupportedDottedCapabilityKind { kind } => write!(f, "internal: dotted-call alias not supported for capability kind {kind:?}"),
+            ParseErrorKind::UnionPayloadRequiresUnionInput => write!(f, "`v` + digits + `{{…}}` is only allowed as the sole `(…)` payload when the capability root input is a tagged union — use `key=value` arguments"),
+            ParseErrorKind::UnionPayloadNotSoleArgument => write!(f, "union constructor payload must be the only parenthesized argument (no `,` after `v#{{…}}`)"),
+            ParseErrorKind::CatalogEntityMissing { entity } => write!(f, "entity `{entity}` is not defined in catalog"),
+            ParseErrorKind::AmbiguousScopedQuery { label, anchor } => write!(f, "ambiguous scoped query `{label}` for anchor `{anchor}`"),
+            ParseErrorKind::ScopedQueryMissingScopeField { capability } => write!(f, "internal: scoped query `{capability}` missing scope field"),
+            ParseErrorKind::PagingHandle { source } => write!(f, "{source}"),
+            ParseErrorKind::UnexpectedPagingArgument { key } => write!(f, "page(...) only accepts optional `limit=N` (unexpected `{key}`)"),
+            ParseErrorKind::OperationHandle { source } => write!(f, "{source}"),
+            ParseErrorKind::GetWrapper => write!(f, "Plasm does not use a `Get(` wrapper; use `Entity(id)` for get-by-id (e.g. `Pokemon(pikachu)`)"),
+            ParseErrorKind::CompoundIdentityRequiresNamedKeys { entity, keys } => write!(f, "entity `{entity}` has compound key {keys:?}; use `{entity}(key=value, ...)` with those keys"),
+            ParseErrorKind::SimpleIdentityRequiresPositional { entity } => write!(f, "entity `{entity}` uses a simple id; use `{entity}(id)` not key=value form"),
+            ParseErrorKind::AmbiguousSearch { entity } => write!(f, "search capability for `{entity}` is structurally ambiguous"),
+            ParseErrorKind::SearchMissingSelectionParameter { capability } => write!(f, "search capability `{capability}` must declare a free-text selection parameter (query/q/search)"),
+            ParseErrorKind::RelationQueryBraces { relation } => f.write_str(&crate::relation_segment::relation_query_braces_message(relation)),
+            ParseErrorKind::CompoundKeyResolution { source, .. } => write!(f, "{source}"),
+            ParseErrorKind::InvalidUnicodeEscape { digit_index, got } => write!(f, "invalid unicode escape: need four hex digits (digit {digit_index}, got {got:?})"),
+            ParseErrorKind::MissingLowSurrogate { high } => write!(f, "high surrogate {high:#x} requires a low-surrogate unicode escape"),
+            ParseErrorKind::InvalidLowSurrogate { unit } => write!(f, "invalid low surrogate {unit:#x}"),
+            ParseErrorKind::InvalidUnicodeCodepoint { codepoint } => write!(f, "invalid unicode code point {codepoint:#x}"),
+            ParseErrorKind::UnknownValueConstructor { token } => write!(f, "unknown value constructor `{token}`; use a declared entity constructor, a binding reference, or quoted literal text"),
+            ParseErrorKind::DuplicateConstructorKey { key } => write!(f, "duplicate key `{key}` in constructor object"),
+            ParseErrorKind::UnquotedValueCharacter { character } => write!(f, "unexpected `{character}` in an unquoted value: use a declared binding/field reference, or quote literal text. String transformations belong inside a quoted Minijinja template, for example \"{{{{ path | split_part('/', 0) }}}}\", not an argument pipe"),
         }
     }
 }
@@ -431,7 +659,7 @@ impl ParsedExpr {
 }
 
 /// A structured parse error with position information.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct ParseError {
     pub kind: ParseErrorKind,
     /// Byte offset in the input where parsing failed.
@@ -452,7 +680,16 @@ impl std::fmt::Display for ParseError {
     }
 }
 
-impl std::error::Error for ParseError {}
+impl std::error::Error for ParseError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match &self.kind {
+            ParseErrorKind::InvalidProgramString { source } => Some(source.as_ref()),
+            ParseErrorKind::IdentitySlotSerialization { source } => Some(source.as_ref()),
+            ParseErrorKind::ParameterValueResolution { source, .. } => Some(source.as_ref()),
+            _ => std::error::Error::source(&self.kind),
+        }
+    }
+}
 
 /// Top-level `v` + ASCII digits — union constructor surface (`v101{…}`), not a CGS entity name.
 fn is_root_union_ctor_surface_label(name: &str) -> bool {
@@ -491,9 +728,7 @@ pub fn parse_with_remainder(
     parsed.expr =
         crate::expr_sugar::lower_id_field_brace_to_get(parsed.expr, cgs).map_err(|e| {
             ParseError {
-                kind: ParseErrorKind::IdentityBraceGetFailed {
-                    message: e.to_string(),
-                },
+                kind: ParseErrorKind::IdentityBraceLowering { source: e },
                 offset: 0,
             }
         })?;
@@ -524,40 +759,6 @@ fn create_only_predicate_entity_note(cgs: &CGS, entity_name: &str, pred_wire: &s
         format!(
             "{entity_name} (field `{pred_wire}` is a Create-capability param; this entity has no Query or Search filter surface — use Get `e#(<id>)` when the id is known, not Create params as `{{…}}` filters)"
         )
-    }
-}
-
-/// Opaque `m#` bound to a read kind: name the taught seat, never "find a mutator".
-fn opaque_read_kind_invoke_note(
-    raw: &str,
-    cap: &crate::CapabilitySchema,
-    entity_sym: &str,
-    cgs: Option<&CGS>,
-) -> String {
-    let kind = cap.kind.as_str();
-    let fq = format!("{}.{}", cap.domain, cap.name);
-    match cap.kind {
-        CapabilityKind::Get => {
-            let pathless = cgs
-                .and_then(|g| crate::query_resolve::sole_nullary_singleton_get(g, &cap.domain))
-                .is_some();
-            if pathless {
-                format!(
-                    "`{raw}` is {kind} `{fq}` — fetch is pathless `{entity_sym}` / `{entity_sym}[…]`, not `{entity_sym}.{raw}(…)`"
-                )
-            } else {
-                format!(
-                    "`{raw}` is {kind} `{fq}` — fetch is `{entity_sym}(<id>)`, not `{entity_sym}.{raw}(…)`"
-                )
-            }
-        }
-        CapabilityKind::Query => format!(
-            "`{raw}` is {kind} `{fq}` — list with `{entity_sym}{{…}}`, not `{entity_sym}.{raw}(…)`"
-        ),
-        CapabilityKind::Search => format!(
-            "`{raw}` is {kind} `{fq}` — search with `{entity_sym}~\"<query>\"`, not `{entity_sym}.{raw}(…)`"
-        ),
-        _ => format!("`{raw}` is {kind} `{fq}`, not a mutator"),
     }
 }
 
@@ -609,9 +810,7 @@ pub fn parse(input: &str, cgs: &CGS) -> Result<ParsedExpr, ParseError> {
     parsed.expr =
         crate::expr_sugar::lower_id_field_brace_to_get(parsed.expr, cgs).map_err(|e| {
             ParseError {
-                kind: ParseErrorKind::IdentityBraceGetFailed {
-                    message: e.to_string(),
-                },
+                kind: ParseErrorKind::IdentityBraceLowering { source: e },
                 offset: 0,
             }
         })?;
@@ -692,9 +891,7 @@ pub fn parse_row_filter_body(
     let _guard = span.enter();
     if layers.is_empty() {
         return Err(ParseError {
-            kind: ParseErrorKind::Other {
-                message: "parse_with_cgs_layers: empty CGS layer list".into(),
-            },
+            kind: ParseErrorKind::EmptyCatalogLayers,
             offset: 0,
         });
     }
@@ -705,14 +902,11 @@ pub fn parse_row_filter_body(
     let remainder = p.classify_remainder();
     if !remainder.acceptable_for_program_line() {
         return Err(ParseError {
-            kind: ParseErrorKind::Other {
-                message: format!(
-                    "unexpected trailing syntax starting with `{}`",
-                    match &remainder {
-                        ParseRemainder::Syntax { head, .. } => *head,
-                        _ => ' ',
-                    }
-                ),
+            kind: ParseErrorKind::TrailingSyntax {
+                head: match &remainder {
+                    ParseRemainder::Syntax { head, .. } => *head,
+                    _ => ' ',
+                },
             },
             offset: match remainder {
                 ParseRemainder::Syntax { at, .. } => at,
@@ -735,9 +929,7 @@ fn parse_with_cgs_layers_program_opts(
     let _guard = span.enter();
     if layers.is_empty() {
         return Err(ParseError {
-            kind: ParseErrorKind::Other {
-                message: "parse_with_cgs_layers: empty CGS layer list".into(),
-            },
+            kind: ParseErrorKind::EmptyCatalogLayers,
             offset: 0,
         });
     }
@@ -748,9 +940,7 @@ fn parse_with_cgs_layers_program_opts(
     if apply_id_field_get_rewrite {
         parsed.expr = crate::expr_sugar::lower_id_field_brace_to_get_federated(parsed.expr, layers)
             .map_err(|e| ParseError {
-                kind: ParseErrorKind::IdentityBraceGetFailed {
-                    message: e.to_string(),
-                },
+                kind: ParseErrorKind::IdentityBraceLowering { source: e },
                 offset: 0,
             })?;
     }
@@ -760,22 +950,18 @@ fn parse_with_cgs_layers_program_opts(
             && matches!(&remainder, ParseRemainder::Syntax { head: '{', .. })
         {
             return Err(ParseError {
-                kind: ParseErrorKind::Other { message: format!(
-                    "unexpected trailing query braces after Get `{}`: Get accepts identity only. Bind required provisions through their declared capabilities before this Get; use `| where` for row selection. Do not discard selection criteria during repair.",
-                    input[..p.pos].trim()
-                ) },
+                kind: ParseErrorKind::QueryBracesAfterGet {
+                    expression: input[..p.pos].trim().to_string(),
+                },
                 offset: p.pos,
             });
         }
         return Err(ParseError {
-            kind: ParseErrorKind::Other {
-                message: format!(
-                    "unexpected trailing syntax starting with `{}`",
-                    match &remainder {
-                        ParseRemainder::Syntax { head, .. } => *head,
-                        _ => ' ',
-                    }
-                ),
+            kind: ParseErrorKind::TrailingSyntax {
+                head: match &remainder {
+                    ParseRemainder::Syntax { head, .. } => *head,
+                    _ => ' ',
+                },
             },
             offset: match remainder {
                 ParseRemainder::Syntax { at, .. } => at,
@@ -1065,9 +1251,9 @@ impl<'a> Parser<'a> {
                     let binding = match self.sym_map.resolve_session_method(raw) {
                         Ok(b) => b,
                         Err(e) => {
-                            return Some(Err(self.err(ParseErrorKind::Other {
-                                message: e.to_agent_program_error(),
-                            })));
+                            return Some(Err(
+                                self.err(ParseErrorKind::SymbolResolution { source: e })
+                            ));
                         }
                     };
                     let anchor = source.primary_entity();
@@ -1089,18 +1275,15 @@ impl<'a> Parser<'a> {
                             return Some(Ok(cap));
                         }
                     }
-                    Err(self.err(ParseErrorKind::Other {
-                        message: SymbolResolveError::MethodAnchorMismatch {
+                    Err(self.err(ParseErrorKind::SymbolResolution {
+                        source: SymbolResolveError::MethodAnchorMismatch {
                             token: raw.trim().to_string(),
                             bound_domain: binding.domain.to_string(),
                             anchor_entity: anchor.to_string(),
-                        }
-                        .to_agent_program_error(),
+                        },
                     }))
                 }
-                Err(e) => Err(self.err(ParseErrorKind::Other {
-                    message: e.to_agent_program_error(),
-                })),
+                Err(e) => Err(self.err(ParseErrorKind::SymbolResolution { source: e })),
             },
         )
     }
@@ -1230,11 +1413,7 @@ impl<'a> Parser<'a> {
                 pending_session_catalog_entry_id: self.pending_session_catalog_entry_id.as_deref(),
             },
         )
-        .map_err(|e| {
-            self.err(ParseErrorKind::Other {
-                message: e.to_string(),
-            })
-        })
+        .map_err(|e| self.err(ParseErrorKind::InvokeCatalogOwnership { source: e }))
     }
 
     /// Resolve invoke `key=value` map keys at capability materialization (cap-qualified only).
@@ -1292,22 +1471,23 @@ impl<'a> Parser<'a> {
                         cap,
                     )
                     .map_err(|e| {
-                        self.err(ParseErrorKind::Other {
-                            message: format!("{e} on `{cap_label}`{hint}"),
+                        self.err(ParseErrorKind::InvokeArgumentResolution {
+                            capability: cap_label.to_string(),
+                            hint: hint.to_string(),
+                            source: e,
                         })
                     })?
             } else {
-                return Err(self.err(ParseErrorKind::Other {
-                    message: format!(
-                        "unknown argument `{raw_key}` for capability `{cap_label}`{hint}"
-                    ),
+                return Err(self.err(ParseErrorKind::UnknownInvokeArgument {
+                    argument: raw_key.to_string(),
+                    capability: cap_label.to_string(),
+                    hint: hint.to_string(),
                 }));
             };
             if out.insert(resolved.clone(), val).is_some() {
-                return Err(self.err(ParseErrorKind::Other {
-                    message: format!(
-                        "duplicate invoke argument `{resolved}` on capability `{cap_label}`"
-                    ),
+                return Err(self.err(ParseErrorKind::DuplicateInvokeArgument {
+                    argument: resolved.to_string(),
+                    capability: cap_label.to_string(),
                 }));
             }
         }
@@ -1353,10 +1533,9 @@ impl<'a> Parser<'a> {
         for (k, v) in resolved_map {
             let leaf = Self::union_ctor_leaf_field_key(k.as_str(), variant, parent_path);
             if out.insert(leaf.clone(), v).is_some() {
-                return Err(self.err(ParseErrorKind::Other {
-                    message: format!(
-                        "duplicate union constructor field `{leaf}` under `{parent_path}`"
-                    ),
+                return Err(self.err(ParseErrorKind::DuplicateNestedUnionField {
+                    field: leaf.to_string(),
+                    parent: parent_path.to_string(),
                 }));
             }
         }
@@ -1548,8 +1727,10 @@ impl<'a> Parser<'a> {
                         cap,
                     )
                     .map_err(|e| {
-                        self.err(ParseErrorKind::Other {
-                            message: format!("{e} on `{cap_label}`{hint}"),
+                        self.err(ParseErrorKind::InvokeArgumentResolution {
+                            capability: cap_label.to_string(),
+                            hint: hint.to_string(),
+                            source: e,
                         })
                     })?
             } else {
@@ -1558,10 +1739,9 @@ impl<'a> Parser<'a> {
             let leaf =
                 Self::union_ctor_leaf_field_key(resolved.as_str(), variant, variant.name.as_str());
             if out.insert(leaf.clone(), val).is_some() {
-                return Err(self.err(ParseErrorKind::Other {
-                    message: format!(
-                        "duplicate union constructor field `{leaf}` in `{ctor_label}`"
-                    ),
+                return Err(self.err(ParseErrorKind::DuplicateUnionField {
+                    field: leaf.to_string(),
+                    constructor: ctor_label.to_string(),
                 }));
             }
         }
@@ -1683,10 +1863,9 @@ impl<'a> Parser<'a> {
             let (raw_key, _, _) = self.parse_ident_with_span()?;
             let key = self.normalize_compound_ctor_key(head, ent, &raw_key)?;
             if parts.contains_key(&key) {
-                return Err(self.err(ParseErrorKind::Other {
-                    message: format!(
-                        "duplicate key `{raw_key}` in compound constructor for `{display_entity}`"
-                    ),
+                return Err(self.err(ParseErrorKind::DuplicateCompoundKey {
+                    key: raw_key.to_string(),
+                    entity: display_entity.to_string(),
                 }));
             }
             self.skip_ws();
@@ -1707,9 +1886,7 @@ impl<'a> Parser<'a> {
                 self.pos += 1;
                 continue;
             }
-            return Err(self.err(ParseErrorKind::Other {
-                message: "expected `,` or `)` after key=value in compound constructor".into(),
-            }));
+            return Err(self.err(ParseErrorKind::ExpectedCompoundKeySeparator));
         }
         self.expect_char(')')?;
         let expected: BTreeSet<String> = ent
@@ -1719,11 +1896,10 @@ impl<'a> Parser<'a> {
             .collect();
         let got: BTreeSet<String> = parts.keys().cloned().collect();
         if expected != got {
-            return Err(self.err(ParseErrorKind::Other {
-                message: format!(
-                    "compound constructor for `{display_entity}` must supply exactly keys {:?}, got {:?}",
-                    ent.key_vars, got
-                ),
+            return Err(self.err(ParseErrorKind::CompoundKeySetMismatch {
+                entity: display_entity.to_owned(),
+                expected: ent.key_vars.iter().map(ToString::to_string).collect(),
+                actual: got.into_iter().collect(),
             }));
         }
         Ok(parts)
@@ -1777,11 +1953,10 @@ impl<'a> Parser<'a> {
             )
             .unwrap_or_else(|_| key.clone());
         if wire_key != ent.id_field.as_str() {
-            return Err(self.err(ParseErrorKind::Other {
-                message: format!(
-                    "entity `{entity}` uses a simple id; `{key}=…` is only accepted when `{key}` is the identity field `{}` — otherwise use `{entity}(value)`",
-                    ent.id_field
-                ),
+            return Err(self.err(ParseErrorKind::InvalidNamedIdentityKey {
+                entity: entity.to_owned(),
+                key: key.to_owned(),
+                identity_field: ent.id_field.to_string(),
             }));
         }
         if let Value::PlasmInputRef(r) = id_val {
@@ -1897,11 +2072,10 @@ impl<'a> Parser<'a> {
             )
             .unwrap_or_else(|_| key.clone());
         if wire_key != ent.id_field.as_str() {
-            return Err(self.err(ParseErrorKind::Other {
-                message: format!(
-                    "entity `{entity_canon}` uses a simple id; `{key}=…` is only accepted when `{key}` is the identity field `{}` — otherwise use `{entity_canon}(value)`",
-                    ent.id_field
-                ),
+            return Err(self.err(ParseErrorKind::InvalidNamedIdentityKey {
+                entity: entity_canon.to_owned(),
+                key: key.to_owned(),
+                identity_field: ent.id_field.to_string(),
             }));
         }
         Ok(Some(id_val))
@@ -1913,14 +2087,10 @@ impl<'a> Parser<'a> {
         match v {
             Value::String(s) => Ok(s.clone()),
             Value::Integer(n) => Ok(n.to_string()),
-            Value::Float(_) => Err(self.err(ParseErrorKind::Other {
-                message:
-                    "IEEE float is not an identity literal; use quoted digits or an exact integer"
-                        .into(),
-            })),
+            Value::Float(_) => Err(self.err(ParseErrorKind::FloatIdentity)),
             Value::Object(_) => serde_json::to_string(v).map_err(|e| {
-                self.err(ParseErrorKind::Other {
-                    message: format!("compound get slot must be JSON-serializable: {e}"),
+                self.err(ParseErrorKind::IdentitySlotSerialization {
+                    source: Arc::new(e),
                 })
             }),
             _ => Err(self.err(ParseErrorKind::IdMustBeStringOrNumber)),
@@ -1933,10 +2103,8 @@ impl<'a> Parser<'a> {
         if let Value::PhraseIdent(ident) = v {
             if let Some(labels) = self.program_nodes {
                 if labels.contains(ident.as_str()) {
-                    return Err(self.err(ParseErrorKind::Other {
-                        message: format!(
-                            "`{ident}` names a program binding in this plan — use `{ident}` or `{ident}.<field>` as a binding reference, not an unquoted literal"
-                        ),
+                    return Err(self.err(ParseErrorKind::BindingUsedAsLiteral {
+                        binding: ident.to_string(),
                     }));
                 }
             }
@@ -1954,10 +2122,8 @@ impl<'a> Parser<'a> {
             Value::PhraseIdent(ident) => {
                 if let Some(labels) = self.program_nodes {
                     if labels.contains(ident.as_str()) {
-                        return Err(self.err(ParseErrorKind::Other {
-                            message: format!(
-                                "`{ident}` names a program binding in this plan — use `{ident}` or `{ident}.<field>` as a binding reference, not an unquoted literal"
-                            ),
+                        return Err(self.err(ParseErrorKind::BindingUsedAsLiteral {
+                            binding: ident.to_string(),
                         }));
                     }
                 }
@@ -2142,9 +2308,7 @@ impl<'a> Parser<'a> {
             if self.try_consume_double_dot() {
                 self.skip_ws();
                 if self.peek_char() != Some(')') {
-                    return Err(self.err(ParseErrorKind::Other {
-                        message: "expected `)` after `..` in argument list".into(),
-                    }));
+                    return Err(self.err(ParseErrorKind::ExpectedRestArgumentClose));
                 }
                 break;
             }
@@ -2169,17 +2333,13 @@ impl<'a> Parser<'a> {
                 if self.try_consume_double_dot() {
                     self.skip_ws();
                     if self.peek_char() != Some(')') {
-                        return Err(self.err(ParseErrorKind::Other {
-                            message: "expected `)` after `,..` in argument list".into(),
-                        }));
+                        return Err(self.err(ParseErrorKind::ExpectedTrailingRestArgumentClose));
                     }
                     break;
                 }
                 continue;
             }
-            return Err(self.err(ParseErrorKind::Other {
-                message: "expected `,` or `)` after `key=value` in argument list".into(),
-            }));
+            return Err(self.err(ParseErrorKind::ExpectedArgumentSeparator));
         }
         Ok(map)
     }
@@ -2219,9 +2379,10 @@ impl<'a> Parser<'a> {
                     continue;
                 }
                 let old = std::mem::replace(v, Value::Null);
-                let nv = f.named_value(ec).map_err(|_| {
-                    self.err(ParseErrorKind::Other {
-                        message: format!("internal: unknown value_ref for parameter `{}`", f.name),
+                let nv = f.named_value(ec).map_err(|source| {
+                    self.err(ParseErrorKind::ParameterValueResolution {
+                        parameter: f.name.clone(),
+                        source: Arc::new(source),
                     })
                 })?;
                 // Preserve program binding diagnostics before string coercion erases the
@@ -2243,7 +2404,9 @@ impl<'a> Parser<'a> {
                                 allowed_values: nv.allowed_values.as_deref(),
                             }),
                         )
-                        .map_err(|message| self.err(ParseErrorKind::Other { message }))?;
+                        .map_err(|error| {
+                            self.err(ParseErrorKind::PhraseIdentifier { source: error })
+                        })?;
                     }
                 }
                 let array_ref = nv.array_items.as_ref();
@@ -2255,11 +2418,11 @@ impl<'a> Parser<'a> {
                     ArrayFieldCoercionPolicy::InvokeArg,
                 )
                 .map_err(|m| {
-                    if matches!(nv.field_type, FieldType::Date) {
-                        self.err(ParseErrorKind::InvalidTemporalValue { message: m })
-                    } else {
-                        self.err(ParseErrorKind::Other { message: m })
-                    }
+                    self.err(ParseErrorKind::ValueCoercion {
+                        field: f.name.to_string(),
+                        field_type: nv.field_type.clone(),
+                        source: m,
+                    })
                 })?;
             }
         }
@@ -2331,8 +2494,16 @@ impl<'a> Parser<'a> {
                         .unwrap_or("");
                     let es = self.sym_map.entity_sym_for(eid, entity);
                     let cgs = self.cgs_for_entity_required(entity).ok();
-                    return Err(self.err(ParseErrorKind::Other {
-                        message: opaque_read_kind_invoke_note(raw, cap, &es, cgs),
+                    return Err(self.err(ParseErrorKind::ReadCapabilityInvoked {
+                        method: raw.to_string(),
+                        capability: format!("{}.{}", cap.domain, cap.name),
+                        entity: es.to_string(),
+                        kind: cap.kind,
+                        pathless: cgs
+                            .and_then(|g| {
+                                crate::query_resolve::sole_nullary_singleton_get(g, &cap.domain)
+                            })
+                            .is_some(),
                     }));
                 }
                 return Ok(cap);
@@ -2453,15 +2624,10 @@ impl<'a> Parser<'a> {
         let label = self.normalize_method_symbol_label(&field_raw);
         let cap = self.resolve_dotted_call_capability(&label, Some(field_raw.as_str()), &source)?;
         let Some(is) = &cap.inputs.payload else {
-            return Err(self.err(ParseErrorKind::Other {
-                message: "this capability has no payload schema — use `key=value` arguments".into(),
-            }));
+            return Err(self.err(ParseErrorKind::MissingInvokePayloadSchema));
         };
         if !matches!(&is.input_type, crate::InputType::Union { .. }) {
-            return Err(self.err(ParseErrorKind::Other {
-                message: "this capability expects `key=value` arguments, not a sole `v#{{…}}` constructor"
-                    .into(),
-            }));
+            return Err(self.err(ParseErrorKind::UnexpectedUnionPayload));
         }
         if let Value::UnionCtor {
             ctor_label,
@@ -2494,9 +2660,7 @@ impl<'a> Parser<'a> {
                 }
             }
         } else {
-            return Err(self.err(ParseErrorKind::Other {
-                message: "expected `v#{{…}}` union constructor for this invoke".into(),
-            }));
+            return Err(self.err(ParseErrorKind::ExpectedUnionPayload));
         }
         let needs_explicit_anchor = cap.requires_receiver();
         let taught_seat = self.taught_explicit_anchor_seat_for(&source, cap);
@@ -2636,10 +2800,7 @@ impl<'a> Parser<'a> {
                     )),
                 ))
             }
-            _ => Err(self.err(ParseErrorKind::Other {
-                message: "internal: dotted-call alias not supported for this capability kind"
-                    .into(),
-            })),
+            _ => Err(self.err(ParseErrorKind::UnsupportedDottedCapabilityKind { kind: cap_kind })),
         }
     }
 
@@ -2661,18 +2822,12 @@ impl<'a> Parser<'a> {
 
         if starts_union_ctor {
             if !root_union {
-                return Err(self.err(ParseErrorKind::Other {
-                    message: "`v` + digits + `{…}` is only allowed as the sole `(…)` payload when the capability root input is a tagged union — use `key=value` arguments"
-                        .into(),
-                }));
+                return Err(self.err(ParseErrorKind::UnionPayloadRequiresUnionInput));
             }
             let val = self.parse_dotted_call_arg_value_rhs()?;
             self.skip_ws();
             if self.peek_char() == Some(',') {
-                return Err(self.err(ParseErrorKind::Other {
-                    message: "union constructor payload must be the only parenthesized argument (no `,` after `v#{{…}}`)"
-                        .into(),
-                }));
+                return Err(self.err(ParseErrorKind::UnionPayloadNotSoleArgument));
             }
             self.expect_char(')')?;
             return self.finish_dotted_call_with_payload_value(source, label, val);
@@ -2788,12 +2943,10 @@ impl<'a> Parser<'a> {
             if let Some((ft, vf, arr)) = self.lookup_field_typing(&first_ty, &field) {
                 if !matches!(val, Value::Null) {
                     val = coerce_value_for_field_type(&ft, vf, arr.as_ref(), val).map_err(|m| {
-                        self.err(if matches!(ft, FieldType::Date) {
-                            ParseErrorKind::InvalidTemporalValue { message: m }
-                        } else {
-                            ParseErrorKind::Other {
-                                message: format!("invalid value for `{field}` ({ft:?}): {m}"),
-                            }
+                        self.err(ParseErrorKind::ValueCoercion {
+                            field: field.clone(),
+                            field_type: ft.clone(),
+                            source: m,
                         })
                     })?;
                 }
@@ -2811,8 +2964,8 @@ impl<'a> Parser<'a> {
         let ec = self.cgs_for_entity_required(entity_name)?;
         let pred_wire = if crate::symbol_tuning::SymbolMap::is_opaque_p_sym(pred_field.as_str()) {
             let ent = ec.get_entity(entity_name).ok_or_else(|| {
-                self.err(ParseErrorKind::Other {
-                    message: format!("entity `{entity_name}` is not defined in catalog"),
+                self.err(ParseErrorKind::CatalogEntityMissing {
+                    entity: entity_name.to_string(),
                 })
             })?;
             self.sym_map
@@ -2823,11 +2976,7 @@ impl<'a> Parser<'a> {
                     ec,
                     pred_field.as_str(),
                 )
-                .map_err(|e| {
-                    self.err(ParseErrorKind::Other {
-                        message: e.to_agent_program_error(),
-                    })
-                })?
+                .map_err(|e| self.err(ParseErrorKind::SymbolResolution { source: e }))?
         } else {
             pred_field.clone()
         };
@@ -2846,12 +2995,10 @@ impl<'a> Parser<'a> {
         if let Some((ft, vf, arr)) = self.lookup_field_typing(entity_name, &pred_wire) {
             if !matches!(val, Value::Null) && !val.is_domain_example_placeholder() {
                 val = coerce_value_for_field_type(&ft, vf, arr.as_ref(), val).map_err(|m| {
-                    self.err(if matches!(ft, FieldType::Date) {
-                        ParseErrorKind::InvalidTemporalValue { message: m }
-                    } else {
-                        ParseErrorKind::Other {
-                            message: format!("invalid value for `{pred_wire}` ({ft:?}): {m}"),
-                        }
+                    self.err(ParseErrorKind::ValueCoercion {
+                        field: pred_wire.clone(),
+                        field_type: ft.clone(),
+                        source: m,
                     })
                 })?;
             }
@@ -3141,8 +3288,9 @@ impl<'a> Parser<'a> {
             return Ok(None);
         }
         if matches.len() > 1 {
-            return Err(self.err(ParseErrorKind::Other {
-                message: format!("ambiguous scoped query `{label}` for anchor `{anchor_entity}`"),
+            return Err(self.err(ParseErrorKind::AmbiguousScopedQuery {
+                label: label.to_string(),
+                anchor: anchor_entity.to_string(),
             }));
         }
         let cap = matches[0];
@@ -3152,8 +3300,8 @@ impl<'a> Parser<'a> {
             .find(|f| f.required)
             .map(|f| f.name.as_str())
             .ok_or_else(|| {
-                self.err(ParseErrorKind::Other {
-                    message: "internal: scoped query missing scope field".into(),
+                self.err(ParseErrorKind::ScopedQueryMissingScopeField {
+                    capability: cap.name.to_string(),
                 })
             })?;
         let preds = vec![Predicate::eq(scope_name, Value::String(anchor_id))];
@@ -3175,9 +3323,10 @@ impl<'a> Parser<'a> {
         if raw.is_empty() {
             return Err(self.err(ParseErrorKind::ExpectedValue));
         }
-        raw.parse::<usize>().map_err(|_| {
+        raw.parse::<usize>().map_err(|source| {
             self.err(ParseErrorKind::InvalidInteger {
                 raw: raw.to_string(),
+                source,
             })
         })
     }
@@ -3186,11 +3335,8 @@ impl<'a> Parser<'a> {
         self.expect_char('(')?;
         self.skip_ws();
         let handle_raw = self.parse_continuation_handle_operand()?;
-        let handle = crate::PagingHandle::parse(&handle_raw).map_err(|e| {
-            self.err(ParseErrorKind::Other {
-                message: e.to_string(),
-            })
-        })?;
+        let handle = crate::PagingHandle::parse(&handle_raw)
+            .map_err(|e| self.err(ParseErrorKind::PagingHandle { source: e }))?;
         self.skip_ws();
         let mut limit = None;
         if self.peek_char() == Some(',') {
@@ -3198,10 +3344,8 @@ impl<'a> Parser<'a> {
             self.skip_ws();
             let key = self.parse_ident()?;
             if key != "limit" {
-                return Err(self.err(ParseErrorKind::Other {
-                    message: format!(
-                        "page(...) only accepts optional `limit=N` (unexpected `{key}`)"
-                    ),
+                return Err(self.err(ParseErrorKind::UnexpectedPagingArgument {
+                    key: key.to_string(),
                 }));
             }
             self.expect_char('=')?;
@@ -3240,11 +3384,8 @@ impl<'a> Parser<'a> {
         self.expect_char('(')?;
         self.skip_ws();
         let handle_raw = self.parse_continuation_handle_operand()?;
-        let handle = crate::OperationHandle::parse(&handle_raw).map_err(|e| {
-            self.err(ParseErrorKind::Other {
-                message: e.to_string(),
-            })
-        })?;
+        let handle = crate::OperationHandle::parse(&handle_raw)
+            .map_err(|e| self.err(ParseErrorKind::OperationHandle { source: e }))?;
         self.skip_ws();
         self.expect_char(')')?;
         if kind == "wait" {
@@ -3322,10 +3463,7 @@ impl<'a> Parser<'a> {
                     .canonical_entity_name(&raw)
                     .unwrap_or_else(|| raw.clone());
                 let kind = if raw == "Get" || entity_try == "Get" {
-                    ParseErrorKind::Other {
-                        message: "Plasm does not use a `Get(` wrapper; use `Entity(id)` for get-by-id (e.g. `Pokemon(pikachu)`)"
-                            .to_string(),
-                    }
+                    ParseErrorKind::GetWrapper
                 } else {
                     ParseErrorKind::UnknownEntity {
                         name: entity_try,
@@ -3380,11 +3518,9 @@ impl<'a> Parser<'a> {
                 let looks_kv = self.peek_compound_key_value_form();
                 if ent.key_vars.len() > 1 {
                     if !looks_kv {
-                        return Err(self.err(ParseErrorKind::Other {
-                            message: format!(
-                                "entity `{}` has compound key {:?}; use `{}(key=value, ...)` with those keys",
-                                entity, ent.key_vars, entity
-                            ),
+                        return Err(self.err(ParseErrorKind::CompoundIdentityRequiresNamedKeys {
+                            entity: entity.to_owned(),
+                            keys: ent.key_vars.iter().map(ToString::to_string).collect(),
                         }));
                     }
                     let head = entity_ref_parse::EntityCtorHead::new(
@@ -3411,11 +3547,8 @@ impl<'a> Parser<'a> {
                         {
                             return self.ok_stamped(get);
                         }
-                        return Err(self.err(ParseErrorKind::Other {
-                            message: format!(
-                                "entity `{}` uses a simple id; use `{}(id)` not key=value form",
-                                entity, entity
-                            ),
+                        return Err(self.err(ParseErrorKind::SimpleIdentityRequiresPositional {
+                            entity: entity.to_string(),
                         }));
                     }
                     self.pos = after_paren;
@@ -3476,18 +3609,13 @@ impl<'a> Parser<'a> {
                 let (cap_name, q_field) = {
                     let c = self.cgs_for_entity_required(&entity)?;
                     let cap = c.primary_search_capability(&entity).ok_or_else(|| {
-                        self.err(ParseErrorKind::Other {
-                            message: format!(
-                                "search capability for `{entity}` is structurally ambiguous"
-                            ),
+                        self.err(ParseErrorKind::AmbiguousSearch {
+                            entity: entity.to_string(),
                         })
                     })?;
                     let field = cap.search_text_selection_param().ok_or_else(|| {
-                        self.err(ParseErrorKind::Other {
-                            message: format!(
-                                "search capability `{}` must declare a free-text selection parameter (query/q/search)",
-                                cap.name
-                            ),
+                        self.err(ParseErrorKind::SearchMissingSelectionParameter {
+                            capability: cap.name.to_string(),
                         })
                     })?;
                     (Some(cap.name.clone()), field.name.clone())
@@ -3661,10 +3789,8 @@ impl<'a> Parser<'a> {
                     self.skip_ws();
                     if self.peek_char() == Some('{') {
                         return Err(ParseError {
-                            kind: ParseErrorKind::Other {
-                                message: crate::relation_segment::relation_query_braces_message(
-                                    &relation_field,
-                                ),
+                            kind: ParseErrorKind::RelationQueryBraces {
+                                relation: relation_field.to_string(),
                             },
                             offset: self.pos,
                         });
@@ -3928,6 +4054,36 @@ mod tests {
     //! means X” end-to-end should have a counterpart row in `plasm-e2e` `plasm_language_matrix`
     //! — cite the matrix row id on semantic parallels (e.g. `lang_query_all`).
     use super::*;
+    #[test]
+    fn semantic_parse_errors_preserve_typed_sources() {
+        use std::error::Error;
+        let source = crate::paging_handle::PagingHandle::parse("invalid").unwrap_err();
+        let error = ParseError {
+            kind: ParseErrorKind::PagingHandle { source },
+            offset: 7,
+        };
+        assert!(
+            matches!(&error.kind, ParseErrorKind::PagingHandle { source: crate::paging_handle::PagingHandleParseError::InvalidFormat(raw) } if raw == "invalid")
+        );
+        assert_eq!(error.offset, 7);
+        assert!(error
+            .source()
+            .unwrap()
+            .downcast_ref::<crate::paging_handle::PagingHandleParseError>()
+            .is_some());
+        let source = serde_json::from_str::<serde_json::Value>("{").unwrap_err();
+        let error = ParseError {
+            kind: ParseErrorKind::IdentitySlotSerialization {
+                source: Arc::new(source),
+            },
+            offset: 3,
+        };
+        assert!(error
+            .source()
+            .unwrap()
+            .downcast_ref::<serde_json::Error>()
+            .is_some());
+    }
     use crate::cgs_federation::cgs_layer_stack;
     use crate::schema::capability_method_label_kebab;
     use crate::schema::registry_test_util;
@@ -3946,6 +4102,80 @@ mod tests {
 
     fn test_layer<'a>(cgs: &'a CGS) -> [CgsLayer<'a>; 1] {
         [CgsLayer::new(cgs.entry_id.as_deref().unwrap_or(""), cgs)]
+    }
+
+    #[test]
+    fn query_resolution_parse_error_keeps_typed_source() {
+        use std::error::Error;
+        let error = ParseError {
+            kind: ParseErrorKind::QueryResolution {
+                source: crate::QueryCapabilityResolveError::CapabilityNotFound {
+                    capability: "missing".into(),
+                    entity: "item".into(),
+                },
+            },
+            offset: 0,
+        };
+        assert!(matches!(
+            error
+                .source()
+                .and_then(|source| source.downcast_ref::<crate::QueryCapabilityResolveError>()),
+            Some(crate::QueryCapabilityResolveError::CapabilityNotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn program_string_rejections_preserve_typed_sources_for_each_literal_form() {
+        use crate::program_string_template::ProgramStringError;
+        use std::error::Error;
+
+        let cgs = CGS::default();
+        for input in [
+            "\"${binding}\"",
+            "<<T\n${binding}\nT\n",
+            "<<T\n${binding}\nT)",
+        ] {
+            let mut parser = Parser::new(input, &cgs);
+            let error = parser
+                .parse_value()
+                .expect_err("dollar interpolation is forbidden");
+            assert!(matches!(
+                &error.kind,
+                ParseErrorKind::InvalidProgramString { source }
+                    if matches!(source.as_ref(), ProgramStringError::DollarForbidden { .. })
+            ));
+            let cloned = error.clone();
+            assert!(matches!(
+                cloned
+                    .source()
+                    .and_then(|source| source.downcast_ref::<ProgramStringError>()),
+                Some(ProgramStringError::DollarForbidden { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn program_string_syntax_rejection_preserves_minijinja_source() {
+        use crate::program_string_template::ProgramStringError;
+        use std::error::Error;
+
+        let cgs = CGS::default();
+        let mut parser = Parser::new("\"{{\"", &cgs);
+        let error = parser
+            .parse_value()
+            .expect_err("template syntax is incomplete");
+        let source = error.source().expect("typed program string cause");
+        assert!(matches!(
+            source.downcast_ref::<ProgramStringError>(),
+            Some(ProgramStringError::Render(error))
+                if matches!(error.kind(), minijinja::ErrorKind::SyntaxError)
+        ));
+        assert!(matches!(
+            source
+                .source()
+                .and_then(|source| source.downcast_ref::<minijinja::Error>()),
+            Some(error) if matches!(error.kind(), minijinja::ErrorKind::SyntaxError)
+        ));
     }
 
     fn seed_fx_str(cgs: &mut CGS) {
@@ -5244,7 +5474,11 @@ mod tests {
             .unwrap_err();
             assert!(matches!(
                 error.kind,
-                ParseErrorKind::InvalidTemporalValue { .. }
+                ParseErrorKind::ValueCoercion {
+                    field_type: FieldType::Date,
+                    source: crate::wire_coercion::CoercionError::Temporal(_),
+                    ..
+                }
             ));
         }
     }
@@ -6066,7 +6300,7 @@ mod tests {
         let cgs = load_schema_dir(dir).unwrap();
         let err = parse("Get(Pet:1)", &cgs).unwrap_err();
         assert!(
-            matches!(err.kind, ParseErrorKind::Other { .. }),
+            matches!(err.kind, ParseErrorKind::GetWrapper),
             "expected Other hint for `Get(`, got {:?}",
             err.kind
         );
@@ -6274,11 +6508,14 @@ mod tests {
         let cgs = load_schema_dir(dir).unwrap();
         // RA-8: hard coerce rejects non-numeric tokens at parse (not soft-leave-as-string).
         let err = parse("LangItem{score=notanint}", &cgs).expect_err("non-numeric integer token");
-        let msg = format!("{err:?}");
-        assert!(
-            msg.contains("cannot coerce") && msg.contains("integer"),
-            "expected RA-8 integer coerce reject, got {msg}"
-        );
+        assert!(matches!(
+            err.kind,
+            ParseErrorKind::ValueCoercion {
+                field,
+                field_type: FieldType::Integer,
+                source: crate::wire_coercion::CoercionError::InvalidIntegerLiteral { raw, .. },
+            } if field == "score" && raw == "notanint"
+        ));
     }
 
     /// Program-mode bare tokens on invoke/create body fields must coerce via the **same**

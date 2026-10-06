@@ -269,7 +269,11 @@ async fn execute(request: Value) -> Value {
     if let Some(source) = request["source"].as_str() {
         let pipeline = Default::default();
         match plasm_agent::compile_program(&pipeline, None, &session, "program", source).await {
-            Err(plasm_agent::compilation_error::CompilationError::Host(failure)) => {
+            Err(
+                error @ (plasm_agent::compilation_error::CompilationError::Host(_)
+                | plasm_agent::compilation_error::CompilationError::Checker(_)),
+            ) => {
+                let failure: plasm_runtime::ExecutionFailure = error.into();
                 result["stage"] = json!("host_failure");
                 result["failure"] = json!(failure);
             }

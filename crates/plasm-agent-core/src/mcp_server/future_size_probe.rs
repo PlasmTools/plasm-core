@@ -40,6 +40,7 @@ fn matrix_host() -> crate::server_state::PlasmHostState {
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
     })
+    .expect("valid catalog fixture")
 }
 
 /// Tokio default worker stacks are ~2 MiB. Measuring on a 64 MiB thread so the probe itself

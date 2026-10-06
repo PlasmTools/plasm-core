@@ -153,16 +153,22 @@ fn index_map_is_empty_named_values(m: &IndexMap<String, NamedValueSchema>) -> bo
 }
 
 /// Catalog-local key into [`CGS::values`] (`value_ref` in `domain.yaml`).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]
 pub struct ValueDomainKey(String);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ValueDomainKeyError {
+    #[error("value domain key cannot be empty")]
+    Empty,
+}
+
 impl ValueDomainKey {
-    pub fn new(raw: impl Into<String>) -> Result<Self, String> {
+    pub fn new(raw: impl Into<String>) -> Result<Self, ValueDomainKeyError> {
         let s = raw.into();
         let t = s.trim();
         if t.is_empty() {
-            return Err("value domain key cannot be empty".to_string());
+            return Err(ValueDomainKeyError::Empty);
         }
         Ok(Self(t.to_string()))
     }
@@ -170,6 +176,31 @@ impl ValueDomainKey {
     #[inline]
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for ValueDomainKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        Self::new(raw).map_err(serde::de::Error::custom)
+    }
+}
+
+#[cfg(test)]
+mod value_domain_key_tests {
+    use super::{ValueDomainKey, ValueDomainKeyError};
+
+    #[test]
+    fn construction_and_deserialization_reject_empty_keys() {
+        assert_eq!(ValueDomainKey::new("  "), Err(ValueDomainKeyError::Empty));
+        assert!(serde_json::from_str::<ValueDomainKey>("\"  \"").is_err());
+        assert_eq!(
+            serde_json::from_str::<ValueDomainKey>("\"status\"").unwrap(),
+            ValueDomainKey::new("status").unwrap()
+        );
     }
 }
 
@@ -187,24 +218,39 @@ impl From<ValueDomainKey> for String {
     }
 }
 
-fn validate_snake_case_ident(raw: impl AsRef<str>, what: &str) -> Result<String, String> {
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ClassNameError {
+    #[error("{kind} cannot be empty")]
+    Empty { kind: &'static str },
+    #[error("{kind} must be snake_case (start with lowercase ascii letter): '{name}'")]
+    InvalidStart { kind: &'static str, name: String },
+    #[error("{kind} must be snake_case (lowercase ascii, digits, underscore): '{name}'")]
+    InvalidCharacter { kind: &'static str, name: String },
+}
+
+fn validate_snake_case_ident(
+    raw: impl AsRef<str>,
+    what: &'static str,
+) -> Result<String, ClassNameError> {
     let s = raw.as_ref().trim();
     if s.is_empty() {
-        return Err(format!("{what} cannot be empty"));
+        return Err(ClassNameError::Empty { kind: what });
     }
     let mut chars = s.chars();
     let Some(first) = chars.next() else {
-        return Err(format!("{what} cannot be empty"));
+        return Err(ClassNameError::Empty { kind: what });
     };
     if !first.is_ascii_lowercase() {
-        return Err(format!(
-            "{what} must be snake_case (start with lowercase ascii letter): '{s}'"
-        ));
+        return Err(ClassNameError::InvalidStart {
+            kind: what,
+            name: s.to_owned(),
+        });
     }
     if !chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') {
-        return Err(format!(
-            "{what} must be snake_case (lowercase ascii, digits, underscore): '{s}'"
-        ));
+        return Err(ClassNameError::InvalidCharacter {
+            kind: what,
+            name: s.to_owned(),
+        });
     }
     Ok(s.to_string())
 }
@@ -214,7 +260,7 @@ fn validate_snake_case_ident(raw: impl AsRef<str>, what: &str) -> Result<String,
 pub struct DataClassName(String);
 
 impl DataClassName {
-    pub fn new(raw: impl Into<String>) -> Result<Self, String> {
+    pub fn new(raw: impl Into<String>) -> Result<Self, ClassNameError> {
         validate_snake_case_ident(raw.into(), "data class name").map(Self)
     }
 
@@ -253,7 +299,7 @@ impl<'de> Deserialize<'de> for DataClassName {
 pub struct SinkClassName(String);
 
 impl SinkClassName {
-    pub fn new(raw: impl Into<String>) -> Result<Self, String> {
+    pub fn new(raw: impl Into<String>) -> Result<Self, ClassNameError> {
         validate_snake_case_ident(raw.into(), "sink class name").map(Self)
     }
 
@@ -1189,23 +1235,48 @@ struct InputFieldSchemaDeHelper {
     wire_array_element_key: Option<String>,
 }
 
-impl TryFrom<InputFieldSchemaDeHelper> for InputFieldSchema {
-    type Error = String;
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum InputFieldDefinitionError {
+    #[error(
+        "parameter or field `{name}`: set exactly one of `value_ref` or `input_type`, not both"
+    )]
+    ConflictingTypes { name: String },
+    #[error("parameter or field `{name}`: missing `value_ref` and `input_type`")]
+    MissingType { name: String },
+}
 
-    fn try_from(h: InputFieldSchemaDeHelper) -> Result<Self, String> {
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ViewNodeResolutionError {
+    #[error("unknown view node `{node}`")]
+    UnknownNode { node: String },
+    #[error("traversal `{node}` requires an earlier node `{source_id}`")]
+    SourceNotEarlier { node: String, source_id: String },
+    #[error("unknown relation `{entity}.{relation}`")]
+    UnknownRelation { entity: String, relation: String },
+    #[error("relation `{entity}.{relation}` is unavailable")]
+    UnavailableRelation { entity: String, relation: String },
+    #[error("unknown capability `{capability}`")]
+    UnknownCapability { capability: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("capability '{capability}' has no CML mapping (derived)")]
+pub struct MissingCapabilityMapping {
+    pub capability: String,
+}
+
+impl TryFrom<InputFieldSchemaDeHelper> for InputFieldSchema {
+    type Error = InputFieldDefinitionError;
+
+    fn try_from(h: InputFieldSchemaDeHelper) -> Result<Self, InputFieldDefinitionError> {
         let wire = match (h.value_ref, h.input_type) {
             (Some(k), None) => InputFieldWire::Registry(k),
             (None, Some(ty)) => InputFieldWire::Inline(ty),
             (Some(_), Some(_)) => {
-                return Err("parameter and object field `".to_string()
-                    + &h.name
-                    + "`: set exactly one of `value_ref` or `input_type`, not both");
+                return Err(InputFieldDefinitionError::ConflictingTypes { name: h.name });
             }
             (None, None) => {
-                return Err(format!(
-                    "parameter or field `{}`: missing `value_ref` and `input_type`",
-                    h.name
-                ));
+                return Err(InputFieldDefinitionError::MissingType { name: h.name });
             }
         };
         Ok(InputFieldSchema {
@@ -2721,7 +2792,7 @@ impl CGS {
     pub fn validate(&self) -> Result<(), SchemaError> {
         self.prerequisites
             .validate(self)
-            .map_err(|detail| SchemaError::PrerequisiteInvalid { detail })?;
+            .map_err(|source| SchemaError::PrerequisiteInvalid { source })?;
         self.validate_core()
     }
 
@@ -2730,40 +2801,47 @@ impl CGS {
         &self,
         view: &ViewDefinition,
         node_id: &str,
-    ) -> Result<EntityName, String> {
+    ) -> Result<EntityName, ViewNodeResolutionError> {
         let index = view
             .nodes
             .iter()
             .position(|n| n.id == node_id)
-            .ok_or_else(|| format!("unknown view node `{node_id}`"))?;
+            .ok_or_else(|| ViewNodeResolutionError::UnknownNode {
+                node: node_id.to_owned(),
+            })?;
         let node = &view.nodes[index];
         if let Some(traverse) = &node.traverse {
             if !view.nodes[..index].iter().any(|n| n.id == traverse.node) {
-                return Err(format!(
-                    "traversal `{node_id}` requires an earlier node `{}`",
-                    traverse.node
-                ));
+                return Err(ViewNodeResolutionError::SourceNotEarlier {
+                    node: node_id.to_owned(),
+                    source_id: traverse.node.clone(),
+                });
             }
             let source = self.view_node_entity(view, &traverse.node)?;
             let relation = self
                 .get_entity(source.as_str())
                 .and_then(|e| e.relations.get(traverse.relation.as_str()))
-                .ok_or_else(|| format!("unknown relation `{source}.{}`", traverse.relation))?;
+                .ok_or_else(|| ViewNodeResolutionError::UnknownRelation {
+                    entity: source.to_string(),
+                    relation: traverse.relation.clone(),
+                })?;
             if matches!(
                 relation.materialize,
                 Some(RelationMaterialization::Unavailable)
             ) {
-                return Err(format!(
-                    "relation `{source}.{}` is unavailable",
-                    traverse.relation
-                ));
+                return Err(ViewNodeResolutionError::UnavailableRelation {
+                    entity: source.to_string(),
+                    relation: traverse.relation.clone(),
+                });
             }
             Ok(relation.target_resource.clone())
         } else {
             self.capabilities
                 .get(node.capability.as_str())
                 .map(|c| c.domain.clone())
-                .ok_or_else(|| format!("unknown capability `{}`", node.capability))
+                .ok_or_else(|| ViewNodeResolutionError::UnknownCapability {
+                    capability: node.capability.clone(),
+                })
         }
     }
 
@@ -2796,10 +2874,10 @@ impl CGS {
 
             let template = &cap
                 .require_mapping()
-                .map_err(|detail| SchemaError::ViewCapabilityMappingInvalid {
+                .map_err(|source| SchemaError::ViewMappingMissing {
                     view: view_key.clone(),
                     capability: view.capability.clone(),
-                    detail,
+                    source,
                 })?
                 .template
                 .0;
@@ -2807,14 +2885,16 @@ impl CGS {
                 return Err(SchemaError::ViewCapabilityMappingInvalid {
                     view: view_key.clone(),
                     capability: view.capability.clone(),
-                    detail: "expected `transport: view` in mappings for this capability".into(),
+                    source: crate::error::ViewMappingError::TransportRequired,
                 });
             }
             if template.get("view").and_then(|x| x.as_str()) != Some(view_key.as_str()) {
                 return Err(SchemaError::ViewCapabilityMappingInvalid {
                     view: view_key.clone(),
                     capability: view.capability.clone(),
-                    detail: format!("expected `view: {view_key}` to match views map key"),
+                    source: crate::error::ViewMappingError::ViewKeyMismatch {
+                        view: view_key.clone(),
+                    },
                 });
             }
 
@@ -2831,10 +2911,9 @@ impl CGS {
                         return Err(SchemaError::ViewCapabilityMappingInvalid {
                             view: view_key.clone(),
                             capability: view.capability.clone(),
-                            detail: format!(
-                                "traversal node `{}` cannot also declare capability, bind, or when",
-                                node.id
-                            ),
+                            source: crate::error::ViewMappingError::ConflictingTraversal {
+                                node: node.id.clone(),
+                            },
                         });
                     }
                     if traverse.node == node.id || !seen_ids.contains(traverse.node.as_str()) {
@@ -2844,11 +2923,10 @@ impl CGS {
                             ref_node: traverse.node.clone(),
                         });
                     }
-                    self.view_node_entity(view, &node.id).map_err(|detail| {
-                        SchemaError::ViewCapabilityMappingInvalid {
+                    self.view_node_entity(view, &node.id).map_err(|source| {
+                        SchemaError::ViewNodeResolution {
                             view: view_key.clone(),
-                            capability: view.capability.clone(),
-                            detail,
+                            source,
                         }
                     })?;
                     continue;
@@ -2959,9 +3037,9 @@ impl CGS {
                     return Err(SchemaError::ViewCapabilityMappingInvalid {
                         view: view_key.clone(),
                         capability: view.capability.clone(),
-                        detail: format!(
-                            "private binding `{local}` shadows a scope or output field"
-                        ),
+                        source: crate::error::ViewMappingError::PrivateBindingShadow {
+                            binding: local.clone(),
+                        },
                     });
                 }
             }
@@ -3006,9 +3084,9 @@ impl CGS {
                             return Err(SchemaError::ViewCapabilityMappingInvalid {
                                 view: view_key.clone(),
                                 capability: view.capability.clone(),
-                                detail: format!(
-                                    "output field `{field_name}`: computed template must be non-empty"
-                                ),
+                                source: crate::error::ViewMappingError::ComputedTemplateEmpty {
+                                    field: field_name.clone(),
+                                },
                             });
                         }
                     }
@@ -3046,17 +3124,14 @@ impl CGS {
                             return Err(SchemaError::ViewCapabilityMappingInvalid {
                                 view: view_key.clone(),
                                 capability: view.capability.clone(),
-                                detail:
-                                    "identity union needs at least one node and a many relation"
-                                        .into(),
+                                source: crate::error::ViewMappingError::InvalidIdentityUnion,
                             });
                         }
                         for node in nodes {
-                            let target = self.view_node_entity(view, node).map_err(|detail| {
-                                SchemaError::ViewCapabilityMappingInvalid {
+                            let target = self.view_node_entity(view, node).map_err(|source| {
+                                SchemaError::ViewNodeResolution {
                                     view: view_key.clone(),
-                                    capability: view.capability.clone(),
-                                    detail,
+                                    source,
                                 }
                             })?;
                             if target != ro.target {
@@ -3099,24 +3174,26 @@ impl CGS {
                 return Err(SchemaError::ViewCapabilityMappingInvalid {
                     view: cap_name.to_string(),
                     capability: cap_name.to_string(),
-                    detail: "transport `view` requires string `view` key".into(),
+                    source: crate::error::ViewMappingError::ViewKeyMissing,
                 });
             };
             let Some(view_def) = self.views.get(view_key) else {
                 return Err(SchemaError::ViewCapabilityMappingInvalid {
                     view: view_key.to_string(),
                     capability: cap_name.to_string(),
-                    detail: format!("unknown views key `{view_key}`"),
+                    source: crate::error::ViewMappingError::UnknownView {
+                        view: view_key.to_owned(),
+                    },
                 });
             };
             if cap.domain != view_def.entity {
                 return Err(SchemaError::ViewCapabilityMappingInvalid {
                     view: view_key.to_string(),
                     capability: cap_name.to_string(),
-                    detail: format!(
-                        "capability domain `{}` must match view entity `{}`",
-                        cap.domain, view_def.entity
-                    ),
+                    source: crate::error::ViewMappingError::DomainMismatch {
+                        actual: cap.domain.to_string(),
+                        expected: view_def.entity.to_string(),
+                    },
                 });
             }
         }
@@ -3196,12 +3273,14 @@ impl CGS {
             };
             for field in slots {
                 // id_from / implicit path identity with no declared field → String default.
-                let field_type = parent_entity_field_type(self, entity, field).map_err(|e| {
-                    SchemaError::UnknownKeyVarField {
-                        entity: entity_name.to_string(),
-                        field: format!("{field} ({e})"),
-                    }
-                })?;
+                let field_type =
+                    parent_entity_field_type(self, entity, field).map_err(|source| {
+                        SchemaError::IdentityFieldTypeResolution {
+                            entity: entity_name.to_string(),
+                            field: field.to_owned(),
+                            source,
+                        }
+                    })?;
                 if !IdentityCodec::is_lawful_identity_type(&field_type) {
                     return Err(SchemaError::UnsupportedIdentityType {
                         entity: entity_name.to_string(),
@@ -3640,20 +3719,20 @@ impl CGS {
             if alias.is_empty() {
                 return Err(SchemaError::RegistryAliasInvalid {
                     alias: raw.clone(),
-                    message: "must be non-empty".into(),
+                    source: crate::error::RegistryAliasError::Empty,
                 });
             }
             let key = alias.to_ascii_lowercase();
             if !seen.insert(key.clone()) {
                 return Err(SchemaError::RegistryAliasInvalid {
                     alias: alias.to_string(),
-                    message: "duplicate alias".into(),
+                    source: crate::error::RegistryAliasError::Duplicate,
                 });
             }
             if !canonical.is_empty() && alias.eq_ignore_ascii_case(canonical) {
                 return Err(SchemaError::RegistryAliasInvalid {
                     alias: alias.to_string(),
-                    message: "must not duplicate canonical entry_id".into(),
+                    source: crate::error::RegistryAliasError::DuplicatesCanonicalEntry,
                 });
             }
         }
@@ -3665,20 +3744,18 @@ impl CGS {
             if matches!(cap.kind, CapabilityKind::Query | CapabilityKind::Search)
                 && (cap.inputs.arguments.is_some() || cap.inputs.payload.is_some())
             {
-                return Err(SchemaError::SchemaConstraint {
-                    message: format!(
-                        "capability '{cap_name}': query/search inputs may only use scope, selection, and controls"
-                    ),
-                });
+                return Err(crate::error::SchemaConstraintError::QueryInputLane {
+                    capability: cap_name.to_string(),
+                }
+                .into());
             }
             if !matches!(cap.kind, CapabilityKind::Query | CapabilityKind::Search)
                 && !cap.selection_params().is_empty()
             {
-                return Err(SchemaError::SchemaConstraint {
-                    message: format!(
-                        "capability '{cap_name}': selection is only valid on query/search capabilities"
-                    ),
-                });
+                return Err(crate::error::SchemaConstraintError::SelectionOnNonQuery {
+                    capability: cap_name.to_string(),
+                }
+                .into());
             }
             if cap.kind == CapabilityKind::Search {
                 match cap.search_text_selection_param() {
@@ -3700,43 +3777,59 @@ impl CGS {
             let mut owners = std::collections::BTreeMap::<String, &'static str>::new();
             let mut register = |name: &str, lane: &'static str| -> Result<(), SchemaError> {
                 if name.trim().is_empty() {
-                    return Err(SchemaError::SchemaConstraint {
-                        message: format!(
-                            "capability '{cap_name}': {lane} contains an empty input name"
-                        ),
-                    });
+                    return Err(crate::error::SchemaConstraintError::EmptyInputName {
+                        capability: cap_name.to_string(),
+                        lane,
+                    }
+                    .into());
                 }
                 if let Some(previous) = owners.insert(name.to_string(), lane) {
-                    return Err(SchemaError::SchemaConstraint {
-                        message: format!(
-                            "capability '{cap_name}': input '{name}' appears in both {previous} and {lane}; capability input lanes must be disjoint"
-                        ),
-                    });
+                    return Err(crate::error::SchemaConstraintError::DuplicateInput {
+                        capability: cap_name.to_string(),
+                        input: name.to_owned(),
+                        previous,
+                        lane,
+                    }
+                    .into());
                 }
                 Ok(())
             };
 
             for field in cap.scope_params() {
                 if field.selection_effect.is_some() {
-                    return Err(SchemaError::SchemaConstraint {
-                        message: format!("capability '{cap_name}': scope input '{}' cannot declare selection_effect", field.name),
-                    });
+                    return Err(
+                        crate::error::SchemaConstraintError::SelectionEffectForbidden {
+                            capability: cap_name.to_string(),
+                            input: field.name.clone(),
+                            lane: "scope",
+                        }
+                        .into(),
+                    );
                 }
                 register(&field.name, "scope")?;
             }
             for field in cap.selection_params() {
                 if field.selection_effect.is_none() {
-                    return Err(SchemaError::SchemaConstraint {
-                        message: format!("capability '{cap_name}': selection input '{}' requires selection_effect", field.name),
-                    });
+                    return Err(
+                        crate::error::SchemaConstraintError::SelectionEffectMissing {
+                            capability: cap_name.to_string(),
+                            input: field.name.clone(),
+                        }
+                        .into(),
+                    );
                 }
                 register(&field.name, "selection")?;
             }
             for field in cap.control_params() {
                 if field.selection_effect.is_some() {
-                    return Err(SchemaError::SchemaConstraint {
-                        message: format!("capability '{cap_name}': control input '{}' cannot declare selection_effect", field.name),
-                    });
+                    return Err(
+                        crate::error::SchemaConstraintError::SelectionEffectForbidden {
+                            capability: cap_name.to_string(),
+                            input: field.name.clone(),
+                            lane: "control",
+                        }
+                        .into(),
+                    );
                 }
                 register(&field.name, "controls")?;
             }
@@ -4692,24 +4785,24 @@ impl CGS {
                 return Err(SchemaError::RegistryDenormalizationMismatch {
                     key: key.to_string(),
                     context: ctx.to_string(),
-                    detail: format!(
-                        "array items field_type {:?} vs values {:?}",
-                        items.field_type, nv.field_type
-                    ),
+                    source: crate::error::RegistryWireMismatch::FieldType {
+                        actual: items.field_type.clone(),
+                        expected: nv.field_type.clone(),
+                    },
                 });
             }
             if items.value_format != nv.value_format {
                 return Err(SchemaError::RegistryDenormalizationMismatch {
                     key: key.to_string(),
                     context: ctx.to_string(),
-                    detail: "array items value_format vs values mismatch".to_string(),
+                    source: crate::error::RegistryWireMismatch::ValueFormat,
                 });
             }
             if items.allowed_values != nv.allowed_values {
                 return Err(SchemaError::RegistryDenormalizationMismatch {
                     key: key.to_string(),
                     context: ctx.to_string(),
-                    detail: "array items allowed_values vs values mismatch".to_string(),
+                    source: crate::error::RegistryWireMismatch::AllowedValues,
                 });
             }
             Ok(())
@@ -4788,11 +4881,11 @@ impl CGS {
                 }
                 if let Some(cf) = field.currency_field.as_deref() {
                     if !matches!(nv.field_type, FieldType::Money) {
-                        return Err(SchemaError::SchemaConstraint {
-                            message: format!(
-                                "entity '{entity_name}' field '{field_name}': `currency_field` is only valid on money fields"
-                            ),
-                        });
+                        return Err(crate::error::SchemaConstraintError::CurrencyOnNonMoney {
+                            entity: entity_name.to_string(),
+                            field: field_name.to_string(),
+                        }
+                        .into());
                     }
                     if !ent.fields.contains_key(cf) {
                         return Err(SchemaError::CurrencyFieldUnknown {
@@ -4851,9 +4944,10 @@ impl CGS {
                         return Err(SchemaError::PipelineSegmentConflict {
                             entity: entity_name.to_string(),
                             segment: label.to_string(),
-                            message: format!(
-                                "duplicate zero-arity pipeline method label on capabilities '{prev}' and '{cap_name}'"
-                            ),
+                            source: crate::error::PipelineSegmentError::DuplicateMethod {
+                                previous: prev,
+                                capability: cap_name,
+                            },
                         });
                     }
                 }
@@ -4864,19 +4958,19 @@ impl CGS {
                     return Err(SchemaError::PipelineSegmentConflict {
                         entity: entity_name.to_string(),
                         segment: label.to_string(),
-                        message: format!(
-                            "zero-arity pipeline method '{cap_name}' label '{label}' collides with relation '{label}'"
-                        ),
+                        source: crate::error::PipelineSegmentError::MethodRelationCollision {
+                            capability: cap_name.clone(),
+                        },
                     });
                 }
                 if let Some(f) = ent.fields.get(label.as_str()) {
                     return Err(SchemaError::PipelineSegmentConflict {
                         entity: entity_name.to_string(),
                         segment: label.to_string(),
-                        message: format!(
-                            "zero-arity pipeline method '{cap_name}' label '{label}' collides with field '{}'",
-                            f.name
-                        ),
+                        source: crate::error::PipelineSegmentError::MethodFieldCollision {
+                            capability: cap_name.clone(),
+                            field: f.name.to_string(),
+                        },
                     });
                 }
             }
@@ -4890,10 +4984,10 @@ impl CGS {
                         return Err(SchemaError::PipelineSegmentConflict {
                             entity: entity_name.to_string(),
                             segment: rel_name.to_string(),
-                            message: format!(
-                                "relation '{rel_name}' has the same name as EntityRef field '{}'",
-                                f.name
-                            ),
+                            source:
+                                crate::error::PipelineSegmentError::RelationReferenceCollision {
+                                    field: f.name.to_string(),
+                                },
                         });
                     }
                 }
@@ -5437,26 +5531,29 @@ impl CGS {
         target_entity: &str,
         capability: &CapabilityName,
     ) -> Result<(), SchemaError> {
-        let err = |detail: String| {
+        let err = |source: crate::error::RelationMaterializeError| {
             Err(SchemaError::RelationMaterializeCapabilityInvalid {
                 entity: parent_entity.to_string(),
                 relation: relation.to_string(),
                 target: target_entity.to_string(),
                 capability: capability.to_string(),
-                detail,
+                source,
             })
         };
         let Some(cap) = self.get_capability(capability.as_str()) else {
-            return err("no such capability name".into());
+            return err(crate::error::RelationMaterializeError::UnknownCapability);
         };
         if cap.domain.as_str() != target_entity {
-            return err(format!(
-                "capability is declared on entity '{}' but relation targets '{}'",
-                cap.domain, target_entity
-            ));
+            return err(crate::error::RelationMaterializeError::DomainMismatch {
+                actual: cap.domain.to_string(),
+                expected: target_entity.to_owned(),
+            });
         }
         if cap.kind != CapabilityKind::Get {
-            return err(format!("capability kind must be get (got {:?})", cap.kind));
+            return err(crate::error::RelationMaterializeError::KindMismatch {
+                expected: crate::preflight::PreflightReadKind::Get,
+                actual: cap.kind,
+            });
         }
         Ok(())
     }
@@ -5472,42 +5569,39 @@ impl CGS {
         capability: &CapabilityName,
         required_param_names: &[&str],
     ) -> Result<(), SchemaError> {
-        let err = |detail: String| {
+        let err = |source: crate::error::RelationMaterializeError| {
             Err(SchemaError::RelationMaterializeCapabilityInvalid {
                 entity: parent_entity.to_string(),
                 relation: relation.to_string(),
                 target: target_entity.to_string(),
                 capability: capability.to_string(),
-                detail,
+                source,
             })
         };
         let Some(cap) = self.get_capability(capability.as_str()) else {
-            return err("no such capability name".into());
+            return err(crate::error::RelationMaterializeError::UnknownCapability);
         };
         if cap.domain.as_str() != target_entity {
-            return err(format!(
-                "capability is declared on entity '{}' but relation targets '{}'",
-                cap.domain, target_entity
-            ));
+            return err(crate::error::RelationMaterializeError::DomainMismatch {
+                actual: cap.domain.to_string(),
+                expected: target_entity.to_owned(),
+            });
         }
         if !matches!(cap.kind, CapabilityKind::Query | CapabilityKind::Search) {
-            return err(format!(
-                "capability kind must be query or search (got {:?})",
-                cap.kind
-            ));
+            return err(crate::error::RelationMaterializeError::KindMismatch {
+                expected: crate::preflight::PreflightReadKind::QueryOrSearch,
+                actual: cap.kind,
+            });
         }
         let fields = cap.scope_params();
         if fields.is_empty() {
-            return err(
-                "capability has no parent-scope parameters; query_scoped materialization requires them"
-                    .into(),
-            );
+            return err(crate::error::RelationMaterializeError::ParentScopeMissing);
         }
         for name in required_param_names {
             if !fields.iter().any(|f| f.name == *name) {
-                return err(format!(
-                    "object input does not declare materialize parameter `{name}`"
-                ));
+                return err(crate::error::RelationMaterializeError::ParamMissing {
+                    param: (*name).to_owned(),
+                });
             }
         }
         Ok(())
@@ -5528,7 +5622,7 @@ impl CGS {
                 relation: relation.to_string(),
                 target: String::new(),
                 capability: capability.to_string(),
-                detail: "no such capability".into(),
+                source: crate::error::RelationMaterializeError::UnknownCapability,
             }
         })?;
         let fields = cap.scope_params();
@@ -5538,30 +5632,39 @@ impl CGS {
                 relation: relation.to_string(),
                 target: cap.domain.to_string(),
                 capability: capability.to_string(),
-                detail: "capability has no parent-scope input".into(),
+                source: crate::error::RelationMaterializeError::ParentScopeMissing,
             });
         }
         for (cap_param, parent_field) in bindings {
             let Some(param_schema) = fields.iter().find(|f| cap_param.as_str() == f.name) else {
                 continue;
             };
-            let param_nv = param_schema.named_value(self).map_err(|e| {
-                SchemaError::RelationMaterializeCapabilityInvalid {
-                    entity: parent_entity.to_string(),
-                    relation: relation.to_string(),
-                    target: cap.domain.to_string(),
-                    capability: capability.to_string(),
-                    detail: format!("param `{}`: {e}", cap_param),
-                }
+            let param_error = |source| SchemaError::RelationMaterializeCapabilityInvalid {
+                entity: parent_entity.to_string(),
+                relation: relation.to_string(),
+                target: cap.domain.to_string(),
+                capability: capability.to_string(),
+                source,
+            };
+            let InputFieldWire::Registry(value_ref) = &param_schema.wire else {
+                return Err(param_error(
+                    crate::error::RelationMaterializeError::InlineParam {
+                        param: cap_param.to_string(),
+                    },
+                ));
+            };
+            let param_nv = self.values.get(value_ref.as_str()).ok_or_else(|| {
+                param_error(crate::error::RelationMaterializeError::ParamValueMissing {
+                    param: cap_param.to_string(),
+                    value_ref: value_ref.to_string(),
+                })
             })?;
             let parent_ty =
                 crate::wire_coercion::parent_entity_field_type(self, entity, parent_field.as_str())
-                    .map_err(|detail| SchemaError::RelationMaterializeCapabilityInvalid {
+                    .map_err(|source| SchemaError::RelationParentFieldInvalid {
                         entity: parent_entity.to_string(),
                         relation: relation.to_string(),
-                        target: cap.domain.to_string(),
-                        capability: capability.to_string(),
-                        detail,
+                        source,
                     })?;
             if !crate::wire_coercion::relation_binding_assignable(
                 entity,
@@ -5593,39 +5696,39 @@ impl CGS {
         capability: &CapabilityName,
         required_param_names: &[&str],
     ) -> Result<(), SchemaError> {
-        let err = |detail: String| {
+        let err = |source: crate::error::RelationMaterializeError| {
             Err(SchemaError::RelationMaterializeCapabilityInvalid {
                 entity: parent_entity.to_string(),
                 relation: relation.to_string(),
                 target: target_entity.to_string(),
                 capability: capability.to_string(),
-                detail,
+                source,
             })
         };
         let Some(cap) = self.get_capability(capability.as_str()) else {
-            return err("no such capability name".into());
+            return err(crate::error::RelationMaterializeError::UnknownCapability);
         };
         if cap.domain.as_str() != target_entity {
-            return err(format!(
-                "capability is declared on entity '{}' but relation targets '{}'",
-                cap.domain, target_entity
-            ));
+            return err(crate::error::RelationMaterializeError::DomainMismatch {
+                actual: cap.domain.to_string(),
+                expected: target_entity.to_owned(),
+            });
         }
         if cap.kind != CapabilityKind::Get {
-            return err(format!("capability kind must be get (got {:?})", cap.kind));
+            return err(crate::error::RelationMaterializeError::KindMismatch {
+                expected: crate::preflight::PreflightReadKind::Get,
+                actual: cap.kind,
+            });
         }
         let fields = cap.scope_params();
         if fields.is_empty() {
-            return err(
-                "capability has no parent-scope parameters; get_scoped_bindings requires them"
-                    .into(),
-            );
+            return err(crate::error::RelationMaterializeError::ParentScopeMissing);
         }
         for name in required_param_names {
             if !fields.iter().any(|f| f.name == *name) {
-                return err(format!(
-                    "object input does not declare materialize parameter `{name}`"
-                ));
+                return err(crate::error::RelationMaterializeError::ParamMissing {
+                    param: (*name).to_owned(),
+                });
             }
         }
         Ok(())
@@ -5844,10 +5947,12 @@ impl CapabilitySchema {
     /// CML mapping for this capability.
     ///
     /// Returns `Err` when this is a derived Get (`mapping` is `None`) — never panics.
-    pub fn require_mapping(&self) -> Result<&CapabilityMapping, String> {
+    pub fn require_mapping(&self) -> Result<&CapabilityMapping, MissingCapabilityMapping> {
         self.mapping
             .as_ref()
-            .ok_or_else(|| format!("capability '{}' has no CML mapping (derived)", self.name))
+            .ok_or_else(|| MissingCapabilityMapping {
+                capability: self.name.to_string(),
+            })
     }
 
     /// Receiver identity required by the domain operation. Transport mappings

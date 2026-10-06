@@ -21,9 +21,9 @@ pub use plasm_cml::{
     CapabilityTemplate, CmlCond, CmlEnv, CmlExpr, CmlRequest, CmlType, CompiledMultipartBody,
     CompiledMultipartPart, CompiledOperation, CompiledRequest, ConcatArraySource, CredentialSource,
     HttpBodyFormat, HttpMethod, HttpResponseDecode, MultipartBodySpec, MultipartPartSpec,
-    PaginationConfig, PaginationLocation, PaginationParam, PaginationParamRole, PaginationStop,
-    PaginationStrategyKind, PathSegment as CmlPathSegment, ResponsePreprocess, ValidatedPagination,
-    ViewCompiled, ViewTemplate,
+    PaginationConfig, PaginationContractError, PaginationLocation, PaginationParam,
+    PaginationParamRole, PaginationStop, PaginationStrategyKind, PathSegment as CmlPathSegment,
+    ResponsePreprocess, ValidatedPagination, ViewCompiled, ViewTemplate,
 };
 
 #[cfg(feature = "evm")]
@@ -39,7 +39,9 @@ pub use embed_decode::{decode_entities, decode_entities_with_cgs};
 pub use embed_target_decoder::entity_decoder_for_from_parent_get_target;
 pub use embed_tree::flatten_decoded_embed_descendants;
 pub use error::{CompileError, DecodeError};
-pub use json_path::path_expr_from_json_segments;
+mod catalog_template_error;
+pub use catalog_template_error::CatalogTemplateError;
+pub use json_path::{path_expr_from_json_segments, JsonPathError};
 pub use plasm_cml::CmlError;
 pub use predicate_compiler::*;
 

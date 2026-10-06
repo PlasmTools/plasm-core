@@ -413,7 +413,7 @@ async fn view_embed_materialize_errors_without_view_produced_relation_refs() {
     let err =
         evaluate_plasm_plan_dry(&s, &plan).expect_err("orphan view_embed must fail before run_ref");
     assert!(
-        err.contains("view_embed_proof") || err.contains("view-produced"),
+        err.to_string().contains("view_embed_proof") || err.to_string().contains("view-produced"),
         "expected view_embed validation error, got: {err}"
     );
 }

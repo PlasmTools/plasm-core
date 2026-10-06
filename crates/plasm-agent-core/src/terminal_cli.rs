@@ -1,6 +1,5 @@
 //! Strongly typed Clap surface for the remote `plasm` HTTP terminal.
 
-use anyhow::{bail, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
@@ -106,13 +105,19 @@ pub struct ContextArgs {
     pub intent: Option<String>,
 }
 
-pub fn validate_context_args(args: &ContextArgs) -> Result<()> {
+#[derive(Debug, thiserror::Error)]
+pub enum ContextArgsError {
+    #[error("context requires --intent (-i)")]
+    IntentRequired,
+}
+
+pub fn validate_context_args(args: &ContextArgs) -> Result<(), ContextArgsError> {
     if args
         .intent
         .as_deref()
         .is_none_or(|intent| intent.trim().is_empty())
     {
-        bail!("context requires --intent (-i)");
+        return Err(ContextArgsError::IntentRequired);
     }
     Ok(())
 }

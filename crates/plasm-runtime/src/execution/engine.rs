@@ -93,9 +93,7 @@ impl ExecuteOptions {
                     .as_ref()
                     .map(|material| material.compiled_catalog.clone())
             })
-            .ok_or_else(|| RuntimeError::ConfigurationError {
-                message: "execution requires an explicitly compiled catalog".into(),
-            })
+            .ok_or(RuntimeError::CompiledCatalogMissing)
     }
 }
 
@@ -245,12 +243,13 @@ impl ExecutionEngine {
             }) {
                 builder = builder.no_proxy();
             }
-            builder.build().map_err(|e| RuntimeError::RequestError {
-                message: format!("Failed to create HTTP client: {e}"),
-                attempts: 1,
-                status: None,
-                body: None,
-            })
+            builder
+                .build()
+                .map_err(|source| RuntimeError::HttpTransport {
+                    phase: crate::HttpTransportPhase::BuildClient,
+                    source: source.without_url(),
+                    attempts: 1,
+                })
         };
         let client = build_client(reqwest::redirect::Policy::default())?;
         let scoped_client = build_client(reqwest::redirect::Policy::none())?;
@@ -296,19 +295,18 @@ impl ExecutionEngine {
         use plasm_core::value::Value;
         use plasm_core::CapabilityKind;
 
-        let cap = cgs.get_capability(capability_name).ok_or_else(|| {
-            RuntimeError::ConfigurationError {
-                message: format!("schema overlay source capability '{capability_name}' not found"),
-            }
-        })?;
+        let cap =
+            cgs.get_capability(capability_name)
+                .ok_or_else(|| RuntimeError::CapabilityUnknown {
+                    capability: capability_name.to_owned(),
+                })?;
         if !matches!(
             cap.kind,
             CapabilityKind::Query | CapabilityKind::Get | CapabilityKind::Search
         ) {
-            return Err(RuntimeError::ConfigurationError {
-                message: format!(
-                    "schema overlay source capability '{capability_name}' must be query, get, or search"
-                ),
+            return Err(RuntimeError::ReadCapabilityRequired {
+                capability: capability_name.to_owned(),
+                actual: cap.kind,
             });
         }
         let template = compiled_catalog.capability(capability_name)?.clone();
@@ -362,9 +360,7 @@ impl ExecutionEngine {
     ) -> Result<(serde_json::Value, Option<String>, ExecutionSource), RuntimeError> {
         if matches!(compiled, CompiledOperation::CredentialBind(_)) {
             if mode != ExecutionMode::Live {
-                return Err(crate::credentials::credential_error(
-                    "credential effects require live reviewed execution",
-                ));
+                return Err(crate::credentials::CredentialError::LiveExecutionRequired.into());
             }
             let (response, link) = self.execute_operation_full(compiled).await?;
             return Ok((response, link, ExecutionSource::Live));
@@ -376,9 +372,9 @@ impl ExecutionEngine {
                 if self.transport.injects_host_auth() {
                     // Delegated injection is validated at dispatch, so a cache cannot bypass it.
                     if mode != ExecutionMode::Live {
-                        return Err(crate::credentials::credential_error(
-                            "scoped delegated authentication requires live dispatch",
-                        ));
+                        return Err(
+                            crate::credentials::CredentialError::LiveDispatchRequired.into()
+                        );
                     }
                     let (response, link) = self.execute_operation_full(compiled).await?;
                     return Ok((response, link, ExecutionSource::Live));
@@ -487,9 +483,7 @@ impl ExecutionEngine {
                     base.as_ref(),
                 )?;
                 if scope.origin != binding.origin {
-                    return Err(crate::credentials::credential_error(
-                        "credential binding origin does not match the executing catalog origin",
-                    ));
+                    return Err(crate::credentials::CredentialError::BindingOriginMismatch.into());
                 }
                 let reference = store
                     .bind(scope, binding.source, binding.lifetime_seconds)
@@ -517,10 +511,7 @@ impl ExecutionEngine {
                 let json = execute_evm_logs(rpc_url, auth.as_ref(), request).await?;
                 Ok((json, None))
             }
-            CompiledOperation::View(_) => Err(RuntimeError::ConfigurationError {
-                message: "composed views execute via Query (`transport: view`), not HTTP invoke"
-                    .into(),
-            }),
+            CompiledOperation::View(_) => Err(RuntimeError::ViewQueryDispatchRequired),
         };
         if out.is_ok() {
             append_request_fingerprint(fp.to_hex());
@@ -532,10 +523,7 @@ impl ExecutionEngine {
         self.config
             .base_url
             .as_deref()
-            .ok_or_else(|| RuntimeError::ConfigurationError {
-                message: "EVM transport requires ExecutionConfig.base_url to be set to an RPC URL"
-                    .to_string(),
-            })
+            .ok_or(RuntimeError::EvmRpcUrlMissing)
     }
 
     /// Resolves credentials for **EVM** RPC requests only (ignores per-session HTTP override).
@@ -637,17 +625,14 @@ impl ExecutionEngine {
                 opts.graph_page_spill.clone(),
                 &view_ambient,
             ),
-            Expr::Page(_) => Err(RuntimeError::ConfigurationError {
-                message: "`page(pg#)` continuations are executed via `ExecutionEngine::execute_pagination_resume`"
-                    .to_string(),
+            Expr::Page(_) => Err(RuntimeError::ContinuationDispatchRequired {
+                kind: crate::ContinuationKind::Page,
             }),
-            Expr::Wait(_) => Err(RuntimeError::ConfigurationError {
-                message: "`wait(sN_oM)` continuations are executed by the agent host (async plan poll)"
-                    .to_string(),
+            Expr::Wait(_) => Err(RuntimeError::ContinuationDispatchRequired {
+                kind: crate::ContinuationKind::Wait,
             }),
-            Expr::Cancel(_) => Err(RuntimeError::ConfigurationError {
-                message: "`cancel(sN_oM)` continuations are executed by the agent host (async plan cancel)"
-                    .to_string(),
+            Expr::Cancel(_) => Err(RuntimeError::ContinuationDispatchRequired {
+                kind: crate::ContinuationKind::Cancel,
             }),
             Expr::Get(get) => {
                 let get = get.clone();
@@ -690,10 +675,7 @@ impl ExecutionEngine {
                 });
                 Ok(stream)
             }
-            Expr::TeachingValue { .. } => Err(RuntimeError::ConfigurationError {
-                message: "`Expr::TeachingValue` is teaching-table-only (prompt teaching); it cannot be executed"
-                    .to_string(),
-            }),
+            Expr::TeachingValue { .. } => Err(RuntimeError::TeachingValueNotExecutable),
         }
     }
 }

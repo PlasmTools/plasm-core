@@ -123,15 +123,18 @@ impl<'de> Deserialize<'de> for MoneyWireFormat {
 
 /// Exact scaling entry point for language hosts. Decimal text avoids a binary
 /// floating-point round trip; currency and the existing Decimal precision are retained.
-pub fn scale_exact(value: &MoneyValue, factor: &str, divide: bool) -> Result<MoneyValue, String> {
-    let factor =
-        Decimal::from_str(factor).map_err(|e| format!("invalid exact money factor: {e}"))?;
+pub fn scale_exact(
+    value: &MoneyValue,
+    factor: &str,
+    divide: bool,
+) -> Result<MoneyValue, MoneyError> {
+    let factor = Decimal::from_str(factor).map_err(|_| MoneyError::InvalidScaleFactor)?;
     let amount = if divide {
         value.amount().checked_div(factor)
     } else {
         value.amount().checked_mul(factor)
     }
-    .ok_or("money arithmetic overflow or division by zero")?;
+    .ok_or(MoneyError::ArithmeticOverflowOrDivisionByZero)?;
     Ok(MoneyValue::new(
         amount.normalize(),
         value.currency().map(str::to_owned),
@@ -336,7 +339,7 @@ pub fn normalize(
 }
 
 /// Both currencies present and unequal (compare is illegal).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub struct CrossCurrencyError {
     left: String,
     right: String,
@@ -393,12 +396,10 @@ pub enum MoneyError {
     UnexpectedWireScalar { got: String },
     #[error("currency_field `{field}` must be a string, got {got}")]
     CurrencyFieldNotString { field: String, got: String },
-}
-
-impl From<MoneyError> for String {
-    fn from(e: MoneyError) -> Self {
-        e.to_string()
-    }
+    #[error("invalid exact money scale factor")]
+    InvalidScaleFactor,
+    #[error("money arithmetic overflow or division by zero")]
+    ArithmeticOverflowOrDivisionByZero,
 }
 
 /// Error only when both currencies are present and differ.
@@ -727,6 +728,19 @@ mod tests {
         assert_eq!(m.amount().to_string(), "10.5");
         let wire = m.encode_stored().unwrap();
         assert_eq!(wire, serde_json::json!(1050));
+    }
+
+    #[test]
+    fn exact_scaling_reports_semantic_errors() {
+        let value = MoneyValue::new(Decimal::ONE, None);
+        assert!(matches!(
+            scale_exact(&value, "not-a-decimal", false),
+            Err(MoneyError::InvalidScaleFactor)
+        ));
+        assert!(matches!(
+            scale_exact(&value, "0", true),
+            Err(MoneyError::ArithmeticOverflowOrDivisionByZero)
+        ));
     }
 
     #[test]

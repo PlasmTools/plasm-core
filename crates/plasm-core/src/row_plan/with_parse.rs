@@ -14,11 +14,9 @@ pub fn parse_with_body(body: &str) -> Result<Vec<WithColumn>, WithExprError> {
     for part in split_top_level_comma(body)? {
         let part = part.trim();
         let Some((name, expr)) = part.split_once(':') else {
-            return Err(WithExprError::Parse(format!(
-                "expected `name: expr`, got `{part}`"
-            )));
+            return Err(WithExprError::ColumnAssignmentRequired);
         };
-        let name = OutputName::new(name.trim().to_string()).map_err(WithExprError::BadColumn)?;
+        let name = OutputName::new(name.trim().to_string())?;
         let expr = parse_with_expr(expr.trim())?;
         columns.push(WithColumn { name, expr });
     }
@@ -50,19 +48,18 @@ fn top_level_chars(s: &str) -> Result<Vec<(usize, char)>, WithExprError> {
             '(' => stack.push(')'),
             ')' => {
                 if stack.pop() != Some(')') {
-                    return Err(WithExprError::Parse(
-                        "unbalanced expression parentheses".into(),
-                    ));
+                    return Err(WithExprError::UnbalancedParentheses);
                 }
             }
             _ if stack.is_empty() => top.push((i, c)),
             _ => {}
         }
     }
-    if quoted || !stack.is_empty() {
-        return Err(WithExprError::Parse(
-            "unterminated string or parenthesized expression".into(),
-        ));
+    if quoted {
+        return Err(WithExprError::UnterminatedString);
+    }
+    if !stack.is_empty() {
+        return Err(WithExprError::UnterminatedParentheses);
     }
     Ok(top)
 }
@@ -92,7 +89,7 @@ fn parse_arith(s: &str) -> Result<WithExpr, WithExprError> {
     }
     if let Ok(n) = s.parse::<f64>() {
         if !n.is_finite() {
-            return Err(WithExprError::Parse("number must be finite".into()));
+            return Err(WithExprError::NonFiniteNumber);
         }
         return Ok(WithExpr::Literal(WithLiteral::Number(s.to_owned())));
     }
@@ -175,32 +172,33 @@ fn parse_atom(s: &str) -> Result<WithExpr, WithExprError> {
         return Ok(WithExpr::Now);
     }
     if s.starts_with('"') {
-        let value = serde_json::from_str::<String>(s)
-            .map_err(|e| WithExprError::Parse(format!("invalid string literal: {e}")))?;
+        let value = serde_json::from_str::<String>(s).map_err(|source| {
+            WithExprError::StringLiteralJson {
+                source: source.into(),
+            }
+        })?;
         return Ok(WithExpr::Literal(WithLiteral::String(value)));
     }
     if let Some(rest) = s.strip_prefix("len(").and_then(|t| t.strip_suffix(')')) {
         return Ok(WithExpr::Len {
-            field: surface_field_path(rest.trim()).map_err(WithExprError::Parse)?,
+            field: surface_field_path(rest.trim())?,
         });
     }
     if let Some(rest) = s.strip_prefix("when(").and_then(|t| t.strip_suffix(')')) {
         return parse_when(rest);
     }
     if s.contains('|') {
-        return Err(WithExprError::Parse("row expressions do not accept template filter pipes; use Minijinja inside {{ }} in a string or per-row => <<TAG template".into()));
+        return Err(WithExprError::TemplatePipeForbidden);
     }
     if let Some(idx) = s.find('(') {
         if s.ends_with(')') {
             let fname = &s[..idx];
-            return Err(WithExprError::Parse(format!(
-                "unknown .with function `{fname}` (known calls: len, when; `now` is a word, not a call)"
-            )));
+            return Err(WithExprError::UnknownFunction {
+                name: fname.to_owned(),
+            });
         }
     }
-    surface_field_path(s)
-        .map(WithExpr::Field)
-        .map_err(WithExprError::Parse)
+    surface_field_path(s).map(WithExpr::Field)
 }
 
 /// Outer `(`…`)` only when that pair wraps the whole atom (`(now - t)`, not `(a)+(b)`).
@@ -240,9 +238,9 @@ fn strip_wrapping_parens(s: &str) -> Option<&str> {
 fn parse_when(args: &str) -> Result<WithExpr, WithExprError> {
     let parts = split_top_level_comma(args)?;
     if parts.len() != 3 {
-        return Err(WithExprError::Parse(
-            "when(pred, then, else) requires three arguments".into(),
-        ));
+        return Err(WithExprError::WhenArgumentCount {
+            actual: parts.len(),
+        });
     }
     let (lhs, op, rhs) = split_when_cmp(parts[0].trim())?;
     Ok(WithExpr::When {
@@ -277,27 +275,79 @@ fn split_when_cmp(s: &str) -> Result<(&str, PlanPredicateOp, &str), WithExprErro
             }
         }
     }
-    Err(WithExprError::Parse(format!(
-        "when() predicate must be a comparison, got `{s}`"
-    )))
+    Err(WithExprError::WhenComparisonRequired)
 }
 
-fn surface_field_path(s: &str) -> Result<FieldPath, String> {
+fn surface_field_path(s: &str) -> Result<FieldPath, WithExprError> {
     if !s.split('.').all(|part| {
         let mut chars = part.chars();
         chars.next().is_some_and(|c| c == '_' || c.is_alphabetic())
             && chars.all(|c| c == '_' || c.is_alphanumeric())
     }) {
-        return Err(format!(
-            "invalid computed field reference `{s}`; use a row field or a supported expression"
-        ));
+        return Err(WithExprError::InvalidFieldReference {
+            reference: s.to_owned(),
+        });
     }
-    FieldPath::from_dotted(s)
+    Ok(FieldPath::from_dotted(s)?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_failures_are_semantic() {
+        assert!(matches!(
+            parse_with_body("field"),
+            Err(WithExprError::ColumnAssignmentRequired)
+        ));
+        assert!(matches!(
+            parse_with_body("out: field)"),
+            Err(WithExprError::UnbalancedParentheses)
+        ));
+        assert!(matches!(
+            parse_with_body("out: (field"),
+            Err(WithExprError::UnterminatedParentheses)
+        ));
+        assert!(matches!(
+            parse_with_body("out: \"unfinished"),
+            Err(WithExprError::UnterminatedString)
+        ));
+        assert!(matches!(
+            parse_with_body("out: 1e999"),
+            Err(WithExprError::NonFiniteNumber)
+        ));
+        assert!(matches!(
+            parse_with_body("out: field | last"),
+            Err(WithExprError::TemplatePipeForbidden)
+        ));
+        assert!(
+            matches!(parse_with_body("out: unknown(field)"), Err(WithExprError::UnknownFunction { name }) if name == "unknown")
+        );
+        assert!(matches!(
+            parse_with_body("out: when(field, 1)"),
+            Err(WithExprError::WhenArgumentCount { actual: 2 })
+        ));
+        assert!(matches!(
+            parse_with_body("out: when(field, 1, 2)"),
+            Err(WithExprError::WhenComparisonRequired)
+        ));
+    }
+
+    #[test]
+    fn invalid_string_preserves_json_source_without_rendering_input() {
+        use std::error::Error;
+        let error = parse_with_body(r#"out: "private-value\q""#).unwrap_err();
+        assert!(
+            matches!(&error, WithExprError::StringLiteralJson { source } if source.is_syntax())
+        );
+        assert!(error.source().is_some());
+        assert!(matches!(
+            error.clone(),
+            WithExprError::StringLiteralJson { .. }
+        ));
+        assert!(!error.to_string().contains("private-value"));
+    }
 
     #[test]
     fn computed_expression_requires_complete_valid_syntax() {

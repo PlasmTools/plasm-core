@@ -7,6 +7,10 @@ use std::sync::Arc;
 use auth_framework::storage::AuthStorage;
 use serde_json::json;
 
+#[derive(Debug, thiserror::Error)]
+#[error("failed to store outbound OAuth binding pointer")]
+pub struct OAuthBindingWriteError(#[source] auth_framework::AuthError);
+
 /// Stable KV key for “which outbound token row is bound to this catalog entry”.
 pub fn oauth_binding_kv_key(entry_id: &str) -> String {
     format!("plasm:oauth_binding:v1:{}", entry_id.trim())
@@ -17,7 +21,7 @@ pub async fn write_oauth_binding_pointer(
     storage: &Arc<dyn AuthStorage>,
     entry_id: &str,
     hosted_kv_key: &str,
-) -> Result<(), String> {
+) -> Result<(), OAuthBindingWriteError> {
     let payload = json!({ "hosted_kv_key": hosted_kv_key }).to_string();
     storage
         .store_kv(
@@ -26,5 +30,32 @@ pub async fn write_oauth_binding_pointer(
             None,
         )
         .await
-        .map_err(|e| e.to_string())
+        .map_err(OAuthBindingWriteError)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pointer_write_fault_preserves_auth_storage_source() {
+        use std::error::Error;
+        let error = OAuthBindingWriteError(auth_framework::AuthError::Storage(
+            auth_framework::errors::StorageError::BackendUnavailable,
+        ));
+        let source = error.source().unwrap();
+        assert!(matches!(
+            source.downcast_ref::<auth_framework::AuthError>(),
+            Some(auth_framework::AuthError::Storage(
+                auth_framework::errors::StorageError::BackendUnavailable
+            ))
+        ));
+        assert!(matches!(
+            source
+                .source()
+                .unwrap()
+                .downcast_ref::<auth_framework::errors::StorageError>(),
+            Some(auth_framework::errors::StorageError::BackendUnavailable)
+        ));
+    }
 }

@@ -58,7 +58,9 @@ impl Lower<'_> {
         ) -> Result<(), PythonLoweringError> {
             use plasm_core::value_contract::ValueShape;
             if depth >= 64 {
-                return Err("capture refinement exceeds 64 levels".into());
+                return Err(
+                    crate::program_rejection::PythonProgramError::CaptureRefinementTooDeep.into(),
+                );
             }
             if let Some((name, rest)) = path.split_first() {
                 match &mut contract.shape {

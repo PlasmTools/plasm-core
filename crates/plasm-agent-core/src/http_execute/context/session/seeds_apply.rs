@@ -45,12 +45,7 @@ async fn resolve_execute_binding(
     let mut resolved: Option<(String, String)> = match binding {
         None => None,
         Some((ph, sid)) => {
-            if st
-                .try_get_execute_session(ph, sid)
-                .await
-                .map_err(|error| error.to_string())?
-                .is_some()
-            {
+            if st.try_get_execute_session(ph, sid).await?.is_some() {
                 Some((ph.to_string(), sid.to_string()))
             } else {
                 stale_execute_binding_recovered = true;
@@ -72,8 +67,7 @@ async fn resolve_execute_binding(
             if let Some(pair) = st.logical_execute_bindings.get(&uuid).await {
                 if st
                     .try_get_execute_session(&pair.0, &pair.1)
-                    .await
-                    .map_err(|error| error.to_string())?
+                    .await?
                     .is_some()
                 {
                     resolved = Some(pair);
@@ -90,7 +84,7 @@ async fn resolve_execute_binding(
             .map(|(ph, sid)| (ph.as_str(), sid.as_str()))
             != binding
     {
-        return Err("routed execute binding is unavailable; open a new context explicitly".into());
+        return Err(super::SessionMutateError::RoutedBindingUnavailable);
     }
     Ok(ResolvedExecuteBinding {
         binding: resolved,
@@ -210,7 +204,7 @@ pub async fn apply_capability_seeds(
     if seeds.is_empty() && st.discovery_route.is_some() {
         let (prompt_hash, session_id) = binding
             .as_ref()
-            .ok_or_else(|| "routing selected no capabilities for a new context".to_string())?;
+            .ok_or(super::SessionMutateError::EmptyRoutedCapabilityPlan)?;
         let coord_key = ExecuteCoordKey {
             prompt_hash: prompt_hash.clone(),
             session_id: session_id.clone(),
@@ -227,12 +221,12 @@ pub async fn apply_capability_seeds(
                 .await?;
                 let session = st
                     .try_get_execute_session(prompt_hash, session_id)
-                    .await
-                    .map_err(|error| error.to_string())?
-                    .ok_or_else(|| "routed execution session expired".to_string())?;
-                let exposure = session.teaching_exposure.as_ref().ok_or_else(|| {
-                    "routed execution session has no teaching exposure".to_string()
-                })?;
+                    .await?
+                    .ok_or(super::SessionMutateError::RoutedSessionExpired)?;
+                let exposure = session
+                    .teaching_exposure
+                    .as_ref()
+                    .ok_or(super::SessionMutateError::RoutedTeachingExposureMissing)?;
                 Ok(ApplyCapabilitySeedsOutcome {
                     prompt_hash: prompt_hash.clone(),
                     session_id: session_id.clone(),
@@ -255,7 +249,7 @@ pub async fn apply_capability_seeds(
     let seeds = resolve_capability_seeds(seeds, &st.catalog.snapshot(), None)?;
 
     let plan = build_capability_exposure_plan(&seeds)
-        .ok_or_else(|| "internal error: empty capability exposure plan".to_string())?;
+        .ok_or(super::SessionMutateError::EmptyCapabilityExposurePlan)?;
     let primary_entry_id = plan.primary_entry_id.clone();
 
     let mut all_eids: Vec<String> = plan.seeds_by_entry.keys().cloned().collect();
@@ -276,7 +270,7 @@ pub async fn apply_capability_seeds(
         )
     } else if let Some(engine_base) = st.engine.config().base_url.as_deref() {
         let override_url = crate::http_backend::ReplHttpOverride::from_engine_base(engine_base)
-            .map_err(|e| format!("invalid engine base_url: {e}"))?;
+            .map_err(super::SessionMutateError::HttpBackend)?;
         let mut map = HashMap::new();
         for eid in &all_eids {
             if let Some(m) = crate::session_bindings::repl_session_binding_map(
@@ -318,7 +312,9 @@ pub async fn apply_capability_seeds(
                 .seeds_by_entry
                 .get(&primary_entry_id)
                 .cloned()
-                .ok_or_else(|| "missing primary entities".to_string())?,
+                .ok_or_else(|| super::SessionMutateError::MissingPrimaryEntities {
+                    entry_id: primary_entry_id.clone(),
+                })?,
             principal: principal.clone(),
             logical_session_id,
             context_intent: normalize_context_intent_for_domain_filter(Some(plasm_context_intent)),
@@ -333,10 +329,7 @@ pub async fn apply_capability_seeds(
             st.session_coordination
                 .with_logical_open(uuid, || async {
                     if let Some(pair) = st.logical_execute_bindings.get(&uuid).await {
-                        if let Some(sess_arc) = st
-                            .try_get_execute_session(&pair.0, &pair.1)
-                            .await
-                            .map_err(|error| error.to_string())?
+                        if let Some(sess_arc) = st.try_get_execute_session(&pair.0, &pair.1).await?
                         {
                             return Ok::<CreateExecuteSessionResponse, super::SessionMutateError>(
                                 CreateExecuteSessionResponse {
@@ -435,8 +428,7 @@ pub async fn apply_capability_seeds(
                 .await?;
                 if let Some(sess_arc) = st
                     .try_get_execute_session(&prompt_hash, &session_id)
-                    .await
-                    .map_err(|error| error.to_string())?
+                    .await?
                 {
                     if let Some(ref exp) = sess_arc.teaching_exposure {
                         let catalogs_ready = plan
@@ -549,7 +541,8 @@ mod sufficiency_tests {
             run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
             session_graph_persistence: None,
             oss_local_filesystem_defaults: false,
-        });
+        })
+        .expect("valid catalog fixture");
         let logical = Uuid::new_v4();
         let opened = apply_capability_seeds(
             &host,

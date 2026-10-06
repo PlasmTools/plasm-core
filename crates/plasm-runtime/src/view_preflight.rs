@@ -94,11 +94,11 @@ impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
         let source_name = self
             .cgs
             .view_node_entity(view, &traverse.node)
-            .map_err(|message| RuntimeError::ConfigurationError { message })?;
+            .map_err(RuntimeError::ViewNodeResolution)?;
         let target = self
             .cgs
             .view_node_entity(view, &node.id)
-            .map_err(|message| RuntimeError::ConfigurationError { message })?;
+            .map_err(RuntimeError::ViewNodeResolution)?;
         let relation = &self
             .cgs
             .get_entity(source_name.as_str())
@@ -235,11 +235,11 @@ impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
             self.ambient,
             self.mat,
         )
-        .map_err(|e| RuntimeError::ConfigurationError {
-            message: format!(
-                "view `{}` node `{}` (capability `{}`): {e}",
-                ctx.view_name, node.id, node.capability
-            ),
+        .map_err(|source| RuntimeError::ViewNode {
+            view: ctx.view_name.to_owned(),
+            node: node.id.clone(),
+            capability: node.capability.clone(),
+            source: Box::new(source),
         })?;
         let mut bound_values = IndexMap::with_capacity(node.bind.len());
         for (param, bspec) in &node.bind {
@@ -266,11 +266,11 @@ impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
             self.ambient,
             self.mat,
         )
-        .map_err(|e| RuntimeError::ConfigurationError {
-            message: format!(
-                "view `{}` node `{}` (capability `{}`): {e}",
-                ctx.view_name, node.id, node.capability
-            ),
+        .map_err(|source| RuntimeError::ViewNode {
+            view: ctx.view_name.to_owned(),
+            node: node.id.clone(),
+            capability: node.capability.clone(),
+            source: Box::new(source),
         })?;
         stub_get_result(cap, self.cgs, bound)
     }
@@ -289,11 +289,11 @@ impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
             self.ambient,
             self.mat,
         )
-        .map_err(|e| RuntimeError::ConfigurationError {
-            message: format!(
-                "view `{}` node `{}` (capability `{}`): {e}",
-                ctx.view_name, node.id, node.capability
-            ),
+        .map_err(|source| RuntimeError::ViewNode {
+            view: ctx.view_name.to_owned(),
+            node: node.id.clone(),
+            capability: node.capability.clone(),
+            source: Box::new(source),
         })?;
         stub_query_result(cap, self.cgs, &IndexMap::new())
     }

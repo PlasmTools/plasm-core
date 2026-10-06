@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 use crate::execute_session::ExecuteSession;
 use crate::plan_dry_display::{
@@ -16,6 +17,37 @@ use crate::plasm_plan_run::DryPlasmPlanEvaluation;
 
 /// Bumped to 3 for the mandatory `flow` field (Flow tab — data-flow reflection).
 pub const PLAN_UX_REFLECTION_SCHEMA_VERSION: u32 = 3;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlanUxReflectionSurface {
+    Reflection,
+    Flow,
+}
+
+impl std::fmt::Display for PlanUxReflectionSurface {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Reflection => "plan_ux_reflection",
+            Self::Flow => "plan_ux_reflection.flow",
+        })
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum PlanUxReflectionWireError {
+    #[error("{surface} invalid: {source}")]
+    Deserialize {
+        surface: PlanUxReflectionSurface,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("{surface}.schema_version must be {expected} (got {actual})")]
+    SchemaVersionMismatch {
+        surface: PlanUxReflectionSurface,
+        expected: u32,
+        actual: u32,
+    },
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -208,14 +240,21 @@ pub fn plan_ux_reflection_value(
 }
 
 /// Reject stale or partial `plan_ux_reflection` wire (exact schema cutover).
-pub fn validate_plan_ux_reflection_wire(v: &serde_json::Value) -> Result<(), String> {
-    let reflection: PlanUxReflection = serde_json::from_value(v.clone())
-        .map_err(|e| format!("plan_ux_reflection invalid: {e}"))?;
+pub fn validate_plan_ux_reflection_wire(
+    v: &serde_json::Value,
+) -> Result<(), PlanUxReflectionWireError> {
+    let reflection: PlanUxReflection = serde_json::from_value(v.clone()).map_err(|source| {
+        PlanUxReflectionWireError::Deserialize {
+            surface: PlanUxReflectionSurface::Reflection,
+            source,
+        }
+    })?;
     if reflection.schema_version != PLAN_UX_REFLECTION_SCHEMA_VERSION {
-        return Err(format!(
-            "plan_ux_reflection.schema_version must be {} (got {})",
-            PLAN_UX_REFLECTION_SCHEMA_VERSION, reflection.schema_version
-        ));
+        return Err(PlanUxReflectionWireError::SchemaVersionMismatch {
+            surface: PlanUxReflectionSurface::Reflection,
+            expected: PLAN_UX_REFLECTION_SCHEMA_VERSION,
+            actual: reflection.schema_version,
+        });
     }
     Ok(())
 }
@@ -558,6 +597,13 @@ mod tests {
             }
         });
         let err = validate_plan_ux_reflection_wire(&stale).unwrap_err();
-        assert!(err.contains("schema_version must be 3"), "{err}");
+        assert!(matches!(
+            err,
+            PlanUxReflectionWireError::SchemaVersionMismatch {
+                surface: PlanUxReflectionSurface::Reflection,
+                expected: 3,
+                actual: 2,
+            }
+        ));
     }
 }

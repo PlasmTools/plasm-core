@@ -1,8 +1,26 @@
 //! Local receipt mirror; the server owns selection, generation pins and symbols.
 
 use crate::terminal_state::{symbol_state_path, ExecutionBinding};
-use anyhow::{anyhow, ensure, Result};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum RoutedTerminalSessionError {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error("terminal receipt serialization failed")]
+    Serialize(#[source] serde_json::Error),
+    #[error(
+        "terminal receipt is not valid routed-session JSON; open an intent-only context with --new"
+    )]
+    InvalidReceipt(#[source] serde_json::Error),
+    #[error("routed terminal session version {actual} is unsupported; open context --new")]
+    UnsupportedVersion { actual: u32 },
+    #[error(
+        "routed terminal receipt belongs to session {actual}, not requested session {expected}"
+    )]
+    SessionMismatch { expected: String, actual: String },
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -15,24 +33,32 @@ pub struct RoutedTerminalSession {
 }
 
 impl RoutedTerminalSession {
-    pub fn persist(&self, server: &str) -> Result<()> {
+    pub fn persist(&self, server: &str) -> Result<(), RoutedTerminalSessionError> {
         let path = symbol_state_path(server, &self.client_session_id);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(path, serde_json::to_vec_pretty(self)?)?;
+        let bytes =
+            serde_json::to_vec_pretty(self).map_err(RoutedTerminalSessionError::Serialize)?;
+        std::fs::write(path, bytes)?;
         Ok(())
     }
 
-    pub fn load_from_disk(server: &str, id: &str) -> Result<Self> {
+    pub fn load_from_disk(server: &str, id: &str) -> Result<Self, RoutedTerminalSessionError> {
         let raw = std::fs::read(symbol_state_path(server, id))?;
-        let state: Self = serde_json::from_slice(&raw).map_err(|_| {
-            anyhow!("terminal state requires cutover; open an intent-only context with --new")
-        })?;
-        ensure!(
-            state.version == 2 && state.client_session_id == id,
-            "invalid routed terminal state; open context --new"
-        );
+        let state: Self =
+            serde_json::from_slice(&raw).map_err(RoutedTerminalSessionError::InvalidReceipt)?;
+        if state.version != 2 {
+            return Err(RoutedTerminalSessionError::UnsupportedVersion {
+                actual: state.version,
+            });
+        }
+        if state.client_session_id != id {
+            return Err(RoutedTerminalSessionError::SessionMismatch {
+                expected: id.to_owned(),
+                actual: state.client_session_id,
+            });
+        }
         Ok(state)
     }
 }

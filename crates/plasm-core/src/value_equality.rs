@@ -6,9 +6,38 @@ use crate::{
     FieldType, Value,
 };
 use std::hash::Hasher;
+use thiserror::Error;
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum ValueEqualityError {
+    #[error("equality contract nesting exceeds the maximum depth")]
+    ContractDepthExceeded,
+    #[error("equality value nesting exceeds the maximum depth")]
+    ValueDepthExceeded,
+    #[error("invalid container representation: {0}")]
+    InvalidContainer(&'static str),
+    #[error("required record fields are not observed")]
+    RequiredFieldUnobserved,
+    #[error("record contains an undeclared field")]
+    UndeclaredField,
+    #[error("value inhabits no equality union variant")]
+    NoUnionVariant,
+    #[error("value has an ambiguous semantic union key")]
+    AmbiguousUnion,
+    #[error("value does not inhabit the declared equality domain")]
+    InvalidRepresentation,
+    #[error("equality domain is uninhabited")]
+    UninhabitedDomain,
+    #[error(transparent)]
+    Ordering(#[from] crate::value_order::OrderingError),
+    #[error(transparent)]
+    Temporal(#[from] crate::value_order::TemporalValueError),
+    #[error(transparent)]
+    Hash(#[from] crate::value_hash::ValueHashError),
+}
 
 pub trait Equatable {
-    fn equality(&self) -> Result<ValueEquality<'_>, String>;
+    fn equality(&self) -> Result<ValueEquality<'_>, ValueEqualityError>;
 }
 #[derive(Clone, Copy)]
 pub struct ValueEquality<'a>(&'a ValueContract);
@@ -32,10 +61,10 @@ impl PartialEq for UnorderedKeys<'_> {
     }
 }
 impl Equatable for ValueContract {
-    fn equality(&self) -> Result<ValueEquality<'_>, String> {
-        fn check(c: &ValueContract, depth: usize) -> Result<(), String> {
+    fn equality(&self) -> Result<ValueEquality<'_>, ValueEqualityError> {
+        fn check(c: &ValueContract, depth: usize) -> Result<(), ValueEqualityError> {
             if depth >= 64 {
-                return Err("equality contract depth exceeded".into());
+                return Err(ValueEqualityError::ContractDepthExceeded);
             }
             match &c.shape {
                 ValueShape::Array { element } | ValueShape::Set { element } => {
@@ -65,16 +94,20 @@ impl Equatable for ValueContract {
     }
 }
 impl ValueEquality<'_> {
-    pub fn key<'a>(&self, value: &'a Value) -> Result<ValueKey<'a>, String> {
+    pub fn key<'a>(&self, value: &'a Value) -> Result<ValueKey<'a>, ValueEqualityError> {
         key(self.0, value, 0)
     }
-    pub fn equivalent(&self, left: &Value, right: &Value) -> Result<bool, String> {
+    pub fn equivalent(&self, left: &Value, right: &Value) -> Result<bool, ValueEqualityError> {
         Ok(self.key(left)? == self.key(right)?)
     }
 }
-fn key<'a>(c: &ValueContract, v: &'a Value, depth: usize) -> Result<ValueKey<'a>, String> {
+fn key<'a>(
+    c: &ValueContract,
+    v: &'a Value,
+    depth: usize,
+) -> Result<ValueKey<'a>, ValueEqualityError> {
     if depth >= 64 {
-        return Err("equality value depth exceeded".into());
+        return Err(ValueEqualityError::ValueDepthExceeded);
     }
     // Null placement/presence is an operator concern; null is one distinct key.
     if v.is_null() {
@@ -84,7 +117,7 @@ fn key<'a>(c: &ValueContract, v: &'a Value, depth: usize) -> Result<ValueKey<'a>
         ValueShape::MappingRecord { record } => return key(record, v, depth + 1),
         ValueShape::Set { element } => KeyKind::Set(UnorderedKeys(
             v.as_array()
-                .ok_or("expected set encoding")?
+                .ok_or(ValueEqualityError::InvalidContainer("set"))?
                 .iter()
                 .map(|v| key(element, v, depth + 1))
                 .collect::<Result<_, _>>()?,
@@ -95,7 +128,7 @@ fn key<'a>(c: &ValueContract, v: &'a Value, depth: usize) -> Result<ValueKey<'a>
         }
         ValueShape::Array { element } => KeyKind::Array(
             v.as_array()
-                .ok_or("expected array key")?
+                .ok_or(ValueEqualityError::InvalidContainer("array"))?
                 .iter()
                 .map(|v| key(element, v, depth + 1))
                 .collect::<Result<_, _>>()?,
@@ -103,7 +136,7 @@ fn key<'a>(c: &ValueContract, v: &'a Value, depth: usize) -> Result<ValueKey<'a>
         ValueShape::Dictionary { value: element, .. } => {
             let mut keys = v
                 .as_object()
-                .ok_or("expected dictionary key")?
+                .ok_or(ValueEqualityError::InvalidContainer("dictionary"))?
                 .iter()
                 .map(|(name, value)| {
                     key(element, value, depth + 1).map(|value| (name.as_str(), value))
@@ -113,7 +146,9 @@ fn key<'a>(c: &ValueContract, v: &'a Value, depth: usize) -> Result<ValueKey<'a>
             KeyKind::Record(keys)
         }
         ValueShape::Record { fields } | ValueShape::ObservedRecord { fields, .. } => {
-            let values = v.as_object().ok_or("expected record key")?;
+            let values = v
+                .as_object()
+                .ok_or(ValueEqualityError::InvalidContainer("record"))?;
             let optional = match &c.shape {
                 ValueShape::ObservedRecord {
                     optional_fields, ..
@@ -123,15 +158,17 @@ fn key<'a>(c: &ValueContract, v: &'a Value, depth: usize) -> Result<ValueKey<'a>
             if fields.keys().any(|name| {
                 !values.contains_key(name) && !optional.is_some_and(|fields| fields.contains(name))
             }) {
-                return Err("required record key field is unobserved".into());
+                return Err(ValueEqualityError::RequiredFieldUnobserved);
             }
             let mut keys = values
                 .iter()
                 .map(|(name, v)| {
-                    let c = fields.get(name).ok_or("undeclared record key field")?;
+                    let c = fields
+                        .get(name)
+                        .ok_or(ValueEqualityError::UndeclaredField)?;
                     Ok((name.as_str(), key(c, v, depth + 1)?))
                 })
-                .collect::<Result<Vec<_>, String>>()?;
+                .collect::<Result<Vec<_>, ValueEqualityError>>()?;
             keys.sort_by_key(|(name, _)| *name);
             KeyKind::Record(keys)
         }
@@ -139,9 +176,9 @@ fn key<'a>(c: &ValueContract, v: &'a Value, depth: usize) -> Result<ValueKey<'a>
             let mut candidates = variants.iter().filter_map(|c| key(c, v, depth + 1).ok());
             let first = candidates
                 .next()
-                .ok_or("value inhabits no equality union variant")?;
+                .ok_or(ValueEqualityError::NoUnionVariant)?;
             if candidates.any(|k| k != first) {
-                return Err("ambiguous semantic union key".into());
+                return Err(ValueEqualityError::AmbiguousUnion);
             }
             first.0
         }
@@ -159,17 +196,17 @@ fn key<'a>(c: &ValueContract, v: &'a Value, depth: usize) -> Result<ValueKey<'a>
                 FieldType::Json | FieldType::Blob | FieldType::EntityRef { .. } => true,
             };
             if !valid {
-                return Err("value does not inhabit declared equality domain".into());
+                return Err(ValueEqualityError::InvalidRepresentation);
             }
             // Validate finite/resolved leaves before establishing reflexive equality.
             crate::hash_resolved_value(v, &mut std::hash::DefaultHasher::new())?;
             KeyKind::Native(v)
         }
-        ValueShape::Null | ValueShape::Never => return Err("uninhabited equality domain".into()),
+        ValueShape::Null | ValueShape::Never => return Err(ValueEqualityError::UninhabitedDomain),
     }))
 }
 impl ValueKey<'_> {
-    pub fn hash_into(&self, h: &mut impl Hasher) -> Result<(), String> {
+    pub fn hash_into(&self, h: &mut impl Hasher) -> Result<(), ValueEqualityError> {
         match &self.0 {
             KeyKind::Native(v) => {
                 h.write_u8(0);
@@ -198,7 +235,7 @@ impl ValueKey<'_> {
                         item.hash_into(&mut hash)?;
                         Ok(hash.finish())
                     })
-                    .collect::<Result<Vec<_>, String>>()?;
+                    .collect::<Result<Vec<_>, ValueEqualityError>>()?;
                 hashes.sort_unstable();
                 h.write_usize(hashes.len());
                 for hash in hashes {

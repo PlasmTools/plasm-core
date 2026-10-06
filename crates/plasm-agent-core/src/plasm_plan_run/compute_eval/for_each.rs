@@ -2,6 +2,14 @@ use super::super::*;
 use super::eval::{instantiate_expr_template, wire_coercion_by_alias_from_inputs};
 use super::materialized_result_use_inputs;
 
+fn for_each_failure(code: &'static str, diagnostic: impl Into<String>) -> ExecutionFailure {
+    ExecutionFailure::new(
+        plasm_runtime::FailureCause::Program,
+        code,
+        diagnostic.into(),
+    )
+}
+
 pub(crate) fn for_each_cross_uses(for_each: &ValidatedForEachNode) -> Vec<PlanResultUse> {
     cross_uses_excluding_item(&for_each.uses_result, &for_each.item_binding)
 }
@@ -53,9 +61,15 @@ pub(crate) fn render_for_each_expressions(
     cgs: &plasm_core::CGS,
     source_rows: &[serde_json::Value],
     materialized: Option<&BTreeMap<PlanNodeId, MaterializedNode>>,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>, super::eval::RuntimeOperandError> {
     let input_rows = if let Some(materialized) = materialized {
-        materialized_result_use_inputs(materialized, &for_each_cross_uses(for_each), None)?
+        materialized_result_use_inputs(materialized, &for_each_cross_uses(for_each), None).map_err(
+            |_| {
+                super::eval::RuntimeOperandError::MaterializedInput(
+                    super::eval::MaterializedInputError,
+                )
+            },
+        )?
     } else {
         BTreeMap::new()
     };
@@ -90,7 +104,10 @@ pub(crate) async fn materialize_for_each_node(
     plan_shared: Option<Arc<crate::plan_execute_shared::PlanLineExecuteShared>>,
 ) -> Result<MaterializedNode, ExecutionFailure> {
     let scoped_es =
-        entry_scoped_execute_session(es, Some(&for_each.effect_template.qualified_entity))?;
+        entry_scoped_execute_session(es, Some(&for_each.effect_template.qualified_entity))
+            .map_err(|diagnostic| {
+                for_each_failure("for_each_catalog_scope_unavailable", diagnostic.to_string())
+            })?;
     let source_rows = materialized_rows(es, st, session_id, materialized, &for_each.source).await?;
     let source_identities = materialized
         .get(&for_each.source)
@@ -104,13 +121,17 @@ pub(crate) async fn materialize_for_each_node(
         .unwrap_or_default();
     let mut input_rows =
         materialized_result_use_inputs(materialized, &for_each_cross_uses(for_each), None)?;
-    let wire_coercion_by_alias = wire_coercion_by_alias_from_inputs(es, &mut input_rows)?;
+    let wire_coercion_by_alias =
+        wire_coercion_by_alias_from_inputs(es, &mut input_rows).map_err(|diagnostic| {
+            for_each_failure("for_each_input_coercion_failed", diagnostic.to_string())
+        })?;
     let mut parsed_steps = Vec::with_capacity(source_rows.len());
     let mut expressions = Vec::with_capacity(source_rows.len());
     for row in &source_rows {
         let env = for_each_plan_eval_env(for_each, row, &input_rows, &wire_coercion_by_alias);
         let parsed =
-            instantiate_expr_template(&for_each.effect_template.ir_template, &env, &scoped_es.cgs)?;
+            instantiate_expr_template(&for_each.effect_template.ir_template, &env, &scoped_es.cgs)
+                .map_err(ExecutionFailure::from)?;
         expressions.push(crate::expr_display::expr_display(&parsed.expr));
         parsed_steps.push(parsed);
     }
@@ -132,7 +153,10 @@ pub(crate) async fn materialize_for_each_node(
             expr_label,
             parsed_expr,
             source_identities.get(row_index).cloned().flatten(),
-        )?;
+        )
+        .map_err(|diagnostic| {
+            for_each_failure("for_each_trace_index_invalid", diagnostic.to_string())
+        })?;
     }
     let fold = super::super::plan_fanout_parallel::execute_row_fanout(
         st,
@@ -155,7 +179,12 @@ pub(crate) async fn materialize_for_each_node(
     // Successful child calls cannot establish completeness of their input collection.
     let parent = &materialized
         .get(&for_each.source)
-        .ok_or("missing fanout source")?
+        .ok_or_else(|| {
+            for_each_failure(
+                "for_each_source_not_materialized",
+                "fanout source was not materialized",
+            )
+        })?
         .result
         .collection;
     super::super::materialize::archive_materialize_for_each_fanout(

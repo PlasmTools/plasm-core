@@ -1,11 +1,26 @@
 //! Append-only per-session mirror archive (`s/<id>/out/NNNN-kind/`).
 
-use anyhow::{Context as _, Result};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
+use thiserror::Error;
 
 use crate::resolved_plan_http::ResolvedPlanResponse;
 use crate::terminal_state::{display_mirror_path, session_dir, session_out_dir};
+
+type Result<T> = std::result::Result<T, TerminalMirrorError>;
+
+#[derive(Debug, Error)]
+pub enum TerminalMirrorError {
+    #[error("failed to {operation} `{path}`: {source}")]
+    Io {
+        operation: &'static str,
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("failed to serialize mirrored JSON: {0}")]
+    Json(#[from] serde_json::Error),
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MirrorOpKind {
@@ -34,11 +49,19 @@ pub struct SessionMirror {
 impl SessionMirror {
     pub fn open(session_id: &str) -> Result<Self> {
         let out_root = session_out_dir(session_id);
-        std::fs::create_dir_all(&out_root)?;
+        std::fs::create_dir_all(&out_root).map_err(|source| TerminalMirrorError::Io {
+            operation: "create directory",
+            path: out_root.clone(),
+            source,
+        })?;
         let seq_path = out_root.join(".seq");
         let next_seq = if seq_path.exists() {
-            let raw = std::fs::read_to_string(&seq_path)
-                .with_context(|| format!("read {}", seq_path.display()))?;
+            let raw =
+                std::fs::read_to_string(&seq_path).map_err(|source| TerminalMirrorError::Io {
+                    operation: "read sequence file",
+                    path: seq_path.clone(),
+                    source,
+                })?;
             raw.trim().parse::<u64>().unwrap_or(0)
         } else {
             0
@@ -53,9 +76,19 @@ impl SessionMirror {
         self.next_seq = self.next_seq.saturating_add(1);
         let dir_name = format!("{:04}-{}", self.next_seq, kind.dir_suffix());
         let dir = session_out_dir(&self.session_id).join(&dir_name);
-        std::fs::create_dir_all(&dir)?;
+        std::fs::create_dir_all(&dir).map_err(|source| TerminalMirrorError::Io {
+            operation: "create operation directory",
+            path: dir.clone(),
+            source,
+        })?;
         let seq_path = session_out_dir(&self.session_id).join(".seq");
-        std::fs::write(&seq_path, self.next_seq.to_string())?;
+        std::fs::write(&seq_path, self.next_seq.to_string()).map_err(|source| {
+            TerminalMirrorError::Io {
+                operation: "write sequence file",
+                path: seq_path,
+                source,
+            }
+        })?;
         Ok(dir)
     }
 
@@ -68,13 +101,23 @@ impl SessionMirror {
 
     pub fn update_latest_pointer(&self, rel_from_session: &str) -> Result<()> {
         let path = session_dir(&self.session_id).join("latest");
-        std::fs::write(&path, format!("{rel_from_session}\n"))?;
+        std::fs::write(&path, format!("{rel_from_session}\n")).map_err(|source| {
+            TerminalMirrorError::Io {
+                operation: "update latest pointer",
+                path,
+                source,
+            }
+        })?;
         Ok(())
     }
 
     pub fn write_file(&self, dir: &Path, name: &str, bytes: &[u8]) -> Result<PathBuf> {
         let path = dir.join(name);
-        std::fs::write(&path, bytes)?;
+        std::fs::write(&path, bytes).map_err(|source| TerminalMirrorError::Io {
+            operation: "write mirror file",
+            path: path.clone(),
+            source,
+        })?;
         Ok(path)
     }
 
@@ -89,21 +132,38 @@ impl SessionMirror {
         if let Ok(v) = serde_json::from_slice::<Value>(raw) {
             let json_path = dir.join(format!("{base}.json"));
             let pretty = serde_json::to_string_pretty(&v)?;
-            std::fs::write(&json_path, &pretty)?;
+            std::fs::write(&json_path, &pretty).map_err(|source| TerminalMirrorError::Io {
+                operation: "write JSON mirror",
+                path: json_path.clone(),
+                source,
+            })?;
             let txt = resolved_plan_text_from_value(&v).unwrap_or(pretty);
             let txt_path = dir.join(format!("{base}.txt"));
-            std::fs::write(&txt_path, txt)?;
+            std::fs::write(&txt_path, txt).map_err(|source| TerminalMirrorError::Io {
+                operation: "write text mirror",
+                path: txt_path.clone(),
+                source,
+            })?;
             return Ok((json_path, txt_path));
         }
         let text = String::from_utf8_lossy(raw).into_owned();
         let txt_path = dir.join(format!("{base}.txt"));
-        std::fs::write(&txt_path, &text)?;
+        std::fs::write(&txt_path, &text).map_err(|source| TerminalMirrorError::Io {
+            operation: "write text mirror",
+            path: txt_path.clone(),
+            source,
+        })?;
         let envelope = serde_json::json!({
             "content_type": content_type_hint.unwrap_or("text/plain"),
             "body": text,
         });
         let json_path = dir.join(format!("{base}.json"));
-        std::fs::write(&json_path, serde_json::to_string_pretty(&envelope)?)?;
+        let json = serde_json::to_string_pretty(&envelope)?;
+        std::fs::write(&json_path, json).map_err(|source| TerminalMirrorError::Io {
+            operation: "write JSON mirror",
+            path: json_path.clone(),
+            source,
+        })?;
         Ok((json_path, txt_path))
     }
 

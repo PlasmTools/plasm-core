@@ -3,6 +3,97 @@
 use super::*;
 use crate::plasm_comp_lift::ExecutablePlasmComp;
 use plasm_core::PlasmCompArtifact;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum DryPlanValidationError {
+    #[error(
+        "plan node {index} relation target catalog `{entry_id}` is not loaded in this session"
+    )]
+    RelationTargetCatalogNotLoaded { index: usize, entry_id: String },
+    #[error("plan node {index} relation target entity `{entity}` is not present in catalog `{entry_id}`")]
+    RelationTargetEntityNotPresent {
+        index: usize,
+        entity: String,
+        entry_id: String,
+    },
+    #[error(
+        "plan node {index} qualified entity catalog `{entry_id}` is not loaded in this session"
+    )]
+    QualifiedEntityCatalogNotLoaded { index: usize, entry_id: String },
+    #[error(
+        "plan node {index} qualified entity `{entity}` is not present in catalog `{entry_id}`"
+    )]
+    QualifiedEntityNotPresent {
+        index: usize,
+        entity: String,
+        entry_id: String,
+    },
+    #[error("plan node {index} has no qualified entity: {source}")]
+    SurfacePolicy {
+        index: usize,
+        #[source]
+        source: crate::plan_surface_policy::SurfaceQualifiedEntityPolicyError,
+    },
+    #[error("plan node {index} relation expression is not a relation chain")]
+    RelationExpressionNotChain { index: usize },
+    #[error("plan node {index} relation `{expected}` does not match parsed selector `{actual}`")]
+    RelationSelectorMismatch {
+        index: usize,
+        expected: String,
+        actual: String,
+    },
+    #[error("plan node {index} relation source ownership could not be resolved: {source}")]
+    RelationSourceOwnership {
+        index: usize,
+        #[source]
+        source: crate::catalog_ownership::CatalogOwnershipError,
+    },
+    #[error("plan node {index} relation source is not owned by a loaded catalog: {source}")]
+    RelationSourceQualification {
+        index: usize,
+        #[source]
+        source: plasm_core::CatalogOwnershipError,
+    },
+    #[error("plan node {index} relation source catalog `{entry_id}` is not loaded for entity `{entity}`")]
+    RelationSourceCatalogNotLoaded {
+        index: usize,
+        entry_id: String,
+        entity: String,
+    },
+    #[error(
+        "plan node {index} could not resolve navigation entity for chain root `{root_entity}`"
+    )]
+    RelationNavigationEntityUnresolved { index: usize, root_entity: String },
+    #[error("plan node {index} relation source entity `{entity}` is not present")]
+    RelationSourceEntityNotPresent { index: usize, entity: String },
+    #[error("plan node {index} source entity `{entity}` has no relation `{relation}`")]
+    RelationNotPresent {
+        index: usize,
+        entity: String,
+        relation: String,
+    },
+    #[error(
+        "plan node {index} relation target `{actual}` does not match catalog target `{expected}`"
+    )]
+    RelationTargetMismatch {
+        index: usize,
+        actual: String,
+        expected: String,
+    },
+    #[error("plan node {index} relation cardinality {actual:?} does not match catalog cardinality {expected:?}")]
+    RelationCardinalityMismatch {
+        index: usize,
+        actual: crate::plasm_plan::RelationCardinality,
+        expected: crate::plasm_plan::RelationCardinality,
+    },
+}
+
+impl From<DryPlanValidationError> for crate::program_diagnostic::ProgramStageError {
+    fn from(error: DryPlanValidationError) -> Self {
+        Self::plan(error)
+    }
+}
 
 #[path = "dry_render.rs"]
 mod dry_render;
@@ -28,14 +119,14 @@ pub fn evaluate_executable_comp_dry(
     if let Some(evidence) = crate::evidence_chain::chain(es) {
         evidence
             .record_comp_committed(comp)
-            .map_err(|e| ProgramStageError::plan(format!("evidence comp_committed: {e}")))?;
+            .map_err(ProgramStageError::plan)?;
     }
     let version = serde_json::json!(comp.version);
     let execution_unsupported = Vec::new();
     let prepared = crate::plan_prepare::prepare_executable_plan_for_session(es, comp, executable)
         .map_err(ProgramStageError::plan)?;
     crate::plan_session_provisions::validate(es, prepared.validated.nodes(), &executable.bind)
-        .map_err(ProgramStageError::plan)?;
+        .map_err(|error| ProgramStageError::SessionProvision { error })?;
     let (mut out, staged_nodes) = preflight_nodes(es, prepared.validated.artifact())?;
     let flow_catalog = es.build_flow_catalog_view();
     let topological_order: Vec<String> = executable
@@ -510,20 +601,21 @@ pub(crate) fn ensure_node_dispatchable(
     es: &ExecuteSession,
     node: &ValidatedPlanNode,
     index: usize,
-) -> Result<(), String> {
+) -> Result<(), DryPlanValidationError> {
     if let ValidatedPlanNode::RelationTraversal(relation) = node {
         let Some(ctx) = es.contexts_by_entry.get(&relation.relation.target.entry_id) else {
-            return Err(format!(
-                "plan.nodes[{index}].relation.target.entry_id {:?} is not loaded in this session",
-                relation.relation.target.entry_id
-            ));
+            return Err(DryPlanValidationError::RelationTargetCatalogNotLoaded {
+                index,
+                entry_id: relation.relation.target.entry_id.clone(),
+            });
         };
         let target = relation.relation.target.entity.as_str();
         if !ctx.cgs.entities.contains_key(target) {
-            return Err(format!(
-                "plan.nodes[{index}].relation.target entity {:?} is not present under entry_id {:?}",
-                relation.relation.target.entity, relation.relation.target.entry_id
-            ));
+            return Err(DryPlanValidationError::RelationTargetEntityNotPresent {
+                index,
+                entity: relation.relation.target.entity.clone(),
+                entry_id: relation.relation.target.entry_id.clone(),
+            });
         }
         return Ok(());
     };
@@ -541,20 +633,21 @@ pub(crate) fn ensure_node_dispatchable(
             q,
         )) => {
             let Some(ctx) = es.contexts_by_entry.get(&q.entry_id) else {
-                return Err(format!(
-                    "plan.nodes[{index}].qualified_entity.entry_id {:?} is not loaded in this session",
-                    q.entry_id
-                ));
+                return Err(DryPlanValidationError::QualifiedEntityCatalogNotLoaded {
+                    index,
+                    entry_id: q.entry_id.clone(),
+                });
             };
             if !ctx.cgs.entities.contains_key(q.entity.as_str()) {
-                return Err(format!(
-                    "plan.nodes[{index}].qualified_entity entity {:?} is not present under entry_id {:?}",
-                    q.entity, q.entry_id
-                ));
+                return Err(DryPlanValidationError::QualifiedEntityNotPresent {
+                    index,
+                    entity: q.entity.clone(),
+                    entry_id: q.entry_id.clone(),
+                });
             }
             Ok(())
         }
-        Err(reason) => Err(format!("plan.nodes[{index}] {reason}")),
+        Err(source) => Err(DryPlanValidationError::SurfacePolicy { index, source }),
     }
 }
 
@@ -563,18 +656,16 @@ pub(crate) fn ensure_relation_expr_matches_plan(
     relation: &crate::plasm_plan::ValidatedRelationTraversalNode,
     pe: &ParsedExpr,
     index: usize,
-) -> Result<(), String> {
+) -> Result<(), DryPlanValidationError> {
     let Expr::Chain(chain) = &pe.expr else {
-        return Err(format!(
-            "plan.nodes[{index}].relation.expr must parse to a Plasm relation chain"
-        ));
+        return Err(DryPlanValidationError::RelationExpressionNotChain { index });
     };
     if chain.selector != relation.relation.relation.as_str() {
-        return Err(format!(
-            "plan.nodes[{index}].relation relation {:?} does not match parsed selector {:?}",
-            relation.relation.relation.as_str(),
-            chain.selector
-        ));
+        return Err(DryPlanValidationError::RelationSelectorMismatch {
+            index,
+            expected: relation.relation.relation.to_string(),
+            actual: chain.selector.clone(),
+        });
     }
     let root_entity = chain.source.primary_entity();
     let federated = es.contexts_by_entry.len() > 1;
@@ -583,59 +674,62 @@ pub(crate) fn ensure_relation_expr_matches_plan(
         federated,
         None,
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|source| DryPlanValidationError::RelationSourceQualification { index, source })?;
     let source_cgs = if let Some(qe) = row_qe.as_ref() {
         es.contexts_by_entry
             .get(qe.entry_id())
             .map(|ctx| ctx.cgs.as_ref())
-            .ok_or_else(|| {
-                format!(
-                    "plan.nodes[{index}].relation unknown catalog entity `{}` for entry `{}`",
-                    qe.entity,
-                    qe.entry_id()
-                )
+            .ok_or_else(|| DryPlanValidationError::RelationSourceCatalogNotLoaded {
+                index,
+                entry_id: qe.entry_id().to_string(),
+                entity: qe.entity.to_string(),
             })?
     } else {
-        crate::catalog_ownership::resolve_cgs_for_entity(es, root_entity, None)?
+        crate::catalog_ownership::resolve_cgs_for_entity(es, root_entity, None)
+            .map_err(|source| DryPlanValidationError::RelationSourceOwnership { index, source })?
     };
     let source_entity = chain
         .source
         .relation_navigation_entity(source_cgs)
-        .ok_or_else(|| {
-            format!(
-                "plan.nodes[{index}].relation could not resolve navigation entity for chain root {root_entity:?}"
-            )
-        })?;
+        .ok_or_else(
+            || DryPlanValidationError::RelationNavigationEntityUnresolved {
+                index,
+                root_entity: root_entity.to_string(),
+            },
+        )?;
     let Some(source_def) = source_cgs.get_entity(source_entity.as_str()) else {
-        return Err(format!(
-            "plan.nodes[{index}].relation source entity {source_entity:?} is not present"
-        ));
+        return Err(DryPlanValidationError::RelationSourceEntityNotPresent {
+            index,
+            entity: source_entity.to_string(),
+        });
     };
     let Some(schema_relation) = source_def
         .relations
         .get(relation.relation.relation.as_str())
     else {
-        return Err(format!(
-            "plan.nodes[{index}].relation source entity {source_entity:?} has no relation {:?}",
-            relation.relation.relation.as_str()
-        ));
+        return Err(DryPlanValidationError::RelationNotPresent {
+            index,
+            entity: source_entity.to_string(),
+            relation: relation.relation.relation.to_string(),
+        });
     };
     if schema_relation.target_resource.as_str() != relation.relation.target.entity {
-        return Err(format!(
-            "plan.nodes[{index}].relation target {:?} does not match CGS target {:?}",
-            relation.relation.target.entity,
-            schema_relation.target_resource.as_str()
-        ));
+        return Err(DryPlanValidationError::RelationTargetMismatch {
+            index,
+            actual: relation.relation.target.entity.clone(),
+            expected: schema_relation.target_resource.to_string(),
+        });
     }
     let expected_cardinality = match schema_relation.cardinality {
         plasm_core::Cardinality::One => crate::plasm_plan::RelationCardinality::One,
         plasm_core::Cardinality::Many => crate::plasm_plan::RelationCardinality::Many,
     };
     if relation.relation.cardinality != expected_cardinality {
-        return Err(format!(
-            "plan.nodes[{index}].relation cardinality {:?} does not match CGS cardinality {:?}",
-            relation.relation.cardinality, expected_cardinality
-        ));
+        return Err(DryPlanValidationError::RelationCardinalityMismatch {
+            index,
+            actual: relation.relation.cardinality,
+            expected: expected_cardinality,
+        });
     }
     Ok(())
 }
@@ -650,26 +744,23 @@ fn compute_parallel_root_surfaces_only(plan: &Plan<ValidatedPlanState>) -> bool 
         })
 }
 
-fn surface_parsed_expr(
-    surface: &crate::plasm_plan::ValidatedSurfaceNode,
-    _step_idx: usize,
-) -> Result<Option<ParsedExpr>, String> {
+fn surface_parsed_expr(surface: &crate::plasm_plan::ValidatedSurfaceNode) -> Option<ParsedExpr> {
     if let Some(ir) = &surface.ir {
-        return Ok(Some(ParsedExpr {
+        return Some(ParsedExpr {
             expr: ir.expr.clone(),
             projection: ir.projection.clone(),
             field_dot_extract: None,
-        }));
+        });
     }
     if let Some(template) = &surface.ir_template {
         let expr = template.expr.clone();
-        return Ok(Some(ParsedExpr {
+        return Some(ParsedExpr {
             expr,
             projection: template.projection.clone(),
             field_dot_extract: None,
-        }));
+        });
     }
-    Ok(None)
+    None
 }
 
 pub(crate) fn dry_stage_result(index: usize, n: &ValidatedPlanNode) -> serde_json::Value {
@@ -825,7 +916,7 @@ pub(crate) fn preflight_nodes(
     let mut out = Vec::new();
     let mut staged_nodes = Vec::new();
     let dry_session = crate::plan_session_provisions::DryProvisionSession::new(es)
-        .map_err(ProgramStageError::plan)?;
+        .map_err(|error| ProgramStageError::SessionProvision { error })?;
     let es = dry_session.session();
     for (step_idx, n) in plan.nodes.iter().enumerate() {
         if let ValidatedPlanNode::IterateUntil(it) = n {
@@ -858,11 +949,11 @@ pub(crate) fn preflight_nodes(
             staged_nodes.push(format!("{} (map_body)", map.id));
             continue;
         }
-        ensure_node_dispatchable(es, n, step_idx).map_err(ProgramStageError::plan)?;
+        ensure_node_dispatchable(es, n, step_idx)?;
         if let ValidatedPlanNode::Compute(compute) = n {
             if matches!(compute.compute.op, ComputeOp::Python { .. }) {
                 crate::python_compute::validate_plan_compute(es, compute, &plan.nodes)
-                    .map_err(ProgramStageError::plan)?;
+                    .map_err(|error| ProgramStageError::PythonCompute { error })?;
             }
         }
         if let ValidatedPlanNode::RelationTraversal(relation) = n {
@@ -873,8 +964,7 @@ pub(crate) fn preflight_nodes(
             };
             typecheck_parsed_for_session(es, &pe)
                 .map_err(|error| ProgramStageError::CoreType { error })?;
-            ensure_relation_expr_matches_plan(es, relation, &pe, step_idx)
-                .map_err(ProgramStageError::plan)?;
+            ensure_relation_expr_matches_plan(es, relation, &pe, step_idx)?;
         }
         let nested_effect = match n {
             ValidatedPlanNode::ForEach(node) => Some(&node.effect_template),
@@ -883,7 +973,7 @@ pub(crate) fn preflight_nodes(
         };
         if let Some(effect) = nested_effect {
             let scoped = entry_scoped_execute_session(es, Some(&effect.qualified_entity))
-                .map_err(ProgramStageError::plan)?;
+                .map_err(|error| ProgramStageError::SessionCatalog { error })?;
             let parsed = ParsedExpr {
                 expr: effect.ir_template.expr.clone(),
                 projection: effect.ir_template.projection.clone(),
@@ -894,11 +984,11 @@ pub(crate) fn preflight_nodes(
             )?;
         }
         if let Some(surface) = n.as_surface() {
-            match surface_parsed_expr(surface, step_idx) {
-                Ok(Some(pe)) => {
+            match surface_parsed_expr(surface) {
+                Some(pe) => {
                     let scoped_es =
                         entry_scoped_execute_session(es, surface.qualified_entity.as_ref())
-                            .map_err(ProgramStageError::plan)?;
+                            .map_err(|error| ProgramStageError::SessionCatalog { error })?;
                     let normalized = if surface.ir.is_some() {
                         crate::execute_pipeline::PlasmPreflight::preflight_node_compile_dispatch(
                             es, &scoped_es, surface, &pe, step_idx,
@@ -959,23 +1049,28 @@ pub(crate) fn preflight_nodes(
                         "type_check": "ok",
                         "simulation": simulation
                     }));
-                    dry_session.stage(n).map_err(ProgramStageError::plan)?;
+                    dry_session
+                        .stage(n)
+                        .map_err(|error| ProgramStageError::SessionProvision { error })?;
                     continue;
                 }
-                Ok(None) => {
+                None => {
                     if n.depends_on().is_empty() && n.uses_result().is_empty() {
-                        return Err(ProgramStageError::plan(format!(
-                            "plan.nodes[{step_idx}] requires ir or ir_template for executable surface"
-                        )));
+                        return Err(ProgramStageError::plan(
+                            crate::program_diagnostic::PlanStageError::ExecutableSurfaceMissing {
+                                index: step_idx,
+                            },
+                        ));
                     }
                 }
-                Err(e) => return Err(ProgramStageError::plan(e)),
             }
         }
 
         staged_nodes.push(format!("{} ({:?})", n.id(), n.kind()));
         out.push(dry_stage_result(step_idx, n));
     }
-    dry_validate_staged_surfaces(es, plan).map_err(|e| ProgramStageError::plan(e.diagnostic()))?;
+    dry_validate_staged_surfaces(es, plan).map_err(|error| {
+        ProgramStageError::plan(crate::program_diagnostic::PlanStageError::DryStaging(error))
+    })?;
     Ok((out, staged_nodes))
 }

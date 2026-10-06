@@ -74,17 +74,23 @@ impl PlasmPreflight {
                     .map_err(ProgramStageError::plan)?;
             let entity = parsed.expr.primary_entity();
             let cgs = crate::catalog_ownership::resolve_cgs_for_entity(session, entity, None)
-                .map_err(ProgramStageError::plan)?;
+                .map_err(|error| ProgramStageError::CatalogOwnership { error })?;
             let Some(ent) = cgs.get_entity(entity) else {
-                return Err(ProgramStageError::plan(format!(
-                    "entity `{entity}` is not defined in the resolved catalog"
-                )));
+                return Err(ProgramStageError::plan(
+                    crate::program_diagnostic::PlanStageError::EntityMissing {
+                        entity: entity.to_string(),
+                    },
+                ));
             };
             if !ent.fields.contains_key(name.as_str()) && !ent.relations.contains_key(name.as_str())
             {
-                return Err(ProgramStageError::plan(format!(
-                    "projection field `{field}` (wire `{name}`) is not declared on entity `{entity}`"
-                )));
+                return Err(ProgramStageError::plan(
+                    crate::program_diagnostic::PlanStageError::ProjectionFieldMissing {
+                        field: field.to_string(),
+                        wire: name.to_string(),
+                        entity: entity.to_string(),
+                    },
+                ));
             }
         }
         Ok(PreflightToken::VERIFIED)
@@ -101,7 +107,7 @@ impl PlasmPreflight {
         Self::preflight_parsed_line(scoped_es, &label, parsed)?;
         let normalized =
             super::dispatch::prepare_parsed_expr_for_dispatch(federation_es, scoped_es, parsed)
-                .map_err(ProgramStageError::plan)?;
+                .map_err(ProgramStageError::from)?;
         Ok(PreflightNormalized::TypecheckedOnly(normalized))
     }
 
@@ -113,7 +119,7 @@ impl PlasmPreflight {
     ) -> Result<PreflightReport, ProgramStageError> {
         let typecheck = Self::typecheck_parsed_for_session(session, parsed)?;
         reject_domain_placeholder_in_executable(&parsed.expr)
-            .map_err(|e| ProgramStageError::plan(e.to_string()))?;
+            .map_err(|error| ProgramStageError::CoreType { error })?;
         let projection = Self::validate_projection_fields(session, parsed)?;
         Ok(PreflightReport {
             typecheck,
@@ -135,7 +141,7 @@ impl PlasmPreflight {
         let normalized = dispatch::preflight_surface_dispatch_after_typecheck(
             es, scoped_es, surface, parsed, step_idx,
         )
-        .map_err(ProgramStageError::plan)?;
+        .map_err(ProgramStageError::from)?;
         Ok(PreflightNormalized::Simulatable(normalized))
     }
 
@@ -153,7 +159,7 @@ impl PlasmPreflight {
             source,
             session.cgs.as_ref(),
         )
-        .map_err(ProgramStageError::plan)?;
+        .map_err(ProgramStageError::from)?;
         Ok(dry_run_simulation_for_session(session, &normalized))
     }
 }

@@ -4,6 +4,12 @@
 //! (e.g. end-user id) for multi-tenant credential lookup. Default and unknown values keep **`env`**
 //! resolution so local development and CI stay unchanged.
 
+#[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq)]
+pub enum AuthResolutionError {
+    #[error("a non-empty principal is required when PLASM_AUTH_RESOLUTION=delegated")]
+    PrincipalRequired,
+}
+
 /// Credential resolution strategy for HTTP execution (see [`crate::auth::AuthResolver`]).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AuthResolutionMode {
@@ -40,7 +46,7 @@ pub fn auth_resolution_mode_from_str(raw: Option<&str>) -> AuthResolutionMode {
 pub fn validate_principal_for_mode(
     mode: AuthResolutionMode,
     principal: Option<&str>,
-) -> Result<(), String> {
+) -> Result<(), AuthResolutionError> {
     match mode {
         AuthResolutionMode::Env => Ok(()),
         AuthResolutionMode::Delegated => {
@@ -48,10 +54,7 @@ pub fn validate_principal_for_mode(
             if ok {
                 Ok(())
             } else {
-                Err(
-                    "`principal` is required when PLASM_AUTH_RESOLUTION=delegated (non-empty string)"
-                        .to_string(),
-                )
+                Err(AuthResolutionError::PrincipalRequired)
             }
         }
     }

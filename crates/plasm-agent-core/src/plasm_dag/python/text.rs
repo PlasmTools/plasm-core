@@ -1,5 +1,6 @@
 //! Root text computations are reviewed DAG nodes, never evaluated during planning.
 use super::*;
+use crate::program_rejection::PythonLoweringInvariantError;
 
 use ruff_python_ast::ExprCall;
 
@@ -14,7 +15,14 @@ impl Lower<'_> {
         let code = self
             .methods
             .get(method)
-            .ok_or_else(|| at(site, "unknown compute method"))?
+            .ok_or_else(|| {
+                at(
+                    site,
+                    PythonSourceError::UnknownComputeMethod {
+                        method: method.to_owned(),
+                    },
+                )
+            })?
             .clone();
         let lowered = self.text_compute_source(site, call, code, id)?;
         self.used_methods.insert(method.to_owned());
@@ -28,9 +36,18 @@ impl Lower<'_> {
         code: String,
         id: &str,
     ) -> Result<String, PythonLoweringError> {
-        let parsed = ruff_python_parser::parse_module(&code).map_err(|e| e.to_string())?;
+        let parsed = ruff_python_parser::parse_module(&code).map_err(|error| {
+            PythonLoweringError::Source {
+                error: std::sync::Arc::new(crate::program_rejection::PythonSourceError::Parse {
+                    source: error,
+                }),
+                span: None,
+            }
+        })?;
         let Some(Stmt::FunctionDef(def)) = parsed.suite().last() else {
-            return Err("missing compute definition".into());
+            return Err(
+                crate::program_rejection::PythonComputeError::ComputeDefinitionMissing.into(),
+            );
         };
         let mut def = def.clone();
         let mut call = call.clone();
@@ -42,14 +59,24 @@ impl Lower<'_> {
             // does not. Use the same private unit port for declared computes
             // and pure helpers; it is not a user-visible dependency.
             let unit = ruff_python_parser::parse_module("def unit(__plasm_unit: int):\n    pass\n")
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| PythonLoweringError::Source {
+                    error: std::sync::Arc::new(
+                        crate::program_rejection::PythonSourceError::Parse { source: error },
+                    ),
+                    span: None,
+                })?;
             let Some(Stmt::FunctionDef(unit)) = unit.suite().first() else {
                 unreachable!()
             };
             def.parameters.args.push(unit.parameters.args[0].clone());
             call.arguments.args.push(
                 *ruff_python_parser::parse_expression("0")
-                    .map_err(|error| error.to_string())?
+                    .map_err(|error| PythonLoweringError::Source {
+                        error: std::sync::Arc::new(
+                            crate::program_rejection::PythonSourceError::Parse { source: error },
+                        ),
+                        span: None,
+                    })?
                     .into_syntax()
                     .body,
             );
@@ -61,7 +88,10 @@ impl Lower<'_> {
             .map(|expr| (None, expr))
             .collect();
         for keyword in &call.arguments.keywords {
-            let name = keyword.arg.as_ref().ok_or_else(|| at(site, "expanded keyword dependencies require a statically materialized argument mapping"))?;
+            let name = keyword
+                .arg
+                .as_ref()
+                .ok_or_else(|| at(site, PythonSourceError::ExpandedComputeKeywords))?;
             expressions.push((Some(name.to_string()), &keyword.value));
         }
         let shape = expressions
@@ -97,7 +127,7 @@ impl Lower<'_> {
                 let default = parameter
                     .default
                     .as_deref()
-                    .ok_or("binder omitted a required input")?;
+                    .ok_or(crate::program_rejection::PythonComputeError::BoundInputMissing)?;
                 bound.push((parameter.parameter.name.to_string(), default));
             }
         }
@@ -117,7 +147,9 @@ impl Lower<'_> {
                 let parameter = parameters
                     .iter()
                     .find(|parameter| parameter.parameter.name.as_str() == name)
-                    .ok_or("bound compute parameter has no materialization port")?;
+                    .ok_or(
+                        crate::program_rejection::PythonComputeError::MaterializationPortMissing,
+                    )?;
                 let mut argument_inputs = BTreeMap::new();
                 let value = self.scoped_value(expression, &mut argument_inputs)?;
                 let annotation = parameter.parameter.annotation.as_deref();
@@ -128,12 +160,15 @@ impl Lower<'_> {
                         if annotation.is_some_and(crate::python_compute::is_row_annotation)
                             && !singleton
                         {
-                            return Err(at(expression, "Row compute input requires a singleton; use list[Row] for a collection"));
+                            return Err(at(
+                                expression,
+                                PythonSourceError::RowComputeNeedsSingleton,
+                            ));
                         }
                         if singleton {
                             argument_inputs
                                 .get_mut(node)
-                                .ok_or("missing row input")?
+                                .ok_or(crate::program_rejection::PythonComputeError::ComputeRowInputMissing)?
                                 .cardinality = crate::plasm_plan::InputCardinality::Singleton;
                         }
                     }
@@ -177,7 +212,9 @@ impl Lower<'_> {
         };
         let parameter_count = parameters.len();
         drop(parameters);
-        let input = inferred_schema(self.es, &self.state, &source, 0)?.row_contract()?;
+        let input = inferred_schema(self.es, &self.state, &source, 0)?
+            .row_contract()
+            .map_err(PythonLoweringError::from)?;
         let needs_inference = def
             .parameters
             .posonlyargs
@@ -185,14 +222,14 @@ impl Lower<'_> {
             .chain(&def.parameters.args)
             .chain(&def.parameters.kwonlyargs)
             .any(|parameter| parameter.parameter.annotation.is_none());
-        let single_contract = if parameter_count == 1 && needs_inference {
-            Some(
-                super::super::binding_contract(&self.state, &source)
-                    .ok_or("compute input contract missing")?,
-            )
-        } else {
-            None
-        };
+        let single_contract =
+            if parameter_count == 1 && needs_inference {
+                Some(super::super::binding_contract(&self.state, &source).ok_or(
+                    crate::program_rejection::PythonComputeError::ComputeInputContractMissing,
+                )?)
+            } else {
+                None
+            };
         for parameter in def
             .parameters
             .posonlyargs
@@ -223,7 +260,12 @@ impl Lower<'_> {
             )?;
             parameter.parameter.annotation = Some(
                 ruff_python_parser::parse_expression(&annotation)
-                    .map_err(|error| error.to_string())?
+                    .map_err(|error| PythonLoweringError::Source {
+                        error: std::sync::Arc::new(
+                            crate::program_rejection::PythonSourceError::Parse { source: error },
+                        ),
+                        span: None,
+                    })?
                     .into_syntax()
                     .body,
             );
@@ -241,7 +283,7 @@ impl Lower<'_> {
                     .parameter
                     .annotation
                     .as_deref()
-                    .ok_or("internal compute input contract missing after inference")?;
+                .ok_or(crate::program_rejection::PythonComputeError::InferredComputeInputContractMissing)?;
                 let argument = if parameters.len() == 1 {
                     input.clone()
                 } else {
@@ -309,9 +351,11 @@ pub(super) fn inferred_schema(
 ) -> Result<SyntheticResultSchema, PythonLoweringError> {
     use super::super::types::DagNodeSource;
     if depth >= 64 {
-        return Err("inferred row schema depth exceeded".into());
+        return Err(PythonLoweringInvariantError::InferredSchemaDepthExceeded.into());
     }
-    let node = state.get(id).ok_or("missing inferred row source")?;
+    let node = state
+        .get(id)
+        .ok_or(PythonLoweringInvariantError::MissingInferredSourceNode)?;
     if let DagNodeSource::Derive {
         value_type: Some(schema),
         ..
@@ -325,7 +369,9 @@ pub(super) fn inferred_schema(
             .fields
             .into_iter()
             .find(|field| field.name.as_str() == wire)
-            .ok_or_else(|| format!("missing scalar value field {wire}"))?;
+            .ok_or_else(|| PythonLoweringInvariantError::ScalarValueFieldMissing {
+                field: wire.clone(),
+            })?;
         field.name = OutputName::new("value")?;
         return Ok(SyntheticResultSchema {
             optional_fields: Default::default(),
@@ -357,7 +403,8 @@ pub(super) fn inferred_schema(
     // A captured entity value contains data fields, not unexecuted navigation
     // capabilities. Apply this recursively, before constructing capture records.
     if implicit_entity_value(state, id, 0) {
-        let owner = compute_owner(state, id, 0).ok_or("missing input entity owner")?;
+        let owner = compute_owner(state, id, 0)
+            .ok_or(PythonLoweringInvariantError::InputEntityOwnerMissing)?;
         let cgs = crate::catalog_ownership::resolve_cgs_for_entry_entity(
             es,
             &owner.entry_id,
@@ -365,7 +412,7 @@ pub(super) fn inferred_schema(
         )?;
         let entity = cgs
             .get_entity(&owner.entity)
-            .ok_or("missing input entity")?;
+            .ok_or(PythonLoweringInvariantError::InputEntityMissing)?;
         schema
             .fields
             .retain(|field| entity.fields.contains_key(field.name.as_str()));
@@ -400,11 +447,11 @@ pub(super) fn derive_contract(
                     .fields
                     .first()
                     .and_then(|f| f.value_type.clone())
-                    .ok_or_else(|| "missing scalar value contract".to_string())?
+                    .ok_or(PythonLoweringInvariantError::ScopedOutputContractMissing)?
             } else {
                 schema.row_contract()?
             };
-            return Ok(
+            return Ok::<_, PythonLoweringError>(
                 if inputs.iter().any(|i| {
                     i.node == dependency
                         && i.cardinality == crate::plasm_plan::InputCardinality::Collection
@@ -423,11 +470,11 @@ pub(super) fn derive_contract(
         }
         let mut value = schema.row_contract()?;
         for name in path {
-            value = value.field(name)?;
+            value = value.field(name).map_err(PythonLoweringError::from)?;
         }
         Ok(value)
     })
-    .map_err(Into::into)
+    .map_err(PythonLoweringError::from)
 }
 
 /// Shared recursive input admission for root and scoped row computations.
@@ -437,7 +484,13 @@ pub(super) fn prepare_op(
     source: &str,
     code: &str,
 ) -> Result<ComputeOp, PythonLoweringError> {
-    let parsed = ruff_python_parser::parse_module(code).map_err(|e| e.to_string())?;
+    let parsed =
+        ruff_python_parser::parse_module(code).map_err(|error| PythonLoweringError::Source {
+            error: std::sync::Arc::new(crate::program_rejection::PythonSourceError::Parse {
+                source: error,
+            }),
+            span: None,
+        })?;
     let multiple = matches!(parsed.suite().last(), Some(Stmt::FunctionDef(def)) if def.parameters.args.len() > 1);
     let owner = if multiple {
         None
@@ -451,12 +504,12 @@ pub(super) fn prepare_op(
             .keys()
             .min()
             .cloned()
-            .ok_or("compute requires a pinned session context")?
+            .ok_or(PythonLoweringInvariantError::PinnedSessionContextMissing)?
     };
     let cgs = es
         .contexts_by_entry
         .get(&entry)
-        .ok_or("compute context is not loaded")?
+        .ok_or(PythonLoweringInvariantError::ComputeContextMissing)?
         .cgs
         .as_ref();
     let schema = inferred_schema(es, state, source, 0)?;
@@ -485,7 +538,7 @@ pub(super) fn prepare_op(
     if checked.contract.as_ref().map(|c| c.owner.entity.as_str())
         != owner.as_ref().map(|o| o.entity.as_str())
     {
-        return Err("compute annotation does not match source entity".into());
+        return Err(crate::program_rejection::PythonComputeError::AnnotationSourceMismatch.into());
     }
     Ok(ComputeOp::Python {
         source: code.to_owned(),

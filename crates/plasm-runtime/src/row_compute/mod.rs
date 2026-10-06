@@ -41,7 +41,7 @@ fn fixture_contract(rows: &[ValueRow]) -> plasm_core::value_contract::ValueContr
 fn evaluate_fixture(
     ops: &[plasm_core::ComputeOp],
     rows: &[ValueRow],
-) -> Result<ComputeEvalOutcome, String> {
+) -> Result<ComputeEvalOutcome, plasm_core::RowComputeError> {
     eval_compute_ops(ops, rows, &fixture_contract(rows))
 }
 
@@ -124,7 +124,7 @@ mod contract_tests {
     #[test]
     fn nested_cell_access_borrows_the_input_payload() {
         let rows = [row!({"value":{"nested":[1,2,3]}})];
-        let state = super::rows::ingest_rows(&rows, &super::fixture_contract(&rows)).unwrap();
+        let state = super::rows::ingest_rows(&rows, &super::fixture_contract(&rows));
         let cell = state.rows[0].get("value.nested").unwrap();
         assert!(std::ptr::eq(
             cell,

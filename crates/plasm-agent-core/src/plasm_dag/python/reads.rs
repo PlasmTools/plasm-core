@@ -26,7 +26,12 @@ impl Lower<'_> {
         let mut expr = match kind {
             CatalogReadKind::Query | CatalogReadKind::Search => {
                 if !call.arguments.args.is_empty() {
-                    return Err(at(site, "query/search require named selection arguments"));
+                    return Err(at(
+                        site,
+                        PythonSourceError::ReadPositionalArguments {
+                            actual: call.arguments.args.len(),
+                        },
+                    ));
                 }
                 let mut q = plasm_core::QueryExpr::all(owner.entity.as_str());
                 if let Some(capability) = &specific {
@@ -34,7 +39,7 @@ impl Lower<'_> {
                 } else if kind == CatalogReadKind::Search {
                     q.capability_name = Some(
                         cgs.primary_search_capability(owner.entity.as_str())
-                            .ok_or("entity has no primary search capability")?
+                            .ok_or(crate::program_rejection::PythonLoweringInvariantError::PrimarySearchCapabilityMissing)?
                             .name
                             .clone(),
                     );
@@ -45,9 +50,14 @@ impl Lower<'_> {
                     let key = kw
                         .arg
                         .as_ref()
-                        .ok_or_else(|| at(site, "keyword unpacking is not admitted"))?;
+                        .ok_or_else(|| at(site, PythonSourceError::SelectionUnpacking))?;
                     if !keys.insert(key.as_str()) {
-                        return Err(at(site, "duplicate selection argument"));
+                        return Err(at(
+                            site,
+                            PythonSourceError::DuplicateSelectionArgument {
+                                argument: key.to_string(),
+                            },
+                        ));
                     }
                     let field = self
                         .state
@@ -58,11 +68,11 @@ impl Lower<'_> {
                             ),
                             owner.entity.as_str(),
                             cgs.get_entity(owner.entity.as_str())
-                                .ok_or("missing entity")?,
+                                .ok_or(crate::program_rejection::PythonLoweringInvariantError::CatalogEntityMissing)?,
                             cgs,
                             key.as_str(),
                         )
-                        .map_err(|e| e.to_string())?;
+                        .map_err(PythonLoweringError::from)?;
                     predicates.push(plasm_core::Predicate::eq(
                         field,
                         self.write_value(&kw.value)?,
@@ -84,9 +94,9 @@ impl Lower<'_> {
                 plasm_core::Expr::Query(q)
             }
             CatalogReadKind::Get => {
-                let entity = cgs
-                    .get_entity(owner.entity.as_str())
-                    .ok_or("missing Get entity")?;
+                let entity = cgs.get_entity(owner.entity.as_str()).ok_or(
+                    crate::program_rejection::PythonLoweringInvariantError::GetEntityMissing,
+                )?;
                 let reference = if specific
                     .as_ref()
                     .and_then(|name| cgs.get_capability(name.as_str()))
@@ -94,53 +104,98 @@ impl Lower<'_> {
                     .is_some_and(|cap| !cap.get_requires_identity_anchor(cgs))
                 {
                     if !call.arguments.args.is_empty() || !call.arguments.keywords.is_empty() {
-                        return Err(at(site, "this Get takes no identity arguments"));
+                        return Err(at(
+                            site,
+                            PythonSourceError::NullaryGetArguments {
+                                positional: call.arguments.args.len(),
+                                keywords: call.arguments.keywords.len(),
+                            },
+                        ));
                     }
                     plasm_core::GetExpr::pathless_nullary(owner.entity.as_str()).reference
                 } else if entity.key_vars.len() > 1 {
                     if !call.arguments.args.is_empty() {
                         return Err(at(
                             site,
-                            "compound Get requires exactly its named identity keys",
+                            PythonSourceError::CompoundGetArgumentShape {
+                                entity: owner.entity.to_string(),
+                                expected: entity.key_vars.iter().map(ToString::to_string).collect(),
+                                positional: call.arguments.args.len(),
+                            },
                         ));
                     }
                     let mut slots = BTreeMap::new();
                     for kw in &call.arguments.keywords {
-                        let key = kw.arg.as_ref().ok_or_else(|| {
-                            at(site, "identity keyword unpacking is not admitted")
-                        })?;
+                        let key = kw
+                            .arg
+                            .as_ref()
+                            .ok_or_else(|| at(site, PythonSourceError::IdentityUnpacking))?;
                         if !entity.key_vars.iter().any(|k| k.as_str() == key.as_str()) {
-                            return Err(at(site, "unknown compound identity key"));
+                            return Err(at(
+                                site,
+                                PythonSourceError::UnknownCompoundIdentityKey {
+                                    entity: owner.entity.to_string(),
+                                    key: key.to_string(),
+                                },
+                            ));
                         }
                         if slots
                             .insert(key.to_string(), self.identity_slot(&kw.value)?)
                             .is_some()
                         {
-                            return Err(at(site, "duplicate compound identity key"));
+                            return Err(at(
+                                site,
+                                PythonSourceError::DuplicateCompoundIdentityKey {
+                                    entity: owner.entity.to_string(),
+                                    key: key.to_string(),
+                                },
+                            ));
                         }
                     }
                     if slots.len() != entity.key_vars.len() {
-                        return Err(at(site, "compound Get requires every identity key"));
+                        return Err(at(
+                            site,
+                            PythonSourceError::MissingCompoundIdentityKeys {
+                                entity: owner.entity.to_string(),
+                                missing: entity
+                                    .key_vars
+                                    .iter()
+                                    .filter(|key| !slots.contains_key(key.as_str()))
+                                    .map(ToString::to_string)
+                                    .collect(),
+                            },
+                        ));
                     }
                     plasm_core::Ref::compound_slots(owner.entity.as_str(), slots)
                 } else {
                     if call.arguments.args.len() > 1 {
-                        return Err(at(site, "Get takes at most one positional identity"));
+                        return Err(at(
+                            site,
+                            PythonSourceError::GetPositionalArgumentCount {
+                                actual: call.arguments.args.len(),
+                            },
+                        ));
                     }
                     let mut identity = call.arguments.args.first();
                     for kw in &call.arguments.keywords {
-                        let key = kw.arg.as_ref().ok_or_else(|| {
-                            at(site, "identity keyword unpacking is not admitted")
-                        })?;
+                        let key = kw
+                            .arg
+                            .as_ref()
+                            .ok_or_else(|| at(site, PythonSourceError::IdentityUnpacking))?;
                         if key.as_str() != "identity" {
-                            return Err(at(site, "unexpected Get argument; expected identity"));
+                            return Err(at(
+                                site,
+                                PythonSourceError::UnexpectedGetArgument {
+                                    argument: key.to_string(),
+                                },
+                            ));
                         }
                         if identity.replace(&kw.value).is_some() {
-                            return Err(at(site, "Get received multiple values for identity"));
+                            return Err(at(site, PythonSourceError::DuplicateGetIdentity));
                         }
                     }
-                    let identity = identity
-                        .ok_or_else(|| at(site, "Get requires identity (positional or keyword)"))?;
+                    let identity =
+                        identity.ok_or_else(|| at(site, PythonSourceError::MissingGetIdentity))?;
                     match self.identity_slot(identity)? {
                         plasm_core::IdentitySlot::Binding(input) => {
                             plasm_core::Ref::simple_binding(owner.entity.as_str(), input)
@@ -157,7 +212,7 @@ impl Lower<'_> {
             }
         };
         plasm_core::apply_required_selection_defaults_in_expr(&mut expr, cgs, "")
-            .map_err(|e| e.to_string())?;
+            .map_err(PythonLoweringError::from)?;
         self.emit_catalog(id, expr)
     }
     fn identity_slot(
@@ -166,20 +221,24 @@ impl Lower<'_> {
     ) -> Result<plasm_core::IdentitySlot, PythonLoweringError> {
         let value = if let PyExpr::UnaryOp(unary) = e {
             if unary.op != ruff_python_ast::UnaryOp::USub {
-                return Err(at(e, "unsupported identity expression"));
+                return Err(at(e, PythonSourceError::UnsupportedIdentityExpression));
             }
             // Parse the signed spelling together so i64::MIN remains exact.
             let PyExpr::NumberLiteral(number) = &*unary.operand else {
-                return Err(at(e, "identity negation requires an integer literal"));
+                return Err(at(e, PythonSourceError::IdentityNegationRequiresInteger));
             };
             let ruff_python_ast::Number::Int(number) = &number.value else {
-                return Err(at(e, "IEEE float is not an identity literal"));
+                return Err(at(e, PythonSourceError::FloatIdentity));
             };
-            plasm_core::Value::Integer(
-                format!("-{number}")
-                    .parse()
-                    .map_err(|_| at(e, "integer identity out of range"))?,
-            )
+            plasm_core::Value::Integer(format!("-{number}").parse().map_err(|source| {
+                at(
+                    e,
+                    PythonSourceError::IntegerIdentityOutOfRange {
+                        literal: format!("-{number}"),
+                        source,
+                    },
+                )
+            })?)
         } else {
             self.write_value(e)?
         };
@@ -188,10 +247,7 @@ impl Lower<'_> {
             plasm_core::Value::String(id) => Ok(plasm_core::IdentitySlot::lit(id)),
             plasm_core::Value::Bool(id) => Ok(plasm_core::IdentitySlot::lit(id.to_string())),
             plasm_core::Value::Integer(id) => Ok(plasm_core::IdentitySlot::lit(id.to_string())),
-            _ => Err(at(
-                e,
-                "identity requires a string, exact integer, boolean or typed binding",
-            )),
+            _ => Err(at(e, PythonSourceError::ExpectedIdentityValue)),
         }
     }
     pub(super) fn filter(

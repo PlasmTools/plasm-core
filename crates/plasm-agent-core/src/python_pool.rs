@@ -4,10 +4,104 @@ use monty_pool::{on_print_sync, Checkout, Pool, PoolConfig, ReplConfig, TurnEven
 use monty_types::{MontyObject, MontyUuid, ResourceLimits};
 use plasm_runtime::{ExecutionFailure, FailureCause};
 use std::{collections::BTreeMap, path::PathBuf, time::Duration};
+use thiserror::Error;
 use tokio::sync::OnceCell;
 
 pub type Records = Vec<BTreeMap<String, String>>;
 pub type TypedRecords = Vec<BTreeMap<String, plasm_core::Value>>;
+
+#[derive(Debug, Error)]
+enum PythonValueConversionError {
+    #[error(transparent)]
+    Temporal(#[from] plasm_core::temporal_value::TemporalValueError),
+    #[error("Python union value has no matching representation")]
+    UnionRepresentationMissing,
+    #[error("Python record contains an undeclared field")]
+    UndeclaredRecordField,
+    #[error("mapping input requires a record contract")]
+    MappingRequiresRecord,
+    #[error("mapping input requires an object")]
+    MappingRequiresObject,
+    #[error("mapping input contains an undeclared field")]
+    UndeclaredMappingField,
+    #[error("set input requires an array")]
+    SetRequiresArray,
+    #[error("Python input contains an unresolved or non-finite value")]
+    UnsupportedValue,
+    #[error("temporal component `{name}` is absent after component validation")]
+    MissingTemporalComponent { name: &'static str },
+}
+
+#[derive(Debug, Error)]
+enum PythonOutputError {
+    #[error("Python output exceeded the depth or size budget")]
+    BudgetExceeded,
+    #[error("Python integer representation is invalid")]
+    InvalidInteger,
+    #[error("Python integer exceeds the Plasm integer range")]
+    IntegerOutOfRange,
+    #[error("Python float representation is invalid")]
+    InvalidFloat,
+    #[error("Python output must be finite")]
+    NonFiniteFloat,
+    #[error("Python collection representation is invalid")]
+    InvalidCollection,
+    #[error("Python output is not a Plasm value")]
+    UnsupportedValue,
+    #[error("Python record keys must be strings")]
+    NonStringRecordKey,
+    #[error("Python record contains a duplicate field")]
+    DuplicateRecordField,
+    #[error("Python output byte budget exceeded")]
+    ByteBudgetExceeded,
+    #[error(transparent)]
+    Temporal(#[from] PythonValueConversionError),
+}
+
+#[derive(Debug, Error)]
+enum PythonMoneyCallError {
+    #[error("{function}: unexpected arguments")]
+    UnexpectedArguments { function: String },
+    #[error("{function}: duplicate argument `{name}`")]
+    DuplicateArgument {
+        function: String,
+        name: &'static str,
+    },
+    #[error("{function}: missing argument `{name}`")]
+    MissingArgument {
+        function: String,
+        name: &'static str,
+    },
+    #[error(transparent)]
+    Output(#[from] PythonOutputError),
+    #[error(transparent)]
+    Money(#[from] crate::python_money::PythonMoneyError),
+}
+
+#[derive(Debug, Error)]
+pub(crate) enum PythonReturnValueError {
+    #[error("Python output must be a string")]
+    ExpectedString,
+    #[error(transparent)]
+    Money(#[from] crate::python_money::PythonMoneyError),
+    #[error(transparent)]
+    Temporal(#[from] plasm_core::temporal_value::TemporalValueError),
+    #[error("money catalog `{entry_id}` is absent")]
+    MoneyCatalogMissing { entry_id: String },
+    #[error("expected array output")]
+    ExpectedArray,
+    #[error("expected dictionary output")]
+    ExpectedDictionary,
+    #[error("expected record output")]
+    ExpectedRecord,
+    #[error("output field `{field}` is not declared")]
+    UnknownRecordField { field: String },
+    #[error("output does not match any declared union variant")]
+    UnmatchedUnion,
+    #[error(transparent)]
+    Contract(#[from] plasm_core::value_contract::ValueContractError),
+}
+
 const MAX_OUTPUT: usize = 1_048_576;
 #[derive(Default)]
 pub struct PythonPool {
@@ -66,8 +160,8 @@ impl PythonPool {
         if let Some(clock) = self.clock {
             config.os_policy.datetime = clock;
         } else if std::env::var("PLASM_TEMPORAL_NOW").is_ok_and(|raw| !raw.trim().is_empty()) {
-            let now =
-                plasm_core::temporal::temporal_reference_now().map_err(infrastructure_failure)?;
+            let now = plasm_core::temporal::temporal_reference_now()
+                .map_err(|error| infrastructure_failure(error.to_string()))?;
             config.os_policy.datetime = monty_types::DateTimeSource::Fixed {
                 unix_seconds: now.timestamp(),
                 microsecond: now.timestamp_subsec_micros(),
@@ -110,7 +204,7 @@ impl PythonPool {
                 if value.is_string() {
                     Ok(value)
                 } else {
-                    Err("Python output must be a string".into())
+                    Err(PythonReturnValueError::ExpectedString)
                 }
             })
             .await?;
@@ -121,7 +215,7 @@ impl PythonPool {
         source: String,
         rows: TypedRecords,
         types: &BTreeMap<String, plasm_core::value_contract::ValueContract>,
-        validate: impl FnOnce(plasm_core::Value) -> Result<plasm_core::Value, String>,
+        validate: impl FnOnce(plasm_core::Value) -> Result<plasm_core::Value, PythonReturnValueError>,
     ) -> Result<plasm_core::Value, ExecutionFailure> {
         let mut session = self.checkout_with_suspensions(4096).await?;
         let class = MontyObject::record_type("Value", fresh_uuid());
@@ -134,14 +228,21 @@ impl PythonPool {
                             value_object(value, types.get(&key))
                                 .map(|value| (MontyObject::string(&key), value))
                         })
-                        .collect::<Result<Vec<_>, String>>()?;
+                        .collect::<Result<Vec<_>, PythonValueConversionError>>()?;
                     Ok(MontyObject::class_instance(
                         class.clone(),
                         fresh_uuid(),
                         fields,
                     ))
                 })
-                .collect::<Result<Vec<_>, String>>()?,
+                .collect::<Result<Vec<_>, PythonValueConversionError>>()
+                .map_err(|diagnostic| {
+                    ExecutionFailure::new(
+                        FailureCause::Program,
+                        "python_input_encoding_failed",
+                        diagnostic.to_string(),
+                    )
+                })?,
         );
         let mut inputs = vec![("__input".into(), input)];
         inputs.extend(
@@ -171,11 +272,19 @@ impl PythonPool {
                     ..
                 } if crate::python_money::FUNCTIONS.contains(&function_name.as_str()) => {
                     let result = match money_call(function_name, args) {
-                        Ok(value) => monty_pool::ResumeValue::Return(value_object(value, None)?),
-                        Err(message) => {
+                        Ok(value) => monty_pool::ResumeValue::Return(
+                            value_object(value, None).map_err(|diagnostic| {
+                                ExecutionFailure::new(
+                                    FailureCause::Runtime,
+                                    "python_host_value_encoding_failed",
+                                    diagnostic.to_string(),
+                                )
+                            })?,
+                        ),
+                        Err(error) => {
                             monty_pool::ResumeValue::Error(monty_types::MontyException::new(
                                 monty_types::ExcType::ValueError,
-                                Some(message),
+                                Some(error.to_string()),
                             ))
                         }
                     };
@@ -195,11 +304,27 @@ impl PythonPool {
             ));
         };
         let mut budget = MAX_OUTPUT;
-        let result = output_value(output.as_ref(), 0, &mut budget)?;
+        let result = output_value(output.as_ref(), 0, &mut budget).map_err(|diagnostic| {
+            ExecutionFailure::new(
+                FailureCause::Program,
+                "python_output_invalid",
+                diagnostic.to_string(),
+            )
+        })?;
         let mut remaining = MAX_OUTPUT;
-        plasm_core::charge_value_budget(&result, &mut remaining)?;
+        plasm_core::charge_value_budget(&result, &mut remaining).map_err(|error| {
+            ExecutionFailure::new(
+                FailureCause::Program,
+                "python_output_budget_exceeded",
+                error.to_string(),
+            )
+        })?;
         let result = validate(result).map_err(|detail| {
-            ExecutionFailure::new(FailureCause::Program, "python_return_contract", detail)
+            ExecutionFailure::new(
+                FailureCause::Program,
+                "python_return_contract",
+                detail.to_string(),
+            )
         })?;
         // Only successful, validated executions return a reset worker to the pool.
         // Every error/cancellation drops the checkout and upstream kills its worker.
@@ -310,7 +435,7 @@ mod tests;
 fn value_object(
     value: plasm_core::Value,
     contract: Option<&plasm_core::value_contract::ValueContract>,
-) -> Result<MontyObject, String> {
+) -> Result<MontyObject, PythonValueConversionError> {
     use plasm_core::value_contract::ValueShape;
     if value.is_null() && contract.is_some_and(|t| t.nullable) {
         return Ok(MontyObject::none());
@@ -331,7 +456,7 @@ fn value_object(
         let branch = variants
             .iter()
             .find(|branch| representation_matches(branch, &value))
-            .ok_or("Python union value has no matching representation")?;
+            .ok_or(PythonValueConversionError::UnionRepresentationMissing)?;
         return value_object(value, Some(branch));
     }
     if let (
@@ -347,10 +472,10 @@ fn value_object(
             .map(|(k, v)| {
                 let field = fields
                     .get(k)
-                    .ok_or("Python record has an undeclared field")?;
+                    .ok_or(PythonValueConversionError::UndeclaredRecordField)?;
                 value_object(v.clone(), Some(field)).map(|v| (MontyObject::string(k), v))
             })
-            .collect::<Result<Vec<_>, String>>()?;
+            .collect::<Result<Vec<_>, PythonValueConversionError>>()?;
         return Ok(MontyObject::class_instance(
             MontyObject::record_type("Record", fresh_uuid()),
             fresh_uuid(),
@@ -378,7 +503,7 @@ fn value_object(
                         value_object(value.clone(), Some(element))?,
                     ))
                 })
-                .collect::<Result<Vec<_>, String>>()?,
+                .collect::<Result<Vec<_>, PythonValueConversionError>>()?,
         ));
     }
     if let Some(t) = contract {
@@ -388,9 +513,11 @@ fn value_object(
                     ValueShape::Record { fields } | ValueShape::ObservedRecord { fields, .. } => {
                         fields
                     }
-                    _ => return Err("mapping input requires record".into()),
+                    _ => return Err(PythonValueConversionError::MappingRequiresRecord),
                 };
-                let values = value.as_object().ok_or("mapping value requires object")?;
+                let values = value
+                    .as_object()
+                    .ok_or(PythonValueConversionError::MappingRequiresObject)?;
                 return Ok(MontyObject::dict(
                     values
                         .iter()
@@ -399,20 +526,24 @@ fn value_object(
                                 MontyObject::string(k),
                                 value_object(
                                     v.clone(),
-                                    Some(fields.get(k).ok_or("unknown mapping field")?),
+                                    Some(fields.get(k).ok_or(
+                                        PythonValueConversionError::UndeclaredMappingField,
+                                    )?),
                                 )?,
                             ))
                         })
-                        .collect::<Result<Vec<_>, String>>()?,
+                        .collect::<Result<Vec<_>, PythonValueConversionError>>()?,
                 ));
             }
             ValueShape::Set { element } => {
-                let values = value.as_array().ok_or("set requires array wire encoding")?;
+                let values = value
+                    .as_array()
+                    .ok_or(PythonValueConversionError::SetRequiresArray)?;
                 return Ok(MontyObject::set(
                     values
                         .iter()
                         .map(|v| value_object(v.clone(), Some(element)))
-                        .collect::<Result<Vec<_>, String>>()?,
+                        .collect::<Result<Vec<_>, PythonValueConversionError>>()?,
                 ));
             }
             _ => {}
@@ -437,7 +568,7 @@ fn value_object(
                         }),
                     )
                 })
-                .collect::<Result<Vec<_>, String>>()?,
+                .collect::<Result<Vec<_>, PythonValueConversionError>>()?,
         ),
         plasm_core::Value::Money(m) => {
             let mut fields = vec![
@@ -474,9 +605,9 @@ fn value_object(
             values
                 .into_iter()
                 .map(|(k, v)| value_object(v, None).map(|v| (MontyObject::string(&k), v)))
-                .collect::<Result<Vec<_>, String>>()?,
+                .collect::<Result<Vec<_>, PythonValueConversionError>>()?,
         ),
-        _ => return Err("unresolved or nonfinite Python input".into()),
+        _ => return Err(PythonValueConversionError::UnsupportedValue),
     })
 }
 
@@ -550,10 +681,10 @@ fn output_value(
     value: monty_types::ObjectRef<'_>,
     depth: usize,
     budget: &mut usize,
-) -> Result<plasm_core::Value, String> {
+) -> Result<plasm_core::Value, PythonOutputError> {
     use plasm_core::Value as V;
     if depth >= 64 || *budget == 0 {
-        return Err("Python output depth or size budget exceeded".into());
+        return Err(PythonOutputError::BudgetExceeded);
     }
     *budget -= 1;
     if let Some(value) = temporal_codec::from_monty(value)? {
@@ -565,7 +696,7 @@ fn output_value(
     if let Some(v) = value.as_str() {
         *budget = budget
             .checked_sub(v.len())
-            .ok_or("Python output byte budget exceeded")?;
+            .ok_or(PythonOutputError::ByteBudgetExceeded)?;
         return Ok(V::String(v.into()));
     }
     match value.type_name() {
@@ -578,52 +709,52 @@ fn output_value(
             let monty_types::unstable::MontyNode::BigInt(integer) =
                 monty_types::unstable::node(value)
             else {
-                return Err("invalid Python integer representation".into());
+                return Err(PythonOutputError::InvalidInteger);
             };
             if integer.bits() > 64 {
-                return Err("Python integer exceeds Plasm integer range".into());
+                return Err(PythonOutputError::IntegerOutOfRange);
             }
             integer
                 .to_string()
                 .parse::<u64>()
                 .map(V::Unsigned)
-                .map_err(|_| "Python integer exceeds Plasm integer range".into())
+                .map_err(|_| PythonOutputError::IntegerOutOfRange)
         }
         "float" => {
-            let n = value.as_float().ok_or("invalid float")?;
+            let n = value.as_float().ok_or(PythonOutputError::InvalidFloat)?;
             if !n.is_finite() {
-                return Err("Python output must be finite".into());
+                return Err(PythonOutputError::NonFiniteFloat);
             }
             Ok(V::Float(n))
         }
         "list" | "tuple" | "set" => value
             .items()
-            .ok_or("invalid Python collection")?
+            .ok_or(PythonOutputError::InvalidCollection)?
             .into_iter()
             .map(|v| output_value(v, depth + 1, budget))
             .collect::<Result<Vec<_>, _>>()
             .map(V::Array),
-        "type" | "frozenset" => Err("Python output is not a Plasm value".into()),
+        "type" | "frozenset" => Err(PythonOutputError::UnsupportedValue),
         _ => {
             if !matches!(
                 monty_types::unstable::node(value),
                 monty_types::unstable::MontyNode::Dict(_)
                     | monty_types::unstable::MontyNode::ClassInstance { .. }
             ) {
-                return Err("Python output is not a Plasm value".into());
+                return Err(PythonOutputError::UnsupportedValue);
             }
-            let pairs = value.pairs().ok_or("Python output is not a Plasm value")?;
+            let pairs = value.pairs().ok_or(PythonOutputError::UnsupportedValue)?;
             let mut object = indexmap::IndexMap::new();
             for (key, value) in pairs {
-                let key = key.as_str().ok_or("Python record keys must be strings")?;
+                let key = key.as_str().ok_or(PythonOutputError::NonStringRecordKey)?;
                 *budget = budget
                     .checked_sub(key.len())
-                    .ok_or("Python output byte budget exceeded")?;
+                    .ok_or(PythonOutputError::ByteBudgetExceeded)?;
                 if object
                     .insert(key.into(), output_value(value, depth + 1, budget)?)
                     .is_some()
                 {
-                    return Err("duplicate Python record field".into());
+                    return Err(PythonOutputError::DuplicateRecordField);
                 }
             }
             Ok(V::Object(object))
@@ -632,7 +763,10 @@ fn output_value(
 }
 
 /// Bind Python positional/keyword arguments once, then enter the typed kernel.
-fn money_call(name: &str, args: &monty_types::CallArgs) -> Result<plasm_core::Value, String> {
+fn money_call(
+    name: &str,
+    args: &monty_types::CallArgs,
+) -> Result<plasm_core::Value, PythonMoneyCallError> {
     let names = if matches!(name, "money_add" | "money_sub" | "money_compare") {
         ["left", "right"]
     } else {
@@ -643,7 +777,9 @@ fn money_call(name: &str, args: &monty_types::CallArgs) -> Result<plasm_core::Va
             .kwargs()
             .any(|(key, _)| !names.contains(&key.as_str().unwrap_or("")))
     {
-        return Err(format!("{name}: unexpected arguments"));
+        return Err(PythonMoneyCallError::UnexpectedArguments {
+            function: name.to_owned(),
+        });
     }
     let mut budget = MAX_OUTPUT;
     let mut values = Vec::with_capacity(2);
@@ -651,16 +787,26 @@ fn money_call(name: &str, args: &monty_types::CallArgs) -> Result<plasm_core::Va
         let positional = args.arg(index);
         let keyword = args.kwarg(key);
         if positional.is_some() && keyword.is_some() {
-            return Err(format!("{name}: duplicate argument {key}"));
+            return Err(PythonMoneyCallError::DuplicateArgument {
+                function: name.to_owned(),
+                name: key,
+            });
         }
         values.push(output_value(
             positional
                 .or(keyword)
-                .ok_or_else(|| format!("{name}: missing {key}"))?,
+                .ok_or_else(|| PythonMoneyCallError::MissingArgument {
+                    function: name.to_owned(),
+                    name: key,
+                })?,
             0,
             &mut budget,
         )?);
     }
     let right = values.pop().expect("two bound arguments");
-    crate::python_money::evaluate(name, values.pop().expect("two bound arguments"), right)
+    Ok(crate::python_money::evaluate(
+        name,
+        values.pop().expect("two bound arguments"),
+        right,
+    )?)
 }

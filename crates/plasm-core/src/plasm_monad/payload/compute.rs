@@ -3,6 +3,16 @@ use super::value::PlanPredicate;
 use super::with_expr::WithColumn;
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum SyntheticResultSchemaError {
+    #[error("synthetic record field `{field}` has no value contract")]
+    UntypedRecordField { field: String },
+    #[error("synthetic presence contract names an undeclared field")]
+    OptionalFieldUndeclared,
+    #[error(transparent)]
+    FieldName(#[from] super::atoms::PlanAtomError),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ComputeTemplate {
     pub source: String,
@@ -180,7 +190,7 @@ impl SyntheticResultSchema {
     /// values use the ordinary scalar value column, without a language-level accessor.
     pub fn for_value(
         value: crate::value_contract::ValueContract,
-    ) -> Result<SyntheticResultSchema, String> {
+    ) -> Result<SyntheticResultSchema, SyntheticResultSchemaError> {
         use crate::value_contract::ValueShape;
         let (fields, optional_fields) = if !value.is_non_null_record() {
             (
@@ -210,30 +220,33 @@ impl SyntheticResultSchema {
                         source: None,
                     })
                 })
-                .collect::<Result<_, String>>()?,
+                .collect::<Result<_, SyntheticResultSchemaError>>()?,
         })
     }
 
-    pub fn row_contract(&self) -> Result<crate::value_contract::ValueContract, String> {
+    pub fn row_contract(
+        &self,
+    ) -> Result<crate::value_contract::ValueContract, SyntheticResultSchemaError> {
         let fields = self
             .fields
             .iter()
             .map(|field| {
-                Ok((
+                Ok::<_, SyntheticResultSchemaError>((
                     field.name.to_string(),
-                    field
-                        .value_type
-                        .clone()
-                        .ok_or_else(|| format!("untyped record field {}", field.name))?,
+                    field.value_type.clone().ok_or_else(|| {
+                        SyntheticResultSchemaError::UntypedRecordField {
+                            field: field.name.to_string(),
+                        }
+                    })?,
                 ))
             })
-            .collect::<Result<std::collections::BTreeMap<_, _>, String>>()?;
+            .collect::<Result<std::collections::BTreeMap<_, _>, SyntheticResultSchemaError>>()?;
         if !self
             .optional_fields
             .iter()
             .all(|name| fields.contains_key(name))
         {
-            return Err("presence contract names an undeclared field".into());
+            return Err(SyntheticResultSchemaError::OptionalFieldUndeclared);
         }
         Ok(crate::value_contract::ValueContract::record(
             fields,

@@ -6,6 +6,23 @@ use crate::typed_invoke::{InvokeInputPayload, TypedInvokeInput};
 use crate::typed_literal::TypedComparisonValue;
 use crate::{Expr, FieldType, Predicate, Value};
 use std::collections::BTreeSet;
+use thiserror::Error;
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum PhraseIdentError {
+    #[error(
+        "`{ident}` names a program binding; use it as a binding reference, not an unquoted literal"
+    )]
+    ProgramBindingLiteral { ident: String },
+    #[error("unknown program binding `{ident}`; quote the value if you meant a literal string")]
+    UnknownProgramBinding { ident: String },
+    #[error("unknown entity `{entity}`")]
+    UnknownEntity { entity: String },
+    #[error("unknown capability `{capability}`")]
+    UnknownCapability { capability: String },
+    #[error(transparent)]
+    Federation(#[from] crate::cgs_federation::FederationResolveError),
+}
 
 /// Single-catalog or federated CGS resolution for phrase-ident validation.
 #[derive(Clone, Copy)]
@@ -18,13 +35,19 @@ enum PhraseIdentCgsScope<'a> {
 }
 
 impl<'a> PhraseIdentCgsScope<'a> {
-    fn resolve(&self, catalog_entry_id: Option<&str>, entity: &str) -> Result<&'a CGS, String> {
+    fn resolve(
+        &self,
+        catalog_entry_id: Option<&str>,
+        entity: &str,
+    ) -> Result<&'a CGS, PhraseIdentError> {
         match self {
             Self::Single(cgs) => {
                 if cgs.entities.contains_key(entity) {
                     Ok(*cgs)
                 } else {
-                    Err(format!("unknown entity `{entity}`"))
+                    Err(PhraseIdentError::UnknownEntity {
+                        entity: entity.to_owned(),
+                    })
                 }
             }
             Self::Federated { fed, fallback } => {
@@ -34,7 +57,7 @@ impl<'a> PhraseIdentCgsScope<'a> {
                     fed,
                     fallback,
                 )
-                .map_err(|e| e.to_string())
+                .map_err(Into::into)
             }
         }
     }
@@ -43,7 +66,7 @@ impl<'a> PhraseIdentCgsScope<'a> {
         &self,
         catalog_entry_id: Option<&str>,
         entity: &str,
-    ) -> Result<&'a CGS, String> {
+    ) -> Result<&'a CGS, PhraseIdentError> {
         self.resolve(catalog_entry_id, entity)
     }
 }
@@ -71,14 +94,14 @@ pub fn validate_identifier_phrase(
     ident: &str,
     program_labels: &BTreeSet<String>,
     ctx: Option<&PhraseIdentFieldContext<'_>>,
-) -> Result<(), String> {
+) -> Result<(), PhraseIdentError> {
     if !is_identifier_phrase(ident) {
         return Ok(());
     }
     if program_labels.contains(ident) {
-        return Err(format!(
-            "`{ident}` names a program binding in this plan — use `{ident}` or `{ident}.<field>` as a binding reference, not an unquoted literal"
-        ));
+        return Err(PhraseIdentError::ProgramBindingLiteral {
+            ident: ident.to_owned(),
+        });
     }
     let Some(ctx) = ctx else {
         return Ok(());
@@ -95,9 +118,9 @@ pub fn validate_identifier_phrase(
             | FieldType::Date
             | FieldType::Json
     ) {
-        return Err(format!(
-            "unknown program binding `{ident}` — quote the value if you meant a literal string"
-        ));
+        return Err(PhraseIdentError::UnknownProgramBinding {
+            ident: ident.to_owned(),
+        });
     }
     Ok(())
 }
@@ -196,7 +219,7 @@ fn validate_value_phrase_idents(
     value: &Value,
     program_labels: &BTreeSet<String>,
     ctx: Option<&PhraseIdentFieldContext<'_>>,
-) -> Result<(), String> {
+) -> Result<(), PhraseIdentError> {
     match value {
         Value::PhraseIdent(ident) => validate_identifier_phrase(ident, program_labels, ctx),
         Value::Array(items) => {
@@ -234,7 +257,7 @@ fn validate_invoke_input_object(
     program_labels: &BTreeSet<String>,
     cap_params: &[InputFieldSchema],
     cgs: &CGS,
-) -> Result<(), String> {
+) -> Result<(), PhraseIdentError> {
     let Some(obj) = input.as_object() else {
         return validate_value_phrase_idents(input, program_labels, None);
     };
@@ -273,11 +296,11 @@ fn validate_invoke_input_object(
 fn validate_ref_identity_slots(
     reference: &crate::Ref,
     program_labels: &BTreeSet<String>,
-) -> Result<(), String> {
+) -> Result<(), PhraseIdentError> {
     fn walk_slot(
         slot: &crate::IdentitySlot,
         _program_labels: &BTreeSet<String>,
-    ) -> Result<(), String> {
+    ) -> Result<(), PhraseIdentError> {
         match slot {
             crate::IdentitySlot::Lit(_) => Ok(()),
             // Binding is [`PlasmInputRef`] — no PhraseIdent payload to validate.
@@ -301,7 +324,7 @@ fn validate_predicate_phrase_idents(
     entity: &EntityDef,
     cap_params: &[InputFieldSchema],
     cgs: &CGS,
-) -> Result<(), String> {
+) -> Result<(), PhraseIdentError> {
     match predicate {
         Predicate::True | Predicate::False => Ok(()),
         Predicate::Comparison { field, value, .. } => {
@@ -414,11 +437,13 @@ fn lower_targeted_phrase_input(
     cgs: &CGS,
     program_labels: &BTreeSet<String>,
     validate: bool,
-) -> Result<(), String> {
+) -> Result<(), PhraseIdentError> {
     if validate {
-        let cap = cgs
-            .get_capability(capability.as_str())
-            .ok_or_else(|| format!("unknown capability `{capability}`"))?;
+        let cap = cgs.get_capability(capability.as_str()).ok_or_else(|| {
+            PhraseIdentError::UnknownCapability {
+                capability: capability.to_string(),
+            }
+        })?;
         if let Some(input) = input.as_ref() {
             validate_invoke_input_object(
                 &input.to_value(),
@@ -440,7 +465,7 @@ fn lower_expr_phrase_idents(
     program_labels: &BTreeSet<String>,
     scope: PhraseIdentCgsScope<'_>,
     validate: bool,
-) -> Result<(), String> {
+) -> Result<(), PhraseIdentError> {
     match expr {
         Expr::Invoke(inv) => {
             let cgs = scope.resolve_capability_cgs(
@@ -464,7 +489,9 @@ fn lower_expr_phrase_idents(
             if validate {
                 let cap = cgs
                     .get_capability(create.capability.as_str())
-                    .ok_or_else(|| format!("unknown capability `{}`", create.capability))?;
+                    .ok_or_else(|| PhraseIdentError::UnknownCapability {
+                        capability: create.capability.to_string(),
+                    })?;
                 let cap_params = cap_params_for_capability(cap);
                 validate_invoke_input_object(
                     &create.input.to_value(),
@@ -503,9 +530,11 @@ fn lower_expr_phrase_idents(
         Expr::Query(q) => {
             let cgs = scope.resolve(q.catalog_entry_id.as_deref(), q.entity.as_str())?;
             if validate {
-                let ent = cgs
-                    .get_entity(q.entity.as_str())
-                    .ok_or_else(|| format!("unknown entity `{}`", q.entity))?;
+                let ent = cgs.get_entity(q.entity.as_str()).ok_or_else(|| {
+                    PhraseIdentError::UnknownEntity {
+                        entity: q.entity.to_string(),
+                    }
+                })?;
                 let cap_params = cap_params_for_query(cgs, q.capability_name.as_deref());
                 if let Some(pred) = &q.predicate {
                     validate_predicate_phrase_idents(pred, program_labels, ent, &cap_params, cgs)?;
@@ -532,7 +561,7 @@ pub fn lower_program_phrase_idents_in_expr(
     expr: &mut Expr,
     program_labels: &BTreeSet<String>,
     cgs: &CGS,
-) -> Result<(), String> {
+) -> Result<(), PhraseIdentError> {
     lower_expr_phrase_idents(expr, program_labels, PhraseIdentCgsScope::Single(cgs), true)
 }
 
@@ -543,7 +572,7 @@ pub fn lower_program_phrase_idents_in_expr_federated(
     program_labels: &BTreeSet<String>,
     fed: &FederationDispatch,
     fallback: &CGS,
-) -> Result<(), String> {
+) -> Result<(), PhraseIdentError> {
     lower_expr_phrase_idents(
         expr,
         program_labels,
@@ -576,7 +605,7 @@ mod tests {
             }),
         )
         .expect_err("shadows binding");
-        assert!(err.contains("program binding"), "{err}");
+        assert!(err.to_string().contains("program binding"), "{err}");
     }
 
     #[test]
@@ -591,7 +620,7 @@ mod tests {
             }),
         )
         .expect_err("unknown binding");
-        assert!(err.contains("unknown program binding"), "{err}");
+        assert!(err.to_string().contains("unknown program binding"), "{err}");
     }
 
     #[test]
@@ -677,6 +706,6 @@ mod tests {
         let mut primary_only = expr.clone();
         let err = lower_program_phrase_idents_in_expr(&mut primary_only, &labels, matrix.as_ref())
             .expect_err("primary langmatrix graph lacks Berry entity");
-        assert!(err.contains("unknown entity"), "{err}");
+        assert!(err.to_string().contains("unknown entity"), "{err}");
     }
 }

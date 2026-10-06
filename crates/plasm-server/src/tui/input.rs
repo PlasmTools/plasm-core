@@ -249,7 +249,7 @@ pub(crate) fn update_modal_key(state: &mut RunState, key: KeyEvent, deps: &Updat
                 } else if let Err(e) = crate::discovery_bootstrap::set_openrouter_api_key(&secret) {
                     set_notice(
                         state,
-                        RunNotice::new(NoticeSeverity::Error, "Save failed", e),
+                        RunNotice::new(NoticeSeverity::Error, "Save failed", e.to_string()),
                     );
                 } else {
                     set_notice(
@@ -325,7 +325,7 @@ pub(crate) fn update_modal_key(state: &mut RunState, key: KeyEvent, deps: &Updat
                                     "OAuth provider review failed",
                                     "The provider settings are incomplete or invalid.",
                                 )
-                                .with_details(vec![e]),
+                                .with_details(vec![e.to_string()]),
                             ),
                         }
                     } else if wiz.step == OAuthUpsertStep::Enabled {
@@ -758,7 +758,7 @@ The control station stores secrets in auth-framework KV, so there is nowhere to 
                         NoticeSeverity::Error,
                         "OAuth unavailable",
                         oauth_surface_status(&snap)
-                            .unwrap_or("OAuth services unavailable")
+                            .unwrap_or_else(|| "OAuth services unavailable".to_owned())
                             .to_string(),
                     ),
                 );
@@ -858,7 +858,7 @@ The control station stores secrets in auth-framework KV, so there is nowhere to 
                         NoticeSeverity::Error,
                         "OAuth unavailable",
                         oauth_surface_status(&snap)
-                            .unwrap_or("OAuth services unavailable")
+                            .unwrap_or_else(|| "OAuth services unavailable".to_owned())
                             .to_string(),
                     ),
                 );

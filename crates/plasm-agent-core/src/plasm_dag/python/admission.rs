@@ -1,4 +1,6 @@
 use super::*;
+use crate::program_rejection::PythonLoweringInvariantError;
+use crate::program_rejection::PythonProgramError;
 use ruff_python_ast::StmtFunctionDef;
 
 macro_rules! declarations {
@@ -32,24 +34,28 @@ impl<'a> Declaration<'a> {
             Stmt::FunctionDef(def) if def.name.as_str() == "build" => Ok(Self::Build(def)),
             Stmt::FunctionDef(def) if def.decorator_list.is_empty() => Ok(Self::Helper(def)),
             Stmt::FunctionDef(def) => Ok(Self::Compute(def)),
-            _ => Err(at(
-                stmt,
-                "class state and executable class bodies are not admitted",
-            )),
+            _ => Err(at(stmt, PythonSourceError::ClassExecutableState)),
         }
     }
 }
 impl DeclarationKind {
     /// Outer declaration candidates only; full admission remains session-aware.
     pub fn inventory(source: &str) -> Result<Vec<Self>, PythonLoweringError> {
-        let ast = ruff_python_parser::parse_module(source).map_err(|e| e.to_string())?;
+        let ast = ruff_python_parser::parse_module(source).map_err(|error| {
+            PythonLoweringError::Source {
+                error: std::sync::Arc::new(crate::program_rejection::PythonSourceError::Parse {
+                    source: error,
+                }),
+                span: None,
+            }
+        })?;
         let (_, suite) = crate::python_datetime::Imports::split(source, ast.suite())?;
         let [stmt] = suite else {
-            return Err("expected exactly one Program subclass".into());
+            return Err(PythonProgramError::ProgramDeclarationCount.into());
         };
         let root = Declaration::classify(stmt)?;
         let Declaration::Program(class) = root else {
-            return Err("expected exactly one Program subclass".into());
+            return Err(PythonProgramError::ProgramDeclarationMissing.into());
         };
         let mut kinds = vec![root.kind()];
         for stmt in &class.body {
@@ -74,27 +80,32 @@ impl<'a> Root<'a> {
     ) -> Result<Self, PythonLoweringError> {
         let (imports, suite) = crate::python_datetime::Imports::split(source, suite)?;
         let [stmt] = suite else {
-            return Err("expected exactly one Program subclass".into());
+            return Err(PythonProgramError::ProgramDeclarationCount.into());
         };
         let Declaration::Program(class) = Declaration::classify(stmt)
-            .map_err(|_| "expected exactly one Program subclass".to_owned())?
+            .map_err(|_| PythonProgramError::ProgramDeclarationMissing)?
         else {
-            return Err("expected exactly one Program subclass".into());
+            return Err(PythonProgramError::ProgramDeclarationMissing.into());
         };
         if class.name.as_str() == "Program" {
-            return Err(at(class, "reserved root name"));
+            return Err(at(
+                class,
+                PythonSourceError::ReservedRootName {
+                    name: class.name.to_string(),
+                },
+            ));
         }
         let args = class
             .arguments
             .as_ref()
-            .ok_or("root must derive directly from Program")?;
+            .ok_or(PythonProgramError::ProgramBaseInvalid)?;
         if args.args.len() != 1
             || name(&args.args[0]) != Some("Program")
             || !args.keywords.is_empty()
             || !class.decorator_list.is_empty()
             || class.type_params.is_some()
         {
-            return Err(at(class, "root must derive directly and only from Program"));
+            return Err(at(class, PythonSourceError::ProgramBaseShape));
         }
         let mut build = None;
         let mut methods = BTreeMap::new();
@@ -102,44 +113,40 @@ impl<'a> Root<'a> {
         let symbols = crate::plasm_plan_run::symbol_map_for_plasm_surface_parse(es, None);
         for local in imports.bindings.keys() {
             if symbols.resolve_session_entity(local).is_ok() || local == class.name.as_str() {
-                return Err("import cannot shadow a session entity or Program class".into());
+                return Err(PythonProgramError::ImportShadowsReservedBinding.into());
             }
         }
         if symbols.resolve_session_entity(class.name.as_str()).is_ok() {
-            return Err(at(class, "root cannot shadow a session entity"));
+            return Err(at(
+                class,
+                PythonSourceError::RootShadowsEntity {
+                    name: class.name.to_string(),
+                },
+            ));
         }
         for stmt in &class.body {
             let declaration = Declaration::classify(stmt)?;
             let def = match declaration {
                 Declaration::Documentation(()) => continue,
                 Declaration::Program(_) => {
-                    return Err(at(
-                        stmt,
-                        "class state and executable class bodies are not admitted",
-                    ))
+                    return Err(at(stmt, PythonSourceError::ClassExecutableState))
                 }
                 Declaration::Build(def) => {
                     synchronous(def)?;
                     if build.replace(def).is_some() {
-                        return Err(at(def, "duplicate build method"));
+                        return Err(at(def, PythonSourceError::DuplicateBuildMethod));
                     }
                     if def.parameters.vararg.is_some() || def.parameters.kwarg.is_some() {
-                        return Err(at(
-                            def,
-                            "variadic build inputs have no materialization port",
-                        ));
+                        return Err(at(def, PythonSourceError::VariadicBuildInputs));
                     }
                     if !def.decorator_list.is_empty() || def.returns.is_some() {
-                        return Err(at(
-                            def,
-                            "build decorators and return annotations have no Program interface",
-                        ));
+                        return Err(at(def, PythonSourceError::BuildInterfaceShape));
                     }
                     let binding = monty_analysis::bind_one_positional(&monty::statement_source(
                         &Stmt::FunctionDef(def.clone()),
                     ))?;
                     if binding.parameter != "self" || binding.variadic {
-                        return Err(at(def, "build requires the Program receiver self"));
+                        return Err(at(def, PythonSourceError::BuildReceiverShape));
                     }
                     for parameter in def
                         .parameters
@@ -166,19 +173,16 @@ impl<'a> Root<'a> {
                 } else if !helper.parameters.args.is_empty() {
                     helper.parameters.args.remove(0)
                 } else {
-                    return Err(at(def, "helper requires self"));
+                    return Err(at(def, PythonSourceError::HelperReceiverMissing));
                 };
                 if receiver.parameter.name.as_str() != "self"
                     || receiver.default.is_some()
                     || def.name.as_str().starts_with("__")
                 {
-                    return Err(at(
-                        def,
-                        "invalid Program helper receiver or reserved method",
-                    ));
+                    return Err(at(def, PythonSourceError::HelperDeclarationShape));
                 }
                 if helper.parameters.vararg.is_some() || helper.parameters.kwarg.is_some() {
-                    return Err(at(def, "variadic helper inputs have no DAG port"));
+                    return Err(at(def, PythonSourceError::VariadicHelperInputs));
                 }
                 for p in helper
                     .parameters
@@ -194,7 +198,12 @@ impl<'a> Root<'a> {
                 if helpers.insert(def.name.to_string(), helper).is_some()
                     || methods.contains_key(def.name.as_str())
                 {
-                    return Err(at(def, "duplicate Program method"));
+                    return Err(at(
+                        def,
+                        PythonSourceError::DuplicateProgramMethod {
+                            method: def.name.to_string(),
+                        },
+                    ));
                 }
                 continue;
             }
@@ -202,7 +211,7 @@ impl<'a> Root<'a> {
                 || def.decorator_list.len() != 1
                 || name(&def.decorator_list[0].expression) != Some("compute")
             {
-                return Err(at(def, "method decorators require exactly @compute"));
+                return Err(at(def, PythonSourceError::ComputeDecoratorShape));
             }
             let mut extracted = def.clone();
             let receiver = if !extracted.parameters.posonlyargs.is_empty() {
@@ -210,19 +219,21 @@ impl<'a> Root<'a> {
             } else if !extracted.parameters.args.is_empty() {
                 extracted.parameters.args.remove(0)
             } else {
-                return Err(at(def, "compute requires a bound Program receiver"));
+                return Err(at(def, PythonSourceError::ComputeReceiverMissing));
             };
             if receiver.default.is_some() {
                 closed_default(&receiver)?;
             }
             if receiver.parameter.name.as_str() != "self" {
-                return Err(at(def, "Program receiver must be named self"));
-            }
-            if extracted.parameters.vararg.is_some() || extracted.parameters.kwarg.is_some() {
                 return Err(at(
                     def,
-                    "variadic compute inputs have no typed materialization port",
+                    PythonSourceError::ProgramReceiverName {
+                        name: receiver.parameter.name.to_string(),
+                    },
                 ));
+            }
+            if extracted.parameters.vararg.is_some() || extracted.parameters.kwarg.is_some() {
+                return Err(at(def, PythonSourceError::VariadicComputeInputs));
             }
             let inputs = extracted
                 .parameters
@@ -236,7 +247,7 @@ impl<'a> Root<'a> {
                     if let Some(problem) =
                         ComputeAnnotationProblem::recognize(annotation, symbols.as_ref())
                     {
-                        return Err(at(annotation, problem.correction()));
+                        return Err(at(annotation, problem.error()));
                     }
                 }
             }
@@ -254,13 +265,18 @@ impl<'a> Root<'a> {
             if helpers.contains_key(def.name.as_str())
                 || methods.insert(def.name.to_string(), extracted).is_some()
             {
-                return Err(at(def, "duplicate compute method"));
+                return Err(at(
+                    def,
+                    PythonSourceError::DuplicateComputeMethod {
+                        method: def.name.to_string(),
+                    },
+                ));
             }
         }
         Ok(Self {
             imports,
             name: class.name.to_string(),
-            build: build.ok_or("Program requires build(self)")?,
+            build: build.ok_or(PythonLoweringInvariantError::ProgramBuildMissing)?,
             methods,
             helpers,
         })
@@ -301,10 +317,17 @@ impl ComputeAnnotationProblem {
         }
     }
 
-    fn correction(self) -> &'static str {
+    fn error(self) -> PythonSourceError {
         match self {
-            Self::DagRowHandle(shape) => shape.compute_input_correction(),
-            Self::EntityAsCollectionElement => "an eN symbol is a catalog binding, not a Python type; omit the annotation and let @compute infer its input from the call",
+            Self::DagRowHandle(shape) => match shape {
+                plasm_core::python_row_shape::PythonRowShape::Rows => {
+                    PythonSourceError::ComputeRowsHandleAnnotation
+                }
+                plasm_core::python_row_shape::PythonRowShape::Singleton => {
+                    PythonSourceError::ComputeSingletonHandleAnnotation
+                }
+            },
+            Self::EntityAsCollectionElement => PythonSourceError::ComputeEntityElementAnnotation,
         }
     }
 }
@@ -317,8 +340,8 @@ enum ComputeBoundaryViolation<'a> {
 impl ComputeBoundaryViolation<'_> {
     fn correction(&self) -> PythonLoweringError {
         match self {
-            Self::Write(call) => at(call, "@compute is pure: materialized rows lose entity identity and cannot dispatch writes. Keep calculations in @compute; select original entity rows and invoke the declared write in build via flat_map."),
-            Self::Relation(attribute) => at(attribute, "@compute receives materialized values without entity relation authority. Navigate the taught relation on its original entity row in build or a scoped callback, then pass the resulting rows as a typed compute input."),
+            Self::Write(call) => at(call, PythonSourceError::ComputeWriteAuthority),
+            Self::Relation(attribute) => at(attribute, PythonSourceError::ComputeRelationAuthority),
         }
     }
 }
@@ -384,7 +407,11 @@ fn synchronous(def: &StmtFunctionDef) -> Result<(), PythonLoweringError> {
     if def.is_async || def.type_params.is_some() {
         return Err(at(
             def,
-            "expected a synchronous method without type parameters",
+            PythonSourceError::MethodDeclarationShape {
+                method: def.name.to_string(),
+                is_async: def.is_async,
+                has_type_parameters: def.type_params.is_some(),
+            },
         ));
     }
     Ok(())
@@ -395,12 +422,19 @@ fn closed_default(
     let default = parameter
         .default
         .as_deref()
-        .ok_or("missing bound default")?;
+        .ok_or(PythonLoweringInvariantError::BoundMethodDefaultMissing)?;
     // Program classes are static declarations, not executed Python objects.
     // A scalar constant is representable as declaration metadata. A computed or
     // mutable default would require definition-time execution/state; deferring it
     // until argument omission changes Python semantics (including exceptions).
-    literal(default).map_err(|_| at(default, "method defaults require scalar constant metadata; definition-time execution and mutable default state have no Program representation"))?;
+    literal(default).map_err(|error| {
+        at(
+            default,
+            error.with_context(
+                crate::program_rejection::PythonLoweringContext::MethodDefaultRequiresScalar,
+            ),
+        )
+    })?;
     Ok(())
 }
 
@@ -412,11 +446,21 @@ pub(super) fn method_source(
     normalized: StmtFunctionDef,
 ) -> Result<String, PythonLoweringError> {
     let rendered = monty::statement_source(&Stmt::FunctionDef(normalized));
-    let parsed = ruff_python_parser::parse_module(&rendered).map_err(|e| e.to_string())?;
+    let parsed = ruff_python_parser::parse_module(&rendered).map_err(|error| {
+        PythonLoweringError::Source {
+            error: std::sync::Arc::new(crate::program_rejection::PythonSourceError::Parse {
+                source: error,
+            }),
+            span: None,
+        }
+    })?;
     let Some(Stmt::FunctionDef(def)) = parsed.suite().last() else {
-        return Err("missing normalized method".into());
+        return Err(PythonProgramError::NormalizedMethodMissing.into());
     };
-    let first = def.body.first().ok_or("missing normalized body")?;
+    let first = def
+        .body
+        .first()
+        .ok_or(PythonLoweringInvariantError::NormalizedMethodBodyMissing)?;
     let header = rendered[..first.start().to_usize()].trim_end();
     let body_line = source[..original.name.start().to_usize()]
         .bytes()
@@ -426,4 +470,23 @@ pub(super) fn method_source(
         .repeat((body_line + 1).saturating_sub(imports.lines().count() + header.lines().count()));
     let body = crate::python_compute::definition_body(source, original)?;
     Ok(format!("{imports}{padding}{header}{body}\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn declaration_inventory_uses_semantic_admission_errors() {
+        assert!(matches!(
+            DeclarationKind::inventory("class A(Program):\n    pass\nclass B(Program):\n    pass"),
+            Err(PythonLoweringError::Program(
+                PythonProgramError::ProgramDeclarationCount
+            ))
+        ));
+        assert!(DeclarationKind::inventory(
+            "class A(Program):\n    def build(self):\n        return e1"
+        )
+        .is_ok());
+    }
 }

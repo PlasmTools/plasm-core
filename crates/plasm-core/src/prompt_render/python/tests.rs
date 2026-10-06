@@ -98,7 +98,10 @@ fn python_query_card_advertises_only_source_call_inputs() {
     let mut source = crate::QueryExpr::filtered("Zone", crate::Predicate::eq("sort_by", "name"));
     source.capability_name = Some("zone_query".into());
     let rejection = crate::normalize_query_expr_to_rowset(&source, &cgs, "matrix").unwrap_err();
-    assert!(rejection.contains("RA-1"), "{rejection}");
+    assert!(matches!(
+        rejection,
+        crate::rowset::RowsetNormalizeError::CapabilityControl { .. }
+    ));
 }
 
 #[test]
@@ -170,9 +173,10 @@ fn python_card_rejects_revision_drift_and_records_unavailable() {
     let initial = prepare_python_teaching_wave(&exposure, &PythonTeachingState::default()).unwrap();
     let mut old = initial.next_state.clone();
     old.language.push('!');
-    assert!(prepare_python_teaching_wave(&exposure, &old)
-        .unwrap_err()
-        .contains("language changed"));
+    assert!(matches!(
+        prepare_python_teaching_wave(&exposure, &old),
+        Err(PythonTeachingError::LanguageChanged)
+    ));
     let mut changed = cgs.clone();
     changed
         .entities
@@ -181,11 +185,10 @@ fn python_card_rejects_revision_drift_and_records_unavailable() {
         .description
         .push('!');
     let changed_exposure = TeachingExposureSession::new(&changed, "fixture", &["Item", "Tag"]);
-    assert!(
-        prepare_python_teaching_wave(&changed_exposure, &initial.next_state)
-            .unwrap_err()
-            .contains("catalog fixture changed")
-    );
+    assert!(matches!(
+        prepare_python_teaching_wave(&changed_exposure, &initial.next_state),
+        Err(PythonTeachingError::CatalogChanged { entry }) if entry == "fixture"
+    ));
     changed
         .capabilities
         .get_mut("item_query")
@@ -257,9 +260,10 @@ fn python_card_cannot_reassign_existing_entity_symbols() {
     let exposure = TeachingExposureSession::new(&cgs, "fixture", &["Item", "Tag"]);
     let wave = prepare_python_teaching_wave(&exposure, &PythonTeachingState::default()).unwrap();
     let swapped = TeachingExposureSession::new(&cgs, "fixture", &["Tag", "Item"]);
-    assert!(prepare_python_teaching_wave(&swapped, &wave.next_state)
-        .unwrap_err()
-        .contains("changed ownership"));
+    assert!(matches!(
+        prepare_python_teaching_wave(&swapped, &wave.next_state),
+        Err(PythonTeachingError::EntitySymbolChanged { .. })
+    ));
 }
 
 #[test]

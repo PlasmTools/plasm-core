@@ -80,11 +80,7 @@ impl ExecutionEngine {
             extract_predicate_vars(pred, &mut env);
         }
         normalize_cml_env_inputs(&mut env, cgs, capability)?;
-        plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
-            RuntimeError::ConfigurationError {
-                message: e.to_string(),
-            }
-        })?;
+        plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability)?;
         if let Some(proj) = &query.projection {
             env.insert(
                 "projection".to_string(),
@@ -209,13 +205,9 @@ impl ExecutionEngine {
                         Some(&cml_env_to_identity_strings(&env)),
                     ),
                 )),
-                CapabilityTemplate::View(_) | CapabilityTemplate::CredentialBind(_) => Err(RuntimeError::ConfigurationError {
-                    message: "internal: view query must use composed-read stream".into(),
-                }),
+                CapabilityTemplate::View(_) | CapabilityTemplate::CredentialBind(_) => Err(RuntimeError::ViewQueryDispatchRequired),
                 CapabilityTemplate::EvmCall(_) | CapabilityTemplate::EvmLogs(_) => {
-                    Err(RuntimeError::ConfigurationError {
-                        message: "query/search capabilities must use HTTP CML templates".into(),
-                    })
+                    Err(RuntimeError::HttpQueryTemplateRequired)
                 }
             }?;
             let decoded_entities = decode_entities_with_cgs(&decoder, &normalized, Some(cgs))?;
@@ -290,11 +282,7 @@ impl ExecutionEngine {
         let user = query.pagination.clone().unwrap_or_default();
         let mut driver = match resume_state {
             Some(s) => {
-                let contract = pconf
-                    .validate()
-                    .map_err(|e| RuntimeError::ConfigurationError {
-                        message: e.to_string(),
-                    })?;
+                let contract = pconf.validate().map_err(RuntimeError::PaginationContract)?;
                 super::pagination_driver::PaginationDriver::from_resume(contract, s)
             }
             None => {
@@ -323,9 +311,7 @@ impl ExecutionEngine {
             ),
             plasm_compile::CapabilityTemplate::View(_)
             | plasm_compile::CapabilityTemplate::CredentialBind(_) => {
-                return Err(RuntimeError::ConfigurationError {
-                    message: "composed views do not support CML pagination".into(),
-                });
+                return Err(RuntimeError::ViewPaginationUnsupported);
             }
             plasm_compile::CapabilityTemplate::EvmCall(_)
             | plasm_compile::CapabilityTemplate::EvmLogs(_) => (
@@ -381,17 +367,15 @@ impl ExecutionEngine {
                 cooperative_cancel_check()?;
                 if prefix == Some(0) { break (false, None); }
                 if pages >= MAX_PAGES {
-                    Err(RuntimeError::ConfigurationError { message: format!("Pagination stopped after {MAX_PAGES} pages (safety cap)") })?;
+                    Err(RuntimeError::PaginationPageLimit { max_pages: MAX_PAGES })?;
                 }
                 let (response, link_next, http_live) =
                     if let Some(url) = driver.take_next_absolute_url() {
                         if matches!(&base_compiled, CompiledOperation::Http(request) if request.credential.is_some()) {
-                            Err(crate::credentials::credential_error("scoped credential pagination requires declared request parameters, not an absolute continuation URL"))?;
+                            Err::<(), RuntimeError>(crate::credentials::CredentialError::AbsoluteContinuationForbidden.into())?;
                         }
                         if mode != ExecutionMode::Live {
-                            Err(RuntimeError::ConfigurationError {
-                                message: "absolute-URL pagination beyond the first page requires Live execution mode (replay/hybrid do not store Link headers or body next URLs)".to_string(),
-                            })?;
+                            Err(RuntimeError::LiveAbsolutePaginationRequired)?;
                         }
                         let (j, link) = with_dispatch_entity(
                             Some(query.entity.as_str()),

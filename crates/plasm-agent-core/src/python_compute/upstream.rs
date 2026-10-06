@@ -4,14 +4,17 @@ use super::*;
 use plasm_core::value_contract::{ValueContract as Type, ValueShape};
 
 #[cfg(test)]
-pub(super) fn stubs(fields: &BTreeMap<String, Type>, cgs: &CGS) -> Result<String, String> {
+pub(super) fn stubs(
+    fields: &BTreeMap<String, Type>,
+    cgs: &CGS,
+) -> Result<String, PythonComputeRejection> {
     stubs_in(fields, cgs, &BTreeMap::new())
 }
 pub(super) fn stubs_in(
     fields: &BTreeMap<String, Type>,
     cgs: &CGS,
     catalogs: &BTreeMap<String, std::sync::Arc<CGS>>,
-) -> Result<String, String> {
+) -> Result<String, PythonComputeRejection> {
     let mut declarations = String::from("from typing import Never, Literal, TypeAlias, overload\nPlasmJson: TypeAlias = None | bool | int | float | str | list[PlasmJson] | dict[str, PlasmJson]\nPlasmRef: TypeAlias = bool | int | float | str | dict[str, PlasmRef]\n");
     declarations.push_str(crate::python_money::STUBS);
     let input = Type::record(fields.clone(), Default::default());
@@ -21,31 +24,33 @@ pub(super) fn stubs_in(
     declarations.push_str(&format!("PlasmInput: TypeAlias = {ty}\n"));
     Ok(declarations)
 }
-pub(super) fn validate_member(name: &str) -> Result<(), String> {
+pub(super) fn validate_member(name: &str) -> Result<(), PythonComputeRejection> {
     let source = format!("{name} = None");
     let parsed = ruff_python_parser::parse_module(&source)
-        .map_err(|_| format!("Python boundary field {name:?} is not an attribute identifier"))?;
+        .map_err(|_| PythonComputeError::InvalidBoundaryMember { field: name.into() })?;
     if !matches!(parsed.suite().as_slice(), [Stmt::Assign(a)] if matches!(a.targets.as_slice(), [Expr::Name(n)] if n.id.as_str() == name))
         || name.starts_with("__")
     {
-        return Err(format!(
-            "Python boundary field {name:?} is not an attribute identifier"
-        ));
+        return Err(PythonComputeError::InvalidBoundaryMember { field: name.into() }.into());
     }
     Ok(())
 }
 
 /// The same indexed-record contract is used by inference and compute admission.
 /// Literal keys retain their field contract; a dynamic string returns the field union.
-pub(super) fn record_index_members(fields: &[(String, String)]) -> String {
+pub(super) fn record_index_members(
+    fields: &[(String, String)],
+) -> Result<String, PythonComputeError> {
     if fields.is_empty() {
-        return "    def __getitem__(self, key: str) -> Never: ...\n".into();
+        return Ok("    def __getitem__(self, key: str) -> Never: ...\n".into());
     }
     let mut out = String::new();
     for (key, ty) in fields {
         out.push_str(&format!(
             "    @overload\n    def __getitem__(self, key: Literal[{}]) -> {ty}: ...\n",
-            serde_json::to_string(key).expect("string")
+            serde_json::to_string(key).map_err(|error| PythonComputeError::BoundaryKeyEncoding(
+                std::sync::Arc::new(error)
+            ))?
         ));
     }
     let types = fields.iter().map(|(_, ty)| ty.as_str()).collect::<Vec<_>>();
@@ -55,7 +60,7 @@ pub(super) fn record_index_members(fields: &[(String, String)]) -> String {
     out.push_str(&format!(
         "    @overload\n    def __getitem__(self, key: str) -> {types}: ...\n"
     ));
-    out
+    Ok(out)
 }
 
 /// Keep generated Python union syntax logarithmic in depth for the upstream checker.
@@ -76,9 +81,9 @@ fn render(
     catalogs: &BTreeMap<String, std::sync::Arc<CGS>>,
     out: &mut String,
     depth: usize,
-) -> Result<String, String> {
+) -> Result<String, PythonComputeRejection> {
     if depth >= 64 {
-        return Err("Python contract depth exceeded".into());
+        return Err(PythonComputeError::BoundaryContractDepthExceeded.into());
     }
     let mut ty = match &t.shape {
         ValueShape::Temporal { kind, .. } => format!("PlasmDatetime.{}", kind.python_name()),
@@ -100,7 +105,9 @@ fn render(
             output_annotation(record, cgs, catalogs, out)?;
             format!(
                 "PlasmOutput{:x}",
-                Sha256::digest(serde_json::to_vec(&record.shape).map_err(|e| e.to_string())?)
+                Sha256::digest(serde_json::to_vec(&record.shape).map_err(|error| {
+                    PythonComputeError::BoundaryFingerprintEncoding(std::sync::Arc::new(error))
+                })?,)
             )
         }
         ValueShape::Set { element } => {
@@ -113,7 +120,9 @@ fn render(
             use sha2::{Digest, Sha256};
             let name = format!(
                 "PlasmRecord{:x}",
-                Sha256::digest(serde_json::to_vec(fields).map_err(|e| e.to_string())?)
+                Sha256::digest(serde_json::to_vec(fields).map_err(|error| {
+                    PythonComputeError::BoundaryFingerprintEncoding(std::sync::Arc::new(error))
+                })?,)
             );
             if out.contains(&format!("class {name}:")) {
                 return Ok(if t.nullable {
@@ -130,7 +139,7 @@ fn render(
                 members.push_str(&format!("    {field}: {ty}\n"));
                 indexed.push((field.clone(), ty));
             }
-            members.push_str(&record_index_members(&indexed));
+            members.push_str(&record_index_members(&indexed)?);
             out.push_str(&format!(
                 "class {name}:\n{}",
                 if members.is_empty() {
@@ -146,13 +155,11 @@ fn render(
             FieldType::Integer => "int",
             FieldType::Number => "float",
             FieldType::MultiSelect => "list[str]",
-            FieldType::Date => {
-                return Err("temporal contract requires an explicit temporal shape".into())
-            }
+            FieldType::Date => return Err(PythonComputeError::BoundaryTemporalShapeRequired.into()),
             FieldType::Money => "dict[str, PlasmJson]",
             FieldType::EntityRef { .. } => "PlasmRef",
             FieldType::Json | FieldType::Blob => "PlasmJson",
-            FieldType::Array => return Err("array contract requires an element type".into()),
+            FieldType::Array => return Err(PythonComputeError::BoundaryArrayShapeRequired.into()),
             _ => "str",
         }
         .into(),
@@ -163,12 +170,17 @@ fn render(
             .map(AsRef::as_ref)
             .unwrap_or(cgs);
         if cgs.catalog_cgs_hash_hex() != domain.catalog_hash {
-            return Err("Python declaration catalog pin mismatch".into());
+            return Err(PythonComputeError::BoundaryCatalogPinMismatch {
+                entry_id: domain.entry_id.clone(),
+            }
+            .into());
         }
-        let value = cgs
-            .values
-            .get(domain.value_ref.as_str())
-            .ok_or("unknown Python value domain")?;
+        let value = cgs.values.get(domain.value_ref.as_str()).ok_or_else(|| {
+            PythonComputeError::BoundaryValueDomainMissing {
+                entry_id: domain.entry_id.clone(),
+                value_ref: domain.value_ref.to_string(),
+            }
+        })?;
         if let Some(tokens) = value.domain.enum_tokens() {
             let literal = format!(
                 "Literal[{}]",
@@ -176,7 +188,9 @@ fn render(
                     .iter()
                     .map(serde_json::to_string)
                     .collect::<Result<Vec<_>, _>>()
-                    .map_err(|e| e.to_string())?
+                    .map_err(|error| PythonComputeError::BoundaryLiteralEncoding(
+                        std::sync::Arc::new(error)
+                    ))?
                     .join(", ")
             );
             ty = if matches!(
@@ -242,8 +256,10 @@ pub(crate) async fn admit_bundle(
                         &c.compute.source,
                     )
                     .map_err(crate::python_program_diagnostic::admission_error)?;
-                    let contract = plasm_core::SyntheticResultSchema::for_value(contract)
-                        .and_then(|s| s.row_contract())
+                    let schema = plasm_core::SyntheticResultSchema::for_value(contract)
+                        .map_err(crate::python_program_diagnostic::admission_error)?;
+                    let contract = schema
+                        .row_contract()
                         .map_err(crate::python_program_diagnostic::admission_error)?;
                     let operation = plasm_core::row_plan::plan_node_from_compute(&c.compute.op)
                         .map_err(|error| {
@@ -332,12 +348,14 @@ pub(super) fn input_type(
     cgs: &CGS,
     catalogs: &BTreeMap<String, std::sync::Arc<CGS>>,
     declarations: &mut String,
-) -> Result<String, String> {
+) -> Result<String, PythonComputeRejection> {
     let ty = render(t, cgs, catalogs, declarations, 0)?;
     use sha2::{Digest, Sha256};
     let alias = format!(
         "PlasmArgument{:x}",
-        Sha256::digest(serde_json::to_vec(t).map_err(|e| e.to_string())?)
+        Sha256::digest(serde_json::to_vec(t).map_err(|error| {
+            PythonComputeError::BoundaryFingerprintEncoding(std::sync::Arc::new(error))
+        })?,)
     );
     declarations.push_str(&format!("{alias}: TypeAlias = {ty}\n"));
     Ok(alias)
@@ -348,23 +366,25 @@ pub(super) fn output_annotation(
     cgs: &CGS,
     catalogs: &BTreeMap<String, std::sync::Arc<CGS>>,
     declarations: &mut String,
-) -> Result<String, String> {
+) -> Result<String, PythonComputeRejection> {
     fn output(
         t: &Type,
         cgs: &CGS,
         catalogs: &BTreeMap<String, std::sync::Arc<CGS>>,
         out: &mut String,
         depth: usize,
-    ) -> Result<String, String> {
+    ) -> Result<String, PythonComputeRejection> {
         if depth >= 64 {
-            return Err("Python output contract depth exceeded".into());
+            return Err(PythonComputeError::BoundaryContractDepthExceeded.into());
         }
         let ty = match &t.shape {
             ValueShape::Record { fields } | ValueShape::ObservedRecord { fields, .. } => {
                 use sha2::{Digest, Sha256};
                 let name = format!(
                     "PlasmOutput{:x}",
-                    Sha256::digest(serde_json::to_vec(&t.shape).map_err(|e| e.to_string())?)
+                    Sha256::digest(serde_json::to_vec(&t.shape).map_err(|error| {
+                        PythonComputeError::BoundaryFingerprintEncoding(std::sync::Arc::new(error))
+                    })?,)
                 );
                 let class = render(t, cgs, catalogs, out, depth)?;
                 if !out.contains(&format!("{name} = TypedDict")) {
@@ -377,7 +397,9 @@ pub(super) fn output_annotation(
                         }
                         members.push(format!(
                             "{}: {ty}",
-                            serde_json::to_string(key).map_err(|e| e.to_string())?
+                            serde_json::to_string(key).map_err(|error| {
+                                PythonComputeError::BoundaryKeyEncoding(std::sync::Arc::new(error))
+                            })?
                         ));
                     }
                     out.push_str(&format!(
@@ -422,7 +444,7 @@ pub(super) fn output_type(
     cgs: &CGS,
     catalogs: &BTreeMap<String, std::sync::Arc<CGS>>,
     declarations: &mut String,
-) -> Result<String, String> {
+) -> Result<String, PythonComputeRejection> {
     let ty = output_annotation(t, cgs, catalogs, declarations)?;
     declarations.push_str(&format!("PlasmOutput: TypeAlias = {ty}\n"));
     Ok("PlasmOutput".into())
@@ -433,7 +455,7 @@ pub(super) fn domain_aliases(
     cgs: &CGS,
     catalogs: &BTreeMap<String, std::sync::Arc<CGS>>,
     declarations: &mut String,
-) -> Result<(), String> {
+) -> Result<(), PythonComputeRejection> {
     for (symbol, contract) in domains {
         let ty = render(contract, cgs, catalogs, declarations, 0)?;
         declarations.push_str(&format!("{symbol}: TypeAlias = {ty}\n"));

@@ -1039,7 +1039,10 @@ fn render_plan_value_compact(value: &PlanValue) -> String {
         ),
         PlanValue::Expression { expression } => expression.render(|v| render_plan_value_compact(v)),
 
-        PlanValue::Literal { value } => render_json_value(&value.to_wire()),
+        PlanValue::Literal { value } => match value.to_wire() {
+            Ok(wire) => render_json_value(&wire),
+            Err(error) => format!("<invalid resolved value: {error}>"),
+        },
         PlanValue::Object { fields } => format!("{{{}}}", fields.len()),
         PlanValue::Array { items } => format!("[{}]", items.len()),
         PlanValue::Template { .. } => "template".to_owned(),
@@ -1073,7 +1076,10 @@ fn plan_value_summary(value: &PlanValue) -> String {
     match value {
         PlanValue::Object { fields } => format!("{{{}}}", fields.len()),
         PlanValue::Array { items } => format!("[{}]", items.len()),
-        PlanValue::Literal { value } => render_json_value(&value.to_wire()),
+        PlanValue::Literal { value } => match value.to_wire() {
+            Ok(wire) => render_json_value(&wire),
+            Err(error) => format!("<invalid resolved value: {error}>"),
+        },
         PlanValue::Template { .. } => "template".to_string(),
         _ => render_plan_value_compact(value),
     }

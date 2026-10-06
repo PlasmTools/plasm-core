@@ -3,10 +3,20 @@
 use crate::{CapabilityTemplate, CmlCond, CmlError, CmlExpr, PathSegment, RequestAuthentication};
 use indexmap::IndexSet;
 
-fn invalid(message: &str) -> CmlError {
-    CmlError::InvalidTemplate {
-        message: message.into(),
-    }
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ExpressionValidationError {
+    #[error("field projection requires at least one nonempty field name")]
+    InvalidFieldProjection,
+    #[error("assertion code must be a nonempty identifier")]
+    InvalidAssertionCode,
+    #[error("first_present requires at least one expression")]
+    EmptyFirstPresent,
+    #[error("let binding name must not be empty")]
+    EmptyLocalBindingName,
+    #[error("let binding name {name} is duplicated")]
+    DuplicateLocalBindingName { name: String },
+    #[error("let binding {binding} references itself or later binding {dependency}")]
+    ForwardLocalBindingReference { binding: String, dependency: String },
 }
 
 fn condition(condition: &CmlCond) -> Result<(), CmlError> {
@@ -28,7 +38,7 @@ fn expression(expr: &CmlExpr) -> Result<(), CmlError> {
         | CmlExpr::DateTimeFormat { value, .. } => expression(value),
         CmlExpr::Field { value, path } => {
             if path.is_empty() || path.iter().any(String::is_empty) {
-                return Err(invalid("field projection requires nonempty field names"));
+                return Err(ExpressionValidationError::InvalidFieldProjection.into());
             }
             expression(value)
         }
@@ -42,34 +52,43 @@ fn expression(expr: &CmlExpr) -> Result<(), CmlError> {
             value,
         } => {
             if code.is_empty() || !code.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_') {
-                return Err(invalid("assertion code must be a nonempty identifier"));
+                return Err(ExpressionValidationError::InvalidAssertionCode.into());
             }
             condition(predicate)?;
             expression(value)
         }
         CmlExpr::FirstPresent { values } => {
             if values.is_empty() {
-                return Err(invalid("first_present requires at least one expression"));
+                return Err(ExpressionValidationError::EmptyFirstPresent.into());
             }
             values.iter().try_for_each(expression)
         }
         CmlExpr::Let { bindings, value } => {
             let mut remaining = IndexSet::new();
             for binding in bindings {
-                if binding.name.is_empty() || !remaining.insert(binding.name.clone()) {
-                    return Err(invalid(
-                        "local expression names must be nonempty and unique",
-                    ));
+                if binding.name.is_empty() {
+                    return Err(ExpressionValidationError::EmptyLocalBindingName.into());
+                }
+                if !remaining.insert(binding.name.clone()) {
+                    return Err(ExpressionValidationError::DuplicateLocalBindingName {
+                        name: binding.name.clone(),
+                    }
+                    .into());
                 }
             }
             for binding in bindings {
                 expression(&binding.value)?;
                 let mut dependencies = IndexSet::new();
                 crate::transport::collect_expr_vars(&binding.value, &mut dependencies);
-                if dependencies.iter().any(|name| remaining.contains(name)) {
-                    return Err(invalid(
-                        "local expressions cannot reference themselves or later declarations",
-                    ));
+                if let Some(dependency) = dependencies
+                    .iter()
+                    .find(|name| remaining.contains(name.as_str()))
+                {
+                    return Err(ExpressionValidationError::ForwardLocalBindingReference {
+                        binding: binding.name.clone(),
+                        dependency: dependency.to_string(),
+                    }
+                    .into());
                 }
                 remaining.shift_remove(&binding.name);
             }

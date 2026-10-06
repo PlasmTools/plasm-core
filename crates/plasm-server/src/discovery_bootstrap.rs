@@ -6,6 +6,48 @@ use std::path::{Path, PathBuf};
 
 pub const OPENROUTER_KEY_RELATIVE_PATH: &str = "bootstrap-secrets/OPENROUTER_API_KEY";
 
+#[derive(Debug, thiserror::Error)]
+pub enum DiscoveryBootstrapError {
+    #[error("discovery bootstrap path has no parent directory: {}", .path.display())]
+    MissingParent { path: PathBuf },
+    #[error("discovery bootstrap directory create failed: {}: {source}", .path.display())]
+    CreateDirectory {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("discovery bootstrap file open failed: {}: {source}", .path.display())]
+    OpenFile {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("discovery bootstrap file write failed: {}: {source}", .path.display())]
+    WriteFile {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("discovery bootstrap file read failed: {}: {source}", .path.display())]
+    ReadFile {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("discovery bootstrap file is empty: {}", .path.display())]
+    EmptyFile { path: PathBuf },
+    #[error("OpenRouter API key must not be empty")]
+    EmptyApiKey,
+    #[error("discovery bootstrap path unavailable; set PLASM_LOCAL_STATE_DIR or HOME")]
+    StatePathUnavailable,
+    #[error("failed removing OpenRouter key file {}: {source}", .path.display())]
+    RemoveFile {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DiscoveryBootstrapState {
     pub openrouter_key_configured: bool,
@@ -45,46 +87,40 @@ fn open_local_secret_file_for_write(path: &Path) -> std::io::Result<std::fs::Fil
     opts.open(path)
 }
 
-fn write_secret_file(path: &Path, contents: &str) -> Result<(), String> {
+fn write_secret_file(path: &Path, contents: &str) -> Result<(), DiscoveryBootstrapError> {
     let Some(parent) = path.parent() else {
-        return Err(format!(
-            "discovery bootstrap path has no parent directory: {}",
-            path.display()
-        ));
+        return Err(DiscoveryBootstrapError::MissingParent {
+            path: path.to_owned(),
+        });
     };
-    std::fs::create_dir_all(parent).map_err(|e| {
-        format!(
-            "discovery bootstrap directory create failed: {}: {e}",
-            parent.display()
-        )
+    std::fs::create_dir_all(parent).map_err(|source| DiscoveryBootstrapError::CreateDirectory {
+        path: parent.to_owned(),
+        source,
     })?;
-    let mut file = open_local_secret_file_for_write(path).map_err(|e| {
-        format!(
-            "discovery bootstrap file write failed: {}: {e}",
-            path.display()
-        )
+    let mut file = open_local_secret_file_for_write(path).map_err(|source| {
+        DiscoveryBootstrapError::OpenFile {
+            path: path.to_owned(),
+            source,
+        }
     })?;
-    file.write_all(contents.as_bytes()).map_err(|e| {
-        format!(
-            "discovery bootstrap file write failed: {}: {e}",
-            path.display()
-        )
-    })
+    file.write_all(contents.as_bytes())
+        .map_err(|source| DiscoveryBootstrapError::WriteFile {
+            path: path.to_owned(),
+            source,
+        })
 }
 
-fn read_trimmed_file(path: &Path) -> Result<String, String> {
-    let raw = std::fs::read_to_string(path).map_err(|e| {
-        format!(
-            "discovery bootstrap file read failed: {}: {e}",
-            path.display()
-        )
-    })?;
+fn read_trimmed_file(path: &Path) -> Result<String, DiscoveryBootstrapError> {
+    let raw =
+        std::fs::read_to_string(path).map_err(|source| DiscoveryBootstrapError::ReadFile {
+            path: path.to_owned(),
+            source,
+        })?;
     let trimmed = raw.trim().to_string();
     if trimmed.is_empty() {
-        return Err(format!(
-            "discovery bootstrap file is empty: {}",
-            path.display()
-        ));
+        return Err(DiscoveryBootstrapError::EmptyFile {
+            path: path.to_owned(),
+        });
     }
     Ok(trimmed)
 }
@@ -97,7 +133,8 @@ pub fn current_state() -> DiscoveryBootstrapState {
 }
 
 /// Load persisted discovery settings into the process environment (explicit env wins).
-pub fn ensure_discovery_bootstrap_at_boot() -> Result<DiscoveryBootstrapState, String> {
+pub fn ensure_discovery_bootstrap_at_boot(
+) -> Result<DiscoveryBootstrapState, DiscoveryBootstrapError> {
     if !env_str_nonempty("OPENROUTER_API_KEY") {
         if let Some(path) = openrouter_key_path() {
             if path.exists() {
@@ -109,29 +146,25 @@ pub fn ensure_discovery_bootstrap_at_boot() -> Result<DiscoveryBootstrapState, S
     Ok(current_state())
 }
 
-pub fn set_openrouter_api_key(key: &str) -> Result<(), String> {
+pub fn set_openrouter_api_key(key: &str) -> Result<(), DiscoveryBootstrapError> {
     let key = key.trim();
     if key.is_empty() {
-        return Err("OpenRouter API key must not be empty".into());
+        return Err(DiscoveryBootstrapError::EmptyApiKey);
     }
     std::env::set_var("OPENROUTER_API_KEY", key);
     let Some(path) = openrouter_key_path() else {
-        return Err(
-            "discovery bootstrap path unavailable; set PLASM_LOCAL_STATE_DIR or HOME".into(),
-        );
+        return Err(DiscoveryBootstrapError::StatePathUnavailable);
     };
     write_secret_file(&path, key)
 }
 
-pub fn clear_openrouter_api_key() -> Result<(), String> {
+pub fn clear_openrouter_api_key() -> Result<(), DiscoveryBootstrapError> {
     std::env::remove_var("OPENROUTER_API_KEY");
     if let Some(path) = openrouter_key_path() {
         if path.exists() {
-            std::fs::remove_file(&path).map_err(|e| {
-                format!(
-                    "failed removing OpenRouter key file {}: {e}",
-                    path.display()
-                )
+            std::fs::remove_file(&path).map_err(|source| DiscoveryBootstrapError::RemoveFile {
+                path: path.clone(),
+                source,
             })?;
         }
     }

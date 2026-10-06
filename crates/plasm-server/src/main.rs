@@ -205,11 +205,7 @@ async fn ensure_cli_policy_store(
         }
         return Ok(None);
     }
-    let guard = EmbeddedPostgresGuard::try_start_from_env().await.map_err(
-        |e| -> Box<dyn std::error::Error + Send + Sync> {
-            Box::new(std::io::Error::other(e.to_string()))
-        },
-    )?;
+    let guard = EmbeddedPostgresGuard::try_start_from_env().await?;
     if let Err(e) = ensure_local_auth_storage_encryption_key() {
         return Err(Box::new(std::io::Error::other(e)));
     }
@@ -256,6 +252,59 @@ fn redact_postgres_url_for_display(url: &str) -> String {
 
 const LOCAL_AUTH_STORAGE_KEY_RELATIVE_PATH: &str = "bootstrap-secrets/AUTH_STORAGE_ENCRYPTION_KEY";
 const LOCAL_AUTH_JWT_SECRET_RELATIVE_PATH: &str = "bootstrap-secrets/PLASM_AUTH_JWT_SECRET";
+
+#[derive(Debug, thiserror::Error)]
+#[error("{source}")]
+struct AuthStorageKeyValidationError {
+    #[source]
+    source: auth_framework::errors::AuthError,
+}
+
+#[derive(Debug, thiserror::Error)]
+enum LocalAuthBootstrapError {
+    #[error(
+        "PLASM_AUTH_JWT_SECRET is required in Kubernetes; set it via your deployment secrets."
+    )]
+    JwtSecretRequired,
+    #[error("local appliance JWT bootstrap could not resolve a durable path; set PLASM_LOCAL_STATE_DIR, ensure HOME is set, or provide PLASM_AUTH_JWT_SECRET explicitly.")]
+    JwtPathUnavailable,
+    #[error("local appliance auth key bootstrap could not resolve a durable path; set PLASM_LOCAL_STATE_DIR, ensure HOME is set, or provide AUTH_STORAGE_ENCRYPTION_KEY explicitly.")]
+    StorageKeyPathUnavailable,
+    #[error("local appliance auth key file read failed: {}: {source}", path.display())]
+    ReadFile {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("local appliance auth key file is empty: {}\nDelete or replace that file to mint a fresh local key on next start. Warning: replacing it will orphan previously encrypted OAuth secrets and MCP API keys.", path.display())]
+    EmptyFile { path: PathBuf },
+    #[error("local appliance auth key path has no parent directory: {}", path.display())]
+    MissingParent { path: PathBuf },
+    #[error("local appliance auth key directory create failed: {}: {source}", path.display())]
+    CreateDirectory {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("local appliance auth key file create failed: {}: {source}", path.display())]
+    CreateFile {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("local appliance auth key file write failed: {}: {source}", path.display())]
+    WriteFile {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("local appliance auth key file is invalid: {}: {source}\nDelete or replace that file to mint a fresh local key on next start. Warning: replacing it will orphan previously encrypted OAuth secrets and MCP API keys.", path.display())]
+    InvalidStorageKey {
+        path: PathBuf,
+        #[source]
+        source: AuthStorageKeyValidationError,
+    },
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum LocalAuthStorageKeyBootstrap {
@@ -310,21 +359,16 @@ fn local_auth_jwt_secret_path() -> Option<PathBuf> {
         .map(|root| root.join(LOCAL_AUTH_JWT_SECRET_RELATIVE_PATH))
 }
 
-fn ensure_local_appliance_jwt_signing_secret() -> Result<LocalAuthJwtSecretBootstrap, String> {
+fn ensure_local_appliance_jwt_signing_secret(
+) -> Result<LocalAuthJwtSecretBootstrap, LocalAuthBootstrapError> {
     if env_str_nonempty("PLASM_AUTH_JWT_SECRET") {
         return Ok(LocalAuthJwtSecretBootstrap::ProvidedByEnv);
     }
     if plasm_agent_core::bootstrap_secrets::running_inside_kubernetes() {
-        return Err(
-            "PLASM_AUTH_JWT_SECRET is required in Kubernetes; set it via your deployment secrets."
-                .to_string(),
-        );
+        return Err(LocalAuthBootstrapError::JwtSecretRequired);
     }
     let Some(path) = local_auth_jwt_secret_path() else {
-        return Err(
-            "local appliance JWT bootstrap could not resolve a durable path; set PLASM_LOCAL_STATE_DIR, ensure HOME is set, or provide PLASM_AUTH_JWT_SECRET explicitly."
-                .to_string(),
-        );
+        return Err(LocalAuthBootstrapError::JwtPathUnavailable);
     };
     let existed = path.exists();
     let secret = if existed {
@@ -388,32 +432,23 @@ fn generate_auth_storage_encryption_key() -> String {
     encode_base64(&bytes)
 }
 
-fn validate_auth_storage_encryption_key() -> Result<(), String> {
+fn validate_auth_storage_encryption_key() -> Result<(), AuthStorageKeyValidationError> {
     auth_framework::storage::StorageEncryption::new()
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(|source| AuthStorageKeyValidationError { source })
 }
 
-fn invalid_local_auth_storage_key_message(path: &Path, err: &str) -> String {
-    format!(
-        "local appliance auth key file is invalid: {}: {err}\nDelete or replace that file to mint a fresh local key on next start. Warning: replacing it will orphan previously encrypted OAuth secrets and MCP API keys.",
-        path.display()
-    )
-}
-
-fn read_local_auth_storage_key(path: &Path) -> Result<String, String> {
-    let raw = std::fs::read_to_string(path).map_err(|e| {
-        format!(
-            "local appliance auth key file read failed: {}: {e}",
-            path.display()
-        )
-    })?;
+fn read_local_auth_storage_key(path: &Path) -> Result<String, LocalAuthBootstrapError> {
+    let raw =
+        std::fs::read_to_string(path).map_err(|source| LocalAuthBootstrapError::ReadFile {
+            path: path.to_path_buf(),
+            source,
+        })?;
     let key = raw.trim().to_string();
     if key.is_empty() {
-        return Err(format!(
-            "local appliance auth key file is empty: {}\nDelete or replace that file to mint a fresh local key on next start. Warning: replacing it will orphan previously encrypted OAuth secrets and MCP API keys.",
-            path.display()
-        ));
+        return Err(LocalAuthBootstrapError::EmptyFile {
+            path: path.to_path_buf(),
+        });
     }
     Ok(key)
 }
@@ -429,35 +464,34 @@ fn open_local_secret_file_for_write(path: &Path) -> std::io::Result<std::fs::Fil
     opts.open(path)
 }
 
-fn write_local_auth_storage_key(path: &Path, key: &str) -> Result<(), String> {
+fn write_local_auth_storage_key(path: &Path, key: &str) -> Result<(), LocalAuthBootstrapError> {
     let Some(parent) = path.parent() else {
-        return Err(format!(
-            "local appliance auth key path has no parent directory: {}",
-            path.display()
-        ));
+        return Err(LocalAuthBootstrapError::MissingParent {
+            path: path.to_path_buf(),
+        });
     };
-    std::fs::create_dir_all(parent).map_err(|e| {
-        format!(
-            "local appliance auth key directory create failed: {}: {e}",
-            parent.display()
-        )
+    std::fs::create_dir_all(parent).map_err(|source| LocalAuthBootstrapError::CreateDirectory {
+        path: parent.to_path_buf(),
+        source,
     })?;
     match open_local_secret_file_for_write(path) {
-        Ok(mut file) => file.write_all(key.as_bytes()).map_err(|e| {
-            format!(
-                "local appliance auth key file write failed: {}: {e}",
-                path.display()
-            )
-        }),
+        Ok(mut file) => {
+            file.write_all(key.as_bytes())
+                .map_err(|source| LocalAuthBootstrapError::WriteFile {
+                    path: path.to_path_buf(),
+                    source,
+                })
+        }
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
-        Err(e) => Err(format!(
-            "local appliance auth key file create failed: {}: {e}",
-            path.display()
-        )),
+        Err(source) => Err(LocalAuthBootstrapError::CreateFile {
+            path: path.to_path_buf(),
+            source,
+        }),
     }
 }
 
-fn ensure_local_auth_storage_encryption_key() -> Result<LocalAuthStorageKeyBootstrap, String> {
+fn ensure_local_auth_storage_encryption_key(
+) -> Result<LocalAuthStorageKeyBootstrap, LocalAuthBootstrapError> {
     if env_str_nonempty("AUTH_STORAGE_ENCRYPTION_KEY") {
         return Ok(LocalAuthStorageKeyBootstrap::ProvidedByEnv);
     }
@@ -471,10 +505,7 @@ fn ensure_local_auth_storage_encryption_key() -> Result<LocalAuthStorageKeyBoots
         return Ok(LocalAuthStorageKeyBootstrap::NotRequired);
     }
     let Some(path) = local_auth_storage_key_path() else {
-        return Err(
-            "local appliance auth key bootstrap could not resolve a durable path; set PLASM_LOCAL_STATE_DIR, ensure HOME is set, or provide AUTH_STORAGE_ENCRYPTION_KEY explicitly."
-                .to_string(),
-        );
+        return Err(LocalAuthBootstrapError::StorageKeyPathUnavailable);
     };
     let existed = path.exists();
     let key = if existed {
@@ -486,7 +517,7 @@ fn ensure_local_auth_storage_encryption_key() -> Result<LocalAuthStorageKeyBoots
     };
     std::env::set_var("AUTH_STORAGE_ENCRYPTION_KEY", &key);
     if let Err(err) = validate_auth_storage_encryption_key() {
-        return Err(invalid_local_auth_storage_key_message(&path, &err));
+        return Err(LocalAuthBootstrapError::InvalidStorageKey { path, source: err });
     }
     Ok(if existed {
         LocalAuthStorageKeyBootstrap::LoadedFromFile { path }
@@ -518,9 +549,7 @@ fn validate_serve_catalog(cli: &ServeCli) {
 
 pub(crate) async fn run_migrate_mcp_config_db(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let mut embedded_pg = EmbeddedPostgresGuard::try_start_from_env()
-        .await
-        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { format!("{e}").into() })?;
+    let mut embedded_pg = EmbeddedPostgresGuard::try_start_from_env().await?;
     let Some(db_url) = plasm_agent_core::mcp_config_repository::mcp_config_database_url() else {
         shutdown_embedded_pg(&mut embedded_pg).await;
         eprintln!(
@@ -559,17 +588,88 @@ fn eprintln_exit_error(err: &dyn Error) {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+enum UiSupervisionError {
+    #[error("UI supervisor channel disconnected before RUN UI handshake")]
+    ChannelDisconnected(#[source] crossbeam_channel::TryRecvError),
+    #[error("timeout waiting for RUN UI RunEntered (120s)")]
+    RunHandshakeTimeout(#[source] tokio::time::error::Elapsed),
+    #[error("UI join wrapper failed")]
+    Join(#[source] tokio::task::JoinError),
+    #[error("UI thread panicked")]
+    Panic(#[source] UiThreadPanic),
+    #[error("terminal UI failed")]
+    Terminal(#[source] boot::TerminalUiError),
+}
+
+#[derive(Debug, thiserror::Error)]
+enum HttpSupervisionError {
+    #[error("listen bind failed on {address}")]
+    Bind {
+        address: String,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("unified HTTP+MCP server failed")]
+    Serve(#[from] plasm_agent_core::http::HostServeError),
+    #[error("unified HTTP+MCP server task failed")]
+    Join(#[from] tokio::task::JoinError),
+    #[error("unified listener exited immediately after bind")]
+    ExitedAfterBind,
+    #[error("unified listener exited before RUN handshake")]
+    ExitedBeforeHandshake,
+    #[error("HTTP+MCP listener stopped while appliance should keep running")]
+    ListenerStopped,
+}
+
+/// Panic payloads are `Send`, but need a mutex to cross the supervisor's `Sync` error boundary.
+/// Retain the actual payload without rendering arbitrary panic contents into diagnostics.
+struct UiThreadPanic {
+    payload: std::sync::Mutex<Box<dyn std::any::Any + Send>>,
+}
+
+impl std::fmt::Debug for UiThreadPanic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UiThreadPanic")
+            .field("payload_poisoned", &self.payload.is_poisoned())
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Display for UiThreadPanic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("UI thread panic payload retained")
+    }
+}
+
+impl Error for UiThreadPanic {}
+
+impl UiThreadPanic {
+    fn new(payload: Box<dyn std::any::Any + Send>) -> Self {
+        Self {
+            payload: std::sync::Mutex::new(payload),
+        }
+    }
+
+    #[cfg(test)]
+    fn payload(
+        &self,
+    ) -> std::sync::LockResult<std::sync::MutexGuard<'_, Box<dyn std::any::Any + Send>>> {
+        self.payload.lock()
+    }
+}
+
 async fn recv_ui_event(
     rx: &crossbeam_channel::Receiver<boot::UiEvent>,
-) -> Result<boot::UiEvent, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<boot::UiEvent, UiSupervisionError> {
     loop {
         match rx.try_recv() {
             Ok(e) => return Ok(e),
             Err(crossbeam_channel::TryRecvError::Empty) => {
                 tokio::time::sleep(Duration::from_millis(30)).await;
             }
-            Err(crossbeam_channel::TryRecvError::Disconnected) => {
-                return Err("UI supervisor channel disconnected before RUN UI handshake".into());
+            Err(error @ crossbeam_channel::TryRecvError::Disconnected) => {
+                return Err(UiSupervisionError::ChannelDisconnected(error));
             }
         }
     }
@@ -684,7 +784,7 @@ async fn bootstrap_appliance_core(
     let argv_owned: Vec<OsString> = argv.to_vec();
     let ui_detail_tx = ui_tx.cloned();
     let catalog_task = tokio::task::spawn_blocking(move || {
-        use plasm_agent_core::error::AgentError;
+        use plasm_agent_core::error::{AgentArgumentError, AgentError};
 
         let push_detail = |line: &str| {
             if let Some(ref t) = ui_detail_tx {
@@ -695,7 +795,7 @@ async fn bootstrap_appliance_core(
         push_detail("parsing inner MCP argv…");
         let pre_matches = mcp_host_bootstrap::preparse_mcp_command()
             .try_get_matches_from(&argv_owned)
-            .map_err(|e| AgentError::Argument(format!("inner argv parse (pre): {e:#}")))?;
+            .map_err(AgentArgumentError::PreflightCliArguments)?;
 
         let mut load_prog = |s: &str| push_detail(s);
         let catalog_outcome = mcp_host_bootstrap::load_catalog_for_mcp_server_with_progress(
@@ -718,7 +818,7 @@ async fn bootstrap_appliance_core(
         push_detail("matching full argv against catalog CLI…");
         let matches = app
             .try_get_matches_from(&argv_owned)
-            .map_err(|e| AgentError::Argument(format!("inner argv parse (full CLI): {e:#}")))?;
+            .map_err(AgentArgumentError::FullCliArguments)?;
         Ok::<_, AgentError>((catalog_outcome, matches))
     });
 
@@ -810,7 +910,8 @@ async fn bootstrap_appliance_core(
             }
             state
         }
-        Err(msg) => {
+        Err(err) => {
+            let msg = err.to_string();
             report_fatal(&msg);
             send(boot::BootstrapUiMsg::Fatal(msg));
             return Err(BootstrapStopped::Fatal);
@@ -823,7 +924,8 @@ async fn bootstrap_appliance_core(
             }
             state
         }
-        Err(msg) => {
+        Err(err) => {
+            let msg = err.to_string();
             report_fatal(&msg);
             send(boot::BootstrapUiMsg::Fatal(msg));
             return Err(BootstrapStopped::Fatal);
@@ -977,19 +1079,19 @@ async fn bootstrap_appliance_core(
 }
 
 async fn join_ui_thread(
-    ui_handle: std::thread::JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>>,
-) -> Result<(), Box<dyn std::error::Error>> {
+    ui_handle: std::thread::JoinHandle<Result<(), boot::TerminalUiError>>,
+) -> Result<(), UiSupervisionError> {
     let join_out = tokio::task::spawn_blocking(move || ui_handle.join())
         .await
-        .map_err(|e| format!("ui join wrapper: {e}"))?;
+        .map_err(UiSupervisionError::Join)?;
     match join_out {
-        Ok(ui_res) => ui_res.map_err(|e| -> Box<dyn std::error::Error> { e }),
-        Err(_) => Err("plasm-server: UI thread panicked".into()),
+        Ok(ui_res) => ui_res.map_err(UiSupervisionError::Terminal),
+        Err(payload) => Err(UiSupervisionError::Panic(UiThreadPanic::new(payload))),
     }
 }
 
 type BlockingUiJoinOut = Result<
-    Result<Result<(), Box<dyn std::error::Error + Send + Sync>>, Box<dyn std::any::Any + Send>>,
+    Result<Result<(), boot::TerminalUiError>, Box<dyn std::any::Any + Send>>,
     tokio::task::JoinError,
 >;
 
@@ -1012,16 +1114,12 @@ fn init_appliance_runtime_headless() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-fn flatten_blocking_ui_join(
-    res: BlockingUiJoinOut,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+fn flatten_blocking_ui_join(res: BlockingUiJoinOut) -> Result<(), UiSupervisionError> {
     match res {
         Ok(Ok(Ok(()))) => Ok(()),
-        Ok(Ok(Err(e))) => Err(e),
-        Ok(Err(_)) => Err(Box::<dyn std::error::Error + Send + Sync>::from(
-            "plasm-server: UI thread panicked",
-        )),
-        Err(e) => Err(Box::new(e)),
+        Ok(Ok(Err(e))) => Err(UiSupervisionError::Terminal(e)),
+        Ok(Err(payload)) => Err(UiSupervisionError::Panic(UiThreadPanic::new(payload))),
+        Err(e) => Err(UiSupervisionError::Join(e)),
     }
 }
 
@@ -1045,11 +1143,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let _cli_pg = ensure_cli_policy_store(&root.serve).await.map_err(|e| {
             eprintln_exit_error(&*e);
-            Box::new(std::io::Error::other(format!("{e}"))) as Box<dyn std::error::Error>
+            e as Box<dyn std::error::Error>
         })?;
         if let Err(e) = run_migrate_mcp_config_db().await {
             eprintln_exit_error(&*e);
-            return Err(Box::new(std::io::Error::other(format!("{e}"))));
+            return Err(e);
         }
         return Ok(());
     }
@@ -1062,11 +1160,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let _cli_pg = ensure_cli_policy_store(&root.serve).await.map_err(|e| {
                 eprintln_exit_error(&*e);
-                Box::new(std::io::Error::other(format!("{e}"))) as Box<dyn std::error::Error>
+                e as Box<dyn std::error::Error>
             })?;
             if let Err(e) = mcp_cli::run_mcp(mcp).await {
                 eprintln_exit_error(&*e);
-                return Err(Box::new(std::io::Error::other(format!("{e}"))));
+                return Err(e);
             }
             return Ok(());
         }
@@ -1077,11 +1175,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let _cli_pg = ensure_cli_policy_store(&root.serve).await.map_err(|e| {
                 eprintln_exit_error(&*e);
-                Box::new(std::io::Error::other(format!("{e}"))) as Box<dyn std::error::Error>
+                e as Box<dyn std::error::Error>
             })?;
             if let Err(e) = oauth_cli::run_oauth(oauth).await {
-                eprintln_exit_error(&*e);
-                return Err(Box::new(std::io::Error::other(format!("{e}"))));
+                eprintln_exit_error(&e);
+                return Err(Box::new(e));
             }
             return Ok(());
         }
@@ -1130,13 +1228,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli.listen_host.as_deref(),
         cli.port,
     )
-    .map_err(|msg| {
-        let err = std::io::Error::new(std::io::ErrorKind::InvalidInput, msg);
+    .map_err(|error| {
+        let err = std::io::Error::new(std::io::ErrorKind::InvalidInput, error);
         eprintln_exit_error(&err);
         Box::new(err) as Box<dyn std::error::Error>
     })?;
 
-    let ui_result: Result<(), Box<dyn std::error::Error + Send + Sync>> = if !use_tui {
+    let ui_result: Result<(), Box<dyn std::error::Error + Send>> = if !use_tui {
         let boot_cancel = AtomicBool::new(false);
         let bootstrap_out = tokio::select! {
             _ = shutdown_signal() => {
@@ -1156,9 +1254,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let listener = match listen.bind_tcp_listener().await {
                     Ok(l) => l,
                     Err(e) => {
-                        let msg = format!("listen bind failed on {}: {e:#}", listen.display_addr());
-                        stderr_log::line(format!("plasm-server: {msg}"));
-                        return Err(msg.into());
+                        let error = HttpSupervisionError::Bind {
+                            address: listen.display_addr(),
+                            source: e,
+                        };
+                        eprintln_exit_error(&error);
+                        return Err(Box::new(error));
                     }
                 };
                 stderr_log::line(format!(
@@ -1177,19 +1278,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         plasm_agent_core::http::DiscoveryHttpServeOpts::default(),
                     )
                     .await
-                    .map_err(|e| format!("unified server error: {e:#}"))
                 });
 
                 tokio::task::yield_now().await;
                 if unified_srv.is_finished() {
                     let err = match unified_srv.await {
-                        Ok(Ok(())) => "unified listener exited immediately after bind".to_string(),
-                        Ok(Err(s)) => s,
-                        Err(e) => format!("unified server task join error: {e}"),
+                        Ok(Ok(())) => HttpSupervisionError::ExitedAfterBind,
+                        Ok(Err(e)) => HttpSupervisionError::Serve(e),
+                        Err(e) => HttpSupervisionError::Join(e),
                     };
                     stderr_log::line(format!("[plasm-server] fatal: {err}"));
                     shutdown_embedded_pg(&mut embedded_pg).await;
-                    return Err(err.into());
+                    return Err(Box::new(err));
                 }
 
                 tracing::info!(target: "plasm_appliance_boot", "phase: headless listener running");
@@ -1208,16 +1308,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         res = &mut unified_srv => {
                             match res {
                                 Ok(Ok(())) => {
-                                    let msg = "HTTP+MCP listener stopped while appliance should keep running";
-                                    stderr_log::line(format!("[plasm-server] fatal: {msg}"));
-                                    Err(Box::<dyn std::error::Error + Send + Sync>::from(msg))
+                                    let error = HttpSupervisionError::ListenerStopped;
+                                    stderr_log::line(format!("[plasm-server] fatal: {error}"));
+                                    Err(Box::new(error) as Box<dyn Error + Send>)
                                 }
                                 Ok(Err(s)) => {
                                     stderr_log::line(format!("[plasm-server] fatal: {s}"));
-                                    Err(s.into())
+                                    Err(Box::new(HttpSupervisionError::Serve(s)) as Box<dyn Error + Send>)
                                 }
                                 Err(e) if e.is_cancelled() => Ok(()),
-                                Err(e) => Err(Box::<dyn std::error::Error + Send + Sync>::from(e)),
+                                Err(e) => Err(Box::new(HttpSupervisionError::Join(e)) as Box<dyn Error + Send>),
                             }
                         }
                     }
@@ -1283,7 +1383,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let _ = tx.send(boot::BootstrapUiMsg::Fatal(format!("{e:#}")));
             eprintln_exit_error(&*e);
             if let Err(je) = join_ui_thread(ui_handle).await {
-                eprintln_exit_error(&*je);
+                eprintln_exit_error(&je);
             }
             return Err(e);
         }
@@ -1296,7 +1396,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 drop(tx);
                 shutdown_embedded_pg(&mut embedded_pg).await;
                 if let Err(e) = join_ui_thread(ui_handle).await {
-                    eprintln_exit_error(&*e);
+                    eprintln_exit_error(&e);
                 }
                 stderr_log::line(
                     "[plasm-server] bootstrap interrupted (Ctrl+C or SIGTERM) — release terminal",
@@ -1317,14 +1417,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Err(BootstrapStopped::Cancelled) => {
                 shutdown_embedded_pg(&mut embedded_pg).await;
                 if let Err(e) = join_ui_thread(ui_handle).await {
-                    eprintln_exit_error(&*e);
+                    eprintln_exit_error(&e);
                 }
                 return Ok(());
             }
             Err(BootstrapStopped::Fatal) => {
                 shutdown_embedded_pg(&mut embedded_pg).await;
                 if let Err(e) = join_ui_thread(ui_handle).await {
-                    eprintln_exit_error(&*e);
+                    eprintln_exit_error(&e);
                 }
                 std::process::exit(1);
             }
@@ -1348,13 +1448,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let listener = match listen.bind_tcp_listener().await {
             Ok(l) => l,
             Err(e) => {
-                let msg = format!("listen bind failed on {}: {e:#}", listen.display_addr());
-                let _ = tx.send(boot::BootstrapUiMsg::Fatal(msg.clone()));
+                let error = HttpSupervisionError::Bind {
+                    address: listen.display_addr(),
+                    source: e,
+                };
+                let _ = tx.send(boot::BootstrapUiMsg::Fatal(error.to_string()));
                 shutdown_embedded_pg(&mut embedded_pg).await;
                 if let Err(je) = join_ui_thread(ui_handle).await {
-                    eprintln_exit_error(&*je);
+                    eprintln_exit_error(&je);
                 }
-                return Err(msg.into());
+                return Err(Box::new(error));
             }
         };
         let bound_port = listener.local_addr()?.port();
@@ -1382,21 +1485,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 },
             )
             .await
-            .map_err(|e| format!("unified server error: {e:#}"))
         });
 
         tokio::task::yield_now().await;
         if unified_srv.is_finished() {
             running.store(false, Ordering::SeqCst);
             let err = match unified_srv.await {
-                Ok(Ok(())) => "unified listener exited before RUN handshake".to_string(),
-                Ok(Err(s)) => s,
-                Err(e) => format!("unified server task join error: {e}"),
+                Ok(Ok(())) => HttpSupervisionError::ExitedBeforeHandshake,
+                Ok(Err(e)) => HttpSupervisionError::Serve(e),
+                Err(e) => HttpSupervisionError::Join(e),
             };
-            let _ = tx.send(boot::BootstrapUiMsg::Fatal(err.clone()));
+            let _ = tx.send(boot::BootstrapUiMsg::Fatal(err.to_string()));
             shutdown_embedded_pg(&mut embedded_pg).await;
             let _ = join_ui_thread(ui_handle).await;
-            return Err(err.into());
+            return Err(Box::new(err));
         }
 
         let _ = tx.send(boot::BootstrapUiMsg::PhaseDone(6));
@@ -1421,7 +1523,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 unified_srv.abort();
                 shutdown_embedded_pg(&mut embedded_pg).await;
                 if let Err(e) = join_ui_thread(ui_handle).await {
-                    eprintln_exit_error(&*e);
+                    eprintln_exit_error(&e);
                 }
                 stderr_log::line(
                     "[plasm-server] shutdown during RUN UI handshake (Ctrl+C or SIGTERM)",
@@ -1440,9 +1542,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         running.store(false, Ordering::SeqCst);
                         unified_srv.abort();
                         let _ = join_ui_thread(ui_handle).await;
-                        return Err(e as Box<dyn std::error::Error>);
+                        return Err(Box::new(e));
                     }
-                    Err(_) => {
+                    Err(elapsed) => {
                         running.store(false, Ordering::SeqCst);
                         boot_cancel.store(true, Ordering::SeqCst);
                         unified_srv.abort();
@@ -1461,7 +1563,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 "[plasm-server] warning: UI thread did not exit within 5s after RUN handshake timeout",
                             ),
                         }
-                        return Err("timeout waiting for RUN UI RunEntered (120s)".into());
+                        return Err(Box::new(UiSupervisionError::RunHandshakeTimeout(elapsed)));
                     }
                 }
             }
@@ -1485,7 +1587,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 _ = shutdown_signal() => {
                     run_ui.store(false, Ordering::SeqCst);
                     unified_srv.abort();
-                    let ui_j = flatten_blocking_ui_join(ui_blocking.await);
+                    let ui_j = flatten_blocking_ui_join(ui_blocking.await)
+                        .map_err(|e| Box::new(e) as Box<dyn Error + Send>);
                     let _ = unified_srv.await;
                     stderr_log::line("[plasm-server] shutdown: signal received");
                     ui_j
@@ -1495,29 +1598,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let _ = unified_srv.await;
                     stderr_log::line("[plasm-server] shutdown: control station closed");
                     flatten_blocking_ui_join(join_res)
+                        .map_err(|e| Box::new(e) as Box<dyn Error + Send>)
                 }
                 res = &mut unified_srv => {
                     run_ui.store(false, Ordering::SeqCst);
-                    let ui_j = flatten_blocking_ui_join(ui_blocking.await);
+                    let ui_j = flatten_blocking_ui_join(ui_blocking.await)
+                        .map_err(|e| Box::new(e) as Box<dyn Error + Send>);
                     match res {
                         Ok(Ok(())) => {
-                            let msg = "HTTP+MCP listener stopped while appliance should keep running";
-                            stderr_log::line(format!("[plasm-server] fatal: {msg}"));
+                            let error = HttpSupervisionError::ListenerStopped;
+                            stderr_log::line(format!("[plasm-server] fatal: {error}"));
                             match ui_j {
-                                Ok(()) => Err(Box::<dyn std::error::Error + Send + Sync>::from(msg)),
+                                Ok(()) => Err(Box::new(error) as Box<dyn Error + Send>),
                                 Err(e) => Err(e),
                             }
                         }
                         Ok(Err(s)) => {
                             stderr_log::line(format!("[plasm-server] fatal: {s}"));
                             match ui_j {
-                                Ok(()) => Err(s.into()),
+                                Ok(()) => Err(Box::new(HttpSupervisionError::Serve(s)) as Box<dyn Error + Send>),
                                 Err(e) => Err(e),
                             }
                         }
                         Err(e) if e.is_cancelled() => ui_j,
                         Err(e) => match ui_j {
-                            Ok(()) => Err(Box::<dyn std::error::Error + Send + Sync>::from(e)),
+                            Ok(()) => Err(Box::new(HttpSupervisionError::Join(e)) as Box<dyn Error + Send>),
                             Err(uie) => Err(uie),
                         },
                     }
@@ -1538,7 +1643,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => {
             eprintln_exit_error(&*e);
             stderr_log::line("[plasm-server] exiting with error");
-            Err(Box::new(std::io::Error::other(format!("{e}"))))
+            Err(e)
         }
     }
 }
@@ -1547,6 +1652,89 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
     use std::sync::{Mutex, OnceLock};
+
+    #[test]
+    fn http_supervision_preserves_serve_source_through_rendering_boundary() {
+        let error: Box<dyn Error + Send> = Box::new(HttpSupervisionError::Serve(
+            plasm_agent_core::http::HostServeError::Listener(std::io::Error::from(
+                std::io::ErrorKind::ConnectionReset,
+            )),
+        ));
+        let serve = error.source().unwrap();
+        assert!(serve.is::<plasm_agent_core::http::HostServeError>());
+        let source = serve
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap();
+        assert_eq!(source.kind(), std::io::ErrorKind::ConnectionReset);
+    }
+
+    #[tokio::test]
+    async fn ui_handshake_disconnect_preserves_channel_source() {
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        drop(tx);
+        let error = recv_ui_event(&rx).await.unwrap_err();
+        assert!(matches!(error, UiSupervisionError::ChannelDisconnected(_)));
+        assert!(error
+            .source()
+            .unwrap()
+            .is::<crossbeam_channel::TryRecvError>());
+    }
+
+    #[tokio::test]
+    async fn ui_handshake_timeout_preserves_elapsed_source() {
+        let elapsed = tokio::time::timeout(Duration::ZERO, std::future::pending::<()>())
+            .await
+            .unwrap_err();
+        let error = UiSupervisionError::RunHandshakeTimeout(elapsed);
+        assert!(error.source().unwrap().is::<tokio::time::error::Elapsed>());
+    }
+
+    #[test]
+    fn ui_join_preserves_terminal_io_source() {
+        let io = std::io::Error::from(std::io::ErrorKind::BrokenPipe);
+        let error =
+            flatten_blocking_ui_join(Ok(Ok(Err(boot::TerminalUiError::Running(io))))).unwrap_err();
+        let terminal = error.source().unwrap();
+        assert!(terminal.is::<boot::TerminalUiError>());
+        let io = terminal
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap();
+        assert_eq!(io.kind(), std::io::ErrorKind::BrokenPipe);
+    }
+
+    #[test]
+    fn ui_join_preserves_panic_payload_without_rendering_it() {
+        let error = flatten_blocking_ui_join(Ok(Err(Box::new(String::from("private payload")))))
+            .unwrap_err();
+        let panic = error
+            .source()
+            .unwrap()
+            .downcast_ref::<UiThreadPanic>()
+            .unwrap();
+        assert_eq!(
+            panic.payload().unwrap().downcast_ref::<String>().unwrap(),
+            "private payload"
+        );
+        assert!(!format!("{error:?}").contains("private payload"));
+        assert!(!error.to_string().contains("private payload"));
+    }
+
+    #[tokio::test]
+    async fn ui_join_wrapper_preserves_tokio_join_source() {
+        let task = tokio::spawn(std::future::pending::<()>());
+        task.abort();
+        let error = flatten_blocking_ui_join(Err(task.await.unwrap_err())).unwrap_err();
+        let source = error
+            .source()
+            .unwrap()
+            .downcast_ref::<tokio::task::JoinError>()
+            .unwrap();
+        assert!(source.is_cancelled());
+    }
 
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -1758,6 +1946,23 @@ mod tests {
     }
 
     #[test]
+    fn local_auth_storage_key_read_preserves_io_source_and_path() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("missing-key");
+        let err = read_local_auth_storage_key(&path).expect_err("missing file");
+        let LocalAuthBootstrapError::ReadFile {
+            path: error_path,
+            source,
+        } = &err
+        else {
+            panic!("expected read failure: {err}");
+        };
+        assert_eq!(error_path, &path);
+        assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
+        assert!(err.source().unwrap().is::<std::io::Error>());
+    }
+
+    #[test]
     fn local_auth_storage_key_bootstrap_reports_corrupt_key_file() {
         let _guard = env_lock().lock().expect("env lock");
         let _env = EnvGuard::new(&[
@@ -1778,12 +1983,25 @@ mod tests {
 
         let err =
             ensure_local_auth_storage_encryption_key().expect_err("corrupt key should be rejected");
+        let LocalAuthBootstrapError::InvalidStorageKey {
+            path: error_path,
+            source,
+        } = &err
+        else {
+            panic!("expected invalid storage key: {err}");
+        };
+        assert_eq!(error_path, &path);
+        assert!(source
+            .source()
+            .unwrap()
+            .is::<auth_framework::errors::AuthError>());
+        let message = err.to_string();
         assert!(
-            err.contains(&path.display().to_string()),
+            message.contains(&path.display().to_string()),
             "error should name the corrupt file path: {err}"
         );
         assert!(
-            err.contains("orphan previously encrypted OAuth secrets and MCP API keys"),
+            message.contains("orphan previously encrypted OAuth secrets and MCP API keys"),
             "error should explain the replacement consequence: {err}"
         );
     }

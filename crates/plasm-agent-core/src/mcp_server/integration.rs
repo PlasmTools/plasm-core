@@ -79,7 +79,8 @@ fn matrix_federated_host_with_base(base_url: Option<&str>) -> PlasmHostState {
         run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
-    });
+    })
+    .expect("valid catalog fixture");
     // Dedicated pool mirrors production MCP hosts; required for live fuse / plasm_run paths.
     st.oss.live_plan_pool = Arc::new(crate::live_plan_run_worker::LivePlanRunPool::new());
     st

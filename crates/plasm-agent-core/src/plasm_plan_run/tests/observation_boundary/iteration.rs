@@ -93,7 +93,8 @@ async fn check(case: Case, python_host: bool, entity_name: &str) {
         run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
-    });
+    })
+    .expect("valid catalog fixture");
     let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
     let entity = symbols.entity_sym_for("matrix", entity_name);
     let method = symbols.method_sym_for(
@@ -141,10 +142,14 @@ async fn check(case: Case, python_host: bool, entity_name: &str) {
             );
             assert!(error.effects.iter().any(|effect| effect.completed > 0));
         }
-        assert!(
-            error.diagnostic().contains(expected),
-            "{error}; events={events:?}"
-        );
+        if expected == "iterate_bound_exhausted" {
+            assert_eq!(error.code, expected, "events={events:?}");
+        } else {
+            assert!(
+                error.diagnostic().contains(expected),
+                "{error}; events={events:?}"
+            );
+        }
     } else {
         let run = run.unwrap();
         let done = run

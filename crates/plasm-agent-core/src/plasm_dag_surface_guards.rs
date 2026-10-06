@@ -2,10 +2,20 @@
 
 use crate::plasm_plan::PlanValue;
 
+#[derive(Debug, thiserror::Error)]
+pub enum SurfaceGuardError {
+    #[error("Program is a JSON/data literal only — that is a literal no-op.\nhelp: Rewrite as Plasm source: bindings, entity gets, relation hops, or transforms — not a bare object/array/string literal.")]
+    LiteralNoopRoot,
+    #[error("`=>` derive map does not accept `{sample}`; {DERIVE_MAP_RELATION_HOP_MSG}")]
+    InvalidDeriveRhs { sample: String },
+    #[error("{DERIVE_MAP_RELATION_HOP_MSG}")]
+    RelationHopDerive,
+}
+
 pub(crate) const DERIVE_MAP_RELATION_HOP_MSG: &str = "Plural relation reads use `child = source => _.r#` (the taught relation symbol from the active TSV), not a bare `r#` applicator. `=>` accepts only derive maps `{ … }`, renders `<<TAG`, per-row effects `Entity.m#(…, _)`, or row relations `_.r#`.";
 
 /// Reject `source => rhs` when `rhs` looks like a relation hop (teaching `r#` or known wire), not derive/write.
-pub(crate) fn reject_relation_arrow_trap(fragment: &str) -> Result<(), String> {
+pub(crate) fn reject_relation_arrow_trap(fragment: &str) -> Result<(), SurfaceGuardError> {
     let line = fragment.trim();
     if !line.contains("=>") {
         return Ok(());
@@ -43,16 +53,11 @@ pub(crate) fn is_bare_literal_noop_root(expr: &str) -> bool {
     looks_like_data_literal(expr.trim())
 }
 
-pub(crate) fn literal_noop_program_error() -> String {
-    agent_program_error(
-        "Program is a JSON/data literal only — that is a literal no-op.",
-        Some(
-            "Rewrite as Plasm source: bindings, entity gets, relation hops, or transforms — not a bare object/array/string literal.",
-        ),
-    )
+pub(crate) fn literal_noop_program_error() -> SurfaceGuardError {
+    SurfaceGuardError::LiteralNoopRoot
 }
 
-pub(crate) fn reject_bare_literal_noop_root(expr: &str) -> Result<(), String> {
+pub(crate) fn reject_bare_literal_noop_root(expr: &str) -> Result<(), SurfaceGuardError> {
     if is_bare_literal_noop_root(expr) {
         Err(literal_noop_program_error())
     } else {
@@ -63,7 +68,7 @@ pub(crate) fn reject_bare_literal_noop_root(expr: &str) -> Result<(), String> {
 pub(crate) fn reject_derive_map_invalid_rhs(
     value: &PlanValue,
     source_relation_wires: &[String],
-) -> Result<(), String> {
+) -> Result<(), SurfaceGuardError> {
     match value {
         PlanValue::NodeSymbol { path, .. } | PlanValue::BindingSymbol { path, .. }
             if path.first().is_some_and(|seg| {
@@ -78,15 +83,17 @@ pub(crate) fn reject_derive_map_invalid_rhs(
     Ok(())
 }
 
-pub(crate) fn derive_map_invalid_rhs_err(sample: Option<&str>) -> String {
+pub(crate) fn derive_map_invalid_rhs_err(sample: Option<&str>) -> SurfaceGuardError {
     match sample {
-        Some(t) => format!("`=>` derive map does not accept `{t}`; {DERIVE_MAP_RELATION_HOP_MSG}"),
+        Some(t) => SurfaceGuardError::InvalidDeriveRhs {
+            sample: t.to_owned(),
+        },
         None => derive_map_relation_hop_err(),
     }
 }
 
-fn derive_map_relation_hop_err() -> String {
-    DERIVE_MAP_RELATION_HOP_MSG.to_string()
+fn derive_map_relation_hop_err() -> SurfaceGuardError {
+    SurfaceGuardError::RelationHopDerive
 }
 
 fn dotted_tail_looks_like_relation_hop(s: &str, source_relation_wires: &[String]) -> bool {
@@ -106,14 +113,6 @@ fn teaching_relation_symbol(seg: &str) -> bool {
     seg.len() > 1 && seg.starts_with('r') && seg[1..].chars().all(|c| c.is_ascii_digit())
 }
 
-fn agent_program_error(head: impl AsRef<str>, help: Option<impl AsRef<str>>) -> String {
-    if let Some(h) = help {
-        format!("{}\nhelp: {}", head.as_ref(), h.as_ref())
-    } else {
-        head.as_ref().to_string()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -122,7 +121,10 @@ mod tests {
     #[test]
     fn reject_relation_arrow_trap_bare_teaching_r_hash() {
         let err = reject_relation_arrow_trap("pika => e2.r3").unwrap_err();
-        assert!(err.contains("Plural relation reads use"), "{err}");
+        assert!(
+            err.to_string().contains("Plural relation reads use"),
+            "{err}"
+        );
     }
 
     #[test]

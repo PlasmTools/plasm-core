@@ -34,14 +34,10 @@ fn collect_program_binding_heredoc_sugar_without_equals() {
 #[test]
 fn collect_program_statement_lines_errors_on_squashed_heredoc_opener() {
     let err = collect_program_statement_lines("body = <<B # junk").expect_err("err");
-    assert!(
-        err.contains("PLP-2:") || err.contains("PLP-3:"),
-        "unexpected err: {err}"
-    );
-    assert!(
-        err.contains("tagged heredoc") || err.contains("<<"),
-        "unexpected err: {err}"
-    );
+    assert!(matches!(
+        err,
+        SurfaceSyntaxError::HeredocUnterminated { .. }
+    ));
 }
 
 #[test]
@@ -92,18 +88,19 @@ created"#;
 fn plp2_finish_hints_unrecognized_same_line_close() {
     let err = collect_program_statement_lines("x = m(body=<<BODY\nline\nBODYfoo, other=1)")
         .expect_err("staging should fail when close suffix is not delimiter-only");
-    assert!(err.contains("PLP-2:"), "{err}");
-    assert!(err.contains("close line not recognized"), "{err}");
+    assert!(matches!(
+        err,
+        SurfaceSyntaxError::HeredocCloseDelimiterMissing { .. }
+    ));
 }
 
 #[test]
 fn plp2_message_tag_collision_hint() {
     let msg = plp2_unterminated_heredoc_message("TAG", "opener <<TAG\nTAG\nbody\nnot_closed");
-    assert!(msg.contains("PLP-2:"), "{msg}");
-    assert!(
-        msg.contains("body contains a line equal to close tag"),
-        "{msg}"
-    );
+    assert!(matches!(
+        msg,
+        SurfaceSyntaxError::HeredocTagCollision { .. }
+    ));
 }
 
 #[test]
@@ -287,20 +284,23 @@ fn validate_rejects_intermediate_postfix_without_binding() {
         "comments[p2,p14]".to_string(),
     ])
     .expect_err("must bind intermediate postfix");
-    assert!(
-        err.contains("binding") || err.contains("Intermediate"),
-        "{err}"
-    );
+    assert!(matches!(
+        err,
+        SurfaceSyntaxError::IntermediateStepRequiresBinding { .. }
+    ));
 }
 
 #[test]
 fn intermediate_return_error_does_not_echo_literal_unroll() {
     let lit = r#"e2.m14(source_file_path="/zone/a/work/x.dat", destination_file_path="/zone/a/archive/x.dat")"#;
-    let err = program_intermediate_return_error(lit);
+    let err = SurfaceSyntaxError::IntermediateRoots.to_string();
     assert!(err.contains("rows =>"), "{err}");
     assert!(!err.contains("/zone/"), "{err}");
     assert!(!err.contains("source_file_path"), "{err}");
-    let err2 = program_intermediate_return_must_be_binding_error(lit);
+    let err2 = SurfaceSyntaxError::IntermediateStepRequiresBinding {
+        binding: super::flatten::leading_identifier(lit).to_owned(),
+    }
+    .to_string();
     assert!(!err2.contains("/zone/"), "{err2}");
     assert!(!err2.contains("source_file_path"), "{err2}");
 }
@@ -315,8 +315,7 @@ fn validate_rejects_multiple_bare_root_lines() {
         "c".to_string(),
     ])
     .expect_err("multiple return lines");
-    assert!(err.contains("comma-separated"), "{err}");
-    assert!(err.contains("one return line"), "{err}");
+    assert!(matches!(err, SurfaceSyntaxError::MultipleRootLines));
 }
 
 #[test]
@@ -338,14 +337,7 @@ fn validate_domain_symbol_assignment_is_label_reject_not_return_root() {
         "p1, p2".to_string(),
     ])
     .expect_err("p# binding name");
-    assert!(
-        err.contains("Binding names must be labels") && err.contains("p1"),
-        "{err}"
-    );
-    assert!(
-        !err.contains("Only one return line"),
-        "must name the reserved label, not the return seat: {err}"
-    );
+    assert!(matches!(err, SurfaceSyntaxError::InvalidBindingLabel { label } if label == "p1"));
 }
 
 #[test]
@@ -355,7 +347,7 @@ fn validate_rejects_binding_after_return_line() {
         "comments = issue.r2".to_string(),
     ])
     .expect_err("binding after return");
-    assert!(err.contains("Return must be last"), "{err}");
+    assert!(matches!(err, SurfaceSyntaxError::BindingAfterRoots));
 }
 
 #[test]

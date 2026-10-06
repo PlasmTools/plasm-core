@@ -411,7 +411,7 @@ impl OauthLinkSession<AwaitingTokenExchange> {
         };
 
         let envelope_bytes =
-            serde_json::to_vec(&envelope).map_err(|_| OauthExchangeError::SerializeEnvelope)?;
+            serde_json::to_vec(&envelope).map_err(OauthExchangeError::SerializeEnvelope)?;
 
         Ok(OauthLinkCompleted {
             return_url: self.core.return_url,
@@ -460,12 +460,21 @@ pub enum OauthExchangeError {
     #[error(transparent)]
     TokenResponse(#[from] ApplyTokenError),
     #[error("failed to serialize token")]
-    SerializeEnvelope,
+    SerializeEnvelope(#[source] serde_json::Error),
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn envelope_serialization_retains_json_source() {
+        let source = serde_json::from_str::<serde_json::Value>("{").unwrap_err();
+        let error = OauthExchangeError::SerializeEnvelope(source);
+        assert!(std::error::Error::source(&error)
+            .unwrap()
+            .is::<serde_json::Error>());
+    }
     use uuid::Uuid;
 
     #[test]

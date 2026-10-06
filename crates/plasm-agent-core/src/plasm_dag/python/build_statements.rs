@@ -44,12 +44,42 @@ impl UnsupportedBuildStatement {
         }
     }
 
-    fn correction(self) -> &'static str {
+    fn error(self, statement: &Stmt) -> PythonSourceError {
         match self {
-            Self::Import => "imports are not build statements; declare permitted imports at module scope or inside @compute",
-            Self::While => "build cannot expand a while loop; use bounded iterate for re-observed effects or @compute for pure Python iteration",
-            Self::Branch => "build does not execute Python branches; place a conditional in a scoped callback, or filter rows before applying effects",
-            Self::Other => "unsupported build statement; build admits immutable assignments, declared callbacks, standalone effect calls and an explicit return",
+            Self::Import => PythonSourceError::BuildImport,
+            Self::While => PythonSourceError::BuildWhile,
+            Self::Branch => PythonSourceError::BuildBranch,
+            Self::Other => match statement {
+                Stmt::Assign(assign) => PythonSourceError::BuildAssignmentTargets {
+                    actual: assign.targets.len(),
+                },
+                Stmt::Delete(_) => PythonSourceError::BuildDelete,
+                Stmt::AugAssign(_) => PythonSourceError::BuildAugmentedAssignment,
+                Stmt::AnnAssign(_) => PythonSourceError::BuildAnnotatedAssignment,
+                Stmt::With(_) => PythonSourceError::BuildWith,
+                Stmt::Raise(_) => PythonSourceError::BuildRaise,
+                Stmt::Try(_) => PythonSourceError::BuildTry,
+                Stmt::Assert(_) => PythonSourceError::BuildAssert,
+                Stmt::Global(_) => PythonSourceError::BuildGlobal,
+                Stmt::Nonlocal(_) => PythonSourceError::BuildNonlocal,
+                Stmt::Pass(_) => PythonSourceError::BuildPass,
+                Stmt::Break(_) => PythonSourceError::BuildBreak,
+                Stmt::Continue(_) => PythonSourceError::BuildContinue,
+                Stmt::TypeAlias(_) => PythonSourceError::BuildTypeAlias,
+                Stmt::ClassDef(_) => PythonSourceError::BuildNestedClass,
+                Stmt::Expr(_) => PythonSourceError::BuildExpression,
+                Stmt::IpyEscapeCommand(_) => PythonSourceError::BuildIpythonCommand,
+                Stmt::Import(_)
+                | Stmt::ImportFrom(_)
+                | Stmt::While(_)
+                | Stmt::If(_)
+                | Stmt::Match(_)
+                | Stmt::FunctionDef(_)
+                | Stmt::For(_)
+                | Stmt::Return(_) => {
+                    unreachable!("supported or separately classified build statement")
+                }
+            },
         }
     }
 }
@@ -61,7 +91,7 @@ pub(super) struct BuildStatementError<'a> {
 
 impl BuildStatementError<'_> {
     pub(super) fn correction(&self) -> PythonLoweringError {
-        at(self.statement, self.kind.correction())
+        at(self.statement, self.kind.error(self.statement))
     }
 }
 
@@ -87,9 +117,10 @@ impl BuildStatementKind {
     /// Syntactic inventory using production classification, not semantic admission.
     /// Callers must still compile the complete program to validate its premises.
     pub fn inventory(source: &str) -> Result<Vec<Self>, PythonLoweringError> {
-        let ast = ruff_python_parser::parse_module(source).map_err(|e| e.to_string())?;
+        let ast =
+            ruff_python_parser::parse_module(source).map_err(PythonLoweringError::parse_error)?;
         let [Stmt::ClassDef(class)] = ast.suite().as_slice() else {
-            return Err("expected one program class".into());
+            return Err(crate::program_rejection::PythonProgramError::ProgramClassCount.into());
         };
         let build = class
             .body
@@ -98,7 +129,7 @@ impl BuildStatementKind {
                 Stmt::FunctionDef(def) if def.name.as_str() == "build" => Some(def),
                 _ => None,
             })
-            .ok_or("missing build")?;
+            .ok_or(crate::program_rejection::PythonProgramError::BuildMethodMissing)?;
         build
             .body
             .iter()
@@ -130,8 +161,12 @@ mod tests {
         ] {
             let source = format!("class P(Program):\n    def build(self):\n        {statement}\n");
             let error = BuildStatementKind::inventory(&source).expect_err(statement);
-            assert!(error.contains(expected), "{statement}: {error}");
-            assert!(!error.contains("unsupported build statement"), "{error}");
+            let correction = error.to_string();
+            assert!(correction.contains(expected), "{statement}: {error}");
+            assert!(
+                !correction.contains("unsupported build statement"),
+                "{error}"
+            );
         }
     }
 

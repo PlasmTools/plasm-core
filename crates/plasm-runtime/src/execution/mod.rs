@@ -4,8 +4,7 @@
 #![allow(unused_imports)]
 
 use crate::api_error_detail::{
-    fibery_command_envelope_hint, graphql_errors_summary, graphql_mutation_envelope_failure,
-    response_path_step,
+    graphql_errors_summary, graphql_mutation_envelope_failure, response_path_step,
 };
 use crate::evm::{execute_evm_call, execute_evm_logs};
 use crate::http_resilience::{HttpResiliencePolicy, ResilientHttpTransport};

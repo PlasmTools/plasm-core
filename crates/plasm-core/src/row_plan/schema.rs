@@ -1,6 +1,7 @@
 //! Recursive row declarations and identity preservation at engine boundaries.
 use crate::{
     identity::EntityName,
+    row_plan::error::FrameSchemaError,
     value_contract::{ValueContract, ValueShape},
 };
 use serde::{Deserialize, Serialize};
@@ -11,12 +12,12 @@ pub struct PlasmFrameSchema {
     contract: ValueContract,
 }
 impl PlasmFrameSchema {
-    pub fn new(shape: FrameShape, contract: ValueContract) -> Result<Self, String> {
+    pub fn new(shape: FrameShape, contract: ValueContract) -> Result<Self, FrameSchemaError> {
         if !matches!(
             contract.shape,
             ValueShape::Record { .. } | ValueShape::ObservedRecord { .. }
         ) {
-            return Err("frame requires a record contract".into());
+            return Err(FrameSchemaError::RequiresRecord);
         }
         Ok(Self { shape, contract })
     }

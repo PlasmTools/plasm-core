@@ -28,6 +28,101 @@ use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+enum EvalCliError {
+    #[error(transparent)]
+    Schema(#[from] plasm_core::loader::SchemaLoadError),
+    #[error(transparent)]
+    Templates(#[from] plasm_compile::CmlError),
+    #[error(transparent)]
+    Cases(#[from] plasm_eval::EvalCaseLoadError),
+    #[error(transparent)]
+    Coverage(#[from] plasm_eval::CoverageError),
+    #[error(transparent)]
+    Session(#[from] plasm_eval::ProgramSessionError),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    Yaml(#[from] serde_yaml::Error),
+    #[error("failed to translate eval case {case_id} on attempt {attempt}")]
+    Translation {
+        case_id: String,
+        attempt: u32,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+    #[error("admission host failed for eval case {case_id}")]
+    AdmissionHost {
+        case_id: String,
+        #[source]
+        source: plasm_agent_core::compilation_error::ExecutionFailure,
+    },
+    #[error(
+        "coverage config schema `{coverage_schema}` does not match schema directory `{schema_dir}`"
+    )]
+    CoverageSchemaMismatch {
+        coverage_schema: String,
+        schema_dir: String,
+    },
+    #[error("coverage is incomplete; missing form buckets: {missing_forms:?}; missing entities: {missing_entities:?}")]
+    CoverageIncomplete {
+        missing_forms: Vec<String>,
+        missing_entities: Vec<String>,
+    },
+    #[error("coverage config could not be read at {path}")]
+    CoverageConfigRead {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("coverage config at {path} is invalid")]
+    CoverageConfigParse {
+        path: PathBuf,
+        #[source]
+        source: serde_yaml::Error,
+    },
+    #[error("no eval cases match schema `{schema}`")]
+    NoMatchingCases { schema: String },
+    #[error("refusing to overwrite existing scaffold at {path}; pass --force to overwrite")]
+    ScaffoldExists { path: PathBuf },
+    #[error("failed to create {operation} at {path}")]
+    Io {
+        operation: EvalFileOperation,
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("OPENROUTER_API_KEY is required by the configured BAML client")]
+    MissingOpenRouterKey(#[source] std::env::VarError),
+    #[error("eval case index {index} failed")]
+    CaseRun {
+        index: usize,
+        #[source]
+        source: Box<EvalCliError>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Error)]
+enum EvalFileOperation {
+    #[error("scaffold directory")]
+    ScaffoldDirectory,
+    #[error("scaffold")]
+    Scaffold,
+    #[error("eval sidecar directory")]
+    SidecarDirectory,
+    #[error("eval human report")]
+    HumanReport,
+    #[error("eval JSON report")]
+    JsonReport,
+    #[error("report directory")]
+    ReportDirectory,
+    #[error("latest human report")]
+    LatestHumanReport,
+    #[error("latest JSON report")]
+    LatestJsonReport,
+}
 
 #[derive(Clone, Copy, Debug)]
 struct PromptStatsSnapshot {
@@ -178,7 +273,7 @@ async fn run_one_case(
     // One transcript for the whole run: first user = Python reference and declarations + goal; later users = `--- GOAL ---` only;
     // assistant = Plasm `text` only (no `reasoning`) to keep per-request size bounded.
     chat_session: &mut Vec<PlanChatTurn>,
-) -> anyhow::Result<serde_json::Value> {
+) -> Result<serde_json::Value, EvalCliError> {
     let mut correction_context = String::new();
     let mut first_success_at: Option<u32> = None;
     let mut final_parsed = None;
@@ -210,8 +305,11 @@ async fn run_one_case(
             .with_client_registry(registry)
             .call(translate_messages.as_slice())
             .await
-            .map_err(|e| anyhow::anyhow!("BAML TranslatePlan: {e}"))
-            .with_context(|| format!("LLM call for case {} attempt {}", case.id, attempt))?;
+            .map_err(|source| EvalCliError::Translation {
+                case_id: case.id.clone(),
+                attempt: attempt + 1,
+                source: Box::new(source),
+            })?;
 
         let text = plan.text.trim().to_string();
         let reasoning = plan.reasoning.trim().to_string();
@@ -255,7 +353,10 @@ async fn run_one_case(
                 break;
             }
             Err(plasm_eval::ValidationFailure::Host(failure)) => {
-                return Err(anyhow::anyhow!("admission host failure: {failure}"))
+                return Err(EvalCliError::AdmissionHost {
+                    case_id: case.id.clone(),
+                    source: failure,
+                })
             }
             Err(plasm_eval::ValidationFailure::Program(diags)) => {
                 chat_session.push(PlanChatTurn {
@@ -328,10 +429,9 @@ async fn run_one_case(
     Ok(serde_json::to_value(&sc)?)
 }
 
-async fn cmd_coverage(args: CoverageArgs) -> anyhow::Result<()> {
-    let cgs = load_schema_dir(&args.schema).map_err(|e| anyhow::anyhow!("load schema: {e}"))?;
-    plasm_compile::validate_cgs_capability_templates(&cgs)
-        .map_err(|e| anyhow::anyhow!("invalid CML capability templates: {e}"))?;
+async fn cmd_coverage(args: CoverageArgs) -> Result<(), EvalCliError> {
+    let cgs = load_schema_dir(&args.schema)?;
+    plasm_compile::validate_cgs_capability_templates(&cgs)?;
 
     let schema_key = args
         .schema
@@ -363,16 +463,21 @@ async fn cmd_coverage(args: CoverageArgs) -> anyhow::Result<()> {
         .or_else(|| legacy_cov.exists().then_some(legacy_cov));
 
     if let Some(ref p) = cfg_path {
-        let text = std::fs::read_to_string(p)
-            .with_context(|| format!("read coverage config {}", p.display()))?;
-        let o: CoverageOverride = serde_yaml::from_str(&text)
-            .with_context(|| format!("parse coverage config {}", p.display()))?;
+        let text =
+            std::fs::read_to_string(p).map_err(|source| EvalCliError::CoverageConfigRead {
+                path: p.to_path_buf(),
+                source,
+            })?;
+        let o: CoverageOverride =
+            serde_yaml::from_str(&text).map_err(|source| EvalCliError::CoverageConfigParse {
+                path: p.to_path_buf(),
+                source,
+            })?;
         if !o.schema.is_empty() && o.schema != schema_key {
-            anyhow::bail!(
-                "coverage config schema {:?} != schema dir {:?}",
-                o.schema,
-                schema_key
-            );
+            return Err(EvalCliError::CoverageSchemaMismatch {
+                coverage_schema: o.schema,
+                schema_dir: schema_key.clone(),
+            });
         }
         required = apply_coverage_override(required, &o)?;
     }
@@ -419,30 +524,17 @@ async fn cmd_coverage(args: CoverageArgs) -> anyhow::Result<()> {
     }
 
     if !report.ok && !args.warn_only {
-        let mut parts = Vec::new();
-        if !report.missing.is_empty() {
-            parts.push(format!(
-                "{} missing form bucket(s): {}",
-                report.missing.len(),
-                report.missing.join(", ")
-            ));
-        }
-        if !report.entities_missing.is_empty() {
-            parts.push(format!(
-                "{} missing entity coverage: {}",
-                report.entities_missing.len(),
-                report.entities_missing.join(", ")
-            ));
-        }
-        anyhow::bail!("coverage incomplete: {}", parts.join("; "));
+        return Err(EvalCliError::CoverageIncomplete {
+            missing_forms: report.missing.clone(),
+            missing_entities: report.entities_missing.clone(),
+        });
     }
     Ok(())
 }
 
-fn cmd_scaffold(args: ScaffoldArgs) -> anyhow::Result<()> {
-    let cgs = load_schema_dir(&args.schema).map_err(|e| anyhow::anyhow!("load schema: {e}"))?;
-    plasm_compile::validate_cgs_capability_templates(&cgs)
-        .map_err(|e| anyhow::anyhow!("invalid CML capability templates: {e}"))?;
+fn cmd_scaffold(args: ScaffoldArgs) -> Result<(), EvalCliError> {
+    let cgs = load_schema_dir(&args.schema)?;
+    plasm_compile::validate_cgs_capability_templates(&cgs)?;
 
     let schema_key = args
         .schema
@@ -455,15 +547,20 @@ fn cmd_scaffold(args: ScaffoldArgs) -> anyhow::Result<()> {
     if args.write {
         let out_path = args.schema.join("eval").join("cases.yaml");
         if out_path.exists() && !args.force {
-            anyhow::bail!(
-                "{} already exists; pass --force to overwrite",
-                out_path.display()
-            );
+            return Err(EvalCliError::ScaffoldExists { path: out_path });
         }
         if let Some(parent) = out_path.parent() {
-            std::fs::create_dir_all(parent)?;
+            std::fs::create_dir_all(parent).map_err(|source| EvalCliError::Io {
+                operation: EvalFileOperation::ScaffoldDirectory,
+                path: parent.to_path_buf(),
+                source,
+            })?;
         }
-        std::fs::write(&out_path, &yaml)?;
+        std::fs::write(&out_path, &yaml).map_err(|source| EvalCliError::Io {
+            operation: EvalFileOperation::Scaffold,
+            path: out_path.clone(),
+            source,
+        })?;
         eprintln!("Wrote {}", out_path.display());
     } else {
         print!("{yaml}");
@@ -487,8 +584,8 @@ async fn main() -> anyhow::Result<()> {
     let top = Top::parse();
 
     match top.sub {
-        Some(EvalSubcommand::Coverage(c)) => cmd_coverage(c).await,
-        Some(EvalSubcommand::Scaffold(s)) => cmd_scaffold(s),
+        Some(EvalSubcommand::Coverage(c)) => cmd_coverage(c).await.map_err(anyhow::Error::from),
+        Some(EvalSubcommand::Scaffold(s)) => cmd_scaffold(s).map_err(anyhow::Error::from),
         None => {
             let run = top.run;
             if run.print_prompt {
@@ -496,13 +593,10 @@ async fn main() -> anyhow::Result<()> {
                     .schema
                     .clone()
                     .context("--print-prompt requires --schema")?;
-                let cgs =
-                    load_schema_dir(&schema).map_err(|e| anyhow::anyhow!("load schema: {e}"))?;
-                plasm_compile::validate_cgs_capability_templates(&cgs)
-                    .map_err(|e| anyhow::anyhow!("invalid CML capability templates: {e}"))?;
+                let cgs = load_schema_dir(&schema)?;
+                plasm_compile::validate_cgs_capability_templates(&cgs)?;
                 let pipeline = PromptPipelineConfig::default();
-                let session =
-                    ProgramSession::new(&cgs, run.focus.as_deref()).map_err(anyhow::Error::msg)?;
+                let session = ProgramSession::new(&cgs, run.focus.as_deref())?;
                 let prompt = prepend_eval_grammar_contract(session.prompt());
                 let st = pipeline.prompt_surface_stats(&cgs, None, &prompt);
                 // Write prompt first so a line-buffered terminal shows Python reference and declarations immediately; stats on
@@ -522,15 +616,20 @@ async fn main() -> anyhow::Result<()> {
                 .clone()
                 .context("eval run: --schema and --cases are required (or use `plasm-eval coverage` / `scaffold`)")?;
             let cases = run.cases.clone().context("eval run: --cases is required")?;
-            run_eval_harness(schema, cases, run).await
+            run_eval_harness(schema, cases, run)
+                .await
+                .map_err(anyhow::Error::from)
         }
     }
 }
 
-async fn run_eval_harness(schema: PathBuf, cases: PathBuf, cli: RunArgs) -> anyhow::Result<()> {
-    let cgs = load_schema_dir(&schema).map_err(|e| anyhow::anyhow!("load schema: {e}"))?;
-    plasm_compile::validate_cgs_capability_templates(&cgs)
-        .map_err(|e| anyhow::anyhow!("invalid CML capability templates: {e}"))?;
+async fn run_eval_harness(
+    schema: PathBuf,
+    cases: PathBuf,
+    cli: RunArgs,
+) -> Result<(), EvalCliError> {
+    let cgs = load_schema_dir(&schema)?;
+    plasm_compile::validate_cgs_capability_templates(&cgs)?;
 
     let mut case_list: Vec<EvalCase> = if cases.is_dir() {
         load_cases_dir(&cases)?
@@ -545,14 +644,11 @@ async fn run_eval_harness(schema: PathBuf, cases: PathBuf, cli: RunArgs) -> anyh
         .to_string();
     case_list.retain(|c| c.schema == schema_key);
     if case_list.is_empty() {
-        anyhow::bail!(
-            "no cases with schema '{}' (directory name must match case `schema:` field)",
-            schema_key
-        );
+        return Err(EvalCliError::NoMatchingCases { schema: schema_key });
     }
 
     let pipeline = PromptPipelineConfig::default();
-    let session = ProgramSession::new(&cgs, cli.focus.as_deref()).map_err(anyhow::Error::msg)?;
+    let session = ProgramSession::new(&cgs, cli.focus.as_deref())?;
     let prompt = prepend_eval_grammar_contract(session.prompt());
     let st = pipeline.prompt_surface_stats(&cgs, None, &prompt);
     let prompt_stats = PromptStatsSnapshot::from(st);
@@ -582,9 +678,8 @@ async fn run_eval_harness(schema: PathBuf, cases: PathBuf, cli: RunArgs) -> anyh
         return Ok(());
     }
 
-    let api_key = std::env::var("OPENROUTER_API_KEY").context(
-        "set OPENROUTER_API_KEY (plasm-eval loads `.env` from cwd if present) — required by BAML clients in baml_src/clients.baml",
-    )?;
+    let api_key =
+        std::env::var("OPENROUTER_API_KEY").map_err(EvalCliError::MissingOpenRouterKey)?;
 
     plasm_eval::baml_client::init();
 
@@ -619,7 +714,10 @@ async fn run_eval_harness(schema: PathBuf, cases: PathBuf, cli: RunArgs) -> anyh
             &mut chat,
         )
         .await
-        .map_err(|e| anyhow::anyhow!("case index {idx}: {e:#}"))?;
+        .map_err(|source| EvalCliError::CaseRun {
+            index: idx,
+            source: Box::new(source),
+        })?;
         report.push(v);
     }
 
@@ -672,14 +770,25 @@ fn write_latest_eval_artifacts(
     model: &str,
     human: &str,
     json: &str,
-) -> anyhow::Result<()> {
-    std::fs::create_dir_all(dir)
-        .with_context(|| format!("create eval sidecar dir {}", dir.display()))?;
+) -> Result<(), EvalCliError> {
+    std::fs::create_dir_all(dir).map_err(|source| EvalCliError::Io {
+        operation: EvalFileOperation::SidecarDirectory,
+        path: dir.to_path_buf(),
+        source,
+    })?;
     let slug = sanitize_model_slug(model);
     let h = dir.join(format!("{slug}.latest.human.txt"));
     let j = dir.join(format!("{slug}.latest.json"));
-    std::fs::write(&h, human).with_context(|| format!("write {}", h.display()))?;
-    std::fs::write(&j, json).with_context(|| format!("write {}", j.display()))?;
+    std::fs::write(&h, human).map_err(|source| EvalCliError::Io {
+        operation: EvalFileOperation::HumanReport,
+        path: h,
+        source,
+    })?;
+    std::fs::write(&j, json).map_err(|source| EvalCliError::Io {
+        operation: EvalFileOperation::JsonReport,
+        path: j,
+        source,
+    })?;
     Ok(())
 }
 
@@ -710,22 +819,40 @@ fn write_eval_report_artifacts(
     model: &str,
     human: &str,
     json: &str,
-) -> anyhow::Result<()> {
+) -> Result<(), EvalCliError> {
     let slug = sanitize_model_slug(model);
     let ts = chrono::Utc::now().format("%Y%m%d-%H%M%S");
     let base = report_dir.join(schema_key);
-    std::fs::create_dir_all(&base)
-        .with_context(|| format!("create report dir {}", base.display()))?;
+    std::fs::create_dir_all(&base).map_err(|source| EvalCliError::Io {
+        operation: EvalFileOperation::ReportDirectory,
+        path: base.clone(),
+        source,
+    })?;
     let stem = format!("{slug}-{ts}");
     let human_path = base.join(format!("{stem}.human.txt"));
     let json_path = base.join(format!("{stem}.json"));
-    std::fs::write(&human_path, human)
-        .with_context(|| format!("write {}", human_path.display()))?;
-    std::fs::write(&json_path, json).with_context(|| format!("write {}", json_path.display()))?;
+    std::fs::write(&human_path, human).map_err(|source| EvalCliError::Io {
+        operation: EvalFileOperation::HumanReport,
+        path: human_path,
+        source,
+    })?;
+    std::fs::write(&json_path, json).map_err(|source| EvalCliError::Io {
+        operation: EvalFileOperation::JsonReport,
+        path: json_path,
+        source,
+    })?;
     let latest_h = base.join(format!("{slug}.latest.human.txt"));
     let latest_j = base.join(format!("{slug}.latest.json"));
-    std::fs::write(&latest_h, human).with_context(|| format!("write {}", latest_h.display()))?;
-    std::fs::write(&latest_j, json).with_context(|| format!("write {}", latest_j.display()))?;
+    std::fs::write(&latest_h, human).map_err(|source| EvalCliError::Io {
+        operation: EvalFileOperation::LatestHumanReport,
+        path: latest_h,
+        source,
+    })?;
+    std::fs::write(&latest_j, json).map_err(|source| EvalCliError::Io {
+        operation: EvalFileOperation::LatestJsonReport,
+        path: latest_j,
+        source,
+    })?;
     eprintln!(
         "eval: reports → {} ({} + {}.latest.*)",
         base.display(),

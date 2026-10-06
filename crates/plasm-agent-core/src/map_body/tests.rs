@@ -126,8 +126,8 @@ fn map_body_preflight_rejects_corruption_before_any_read() {
                 Ok(bundle) => match evaluate_plasm_comp_dry(&es, &bundle) {
                     Ok(_) => crate::python_compute::admit_bundle(&es, &bundle)
                         .await
-                        .map_err(|error| error.to_string()),
-                    Err(error) => Err(error.to_string()),
+                        .map_err(|error| support::MapBodyTestError::Admission(error.to_string())),
+                    Err(error) => Err(support::MapBodyTestError::Admission(error.to_string())),
                 },
                 Err(error) => Err(error),
             };

@@ -65,17 +65,19 @@ impl Lower<'_> {
                     self.comparison_chain(expression, chain, inputs).map(Some)
                 }
                 PyExpr::BoolOp(boolean) => {
-                    let first = boolean.values.first().ok_or("empty boolean expression")?;
+                    let first = boolean.values.first().ok_or(
+                        crate::program_rejection::PythonLoweringInvariantError::BooleanOperandsMissing,
+                    )?;
                     let mut dependencies = BTreeMap::new();
                     let value = self.scoped_value(first, &mut dependencies)?;
                     let id = self.fresh();
                     self.emit_value(value, dependencies.into_values().collect(), &id)?;
                     let operand = *ruff_python_parser::parse_expression(&id)
-                        .map_err(|e| e.to_string())?
+                        .map_err(PythonLoweringError::parse_error)?
                         .into_syntax()
                         .body;
                     let condition = *ruff_python_parser::parse_expression(&format!("bool({id})"))
-                        .map_err(|e| e.to_string())?
+                        .map_err(PythonLoweringError::parse_error)?
                         .into_syntax()
                         .body;
                     let rest = if boolean.values.len() == 2 {

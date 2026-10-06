@@ -36,7 +36,12 @@ impl HttpTransport for Transport {
             store.attempts += 1;
             if attempt == self.fail_at {
                 return Err(RuntimeError::RequestError {
-                    message: "fixture 422".into(),
+                    source: plasm_runtime::RequestFailure::HttpStatus(
+                        plasm_runtime::HttpStatusFailure::without_request(
+                            422,
+                            "fixture 422".into(),
+                        ),
+                    ),
                     attempts: 1,
                     status: Some(422),
                     body: None,
@@ -108,7 +113,8 @@ async fn ordered_fanout_case(count: usize, fail_at: usize) {
         run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
-    });
+    })
+    .expect("valid catalog fixture");
     let opened = Box::pin(apply_capability_seeds(
         &host,
         None,
@@ -262,7 +268,8 @@ async fn case(count: usize, fail_at: usize) {
         run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
-    });
+    })
+    .expect("valid catalog fixture");
     let opened = Box::pin(apply_capability_seeds(
         &host,
         None,

@@ -184,7 +184,7 @@ fn record_run_sealed_rejects_run_id_wire_mismatch() {
             request_fingerprints: vec![],
         })
         .expect_err("wire mismatch");
-    assert!(matches!(err, EvidenceEmitError::RunBundleDigest(_)));
+    assert!(matches!(err, EvidenceEmitError::RunIdDigestMismatch { .. }));
 }
 
 #[test]

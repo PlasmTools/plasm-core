@@ -7,20 +7,27 @@ use crate::server_state::PlasmHostState;
 use super::config::McpTransportStoreConfig;
 use super::redis_backend::RedisBackend;
 
+#[derive(Debug, thiserror::Error)]
+pub enum HostWiringError {
+    #[error("Redis connection failed")]
+    RedisConnect(#[source] redis::RedisError),
+    #[error("Redis health check failed")]
+    RedisPing(#[source] redis::RedisError),
+    #[error(transparent)]
+    SymbolLedgerArchive(#[from] super::symbol_ledger_archive::SymbolLedgerArchiveError),
+}
+
 /// Connect Redis when `PLASM_MCP_TRANSPORT_REDIS_URL` is set (sole factory for all transport stores).
-pub async fn connect_redis_backend() -> Result<Option<Arc<RedisBackend>>, String> {
+pub async fn connect_redis_backend() -> Result<Option<Arc<RedisBackend>>, HostWiringError> {
     let Some(cfg) = McpTransportStoreConfig::from_env() else {
         return Ok(None);
     };
     let backend = Arc::new(
         RedisBackend::connect(&cfg.redis_url, cfg.ttl)
             .await
-            .map_err(|e| format!("Redis connect failed: {e}"))?,
+            .map_err(HostWiringError::RedisConnect)?,
     );
-    backend
-        .ping()
-        .await
-        .map_err(|e| format!("Redis ping failed: {e}"))?;
+    backend.ping().await.map_err(HostWiringError::RedisPing)?;
     Ok(Some(backend))
 }
 
@@ -28,11 +35,8 @@ pub async fn connect_redis_backend() -> Result<Option<Arc<RedisBackend>>, String
 pub async fn wire_host_redis(
     plasm: &mut PlasmHostState,
     backend: Arc<RedisBackend>,
-) -> Result<(), String> {
-    backend
-        .ping()
-        .await
-        .map_err(|e| format!("Redis ping failed: {e}"))?;
+) -> Result<(), HostWiringError> {
+    backend.ping().await.map_err(HostWiringError::RedisPing)?;
     plasm
         .logical_symbol_ledgers
         .attach_redis(Arc::clone(&backend))
@@ -55,7 +59,9 @@ pub async fn wire_host_redis(
 }
 
 /// Connect Redis (when configured) and wire all host stores before serve/MCP bootstrap.
-pub async fn prepare_host_for_serve(mut state: PlasmHostState) -> Result<PlasmHostState, String> {
+pub async fn prepare_host_for_serve(
+    mut state: PlasmHostState,
+) -> Result<PlasmHostState, HostWiringError> {
     if let Some(archive) = super::symbol_ledger_archive::SymbolLedgerArchive::from_env()? {
         state
             .logical_symbol_ledgers

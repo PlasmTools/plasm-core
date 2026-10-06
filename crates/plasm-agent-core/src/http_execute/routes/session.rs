@@ -31,7 +31,7 @@ pub(crate) async fn post_execute_session_context(
     if !session_allows_principal(&sess, principal.as_ref()) {
         return incoming_auth_problem(
             crate::incoming_auth::IncomingAuthFailure::Invalid(
-                "execute session tenant does not match caller".into(),
+                crate::incoming_auth::IncomingAuthError::SessionTenantMismatch,
             ),
             true,
         );
@@ -108,7 +108,7 @@ pub(crate) async fn get_execute_session_symbols(
     if !session_allows_principal(&sess, principal.as_ref()) {
         return incoming_auth_problem(
             crate::incoming_auth::IncomingAuthFailure::Invalid(
-                "execute session tenant does not match caller".into(),
+                crate::incoming_auth::IncomingAuthError::SessionTenantMismatch,
             ),
             true,
         );
@@ -163,7 +163,7 @@ pub(crate) async fn get_execute_session_status(
     if !session_allows_principal(&sess, principal.as_ref()) {
         return incoming_auth_problem(
             crate::incoming_auth::IncomingAuthFailure::Invalid(
-                "execute session tenant does not match caller".into(),
+                crate::incoming_auth::IncomingAuthError::SessionTenantMismatch,
             ),
             true,
         );
@@ -210,7 +210,7 @@ pub(crate) async fn get_execute_session_runs(
     if !session_allows_principal(&sess, principal.as_ref()) {
         return incoming_auth_problem(
             crate::incoming_auth::IncomingAuthFailure::Invalid(
-                "execute session tenant does not match caller".into(),
+                crate::incoming_auth::IncomingAuthError::SessionTenantMismatch,
             ),
             true,
         );
@@ -254,7 +254,7 @@ pub(crate) async fn post_execute_session_plan(
     if !session_allows_principal(&sess, principal.as_ref()) {
         return incoming_auth_problem(
             crate::incoming_auth::IncomingAuthFailure::Invalid(
-                "execute session tenant does not match caller".into(),
+                crate::incoming_auth::IncomingAuthError::SessionTenantMismatch,
             ),
             true,
         );
@@ -302,6 +302,7 @@ pub(crate) async fn post_execute_session_plan(
                 .await
             })
             .await
+            .map_err(crate::live_plan_run_worker::LivePlanRunError::into_execution_failure)
     } else {
         crate::execute_pipeline::ExecutePipeline::run_program(
             &sess,

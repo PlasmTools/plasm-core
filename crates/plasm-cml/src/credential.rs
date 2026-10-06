@@ -3,6 +3,35 @@
 use crate::{eval_cml, CmlEnv, CmlError, CmlExpr};
 use plasm_core::Value;
 use serde::{Deserialize, Serialize};
+use url::Url;
+
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum CredentialBindError {
+    #[error("credential slot must be a nonempty identifier")]
+    InvalidSlot,
+    #[error("credential lifetime must be positive")]
+    ZeroLifetime,
+    #[error("credential resource identity must be an object")]
+    ResourceNotObject,
+    #[error("credential resource identity must contain at least one field")]
+    EmptyResource,
+    #[error("credential resource field {field} must have a nonempty name and string value")]
+    InvalidResourceField { field: String },
+    #[error("credential resource identity could not be serialized")]
+    ResourceSerialization(#[source] std::sync::Arc<serde_json::Error>),
+    #[error("credential origin is not a valid URL")]
+    OriginParse(#[source] url::ParseError),
+    #[error("credential origin must use HTTP or HTTPS")]
+    OriginScheme,
+    #[error("credential origin cannot contain user information")]
+    OriginUserInfo,
+    #[error("credential origin cannot contain a query")]
+    OriginQuery,
+    #[error("credential origin cannot contain a fragment")]
+    OriginFragment,
+    #[error("credential origin must not contain a path")]
+    OriginPath,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -39,58 +68,69 @@ pub struct CompiledCredentialUse {
     pub reference: String,
 }
 
-fn invalid(message: &str) -> CmlError {
-    CmlError::InvalidTemplate {
-        message: message.into(),
-    }
-}
-
-pub(crate) fn validate_slot(slot: &str) -> Result<(), CmlError> {
+pub(crate) fn validate_slot(slot: &str) -> Result<(), CredentialBindError> {
     if slot.is_empty()
         || !slot
             .bytes()
             .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
     {
-        return Err(invalid("credential slot must be a nonempty identifier"));
+        return Err(CredentialBindError::InvalidSlot);
     }
     Ok(())
 }
 
-pub(crate) fn resource_key(resource: Value) -> Result<serde_json::Value, CmlError> {
+pub(crate) fn resource_key(resource: Value) -> Result<serde_json::Value, CredentialBindError> {
     let Value::Object(fields) = resource else {
-        return Err(invalid("credential resource key must be an object"));
+        return Err(CredentialBindError::ResourceNotObject);
     };
-    if fields.is_empty()
-        || fields.iter().any(|(name, value)| {
-            name.is_empty() || !matches!(value, Value::String(s) if !s.is_empty())
-        })
-    {
-        return Err(invalid(
-            "credential resource key requires named nonempty string identities",
-        ));
+    if fields.is_empty() {
+        return Err(CredentialBindError::EmptyResource);
     }
-    serde_json::to_value(fields).map_err(|_| invalid("invalid credential resource key"))
+    for (name, value) in &fields {
+        if name.is_empty() || !matches!(value, Value::String(s) if !s.is_empty()) {
+            return Err(CredentialBindError::InvalidResourceField {
+                field: name.clone(),
+            });
+        }
+    }
+    serde_json::to_value(fields)
+        .map_err(|error| CredentialBindError::ResourceSerialization(std::sync::Arc::new(error)))
+}
+
+fn credential_origin(origin: &str) -> Result<Url, CredentialBindError> {
+    let url = Url::parse(origin).map_err(CredentialBindError::OriginParse)?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(CredentialBindError::OriginScheme);
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(CredentialBindError::OriginUserInfo);
+    }
+    if url.query().is_some() {
+        return Err(CredentialBindError::OriginQuery);
+    }
+    if url.fragment().is_some() {
+        return Err(CredentialBindError::OriginFragment);
+    }
+    if url.path() != "/" {
+        return Err(CredentialBindError::OriginPath);
+    }
+    Ok(url)
 }
 
 impl CredentialBindTemplate {
-    pub fn validate(&self) -> Result<(), CmlError> {
+    pub fn validate(&self) -> Result<(), CredentialBindError> {
         validate_slot(&self.slot)?;
         if self.lifetime_seconds == 0 {
-            return Err(invalid("credential lifetime_seconds must be positive"));
+            return Err(CredentialBindError::ZeroLifetime);
         }
-        crate::UrlProjection {
-            origins: vec![self.origin.clone()],
-            path: vec![],
-            query: Default::default(),
-        }
-        .validate()
+        credential_origin(&self.origin)?;
+        Ok(())
     }
 
     pub fn compile(&self, env: &CmlEnv) -> Result<CompiledCredentialBind, CmlError> {
         self.validate()?;
         let resource = resource_key(eval_cml(&self.resource, env)?)?;
-        let origin = url::Url::parse(&self.origin)
-            .map_err(|_| invalid("invalid credential origin"))?
+        let origin = credential_origin(&self.origin)?
             .origin()
             .ascii_serialization();
         Ok(CompiledCredentialBind {

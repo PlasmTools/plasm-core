@@ -6,6 +6,22 @@ use crate::symbol_tuning::{
 };
 use crate::{CapabilityKind, CGS};
 use std::collections::BTreeSet;
+use thiserror::Error;
+
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum CapabilityExposureError {
+    #[error("selected capability `{entry_id}/{capability}` does not exist")]
+    UnknownSelectedCapability {
+        entry_id: String,
+        capability: String,
+    },
+    #[error("selected capability owner entity `{entity}` does not exist")]
+    CapabilityOwnerMissing { entity: String },
+    #[error("selected capability output entity `{entity}` does not exist")]
+    OutputEntityMissing { entity: String },
+    #[error("exposed entity `{entity}` does not exist")]
+    ExposedEntityMissing { entity: String },
+}
 
 /// Domain-entity teaching slots (RA-12).
 ///
@@ -67,17 +83,20 @@ pub fn selected_capability_surface(
     cgs: &CGS,
     entry_id: &str,
     capabilities: &[String],
-) -> Result<ExposureSurfaceDelta, String> {
+) -> Result<ExposureSurfaceDelta, CapabilityExposureError> {
     let mut surface = ExposureSurface::default();
     for name in capabilities {
-        let cap = cgs
-            .capabilities
-            .get(name.as_str())
-            .ok_or_else(|| format!("unknown selected capability {entry_id}/{name}"))?;
-        let entity = cgs
-            .entities
-            .get(cap.domain.as_str())
-            .ok_or("selected capability entity missing")?;
+        let cap = cgs.capabilities.get(name.as_str()).ok_or_else(|| {
+            CapabilityExposureError::UnknownSelectedCapability {
+                entry_id: entry_id.to_owned(),
+                capability: name.clone(),
+            }
+        })?;
+        let entity = cgs.entities.get(cap.domain.as_str()).ok_or_else(|| {
+            CapabilityExposureError::CapabilityOwnerMissing {
+                entity: cap.domain.to_string(),
+            }
+        })?;
         let entity_key = ExposureEntityKey {
             entry_id: entry_id.into(),
             entity: cap.domain.clone(),
@@ -102,10 +121,11 @@ pub fn selected_capability_surface(
             if let crate::schema::OutputType::Entity { entity_type }
             | crate::schema::OutputType::Collection { entity_type, .. } = &output.output_type
             {
-                let output_entity = cgs
-                    .entities
-                    .get(entity_type.as_str())
-                    .ok_or("selected output entity missing")?;
+                let output_entity = cgs.entities.get(entity_type.as_str()).ok_or_else(|| {
+                    CapabilityExposureError::OutputEntityMissing {
+                        entity: entity_type.to_string(),
+                    }
+                })?;
                 let output_key = ExposureEntityKey {
                     entry_id: entry_id.into(),
                     entity: entity_type.as_str().into(),
@@ -117,10 +137,11 @@ pub fn selected_capability_surface(
     }
     let entities: BTreeSet<_> = surface.entities.iter().cloned().collect();
     for key in &entities {
-        let entity = cgs
-            .entities
-            .get(key.entity.as_str())
-            .ok_or("exposed entity missing")?;
+        let entity = cgs.entities.get(key.entity.as_str()).ok_or_else(|| {
+            CapabilityExposureError::ExposedEntityMissing {
+                entity: key.entity.to_string(),
+            }
+        })?;
         for (name, relation) in &entity.relations {
             if entities.contains(&ExposureEntityKey {
                 entry_id: entry_id.into(),
@@ -142,7 +163,7 @@ pub fn explicit_entity_capability_surface(
     cgs: &CGS,
     entry: &str,
     entities: &[String],
-) -> Result<ExposureSurfaceDelta, String> {
+) -> Result<ExposureSurfaceDelta, CapabilityExposureError> {
     let capabilities = cgs
         .capabilities
         .values()

@@ -17,8 +17,8 @@ pub enum CatalogReloadError {
     NotCatalogDir,
     #[error(transparent)]
     Pool(#[from] crate::blocking_compute::ComputePoolError),
-    #[error("catalog load failed: {0}")]
-    Load(String),
+    #[error(transparent)]
+    Runtime(#[from] crate::catalog_runtime::CatalogRuntimeError),
 }
 
 #[derive(Debug, Clone)]
@@ -85,10 +85,7 @@ impl PlasmHostState {
         let old_hashes = entry_hash_map(prev.as_ref());
 
         let _ = path; // Bootstrap path is owned by CatalogRuntime for one atomic manifest-set read.
-        self.catalog
-            .activate_discovery()
-            .await
-            .map_err(|e| CatalogReloadError::Load(e.to_string()))?;
+        self.catalog.activate_discovery().await?;
         let new_reg = self.catalog.snapshot();
 
         let new_hashes = entry_hash_map(&new_reg);

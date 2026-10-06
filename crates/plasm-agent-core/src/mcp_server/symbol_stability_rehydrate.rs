@@ -40,16 +40,19 @@ mod tests {
         )]);
         let engine =
             plasm_runtime::ExecutionEngine::new(plasm_runtime::ExecutionConfig::default()).ok()?;
-        Some(build_plasm_host_state(PlasmHostBootstrap {
-            engine,
-            mode: plasm_runtime::ExecutionMode::Live,
-            registry: Arc::new(reg),
-            catalog_bootstrap: crate::server_state::CatalogBootstrap::Fixed,
-            incoming_auth: None,
-            run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
-            session_graph_persistence: None,
-            oss_local_filesystem_defaults: false,
-        }))
+        Some(
+            build_plasm_host_state(PlasmHostBootstrap {
+                engine,
+                mode: plasm_runtime::ExecutionMode::Live,
+                registry: Arc::new(reg),
+                catalog_bootstrap: crate::server_state::CatalogBootstrap::Fixed,
+                incoming_auth: None,
+                run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
+                session_graph_persistence: None,
+                oss_local_filesystem_defaults: false,
+            })
+            .expect("valid catalog fixture"),
+        )
     }
 
     fn item_tag_line_seeds() -> Vec<CapabilitySeed> {

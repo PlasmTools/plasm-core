@@ -4,6 +4,7 @@ use super::super::heredoc_surface::{
     heredoc_surface_step_at, tagged_heredoc_close_kind, HeredocSurfaceStep,
 };
 use super::labels::is_valid_program_label;
+use super::SurfaceSyntaxError;
 
 /// Strip trailing `;;` line comments (teaching table-style).
 #[inline]
@@ -20,7 +21,9 @@ pub enum PhysicalLineStmtState {
     AwaitingDelimiterClose,
 }
 
-pub fn scan_physical_line_stmt_state(line: &str) -> Result<PhysicalLineStmtState, String> {
+pub fn scan_physical_line_stmt_state(
+    line: &str,
+) -> Result<PhysicalLineStmtState, SurfaceSyntaxError> {
     let mut i = 0usize;
     let mut depth = 0i32;
     let mut quote = None::<char>;
@@ -28,7 +31,7 @@ pub fn scan_physical_line_stmt_state(line: &str) -> Result<PhysicalLineStmtState
         let c = line[i..]
             .chars()
             .next()
-            .ok_or_else(|| "invalid UTF-8 boundary".to_string())?;
+            .ok_or(SurfaceSyntaxError::InvalidUtf8Boundary)?;
         let cl = c.len_utf8();
         if quote.is_none() {
             match heredoc_surface_step_at(line, i)? {
@@ -52,17 +55,15 @@ pub fn scan_physical_line_stmt_state(line: &str) -> Result<PhysicalLineStmtState
         i += cl;
     }
     if quote.is_some() {
-        return Err(crate::plp::plp3_staging(
-            "physical newline inside a quoted Plasm string parameter; use a tagged heredoc for multiline string parameters, e.g. `p58=<<MAIL_7f3a` then the body and a closing `MAIL_7f3a)` line",
-        ));
+        return Err(SurfaceSyntaxError::QuotedPhysicalNewline);
     }
     if depth > 0 {
         return Ok(PhysicalLineStmtState::AwaitingDelimiterClose);
     }
     if depth < 0 {
-        return Err(format!(
-            "unbalanced delimiters in Plasm program line `{line}`"
-        ));
+        return Err(SurfaceSyntaxError::UnbalancedDelimiters {
+            expression: line.to_owned(),
+        });
     }
     Ok(PhysicalLineStmtState::Complete)
 }
@@ -114,7 +115,7 @@ impl PhysicalLineStatementScanner {
         }
     }
 
-    fn apply_stmt_state(&mut self, state: PhysicalLineStmtState) -> Result<(), String> {
+    fn apply_stmt_state(&mut self, state: PhysicalLineStmtState) -> Result<(), SurfaceSyntaxError> {
         match state {
             PhysicalLineStmtState::Complete => {
                 self.out.push(self.cur.trim_end().to_string());
@@ -134,7 +135,7 @@ impl PhysicalLineStatementScanner {
         }
     }
 
-    fn push_line(&mut self, raw: &str) -> Result<(), String> {
+    fn push_line(&mut self, raw: &str) -> Result<(), SurfaceSyntaxError> {
         let w = self.normalize_line(raw);
         if self.pending_tag.is_some() || self.pending_delimiters {
             if !self.cur.is_empty() {
@@ -161,25 +162,21 @@ impl PhysicalLineStatementScanner {
         Ok(())
     }
 
-    fn finish(self) -> Result<Vec<String>, String> {
+    fn finish(self) -> Result<Vec<String>, SurfaceSyntaxError> {
         if let Some(tag) = self.pending_tag.as_deref() {
             return Err(plp2_unterminated_heredoc_message(tag, &self.cur));
         }
         if self.pending_delimiters {
-            return Err(crate::plp::plp3_staging(
-                "unterminated Plasm program statement (unbalanced delimiters after heredoc close)",
-            ));
+            return Err(SurfaceSyntaxError::StatementDelimitersUnterminated);
         }
         if !self.cur.is_empty() {
-            return Err(crate::plp::plp3_staging(
-                "unterminated Plasm program statement (unexpected trailing fragment)",
-            ));
+            return Err(SurfaceSyntaxError::StatementTrailingFragment);
         }
         Ok(self.out)
     }
 }
 
-pub fn collect_program_statement_lines(src: &str) -> Result<Vec<String>, String> {
+pub fn collect_program_statement_lines(src: &str) -> Result<Vec<String>, SurfaceSyntaxError> {
     let mut scanner = PhysicalLineStatementScanner::new();
     for raw in src.lines() {
         scanner.push_line(raw)?;
@@ -187,28 +184,30 @@ pub fn collect_program_statement_lines(src: &str) -> Result<Vec<String>, String>
     scanner.finish()
 }
 
-pub(super) fn plp2_unterminated_heredoc_message(tag: &str, cur: &str) -> String {
-    const BASE: &str = "unterminated tagged heredoc (missing closing `TAG` line, or missing newline after `<<TAG` on the opener line)";
+pub(super) fn plp2_unterminated_heredoc_message(tag: &str, cur: &str) -> SurfaceSyntaxError {
     let lines: Vec<&str> = cur.lines().collect();
     if let Some(last) = lines.last() {
         if tagged_heredoc_close_kind(last, tag).is_some() {
-            return crate::plp::plp2_heredoc(format!(
-                "{BASE}; close line `{last}` should have ended the heredoc but program staging still has pending tag `{tag}` (file an issue)"
-            ));
+            return SurfaceSyntaxError::HeredocCloseNotStaged {
+                tag: tag.to_owned(),
+                line: (*last).to_owned(),
+            };
         }
         let trimmed = last.trim();
         if trimmed.starts_with(tag) {
-            return crate::plp::plp2_heredoc(format!(
-                "{BASE}; close line not recognized after `{tag}` — if trailing call arguments follow the close tag on the same line, use a close delimiter such as `TAG,` or `TAG)` before the next argument"
-            ));
+            return SurfaceSyntaxError::HeredocCloseDelimiterMissing {
+                tag: tag.to_owned(),
+            };
         }
     }
     for line in lines.iter().take(lines.len().saturating_sub(1)) {
         if line.trim() == tag {
-            return crate::plp::plp2_heredoc(format!(
-                "{BASE}; body contains a line equal to close tag `{tag}` before the real close — use an opaque tag that cannot appear in the payload"
-            ));
+            return SurfaceSyntaxError::HeredocTagCollision {
+                tag: tag.to_owned(),
+            };
         }
     }
-    crate::plp::plp2_heredoc(BASE)
+    SurfaceSyntaxError::HeredocUnterminated {
+        tag: tag.to_owned(),
+    }
 }

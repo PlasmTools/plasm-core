@@ -151,11 +151,10 @@ impl PlasmHostState {
     pub(crate) async fn with_discovery_route(
         &self,
         receipt: crate::discovery_service::RoutingReceipt,
-    ) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            receipt.closure.is_some(),
-            "routing requires a declared capability closure to create an execution view"
-        );
+    ) -> Result<Self, DiscoveryRouteStateError> {
+        if receipt.closure.is_none() {
+            return Err(DiscoveryRouteStateError::MissingCapabilityClosure);
+        }
         let mut view = self.clone();
         view.oss.catalog = self
             .catalog
@@ -173,7 +172,10 @@ impl PlasmHostState {
         cgs: &plasm_core::CGS,
         entry: &str,
         entities: &[String],
-    ) -> Result<plasm_core::symbol_tuning::ExposureSurfaceDelta, String> {
+    ) -> Result<
+        plasm_core::symbol_tuning::ExposureSurfaceDelta,
+        plasm_core::capability_exposure::CapabilityExposureError,
+    > {
         let capabilities = match self
             .discovery_route
             .as_ref()
@@ -314,7 +316,7 @@ impl PlasmHostState {
         &self,
         prompt_hash: &str,
         session_id: &str,
-    ) -> anyhow::Result<Option<Arc<ExecuteSession>>> {
+    ) -> Result<Option<Arc<ExecuteSession>>, crate::catalog_runtime::CatalogRuntimeError> {
         if let Some(sess) = self.sessions.get_by_strs(prompt_hash, session_id).await {
             let reg = self.catalog.snapshot();
             let pins =
@@ -373,7 +375,7 @@ impl PlasmHostState {
         &self,
         prompt_hash: &str,
         session_id: &str,
-    ) -> anyhow::Result<Option<Arc<ExecuteSession>>> {
+    ) -> Result<Option<Arc<ExecuteSession>>, crate::catalog_runtime::CatalogRuntimeError> {
         let Some(desc) = self
             .execute_session_registry
             .load(prompt_hash, session_id)
@@ -577,6 +579,14 @@ impl PlasmHostState {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum DiscoveryRouteStateError {
+    #[error("routing receipt has no declared capability closure")]
+    MissingCapabilityClosure,
+    #[error(transparent)]
+    Catalog(#[from] crate::catalog_runtime::CatalogRuntimeError),
+}
+
 /// Errors from [`PlasmHostState::build_tool_model_for_entry`].
 #[derive(Debug, thiserror::Error)]
 pub enum ToolModelHostError {
@@ -621,6 +631,7 @@ fn rehydrate_error_kind(err: &crate::execute_session_rehydrate::RehydrateError) 
         RehydrateError::SymbolLedgerDecode(_) => "symbol_ledger_decode",
         RehydrateError::CatalogRecipes(_) => "catalog_recipes",
         RehydrateError::Discovery(_) => "discovery",
+        RehydrateError::Materialize(_) => "materialize",
     }
 }
 
@@ -653,6 +664,7 @@ mod tests {
             session_graph_persistence: None,
             oss_local_filesystem_defaults: false,
         })
+        .expect("valid catalog fixture")
     }
 
     fn test_host_state() -> PlasmHostState {
@@ -682,7 +694,8 @@ mod tests {
             run_artifacts: Arc::new(RunArtifactStore::memory()),
             session_graph_persistence: None,
             oss_local_filesystem_defaults: false,
-        });
+        })
+        .expect("valid catalog fixture");
         st.oss.execute_session_registry = execute_session_registry;
         st
     }
@@ -873,7 +886,8 @@ mod tests {
             .is_some());
 
         st.catalog
-            .publish_catalog(Arc::new(rotated_overshow_registry()));
+            .publish_catalog(Arc::new(rotated_overshow_registry()))
+            .expect("valid rotated catalog");
 
         assert!(st
             .get_execute_session(&created.prompt_hash, &created.session)

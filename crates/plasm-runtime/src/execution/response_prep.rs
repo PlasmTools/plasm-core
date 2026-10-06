@@ -2,6 +2,33 @@
 
 use super::*;
 
+fn response_narrow_hint(response: &serde_json::Value, segment: &str) -> crate::ResponseNarrowHint {
+    if let Some(detail) = graphql_errors_summary(response) {
+        return crate::ResponseNarrowHint::GraphQl { detail };
+    }
+    if response.get("data").is_some_and(serde_json::Value::is_null) {
+        return crate::ResponseNarrowHint::NullData;
+    }
+    if segment == "0" && response.get("success").and_then(serde_json::Value::as_bool) == Some(false)
+    {
+        if let Some(result) = response.get("result") {
+            return crate::ResponseNarrowHint::Command {
+                name: result
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("command.error")
+                    .to_owned(),
+                message: result
+                    .get("message")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("Fibery command failed")
+                    .to_owned(),
+            };
+        }
+    }
+    crate::ResponseNarrowHint::None
+}
+
 pub(crate) fn http_collection_source(cml: &CmlRequest) -> PathExpr {
     if let Some(ref r) = cml.response {
         if let Some(ref path) = r.items_path {
@@ -78,9 +105,7 @@ pub(crate) fn narrow_http_graphql_response_for_entity_decode(
             };
             extract_single_entity_payload_from_response(response, cml)
         }
-        CapabilityTemplate::View(_) => Err(RuntimeError::ConfigurationError {
-            message: "view capabilities do not use HTTP response narrowing".into(),
-        }),
+        CapabilityTemplate::View(_) => Err(crate::ResponseNarrowError::ViewTransport.into()),
         CapabilityTemplate::EvmCall(_) | CapabilityTemplate::EvmLogs(_) => Ok(response),
     }
 }
@@ -106,7 +131,10 @@ pub(crate) fn preflight_fibery_command_envelope(
             .and_then(|v| v.as_str())
             .unwrap_or("Fibery command failed");
         return Err(RuntimeError::RequestError {
-            message: format!("Fibery command failed ({name}): {message}"),
+            source: crate::RequestFailure::CommandRejected {
+                code: name.to_owned(),
+                message: message.to_owned(),
+            },
             attempts: 1,
             status: None,
             body: None,
@@ -127,9 +155,9 @@ pub(crate) fn preflight_command_envelope_for_single_entity_narrow(
     };
     preflight_fibery_command_envelope(response)?;
     if let Some(path) = r.items_path.as_ref().filter(|p| !p.is_empty()) {
-        if let Some(msg) = graphql_mutation_envelope_failure(response, path) {
+        if let Some(source) = graphql_mutation_envelope_failure(response, path) {
             return Err(RuntimeError::RequestError {
-                message: msg,
+                source: crate::RequestFailure::GraphQlMutation(source),
                 attempts: 1,
                 status: None,
                 body: None,
@@ -153,10 +181,7 @@ pub(crate) fn preflight_command_envelope_for_single_entity_narrow(
     }
     if result.as_array().is_some_and(|a| a.is_empty()) {
         return Err(RuntimeError::RequestError {
-            message: "Fibery command succeeded but returned no rows (empty `result` array). \
-                      For `user_get_me`, the API token may not resolve `$my-id` — use a personal \
-                      workspace API token from Fibery → API Tokens and reconnect in Plasm."
-                .into(),
+            source: crate::RequestFailure::CommandRowsEmpty,
             attempts: 1,
             status: None,
             body: None,
@@ -183,33 +208,21 @@ pub(crate) fn extract_single_entity_payload_from_response(
                         cur = match response_path_step(cur, key) {
                             Some(v) => v,
                             None => {
-                                let mut msg =
-                                    format!("single-entity response: missing path segment `{key}`");
-                                if let Some(gs) = graphql_errors_summary(&response) {
-                                    msg.push_str(" — GraphQL: ");
-                                    msg.push_str(&gs);
-                                } else if matches!(response.get("data"), Some(d) if d.is_null()) {
-                                    msg.push_str(
-                                        " (response `data` is null; often paired with GraphQL `errors`)",
-                                    );
-                                } else if let Some(fibery) =
-                                    fibery_command_envelope_hint(&response, key)
-                                {
-                                    msg.push_str(" — ");
-                                    msg.push_str(&fibery);
+                                return Err(crate::ResponseNarrowError::MissingSegment {
+                                    segment: key.clone(),
+                                    hint: response_narrow_hint(&response, key),
                                 }
-                                return Err(RuntimeError::ConfigurationError { message: msg });
+                                .into());
                             }
                         };
                         if cur.is_null() && i + 1 == path.len() {
-                            let mut msg =
-                                format!("Entity not found (`{key}` is null in the API response)");
-                            if let Some(gs) = graphql_errors_summary(&response) {
-                                msg.push_str(" — GraphQL: ");
-                                msg.push_str(&gs);
-                            }
                             return Err(RuntimeError::RequestError {
-                                message: msg,
+                                source: crate::RequestFailure::EntityNull {
+                                    field: key.clone(),
+                                    hint: graphql_errors_summary(&response)
+                                        .map(|detail| crate::ResponseNarrowHint::GraphQl { detail })
+                                        .unwrap_or(crate::ResponseNarrowHint::None),
+                                },
                                 attempts: 1,
                                 status: None,
                                 body: None,
@@ -221,12 +234,13 @@ pub(crate) fn extract_single_entity_payload_from_response(
                 cur = match single_response_path_step(cur, key) {
                     Some(v) => v,
                     None => {
-                        let mut msg = format!("single-entity response: missing `{key}`");
-                        if let Some(gs) = graphql_errors_summary(&response) {
-                            msg.push_str(" — GraphQL: ");
-                            msg.push_str(&gs);
+                        return Err(crate::ResponseNarrowError::MissingSegment {
+                            segment: key.to_owned(),
+                            hint: graphql_errors_summary(&response)
+                                .map(|detail| crate::ResponseNarrowHint::GraphQl { detail })
+                                .unwrap_or(crate::ResponseNarrowHint::None),
                         }
-                        return Err(RuntimeError::ConfigurationError { message: msg });
+                        .into());
                     }
                 };
             }
@@ -258,26 +272,18 @@ pub(crate) fn unwrap_single_inner_payload(
 ) -> Result<serde_json::Value, RuntimeError> {
     match cur {
         serde_json::Value::Array(mut a) => {
-            let first = a.get_mut(0).map(std::mem::take).ok_or_else(|| {
-                RuntimeError::ConfigurationError {
-                    message: "single-entity response: expected a non-empty array at path"
-                        .to_string(),
-                }
-            })?;
+            let first = a
+                .get_mut(0)
+                .map(std::mem::take)
+                .ok_or_else(|| crate::ResponseNarrowError::EmptyArray)?;
             match first {
-                serde_json::Value::Object(m) => {
-                    m.get(inner)
-                        .cloned()
-                        .ok_or_else(|| RuntimeError::ConfigurationError {
-                            message: format!(
-                                "single-entity response: array element missing `{inner}` object"
-                            ),
-                        })
-                }
-                _ => Err(RuntimeError::ConfigurationError {
-                    message: "single-entity response: expected object elements in array"
-                        .to_string(),
+                serde_json::Value::Object(m) => m.get(inner).cloned().ok_or_else(|| {
+                    crate::ResponseNarrowError::ArrayInnerMissing {
+                        inner: inner.to_owned(),
+                    }
+                    .into()
                 }),
+                _ => Err(crate::ResponseNarrowError::ArrayObjectRequired.into()),
             }
         }
         serde_json::Value::Object(m) => {

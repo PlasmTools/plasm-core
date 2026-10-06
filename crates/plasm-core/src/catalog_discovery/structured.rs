@@ -5,6 +5,25 @@ use crate::schema::{
     ValueDomainSlot,
 };
 use crate::CGS;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum StructuredDiscoveryError {
+    #[error("structured discovery requires a catalog identity")]
+    MissingCatalogIdentity,
+    #[error("unknown discovery capability `{capability}`")]
+    CapabilityNotFound { capability: String },
+    #[error("unknown discovery entity `{entity}`")]
+    EntityNotFound { entity: String },
+    #[error("unknown provided field `{field}`")]
+    ProvidedFieldNotFound { field: String },
+    #[error("unknown value domain `{key}`")]
+    ValueDomainNotFound { key: String },
+    #[error("semantic value domain items contain a cycle at `{key}`")]
+    CyclicValueDomainItems { key: String },
+    #[error(transparent)]
+    Schema(#[from] crate::SchemaError),
+}
 
 /// A value reference is scoped to an exact catalog revision. Equal references
 /// identify a declaration, not equal runtime values or cross-service people.
@@ -31,24 +50,27 @@ pub struct StructuredCapability<'a> {
 }
 
 impl<'a> StructuredCapability<'a> {
-    pub fn new(cgs: &'a CGS, capability: &str) -> Result<Self, String> {
+    pub fn new(cgs: &'a CGS, capability: &str) -> Result<Self, StructuredDiscoveryError> {
         if cgs.entry_id.as_deref().is_none_or(str::is_empty) {
-            return Err("structured discovery requires a catalog identity".into());
+            return Err(StructuredDiscoveryError::MissingCatalogIdentity);
         }
-        let capability = cgs
-            .capabilities
-            .get(capability)
-            .ok_or_else(|| format!("unknown discovery capability {capability}"))?;
-        let entity = cgs
-            .entities
-            .get(&capability.domain)
-            .ok_or_else(|| format!("unknown discovery entity {}", capability.domain))?;
+        let capability = cgs.capabilities.get(capability).ok_or_else(|| {
+            StructuredDiscoveryError::CapabilityNotFound {
+                capability: capability.to_owned(),
+            }
+        })?;
+        let entity = cgs.entities.get(&capability.domain).ok_or_else(|| {
+            StructuredDiscoveryError::EntityNotFound {
+                entity: capability.domain.to_string(),
+            }
+        })?;
         for name in &capability.provides {
-            let field = entity
-                .fields
-                .get(name.as_str())
-                .ok_or_else(|| format!("unknown provided field {name}"))?;
-            field.named_value(cgs).map_err(|e| e.to_string())?;
+            let field = entity.fields.get(name.as_str()).ok_or_else(|| {
+                StructuredDiscoveryError::ProvidedFieldNotFound {
+                    field: name.to_string(),
+                }
+            })?;
+            field.named_value(cgs)?;
         }
         Ok(Self {
             cgs,
@@ -69,19 +91,19 @@ impl<'a> StructuredCapability<'a> {
     pub fn value<'s>(
         &'s self,
         slot: &'s impl ValueDomainSlot,
-    ) -> Result<(DomainReference<'s>, &'s NamedValueSchema), String> {
+    ) -> Result<(DomainReference<'s>, &'s NamedValueSchema), StructuredDiscoveryError> {
         self.value_by_key(slot.value_domain_key())
     }
 
     pub fn value_by_key<'s>(
         &'s self,
         key: &'s crate::ValueDomainKey,
-    ) -> Result<(DomainReference<'s>, &'s NamedValueSchema), String> {
-        let value = self
-            .cgs
-            .values
-            .get(key.as_str())
-            .ok_or_else(|| format!("unknown value domain {}", key.as_str()))?;
+    ) -> Result<(DomainReference<'s>, &'s NamedValueSchema), StructuredDiscoveryError> {
+        let value = self.cgs.values.get(key.as_str()).ok_or_else(|| {
+            StructuredDiscoveryError::ValueDomainNotFound {
+                key: key.to_string(),
+            }
+        })?;
         Ok((
             DomainReference {
                 catalog: self
@@ -238,6 +260,19 @@ mod tests {
             .unwrap()
             .provides
             .push("missing".into());
-        assert!(StructuredCapability::new(&cgs, "read").is_err());
+        assert!(matches!(
+            StructuredCapability::new(&cgs, "read"),
+            Err(StructuredDiscoveryError::ProvidedFieldNotFound { field }) if field == "missing"
+        ));
+    }
+
+    #[test]
+    fn structured_discovery_rejects_missing_catalog_identity_semantically() {
+        let mut cgs = fixture();
+        cgs.entry_id = None;
+        assert!(matches!(
+            StructuredCapability::new(&cgs, "read"),
+            Err(StructuredDiscoveryError::MissingCatalogIdentity)
+        ));
     }
 }

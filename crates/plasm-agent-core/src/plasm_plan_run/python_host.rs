@@ -45,7 +45,13 @@ pub(super) async fn materialize(
         {
             call_id
         }
-        _ => return Err("Python host did not suspend on the reviewed operation".into()),
+        _ => {
+            return Err(ExecutionFailure::new(
+                plasm_runtime::FailureCause::Runtime,
+                "python_host_suspend_contract_mismatch",
+                "Python host did not suspend on the reviewed operation",
+            ))
+        }
     };
     if let Some(scope) = ctx.execution_scope {
         scope.check()?;
@@ -96,10 +102,13 @@ pub(super) async fn materialize(
                 ),
                 (
                     MontyObject::string("count"),
-                    MontyObject::int(
-                        i64::try_from(result.result.count())
-                            .map_err(|_| "row count exceeds Python handle range")?,
-                    ),
+                    MontyObject::int(i64::try_from(result.result.count()).map_err(|_| {
+                        ExecutionFailure::new(
+                            plasm_runtime::FailureCause::Program,
+                            "python_host_row_count_out_of_range",
+                            "row count exceeds the Python handle range",
+                        )
+                    })?),
                 ),
             ],
         );
@@ -116,10 +125,11 @@ pub(super) async fn materialize(
         .await?;
         match event {
         TurnEvent::Complete(returned) if returned == handle => {}
-        _ => return Err(
-            "Python host return contract mismatch after host operation; operation is not retried"
-                .into(),
-        ),
+        _ => return Err(ExecutionFailure::new(
+            plasm_runtime::FailureCause::Runtime,
+            "python_host_return_contract_mismatch",
+            "Python host return contract mismatched after host operation; operation is not retried",
+        )),
     }
         await_checked(ctx.execution_scope, async {
             session

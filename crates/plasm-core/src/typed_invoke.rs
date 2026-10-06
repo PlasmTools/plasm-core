@@ -8,6 +8,49 @@ use crate::typed_literal::TypedLiteral;
 use crate::value::{PlasmInputRef, Value};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum TypedInvokeInputError {
+    #[error("union field `{field}` requires an explicit array for per-element wire wrapping")]
+    ArrayWireWrapRequiresExplicitArray { field: String },
+    #[error("invoke input validation failed: {0}")]
+    Validation(#[source] crate::TypeError),
+    #[error("typed union lowering failed: {0}")]
+    Lowering(#[source] TypedInvokeLiftError),
+}
+
+#[derive(Debug, Error)]
+pub enum TypedInvokeLiftError {
+    #[error("input schema declares no value")]
+    UnexpectedValueForNone,
+    #[error(transparent)]
+    Literal(#[from] crate::typed_literal::TypedLiteralError),
+    #[error("input value must be an object")]
+    ExpectedObject,
+    #[error("input object contains keys outside its closed schema")]
+    UnexpectedObjectFields,
+    #[error("required input field `{field}` is missing")]
+    MissingRequiredField { field: String },
+    #[error("input value must be an array")]
+    ExpectedArray,
+    #[error("union constructor does not name a declared variant")]
+    UnknownUnionConstructor,
+    #[error("value does not match any declared union variant")]
+    NoMatchingUnionVariant,
+    #[error("nested array value domain is missing its element declaration")]
+    MissingArrayElementDomain,
+    #[error("nested array value domain references an unknown value key")]
+    UnknownArrayElementDomain,
+    #[error("nested input type exceeds the supported depth")]
+    InputTypeDepthExceeded,
+    #[error("wire input is missing required field `{field}`")]
+    MissingWireField { field: String },
+    #[error("wire array element does not match its declared wrapper shape")]
+    InvalidWireArrayElement,
+    #[error("wire input contains fields outside the union variant")]
+    UnexpectedWireFields,
+}
 
 /// Structured invoke body after lowering from [`Value`] using an [`InputType`] description.
 #[derive(Debug, Clone, PartialEq)]
@@ -44,7 +87,7 @@ impl TypedInvokeInput {
         variant_index: usize,
         fields: Value,
         cgs: &CGS,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, TypedInvokeInputError> {
         let body_type = input_variant_body_type(variant);
         if let Value::Object(object) = &fields {
             for field in &variant.fields {
@@ -56,17 +99,16 @@ impl TypedInvokeInput {
                         .get(&field.name)
                         .is_some_and(|value| matches!(value, Value::PlasmInputRef(_)))
                 {
-                    return Err(format!(
-                        "union field {} requires an explicit array for per-element wire wrapping",
-                        field.name
-                    ));
+                    return Err(TypedInvokeInputError::ArrayWireWrapRequiresExplicitArray {
+                        field: field.name.clone(),
+                    });
                 }
             }
         }
         crate::capability_input::validate_input_type(&fields, &body_type, &variant.name, cgs)
-            .map_err(|error| error.to_string())?;
-        let inner = lift_inner(&fields, &body_type, cgs)
-            .map_err(|()| format!("cannot lower union variant {}", variant.name))?;
+            .map_err(TypedInvokeInputError::Validation)?;
+        let inner =
+            lift_inner(&fields, &body_type, cgs).map_err(TypedInvokeInputError::Lowering)?;
         let (nested_wire_paths, array_element_wrap_keys) = union_merge_hints_from_variant(variant);
         Ok(Self::Union {
             variant_index,
@@ -243,7 +285,7 @@ pub(crate) fn union_variant_needs_wire_decode(variant: &InputVariantSchema) -> b
 pub(crate) fn logical_object_from_wire_union_body(
     stripped: &IndexMap<String, Value>,
     variant: &InputVariantSchema,
-) -> Result<Value, ()> {
+) -> Result<Value, TypedInvokeLiftError> {
     lift_wire_shape_to_logical_object(stripped, variant)
 }
 
@@ -259,7 +301,7 @@ fn needs_wire_to_logical_transform(variant: &InputVariantSchema) -> bool {
 fn lift_wire_shape_to_logical_object(
     wire_obj: &IndexMap<String, Value>,
     variant: &InputVariantSchema,
-) -> Result<Value, ()> {
+) -> Result<Value, TypedInvokeLiftError> {
     let mut remaining = wire_obj.clone();
     let mut logical = IndexMap::new();
     for field in &variant.fields {
@@ -273,7 +315,9 @@ fn lift_wire_shape_to_logical_object(
         };
         let Some(mut value) = value else {
             if field.required {
-                return Err(());
+                return Err(TypedInvokeLiftError::MissingWireField {
+                    field: field.name.clone(),
+                });
             }
             continue;
         };
@@ -284,19 +328,21 @@ fn lift_wire_shape_to_logical_object(
                 .filter(|key| !key.is_empty())
             {
                 let Value::Array(items) = value else {
-                    return Err(());
+                    return Err(TypedInvokeLiftError::InvalidWireArrayElement);
                 };
                 value = Value::Array(
                     items
                         .into_iter()
                         .map(|item| {
                             let Value::Object(mut object) = item else {
-                                return Err(());
+                                return Err(TypedInvokeLiftError::InvalidWireArrayElement);
                             };
                             if object.len() != 1 {
-                                return Err(());
+                                return Err(TypedInvokeLiftError::InvalidWireArrayElement);
                             }
-                            object.shift_remove(key).ok_or(())
+                            object
+                                .shift_remove(key)
+                                .ok_or(TypedInvokeLiftError::InvalidWireArrayElement)
                         })
                         .collect::<Result<_, _>>()?,
                 );
@@ -305,7 +351,7 @@ fn lift_wire_shape_to_logical_object(
         logical.insert(field.name.clone(), value);
     }
     if !remaining.is_empty() {
-        return Err(());
+        return Err(TypedInvokeLiftError::UnexpectedWireFields);
     }
     Ok(Value::Object(logical))
 }
@@ -342,7 +388,11 @@ fn insert_nested_json_value(root: &mut IndexMap<String, Value>, path: &[String],
     }
 }
 
-fn lift_inner(value: &Value, input_type: &InputType, cgs: &CGS) -> Result<TypedInvokeInput, ()> {
+fn lift_inner(
+    value: &Value,
+    input_type: &InputType,
+    cgs: &CGS,
+) -> Result<TypedInvokeInput, TypedInvokeLiftError> {
     if matches!(value, Value::PlasmInputRef(_)) {
         let r = match value {
             Value::PlasmInputRef(r) => r.clone(),
@@ -359,7 +409,7 @@ fn lift_inner(value: &Value, input_type: &InputType, cgs: &CGS) -> Result<TypedI
             if matches!(value, Value::Null) {
                 Ok(TypedInvokeInput::Leaf(TypedLiteral::Null))
             } else {
-                Err(())
+                Err(TypedInvokeLiftError::UnexpectedValueForNone)
             }
         }
         InputType::Value {
@@ -380,14 +430,16 @@ fn lift_inner(value: &Value, input_type: &InputType, cgs: &CGS) -> Result<TypedI
                 };
                 return Ok(TypedInvokeInput::Json(v));
             }
-            let lit = TypedLiteral::try_from_value(value).map_err(|_| ())?;
+            let lit = TypedLiteral::try_from_value(value)?;
             Ok(TypedInvokeInput::Leaf(lit))
         }
         InputType::Object {
             fields,
             additional_fields,
         } => {
-            let obj = value.as_object().ok_or(())?;
+            let obj = value
+                .as_object()
+                .ok_or(TypedInvokeLiftError::ExpectedObject)?;
             // A payload-only schema must not erase scope or another input lane.
             // The caller retains the original complete invocation when it cannot
             // be represented by this particular typed schema.
@@ -396,7 +448,7 @@ fn lift_inner(value: &Value, input_type: &InputType, cgs: &CGS) -> Result<TypedI
                     .keys()
                     .any(|key| !fields.iter().any(|field| &field.name == key))
             {
-                return Err(());
+                return Err(TypedInvokeLiftError::UnexpectedObjectFields);
             }
             let mut out: IndexMap<String, TypedInvokeInput> = IndexMap::new();
             for f in fields {
@@ -407,7 +459,9 @@ fn lift_inner(value: &Value, input_type: &InputType, cgs: &CGS) -> Result<TypedI
                     }
                     None => {
                         if f.required {
-                            return Err(());
+                            return Err(TypedInvokeLiftError::MissingRequiredField {
+                                field: f.name.clone(),
+                            });
                         }
                     }
                 }
@@ -436,7 +490,9 @@ fn lift_inner(value: &Value, input_type: &InputType, cgs: &CGS) -> Result<TypedI
             min_length: _,
             max_length: _,
         } => {
-            let arr = value.as_array().ok_or(())?;
+            let arr = value
+                .as_array()
+                .ok_or(TypedInvokeLiftError::ExpectedArray)?;
             let mut out = Vec::with_capacity(arr.len());
             for item in arr {
                 out.push(lift_inner(item, element_type, cgs)?);
@@ -455,7 +511,7 @@ fn lift_inner(value: &Value, input_type: &InputType, cgs: &CGS) -> Result<TypedI
                         union_variant_constructor_symbol(v)
                             .is_some_and(|s| s == ctor_label.as_str())
                     })
-                    .ok_or(())?;
+                    .ok_or(TypedInvokeLiftError::UnknownUnionConstructor)?;
                 let variant = &variants[idx];
                 let body_ty = input_variant_body_type(variant);
                 let inner = lift_inner(&Value::Object(ctor_fields.clone()), &body_ty, cgs)?;
@@ -499,17 +555,23 @@ fn lift_inner(value: &Value, input_type: &InputType, cgs: &CGS) -> Result<TypedI
                     }
                 }
             }
-            Err(())
+            Err(TypedInvokeLiftError::NoMatchingUnionVariant)
         }
     }
 }
 
-fn field_input_schema_to_input_type(f: &InputFieldSchema, cgs: &CGS) -> Result<InputType, ()> {
+fn field_input_schema_to_input_type(
+    f: &InputFieldSchema,
+    cgs: &CGS,
+) -> Result<InputType, TypedInvokeLiftError> {
     match &f.wire {
         InputFieldWire::Inline(ty) => Ok((**ty).clone()),
-        InputFieldWire::Registry(_) => {
-            named_input_type(f.named_value(cgs).map_err(|_| ())?, cgs, 0)
-        }
+        InputFieldWire::Registry(_) => named_input_type(
+            f.named_value(cgs)
+                .map_err(|_| TypedInvokeLiftError::UnknownArrayElementDomain)?,
+            cgs,
+            0,
+        ),
     }
 }
 
@@ -517,16 +579,19 @@ fn named_input_type(
     value: &crate::schema::NamedValueSchema,
     cgs: &CGS,
     depth: usize,
-) -> Result<InputType, ()> {
+) -> Result<InputType, TypedInvokeLiftError> {
     if depth >= 64 {
-        return Err(());
+        return Err(TypedInvokeLiftError::InputTypeDepthExceeded);
     }
     if value.field_type == crate::FieldType::Array {
-        let item = value.array_items.as_ref().ok_or(())?;
+        let item = value
+            .array_items
+            .as_ref()
+            .ok_or(TypedInvokeLiftError::MissingArrayElementDomain)?;
         let element = cgs
             .values
             .get(item.kind.registry_key().as_str())
-            .ok_or(())?;
+            .ok_or(TypedInvokeLiftError::UnknownArrayElementDomain)?;
         Ok(InputType::Array {
             element_type: Box::new(named_input_type(element, cgs, depth + 1)?),
             min_length: value.domain.constraints.min_length,
@@ -670,10 +735,9 @@ mod tests {
             ("count".into(), Value::Integer(2)),
             ("labels".into(), reference),
         ]));
-        assert!(
-            TypedInvokeInput::from_union_variant(&variant, 1, deferred, &cgs)
-                .unwrap_err()
-                .contains("explicit array")
-        );
+        assert!(matches!(
+            TypedInvokeInput::from_union_variant(&variant, 1, deferred, &cgs),
+            Err(TypedInvokeInputError::ArrayWireWrapRequiresExplicitArray { .. })
+        ));
     }
 }

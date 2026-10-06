@@ -112,11 +112,9 @@ impl MockStore {
             entity
                 .relations
                 .get(relation)
-                .ok_or_else(|| MockError::InvalidRequest {
-                    message: format!(
-                        "Relation '{}' not found in entity '{}'",
-                        relation, entity_type
-                    ),
+                .ok_or_else(|| MockError::RelationNotFound {
+                    relation: relation.to_owned(),
+                    entity: entity_type.to_owned(),
                 })?;
 
         let resource = self.get_resource(entity_type, id)?;
@@ -272,8 +270,9 @@ impl MockStore {
             entity
                 .relations
                 .get(relation)
-                .ok_or_else(|| MockError::InvalidRequest {
-                    message: format!("Relation '{}' not found", relation),
+                .ok_or_else(|| MockError::RelationNotFound {
+                    relation: relation.to_owned(),
+                    entity: entity.name.to_string(),
                 })?;
 
         let empty_vec = Vec::new();

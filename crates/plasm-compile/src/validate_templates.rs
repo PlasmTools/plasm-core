@@ -1,4 +1,6 @@
 //! Pack-time CGS capability template + view validation.
+use crate::CatalogTemplateError;
+use std::sync::Arc;
 
 use plasm_core::CapabilitySchema;
 use serde::{Deserialize, Serialize};
@@ -46,10 +48,13 @@ struct CompiledCatalogArtifact {
 impl CompiledCatalog {
     /// Decode untrusted artifact bytes and construct a trusted catalog only after
     /// exact revision and capability-set validation.
-    pub fn decode_artifact(bytes: &[u8], cgs: &plasm_core::CGS) -> Result<Self, CmlError> {
+    pub fn decode_artifact(
+        bytes: &[u8],
+        cgs: &plasm_core::CGS,
+    ) -> Result<Self, CatalogTemplateError> {
         let artifact: CompiledCatalogArtifact =
-            serde_json::from_slice(bytes).map_err(|error| CmlError::InvalidTemplate {
-                message: format!("decode compiled request recipes: {error}"),
+            serde_json::from_slice(bytes).map_err(|error| CatalogTemplateError::RecipeJson {
+                source: Arc::new(error),
             })?;
         let compiled = Self {
             entry_id: cgs.entry_id.clone(),
@@ -68,23 +73,21 @@ impl CompiledCatalog {
         &self.cgs_hash
     }
 
-    pub fn capability(&self, name: &str) -> Result<&CapabilityTemplate, CmlError> {
+    pub fn capability(&self, name: &str) -> Result<&CapabilityTemplate, CatalogTemplateError> {
         self.capabilities
             .get(name)
-            .ok_or_else(|| CmlError::InvalidTemplate {
-                message: format!("compiled catalog has no request recipe for `{name}`"),
+            .ok_or_else(|| CatalogTemplateError::RecipeMissing {
+                capability: name.to_string(),
             })
     }
 
-    pub fn validate_against(&self, cgs: &plasm_core::CGS) -> Result<(), CmlError> {
+    pub fn validate_against(&self, cgs: &plasm_core::CGS) -> Result<(), CatalogTemplateError> {
         crate::embed_target_decoder::validate_embedded_identity_contracts(cgs)?;
         let actual_hash = cgs.catalog_cgs_hash_hex();
         if self.cgs_hash != actual_hash {
-            return Err(CmlError::InvalidTemplate {
-                message: format!(
-                    "compiled request recipes target CGS {}, loaded CGS is {actual_hash}",
-                    self.cgs_hash
-                ),
+            return Err(CatalogTemplateError::RevisionMismatch {
+                expected: self.cgs_hash.clone(),
+                actual: actual_hash,
             });
         }
         let expected = cgs
@@ -98,8 +101,9 @@ impl CompiledCatalog {
             .map(String::as_str)
             .collect::<std::collections::BTreeSet<_>>();
         if expected != actual {
-            return Err(CmlError::InvalidTemplate {
-                message: "compiled request recipe capability set does not match the CGS".into(),
+            return Err(CatalogTemplateError::RecipeCapabilitySet {
+                expected: expected.into_iter().map(str::to_string).collect(),
+                actual: actual.into_iter().map(str::to_string).collect(),
             });
         }
         Ok(())
@@ -111,34 +115,35 @@ pub fn load_compiled_catalog_artifact(
     dir: &std::path::Path,
     manifest: &plasm_core::catalog_il::CatalogManifest,
     cgs: &plasm_core::CGS,
-) -> Result<CompiledCatalog, CmlError> {
+) -> Result<CompiledCatalog, CatalogTemplateError> {
     manifest
         .validate_format()
-        .map_err(|message| CmlError::InvalidTemplate { message })?;
+        .map_err(|error| CatalogTemplateError::Manifest {
+            source: Arc::new(error),
+        })?;
     let bytes = std::fs::read(dir.join(&manifest.recipes_json)).map_err(|error| {
-        CmlError::InvalidTemplate {
-            message: format!("read compiled request recipes: {error}"),
+        CatalogTemplateError::RecipeRead {
+            path: dir.join(&manifest.recipes_json),
+            source: Arc::new(error),
         }
     })?;
     if plasm_core::catalog_discovery::content_hash(&bytes) != manifest.recipes_hash {
-        return Err(CmlError::InvalidTemplate {
-            message: "compiled request recipe digest mismatch".into(),
-        });
+        return Err(CatalogTemplateError::RecipeDigestMismatch);
     }
     CompiledCatalog::decode_artifact(&bytes, cgs)
 }
 
 pub fn compile_cgs_capability_templates(
     cgs: &plasm_core::CGS,
-) -> Result<CompiledCatalog, CmlError> {
+) -> Result<CompiledCatalog, CatalogTemplateError> {
     for capability in cgs.capabilities.values() {
         if capability
             .require_mapping()
             .ok()
             .is_some_and(|mapping| mapping.template.0.get("conflict_rules").is_some())
         {
-            return Err(CmlError::InvalidTemplate {
-                message: "service error bodies are opaque; conflict_rules are not supported; declare read-backed reconciliation".into(),
+            return Err(CatalogTemplateError::ConflictRulesUnsupported {
+                capability: capability.name.to_string(),
             });
         }
     }
@@ -154,7 +159,7 @@ pub fn compile_cgs_capability_templates(
 
 fn compile_capability_templates(
     cgs: &plasm_core::CGS,
-) -> Result<BTreeMap<String, CapabilityTemplate>, CmlError> {
+) -> Result<BTreeMap<String, CapabilityTemplate>, CatalogTemplateError> {
     crate::embed_target_decoder::validate_embedded_identity_contracts(cgs)?;
     let mut capabilities = BTreeMap::new();
     for (name, cap) in &cgs.capabilities {
@@ -164,24 +169,27 @@ fn compile_capability_templates(
         }
         let template_json = &cap
             .require_mapping()
-            .map_err(|message| CmlError::InvalidTemplate { message })?
+            .map_err(CmlError::MissingCapabilityMapping)?
             .template
             .0;
-        let template =
-            parse_capability_template(template_json).map_err(|e| CmlError::InvalidTemplate {
-                message: format!("capability `{name}`: {e}"),
-            })?;
+        let template = parse_capability_template(template_json).map_err(|e| {
+            CatalogTemplateError::CapabilityTemplate {
+                capability: name.to_string(),
+                source: e,
+            }
+        })?;
         let template_text = template_json
             .as_str()
             .map(str::to_string)
             .unwrap_or_else(|| template_json.to_string());
-        plasm_core::bind_wire_validate::validate_bind_wire_refs(
-            &template_text,
-            &format!("capability `{name}` CML template"),
-        )
-        .map_err(|e| CmlError::InvalidTemplate {
-            message: e.to_string(),
-        })?;
+        let mut unknown = plasm_core::bind_wire_validate::unknown_bind_wire_refs(&template_text);
+        unknown.sort();
+        if !unknown.is_empty() {
+            return Err(CatalogTemplateError::UnknownBindingWires {
+                capability: name.to_string(),
+                wires: unknown,
+            });
+        }
 
         forbid_pagination_dual_wire(name, &template)?;
         if matches!(template, CapabilityTemplate::CredentialBind(_))
@@ -190,7 +198,10 @@ fn compile_capability_templates(
                 plasm_core::CapabilityKind::Create | plasm_core::CapabilityKind::Action
             )
         {
-            return Err(CmlError::InvalidTemplate { message: format!("capability `{name}`: credential binding requires a create or action capability") });
+            return Err(CatalogTemplateError::CredentialCapabilityKind {
+                capability: name.to_string(),
+                kind: cap.kind,
+            });
         }
         validate_capability_params_wired_in_cml(cgs, name, cap, &template)?;
         validate_capability_path_vars_projectable(cgs, cap)?;
@@ -200,7 +211,9 @@ fn compile_capability_templates(
     Ok(capabilities)
 }
 
-pub fn validate_cgs_capability_templates(cgs: &plasm_core::CGS) -> Result<(), CmlError> {
+pub fn validate_cgs_capability_templates(
+    cgs: &plasm_core::CGS,
+) -> Result<(), CatalogTemplateError> {
     compile_capability_templates(cgs).map(|_| ())
 }
 
@@ -210,10 +223,9 @@ pub fn validate_cgs_capability_templates(cgs: &plasm_core::CGS) -> Result<(), Cm
 fn validate_capability_path_vars_projectable(
     cgs: &plasm_core::CGS,
     cap: &CapabilitySchema,
-) -> Result<(), CmlError> {
-    plasm_core::prove_path_env_coverage_in_cgs(cgs, cap).map_err(|e| CmlError::InvalidTemplate {
-        message: e.to_string(),
-    })
+) -> Result<(), CatalogTemplateError> {
+    plasm_core::prove_path_env_coverage_in_cgs(cgs, cap)
+        .map_err(|e| CatalogTemplateError::PathEnvironment { source: e })
 }
 
 /// Fail closed when a `pagination.params` key is also a CML template var
@@ -222,7 +234,7 @@ fn validate_capability_path_vars_projectable(
 pub(crate) fn forbid_pagination_dual_wire(
     name: &str,
     template: &CapabilityTemplate,
-) -> Result<(), CmlError> {
+) -> Result<(), CatalogTemplateError> {
     let Some(pconf) = template_pagination(template) else {
         return Ok(());
     };
@@ -236,11 +248,9 @@ pub(crate) fn forbid_pagination_dual_wire(
         .collect();
     dual.sort_unstable();
     if !dual.is_empty() {
-        return Err(CmlError::InvalidTemplate {
-            message: format!(
-                "capability `{name}`: pagination param(s) [{}] also appear as CML template vars (path/query/body/headers/multipart) — dual-wire is forbidden; remove the manual fields and let `pagination:` drive the wire",
-                dual.join(", ")
-            ),
+        return Err(CatalogTemplateError::PaginationDualWire {
+            capability: name.to_string(),
+            parameters: dual.into_iter().map(str::to_string).collect(),
         });
     }
     if !pconf.initial_only_query_params.is_empty() {
@@ -257,10 +267,9 @@ pub(crate) fn forbid_pagination_dual_wire(
         };
         for field in &pconf.initial_only_query_params {
             if !query_fields.contains(field.as_str()) {
-                return Err(CmlError::InvalidTemplate {
-                    message: format!(
-                        "capability `{name}`: initial-only query key `{field}` must be a field of the CML query object"
-                    ),
+                return Err(CatalogTemplateError::InitialOnlyQueryKey {
+                    capability: name.to_string(),
+                    field: field.to_string(),
                 });
             }
         }
@@ -274,7 +283,7 @@ fn validate_capability_params_wired_in_cml(
     name: &str,
     cap: &CapabilitySchema,
     template: &CapabilityTemplate,
-) -> Result<(), CmlError> {
+) -> Result<(), CatalogTemplateError> {
     if matches!(template, CapabilityTemplate::View(_)) {
         return Ok(());
     }
@@ -363,26 +372,27 @@ fn validate_capability_params_wired_in_cml(
         .collect();
     missing.sort_unstable();
     if !missing.is_empty() {
-        return Err(CmlError::InvalidTemplate {
-            message: format!(
-                "capability `{name}`: parameter(s) [{}] are declared in domain.yaml but not referenced in CML (path/query/body/headers/multipart/pagination). Fabricated filters/params that never hit the wire are forbidden — wire them in mappings.yaml or remove them from the capability.",
-                missing.join(", ")
-            ),
+        return Err(CatalogTemplateError::UnwiredCapabilityParameters {
+            capability: name.to_string(),
+            parameters: missing.into_iter().map(str::to_string).collect(),
         });
     }
     Ok(())
 }
 
-fn validate_view_template_syntax(label: &str, template: &str) -> Result<(), CmlError> {
+fn validate_view_template_syntax(label: &str, template: &str) -> Result<(), CatalogTemplateError> {
     if template.len() > 32_768 {
-        return Err(CmlError::InvalidTemplate {
-            message: format!("{label}: template exceeds 32KiB"),
+        return Err(CatalogTemplateError::ViewTemplateSize {
+            label: label.to_string(),
+            actual: template.len(),
+            maximum: 32_768,
         });
     }
     minijinja::Environment::new()
         .template_from_str(template)
-        .map_err(|e| CmlError::InvalidTemplate {
-            message: format!("{label}: {e}"),
+        .map_err(|e| CatalogTemplateError::ViewTemplateSyntax {
+            label: label.to_string(),
+            source: Arc::new(e),
         })?;
     Ok(())
 }
@@ -392,7 +402,7 @@ fn view_node_ids(view: &plasm_core::schema::ViewDefinition) -> indexmap::IndexSe
 }
 
 /// Static validation for CGS `views:` DAGs at catalog load (no expr / HTTP).
-pub fn validate_cgs_views(cgs: &plasm_core::CGS) -> Result<(), CmlError> {
+pub fn validate_cgs_views(cgs: &plasm_core::CGS) -> Result<(), CatalogTemplateError> {
     use plasm_core::schema::{ViewOutputBinding, ViewParamBinding, ViewRelationBinding};
     use plasm_core::CapabilityKind;
     use std::collections::HashSet;
@@ -400,50 +410,44 @@ pub fn validate_cgs_views(cgs: &plasm_core::CGS) -> Result<(), CmlError> {
     for (view_key, view) in &cgs.views {
         let cap = cgs
             .get_capability(view.capability.as_str())
-            .ok_or_else(|| CmlError::InvalidTemplate {
-                message: format!(
-                    "view `{view_key}` references unknown capability `{}`",
-                    view.capability
-                ),
+            .ok_or_else(|| CatalogTemplateError::ViewCapabilityMissing {
+                view: view_key.to_string(),
+                capability: view.capability.to_string(),
             })?;
         let template = parse_capability_template(
             &cap.require_mapping()
-                .map_err(|message| CmlError::InvalidTemplate { message })?
+                .map_err(CmlError::MissingCapabilityMapping)?
                 .template,
         )?;
         match &template {
             CapabilityTemplate::View(vt) if vt.view == *view_key => {}
             CapabilityTemplate::View(vt) => {
-                return Err(CmlError::InvalidTemplate {
-                    message: format!(
-                        "view `{view_key}`: capability `{}` maps to view `{}`",
-                        view.capability, vt.view
-                    ),
+                return Err(CatalogTemplateError::ViewMappingMismatch {
+                    view: view_key.to_string(),
+                    capability: view.capability.to_string(),
+                    mapped_view: vt.view.to_string(),
                 });
             }
             _ => {
-                return Err(CmlError::InvalidTemplate {
-                    message: format!(
-                        "view `{view_key}` capability `{}` must use transport: view",
-                        view.capability
-                    ),
+                return Err(CatalogTemplateError::ViewTransportRequired {
+                    view: view_key.to_string(),
+                    capability: view.capability.to_string(),
                 });
             }
         }
 
         if cgs.get_entity(view.entity.as_str()).is_none() {
-            return Err(CmlError::InvalidTemplate {
-                message: format!("view `{view_key}` targets unknown entity `{}`", view.entity),
+            return Err(CatalogTemplateError::ViewEntityMissing {
+                view: view_key.to_string(),
+                entity: view.entity.to_string(),
             });
         }
 
         for sp in &view.scope {
             if sp.required && sp.inject.is_some() {
-                return Err(CmlError::InvalidTemplate {
-                    message: format!(
-                        "view `{view_key}` scope `{}` cannot be both required and inject",
-                        sp.name
-                    ),
+                return Err(CatalogTemplateError::ViewRequiredInjectedScope {
+                    view: view_key.to_string(),
+                    scope: sp.name.to_string(),
                 });
             }
         }
@@ -454,50 +458,50 @@ pub fn validate_cgs_views(cgs: &plasm_core::CGS) -> Result<(), CmlError> {
 
         for node in &view.nodes {
             if !seen_node_ids.insert(node.id.clone()) {
-                return Err(CmlError::InvalidTemplate {
-                    message: format!("view `{view_key}` has duplicate node id `{}`", node.id),
+                return Err(CatalogTemplateError::ViewDuplicateNode {
+                    view: view_key.to_string(),
+                    node: node.id.to_string(),
                 });
             }
             if node.traverse.is_some() {
                 if !node.capability.is_empty() || !node.bind.is_empty() || node.when.is_some() {
-                    return Err(CmlError::InvalidTemplate { message: format!("view `{view_key}` traversal `{}` cannot also declare capability, bind, or when", node.id) });
+                    return Err(CatalogTemplateError::ViewTraversalDeclarations {
+                        view: view_key.to_string(),
+                        node: node.id.to_string(),
+                    });
                 }
                 cgs.view_node_entity(view, &node.id)
-                    .map_err(|message| CmlError::InvalidTemplate { message })?;
+                    .map_err(CmlError::ViewNodeResolution)?;
                 prior_nodes.insert(node.id.clone());
                 continue;
             }
             let node_cap = cgs
                 .get_capability(node.capability.as_str())
-                .ok_or_else(|| CmlError::InvalidTemplate {
-                    message: format!(
-                        "view `{view_key}` node `{}` references unknown capability `{}`",
-                        node.id, node.capability
-                    ),
+                .ok_or_else(|| CatalogTemplateError::ViewNodeCapabilityMissing {
+                    view: view_key.to_string(),
+                    node: node.id.to_string(),
+                    capability: node.capability.to_string(),
                 })?;
             match node_cap.kind {
                 CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get => {}
                 other => {
-                    return Err(CmlError::InvalidTemplate {
-                        message: format!(
-                            "view `{view_key}` node `{}`: unsupported capability kind {other:?}",
-                            node.id
-                        ),
+                    return Err(CatalogTemplateError::ViewNodeCapabilityKind {
+                        view: view_key.to_string(),
+                        node: node.id.to_string(),
+                        kind: other,
                     });
                 }
             }
             let inner_template = parse_capability_template(
                 &node_cap
                     .require_mapping()
-                    .map_err(|message| CmlError::InvalidTemplate { message })?
+                    .map_err(CmlError::MissingCapabilityMapping)?
                     .template,
             )?;
             if matches!(inner_template, CapabilityTemplate::View(_)) {
-                return Err(CmlError::InvalidTemplate {
-                    message: format!(
-                        "view `{view_key}` node `{}`: nested view capabilities are not supported",
-                        node.id
-                    ),
+                return Err(CatalogTemplateError::NestedView {
+                    view: view_key.to_string(),
+                    node: node.id.to_string(),
                 });
             }
 
@@ -505,11 +509,11 @@ pub fn validate_cgs_views(cgs: &plasm_core::CGS) -> Result<(), CmlError> {
                 match binding {
                     ViewParamBinding::NodeField { node: ref_node, .. } => {
                         if !prior_nodes.contains(ref_node) {
-                            return Err(CmlError::InvalidTemplate {
-                                message: format!(
-                                    "view `{view_key}` node `{}` bind `{param}` references `{ref_node}` before it runs",
-                                    node.id
-                                ),
+                            return Err(CatalogTemplateError::ViewForwardBinding {
+                                view: view_key.to_string(),
+                                node: node.id.to_string(),
+                                parameter: param.to_string(),
+                                referenced_node: ref_node.to_string(),
                             });
                         }
                     }
@@ -548,10 +552,11 @@ pub fn validate_cgs_views(cgs: &plasm_core::CGS) -> Result<(), CmlError> {
                 | ViewOutputBinding::WriteReused { node }
                 | ViewOutputBinding::WriteSkipped { node } => {
                     if !all_node_ids.contains(node) {
-                        return Err(CmlError::InvalidTemplate {
-                            message: format!(
-                                "view `{view_key}` {kind} `{field}` references unknown node `{node}`"
-                            ),
+                        return Err(CatalogTemplateError::ViewOutputNodeMissing {
+                            view: view_key.to_string(),
+                            kind,
+                            field: field.to_string(),
+                            node: node.to_string(),
                         });
                     }
                 }
@@ -568,7 +573,12 @@ pub fn validate_cgs_views(cgs: &plasm_core::CGS) -> Result<(), CmlError> {
         for spec in &view.relation_outputs {
             if let ViewRelationBinding::NodeUnionRows { nodes } = &spec.binding {
                 if nodes.is_empty() || spec.cardinality != plasm_core::Cardinality::Many {
-                    return Err(CmlError::InvalidTemplate { message: format!("view `{view_key}` identity union needs nonempty nodes and a many relation") });
+                    return Err(CatalogTemplateError::ViewIdentityUnionShape {
+                        view: view_key.to_string(),
+                        relation: spec.relation.to_string(),
+                        nodes: nodes.clone(),
+                        cardinality: spec.cardinality,
+                    });
                 }
             }
             let nodes: Vec<&str> = match &spec.binding {
@@ -582,26 +592,30 @@ pub fn validate_cgs_views(cgs: &plasm_core::CGS) -> Result<(), CmlError> {
             };
             for node in nodes {
                 if !all_node_ids.contains(node) {
-                    return Err(CmlError::InvalidTemplate {
-                        message: format!(
-                            "view `{view_key}` relation `{}` references unknown node `{node}`",
-                            spec.relation
-                        ),
+                    return Err(CatalogTemplateError::ViewRelationNodeMissing {
+                        view: view_key.to_string(),
+                        relation: spec.relation.to_string(),
+                        node: node.to_string(),
                     });
                 }
                 let entity = cgs
                     .view_node_entity(view, node)
-                    .map_err(|message| CmlError::InvalidTemplate { message })?;
+                    .map_err(CmlError::ViewNodeResolution)?;
                 if entity != spec.target {
-                    return Err(CmlError::InvalidTemplate { message: format!("view `{view_key}` relation `{}` expects {}, node `{node}` produces {entity}", spec.relation, spec.target) });
+                    return Err(CatalogTemplateError::ViewRelationEntityMismatch {
+                        view: view_key.to_string(),
+                        relation: spec.relation.to_string(),
+                        node: node.to_string(),
+                        expected: spec.target.to_string(),
+                        actual: entity.to_string(),
+                    });
                 }
             }
             if cgs.get_entity(spec.target.as_str()).is_none() {
-                return Err(CmlError::InvalidTemplate {
-                    message: format!(
-                        "view `{view_key}` relation `{}` targets unknown entity `{}`",
-                        spec.relation, spec.target
-                    ),
+                return Err(CatalogTemplateError::ViewRelationEntityMissing {
+                    view: view_key.to_string(),
+                    relation: spec.relation.to_string(),
+                    entity: spec.target.to_string(),
                 });
             }
         }
@@ -616,8 +630,9 @@ pub fn validate_cgs_views(cgs: &plasm_core::CGS) -> Result<(), CmlError> {
         };
         if let CapabilityTemplate::View(vt) = template {
             if !cgs.views.contains_key(vt.view.as_str()) {
-                return Err(CmlError::InvalidTemplate {
-                    message: format!("capability `{cap_name}` maps to unknown view `{}`", vt.view),
+                return Err(CatalogTemplateError::CapabilityViewMissing {
+                    capability: cap_name.to_string(),
+                    view: vt.view.to_string(),
                 });
             }
         }
@@ -646,6 +661,29 @@ mod tests {
     use plasm_core::value::Value;
 
     use super::*;
+
+    #[test]
+    fn view_template_failures_preserve_semantics_and_typed_source() {
+        use std::error::Error;
+        let error = validate_view_template_syntax("view output", "{{").unwrap_err();
+        assert!(
+            matches!(&error, CatalogTemplateError::ViewTemplateSyntax { label, .. } if label == "view output")
+        );
+        assert!(error
+            .source()
+            .unwrap()
+            .downcast_ref::<Arc<minijinja::Error>>()
+            .is_some());
+        let error = validate_view_template_syntax("view output", &"x".repeat(32_769)).unwrap_err();
+        assert!(matches!(
+            error,
+            CatalogTemplateError::ViewTemplateSize {
+                actual: 32_769,
+                maximum: 32_768,
+                ..
+            }
+        ));
+    }
     use crate::{compile_operation, CmlEnv, CompiledOperation};
 
     fn commit_matrix_cgs() -> plasm_core::CGS {
@@ -984,10 +1022,9 @@ mod tests {
         }))
         .expect("parse dual-wire template");
         let err = forbid_pagination_dual_wire("list_items", &template).expect_err("dual-wire");
-        let msg = err.to_string();
         assert!(
-            msg.contains("dual-wire") && msg.contains("page_index") && msg.contains("page_limit"),
-            "{msg}"
+            matches!(err, CatalogTemplateError::PaginationDualWire { capability, parameters }
+            if capability == "list_items" && parameters == ["page_index", "page_limit"])
         );
     }
 
@@ -1034,9 +1071,10 @@ mod tests {
         };
         let err = forbid_pagination_dual_wire("list_items", &recipe("other"))
             .expect_err("undeclared key");
-        assert!(err
-            .to_string()
-            .contains("initial-only query key `include_self`"));
+        assert!(
+            matches!(err, CatalogTemplateError::InitialOnlyQueryKey { capability, field }
+            if capability == "list_items" && field == "include_self")
+        );
         forbid_pagination_dual_wire("list_items", &recipe("include_self")).expect("declared key");
     }
 
@@ -1050,7 +1088,9 @@ mod tests {
         let view = cgs.views.get_mut("lang_digest").expect("view");
         view.nodes.push(view.nodes[0].clone());
         let err = validate_cgs_views(&cgs).expect_err("duplicate node");
-        assert!(err.to_string().contains("duplicate node id"), "{err}");
+        assert!(
+            matches!(err, CatalogTemplateError::ViewDuplicateNode { view, .. } if view == "lang_digest")
+        );
     }
 
     #[test]
@@ -1081,7 +1121,7 @@ mod tests {
         artifact["entry_id"] = serde_json::json!("invented");
         let error = CompiledCatalog::decode_artifact(&serde_json::to_vec(&artifact).unwrap(), &cgs)
             .expect_err("artifact cannot supply registry identity");
-        assert!(error.to_string().contains("unknown field `entry_id`"));
+        assert!(matches!(error, CatalogTemplateError::RecipeJson { source } if source.is_data()));
     }
 
     #[test]
@@ -1101,6 +1141,9 @@ mod tests {
         let error = decoded
             .validate_against(&changed)
             .expect_err("different CGS revision must be rejected");
-        assert!(error.to_string().contains("target CGS"), "{error}");
+        assert!(
+            matches!(error, CatalogTemplateError::RevisionMismatch { expected, actual }
+            if expected == decoded.cgs_hash() && actual == changed.catalog_cgs_hash_hex())
+        );
     }
 }

@@ -277,7 +277,10 @@ pub(crate) fn render_plan_value(value: &PlanValue) -> String {
         ),
         PlanValue::Expression { expression } => expression.render(|v| render_plan_value(v)),
 
-        PlanValue::Literal { value } => render_json_value(&value.to_wire()),
+        PlanValue::Literal { value } => match value.to_wire() {
+            Ok(wire) => render_json_value(&wire),
+            Err(error) => format!("<invalid resolved value: {error}>"),
+        },
         PlanValue::Symbol { path } => format!("{{{{ {path} }}}}"),
         PlanValue::BindingSymbol { binding, path } => {
             let suffix = if path.is_empty() {

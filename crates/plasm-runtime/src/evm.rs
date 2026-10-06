@@ -9,6 +9,67 @@ use plasm_compile::{
 };
 use serde_json::{Map, Value as JsonValue};
 
+#[derive(Debug, thiserror::Error)]
+pub enum EvmError {
+    #[error("invalid EVM RPC URL: {0}")]
+    RpcUrl(#[source] url::ParseError),
+    #[error("failed to build EVM RPC client: {0}")]
+    HttpClient(#[source] alloy_reqwest::Error),
+    #[error("invalid EVM RPC auth header name: {0}")]
+    HeaderName(#[source] alloy_reqwest::header::InvalidHeaderName),
+    #[error("invalid EVM RPC auth header value: {0}")]
+    HeaderValue(#[source] alloy_reqwest::header::InvalidHeaderValue),
+    #[error("ABI {phase:?} failed for `{signature}`: {source}")]
+    Abi {
+        phase: EvmAbiPhase,
+        signature: String,
+        #[source]
+        source: alloy_dyn_abi::Error,
+    },
+    #[error("EVM RPC {operation:?} failed: {source}")]
+    Rpc {
+        operation: EvmRpcOperation,
+        #[source]
+        source: alloy_provider::transport::TransportError,
+    },
+    #[error("EVM decode index {index} out of bounds for {field_kind:?} (length {len})")]
+    DecodeIndex {
+        field_kind: EvmDecodeFieldKind,
+        index: usize,
+        len: usize,
+    },
+    #[error("EVM call decode only supports input/output sources")]
+    CallDecodeSource,
+    #[error("EVM log decode only supports topic/data/log_meta sources")]
+    LogDecodeSource,
+    #[error("EVM log is missing transaction_hash required for event_id")]
+    TransactionHashMissing,
+    #[error("EVM log is missing log_index required for event_id")]
+    LogIndexMissing,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EvmAbiPhase {
+    EncodeCall,
+    DecodeOutput,
+    DecodeLog,
+    ParseInputType,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EvmRpcOperation {
+    Call,
+    GetLogs,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EvmDecodeFieldKind {
+    Input,
+    Output,
+    Topic,
+    Data,
+}
+
 pub async fn execute_evm_call(
     rpc_url: &str,
     auth: Option<&ResolvedAuth>,
@@ -16,12 +77,14 @@ pub async fn execute_evm_call(
 ) -> Result<serde_json::Value, RuntimeError> {
     let provider = connect_provider(rpc_url, auth)?;
     let args = compile_call_args(op)?;
-    let calldata = op.function.abi_encode_input(&args).map_err(|e| {
-        request_error(format!(
-            "failed to ABI-encode EVM call '{}': {e}",
-            op.function.signature()
-        ))
-    })?;
+    let calldata = op
+        .function
+        .abi_encode_input(&args)
+        .map_err(|source| EvmError::Abi {
+            phase: EvmAbiPhase::EncodeCall,
+            signature: op.function.signature(),
+            source,
+        })?;
 
     let tx = TransactionRequest {
         to: Some(op.contract.into()),
@@ -34,19 +97,19 @@ pub async fn execute_evm_call(
         Some(block) => provider.call(tx).block(BlockId::Number(block)).await,
         None => provider.call(tx).await,
     }
-    .map_err(|e| {
-        request_error(format!(
-            "eth_call failed for '{}': {e}",
-            op.function.signature()
-        ))
+    .map_err(|source| EvmError::Rpc {
+        operation: EvmRpcOperation::Call,
+        source,
     })?;
 
-    let outputs = op.function.abi_decode_output(raw.as_ref()).map_err(|e| {
-        request_error(format!(
-            "failed to decode EVM call output '{}': {e}",
-            op.function.signature()
-        ))
-    })?;
+    let outputs = op
+        .function
+        .abi_decode_output(raw.as_ref())
+        .map_err(|source| EvmError::Abi {
+            phase: EvmAbiPhase::DecodeOutput,
+            signature: op.function.signature(),
+            source,
+        })?;
 
     normalize_call_response(op, &outputs)
 }
@@ -58,12 +121,13 @@ pub async fn execute_evm_logs(
 ) -> Result<serde_json::Value, RuntimeError> {
     let provider = connect_provider(rpc_url, auth)?;
     let filter = build_log_filter(op);
-    let logs = provider.get_logs(&filter).await.map_err(|e| {
-        request_error(format!(
-            "eth_getLogs failed for '{}': {e}",
-            op.event.signature()
-        ))
-    })?;
+    let logs = provider
+        .get_logs(&filter)
+        .await
+        .map_err(|source| EvmError::Rpc {
+            operation: EvmRpcOperation::GetLogs,
+            source,
+        })?;
 
     let mut rows = Vec::with_capacity(logs.len());
     for log in &logs {
@@ -76,10 +140,7 @@ fn connect_provider(
     rpc_url: &str,
     auth: Option<&ResolvedAuth>,
 ) -> Result<DynProvider, RuntimeError> {
-    let mut url =
-        alloy_reqwest::Url::parse(rpc_url).map_err(|e| RuntimeError::ConfigurationError {
-            message: format!("invalid EVM RPC URL '{rpc_url}': {e}"),
-        })?;
+    let mut url = alloy_reqwest::Url::parse(rpc_url).map_err(EvmError::RpcUrl)?;
     if let Some(auth) = auth {
         let mut pairs = url.query_pairs_mut();
         for (key, value) in &auth.query_params {
@@ -100,9 +161,7 @@ fn build_http_client(auth: Option<&ResolvedAuth>) -> Result<alloy_reqwest::Clien
     }
     builder
         .build()
-        .map_err(|e| RuntimeError::ConfigurationError {
-            message: format!("failed to build EVM RPC client: {e}"),
-        })
+        .map_err(|source| EvmError::HttpClient(source.without_url()).into())
 }
 
 fn build_default_headers(
@@ -110,16 +169,10 @@ fn build_default_headers(
 ) -> Result<alloy_reqwest::header::HeaderMap, RuntimeError> {
     let mut headers = alloy_reqwest::header::HeaderMap::new();
     for (key, value) in entries {
-        let name = alloy_reqwest::header::HeaderName::from_bytes(key.as_bytes()).map_err(|e| {
-            RuntimeError::ConfigurationError {
-                message: format!("invalid EVM RPC auth header '{key}': {e}"),
-            }
-        })?;
-        let value = alloy_reqwest::header::HeaderValue::from_str(value).map_err(|e| {
-            RuntimeError::ConfigurationError {
-                message: format!("invalid value for EVM RPC auth header '{key}': {e}"),
-            }
-        })?;
+        let name = alloy_reqwest::header::HeaderName::from_bytes(key.as_bytes())
+            .map_err(EvmError::HeaderName)?;
+        let value =
+            alloy_reqwest::header::HeaderValue::from_str(value).map_err(EvmError::HeaderValue)?;
         headers.append(name, value);
     }
     Ok(headers)
@@ -128,16 +181,11 @@ fn build_default_headers(
 fn compile_call_args(op: &CompiledEvmCall) -> Result<Vec<DynSolValue>, RuntimeError> {
     let mut args = Vec::with_capacity(op.args.len());
     for (value, param) in op.args.iter().zip(&op.function.inputs) {
-        let ty = param
-            .ty
-            .parse()
-            .map_err(|e| RuntimeError::ConfigurationError {
-                message: format!(
-                    "invalid ABI input type '{}' for '{}': {e}",
-                    param.ty,
-                    op.function.signature()
-                ),
-            })?;
+        let ty = param.ty.parse().map_err(|source| EvmError::Abi {
+            phase: EvmAbiPhase::ParseInputType,
+            signature: op.function.signature(),
+            source,
+        })?;
         args.push(coerce_dyn_value(value, &ty)?);
     }
     Ok(args)
@@ -187,12 +235,14 @@ fn normalize_call_response(
 }
 
 fn normalize_log_response(op: &CompiledEvmLogs, log: &Log) -> Result<JsonValue, RuntimeError> {
-    let decoded = op.event.decode_log(log.data()).map_err(|e| {
-        request_error(format!(
-            "failed to decode log for event '{}': {e}",
-            op.event.signature()
-        ))
-    })?;
+    let decoded = op
+        .event
+        .decode_log(log.data())
+        .map_err(|source| EvmError::Abi {
+            phase: EvmAbiPhase::DecodeLog,
+            signature: op.event.signature(),
+            source,
+        })?;
 
     if op.decode.is_empty() {
         let mut obj = Map::new();
@@ -244,32 +294,27 @@ fn extract_call_field(
             .get(*index)
             .map(plasm_value_to_json)
             .transpose()?
-            .ok_or_else(|| RuntimeError::ConfigurationError {
-                message: format!(
-                    "decode.input index {} out of bounds for '{}'",
-                    index,
-                    op.function.signature()
-                ),
+            .ok_or_else(|| {
+                EvmError::DecodeIndex {
+                    field_kind: EvmDecodeFieldKind::Input,
+                    index: *index,
+                    len: op.args.len(),
+                }
+                .into()
             }),
         EvmFieldSource::Output { index } => {
             outputs.get(*index).map(dyn_value_to_json).ok_or_else(|| {
-                RuntimeError::ConfigurationError {
-                    message: format!(
-                        "decode.output index {} out of bounds for '{}'",
-                        index,
-                        op.function.signature()
-                    ),
+                EvmError::DecodeIndex {
+                    field_kind: EvmDecodeFieldKind::Output,
+                    index: *index,
+                    len: outputs.len(),
                 }
+                .into()
             })
         }
         EvmFieldSource::Topic { .. }
         | EvmFieldSource::Data { .. }
-        | EvmFieldSource::LogMeta { .. } => Err(RuntimeError::ConfigurationError {
-            message: format!(
-                "EVM call decode for '{}' only supports input/output sources",
-                op.function.signature()
-            ),
-        }),
+        | EvmFieldSource::LogMeta { .. } => Err(EvmError::CallDecodeSource.into()),
     }
 }
 
@@ -282,23 +327,27 @@ fn extract_log_field(
     match source {
         EvmFieldSource::Topic { index } => {
             indexed.get(*index).map(dyn_value_to_json).ok_or_else(|| {
-                RuntimeError::ConfigurationError {
-                    message: format!("decode.topic index {index} out of bounds for EVM log"),
+                EvmError::DecodeIndex {
+                    field_kind: EvmDecodeFieldKind::Topic,
+                    index: *index,
+                    len: indexed.len(),
                 }
+                .into()
             })
         }
         EvmFieldSource::Data { index } => {
             body.get(*index).map(dyn_value_to_json).ok_or_else(|| {
-                RuntimeError::ConfigurationError {
-                    message: format!("decode.data index {index} out of bounds for EVM log"),
+                EvmError::DecodeIndex {
+                    field_kind: EvmDecodeFieldKind::Data,
+                    index: *index,
+                    len: body.len(),
                 }
+                .into()
             })
         }
         EvmFieldSource::LogMeta { key } => extract_log_meta(*key, log),
         EvmFieldSource::Input { .. } | EvmFieldSource::Output { .. } => {
-            Err(RuntimeError::ConfigurationError {
-                message: "EVM log decode only supports topic/data/log_meta sources".to_string(),
-            })
+            Err(EvmError::LogDecodeSource.into())
         }
     }
 }
@@ -310,19 +359,8 @@ fn extract_log_meta(key: EvmLogMetaKey, log: &Log) -> Result<JsonValue, RuntimeE
         EvmLogMetaKey::EventId => {
             let tx_hash = log
                 .transaction_hash
-                .ok_or_else(|| RuntimeError::RequestError {
-                    message: "EVM log is missing transaction_hash required for event_id"
-                        .to_string(),
-                    attempts: 1,
-                    status: None,
-                    body: None,
-                })?;
-            let log_index = log.log_index.ok_or_else(|| RuntimeError::RequestError {
-                message: "EVM log is missing log_index required for event_id".to_string(),
-                attempts: 1,
-                status: None,
-                body: None,
-            })?;
+                .ok_or(EvmError::TransactionHashMissing)?;
+            let log_index = log.log_index.ok_or(EvmError::LogIndexMissing)?;
             JsonValue::String(format!("{tx_hash}:{log_index}"))
         }
         EvmLogMetaKey::TransactionHash => log
@@ -374,16 +412,5 @@ fn u64_to_json(value: u64) -> JsonValue {
 }
 
 fn plasm_value_to_json(value: &plasm_core::Value) -> Result<JsonValue, RuntimeError> {
-    serde_json::to_value(value).map_err(|e| RuntimeError::SerializationError {
-        message: e.to_string(),
-    })
-}
-
-fn request_error(message: String) -> RuntimeError {
-    RuntimeError::RequestError {
-        message,
-        attempts: 1,
-        status: None,
-        body: None,
-    }
+    serde_json::to_value(value).map_err(RuntimeError::from)
 }

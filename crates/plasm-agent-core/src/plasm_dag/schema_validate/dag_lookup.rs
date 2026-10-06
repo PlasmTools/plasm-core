@@ -4,7 +4,7 @@ use super::super::prelude::*;
 use super::super::types::{CompileState, DagNode, DagNodeSource};
 use super::catalog::{
     capability_for_surface_expr, cgs_for_qualified_entity, logical_row_field_paths_for_entity,
-    logical_row_field_paths_from_names,
+    logical_row_field_paths_from_names, SchemaCatalogError,
 };
 
 pub(in crate::plasm_dag) fn resolve_surface_dag_node<'a>(
@@ -33,7 +33,7 @@ pub(in crate::plasm_dag) fn resolve_surface_dag_node<'a>(
 pub(in crate::plasm_dag) fn logical_row_field_paths_for_surface_node(
     session: &ExecuteSession,
     node: &DagNode,
-) -> Result<Option<BTreeSet<Vec<String>>>, String> {
+) -> Result<Option<BTreeSet<Vec<String>>>, SchemaCatalogError> {
     let (parsed, qe) = match &node.source {
         DagNodeSource::Surface {
             parsed,
@@ -48,10 +48,10 @@ pub(in crate::plasm_dag) fn logical_row_field_paths_for_surface_node(
         _ => return Ok(None),
     };
     let cgs = cgs_for_qualified_entity(session, qe).ok_or_else(|| {
-        format!(
-            "catalog `{}` is not loaded for entity `{}`",
-            qe.entry_id, qe.entity
-        )
+        SchemaCatalogError::CatalogNotLoaded {
+            entry_id: qe.entry_id.clone(),
+            entity: qe.entity.to_string(),
+        }
     })?;
     let Some(cap) = capability_for_surface_expr(cgs.as_ref(), &parsed.expr)? else {
         return Ok(None);

@@ -48,19 +48,13 @@ pub fn validate_bind_wire_refs(template: &str, context: &str) -> Result<(), Sche
         return Ok(());
     }
     Err(SchemaError::SchemaOverlayInvalid {
-        detail: format!(
-            "{context}: unknown bind reference(s) {} — allowed: {}",
-            unknown
-                .iter()
-                .map(|w| format!("bind.{w}"))
-                .collect::<Vec<_>>()
-                .join(", "),
-            HOST_BINDING_WIRES
-                .iter()
-                .map(|w| format!("bind.{w}"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
+        source: crate::schema_overlay::OverlayValidationError::UnknownBindingWires {
+            context: context.to_owned(),
+            wires: unknown
+                .into_iter()
+                .map(|wire| format!("bind.{wire}"))
+                .collect(),
+        },
     })
 }
 

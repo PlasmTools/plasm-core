@@ -26,13 +26,34 @@ pub struct FlowPolicySimulateResult {
 }
 
 /// Typed simulate failures returned to the HTTP layer as JSON `error` + `code`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error)]
 pub enum SimulateError {
+    #[error("no draft policy — author rules before simulating draft arm")]
     DraftMissing,
+    #[error("no published policy — publish a revision before simulating published arm")]
     PublishedInactive,
-    CompileFailed(String),
-    Session(String),
-    Other(String),
+    #[error("execute-session setup failed: {0}")]
+    SessionOpen(#[source] crate::http_execute::SessionMutateError),
+    #[error("simulate session is missing after {phase}")]
+    SessionMissing { phase: SimulateSessionPhase },
+    #[error("invalid prompt hash returned by session setup: {0}")]
+    InvalidPromptHash(#[source] crate::execute_path_ids::PromptHashParseError),
+    #[error("invalid session identifier returned by session setup: {0}")]
+    InvalidSessionId(#[source] crate::execute_path_ids::ExecuteSessionIdParseError),
+    #[error("flow-policy program compilation failed")]
+    CompileFailed(crate::compilation_error::CompilationError),
+    #[error("flow-policy dry evaluation failed")]
+    DryEvaluationFailed(crate::program_diagnostic::ProgramStageError),
+    #[error("simulate response encoding failed: {0}")]
+    ResponseSerialization(#[source] serde_json::Error),
+}
+
+#[derive(Debug, Clone, Copy, thiserror::Error)]
+pub enum SimulateSessionPhase {
+    #[error("session open")]
+    Open,
+    #[error("policy pin")]
+    PolicyPin,
 }
 
 impl SimulateError {
@@ -40,34 +61,34 @@ impl SimulateError {
         match self {
             Self::DraftMissing => "draft_missing",
             Self::PublishedInactive => "published_inactive",
+            Self::SessionOpen(_)
+            | Self::SessionMissing { .. }
+            | Self::InvalidPromptHash(_)
+            | Self::InvalidSessionId(_) => "session_error",
             Self::CompileFailed(_) => "compile_failed",
-            Self::Session(_) => "session_error",
-            Self::Other(_) => "simulate_failed",
+            Self::DryEvaluationFailed(_) | Self::ResponseSerialization(_) => "simulate_failed",
         }
     }
 
     pub fn message(&self) -> String {
         match self {
-            Self::DraftMissing => {
-                "no draft policy — author rules before simulating draft arm".into()
+            Self::DraftMissing => self.to_string(),
+            Self::PublishedInactive => self.to_string(),
+            Self::SessionOpen(error) => error.to_string(),
+            Self::SessionMissing { phase } => match phase {
+                SimulateSessionPhase::Open => "simulate session missing after open".into(),
+                SimulateSessionPhase::PolicyPin => {
+                    "simulate session missing after policy pin".into()
+                }
+            },
+            Self::InvalidPromptHash(error) => error.to_string(),
+            Self::InvalidSessionId(error) => error.to_string(),
+            Self::CompileFailed(error) => error.to_string(),
+            Self::DryEvaluationFailed(error) => error.to_string(),
+            Self::ResponseSerialization(error) => {
+                format!("simulate response encode failed: {error}")
             }
-            Self::PublishedInactive => {
-                "no published policy — publish a revision before simulating published arm".into()
-            }
-            Self::CompileFailed(m) | Self::Session(m) | Self::Other(m) => m.clone(),
         }
-    }
-}
-
-impl From<String> for SimulateError {
-    fn from(value: String) -> Self {
-        Self::Other(value)
-    }
-}
-
-impl From<&str> for SimulateError {
-    fn from(value: &str) -> Self {
-        Self::Other(value.into())
     }
 }
 
@@ -109,7 +130,7 @@ pub async fn simulate_flow_policy_with_options(
     let snapshot = policy_snapshot_for_arm(row, arm, opts.ephemeral_policy.as_ref())?;
     let out = apply_capability_seeds(st, None, None, seeds, None, None, None, intent)
         .await
-        .map_err(|e| SimulateError::Session(e.to_string()))?;
+        .map_err(SimulateError::SessionOpen)?;
 
     let ph = out.prompt_hash.clone();
     let sid = out.session_id.clone();
@@ -117,21 +138,26 @@ pub async fn simulate_flow_policy_with_options(
     let es_arc = st
         .get_execute_session(&ph, &sid)
         .await
-        .ok_or_else(|| SimulateError::Session("simulate session missing after open".into()))?;
+        .ok_or(SimulateError::SessionMissing {
+            phase: SimulateSessionPhase::Open,
+        })?;
 
     let mut es: ExecuteSession = (*es_arc).clone();
     es.flow_policy = snapshot;
     let ph_typed = ph
         .parse::<crate::execute_path_ids::PromptHashHex>()
-        .map_err(|e| SimulateError::Session(e.to_string()))?;
+        .map_err(SimulateError::InvalidPromptHash)?;
     let sid_typed = sid
         .parse::<crate::execute_path_ids::ExecuteSessionId>()
-        .map_err(|e| SimulateError::Session(e.to_string()))?;
+        .map_err(SimulateError::InvalidSessionId)?;
     st.sessions.replace_session(&ph_typed, &sid_typed, es).await;
 
-    let es = st.get_execute_session(&ph, &sid).await.ok_or_else(|| {
-        SimulateError::Session("simulate session missing after policy pin".into())
-    })?;
+    let es =
+        st.get_execute_session(&ph, &sid)
+            .await
+            .ok_or_else(|| SimulateError::SessionMissing {
+                phase: SimulateSessionPhase::PolicyPin,
+            })?;
 
     let pipeline = st.engine.prompt_pipeline();
     let cross = st.sessions.symbol_map_cross_cache();
@@ -143,9 +169,9 @@ pub async fn simulate_flow_policy_with_options(
         program,
     )
     .await
-    .map_err(|e| SimulateError::CompileFailed(e.to_string()))?;
+    .map_err(SimulateError::CompileFailed)?;
     let dry = evaluate_plasm_comp_dry(es.as_ref(), &bundle)
-        .map_err(|e| SimulateError::Other(e.to_string()))?;
+        .map_err(SimulateError::DryEvaluationFailed)?;
     let gate = dry.evaluate_gate();
     let ux_ctx = PlanUxBuildContext {
         session: Some(es.as_ref()),
@@ -161,7 +187,7 @@ pub async fn simulate_flow_policy_with_options(
     Ok(FlowPolicySimulateResult {
         dry_verdict,
         plan_ux_reflection: plan_ux,
-        comp: serde_json::to_value(&comp).map_err(|e| SimulateError::Other(e.to_string()))?,
+        comp: serde_json::to_value(&comp).map_err(SimulateError::ResponseSerialization)?,
     })
 }
 
@@ -219,7 +245,7 @@ mod tests {
     fn draft_missing_without_ephemeral() {
         let err =
             policy_snapshot_for_arm(&empty_row(), SimulatePolicyArm::Draft, None).unwrap_err();
-        assert_eq!(err, SimulateError::DraftMissing);
+        assert!(matches!(err, SimulateError::DraftMissing));
         assert_eq!(err.code(), "draft_missing");
     }
 
@@ -238,8 +264,20 @@ mod tests {
     fn published_inactive_fail_closed() {
         let err =
             policy_snapshot_for_arm(&empty_row(), SimulatePolicyArm::Published, None).unwrap_err();
-        assert_eq!(err, SimulateError::PublishedInactive);
+        assert!(matches!(err, SimulateError::PublishedInactive));
         assert_eq!(err.code(), "published_inactive");
+    }
+
+    #[test]
+    fn typed_path_errors_keep_the_existing_http_code_and_message() {
+        let error = SimulateError::InvalidPromptHash(
+            crate::execute_path_ids::PromptHashParseError::InvalidLength,
+        );
+        assert_eq!(error.code(), "session_error");
+        assert_eq!(
+            error.message(),
+            "prompt_hash must be exactly 64 hexadecimal characters (SHA-256 digest)"
+        );
     }
 
     #[test]

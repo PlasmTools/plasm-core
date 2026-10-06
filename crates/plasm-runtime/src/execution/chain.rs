@@ -86,190 +86,181 @@ impl ExecutionEngine {
         let source_entity_name = source_entity_name_owned.as_str();
         let source_entity =
             cgs.get_entity(source_entity_name)
-                .ok_or_else(|| RuntimeError::ConfigurationError {
-                    message: format!("Chain source entity '{}' not in CGS", source_entity_name),
+                .ok_or_else(|| RuntimeError::EntityUnknown {
+                    entity: source_entity_name.to_string(),
                 })?;
 
         // Resolve the target entity type — either from an EntityRef field or a
         // declared relation (cardinality-one decode, scoped query, embedded GET refs).
-        let target_entity_name: String = if let Some(field_schema) =
-            source_entity.fields.get(chain.selector.as_str())
-        {
-            let nv = cgs.named_value_for_slot(field_schema).map_err(|e| {
-                RuntimeError::ConfigurationError {
-                    message: format!(
-                        "Field '{}.{}': invalid value_ref — {}",
-                        source_entity_name, chain.selector, e
-                    ),
-                }
-            })?;
-            match &nv.field_type {
-                FieldType::EntityRef { target, .. } => target.to_string(),
-                _ => {
-                    return Err(RuntimeError::ConfigurationError {
-                        message: format!(
-                            "Field '{}.{}' is {:?}, not EntityRef",
-                            source_entity_name, chain.selector, nv.field_type
-                        ),
-                    });
-                }
-            }
-        } else if let Some(rel) = source_entity.relations.get(chain.selector.as_str()) {
-            match rel.cardinality {
-                plasm_core::Cardinality::Many => {
-                    let rel_mat = rel
-                        .materialize
-                        .as_ref()
-                        .unwrap_or(&RelationMaterialization::Unavailable);
-                    match rel_mat {
-                        RelationMaterialization::QueryScoped { capability, param } => {
-                            return self
-                                .execute_chain_via_param(
-                                    &source_result,
-                                    rel,
-                                    capability,
-                                    param,
-                                    cgs,
-                                    mat,
-                                    mode,
-                                    &chain.step,
-                                    consume.clone(),
-                                    opts.clone(),
-                                )
-                                .await;
-                        }
-                        RelationMaterialization::QueryScopedBindings {
-                            capability,
-                            bindings,
-                        } => {
-                            return self
-                                .execute_chain_via_bindings(
-                                    &source_result,
-                                    source_entity,
-                                    rel,
-                                    capability,
-                                    bindings,
-                                    cgs,
-                                    mat,
-                                    mode,
-                                    &chain.step,
-                                    consume.clone(),
-                                    opts.clone(),
-                                )
-                                .await;
-                        }
-                        RelationMaterialization::FromParentGet { .. }
-                        | RelationMaterialization::ViewEmbed { .. } => {
-                            return self
-                                .execute_chain_from_embedded_relations(
-                                    &source_result,
-                                    rel,
-                                    cgs,
-                                    mat,
-                                    mode,
-                                    &chain.step,
-                                    consume.clone(),
-                                    opts.clone(),
-                                )
-                                .await;
-                        }
-                        RelationMaterialization::PreferFromParentGet { .. } => {
-                            return self
-                                .execute_chain_prefer_from_parent_get(
-                                    &source_result,
-                                    source_entity,
-                                    rel,
-                                    cgs,
-                                    mat,
-                                    mode,
-                                    &chain.step,
-                                    consume.clone(),
-                                    opts.clone(),
-                                )
-                                .await;
-                        }
-                        RelationMaterialization::Unavailable => {
-                            return Err(RuntimeError::ConfigurationError {
-                                message: format!(
-                                    "Relation '{}.{}' is not configured for chain traversal (materialize unavailable)",
-                                    source_entity_name, chain.selector
-                                ),
-                            });
-                        }
-                        RelationMaterialization::GetScopedBindings { .. } => {
-                            return Err(RuntimeError::ConfigurationError {
-                                message: format!(
-                                    "Relation '{}.{}': get_scoped_bindings requires cardinality one",
-                                    source_entity_name, chain.selector
-                                ),
-                            });
-                        }
+        let target_entity_name: String =
+            if let Some(field_schema) = source_entity.fields.get(chain.selector.as_str()) {
+                let nv = cgs
+                    .named_value_for_slot(field_schema)
+                    .map_err(|e| RuntimeError::SchemaContract(e))?;
+                match &nv.field_type {
+                    FieldType::EntityRef { target, .. } => target.to_string(),
+                    _ => {
+                        return Err(RuntimeError::Chain(crate::ChainError::FieldNotEntityRef {
+                            entity: source_entity_name.to_string(),
+                            field: chain.selector.to_string(),
+                            actual: nv.field_type.clone(),
+                        }));
                     }
                 }
-                plasm_core::Cardinality::One => {
-                    match rel.materialize.as_ref() {
-                        Some(RelationMaterialization::GetScopedBindings {
-                            capability,
-                            bindings,
-                        }) => {
-                            return self
-                                .execute_chain_via_get_bindings(
-                                    &source_result,
-                                    source_entity,
-                                    rel.target_resource.clone(),
-                                    capability,
-                                    bindings,
-                                    cgs,
-                                    mat,
-                                    mode,
-                                )
-                                .await;
+            } else if let Some(rel) = source_entity.relations.get(chain.selector.as_str()) {
+                match rel.cardinality {
+                    plasm_core::Cardinality::Many => {
+                        let rel_mat = rel
+                            .materialize
+                            .as_ref()
+                            .unwrap_or(&RelationMaterialization::Unavailable);
+                        match rel_mat {
+                            RelationMaterialization::QueryScoped { capability, param } => {
+                                return self
+                                    .execute_chain_via_param(
+                                        &source_result,
+                                        rel,
+                                        capability,
+                                        param,
+                                        cgs,
+                                        mat,
+                                        mode,
+                                        &chain.step,
+                                        consume.clone(),
+                                        opts.clone(),
+                                    )
+                                    .await;
+                            }
+                            RelationMaterialization::QueryScopedBindings {
+                                capability,
+                                bindings,
+                            } => {
+                                return self
+                                    .execute_chain_via_bindings(
+                                        &source_result,
+                                        source_entity,
+                                        rel,
+                                        capability,
+                                        bindings,
+                                        cgs,
+                                        mat,
+                                        mode,
+                                        &chain.step,
+                                        consume.clone(),
+                                        opts.clone(),
+                                    )
+                                    .await;
+                            }
+                            RelationMaterialization::FromParentGet { .. }
+                            | RelationMaterialization::ViewEmbed { .. } => {
+                                return self
+                                    .execute_chain_from_embedded_relations(
+                                        &source_result,
+                                        rel,
+                                        cgs,
+                                        mat,
+                                        mode,
+                                        &chain.step,
+                                        consume.clone(),
+                                        opts.clone(),
+                                    )
+                                    .await;
+                            }
+                            RelationMaterialization::PreferFromParentGet { .. } => {
+                                return self
+                                    .execute_chain_prefer_from_parent_get(
+                                        &source_result,
+                                        source_entity,
+                                        rel,
+                                        cgs,
+                                        mat,
+                                        mode,
+                                        &chain.step,
+                                        consume.clone(),
+                                        opts.clone(),
+                                    )
+                                    .await;
+                            }
+                            RelationMaterialization::Unavailable => {
+                                return Err(RuntimeError::Chain(
+                                    crate::ChainError::MaterializationMissing {
+                                        entity: source_entity_name.to_string(),
+                                        relation: chain.selector.to_string(),
+                                    },
+                                ));
+                            }
+                            RelationMaterialization::GetScopedBindings { .. } => {
+                                return Err(RuntimeError::Chain(
+                                    crate::ChainError::GetBindingsCardinality {
+                                        entity: source_entity_name.to_string(),
+                                        relation: chain.selector.to_string(),
+                                    },
+                                ));
+                            }
                         }
-                        Some(RelationMaterialization::FromParentGet { .. }) => {
-                            return self
-                                .execute_chain_from_embedded_relations(
-                                    &source_result,
-                                    rel,
-                                    cgs,
-                                    mat,
-                                    mode,
-                                    &chain.step,
-                                    consume.clone(),
-                                    opts.clone(),
-                                )
-                                .await;
-                        }
-                        Some(RelationMaterialization::QueryScoped { .. })
-                        | Some(RelationMaterialization::QueryScopedBindings { .. }) => {
-                            return Err(RuntimeError::ConfigurationError {
-                                message: format!(
-                                    "Relation '{}.{}': query-scoped materialization is invalid for cardinality one",
-                                    source_entity_name, chain.selector
-                                ),
-                            });
-                        }
-                        Some(RelationMaterialization::PreferFromParentGet { .. })
-                        | Some(RelationMaterialization::ViewEmbed { .. }) => {
-                            return Err(RuntimeError::ConfigurationError {
-                                message: format!(
-                                    "Relation '{}.{}': prefer_from_parent_get/view_embed requires cardinality many",
-                                    source_entity_name, chain.selector
-                                ),
-                            });
-                        }
-                        Some(RelationMaterialization::Unavailable) | None => {}
                     }
-                    rel.target_resource.to_string()
+                    plasm_core::Cardinality::One => {
+                        match rel.materialize.as_ref() {
+                            Some(RelationMaterialization::GetScopedBindings {
+                                capability,
+                                bindings,
+                            }) => {
+                                return self
+                                    .execute_chain_via_get_bindings(
+                                        &source_result,
+                                        source_entity,
+                                        rel.target_resource.clone(),
+                                        capability,
+                                        bindings,
+                                        cgs,
+                                        mat,
+                                        mode,
+                                    )
+                                    .await;
+                            }
+                            Some(RelationMaterialization::FromParentGet { .. }) => {
+                                return self
+                                    .execute_chain_from_embedded_relations(
+                                        &source_result,
+                                        rel,
+                                        cgs,
+                                        mat,
+                                        mode,
+                                        &chain.step,
+                                        consume.clone(),
+                                        opts.clone(),
+                                    )
+                                    .await;
+                            }
+                            Some(RelationMaterialization::QueryScoped { .. })
+                            | Some(RelationMaterialization::QueryScopedBindings { .. }) => {
+                                return Err(RuntimeError::Chain(
+                                    crate::ChainError::QueryBindingsCardinality {
+                                        entity: source_entity_name.to_string(),
+                                        relation: chain.selector.to_string(),
+                                    },
+                                ));
+                            }
+                            Some(RelationMaterialization::PreferFromParentGet { .. })
+                            | Some(RelationMaterialization::ViewEmbed { .. }) => {
+                                return Err(RuntimeError::Chain(
+                                    crate::ChainError::ParentEmbeddingCardinality {
+                                        entity: source_entity_name.to_string(),
+                                        relation: chain.selector.to_string(),
+                                    },
+                                ));
+                            }
+                            Some(RelationMaterialization::Unavailable) | None => {}
+                        }
+                        rel.target_resource.to_string()
+                    }
                 }
-            }
-        } else {
-            return Err(RuntimeError::ConfigurationError {
-                message: format!(
-                    "Chain selector '{}' not found on entity '{}' (not an EntityRef field or relation)",
-                    chain.selector, source_entity_name
-                ),
-            });
-        };
+            } else {
+                return Err(RuntimeError::Chain(crate::ChainError::SelectorMissing {
+                    entity: source_entity_name.to_string(),
+                    selector: chain.selector.to_string(),
+                }));
+            };
 
         // ── Extract ref IDs from source entities ─────────────────────────
         let ref_ids: Vec<Option<String>> = source_result
@@ -442,9 +433,11 @@ impl ExecutionEngine {
         for id_opt in &ref_ids {
             let Some(id) = id_opt else { continue };
             let r = Ref::new(&target_entity_name, id.as_str());
-            let e = mat.get(&r).ok_or_else(|| RuntimeError::CacheError {
-                message: format!("missing resolved reference {r}"),
-            })?;
+            let e = mat
+                .get(&r)
+                .ok_or_else(|| crate::CacheError::EntityMissing {
+                    reference: r.clone(),
+                })?;
             resolved.push(e.clone());
         }
 
@@ -597,20 +590,19 @@ impl ExecutionEngine {
         let target_entity = rel.target_resource.clone();
         let target_key = target_entity.as_str();
         let cap = cgs.get_capability(capability.as_str()).ok_or_else(|| {
-            RuntimeError::ConfigurationError {
-                message: format!(
-                    "Chain materialize: unknown capability '{}' (target entity '{}')",
-                    capability, target_key
-                ),
+            RuntimeError::CapabilityNotFound {
+                capability: capability.to_string(),
+                entity: target_key.to_string(),
             }
         })?;
         if cap.domain.as_str() != target_key {
-            return Err(RuntimeError::ConfigurationError {
-                message: format!(
-                    "Chain materialize: capability '{}' domain '{}' does not match target '{}'",
-                    capability, cap.domain, target_key
-                ),
-            });
+            return Err(RuntimeError::Chain(
+                crate::ChainError::CapabilityDomainMismatch {
+                    capability: capability.to_string(),
+                    expected: target_key.to_string(),
+                    actual: cap.domain.to_string(),
+                },
+            ));
         }
         let capability_name = cap.name.clone();
 
@@ -676,20 +668,19 @@ impl ExecutionEngine {
         let target_entity = rel.target_resource.clone();
         let target_key = target_entity.as_str();
         let cap = cgs.get_capability(capability.as_str()).ok_or_else(|| {
-            RuntimeError::ConfigurationError {
-                message: format!(
-                    "Chain materialize: unknown capability '{}' (target entity '{}')",
-                    capability, target_key
-                ),
+            RuntimeError::CapabilityNotFound {
+                capability: capability.to_string(),
+                entity: target_key.to_string(),
             }
         })?;
         if cap.domain.as_str() != target_key {
-            return Err(RuntimeError::ConfigurationError {
-                message: format!(
-                    "Chain materialize: capability '{}' domain '{}' does not match target '{}'",
-                    capability, cap.domain, target_key
-                ),
-            });
+            return Err(RuntimeError::Chain(
+                crate::ChainError::CapabilityDomainMismatch {
+                    capability: capability.to_string(),
+                    expected: target_key.to_string(),
+                    actual: cap.domain.to_string(),
+                },
+            ));
         }
 
         source_result.collection.materialize(Demand::Observed)?;
@@ -755,12 +746,11 @@ impl ExecutionEngine {
         let Some(RelationMaterialization::PreferFromParentGet { fallback, .. }) =
             rel.materialize.as_ref()
         else {
-            return Err(RuntimeError::ConfigurationError {
-                message: format!(
-                    "Relation '{}': expected PreferFromParentGet materialize",
-                    rel.name
-                ),
-            });
+            return Err(RuntimeError::Chain(
+                crate::ChainError::PreferParentGetRequired {
+                    relation: rel.name.to_string(),
+                },
+            ));
         };
 
         source_result.collection.materialize(Demand::Observed)?;
@@ -845,27 +835,26 @@ impl ExecutionEngine {
 
         let target_key = target_entity.as_str();
         let cap = cgs.get_capability(capability.as_str()).ok_or_else(|| {
-            RuntimeError::ConfigurationError {
-                message: format!(
-                    "Chain materialize: unknown capability '{}' (target entity '{}')",
-                    capability, target_key
-                ),
+            RuntimeError::CapabilityNotFound {
+                capability: capability.to_string(),
+                entity: target_key.to_string(),
             }
         })?;
         if cap.domain.as_str() != target_key {
-            return Err(RuntimeError::ConfigurationError {
-                message: format!(
-                    "Chain materialize: capability '{}' domain '{}' does not match target '{}'",
-                    capability, cap.domain, target_key
-                ),
-            });
+            return Err(RuntimeError::Chain(
+                crate::ChainError::CapabilityDomainMismatch {
+                    capability: capability.to_string(),
+                    expected: target_key.to_string(),
+                    actual: cap.domain.to_string(),
+                },
+            ));
         }
 
-        let target_ent =
-            cgs.get_entity(target_key)
-                .ok_or_else(|| RuntimeError::ConfigurationError {
-                    message: format!("Chain materialize: unknown target entity '{target_key}'"),
-                })?;
+        let target_ent = cgs
+            .get_entity(target_key)
+            .ok_or_else(|| RuntimeError::EntityUnknown {
+                entity: target_key.to_string(),
+            })?;
 
         let mut gets: Vec<(GetExpr, ViewAmbientContext)> = Vec::new();
         for entity in source_result.entities() {
@@ -1001,16 +990,12 @@ impl ExecutionEngine {
 
         let mut embedded_children = Vec::new();
         for parent in source_result.entities().iter() {
-            let refs =
-                parent
-                    .relations
-                    .get(relation_key)
-                    .ok_or_else(|| RuntimeError::CacheError {
-                        message: format!(
-                            "unobserved relation {}.{}",
-                            parent.reference, relation_key
-                        ),
-                    })?;
+            let refs = parent.relations.get(relation_key).ok_or_else(|| {
+                crate::CacheError::RelationUnobserved {
+                    reference: parent.reference.clone(),
+                    relation: relation_key.to_owned(),
+                }
+            })?;
             let record = refs.record().clone();
             embedded_children.push(ExecutionCollection::graph(record));
         }
@@ -1022,11 +1007,9 @@ impl ExecutionEngine {
             if let Some(refs) = e.relations.get(relation_key) {
                 for r in refs {
                     if r.entity_type != *expected_target {
-                        return Err(RuntimeError::ConfigurationError {
-                            message: format!(
-                                "Decoded relation '{}' expected Ref.entity_type {} (CGS target_resource), got {}",
-                                relation.name, expected_target, r.entity_type
-                            ),
+                        return Err(RuntimeError::TraversalParentTypeMismatch {
+                            expected: expected_target.to_string(),
+                            actual: r.entity_type.to_string(),
                         });
                     }
                     ordered_refs.push(r.clone());
@@ -1154,8 +1137,9 @@ impl ExecutionEngine {
                         .await
                         .and_then(|(entity, source)| {
                             if entity.reference != reference {
-                                return Err(RuntimeError::ConfigurationError {
-                                    message: format!("relation GET identity mismatch: requested {reference}, returned {}", entity.reference),
+                                return Err(RuntimeError::GetIdentityMismatch {
+                                    expected: reference.clone(),
+                                    actual: entity.reference.clone(),
                                 });
                             }
                             Ok((entity, source, branch))

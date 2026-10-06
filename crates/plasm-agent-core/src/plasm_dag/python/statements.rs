@@ -11,14 +11,16 @@ impl Lower<'_> {
             build_statements::BuildStatement::Documentation(()) => {}
             build_statements::BuildStatement::Effect(s) => {
                 let id = self.expr(&s.value, None)?;
-                let node = self.state.get(&id).ok_or("missing statement node")?;
+                let node = self.state.get(&id).ok_or(
+                    crate::program_rejection::PythonLoweringInvariantError::StatementNodeMissing,
+                )?;
                 if !node.source.is_write_or_side_effect() {
-                    return Err(at(stmt, "unused expression statements must be writes"));
+                    return Err(at(stmt, PythonSourceError::UnusedNonWriteExpression));
                 }
             }
             build_statements::BuildStatement::Binding(s) => {
                 let label = name(&s.targets[0])
-                    .ok_or_else(|| at(stmt, "only immutable local assignments are admitted"))?;
+                    .ok_or_else(|| at(stmt, PythonSourceError::MutableLocalAssignment))?;
                 if matches!(
                     label,
                     "self" | "Program" | "compute" | "Value" | "agg" | "_"
@@ -30,7 +32,12 @@ impl Lower<'_> {
                         .resolve_session_entity(label)
                         .is_ok()
                 {
-                    return Err(at(stmt, "reserved binding name"));
+                    return Err(at(
+                        stmt,
+                        PythonSourceError::ReservedBindingName {
+                            name: label.to_owned(),
+                        },
+                    ));
                 }
                 let previous = self.scoped_binding(label).to_owned();
                 let binding =

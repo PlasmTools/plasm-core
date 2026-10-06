@@ -168,14 +168,17 @@ impl PlasmMcpHandler {
             .await
             .map_err(|e| CallToolError::from_message(e.to_string()))?;
         let provenance = if let Some(id) = logical_id.as_deref() {
-            store
+            let chain = store
                 .intent_provenance(id)
                 .await
-                .and_then(|chain| chain.derived(intent.to_owned()))
+                .map_err(|error| CallToolError::from_message(error.to_string()))?;
+            chain
+                .derived(intent.to_owned())
+                .map_err(|error| CallToolError::from_message(error.to_string()))?
         } else {
             crate::intent_provenance::IntentProvenance::from_turns([intent.to_owned()])
-        }
-        .map_err(|e| CallToolError::from_message(e.to_string()))?;
+                .map_err(|error| CallToolError::from_message(error.to_string()))?
+        };
         let service = DiscoveryService::from_env(store.clone())
             .map_err(|e| CallToolError::from_message(e.to_string()))?;
         let receipt = service
@@ -206,7 +209,7 @@ impl PlasmMcpHandler {
                 }),
             )
             .await
-            .map_err(CallToolError::from_message)?;
+            .map_err(|error| CallToolError::from_message(error.to_string()))?;
         if receipt.closure.is_none() {
             let content = if let Some(recovery) = &receipt.recovery {
                 recovery.render_unmatched_markdown()
@@ -424,7 +427,7 @@ impl PlasmMcpHandler {
                     &catalogs,
                     symbols.as_ref(),
                 )
-                .map_err(CallToolError::from_message)?;
+                .map_err(|error| CallToolError::from_message(error.to_string()))?;
                 if !guidance.is_empty() {
                     text.push_str("\n\n");
                     text.push_str(&guidance);

@@ -24,7 +24,7 @@ pub(crate) fn bearer_authorization_value(raw_secret: Option<&str>) -> String {
 pub(crate) fn mcp_client_json_config(
     listen: &plasm_agent_core::listen_endpoint::TcpListenEndpoint,
     raw_secret: Option<&str>,
-) -> Result<String, String> {
+) -> Result<String, serde_json::Error> {
     let auth = bearer_authorization_value(raw_secret);
     let value = serde_json::json!({
         "mcpServers": {
@@ -37,9 +37,7 @@ pub(crate) fn mcp_client_json_config(
             }
         }
     });
-    serde_json::to_string_pretty(&value)
-        .map(|s| format!("{s}\n"))
-        .map_err(|e| e.to_string())
+    serde_json::to_string_pretty(&value).map(|s| format!("{s}\n"))
 }
 
 pub(crate) fn plasm_cli_api_key_value(raw_secret: Option<&str>) -> String {
@@ -59,14 +57,12 @@ pub(crate) fn plasm_cli_api_key_value(raw_secret: Option<&str>) -> String {
 pub(crate) fn plasm_cli_profile_json_config(
     listen: &plasm_agent_core::listen_endpoint::TcpListenEndpoint,
     raw_secret: Option<&str>,
-) -> Result<String, String> {
+) -> Result<String, serde_json::Error> {
     let value = serde_json::json!({
         "server": listen.client_http_origin(),
         "api_key": plasm_cli_api_key_value(raw_secret),
     });
-    serde_json::to_string_pretty(&value)
-        .map(|s| format!("{s}\n"))
-        .map_err(|e| e.to_string())
+    serde_json::to_string_pretty(&value).map(|s| format!("{s}\n"))
 }
 
 pub(crate) fn plasm_cli_init_command_line(

@@ -2430,12 +2430,7 @@ fn hydrate_from_embed_path_fallback_is_plan_materialized_only() {
         &cgs,
     )
     .expect_err("runtime must not build scoped queries for hydrate fallback");
-    match err {
-        RuntimeError::ConfigurationError { message } => {
-            assert!(message.contains("plan-materialized"));
-        }
-        other => panic!("unexpected error: {other:?}"),
-    }
+    assert!(matches!(err, RuntimeError::EmbeddedHydrationPlanRequired));
 }
 
 #[test]

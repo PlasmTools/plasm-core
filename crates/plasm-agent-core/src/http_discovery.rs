@@ -11,6 +11,7 @@ use http_problem::Problem;
 use plasm_core::discovery::{CatalogEntryMeta, CgsCatalog, DiscoveryError};
 use plasm_core::schema::CGS;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 use crate::http_problem_util::problem_response;
 use crate::http_problem_util::problem_types;
@@ -191,7 +192,7 @@ async fn route_http_intent(
     body: &IntentDiscoveryRequest,
     _scope: &str,
     session: Option<&crate::execute_session::ExecuteSession>,
-) -> anyhow::Result<crate::discovery_service::RoutingReceipt> {
+) -> Result<crate::discovery_service::RoutingReceipt, HttpIntentRoutingError> {
     use crate::discovery_service::{DiscoveryService, RouteTurn};
     let generation = match session.and_then(|session| session.discovery_pin.as_ref()) {
         Some(pin) => pin.generation.clone(),
@@ -248,6 +249,47 @@ async fn route_http_intent(
             expires_at: std::time::SystemTime::now() + std::time::Duration::from_secs(24 * 3600),
         })
         .await
+        .map_err(HttpIntentRoutingError::Discovery)
+}
+
+#[derive(Debug, Error)]
+enum HttpIntentRoutingError {
+    #[error(transparent)]
+    Discovery(#[from] crate::discovery_service::DiscoveryServiceError),
+    #[error(transparent)]
+    Catalog(#[from] crate::catalog_runtime::CatalogRuntimeError),
+    #[error(transparent)]
+    Store(#[from] crate::discovery_store::DiscoveryStoreError),
+    #[error(transparent)]
+    Provenance(#[from] crate::intent_provenance::IntentProvenanceError),
+}
+
+#[derive(Debug, Error)]
+enum RoutedHttpContextError {
+    #[error("intent extension requires a routed context; open one with POST /v1/context")]
+    IntentExtensionRequiresRoutedContext,
+    #[error("routing attempted to change the pinned session generation")]
+    PinnedGenerationChanged,
+    #[error("selected capability `{capability}` is absent from pinned catalog `{catalog}`")]
+    SelectedCapabilityMissing { catalog: String, capability: String },
+    #[error("routed execute session is missing after capability exposure")]
+    ExecuteSessionMissing,
+    #[error("routed execute session is missing teaching exposure")]
+    TeachingExposureMissing,
+    #[error(transparent)]
+    Routing(#[from] HttpIntentRoutingError),
+    #[error(transparent)]
+    RouteState(#[from] crate::server_state::DiscoveryRouteStateError),
+    #[error(transparent)]
+    Catalog(#[from] crate::catalog_runtime::CatalogRuntimeError),
+    #[error(transparent)]
+    Discovery(#[from] plasm_core::discovery::DiscoveryError),
+    #[error(transparent)]
+    SeedApply(#[from] crate::http_execute::SessionMutateError),
+    #[error(transparent)]
+    Uuid(#[from] uuid::Error),
+    #[error(transparent)]
+    Prompt(#[from] plasm_core::prompt_render::PrerequisiteBindingRenderError),
 }
 
 async fn post_discover(
@@ -373,9 +415,9 @@ async fn apply_routed_http_context(
     body: &IntentDiscoveryRequest,
     session: Option<&crate::execute_session::ExecuteSession>,
     binding: Option<(&str, &str)>,
-) -> anyhow::Result<serde_json::Value> {
+) -> Result<serde_json::Value, RoutedHttpContextError> {
     if session.is_some_and(|session| session.discovery_pin.is_none()) {
-        anyhow::bail!("intent extension requires a routed context; open one with POST /v1/context");
+        return Err(RoutedHttpContextError::IntentExtensionRequiresRoutedContext);
     }
     let scope = crate::incoming_auth::tenant_scope(principal);
     let receipt = route_http_intent(st, body, &scope, session).await?;
@@ -383,10 +425,9 @@ async fn apply_routed_http_context(
         return Ok(serde_json::json!({"routing": receipt}));
     }
     if let Some(pin) = session.and_then(|session| session.discovery_pin.as_ref()) {
-        anyhow::ensure!(
-            pin.pin_id == receipt.pin_id && pin.generation == receipt.retrieval.generation,
-            "routing attempted to change the pinned session generation"
-        );
+        if pin.pin_id != receipt.pin_id || pin.generation != receipt.retrieval.generation {
+            return Err(RoutedHttpContextError::PinnedGenerationChanged);
+        }
     }
     let routed = st.with_discovery_route(receipt).await?;
     let receipt = routed
@@ -410,7 +451,10 @@ async fn apply_routed_http_context(
             .cgs
             .capabilities
             .get(reference.capability.as_str())
-            .ok_or_else(|| anyhow::anyhow!("selected capability absent from pinned catalog"))?;
+            .ok_or_else(|| RoutedHttpContextError::SelectedCapabilityMissing {
+                catalog: reference.catalog.clone(),
+                capability: reference.capability.clone(),
+            })?;
         seeds.push(crate::http_execute::CapabilitySeed {
             entry_id: reference.catalog.clone(),
             entity: capability.domain.to_string(),
@@ -432,16 +476,15 @@ async fn apply_routed_http_context(
         Some(uuid::Uuid::parse_str(&receipt.pin_id)?),
         &intent,
     )
-    .await
-    .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    .await?;
     let execute = routed
         .try_get_execute_session(&out.prompt_hash, &out.session_id)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("routed execute session missing after exposure"))?;
+        .ok_or(RoutedHttpContextError::ExecuteSessionMissing)?;
     let exposure = execute
         .teaching_exposure
         .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("routed execute session missing teaching exposure"))?;
+        .ok_or(RoutedHttpContextError::TeachingExposureMissing)?;
     let catalogs = execute
         .contexts_by_entry
         .iter()
@@ -451,8 +494,7 @@ async fn apply_routed_http_context(
         closure,
         &catalogs,
         exposure.to_symbol_map().as_ref(),
-    )
-    .map_err(anyhow::Error::msg)?;
+    )?;
     Ok(serde_json::json!({"routing": receipt, "context": out, "prerequisite_guidance": guidance}))
 }
 

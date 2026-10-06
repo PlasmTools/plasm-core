@@ -22,7 +22,7 @@ use uuid::Uuid;
 use crate::appliance_mcp_admin::{
     admin_service_from_host, appliance_mcp_scope, appliance_preferred_config_id,
 };
-use crate::appliance_oauth_admin::{self, ApplianceOauthUpsert};
+use crate::appliance_oauth_admin::{self, AdminError, ApplianceOauthUpsert};
 
 pub type AdminCorr = u64;
 
@@ -34,17 +34,20 @@ pub enum PolicyStoreUnavailableReason {
     RefreshPending,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub enum McpConfigSurfaceState {
     PolicyStoreUnavailable {
         reason: PolicyStoreUnavailableReason,
     },
-    ConfigLoadError,
+    ConfigLoadError {
+        source: Arc<AdminError>,
+    },
     Ready {
         summary_name: String,
         summary_status: String,
         enabled_api_count: usize,
         key_count: usize,
+        key_load_warning: Option<Arc<AdminError>>,
     },
 }
 
@@ -64,6 +67,7 @@ pub fn config_surface_from_host(state: &PlasmHostState) -> McpConfigSurfaceState
             summary_status: "attached".into(),
             enabled_api_count: 0,
             key_count: 0,
+            key_load_warning: None,
         }
     } else {
         McpConfigSurfaceState::PolicyStoreUnavailable {
@@ -72,13 +76,13 @@ pub fn config_surface_from_host(state: &PlasmHostState) -> McpConfigSurfaceState
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub enum OAuthSurfaceState {
     #[default]
     CatalogUnavailable,
     AuthStorageUnavailable,
     ProviderStoreUnavailable,
-    ProviderListUnavailable(String),
+    ProviderListUnavailable(Arc<AdminError>),
     Ready,
 }
 
@@ -94,14 +98,14 @@ impl OAuthSurfaceState {
         matches!(self, Self::Ready)
     }
 
-    pub fn status_message(&self) -> Option<&str> {
+    pub fn status_message(&self) -> Option<String> {
         match self {
-            Self::CatalogUnavailable => Some("OAuth catalog unavailable"),
-            Self::AuthStorageUnavailable => Some("OAuth auth storage unavailable"),
+            Self::CatalogUnavailable => Some("OAuth catalog unavailable".to_owned()),
+            Self::AuthStorageUnavailable => Some("OAuth auth storage unavailable".to_owned()),
             Self::ProviderStoreUnavailable => {
-                Some("OAuth provider store unavailable (policy DB not attached)")
+                Some("OAuth provider store unavailable (policy DB not attached)".to_owned())
             }
-            Self::ProviderListUnavailable(msg) => Some(msg.as_str()),
+            Self::ProviderListUnavailable(source) => Some(source.to_string()),
             Self::Ready => None,
         }
     }
@@ -116,7 +120,7 @@ pub struct RefreshedUiData {
     pub keys: Vec<McpConfigApiKeyRow>,
     pub db_allowed: HashSet<String>,
     pub oauth_providers: Vec<OauthProviderAppRow>,
-    pub oauth_binding_hints: Vec<String>,
+    pub oauth_binding_hints: Vec<Result<appliance_oauth_admin::OAuthBindingStatus, AdminError>>,
     pub oauth_surface: OAuthSurfaceState,
 }
 
@@ -187,21 +191,21 @@ pub enum AdminCompletion {
     },
     ProvisionApiKey {
         corr: AdminCorr,
-        result: Result<McpApiKeyProvisioned, String>,
+        result: Result<McpApiKeyProvisioned, AdminError>,
     },
     SetAllowedApisExact {
         corr: AdminCorr,
-        result: Result<(), String>,
+        result: Result<(), AdminError>,
     },
     StoreOutboundSecret {
         corr: AdminCorr,
         key: String,
-        result: Result<(), String>,
+        result: Result<(), AdminError>,
     },
     StoreMcpCatalogBinding {
         corr: AdminCorr,
         entry_id: String,
-        result: Result<(), String>,
+        result: Result<(), AdminError>,
     },
     OAuthDeviceBindStarted {
         corr: AdminCorr,
@@ -209,27 +213,27 @@ pub enum AdminCompletion {
     },
     OAuthDeviceBind {
         corr: AdminCorr,
-        result: Result<appliance_oauth_admin::DeviceBindOutcome, String>,
+        result: Result<appliance_oauth_admin::DeviceBindOutcome, AdminError>,
     },
     OauthProviderUpsert {
         corr: AdminCorr,
-        result: Result<(), String>,
+        result: Result<(), AdminError>,
     },
     OauthProviderDisable {
         corr: AdminCorr,
-        result: Result<(), String>,
+        result: Result<(), AdminError>,
     },
     RotateApiKey {
         corr: AdminCorr,
-        result: Result<McpApiKeyProvisioned, String>,
+        result: Result<McpApiKeyProvisioned, AdminError>,
     },
     RevokeApiKey {
         corr: AdminCorr,
-        result: Result<(), String>,
+        result: Result<(), AdminError>,
     },
     RevealApiKey {
         corr: AdminCorr,
-        result: Result<String, String>,
+        result: Result<String, AdminError>,
     },
 }
 
@@ -333,8 +337,8 @@ async fn refresh_oauth_into(state: &PlasmHostState, data: &mut RefreshedUiData) 
         match plasm_agent_core::oauth_provider_repository::list_oauth_provider_apps(&pool).await {
             Ok(rows) => rows,
             Err(e) => {
-                data.oauth_surface = OAuthSurfaceState::ProviderListUnavailable(format!(
-                    "OAuth provider list unavailable: {e}"
+                data.oauth_surface = OAuthSurfaceState::ProviderListUnavailable(Arc::new(
+                    AdminError::ProviderDatabase { source: e.into() },
                 ));
                 return;
             }
@@ -343,10 +347,10 @@ async fn refresh_oauth_into(state: &PlasmHostState, data: &mut RefreshedUiData) 
     let mut bound_entry_ids = HashSet::new();
     for r in &rows {
         let status = appliance_oauth_admin::oauth_binding_status(&storage, &r.entry_id).await;
-        if status.bound {
+        if status.as_ref().is_ok_and(|status| status.bound) {
             bound_entry_ids.insert(r.entry_id.clone());
         }
-        hints.push(status.hint);
+        hints.push(status);
     }
     apply_local_secret_state_to_catalog_rows(&mut data.catalog_rows, &storage).await;
     apply_oauth_binding_state_to_catalog_rows(&mut data.catalog_rows, &bound_entry_ids);
@@ -373,20 +377,41 @@ pub async fn refresh_full_snapshot(state: &PlasmHostState) -> RefreshedUiData {
         let id = admin
             .ensure_singleton_config(&scope, pref, "Your MCP")
             .await
-            .ok()?;
-        let summary = admin.admin_summary(id).await.ok()?;
-        let runtime = admin.load_runtime_snapshot(id).await.ok()??;
-        let optional = admin.load_auth_optional_set(id).await.ok()?;
+            .map_err(|source| AdminError::McpAdministration { source })?;
+        let summary = admin
+            .admin_summary(id)
+            .await
+            .map_err(|source| AdminError::McpAdministration { source })?;
+        let runtime = admin
+            .load_runtime_snapshot(id)
+            .await
+            .map_err(|source| AdminError::McpAdministration { source })?
+            .ok_or(AdminError::ConfigSnapshotMissing { config_id: id })?;
+        let optional = admin
+            .load_auth_optional_set(id)
+            .await
+            .map_err(|source| AdminError::McpAdministration { source })?;
         let catalog_rows = McpConfigAdminService::catalog_rows(reg.as_ref(), &runtime, &optional);
-        let keys = admin.list_api_key_rows(id).await.unwrap_or_default();
-        Some((id, summary, runtime, catalog_rows, keys))
+        let (keys, key_load_warning) = match admin.list_api_key_rows(id).await {
+            Ok(keys) => (keys, None),
+            Err(source) => (
+                Vec::new(),
+                Some(Arc::new(AdminError::McpAdministration { source })),
+            ),
+        };
+        Ok::<_, AdminError>((id, summary, runtime, catalog_rows, keys, key_load_warning))
     }
     .await;
 
-    let Some((id, summary, runtime, catalog_rows, keys)) = res else {
-        data.config_surface = McpConfigSurfaceState::ConfigLoadError;
-        refresh_oauth_into(state, &mut data).await;
-        return data;
+    let (id, summary, runtime, catalog_rows, keys, key_load_warning) = match res {
+        Ok(snapshot) => snapshot,
+        Err(source) => {
+            data.config_surface = McpConfigSurfaceState::ConfigLoadError {
+                source: Arc::new(source),
+            };
+            refresh_oauth_into(state, &mut data).await;
+            return data;
+        }
     };
 
     data.config_id = Some(id);
@@ -395,6 +420,7 @@ pub async fn refresh_full_snapshot(state: &PlasmHostState) -> RefreshedUiData {
         summary_status: summary.status,
         enabled_api_count: summary.enabled_api_count,
         key_count: keys.len(),
+        key_load_warning,
     };
     data.catalog_rows = catalog_rows;
     data.keys = keys;
@@ -439,9 +465,9 @@ async fn run_admin_job(
                 admin
                     .provision_api_key(config_id, label)
                     .await
-                    .map_err(|e| format!("{e}"))
+                    .map_err(|source| AdminError::McpAdministration { source })
             } else {
-                Err("MCP admin unavailable".into())
+                Err(AdminError::McpAdminUnavailable)
             };
             send_completion(&comp_tx, AdminCompletion::ProvisionApiKey { corr, result });
         }
@@ -454,9 +480,9 @@ async fn run_admin_job(
                 admin
                     .set_allowed_apis_exact(config_id, entry_ids)
                     .await
-                    .map_err(|e| format!("{e}"))
+                    .map_err(|source| AdminError::McpAdministration { source })
             } else {
-                Err("MCP admin unavailable".into())
+                Err(AdminError::McpAdminUnavailable)
             };
             send_completion(
                 &comp_tx,
@@ -468,9 +494,12 @@ async fn run_admin_job(
                 storage
                     .store_kv(key.as_str(), value.as_bytes(), None)
                     .await
-                    .map_err(|e| e.to_string())
+                    .map_err(|source| AdminError::OutboundSecretWrite {
+                        key: key.clone(),
+                        source,
+                    })
             } else {
-                Err("auth storage unavailable".into())
+                Err(AdminError::AuthStorageUnavailable)
             };
             send_completion(
                 &comp_tx,
@@ -487,15 +516,18 @@ async fn run_admin_job(
             let result = async {
                 let repo = state
                     .mcp_config_repository()
-                    .ok_or_else(|| "mcp config repo unavailable".to_string())?;
+                    .ok_or(AdminError::ConfigRepositoryUnavailable)?;
                 let storage = state
                     .auth_storage()
-                    .ok_or_else(|| "auth storage unavailable".to_string())?;
+                    .ok_or(AdminError::AuthStorageUnavailable)?;
                 let normalized = plasm_agent_core::binding_slots::normalize_connect_binding_values(
                     entry_id.as_str(),
                     &values,
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(|source| AdminError::BindingValues {
+                    entry_id: entry_id.clone(),
+                    source,
+                })?;
                 let scope = plasm_agent_core::binding_slots::BindingScope::new(
                     tenant_id,
                     config_id,
@@ -505,7 +537,10 @@ async fn run_admin_job(
                     storage, repo, scope, normalized, None,
                 )
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(|source| AdminError::BindingStore {
+                    entry_id: entry_id.clone(),
+                    source,
+                })?;
                 Ok(())
             }
             .await;
@@ -526,11 +561,22 @@ async fn run_admin_job(
             storage,
         } => {
             let resolved_scopes: Vec<String> = if scopes.is_empty() {
-                catalog
+                match catalog
                     .resolve_for_oauth_start(&storage, entry_id.trim())
                     .await
-                    .map(|c| c.default_scopes)
-                    .unwrap_or_default()
+                {
+                    Ok(provider) => provider.default_scopes,
+                    Err(source) => {
+                        send_completion(
+                            &comp_tx,
+                            AdminCompletion::OAuthDeviceBind {
+                                corr,
+                                result: Err(AdminError::ProviderResolution { source }),
+                            },
+                        );
+                        return;
+                    }
+                }
             } else {
                 scopes
                     .into_iter()
@@ -554,18 +600,17 @@ async fn run_admin_job(
                     );
                 },
             )
-            .await
-            .map_err(|e| format!("{e}"));
+            .await;
             send_completion(&comp_tx, AdminCompletion::OAuthDeviceBind { corr, result });
         }
         AdminJob::OauthProviderUpsert { corr, upsert } => {
             let result = async {
                 let catalog = state
                     .oauth_link_catalog()
-                    .ok_or_else(|| "OAuth catalog unavailable".to_string())?;
+                    .ok_or(AdminError::OAuthCatalogUnavailable)?;
                 let storage = state
                     .auth_storage()
-                    .ok_or_else(|| "auth storage unavailable".to_string())?;
+                    .ok_or(AdminError::AuthStorageUnavailable)?;
                 let repo = state.mcp_config_repository().map(|r| r.as_ref());
                 appliance_oauth_admin::appliance_oauth_upsert_provider(
                     repo,
@@ -574,7 +619,6 @@ async fn run_admin_job(
                     upsert,
                 )
                 .await
-                .map_err(|e| format!("{e:#}"))
             }
             .await;
             send_completion(
@@ -586,7 +630,7 @@ async fn run_admin_job(
             let result = async {
                 let catalog = state
                     .oauth_link_catalog()
-                    .ok_or_else(|| "OAuth catalog unavailable".to_string())?;
+                    .ok_or(AdminError::OAuthCatalogUnavailable)?;
                 let repo = state.mcp_config_repository().map(|r| r.as_ref());
                 appliance_oauth_admin::appliance_oauth_provider_disable(
                     repo,
@@ -594,7 +638,6 @@ async fn run_admin_job(
                     &entry_id,
                 )
                 .await
-                .map_err(|e| format!("{e:#}"))
             }
             .await;
             send_completion(
@@ -615,7 +658,7 @@ async fn run_admin_job(
                             &comp_tx,
                             AdminCompletion::RotateApiKey {
                                 corr,
-                                result: Err(format!("{e}")),
+                                result: Err(AdminError::McpAdministration { source: e }),
                             },
                         );
                         return;
@@ -624,9 +667,9 @@ async fn run_admin_job(
                 admin
                     .rotate_one_api_key(config_id, key_id, new_label)
                     .await
-                    .map_err(|e| format!("{e}"))
+                    .map_err(|source| AdminError::McpAdministration { source })
             } else {
-                Err("MCP admin unavailable".into())
+                Err(AdminError::McpAdminUnavailable)
             };
             send_completion(&comp_tx, AdminCompletion::RotateApiKey { corr, result });
         }
@@ -639,9 +682,9 @@ async fn run_admin_job(
                 admin
                     .revoke_one_api_key(config_id, key_id)
                     .await
-                    .map_err(|e| format!("{e}"))
+                    .map_err(|source| AdminError::McpAdministration { source })
             } else {
-                Err("MCP admin unavailable".into())
+                Err(AdminError::McpAdminUnavailable)
             };
             send_completion(&comp_tx, AdminCompletion::RevokeApiKey { corr, result });
         }
@@ -654,9 +697,9 @@ async fn run_admin_job(
                 admin
                     .reveal_api_key(config_id, key_id)
                     .await
-                    .map_err(|e| format!("{e}"))
+                    .map_err(|source| AdminError::McpAdministration { source })
             } else {
-                Err("MCP admin unavailable".into())
+                Err(AdminError::McpAdminUnavailable)
             };
             send_completion(&comp_tx, AdminCompletion::RevealApiKey { corr, result });
         }
@@ -689,6 +732,36 @@ pub fn spawn_admin_router(state: Arc<PlasmHostState>) -> AdminBridge {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn completion_channel_preserves_typed_causes_until_ui_consumption() {
+        use std::error::Error;
+        let (tx, rx) = crossbeam_channel::unbounded();
+        send_completion(
+            &tx,
+            AdminCompletion::OAuthDeviceBind {
+                corr: 19,
+                result: Err(AdminError::ProviderResolution {
+                    source: plasm_agent_core::oauth_link_catalog::OauthResolveError::UnknownEntry,
+                }),
+            },
+        );
+        let AdminCompletion::OAuthDeviceBind {
+            corr,
+            result: Err(error),
+        } = rx.try_recv().unwrap()
+        else {
+            panic!("typed rejection missing");
+        };
+        assert_eq!(corr, 19);
+        assert!(matches!(
+            error
+                .source()
+                .unwrap()
+                .downcast_ref::<plasm_agent_core::oauth_link_catalog::OauthResolveError>(),
+            Some(plasm_agent_core::oauth_link_catalog::OauthResolveError::UnknownEntry)
+        ));
+    }
 
     #[test]
     fn rotated_api_key_label_preserves_existing_label() {

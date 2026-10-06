@@ -25,12 +25,9 @@ impl RelationOperation {
         match self {
             Self::Navigate => {
                 let contract = super::super::binding_contract(&lower.state, source)
-                    .ok_or("missing relation source contract")?;
+                    .ok_or(crate::program_rejection::PythonLoweringInvariantError::RelationSourceContractMissing)?;
                 if !contract.row_cardinality.permits_scalar_field_extract() {
-                    return Err(at(
-                        site,
-                        "relation dot requires a singleton; use flat_map for plural rows",
-                    ));
+                    return Err(at(site, PythonSourceError::RelationNeedsSingleton));
                 }
                 // The shared relation lowerer retains ownership, anchor, scope and
                 // materialization proofs. Correlated bodies supply their local row.

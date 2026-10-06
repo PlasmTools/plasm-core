@@ -7,9 +7,7 @@ pub(crate) fn resolve_query_capability<'a>(
     query: &'a QueryExpr,
     cgs: &'a CGS,
 ) -> Result<&'a CapabilitySchema, RuntimeError> {
-    resolve_query_capability_core(query, cgs).map_err(|e| RuntimeError::ConfigurationError {
-        message: e.to_string(),
-    })
+    resolve_query_capability_core(query, cgs).map_err(RuntimeError::QueryResolution)
 }
 
 /// Canonical HTTP execute session coordinates supplied by the host (`plasm` HTTP/MCP).
@@ -63,9 +61,7 @@ pub(crate) fn compiled_capability_template(
                 .cloned()
                 .map_err(RuntimeError::from)
         })
-        .map_err(|_| RuntimeError::ConfigurationError {
-            message: "execution requires a pinned compiled catalog scope".into(),
-        })?
+        .map_err(|_| RuntimeError::CompiledCatalogScopeMissing)?
 }
 
 /// Reserved CML env key: 64-char lowercase hex (rendered teaching prompt digest for the row).

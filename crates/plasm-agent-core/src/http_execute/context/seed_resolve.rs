@@ -1,6 +1,7 @@
 //! Resolve capability seeds against the live catalog registry (entry aliases + entity case-fold).
 
 use std::sync::Arc;
+use thiserror::Error;
 
 use plasm_core::discovery::CgsRegistry;
 use plasm_core::schema::CGS;
@@ -9,14 +10,37 @@ use crate::http_execute::CapabilitySeed;
 
 use super::seeds::normalize_capability_seeds;
 
+#[derive(Debug, Error)]
+pub enum SeedResolutionError {
+    #[error(transparent)]
+    CatalogEntry(#[from] plasm_core::discovery::DiscoveryError),
+    #[error("resolved catalog entry `{entry_id}` has no loaded CGS")]
+    MissingCatalog { entry_id: String },
+    #[error("seed entity name must not be empty")]
+    EmptyEntity,
+    #[error("unknown entity `{entity}`; nearest entity names: {nearest:?}")]
+    UnknownEntity {
+        entity: String,
+        nearest: Vec<String>,
+    },
+    #[error("entity name `{entity}` is ambiguous; matching catalog keys: {candidates:?}")]
+    AmbiguousEntity {
+        entity: String,
+        candidates: Vec<String>,
+    },
+}
+
 /// Resolve a seed entity string to the canonical CGS entity key (ASCII case-insensitive).
 ///
 /// Exact match wins; otherwise a unique case-insensitive match is accepted. Zero or multiple
 /// candidates return an error with candidates listed (and nearest-name hints on miss).
-pub fn resolve_entity_name_case_insensitive(cgs: &CGS, raw: &str) -> Result<String, String> {
+pub fn resolve_entity_name_case_insensitive(
+    cgs: &CGS,
+    raw: &str,
+) -> Result<String, SeedResolutionError> {
     let raw = raw.trim();
     if raw.is_empty() {
-        return Err("empty entity name in seeds".into());
+        return Err(SeedResolutionError::EmptyEntity);
     }
     if cgs.get_entity(raw).is_some() {
         return Ok(raw.to_string());
@@ -31,23 +55,17 @@ pub fn resolve_entity_name_case_insensitive(cgs: &CGS, raw: &str) -> Result<Stri
     matches.dedup();
     match matches.as_slice() {
         [one] => Ok((*one).to_string()),
-        [] => {
-            let hints = nearest_entity_names(cgs, raw, 5);
-            if hints.is_empty() {
-                Err(format!(
-                    "unknown entity `{raw}` in this schema (entity keys are catalog PascalCase; check language card / browse preview)"
-                ))
-            } else {
-                Err(format!(
-                    "unknown entity `{raw}` in this schema — nearest: {}; use an exact catalog key from language card / browse preview",
-                    hints.join(", ")
-                ))
-            }
-        }
-        many => Err(format!(
-            "ambiguous entity `{raw}` — matches {}; use the exact catalog key",
-            many.join(", ")
-        )),
+        [] => Err(SeedResolutionError::UnknownEntity {
+            entity: raw.to_owned(),
+            nearest: nearest_entity_names(cgs, raw, 5),
+        }),
+        many => Err(SeedResolutionError::AmbiguousEntity {
+            entity: raw.to_owned(),
+            candidates: many
+                .iter()
+                .map(|candidate| (*candidate).to_owned())
+                .collect(),
+        }),
     }
 }
 
@@ -112,23 +130,16 @@ pub fn resolve_capability_seeds(
     seeds: Vec<CapabilitySeed>,
     registry: &CgsRegistry,
     allowed_entry_ids: Option<&[String]>,
-) -> Result<Vec<CapabilitySeed>, String> {
+) -> Result<Vec<CapabilitySeed>, SeedResolutionError> {
     let mut out = normalize_capability_seeds(seeds);
     for s in &mut out {
         s.entry_id = registry
             .resolve_entry_id(s.entry_id.as_str(), allowed_entry_ids)
-            .map_err(|e| {
-                if e.to_string().starts_with("unknown catalog entry:") {
-                    e.to_string()
-                } else {
-                    format!("unknown catalog entry: {e}")
-                }
-            })?;
+            .map_err(SeedResolutionError::CatalogEntry)?;
         let cgs: Arc<CGS> = registry.cgs_arc(s.entry_id.as_str()).ok_or_else(|| {
-            format!(
-                "unknown catalog entry: `{}` has no loaded CGS after resolve",
-                s.entry_id
-            )
+            SeedResolutionError::MissingCatalog {
+                entry_id: s.entry_id.clone(),
+            }
         })?;
         s.entity = resolve_entity_name_case_insensitive(cgs.as_ref(), s.entity.as_str())?;
     }
@@ -152,8 +163,11 @@ mod tests {
             "LangItem"
         );
         let err = resolve_entity_name_case_insensitive(&cgs, "nope_entity").unwrap_err();
-        assert!(err.contains("unknown entity"), "{err}");
-        assert!(err.contains("nearest:"), "{err}");
+        assert!(matches!(
+            err,
+            SeedResolutionError::UnknownEntity { entity, nearest }
+                if entity == "nope_entity" && !nearest.is_empty()
+        ));
     }
 
     #[test]

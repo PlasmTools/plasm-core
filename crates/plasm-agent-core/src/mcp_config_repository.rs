@@ -23,8 +23,15 @@ pub enum McpConfigRepositoryError {
          check DATABASE_URL / PLASM_MCP_CONFIG_DATABASE_URL and Postgres permissions"
     )]
     PostMigrateSchemaMissing,
-    #[error("{0}")]
-    InvalidInput(String),
+    #[error("workspace_slug, project_slug, and name must be non-empty")]
+    EmptyRequiredField { field: RequiredMcpConfigField },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequiredMcpConfigField {
+    WorkspaceSlug,
+    ProjectSlug,
+    Name,
 }
 
 /// For [`McpConfigRepository::fetch_hosted_kv_for_graph_binding`]: `None` and blank/whitespace-only
@@ -635,9 +642,14 @@ impl McpConfigRepository {
         let nm = name.trim();
         let st = status.trim();
         if ws.is_empty() || ps.is_empty() || nm.is_empty() {
-            return Err(McpConfigRepositoryError::InvalidInput(
-                "workspace_slug, project_slug, and name must be non-empty".into(),
-            ));
+            let field = if ws.is_empty() {
+                RequiredMcpConfigField::WorkspaceSlug
+            } else if ps.is_empty() {
+                RequiredMcpConfigField::ProjectSlug
+            } else {
+                RequiredMcpConfigField::Name
+            };
+            return Err(McpConfigRepositoryError::EmptyRequiredField { field });
         }
 
         let now = Utc::now();

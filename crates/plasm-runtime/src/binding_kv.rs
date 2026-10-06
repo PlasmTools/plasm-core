@@ -9,6 +9,18 @@ pub const BINDING_KV_VERSION: u32 = 1;
 /// KV key prefix for binding envelopes.
 pub const BINDING_KV_PREFIX: &str = "plasm:binding:v1:";
 
+#[derive(Debug, thiserror::Error)]
+pub enum ConnectUrlError {
+    #[error("URL must not be empty")]
+    Empty,
+    #[error("invalid URL: {0}")]
+    Parse(#[from] url::ParseError),
+    #[error("URL must use http or https")]
+    UnsupportedScheme,
+    #[error("URL must include a host")]
+    MissingHost,
+}
+
 /// Scope triple embedded in every binding envelope (defense in depth).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BindingScopeV1 {
@@ -36,8 +48,15 @@ pub enum BindingKvParseError {
     Json(#[from] serde_json::Error),
     #[error("unsupported binding credential version: {0} (expected {1})")]
     UnsupportedVersion(u32, u32),
-    #[error("binding scope mismatch: {0}")]
-    ScopeMismatch(String),
+    #[error(
+        "binding scope mismatch: expected tenant={} config={} entry={}, got tenant={} config={} entry={}",
+        .expected.tenant_id, .expected.mcp_config_id, .expected.entry_id,
+        .actual.tenant_id, .actual.mcp_config_id, .actual.entry_id
+    )]
+    ScopeMismatch {
+        expected: BindingScopeV1,
+        actual: BindingScopeV1,
+    },
 }
 
 pub fn parse_binding_kv_v1(raw: &str) -> Result<BindingKvV1, BindingKvParseError> {
@@ -70,10 +89,14 @@ pub fn parse_binding_kv_v1_scoped(
         || env.scope.mcp_config_id != mcp_config_id
         || env.scope.entry_id != entry_id
     {
-        return Err(BindingKvParseError::ScopeMismatch(format!(
-            "expected tenant={tenant_id} config={mcp_config_id} entry={entry_id}, got tenant={} config={} entry={}",
-            env.scope.tenant_id, env.scope.mcp_config_id, env.scope.entry_id
-        )));
+        return Err(BindingKvParseError::ScopeMismatch {
+            expected: BindingScopeV1 {
+                tenant_id: tenant_id.to_owned(),
+                mcp_config_id: mcp_config_id.to_owned(),
+                entry_id: entry_id.to_owned(),
+            },
+            actual: env.scope,
+        });
     }
     Ok(env)
 }
@@ -83,18 +106,18 @@ pub fn binding_kv_key_from_uuid(uuid: &str) -> String {
 }
 
 /// Normalize workspace URL: trim, strip trailing slash, require http(s) scheme.
-pub fn normalize_connect_url(raw: &str) -> Result<String, String> {
+pub fn normalize_connect_url(raw: &str) -> Result<String, ConnectUrlError> {
     let s = raw.trim();
     if s.is_empty() {
-        return Err("URL must not be empty".into());
+        return Err(ConnectUrlError::Empty);
     }
-    let parsed = url::Url::parse(s).map_err(|e| format!("invalid URL: {e}"))?;
+    let parsed = url::Url::parse(s)?;
     let scheme = parsed.scheme();
     if scheme != "http" && scheme != "https" {
-        return Err("URL must use http or https".into());
+        return Err(ConnectUrlError::UnsupportedScheme);
     }
     if parsed.host_str().is_none() {
-        return Err("URL must include a host".into());
+        return Err(ConnectUrlError::MissingHost);
     }
     let mut out = format!("{}://{}", scheme, parsed.host_str().expect("host"));
     if let Some(port) = parsed.port() {
@@ -119,10 +142,72 @@ mod tests {
     }
 
     #[test]
+    fn scoped_binding_parser_preserves_each_mismatched_scope() {
+        let scope = BindingScopeV1 {
+            tenant_id: "t1".into(),
+            mcp_config_id: "c1".into(),
+            entry_id: "fibery".into(),
+        };
+        let raw = serde_json::to_string(&BindingKvV1 {
+            version: BINDING_KV_VERSION,
+            scope: scope.clone(),
+            values: HashMap::new(),
+        })
+        .unwrap();
+        assert_eq!(
+            parse_binding_kv_v1_scoped(&raw, "t1", "c1", "fibery")
+                .unwrap()
+                .scope,
+            scope
+        );
+        for (tenant, config, entry) in [
+            ("t2", "c1", "fibery"),
+            ("t1", "c2", "fibery"),
+            ("t1", "c1", "github"),
+        ] {
+            let error = parse_binding_kv_v1_scoped(&raw, tenant, config, entry).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "binding scope mismatch: expected tenant={tenant} config={config} entry={entry}, got tenant=t1 config=c1 entry=fibery"
+                )
+            );
+            let BindingKvParseError::ScopeMismatch { expected, actual } = error else {
+                panic!("expected a scope mismatch");
+            };
+            assert_eq!(
+                expected,
+                BindingScopeV1 {
+                    tenant_id: tenant.into(),
+                    mcp_config_id: config.into(),
+                    entry_id: entry.into(),
+                }
+            );
+            assert_eq!(actual, scope);
+        }
+    }
+
+    #[test]
     fn normalize_connect_url_strips_trailing_slash_path() {
         assert_eq!(
             normalize_connect_url("https://acme.fibery.io/").unwrap(),
             "https://acme.fibery.io"
         );
+    }
+
+    #[test]
+    fn normalize_connect_url_reports_semantic_failures() {
+        assert!(matches!(
+            normalize_connect_url("  "),
+            Err(ConnectUrlError::Empty)
+        ));
+        assert!(matches!(
+            normalize_connect_url("ftp://acme.fibery.io"),
+            Err(ConnectUrlError::UnsupportedScheme)
+        ));
+        assert!(matches!(
+            normalize_connect_url("not a URL"),
+            Err(ConnectUrlError::Parse(_))
+        ));
     }
 }

@@ -215,14 +215,13 @@ impl RequestFingerprint {
 
     /// Create from hex string
     pub fn from_hex(hex: &str) -> Result<Self, RuntimeError> {
-        let bytes = hex::decode(hex).map_err(|e| RuntimeError::ReplayStoreError {
-            message: format!("Invalid hex fingerprint: {}", e),
-        })?;
+        let bytes = hex::decode(hex).map_err(crate::ReplayStoreError::FingerprintHex)?;
 
         if bytes.len() != 32 {
-            return Err(RuntimeError::ReplayStoreError {
-                message: "Fingerprint must be 32 bytes".to_string(),
-            });
+            return Err(crate::ReplayStoreError::FingerprintLength {
+                actual: bytes.len(),
+            }
+            .into());
         }
 
         let mut array = [0u8; 32];
@@ -238,8 +237,11 @@ fn normalize_serde_for_fingerprint<T: Serialize>(value: &T) -> String {
 impl FileReplayStore {
     /// Create a new file-based replay store
     pub fn new(base_path: PathBuf) -> Result<Self, RuntimeError> {
-        std::fs::create_dir_all(&base_path).map_err(|e| RuntimeError::ReplayStoreError {
-            message: format!("Failed to create replay store directory: {}", e),
+        std::fs::create_dir_all(&base_path).map_err(|source| {
+            crate::ReplayStoreError::Operation {
+                operation: crate::ReplayStoreOperation::CreateDirectory,
+                source,
+            }
         })?;
 
         Ok(Self { base_path })
@@ -259,8 +261,12 @@ impl ReplayStore for FileReplayStore {
         entry: ReplayEntry,
     ) -> Result<(), RuntimeError> {
         let path = self.entry_path(&fingerprint);
-        let content = serde_json::to_string_pretty(&entry)?;
-        std::fs::write(path, content)?;
+        let content =
+            serde_json::to_string_pretty(&entry).map_err(crate::ReplayStoreError::EntryJson)?;
+        std::fs::write(path, content).map_err(|source| crate::ReplayStoreError::Operation {
+            operation: crate::ReplayStoreOperation::WriteEntry,
+            source,
+        })?;
         Ok(())
     }
 
@@ -274,16 +280,30 @@ impl ReplayStore for FileReplayStore {
             return Ok(None);
         }
 
-        let content = std::fs::read_to_string(path)?;
-        let entry: ReplayEntry = serde_json::from_str(&content)?;
+        let content =
+            std::fs::read_to_string(path).map_err(|source| crate::ReplayStoreError::Operation {
+                operation: crate::ReplayStoreOperation::ReadEntry,
+                source,
+            })?;
+        let entry: ReplayEntry =
+            serde_json::from_str(&content).map_err(crate::ReplayStoreError::EntryJson)?;
         Ok(Some(entry))
     }
 
     fn list_fingerprints(&self) -> Result<Vec<RequestFingerprint>, RuntimeError> {
         let mut fingerprints = Vec::new();
 
-        for entry in std::fs::read_dir(&self.base_path)? {
-            let entry = entry?;
+        let entries = std::fs::read_dir(&self.base_path).map_err(|source| {
+            crate::ReplayStoreError::Operation {
+                operation: crate::ReplayStoreOperation::ListEntries,
+                source,
+            }
+        })?;
+        for entry in entries {
+            let entry = entry.map_err(|source| crate::ReplayStoreError::Operation {
+                operation: crate::ReplayStoreOperation::ReadDirectoryEntry,
+                source,
+            })?;
             let path = entry.path();
 
             if let Some(filename) = path.file_stem() {
@@ -389,6 +409,27 @@ mod tests {
     use plasm_core::value_domain::ValueDomain;
     use plasm_core::Value;
     use tempfile::tempdir;
+
+    #[test]
+    fn invalid_fingerprint_preserves_typed_cause() {
+        let error = RequestFingerprint::from_hex("zz").unwrap_err();
+        assert!(matches!(
+            &error,
+            RuntimeError::ReplayStoreError(crate::ReplayStoreError::FingerprintHex(_))
+        ));
+        let source = std::error::Error::source(&error).unwrap();
+        assert!(source.downcast_ref::<crate::ReplayStoreError>().is_some());
+        assert!(std::error::Error::source(source)
+            .unwrap()
+            .downcast_ref::<hex::FromHexError>()
+            .is_some());
+        assert!(matches!(
+            RequestFingerprint::from_hex("00"),
+            Err(RuntimeError::ReplayStoreError(
+                crate::ReplayStoreError::FingerprintLength { actual: 1 }
+            ))
+        ));
+    }
 
     fn create_test_request() -> CompiledOperation {
         CompiledOperation::Http(CompiledRequest {

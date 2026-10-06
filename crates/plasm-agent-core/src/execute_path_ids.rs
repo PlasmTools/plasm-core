@@ -5,6 +5,7 @@ use serde::Deserializer;
 use sha2::{Digest, Sha256};
 use std::fmt;
 use std::str::FromStr;
+use thiserror::Error;
 use uuid::Uuid;
 
 const SHA256_HEX_LEN: usize = 64;
@@ -17,6 +18,22 @@ pub struct PromptHashHex(String);
 /// `Uuid::simple()` form: 32 lowercase hex digits, no hyphens.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ExecuteSessionId(String);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum PromptHashParseError {
+    #[error("prompt_hash must be exactly 64 hexadecimal characters (SHA-256 digest)")]
+    InvalidLength,
+    #[error("prompt_hash must contain only ASCII hexadecimal digits")]
+    InvalidCharacter,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum ExecuteSessionIdParseError {
+    #[error("session_id must be exactly 32 hexadecimal characters (UUID simple form)")]
+    InvalidLength,
+    #[error("session_id must contain only ASCII hexadecimal digits")]
+    InvalidCharacter,
+}
 
 impl PromptHashHex {
     pub fn from_prompt_sha256(prompt: &str) -> Self {
@@ -51,28 +68,28 @@ impl fmt::Display for ExecuteSessionId {
 }
 
 impl FromStr for PromptHashHex {
-    type Err = &'static str;
+    type Err = PromptHashParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s.len() != SHA256_HEX_LEN {
-            return Err("prompt_hash must be exactly 64 hexadecimal characters (SHA-256 digest)");
+            return Err(PromptHashParseError::InvalidLength);
         }
         if !s.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Err("prompt_hash must contain only ASCII hexadecimal digits");
+            return Err(PromptHashParseError::InvalidCharacter);
         }
         Ok(Self(s.to_ascii_lowercase()))
     }
 }
 
 impl FromStr for ExecuteSessionId {
-    type Err = &'static str;
+    type Err = ExecuteSessionIdParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s.len() != SESSION_SIMPLE_HEX_LEN {
-            return Err("session_id must be exactly 32 hexadecimal characters (UUID simple form)");
+            return Err(ExecuteSessionIdParseError::InvalidLength);
         }
         if !s.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Err("session_id must contain only ASCII hexadecimal digits");
+            return Err(ExecuteSessionIdParseError::InvalidCharacter);
         }
         Ok(Self(s.to_ascii_lowercase()))
     }
@@ -119,7 +136,10 @@ mod tests {
 
     #[test]
     fn rejects_bad_prompt_hash_length() {
-        assert!("".parse::<PromptHashHex>().is_err());
+        assert_eq!(
+            "".parse::<PromptHashHex>(),
+            Err(PromptHashParseError::InvalidLength)
+        );
         assert!("a".repeat(63).parse::<PromptHashHex>().is_err());
         assert!("a".repeat(65).parse::<PromptHashHex>().is_err());
     }
@@ -128,12 +148,28 @@ mod tests {
     fn rejects_non_hex_in_prompt_hash() {
         let mut s = "a".repeat(64);
         s.replace_range(0..1, "g");
-        assert!(s.parse::<PromptHashHex>().is_err());
+        assert_eq!(
+            s.parse::<PromptHashHex>(),
+            Err(PromptHashParseError::InvalidCharacter)
+        );
     }
 
     #[test]
     fn rejects_bad_session_length() {
-        assert!("".parse::<ExecuteSessionId>().is_err());
+        assert_eq!(
+            "".parse::<ExecuteSessionId>(),
+            Err(ExecuteSessionIdParseError::InvalidLength)
+        );
         assert!("0".repeat(31).parse::<ExecuteSessionId>().is_err());
+    }
+
+    #[test]
+    fn session_id_rejects_non_hex_semantically() {
+        let mut input = "0".repeat(32);
+        input.replace_range(0..1, "g");
+        assert_eq!(
+            input.parse::<ExecuteSessionId>(),
+            Err(ExecuteSessionIdParseError::InvalidCharacter)
+        );
     }
 }

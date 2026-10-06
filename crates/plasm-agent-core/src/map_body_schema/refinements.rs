@@ -2,11 +2,22 @@
 //! semantics live here. Evidence is recomputed from sealed IL, not serialized claims.
 use plasm_core::plasm_monad::*;
 use plasm_core::value_contract::{ValueContract, ValueShape};
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum RefinementError {
+    #[error(transparent)]
+    Inference(#[from] Box<crate::python_compute::inference::InferenceError>),
+    #[error(transparent)]
+    Schema(#[from] plasm_core::plasm_monad::SyntheticResultSchemaError),
+    #[error(transparent)]
+    Contract(#[from] plasm_core::value_contract::ValueContractError),
+}
 
 pub(super) fn refine(
     body: &CorrelatedBody,
     schema: &mut SyntheticResultSchema,
-) -> Result<(), String> {
+) -> Result<(), RefinementError> {
     let PlasmReturn::Step { step } = &body.body.return_ else {
         return Ok(());
     };
@@ -31,7 +42,8 @@ pub(super) fn refine(
             continue;
         };
         if let Some(contract) = &field.value_type {
-            let mut paths = crate::python_compute::observation_paths(contract)?;
+            let mut paths = crate::python_compute::observation_paths(contract)
+                .map_err(|error| RefinementError::Inference(Box::new(error)))?;
             paths.insert(0, Vec::new());
             for path in paths {
                 let input_path: Vec<String> = std::iter::once(field.name.to_string())
@@ -52,7 +64,8 @@ pub(super) fn refine(
         .map(|(path, _)| path.clone())
         .collect::<Vec<_>>();
     let Some(branches) =
-        crate::python_compute::branch_contracts(source, &input.row_contract()?, &paths)?
+        crate::python_compute::branch_contracts(source, &input.row_contract()?, &paths)
+            .map_err(|error| RefinementError::Inference(Box::new(error)))?
     else {
         return Ok(());
     };
@@ -143,7 +156,7 @@ fn replace(
     contract: &mut ValueContract,
     path: &[String],
     selected: ValueContract,
-) -> Result<(), String> {
+) -> Result<(), RefinementError> {
     if let Some((first, rest)) = path.split_first() {
         if let ValueShape::Record { fields } | ValueShape::ObservedRecord { fields, .. } =
             &mut contract.shape

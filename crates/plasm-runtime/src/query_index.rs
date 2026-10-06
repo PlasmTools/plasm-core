@@ -312,10 +312,10 @@ mod tests {
                 Observation::Literal,
             )
             .unwrap();
-        assert_eq!(
+        assert!(matches!(
             index.insert(key.clone(), wrong),
             Err(CollectionFault::IdentityMismatch)
-        );
+        ));
         assert!(index.get(&key).is_none());
     }
     #[test]

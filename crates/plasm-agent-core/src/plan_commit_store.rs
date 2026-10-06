@@ -17,7 +17,7 @@ use crate::plasm_comp_bundle::PlasmCompBundle;
 use crate::plasm_plan_run::{evaluate_plasm_comp_dry, DryPlasmPlanEvaluation};
 use crate::server_state::PlasmHostState;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum PlanCommitVerifyError {
     Unknown {
         commit_ref: PlanCommitRef,
@@ -39,8 +39,23 @@ pub enum PlanCommitVerifyError {
     },
     Evidence {
         commit_ref: PlanCommitRef,
-        detail: String,
+        #[source]
+        source: Arc<PlanCommitEvidenceError>,
     },
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum PlanCommitEvidenceError {
+    #[error(transparent)]
+    Chain(#[from] crate::evidence_chain::EvidenceEmitError),
+    #[error(transparent)]
+    Preparation(#[from] crate::plasm_step_convert::StepPayloadLiftError),
+    #[error(transparent)]
+    DryEvaluation(#[from] crate::program_diagnostic::ProgramStageError),
+    #[error("lowered GET IR digest mismatch — call `plasm` dry-run again")]
+    LoweredIrDigestMismatch,
+    #[error("executable schedule digest mismatch — call `plasm` dry-run again")]
+    ScheduleDigestMismatch,
 }
 
 impl PlanCommitVerifyError {
@@ -76,15 +91,13 @@ impl std::fmt::Display for PlanCommitVerifyError {
                 f,
                 "plan_commit_ref `{commit_ref}` is stale after flow policy changed — call `plasm` dry-run again"
             ),
-            Self::Evidence { commit_ref, detail } => write!(
+            Self::Evidence { commit_ref, source } => write!(
                 f,
-                "plan_commit_ref `{commit_ref}` evidence mismatch: {detail}"
+                "plan_commit_ref `{commit_ref}` evidence mismatch: {source}"
             ),
         }
     }
 }
-
-impl std::error::Error for PlanCommitVerifyError {}
 
 pub async fn register_plan_commit_and_persist(
     st: &PlasmHostState,
@@ -187,7 +200,7 @@ pub fn verify_plan_commit_id(
             .verify_comp_commit_matches(&record.commit_id)
             .map_err(|e| PlanCommitVerifyError::Evidence {
                 commit_ref: commit_ref.clone(),
-                detail: e.to_string(),
+                source: Arc::new(PlanCommitEvidenceError::Chain(e)),
             })?;
     }
     Ok(())
@@ -243,7 +256,7 @@ pub fn verify_committed_plan_bundle(
         )
         .map_err(|e| PlanCommitVerifyError::Evidence {
             commit_ref: committed.commit_ref.clone(),
-            detail: e,
+            source: Arc::new(PlanCommitEvidenceError::Preparation(e)),
         })?;
         if !committed.lowered_ir_digest().is_empty() {
             let live =
@@ -251,7 +264,7 @@ pub fn verify_committed_plan_bundle(
             if live.as_str() != committed.lowered_ir_digest() {
                 return Err(PlanCommitVerifyError::Evidence {
                     commit_ref: committed.commit_ref.clone(),
-                    detail: "lowered GET IR digest mismatch — call `plasm` dry-run again".into(),
+                    source: Arc::new(PlanCommitEvidenceError::LoweredIrDigestMismatch),
                 });
             }
         }
@@ -268,8 +281,7 @@ pub fn verify_committed_plan_bundle(
             if live_schedule != committed.schedule_digest() {
                 return Err(PlanCommitVerifyError::Evidence {
                     commit_ref: committed.commit_ref.clone(),
-                    detail: "executable schedule digest mismatch — call `plasm` dry-run again"
-                        .into(),
+                    source: Arc::new(PlanCommitEvidenceError::ScheduleDigestMismatch),
                 });
             }
         }
@@ -284,9 +296,9 @@ pub fn dry_for_committed_plasm_run(
     committed: &CommittedPlan,
 ) -> Result<DryPlasmPlanEvaluation, PlanCommitVerifyError> {
     verify_committed_plan_bundle(bundle, committed)?;
-    let map_dry = |detail: String| PlanCommitVerifyError::Evidence {
+    let map_dry = |source: PlanCommitEvidenceError| PlanCommitVerifyError::Evidence {
         commit_ref: committed.commit_ref.clone(),
-        detail,
+        source: Arc::new(source),
     };
     if committed.dry_cache.is_populated() {
         DryPlasmPlanEvaluation::from_plan_commit_cache(
@@ -295,9 +307,10 @@ pub fn dry_for_committed_plasm_run(
             &committed.dry_cache,
             committed.dry_review.clone(),
         )
-        .map_err(map_dry)
+        .map_err(|error| map_dry(PlanCommitEvidenceError::Preparation(error)))
     } else {
-        evaluate_plasm_comp_dry(es, bundle).map_err(|e| map_dry(e.into()))
+        evaluate_plasm_comp_dry(es, bundle)
+            .map_err(|error| map_dry(PlanCommitEvidenceError::DryEvaluation(error)))
     }
 }
 
@@ -374,7 +387,7 @@ mod tests {
 
     use super::{
         accept_plan_commit_for_bundle, dry_for_committed_plasm_run, verify_committed_plan_bundle,
-        verify_plan_commit_id, CommittedPlan, PlanCommitVerifyError,
+        verify_plan_commit_id, CommittedPlan, PlanCommitEvidenceError, PlanCommitVerifyError,
     };
     use crate::execute_session::ExecuteSession;
     use crate::operation::{
@@ -740,11 +753,11 @@ mod tests {
         let err = verify_committed_plan_bundle(&bundle, &committed("00".repeat(32)))
             .expect_err("drifted schedule digest must fail the seal");
         match err {
-            PlanCommitVerifyError::Evidence { detail, .. } => {
-                assert!(
-                    detail.contains("executable schedule digest mismatch"),
-                    "unexpected detail: {detail}"
-                );
+            PlanCommitVerifyError::Evidence { source, .. } => {
+                assert!(matches!(
+                    source.as_ref(),
+                    PlanCommitEvidenceError::ScheduleDigestMismatch
+                ));
             }
             other => panic!("expected Evidence mismatch, got {other:?}"),
         }

@@ -13,7 +13,7 @@ pub enum ComputePoolError {
     #[error("compute pool closed")]
     Closed,
     #[error("blocking task join error: {0}")]
-    Join(String),
+    Join(#[source] tokio::task::JoinError),
 }
 
 /// Bounded wrapper around Tokio's blocking thread pool.
@@ -58,7 +58,7 @@ impl BlockingComputePool {
             f()
         })
         .await
-        .map_err(|e| ComputePoolError::Join(e.to_string()))?;
+        .map_err(ComputePoolError::Join)?;
         drop(permit);
         Ok(out)
     }

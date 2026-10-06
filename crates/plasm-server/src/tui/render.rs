@@ -37,6 +37,7 @@ pub(crate) fn build_overview_lines(
             summary_status,
             enabled_api_count,
             key_count,
+            key_load_warning,
         } => {
             lines.push(Line::from("  policy store (project_mcp_*): enabled"));
             lines.push(Line::from(format!(
@@ -54,8 +55,13 @@ pub(crate) fn build_overview_lines(
             if let Some(id) = model.resources.config_id {
                 lines.push(Line::from(format!("  config_id: {id}")));
             }
+            if let Some(source) = key_load_warning {
+                lines.push(Line::from(format!(
+                    "  Transport key list unavailable: {source}"
+                )));
+            }
         }
-        McpConfigSurfaceState::ConfigLoadError => {
+        McpConfigSurfaceState::ConfigLoadError { source } => {
             lines.push(Line::from(vec![
                 Span::styled("  ! ", err_emphasis_style()),
                 Span::styled(
@@ -67,6 +73,7 @@ pub(crate) fn build_overview_lines(
                 Span::styled("  > ", dim_style()),
                 Span::raw("Wait for refresh or inspect startup / DB diagnostics."),
             ]));
+            lines.push(Line::from(format!("  {source}")));
         }
         McpConfigSurfaceState::PolicyStoreUnavailable { reason } => match reason {
             PolicyStoreUnavailableReason::RefreshPending => {

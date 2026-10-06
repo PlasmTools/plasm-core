@@ -4,32 +4,52 @@ use crate::CmlError;
 use indexmap::IndexMap;
 use plasm_core::Value;
 
-fn invalid(message: &str) -> CmlError {
-    CmlError::TypeError {
-        message: message.into(),
-    }
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum MailError {
+    #[error("mail headers require an object")]
+    HeadersType,
+    #[error("invalid mail header name")]
+    InvalidHeaderName,
+    #[error("mail header `{name}` values must be strings")]
+    HeaderValueType { name: String },
+    #[error("mail headers cannot contain control characters")]
+    HeaderControlCharacters,
+    #[error("mail header names must be unique ignoring case")]
+    DuplicateHeaderName,
+    #[error("mail submission requires a nonblank {name} header")]
+    RequiredHeaderMissing { name: &'static str },
+    #[error("mail text must be a string")]
+    TextType,
+    #[error("plain-text mail codec owns MIME content headers")]
+    MimeHeaderOverride,
+    #[error("mail header exceeds the supported line length ({actual} bytes; maximum {maximum})")]
+    HeaderLineTooLong { actual: usize, maximum: usize },
+    #[error("reply requires a recipient or parent Reply-To/From")]
+    ReplyRecipientMissing,
+    #[error("reply requires a parent Message-ID")]
+    ReplyMessageIdMissing,
 }
 
 fn headers(value: Value) -> Result<IndexMap<String, String>, CmlError> {
     let Value::Object(fields) = value else {
-        return Err(invalid("mail headers require an object"));
+        return Err(MailError::HeadersType.into());
     };
     let mut result = IndexMap::new();
     for (name, value) in fields {
         if name.is_empty() || !name.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') {
-            return Err(invalid("invalid mail header name"));
+            return Err(MailError::InvalidHeaderName.into());
         }
         let name = name.to_ascii_lowercase();
         let value = match value {
             Value::Null => continue,
             Value::String(value) => value,
-            _ => return Err(invalid("mail header values must be strings")),
+            _ => return Err(MailError::HeaderValueType { name }.into()),
         };
         if value.chars().any(|c| c.is_control() && c != '\t') {
-            return Err(invalid("mail headers cannot contain control characters"));
+            return Err(MailError::HeaderControlCharacters.into());
         }
         if result.insert(name, value).is_some() {
-            return Err(invalid("mail header names must be unique ignoring case"));
+            return Err(MailError::DuplicateHeaderName.into());
         }
     }
     Ok(result)
@@ -42,13 +62,11 @@ pub(crate) fn serialize_message(header_values: Value, text: Value) -> Result<Val
             .get(name)
             .is_none_or(|value| value.trim().is_empty())
         {
-            return Err(invalid(
-                "mail submission requires nonblank From and To headers",
-            ));
+            return Err(MailError::RequiredHeaderMissing { name }.into());
         }
     }
     let Value::String(text) = text else {
-        return Err(invalid("mail text must be a string"));
+        return Err(MailError::TextType.into());
     };
     let mut lines = Vec::new();
     for (name, value) in headers {
@@ -56,13 +74,17 @@ pub(crate) fn serialize_message(header_values: Value, text: Value) -> Result<Val
             name.as_str(),
             "mime-version" | "content-type" | "content-transfer-encoding"
         ) {
-            return Err(invalid("plain-text mail codec owns MIME content headers"));
+            return Err(MailError::MimeHeaderOverride.into());
         }
         // UTF-8 submission headers are preserved; the codec does not invent mailbox parsing
         // or encoded-word rules. The provider's submission endpoint accepts these headers.
         let line = format!("{name}: {value}");
         if line.len() > 998 {
-            return Err(invalid("mail header exceeds the supported line length"));
+            return Err(MailError::HeaderLineTooLong {
+                actual: line.len(),
+                maximum: 998,
+            }
+            .into());
         }
         lines.push(line);
     }
@@ -96,7 +118,7 @@ pub(crate) fn reply_headers(parent: Value, overrides: Value) -> Result<Value, Cm
     if result.get("to").is_none_or(|v| v.trim().is_empty()) {
         let to = get("reply-to")
             .or_else(|| get("from"))
-            .ok_or_else(|| invalid("reply requires a recipient or parent Reply-To/From"))?;
+            .ok_or(MailError::ReplyRecipientMissing)?;
         // Preserve the header's mailbox list and display names. Do not guess a first address.
         result.insert("to".into(), to.clone());
     }
@@ -114,8 +136,7 @@ pub(crate) fn reply_headers(parent: Value, overrides: Value) -> Result<Value, Cm
         };
         result.insert("subject".into(), subject);
     }
-    let message_id =
-        get("message-id").ok_or_else(|| invalid("reply requires a parent Message-ID"))?;
+    let message_id = get("message-id").ok_or(MailError::ReplyMessageIdMissing)?;
     result
         .entry("in-reply-to".into())
         .or_insert_with(|| message_id.clone());
@@ -177,14 +198,38 @@ mod tests {
 
     #[test]
     fn invalid_headers_fail_without_echoing_contents() {
-        for headers in [
-            json!({"From":"a","To":"b","Subject":"private\r\nInjected: x"}),
-            json!({"From":"a","To":"b","subject":"a","Subject":"b"}),
-            json!({"From":"a","To":"b","Content-Type":"text/html"}),
-            json!({"From":"a","To":"b","Subject":false}),
+        for (headers, expected) in [
+            (
+                json!({"From":"a","To":"b","Subject":"private\r\nInjected: x"}),
+                MailError::HeaderControlCharacters,
+            ),
+            (
+                json!({"From":"a","To":"b","subject":"a","Subject":"b"}),
+                MailError::DuplicateHeaderName,
+            ),
+            (
+                json!({"From":"a","To":"b","Content-Type":"text/html"}),
+                MailError::MimeHeaderOverride,
+            ),
+            (
+                json!({"From":"a","To":"b","Subject":false}),
+                MailError::HeaderValueType {
+                    name: "subject".into(),
+                },
+            ),
         ] {
             let error =
                 serialize_message(value(headers), Value::String("body".into())).unwrap_err();
+            let CmlError::Mail(actual) = &error else {
+                panic!("expected mail rejection: {error:?}");
+            };
+            assert_eq!(
+                std::mem::discriminant(actual),
+                std::mem::discriminant(&expected)
+            );
+            if let MailError::HeaderValueType { name } = actual {
+                assert_eq!(name, "subject");
+            }
             assert!(!error.to_string().contains("private"));
         }
     }

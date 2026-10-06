@@ -13,7 +13,7 @@ impl PreparedCompute {
         symbols: &dyn SymbolResolve,
         rows: Option<(&SyntheticResultSchema, &str)>,
         domains: &ReturnDomains,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, PythonComputeRejection> {
         let p = &def.parameters;
         if !p.posonlyargs.is_empty()
             || !p.kwonlyargs.is_empty()
@@ -21,22 +21,25 @@ impl PreparedCompute {
             || p.kwarg.is_some()
             || p.args.iter().any(|a| a.default.is_some())
         {
-            return Err("compute requires annotated positional inputs without defaults".into());
+            return Err(PythonComputeError::InputParameterShape.into());
         }
-        let (schema, token) =
-            rows.ok_or("multi-input compute requires a typed dependency packet")?;
+        let (schema, token) = rows.ok_or(PythonComputeError::DependencyPacketMissing)?;
         if !token.is_empty() {
-            return Err("compute dependency packet cannot carry entity authority".into());
+            return Err(PythonComputeError::DependencyPacketHasEntityAuthority.into());
         }
-        let input = schema.row_contract()?;
+        let input = schema
+            .row_contract()
+            .map_err(PythonComputeRejection::from)?;
         let ValueShape::Record { fields } = &input.shape else {
-            return Err("compute inputs require a record packet".into());
+            return Err(PythonComputeError::DependencyPacketNotRecord.into());
         };
         if fields.len() != p.args.len() {
-            return Err("compute dependency count mismatch".into());
+            return Err(PythonComputeError::DependencyCountMismatch.into());
         }
-        let mut stubs = upstream::stubs_in(fields, cgs, &domains.catalogs)?;
-        upstream::domain_aliases(&domains.types, cgs, &domains.catalogs, &mut stubs)?;
+        let mut stubs = upstream::stubs_in(fields, cgs, &domains.catalogs)
+            .map_err(PythonComputeRejection::from)?;
+        upstream::domain_aliases(&domains.types, cgs, &domains.catalogs, &mut stubs)
+            .map_err(PythonComputeRejection::from)?;
         let mut typed_inputs = fields.clone();
         let mut parameters = Vec::new();
         let mut arguments = Vec::new();
@@ -45,16 +48,16 @@ impl PreparedCompute {
             let annotation = parameter
                 .annotation
                 .as_deref()
-                .ok_or("every compute input requires an annotation")?;
+                .ok_or(PythonComputeError::InputAnnotationMissing)?;
             let actual = fields
                 .get(parameter.name.as_str())
-                .ok_or("missing named compute dependency")?;
+                .ok_or(PythonComputeError::NamedDependencyMissing)?;
             let (row_annotation, row_type) = match annotation {
                 Expr::Subscript(s)
                     if name(&s.value) == Some("list") && arguments::is_row(&s.slice) =>
                 {
                     let ValueShape::Array { element } = &actual.shape else {
-                        return Err("list[Row] input requires a collection".into());
+                        return Err(PythonComputeError::ListRowRequiresCollection.into());
                     };
                     (&*s.slice, &**element)
                 }
@@ -66,7 +69,7 @@ impl PreparedCompute {
                     row_type.shape,
                     ValueShape::Record { .. } | ValueShape::ObservedRecord { .. }
                 ) {
-                    return Err("Row input requires a record".into());
+                    return Err(PythonComputeError::RowInputRequiresRecord.into());
                 }
                 if name(row_annotation) != Some("Row") {
                     let expected = returns::resolve(
@@ -78,11 +81,12 @@ impl PreparedCompute {
                         entry,
                         symbols,
                         &imports.source,
-                    )?;
-                    if !inference::assignable(row_type, &expected)? {
-                        return Err(
-                            "compute row annotation differs from its dependency contract".into(),
-                        );
+                    )
+                    .map_err(PythonComputeRejection::from)?;
+                    if !inference::assignable(row_type, &expected)
+                        .map_err(PythonComputeRejection::from)?
+                    {
+                        return Err(PythonComputeError::DependencyAnnotationMismatch.into());
                     }
                 }
             } else {
@@ -95,8 +99,9 @@ impl PreparedCompute {
                     entry,
                     symbols,
                     &imports.source,
-                )?;
-                if let Err(original) = expected.check(actual) {
+                )
+                .map_err(PythonComputeRejection::from)?;
+                if expected.check(actual).is_err() {
                     let (record, collection) = match &actual.shape {
                         ValueShape::Array { element } => (&**element, true),
                         _ => (actual, false),
@@ -104,7 +109,7 @@ impl PreparedCompute {
                     let record_fields = match &record.shape {
                         ValueShape::Record { fields }
                         | ValueShape::ObservedRecord { fields, .. } => fields,
-                        _ => return Err(original),
+                        _ => return Err(PythonComputeError::InputContractMismatch.into()),
                     };
                     let adapted = arguments::resolve(
                         annotation,
@@ -120,9 +125,10 @@ impl PreparedCompute {
                         } else {
                             ComputeInputMode::Singleton
                         },
-                    )?;
+                    )
+                    .map_err(PythonComputeRejection::from)?;
                     if adapted.mapping.is_none() || adapted.per_row == collection {
-                        return Err(original);
+                        return Err(PythonComputeError::InputContractMismatch.into());
                     }
                     let input = if collection {
                         expression
@@ -141,7 +147,8 @@ impl PreparedCompute {
                     cgs,
                     &domains.catalogs,
                     &mut stubs
-                )?
+                )
+                .map_err(PythonComputeRejection::from)?
             ));
             arguments.push(expression);
         }
@@ -160,7 +167,8 @@ impl PreparedCompute {
                 })
                 .collect::<Vec<_>>();
             let output =
-                inference::infer_body(&definition_body(source, def)?, &inputs, &body_imports)?;
+                inference::infer_body(&definition_body(source, def)?, &inputs, &body_imports)
+                    .map_err(PythonComputeRejection::from)?;
             Some(returns::inferred_row_binding(&output)?)
         } else {
             None
@@ -180,7 +188,8 @@ impl PreparedCompute {
                     &body_imports,
                 )
             })
-            .transpose()?;
+            .transpose()
+            .map_err(PythonComputeRejection::from)?;
         if let Some(annotation) = &annotation {
             let inputs = p
                 .args
@@ -190,17 +199,20 @@ impl PreparedCompute {
                     (name, &typed_inputs[name])
                 })
                 .collect::<Vec<_>>();
-            annotation.check_body(
-                &definition_body(source, def)?,
-                &inputs,
-                cgs,
-                &domains.catalogs,
-            )?;
+            annotation
+                .check_body(
+                    &definition_body(source, def)?,
+                    &inputs,
+                    cgs,
+                    &domains.catalogs,
+                )
+                .map_err(PythonComputeRejection::from)?;
         }
         let declared_output = annotation
             .as_ref()
             .map(|a| a.contract())
-            .transpose()?
+            .transpose()
+            .map_err(PythonComputeRejection::from)?
             .flatten();
         let output = if let Some(output) = declared_output {
             output
@@ -214,13 +226,17 @@ impl PreparedCompute {
                 })
                 .collect::<Vec<_>>();
             let output =
-                inference::infer_body(&definition_body(source, def)?, &inputs, &body_imports)?;
+                inference::infer_body(&definition_body(source, def)?, &inputs, &body_imports)
+                    .map_err(PythonComputeRejection::from)?;
             if let Some(annotation) = &annotation {
-                annotation.check(&output)?;
+                annotation
+                    .check(&output)
+                    .map_err(PythonComputeRejection::from)?;
             }
             output
         };
-        let output_type = upstream::output_type(&output, cgs, &domains.catalogs, &mut stubs)?;
+        let output_type = upstream::output_type(&output, cgs, &domains.catalogs, &mut stubs)
+            .map_err(PythonComputeRejection::from)?;
         let body = definition_body(source, def)?;
         let definition = format!(
             "import datetime as PlasmDatetime\n{}\ndef {}({}) -> {}:{}\n",

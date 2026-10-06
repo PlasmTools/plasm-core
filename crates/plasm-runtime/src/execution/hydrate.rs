@@ -264,12 +264,7 @@ pub(crate) fn relation_inherit_for_scoped_query(
     if missing.is_empty() {
         return Ok(inherit);
     }
-    Err(RuntimeError::ConfigurationError {
-        message: format!(
-            "relation hop missing {}: inherit from parent Get / session Bearer (catalog request_auth)",
-            missing.join(", ")
-        ),
-    })
+    Err(RuntimeError::RelationParametersMissing { params: missing })
 }
 
 pub(crate) fn wrap_synthesized_get_error(
@@ -498,9 +493,11 @@ impl ExecutionEngine {
 
         let mut out = Vec::with_capacity(ordered_refs.len());
         for r in &ordered_refs {
-            let e = workspace.get(r).ok_or_else(|| RuntimeError::CacheError {
-                message: format!("entity missing after query/hydrate: {}", r),
-            })?;
+            let e = workspace
+                .get(r)
+                .ok_or_else(|| crate::CacheError::EntityMissing {
+                    reference: r.clone(),
+                })?;
             out.push(e.clone());
         }
         Ok((out, extra_network))
@@ -624,10 +621,7 @@ mod tests {
         let mapping_err = cap
             .require_mapping()
             .expect_err("derived Get has no CML mapping");
-        assert!(
-            mapping_err.contains("lang_key_pick_get") && mapping_err.contains("derived"),
-            "unexpected require_mapping err: {mapping_err}"
-        );
+        assert_eq!(mapping_err.capability, "lang_key_pick_get");
         let mut get = GetExpr::from_ref(Ref::new("LangKeyPick", "alpha"));
         get.capability_name = Some("lang_key_pick_get".into());
         let mat = SessionMaterialization::new();
@@ -1931,7 +1925,7 @@ mod tests {
                 _auth: Option<ResolvedAuth>,
             ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
                 Err(RuntimeError::request_failure(
-                    "empty-token hop must not HTTP",
+                    crate::RequestFailure::UnexpectedTestRequest,
                     1,
                 ))
             }
@@ -2432,9 +2426,7 @@ mod tests {
                         None,
                     ));
                 }
-                Err(RuntimeError::CacheError {
-                    message: "404 detail".into(),
-                })
+                Err(crate::CacheError::DetailUnavailable.into())
             }
 
             async fn get_json_absolute(
@@ -2567,9 +2559,7 @@ mod tests {
                 _auth: Option<ResolvedAuth>,
             ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
                 if request.path.contains("/indexed/") {
-                    return Err(RuntimeError::CacheError {
-                        message: "404 detail".into(),
-                    });
+                    return Err(crate::CacheError::DetailUnavailable.into());
                 }
                 let page = self.list_pages.fetch_add(1, Ordering::SeqCst);
                 if page > 0 {
@@ -3202,9 +3192,7 @@ mod tests {
                 _auth: Option<ResolvedAuth>,
             ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
                 if request.path.contains("/indexed/") {
-                    return Err(RuntimeError::CacheError {
-                        message: "404 detail".into(),
-                    });
+                    return Err(crate::CacheError::DetailUnavailable.into());
                 }
                 let page = self.list_pages.fetch_add(1, Ordering::SeqCst);
                 if page > 0 {

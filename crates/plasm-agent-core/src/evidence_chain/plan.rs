@@ -156,7 +156,7 @@ pub async fn persist_evidence_sidecars(
         .insert_evidence_bundles(prompt_hash, session_id, run_ids, bundle)
         .await
         .map(|_| ())
-        .map_err(|e| EvidenceEmitError::Persist(e.to_string()))
+        .map_err(EvidenceEmitError::Persist)
 }
 
 pub fn attach_evidence_meta(

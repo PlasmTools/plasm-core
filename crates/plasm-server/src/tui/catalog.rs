@@ -29,7 +29,7 @@ pub(crate) fn catalog_policy_readiness_gaps(
         .collect()
 }
 
-pub(crate) fn oauth_surface_status(snap: &UiSnapshot) -> Option<&str> {
+pub(crate) fn oauth_surface_status(snap: &UiSnapshot) -> Option<String> {
     snap.oauth_surface.status_message()
 }
 

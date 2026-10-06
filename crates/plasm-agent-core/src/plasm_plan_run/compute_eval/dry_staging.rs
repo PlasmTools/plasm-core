@@ -4,6 +4,41 @@ use super::super::*;
 use super::eval::{instantiate_expr_template, EvalScope, InputEnv, PlanEvalEnv};
 use super::input_rows::{materialized_result_use_inputs, materialized_singleton_inputs};
 use std::collections::BTreeMap;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+enum DryStagingError {
+    #[error("dry staging could not construct catalog-typed rows: {source}")]
+    StubRows {
+        #[source]
+        source: plasm_core::SchemaError,
+    },
+    #[error("dry staging relation `{relation_id}` has unstaged source `{source_id}`")]
+    RelationSourceMissing {
+        relation_id: String,
+        source_id: String,
+    },
+    #[error("dry staging pure node `{node_id}` has unstaged source `{source_id}`")]
+    PureSourceMissing { node_id: String, source_id: String },
+    #[error("dry staging pure node `{node_id}` source `{source_id}` has no inline rows")]
+    PureSourceNotInline { node_id: String, source_id: String },
+}
+
+impl From<DryStagingError> for ExecutionFailure {
+    fn from(error: DryStagingError) -> Self {
+        let code = match &error {
+            DryStagingError::StubRows { .. } => "dry_staging_stub_rows_invalid",
+            DryStagingError::RelationSourceMissing { .. } => "dry_staging_relation_source_missing",
+            DryStagingError::PureSourceMissing { .. } => "dry_staging_pure_source_missing",
+            DryStagingError::PureSourceNotInline { .. } => "dry_staging_pure_source_not_inline",
+        };
+        Self::new(
+            plasm_runtime::FailureCause::Program,
+            code,
+            error.to_string(),
+        )
+    }
+}
 
 fn dry_stub_row_count(shape: crate::plasm_plan::ResultShape) -> usize {
     use crate::plasm_plan::ResultShape;
@@ -22,9 +57,10 @@ fn dry_stub_entity_rows(
         Vec<plasm_core::ValueRow>,
         Vec<Option<plasm_core::RowIdentity>>,
     ),
-    String,
+    DryStagingError,
 > {
-    let rows = plasm_core::dry_stub_entity_rows(cgs, ent, count)?;
+    let rows = plasm_core::dry_stub_entity_rows(cgs, ent, count)
+        .map_err(|source| DryStagingError::StubRows { source })?;
     Ok((rows, vec![None; count]))
 }
 
@@ -56,7 +92,12 @@ async fn dry_stub_materialize_io(
                     surface.id.as_str(),
                     surface,
                     federated,
-                )? {
+                )
+                .map_err(|diagnostic| ExecutionFailure::new(
+                    plasm_runtime::FailureCause::Program,
+                    "dry_staging_surface_entity_invalid",
+                    diagnostic.to_string(),
+                ))? {
                     crate::plan_surface_policy::SurfaceQualifiedEntityPolicy::PageWithoutEntity
                     | crate::plan_surface_policy::SurfaceQualifiedEntityPolicy::EntityOptional => {
                         Ok(None)
@@ -78,11 +119,10 @@ async fn dry_stub_materialize_io(
         }
         IoStep::Relation(relation) => {
             if !materialized.contains_key(&relation.relation.source) {
-                return Err(format!(
-                    "dry staging: relation `{}` source `{}` not stubbed",
-                    relation.id.as_str(),
-                    relation.relation.source.as_str()
-                )
+                return Err(DryStagingError::RelationSourceMissing {
+                    relation_id: relation.id.as_str().to_owned(),
+                    source_id: relation.relation.source.as_str().to_owned(),
+                }
                 .into());
             }
             let qe = &relation.relation.target;
@@ -154,32 +194,47 @@ fn dry_stub_entity_rows_for(
         Vec<plasm_core::ValueRow>,
         Vec<Option<plasm_core::RowIdentity>>,
     ),
-    String,
+    ExecutionFailure,
 > {
-    let scoped = entry_scoped_execute_session(es, Some(qe))?;
-    let ent = scoped
-        .cgs
-        .get_entity(qe.entity.as_str())
-        .ok_or_else(|| format!("dry staging: unknown entity `{}`", qe.entity))?;
+    let scoped = entry_scoped_execute_session(es, Some(qe)).map_err(|diagnostic| {
+        ExecutionFailure::new(
+            plasm_runtime::FailureCause::Program,
+            "dry_staging_catalog_unavailable",
+            diagnostic.to_string(),
+        )
+    })?;
+    let ent = scoped.cgs.get_entity(qe.entity.as_str()).ok_or_else(|| {
+        ExecutionFailure::new(
+            plasm_runtime::FailureCause::Program,
+            "dry_staging_entity_missing",
+            format!(
+                "dry staging entity `{}` is absent from its catalog",
+                qe.entity
+            ),
+        )
+    })?;
     let (rows, _) = dry_stub_entity_rows(scoped.cgs.as_ref(), ent, count)?;
     let keys: Vec<String> = ent.key_vars.iter().map(ToString::to_string).collect();
     let identities = rows
         .iter()
         .map(|row| {
-            let scalar = |key: &str| -> Result<String, String> {
-                let value = row
-                    .get(key)
-                    .ok_or_else(|| format!("dry identity lacks `{key}`"))?;
-                plasm_core::operand_binding::IdentityCodec::compile(
-                    scoped.cgs.as_ref(),
-                    plasm_core::operand_binding::IdentityTarget {
-                        entity: &ent.name,
-                        field: (keys.len() > 1).then_some(key),
-                    },
-                )?
-                .encode(value)
-                .map(|id| id.to_string())
-            };
+            let scalar =
+                |key: &str| -> Result<String, plasm_core::operand_binding::IdentityCodecError> {
+                    let value = row.get(key).ok_or_else(|| {
+                        plasm_core::operand_binding::IdentityCodecError::MissingIdentityValue {
+                            field: key.to_owned(),
+                        }
+                    })?;
+                    plasm_core::operand_binding::IdentityCodec::compile(
+                        scoped.cgs.as_ref(),
+                        plasm_core::operand_binding::IdentityTarget {
+                            entity: &ent.name,
+                            field: (keys.len() > 1).then_some(key),
+                        },
+                    )?
+                    .encode(value)
+                    .map(|id| id.to_string())
+                };
             let reference = if keys.len() > 1 {
                 let parts = keys
                     .iter()
@@ -207,7 +262,14 @@ fn dry_stub_entity_rows_for(
                 &keys,
             )))
         })
-        .collect::<Result<Vec<_>, String>>()?;
+        .collect::<Result<Vec<_>, plasm_core::operand_binding::IdentityCodecError>>()
+        .map_err(|error| {
+            ExecutionFailure::new(
+                plasm_runtime::FailureCause::Runtime,
+                "dry_identity_encoding",
+                error.to_string(),
+            )
+        })?;
     Ok((rows, identities))
 }
 
@@ -231,21 +293,17 @@ async fn dry_stub_materialize_node(
             let source_rows = match &source {
                 Some(src) => {
                     let source_mat = materialized.get(src).ok_or_else(|| {
-                        format!(
-                            "dry staging: pure `{}` source `{}` not stubbed",
-                            id.as_str(),
-                            src.as_str()
-                        )
+                        DryStagingError::PureSourceMissing {
+                            node_id: id.as_str().to_owned(),
+                            source_id: src.as_str().to_owned(),
+                        }
                     })?;
                     source_mat
                         .row_source
                         .inline_rows()
-                        .ok_or_else(|| {
-                            format!(
-                                "dry staging: pure `{}` source `{}` has no inline rows",
-                                id.as_str(),
-                                src.as_str()
-                            )
+                        .ok_or_else(|| DryStagingError::PureSourceNotInline {
+                            node_id: id.as_str().to_owned(),
+                            source_id: src.as_str().to_owned(),
                         })?
                         .to_vec()
                 }
@@ -342,9 +400,13 @@ pub(crate) fn dry_validate_staged_surfaces(
                 let dep_id = dep.clone();
                 if !materialized.contains_key(&dep_id) {
                     let dep_node = node_by_id.get(dep.as_str()).ok_or_else(|| {
-                        format!(
-                            "dry staging: unknown dependency `{dep}` on `{}`",
-                            n.id().as_str()
+                        ExecutionFailure::new(
+                            plasm_runtime::FailureCause::Program,
+                            "dry_staging_dependency_missing",
+                            format!(
+                                "dry staging dependency `{dep}` on `{}` is unavailable",
+                                n.id().as_str()
+                            ),
                         )
                     })?;
                     dry_stub_materialize_node(&plan.nodes, es, dep_node, &mut materialized).await?;
@@ -373,7 +435,14 @@ pub(crate) fn dry_validate_staged_surfaces(
             inputs,
             wire_coercion_by_alias: &empty_coercion,
         };
-        let scoped_es = entry_scoped_execute_session(es, surface.qualified_entity.as_ref())?;
+        let scoped_es = entry_scoped_execute_session(es, surface.qualified_entity.as_ref())
+            .map_err(|diagnostic| {
+                ExecutionFailure::new(
+                    plasm_runtime::FailureCause::Program,
+                    "dry_staging_catalog_unavailable",
+                    diagnostic.to_string(),
+                )
+            })?;
         instantiate_expr_template(template, &env, &scoped_es.cgs)?;
     }
     Ok(())

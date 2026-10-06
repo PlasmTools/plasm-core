@@ -34,7 +34,12 @@ impl HttpTransport for Transport {
                 if self.1 == Some(value) {
                     events.push(Event::Rejected);
                     return Err(RuntimeError::RequestError {
-                        message: "fixture write rejected".into(),
+                        source: plasm_runtime::RequestFailure::HttpStatus(
+                            plasm_runtime::HttpStatusFailure::without_request(
+                                422,
+                                "fixture write rejected".into(),
+                            ),
+                        ),
                         attempts: 1,
                         status: Some(422),
                         body: None,
@@ -185,7 +190,8 @@ fn check_observations_with_driver(
                             ),
                             session_graph_persistence: None,
                             oss_local_filesystem_defaults: false,
-                        });
+                        })
+                        .expect("valid catalog fixture");
                     let bundle = crate::plasm_compile::compile_python_program(&es, &source)
                         .await
                         .expect("Python compile");

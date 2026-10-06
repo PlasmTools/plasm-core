@@ -1,4 +1,4 @@
-use crate::error::CmlError;
+use crate::error::{CmlError, CmlEvaluationError, PathValueContext};
 use indexmap::IndexMap;
 use plasm_core::{TypedFieldValue, Value};
 use serde::{Deserialize, Serialize};
@@ -594,7 +594,15 @@ impl CmlRequest {
 
 /// Legacy `response:` YAML shorthands (`single`, `results_list`, …) before structured
 /// [`HttpResponseDecode`].
-fn legacy_http_response_decode(s: &str) -> Result<HttpResponseDecode, String> {
+#[derive(Debug, thiserror::Error)]
+enum LegacyHttpResponseDecodeError {
+    #[error("unknown legacy response hint: {hint}")]
+    UnknownHint { hint: String },
+}
+
+fn legacy_http_response_decode(
+    s: &str,
+) -> Result<HttpResponseDecode, LegacyHttpResponseDecodeError> {
     match s {
         "single" => Ok(HttpResponseDecode {
             items: None,
@@ -632,7 +640,7 @@ fn legacy_http_response_decode(s: &str) -> Result<HttpResponseDecode, String> {
             response_preprocess: None,
             auxiliary_merge: None,
         }),
-        _ => Err(format!("unknown legacy response hint: {s}")),
+        _ => Err(LegacyHttpResponseDecodeError::UnknownHint { hint: s.to_owned() }),
     }
 }
 
@@ -910,9 +918,7 @@ pub fn eval_cml(expr: &CmlExpr, env: &CmlEnv) -> Result<Value, CmlError> {
                     Value::String(value.into())
                 })
             }
-            _ => Err(CmlError::InvalidTemplate {
-                message: "trim requires a string or null".into(),
-            }),
+            _ => Err(CmlEvaluationError::TrimInputType.into()),
         },
         CmlExpr::FirstPresent { values } => {
             for value in values {
@@ -929,11 +935,7 @@ pub fn eval_cml(expr: &CmlExpr, env: &CmlEnv) -> Result<Value, CmlError> {
                 value = match value {
                     Value::Null => return Ok(Value::Null),
                     Value::Object(mut fields) => fields.shift_remove(field).unwrap_or(Value::Null),
-                    _ => {
-                        return Err(CmlError::InvalidTemplate {
-                            message: "field projection requires an object or null".into(),
-                        })
-                    }
+                    _ => return Err(CmlEvaluationError::FieldProjectionInputType.into()),
                 };
             }
             Ok(value)
@@ -946,10 +948,12 @@ pub fn eval_cml(expr: &CmlExpr, env: &CmlEnv) -> Result<Value, CmlError> {
             } in bindings
             {
                 if name.is_empty() || locals.contains_key(name) {
-                    return Err(CmlError::InvalidTemplate {
-                        message: "local expression names must be nonempty and cannot shadow inputs"
-                            .into(),
-                    });
+                    return Err(if name.is_empty() {
+                        CmlEvaluationError::EmptyLocalName
+                    } else {
+                        CmlEvaluationError::LocalNameShadowsInput { name: name.clone() }
+                    }
+                    .into());
                 }
                 let evaluated = eval_cml(expression, &locals)?;
                 locals.insert(name.clone(), evaluated);
@@ -963,14 +967,10 @@ pub fn eval_cml(expr: &CmlExpr, env: &CmlEnv) -> Result<Value, CmlError> {
             value,
         } => {
             if code.is_empty() || !code.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_') {
-                return Err(CmlError::InvalidTemplate {
-                    message: "assertion code must be a nonempty identifier".into(),
-                });
+                return Err(CmlEvaluationError::InvalidAssertionCode.into());
             }
             if !eval_cond(condition, env)? {
-                return Err(CmlError::TypeError {
-                    message: format!("assertion failed: {code}"),
-                });
+                return Err(CmlEvaluationError::AssertionFailed { code: code.clone() }.into());
             }
             eval_cml(value, env)
         }
@@ -1030,7 +1030,8 @@ pub fn eval_cml(expr: &CmlExpr, env: &CmlEnv) -> Result<Value, CmlError> {
                             Value::Bool(b) => Ok(b.to_string()),
                             Value::Money(m) => m
                                 .to_wire_text()
-                                .map_err(|e| CmlError::SerializationError { message: e.into() }),
+                                .map_err(CmlEvaluationError::from)
+                                .map_err(CmlError::from),
                             other => Ok(format!("{:?}", other)),
                         })
                         .collect::<Result<Vec<_>, _>>()?
@@ -1047,13 +1048,16 @@ pub fn eval_cml(expr: &CmlExpr, env: &CmlEnv) -> Result<Value, CmlError> {
             format,
         } => format
             .encode(eval_cml(value, env)?, *wire)
-            .map_err(|message| CmlError::SerializationError { message }),
+            .map_err(CmlEvaluationError::from)
+            .map_err(CmlError::from),
         CmlExpr::Format { template, vars } => {
             template.validate_vars(vars)?;
             let rendered = template.render(|name| {
-                let expr = vars.get(name).ok_or_else(|| CmlError::InvalidTemplate {
-                    message: format!("missing format var '{name}'"),
-                })?;
+                let expr =
+                    vars.get(name)
+                        .ok_or_else(|| crate::FormatTemplateError::MissingVariable {
+                            name: name.to_owned(),
+                        })?;
                 value_to_string(&eval_cml(expr, env)?)
             })?;
             Ok(Value::String(rendered))
@@ -1083,9 +1087,7 @@ pub fn eval_cml(expr: &CmlExpr, env: &CmlEnv) -> Result<Value, CmlError> {
 fn value_to_string(value: &Value) -> Result<String, CmlError> {
     match value {
         Value::PlasmInputRef(_) | Value::GetScalarExtract(_) | Value::StringTemplate(_) => {
-            Err(CmlError::TypeError {
-                message: "unbound program operand reached CML encoding".into(),
-            })
+            Err(CmlEvaluationError::UnboundProgramOperand.into())
         }
         Value::String(s) | Value::PhraseIdent(s) => Ok(s.clone()),
         Value::Integer(i) => Ok(i.to_string()),
@@ -1095,7 +1097,8 @@ fn value_to_string(value: &Value) -> Result<String, CmlError> {
         Value::Null => Ok("null".to_string()),
         Value::Money(m) => m
             .to_wire_text()
-            .map_err(|e| CmlError::SerializationError { message: e.into() }),
+            .map_err(CmlEvaluationError::from)
+            .map_err(CmlError::from),
         Value::Array(_) | Value::Object(_) | Value::UnionCtor { .. } => Ok(format!("{:?}", value)),
     }
 }
@@ -1116,23 +1119,22 @@ pub fn eval_cond(cond: &CmlCond, env: &CmlEnv) -> Result<bool, CmlError> {
             match value {
                 Value::Bool(b) => Ok(b),
                 Value::Null => Ok(false),
-                _ => Err(CmlError::TypeError {
-                    message: format!("Expected boolean, got {:?}", value.type_name()),
-                }),
+                _ => Err(CmlEvaluationError::ConditionType {
+                    actual: value.type_name(),
+                }
+                .into()),
             }
         }
     }
 }
 
-fn path_value_to_string(value: &Value, context: &str) -> Result<String, CmlError> {
+fn path_value_to_string(value: &Value, context: PathValueContext) -> Result<String, CmlError> {
     match value {
         Value::String(s) => Ok(s.clone()),
         Value::Integer(i) => Ok(i.to_string()),
         Value::Unsigned(i) => Ok(i.to_string()),
         Value::Float(f) => Ok(f.to_string()),
-        _ => Err(CmlError::TypeError {
-            message: format!("{context} must evaluate to string or number"),
-        }),
+        _ => Err(CmlEvaluationError::PathValueType { context }.into()),
     }
 }
 
@@ -1145,7 +1147,8 @@ pub fn eval_path_segment(segment: &PathSegment, env: &CmlEnv) -> Result<String, 
                 .get(name)
                 .ok_or_else(|| CmlError::VariableNotFound { name: name.clone() })?;
 
-            let mut s = path_value_to_string(value, &format!("Path variable '{name}'"))?;
+            let mut s =
+                path_value_to_string(value, PathValueContext::Variable { name: name.clone() })?;
             if let Some(tail) = suffix {
                 s.push_str(tail);
             }
@@ -1161,7 +1164,7 @@ pub fn eval_path_segment(segment: &PathSegment, env: &CmlEnv) -> Result<String, 
             } else {
                 eval_cml(else_expr, env)?
             };
-            path_value_to_string(&chosen, "Path `if` branch")
+            path_value_to_string(&chosen, PathValueContext::ConditionalBranch)
         }
     }
 }
@@ -1187,30 +1190,19 @@ pub fn compile_request(request: &CmlRequest, env: &CmlEnv) -> Result<CompiledReq
     let multipart = match request.body_format {
         HttpBodyFormat::Multipart => {
             if request.body.is_some() {
-                return Err(CmlError::InvalidTemplate {
-                    message: "body_format multipart cannot be combined with `body`; use multipart.parts only"
-                        .to_string(),
-                });
+                return Err(CmlEvaluationError::MultipartBodyConflict.into());
             }
             let spec = request
                 .multipart
                 .as_ref()
-                .ok_or_else(|| CmlError::InvalidTemplate {
-                    message:
-                        "body_format multipart requires `multipart:` with a non-empty `parts` list"
-                            .to_string(),
-                })?;
+                .ok_or(CmlEvaluationError::MultipartDeclarationMissing)?;
             if spec.parts.is_empty() {
-                return Err(CmlError::InvalidTemplate {
-                    message: "multipart.parts must contain at least one part".to_string(),
-                });
+                return Err(CmlEvaluationError::MultipartDeclarationEmpty.into());
             }
             let mut compiled_parts = Vec::with_capacity(spec.parts.len());
             for p in &spec.parts {
                 if p.name.is_empty() {
-                    return Err(CmlError::InvalidTemplate {
-                        message: "multipart part `name` must be non-empty".to_string(),
-                    });
+                    return Err(CmlEvaluationError::MultipartPartNameEmpty.into());
                 }
                 let content = eval_cml(&p.content, env)?;
                 if content == Value::Null {
@@ -1224,11 +1216,7 @@ pub fn compile_request(request: &CmlRequest, env: &CmlEnv) -> Result<CompiledReq
                 });
             }
             if compiled_parts.is_empty() {
-                return Err(CmlError::InvalidTemplate {
-                    message:
-                        "multipart request has no parts after evaluation (all parts were null)"
-                            .to_string(),
-                });
+                return Err(CmlEvaluationError::MultipartNoRenderedParts.into());
             }
             Some(CompiledMultipartBody {
                 parts: compiled_parts,
@@ -1236,9 +1224,7 @@ pub fn compile_request(request: &CmlRequest, env: &CmlEnv) -> Result<CompiledReq
         }
         HttpBodyFormat::Json | HttpBodyFormat::FormUrlencoded => {
             if request.multipart.is_some() {
-                return Err(CmlError::InvalidTemplate {
-                    message: "`multipart` is only valid when body_format is multipart".to_string(),
-                });
+                return Err(CmlEvaluationError::MultipartFormatRequired.into());
             }
             None
         }
@@ -1266,25 +1252,19 @@ pub fn compile_request(request: &CmlRequest, env: &CmlEnv) -> Result<CompiledReq
     if let Some(RequestAuthentication::Bearer { token }) = auth {
         let token = eval_cml(token, env)?;
         let Value::String(token) = token else {
-            return Err(CmlError::TypeError {
-                message: "bearer input must be a nonempty token string".into(),
-            });
+            return Err(CmlEvaluationError::BearerInputType.into());
         };
         // RFC 6750 b64token: never accept whitespace or header control characters.
         validate_bearer_token(&token)?;
         let fields = headers.get_or_insert_with(|| Value::Object(IndexMap::new()));
         let Value::Object(fields) = fields else {
-            return Err(CmlError::TypeError {
-                message: "request headers must be an object".into(),
-            });
+            return Err(CmlEvaluationError::HeadersType.into());
         };
         if fields
             .keys()
             .any(|name| name.eq_ignore_ascii_case("authorization"))
         {
-            return Err(CmlError::InvalidTemplate {
-                message: "auth and headers cannot both declare Authorization".into(),
-            });
+            return Err(CmlEvaluationError::AuthorizationHeaderConflict.into());
         }
         fields.insert(
             "Authorization".into(),
@@ -1303,18 +1283,13 @@ pub fn compile_request(request: &CmlRequest, env: &CmlEnv) -> Result<CompiledReq
                 .keys()
                 .any(|name| name.eq_ignore_ascii_case("authorization"))
             {
-                return Err(CmlError::InvalidTemplate {
-                    message: "credential auth cannot be combined with an Authorization header"
-                        .into(),
-                });
+                return Err(CmlEvaluationError::CredentialAuthorizationHeaderConflict.into());
             }
         }
         crate::credential::validate_slot(slot)?;
         let resource = crate::credential::resource_key(eval_cml(resource, env)?)?;
         let Value::String(reference) = eval_cml(reference, env)? else {
-            return Err(CmlError::TypeError {
-                message: "credential source requires an opaque reference".into(),
-            });
+            return Err(CmlEvaluationError::CredentialReferenceType.into());
         };
         Some(crate::CompiledCredentialUse {
             slot: slot.clone(),
@@ -1361,9 +1336,7 @@ pub(crate) fn validate_bearer_token(token: &str) -> Result<(), CmlError> {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"-._~+/".contains(&b))
     {
-        return Err(CmlError::TypeError {
-            message: "bearer input contains invalid token characters".into(),
-        });
+        return Err(CmlEvaluationError::BearerTokenCharacters.into());
     }
     Ok(())
 }
@@ -1396,6 +1369,44 @@ impl CompiledRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn evaluation_shape_failures_are_semantic_errors() {
+        let env = CmlEnv::new();
+        let error = eval_cml(
+            &CmlExpr::Trim {
+                value: Box::new(CmlExpr::const_(42)),
+            },
+            &env,
+        )
+        .expect_err("trim rejects non-string input");
+        assert!(matches!(
+            error,
+            CmlError::Evaluation(CmlEvaluationError::TrimInputType)
+        ));
+
+        let error = eval_cond(
+            &CmlCond::Bool {
+                expr: Box::new(CmlExpr::const_("not a boolean")),
+            },
+            &env,
+        )
+        .expect_err("boolean condition rejects string input");
+        assert!(matches!(
+            error,
+            CmlError::Evaluation(CmlEvaluationError::ConditionType { .. })
+        ));
+    }
+
+    #[test]
+    fn bearer_validation_uses_a_typed_error() {
+        assert!(matches!(
+            validate_bearer_token("bad token"),
+            Err(CmlError::Evaluation(
+                CmlEvaluationError::BearerTokenCharacters
+            ))
+        ));
+    }
 
     #[test]
     fn test_eval_var() {
@@ -1697,7 +1708,9 @@ mod tests {
             vars: IndexMap::new(),
         };
         let result = eval_cml(&expr, &env);
-        assert!(matches!(result, Err(CmlError::InvalidTemplate { .. })));
+        assert!(
+            matches!(result, Err(CmlError::FormatTemplate(crate::FormatTemplateError::MissingVariable { name })) if name == "name")
+        );
     }
 
     #[test]
@@ -1705,10 +1718,15 @@ mod tests {
         let env = CmlEnv::new();
         let expr = CmlExpr::Format {
             template: crate::FormatTemplate::try_from("hello-{name}".to_string()).unwrap(),
-            vars: IndexMap::from([("extra".to_string(), CmlExpr::const_("x"))]),
+            vars: IndexMap::from([
+                ("name".to_string(), CmlExpr::const_("name")),
+                ("extra".to_string(), CmlExpr::const_("x")),
+            ]),
         };
         let result = eval_cml(&expr, &env);
-        assert!(matches!(result, Err(CmlError::InvalidTemplate { .. })));
+        assert!(
+            matches!(result, Err(CmlError::FormatTemplate(crate::FormatTemplateError::UnusedVariable { name })) if name == "extra")
+        );
     }
 
     #[test]

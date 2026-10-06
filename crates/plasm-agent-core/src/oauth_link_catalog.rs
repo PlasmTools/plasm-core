@@ -232,7 +232,7 @@ impl OauthLinkCatalog {
             let raw = storage
                 .get_kv(key)
                 .await
-                .map_err(|e| OauthResolveError::Storage(e.to_string()))?;
+                .map_err(OauthResolveError::Storage)?;
             let Some(bytes) = raw else {
                 return Err(OauthResolveError::SecretNotInKv);
             };
@@ -280,12 +280,16 @@ impl OauthLinkCatalog {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum OauthResolveError {
+    #[error("OAuth provider catalog entry missing; re-link or restore provider config.")]
     UnknownEntry,
+    #[error("OAuth client secret not available for refresh; check KV.")]
     SecretNotInKv,
+    #[error("OAuth client secret has invalid UTF-8 encoding")]
     BadSecretUtf8,
-    Storage(String),
+    #[error("OAuth storage error: {0}")]
+    Storage(#[source] auth_framework::errors::AuthError),
 }
 
 impl OauthResolveError {

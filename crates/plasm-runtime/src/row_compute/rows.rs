@@ -69,9 +69,11 @@ impl<'a> Row<'a> {
         }
         Some(value)
     }
-    pub fn require(&self, name: &str) -> Result<&Value, String> {
+    pub fn require(&self, name: &str) -> Result<&Value, plasm_core::RowComputeError> {
         self.get(name)
-            .ok_or_else(|| format!("field `{name}` is unobserved (not null)"))
+            .ok_or_else(|| plasm_core::RowComputeError::MissingField {
+                field: name.to_owned(),
+            })
     }
     pub fn materialize(&self) -> ValueRow {
         self.0
@@ -86,11 +88,8 @@ pub(super) struct FrameState<'a> {
     pub contract: ValueContract,
     pub shape: FrameShape,
 }
-pub(super) fn ingest_rows<'a>(
-    rows: &'a [ValueRow],
-    contract: &ValueContract,
-) -> Result<FrameState<'a>, String> {
-    Ok(FrameState {
+pub(super) fn ingest_rows<'a>(rows: &'a [ValueRow], contract: &ValueContract) -> FrameState<'a> {
+    FrameState {
         rows: rows
             .iter()
             .enumerate()
@@ -115,10 +114,10 @@ pub(super) fn ingest_rows<'a>(
         shape: FrameShape::Remapped {
             reason: RemapReason::Derive,
         },
-    })
+    }
 }
-pub(super) fn collect_rows(state: &FrameState<'_>) -> Result<Vec<ValueRow>, String> {
-    Ok(state.rows.iter().map(Row::materialize).collect())
+pub(super) fn collect_rows(state: &FrameState<'_>) -> Vec<ValueRow> {
+    state.rows.iter().map(Row::materialize).collect()
 }
 
 #[cfg(test)]
@@ -168,8 +167,8 @@ mod tests {
             .iter()
             .map(|v| row!({"value":v,"nested":{"value":v}}))
             .collect();
-        let state = ingest_rows(&rows, &super::super::fixture_contract(&rows)).unwrap();
-        assert_eq!(collect_rows(&state).unwrap(), rows);
+        let state = ingest_rows(&rows, &super::super::fixture_contract(&rows));
+        assert_eq!(collect_rows(&state), rows);
         for (i, expected) in values.iter().enumerate() {
             assert_eq!(state.rows[i].get("nested.value").unwrap(), expected);
         }
@@ -183,14 +182,14 @@ mod replacement_tests {
     #[test]
     fn replacing_a_record_removes_old_descendants_and_preserves_new_presence() {
         let input = [row!({"x":{"old":1}}), row!({"x":{"old":2}})];
-        let mut state = ingest_rows(&input, &super::super::fixture_contract(&input)).unwrap();
+        let mut state = ingest_rows(&input, &super::super::fixture_contract(&input));
         for (row, value) in state.rows.iter_mut().zip([value!({"new":3}), value!({})]) {
             row.0.insert("x".into(), Cell::computed(value));
         }
         assert!(state.rows[0].get("x.old").is_none());
         assert!(state.rows[1].get("x.new").is_none());
         assert_eq!(
-            collect_rows(&state).unwrap(),
+            collect_rows(&state),
             [row!({"x":{"new":3}}), row!({"x":{}})]
         );
         for row in &mut state.rows {
@@ -214,8 +213,8 @@ mod replacement_tests {
             make(MoneyWireFormat::DecimalString),
             make(MoneyWireFormat::MinorUnits { scale: 3 }),
         ];
-        let state = ingest_rows(&rows, &super::super::fixture_contract(&rows)).unwrap();
-        let out = collect_rows(&state).unwrap();
+        let state = ingest_rows(&rows, &super::super::fixture_contract(&rows));
+        let out = collect_rows(&state);
         for (out, format) in out.iter().zip([
             MoneyWireFormat::DecimalString,
             MoneyWireFormat::MinorUnits { scale: 3 },
@@ -227,9 +226,7 @@ mod replacement_tests {
             assert_eq!(m.amount(), "1".parse::<rust_decimal::Decimal>().unwrap());
         }
         let rows = [row!({"v":[0.0]}), row!({"v":[-0.0]})];
-        let out =
-            collect_rows(&ingest_rows(&rows, &super::super::fixture_contract(&rows)).unwrap())
-                .unwrap();
+        let out = collect_rows(&ingest_rows(&rows, &super::super::fixture_contract(&rows)));
         assert!(out[1]["v"].as_array().unwrap()[0]
             .as_number()
             .unwrap()
@@ -251,7 +248,7 @@ mod borrowing_tests {
             row!({"rank":2,"payload":{"items":[1,2,3]}}),
             row!({"rank":1,"payload":{"items":[4,5,6]}}),
         ];
-        let mut state = ingest_rows(&input, &fixture_contract(&input)).unwrap();
+        let mut state = ingest_rows(&input, &fixture_contract(&input));
         let ops = [
             ComputeOp::Sort {
                 key: FieldPath::from_dotted("rank").unwrap(),
@@ -294,7 +291,7 @@ mod borrowing_tests {
     fn positional_reduction_retains_the_selected_payload_reference() {
         use plasm_core::{AggregateFunction, AggregateSpec};
         let input = [row!({"payload":{"items":[1,2,3]}})];
-        let mut state = ingest_rows(&input, &fixture_contract(&input)).unwrap();
+        let mut state = ingest_rows(&input, &fixture_contract(&input));
         let op = ComputeOp::Aggregate {
             aggregates: vec![AggregateSpec {
                 name: OutputName::new("selected").unwrap(),
@@ -322,8 +319,8 @@ mod borrowing_tests {
             values in proptest::collection::vec(proptest::option::of(proptest::option::of(proptest::num::i64::ANY)),0..60)
         ) {
             let input:Vec<_>=values.iter().map(|v|match v {None=>ValueRow::new(),Some(None)=>ValueRow::from_iter([("v".into(),Value::Null)]),Some(Some(n))=>ValueRow::from_iter([("v".into(),Value::Integer(*n))])}).collect();
-            let state=ingest_rows(&input,&fixture_contract(&input)).unwrap();
-            proptest::prop_assert_eq!(collect_rows(&state).unwrap(),input);
+            let state=ingest_rows(&input,&fixture_contract(&input));
+            proptest::prop_assert_eq!(collect_rows(&state),input);
         }
     }
 }

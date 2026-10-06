@@ -6,6 +6,41 @@ use crate::{Cardinality, Ref, RefWire, TypedFieldValue, CGS};
 use indexmap::IndexMap;
 use serde_json::{Map, Value as Json};
 use std::collections::BTreeSet;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum RowDecodeError {
+    #[error(transparent)]
+    ValueRow(#[from] crate::value_row::ValueRowError),
+    #[error("row requires a structural _ref")]
+    MissingStructuralIdentity,
+    #[error("row without _ref requires schema for `{entity}`")]
+    SchemaRequiredForIdentity { entity: String },
+    #[error("row missing scalar identity field `{field}`")]
+    MissingIdentityField { field: String },
+    #[error(transparent)]
+    IdentityNumber(#[from] crate::operand_binding::IdentityCodecError),
+    #[error("row identity belongs to `{actual}`, expected `{expected}`")]
+    IdentityEntityMismatch { expected: String, actual: String },
+    #[error("relation `{relation}` has invalid cardinality or identity representation")]
+    InvalidRelationRepresentation { relation: String },
+    #[error("relation `{relation}` row requires a structural _ref")]
+    RelationMissingStructuralIdentity { relation: String },
+    #[error("relation `{relation}` has invalid _ref")]
+    InvalidRelationIdentity { relation: String },
+    #[error("relation `{relation}` targets `{actual}`, expected `{expected}`")]
+    RelationTargetMismatch {
+        relation: String,
+        expected: String,
+        actual: String,
+    },
+    #[error(transparent)]
+    Collection(#[from] crate::collection_codec::CollectionFault),
+    #[error("unavailable fields must be an array")]
+    UnavailableFieldsNotArray,
+    #[error("unavailable field entry must be a string")]
+    UnavailableFieldNotString,
+}
 
 /// A computation row contains values, not transport encodings. Missing keys are unobserved.
 pub use crate::ValueRow;
@@ -350,30 +385,38 @@ impl<'a> RowCodec<'a> {
 
     /// Decode an execution row. Storage metadata must be removed by its owning
     /// adapter before calling this method; it is never inferred from a prefix.
-    pub fn decode(&self, entity: &str, wire: &Json) -> Result<RowRecord, String> {
+    pub fn decode(&self, entity: &str, wire: &Json) -> Result<RowRecord, RowDecodeError> {
         let value = crate::json_value_to_plasm_value(wire);
         self.decode_values(entity, &ValueRow::try_from(value)?)
     }
-    pub fn decode_values(&self, entity: &str, object: &ValueRow) -> Result<RowRecord, String> {
+    pub fn decode_values(
+        &self,
+        entity: &str,
+        object: &ValueRow,
+    ) -> Result<RowRecord, RowDecodeError> {
         use crate::Value as V;
         let definition = self.cgs.and_then(|cgs| cgs.get_entity(entity));
         let identity = match object.get("_ref") {
             Some(reference) => RefWire::from_value(reference)
-                .ok_or("row requires a structural _ref")?
+                .ok_or(RowDecodeError::MissingStructuralIdentity)?
                 .into_ref(),
             None => {
-                let definition = definition
-                    .ok_or_else(|| format!("row without _ref requires schema for `{entity}`"))?;
-                let scalar = |name: &str| -> Result<String, String> {
+                let definition =
+                    definition.ok_or_else(|| RowDecodeError::SchemaRequiredForIdentity {
+                        entity: entity.to_owned(),
+                    })?;
+                let scalar = |name: &str| -> Result<String, RowDecodeError> {
                     match object.get(name) {
                         Some(V::String(value)) => Ok(value.clone()),
                         Some(V::Integer(value)) => Ok(value.to_string()),
                         Some(V::Unsigned(value)) => Ok(value.to_string()),
                         Some(V::Float(value)) => {
-                            crate::operand_binding::encode_float_identity(*value)
+                            Ok(crate::operand_binding::encode_float_identity(*value)?)
                         }
                         Some(V::Bool(value)) => Ok(value.to_string()),
-                        _ => Err(format!("row missing scalar identity field `{name}`")),
+                        _ => Err(RowDecodeError::MissingIdentityField {
+                            field: name.to_owned(),
+                        }),
                     }
                 };
                 if definition.key_vars.len() > 1 {
@@ -383,7 +426,7 @@ impl<'a> RowCodec<'a> {
                             .key_vars
                             .iter()
                             .map(|key| Ok((key.to_string(), scalar(key.as_str())?)))
-                            .collect::<Result<_, String>>()?,
+                            .collect::<Result<_, RowDecodeError>>()?,
                     )
                 } else {
                     Ref::new(entity, scalar(definition.id_field.as_str())?)
@@ -391,10 +434,10 @@ impl<'a> RowCodec<'a> {
             }
         };
         if identity.entity_type.as_str() != entity {
-            return Err(format!(
-                "row identity belongs to {}, expected {entity}",
-                identity.entity_type
-            ));
+            return Err(RowDecodeError::IdentityEntityMismatch {
+                expected: entity.to_owned(),
+                actual: identity.entity_type.to_string(),
+            });
         }
         let mut fields = IndexMap::new();
         let mut relations = IndexMap::new();
@@ -410,26 +453,34 @@ impl<'a> RowCodec<'a> {
                     (Cardinality::One, V::Object(_)) => vec![value],
                     (Cardinality::One, V::Null) => vec![],
                     _ => {
-                        return Err(format!(
-                            "relation `{key}` has invalid cardinality or identity representation"
-                        ))
+                        return Err(RowDecodeError::InvalidRelationRepresentation {
+                            relation: key.clone(),
+                        })
                     }
                 };
                 let references = values
                     .into_iter()
                     .map(|value| {
                         let reference = value.get("_ref").ok_or_else(|| {
-                            format!("relation `{key}` row requires a structural _ref")
+                            RowDecodeError::RelationMissingStructuralIdentity {
+                                relation: key.clone(),
+                            }
                         })?;
                         let reference = RefWire::from_value(reference)
-                            .ok_or_else(|| format!("relation `{key}` has invalid _ref"))?
+                            .ok_or_else(|| RowDecodeError::InvalidRelationIdentity {
+                                relation: key.clone(),
+                            })?
                             .into_ref();
                         if reference.entity_type.as_str() != relation.target_resource.as_str() {
-                            return Err(format!("relation `{key}` has wrong target identity"));
+                            return Err(RowDecodeError::RelationTargetMismatch {
+                                relation: key.clone(),
+                                expected: relation.target_resource.to_string(),
+                                actual: reference.entity_type.to_string(),
+                            });
                         }
                         Ok(reference)
                     })
-                    .collect::<Result<_, String>>()?;
+                    .collect::<Result<_, RowDecodeError>>()?;
                 relations.insert(
                     key.clone(),
                     RelationMembership::observe(
@@ -437,8 +488,7 @@ impl<'a> RowCodec<'a> {
                         &("value_ingress", &identity, key, value),
                         references,
                         None,
-                    )
-                    .map_err(|e| e.to_string())?,
+                    )?,
                 );
             } else {
                 fields.insert(key.clone(), TypedFieldValue::from(value.clone()));
@@ -452,14 +502,14 @@ impl<'a> RowCodec<'a> {
             .map(|value| {
                 value
                     .as_array()
-                    .ok_or_else(|| "unavailable fields must be an array".to_owned())?
+                    .ok_or(RowDecodeError::UnavailableFieldsNotArray)?
                     .iter()
                     .map(|v| {
                         v.as_str()
                             .map(str::to_owned)
-                            .ok_or_else(|| "unavailable field must be a string".to_owned())
+                            .ok_or(RowDecodeError::UnavailableFieldNotString)
                     })
-                    .collect::<Result<BTreeSet<_>, String>>()
+                    .collect::<Result<BTreeSet<_>, RowDecodeError>>()
             })
             .transpose()?
             .unwrap_or_default();
@@ -478,11 +528,25 @@ pub struct PublicRowSchema<'a> {
     schema: &'a crate::plasm_monad::SyntheticResultSchema,
 }
 
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum RowProjectionError {
+    #[error("row is missing declared column `{field}`")]
+    MissingDeclaredColumn { field: String },
+}
+
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum RowUnionError {
+    #[error(transparent)]
+    Projection(#[from] RowProjectionError),
+    #[error(transparent)]
+    Hash(#[from] crate::ValueHashError),
+}
+
 impl<'a> PublicRowSchema<'a> {
     pub fn new(schema: &'a crate::plasm_monad::SyntheticResultSchema) -> Self {
         Self { schema }
     }
-    pub fn project(&self, row: &ValueRow) -> Result<ValueRow, String> {
+    pub fn project(&self, row: &ValueRow) -> Result<ValueRow, RowProjectionError> {
         let mut projected = ValueRow::new();
         for field in &self.schema.fields {
             match row.get(field.name.as_str()) {
@@ -490,12 +554,20 @@ impl<'a> PublicRowSchema<'a> {
                     projected.insert(field.name.to_string(), value.clone());
                 }
                 None if self.schema.optional_fields.contains(field.name.as_str()) => {}
-                None => return Err(format!("row missing declared column `{}`", field.name)),
+                None => {
+                    return Err(RowProjectionError::MissingDeclaredColumn {
+                        field: field.name.to_string(),
+                    })
+                }
             }
         }
         Ok(projected)
     }
-    pub fn union(&self, left: &[ValueRow], right: &[ValueRow]) -> Result<Vec<ValueRow>, String> {
+    pub fn union(
+        &self,
+        left: &[ValueRow],
+        right: &[ValueRow],
+    ) -> Result<Vec<ValueRow>, RowUnionError> {
         self.union_with_occurrences(left, right)
             .map(|(rows, _)| rows)
     }
@@ -504,7 +576,7 @@ impl<'a> PublicRowSchema<'a> {
         &self,
         left: &[ValueRow],
         right: &[ValueRow],
-    ) -> Result<(Vec<ValueRow>, Vec<usize>), String> {
+    ) -> Result<(Vec<ValueRow>, Vec<usize>), RowUnionError> {
         use std::hash::Hasher;
         let mut occurrences = Vec::new();
         let mut seen = std::collections::HashMap::<u64, Vec<usize>>::new();

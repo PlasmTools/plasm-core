@@ -18,7 +18,7 @@ pub(crate) const PARALLELIZABLE_ROOTS_NOTE: &str =
 /// Derive dry-run bind execution fields from the executable bind graph (single source of truth).
 pub(crate) fn bind_execution_graph_summary(
     bind: &PlasmBindGraph,
-) -> Result<BindExecutionGraphSummary, String> {
+) -> Result<BindExecutionGraphSummary, plasm_core::plasm_monad::BindGraphError> {
     let execution_layers = bind_topo_execution_layers(bind)?
         .into_iter()
         .map(|layer| layer.iter().map(|s| s.as_str().to_string()).collect())
@@ -38,7 +38,7 @@ pub(crate) fn bind_execution_graph_summary(
 /// Group bind topo steps into layers of mutually ready steps (deps satisfied).
 pub(crate) fn bind_topo_execution_layers(
     bind: &PlasmBindGraph,
-) -> Result<Vec<Vec<StepId>>, String> {
+) -> Result<Vec<Vec<StepId>>, plasm_core::plasm_monad::BindGraphError> {
     bind.execution_layers(&Default::default())
 }
 
@@ -83,7 +83,7 @@ pub(crate) fn layer_parallel_safe(
                     target: "plasm_agent::plan_schedule",
                     relation = id.as_str(),
                     source = p.relation.source.as_str(),
-                    error = err.as_str(),
+                    error = %err,
                     "CEP-9: relation flat-map has an invalid source id; refusing parallel execution"
                 );
                 return false;

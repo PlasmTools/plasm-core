@@ -1,4 +1,6 @@
 //! CGS `from_parent_get` embed target decoders (CEP-10: leaf decoders have no nested `.relations`).
+use crate::CatalogTemplateError;
+use std::sync::Arc;
 
 use indexmap::IndexMap;
 
@@ -8,7 +10,7 @@ use crate::decoder::{EntityDecoder, FieldDecoder, ParentIdentityBinding, PathExp
 /// Wire presence is a backend contract; source paths and inherited slot types are ours.
 pub(crate) fn validate_embedded_identity_contracts(
     cgs: &plasm_core::CGS,
-) -> Result<(), crate::CmlError> {
+) -> Result<(), CatalogTemplateError> {
     for parent in cgs.entities.values() {
         for (name, relation) in &parent.relations {
             if !matches!(
@@ -22,11 +24,10 @@ pub(crate) fn validate_embedded_identity_contracts(
             }
             let target = cgs
                 .get_entity(relation.target_resource.as_str())
-                .ok_or_else(|| crate::CmlError::InvalidTemplate {
-                    message: format!(
-                        "{}.{}: missing embedded entity {}",
-                        parent.name, name, relation.target_resource
-                    ),
+                .ok_or_else(|| CatalogTemplateError::EmbeddedEntityMissing {
+                    parent: parent.name.to_string(),
+                    relation: name.to_string(),
+                    entity: relation.target_resource.to_string(),
                 })?;
             for key in target
                 .key_vars
@@ -34,41 +35,50 @@ pub(crate) fn validate_embedded_identity_contracts(
                 .map(|key| key.as_str())
                 .chain(std::iter::once(target.id_field.as_str()))
             {
-                let child =
-                    target
-                        .fields
-                        .get(key)
-                        .ok_or_else(|| crate::CmlError::InvalidTemplate {
-                            message: format!(
-                                "{}.{}: embedded identity slot {}.{key} has no declared field",
-                                parent.name, name, target.name
-                            ),
-                        })?;
-                let child_type =
-                    child
-                        .named_value(cgs)
-                        .map_err(|error| crate::CmlError::InvalidTemplate {
-                            message: error.to_string(),
-                        })?;
+                let child = target.fields.get(key).ok_or_else(|| {
+                    CatalogTemplateError::EmbeddedIdentityFieldMissing {
+                        parent: parent.name.to_string(),
+                        relation: name.to_string(),
+                        entity: target.name.to_string(),
+                        field: key.to_string(),
+                    }
+                })?;
+                let child_type = child.named_value(cgs).map_err(|error| {
+                    CatalogTemplateError::EmbeddedIdentitySchema {
+                        entity: target.name.to_string(),
+                        field: key.to_string(),
+                        source: Arc::new(error),
+                    }
+                })?;
                 if child.wire_path.as_ref().is_some_and(|path| path.is_empty()) {
-                    return Err(crate::CmlError::InvalidTemplate {
-                        message: format!(
-                            "{}.{}: identity slot {}.{key} has an empty wire path",
-                            parent.name, name, target.name
-                        ),
+                    return Err(CatalogTemplateError::EmbeddedIdentityEmptyPath {
+                        parent: parent.name.to_string(),
+                        relation: name.to_string(),
+                        entity: target.name.to_string(),
+                        field: key.to_string(),
                     });
                 }
                 if target.key_vars.len() > 1 && key != target.id_field.as_str() {
                     if let Some(source) = parent.fields.get(key) {
                         let source_type = source.named_value(cgs).map_err(|error| {
-                            crate::CmlError::InvalidTemplate {
-                                message: error.to_string(),
+                            CatalogTemplateError::EmbeddedIdentitySchema {
+                                entity: parent.name.to_string(),
+                                field: key.to_string(),
+                                source: Arc::new(error),
                             }
                         })?;
                         if source_type.field_type != child_type.field_type
                             || source_type.value_format != child_type.value_format
                         {
-                            return Err(crate::CmlError::InvalidTemplate { message: format!("{}.{}: inherited identity slot {key} has incompatible parent and child types", parent.name, name) });
+                            return Err(CatalogTemplateError::InheritedIdentityTypeMismatch {
+                                parent: parent.name.to_string(),
+                                relation: name.to_string(),
+                                field: key.to_string(),
+                                parent_type: source_type.field_type.clone(),
+                                child_type: child_type.field_type.clone(),
+                                parent_format: source_type.value_format,
+                                child_format: child_type.value_format,
+                            });
                         }
                     }
                 }
@@ -200,10 +210,11 @@ mod tests {
             .unwrap()
             .fields
             .shift_remove("id");
-        assert!(validate_embedded_identity_contracts(&missing)
-            .unwrap_err()
-            .to_string()
-            .contains("no declared field"));
+        assert!(
+            matches!(validate_embedded_identity_contracts(&missing).unwrap_err(),
+            CatalogTemplateError::EmbeddedIdentityFieldMissing { entity, field, .. }
+            if entity == "LangLine" && field == "id")
+        );
         let mut empty = cgs;
         empty
             .entities
@@ -213,10 +224,11 @@ mod tests {
             .get_mut("id")
             .unwrap()
             .wire_path = Some(vec![]);
-        assert!(validate_embedded_identity_contracts(&empty)
-            .unwrap_err()
-            .to_string()
-            .contains("empty wire path"));
+        assert!(
+            matches!(validate_embedded_identity_contracts(&empty).unwrap_err(),
+            CatalogTemplateError::EmbeddedIdentityEmptyPath { entity, field, .. }
+            if entity == "LangLine" && field == "id")
+        );
     }
 
     #[test]
@@ -243,12 +255,11 @@ mod tests {
         child.fields.get_mut("item_id").unwrap().kind = plasm_core::FieldValueKind::Registry(
             plasm_core::ValueDomainKey::new("incompatible_child_identity").unwrap(),
         );
-        let error = validate_embedded_identity_contracts(&cgs)
-            .unwrap_err()
-            .to_string();
+        let error = validate_embedded_identity_contracts(&cgs).unwrap_err();
         assert!(
-            error.contains("incompatible parent and child types"),
-            "{error}"
+            matches!(error, CatalogTemplateError::InheritedIdentityTypeMismatch {
+            field, child_type: plasm_core::FieldType::Integer, ..
+        } if field == "item_id")
         );
         assert!(crate::compile_cgs_capability_templates(&cgs).is_err());
     }

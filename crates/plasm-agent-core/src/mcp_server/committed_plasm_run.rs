@@ -6,7 +6,7 @@ use tracing::Instrument;
 use plasm_core::{PagingHandle, PlanCommitRef, PromptPipelineConfig, SymbolMapCrossRequestCache};
 
 use crate::execute_session::ExecuteSession;
-use crate::plan_commit_store::{dry_for_committed_plasm_run, CommittedPlan};
+use crate::plan_commit_store::{dry_for_committed_plasm_run, CommittedPlan, PlanCommitVerifyError};
 use crate::plan_dry_display::{build_plan_dry_compact_view, PlanDryVerdict};
 use crate::plan_gate::{plan_requires_review_gate, PlanGateContext};
 use crate::plasm_comp_bundle::PlasmCompBundle;
@@ -20,6 +20,7 @@ use crate::server_state::PlasmHostState;
 use crate::trace_hub::TraceHub;
 use crate::trace_sink_emit::PlasmTraceContext;
 
+use plasm_runtime::{ExecutionFailure, FailureCause};
 use plasm_trace::TraceCompWire;
 
 use super::mcp_plasm_invoke::McpPlasmRunTarget;
@@ -74,12 +75,17 @@ pub fn compile_page_continuation(
     session: &ExecuteSession,
     handle: &PagingHandle,
     call_index: u64,
-) -> Result<PlasmCompBundle, String> {
+) -> Result<PlasmCompBundle, ExecutionFailure> {
     use plasm_core::plasm_monad::*;
-    let owner = session
-        .paging_qualified_entity(handle)
-        .ok_or_else(|| format!("page handle {handle} is not registered in this session"))?;
-    let id = StepId::new("page")?;
+    let owner = session.paging_qualified_entity(handle).ok_or_else(|| {
+        ExecutionFailure::from(crate::http_execute::PagingHandleFault::Unavailable {
+            handle: handle.clone(),
+        })
+    })?;
+    let build_failure = |detail: plasm_core::plasm_monad::StepIdError| {
+        ExecutionFailure::new(FailureCause::Program, "step_id_invalid", detail.to_string())
+    };
+    let id = StepId::new("page").map_err(build_failure)?;
     let mut comp = empty_comp(Some(format!("plasm_page_call_{call_index}")));
     let payload = PlasmStepPayload::Invoke(InvokePayload {
         plan_kind: SurfaceKind::Query,
@@ -104,13 +110,31 @@ pub fn compile_page_continuation(
         effect_class: EffectClass::Read,
         result_shape: ResultShape::Page,
     });
-    plasm_pure_step(&mut comp, id.clone(), payload, "result continuation")
-        .map_err(|error| error.to_string())?;
+    plasm_pure_step(&mut comp, id.clone(), payload, "result continuation").map_err(|error| {
+        ExecutionFailure::new(
+            FailureCause::Runtime,
+            "page_plan_construction",
+            error.to_string(),
+        )
+    })?;
     comp.return_ = PlasmReturn::Step { step: id };
-    comp.validate()?;
+    comp.validate().map_err(|error| {
+        ExecutionFailure::new(
+            FailureCause::Program,
+            "committed_plan_invalid",
+            error.to_string(),
+        )
+    })?;
     PlasmCompBundle::new(PlasmCompArtifact {
         comp,
         approval_gates: vec![],
+    })
+    .map_err(|error| {
+        ExecutionFailure::new(
+            FailureCause::Program,
+            "committed_plan_invalid",
+            error.to_string(),
+        )
     })
 }
 
@@ -122,11 +146,11 @@ pub async fn resolve_mcp_live_run_ingress(
     _pipeline: &PromptPipelineConfig,
     _symbol_map_cross_cache: &SymbolMapCrossRequestCache,
     call_index: u64,
-) -> Result<ResolvedMcpLiveRunIngress, String> {
+) -> Result<ResolvedMcpLiveRunIngress, ExecutionFailure> {
     match run_target {
         McpPlasmRunTarget::Page(handle) => {
             crate::http_execute::resolve_paging_storage_handle(Some(mcp_trace), handle)
-                .map_err(crate::execute_pipeline::display_run_line_error)?;
+                .map_err(ExecutionFailure::from)?;
             let program = format!("Continue result page {handle}");
             let bundle = compile_page_continuation(es, handle, call_index)?;
             Ok(ResolvedMcpLiveRunIngress {
@@ -140,11 +164,18 @@ pub async fn resolve_mcp_live_run_ingress(
         McpPlasmRunTarget::Commit(pc) => {
             let committed =
                 crate::mcp_plasm_run_phases::mcp_plasm_run_phase("resolve_commit", || async {
-                    crate::plan_commit_store::resolve_committed_plan(es, pc).map_err(|e| e.detail())
+                    crate::plan_commit_store::resolve_committed_plan(es, pc)
                 })
-                .await?;
+                .await
+                .map_err(commit_verify_failure)?;
             Ok(ResolvedMcpLiveRunIngress {
-                bundle: PlasmCompBundle::new(committed.artifact.clone())?,
+                bundle: PlasmCompBundle::new(committed.artifact.clone()).map_err(|detail| {
+                    ExecutionFailure::new(
+                        FailureCause::Runtime,
+                        "committed_plan_invalid",
+                        detail.to_string(),
+                    )
+                })?,
                 program_for_trace: committed.program.clone(),
                 kind: McpLiveRunKind::ReviewedCommit {
                     committed: Box::new(committed),
@@ -152,6 +183,65 @@ pub async fn resolve_mcp_live_run_ingress(
                 },
             })
         }
+    }
+}
+
+fn commit_verify_failure(error: PlanCommitVerifyError) -> ExecutionFailure {
+    let (cause, code) = match &error {
+        PlanCommitVerifyError::Unknown { .. } => (FailureCause::Program, "plan_commit_unknown"),
+        PlanCommitVerifyError::Expired { .. } => (FailureCause::Program, "plan_commit_expired"),
+        PlanCommitVerifyError::Mismatch { .. } => (FailureCause::Program, "plan_commit_mismatch"),
+        PlanCommitVerifyError::PlanAheadOfSession { .. } => {
+            (FailureCause::Program, "plan_commit_ahead_of_session")
+        }
+        PlanCommitVerifyError::StalePolicy { .. } => {
+            (FailureCause::Program, "plan_commit_stale_policy")
+        }
+        PlanCommitVerifyError::Evidence { .. } => {
+            (FailureCause::Runtime, "plan_commit_evidence_mismatch")
+        }
+    };
+    ExecutionFailure::new(cause, code, error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use indexmap::IndexMap;
+    use plasm_core::{CgsContext, CGS};
+    use plasm_runtime::{FailureCause, RecoveryDisposition};
+
+    #[test]
+    fn unavailable_page_handle_is_a_repairable_read_only_error() {
+        let cgs = Arc::new(CGS::new());
+        let mut contexts = IndexMap::new();
+        contexts.insert(
+            "default".into(),
+            Arc::new(CgsContext::entry("default", Arc::clone(&cgs))),
+        );
+        let session = ExecuteSession::new(
+            "ph".into(),
+            "p".into(),
+            Arc::clone(&cgs),
+            contexts,
+            "default".into(),
+            String::new(),
+            String::new(),
+            None,
+            vec!["Pet".into()],
+            None,
+            None,
+            cgs.catalog_cgs_hash_hex(),
+            None,
+        );
+        let handle = PagingHandle::parse("pg1").unwrap();
+        let failure = compile_page_continuation(&session, &handle, 1).unwrap_err();
+        assert_eq!(failure.cause, FailureCause::Program);
+        assert_eq!(failure.code, "page_handle_unavailable");
+        assert_eq!(failure.recovery, RecoveryDisposition::RepairProgram);
+        assert!(!failure.effects_unresolved);
+        assert!(failure.effects.is_empty());
+        assert!(failure.dispatches.is_empty());
     }
 }
 
@@ -201,14 +291,20 @@ fn prepare_live_dry(
     es: &ExecuteSession,
     bundle: &PlasmCompBundle,
     force_run: bool,
-) -> Result<LiveDryOutcome, String> {
+) -> Result<LiveDryOutcome, plasm_runtime::ExecutionFailure> {
     match kind {
         McpLiveRunKind::ReviewedCommit {
             committed,
             plan_commit_ref,
         } => {
-            let dry = dry_for_committed_plasm_run(es, bundle, committed.as_ref())
-                .map_err(|e| e.detail())?;
+            let dry =
+                dry_for_committed_plasm_run(es, bundle, committed.as_ref()).map_err(|error| {
+                    plasm_runtime::ExecutionFailure::new(
+                        plasm_runtime::FailureCause::Program,
+                        "committed_plan_dry_evaluation_failed",
+                        error.detail(),
+                    )
+                })?;
             let gate = dry.evaluate_gate();
             if plan_requires_review_gate(
                 &gate,
@@ -217,10 +313,11 @@ fn prepare_live_dry(
                     plan_commit_ref: Some(&plan_commit_ref),
                 },
             ) {
-                return Err(
-                    "plan_requires_review: call `plasm` dry-run first, then pass the returned `run_ref` (`pcN`) to `plasm_run`"
-                        .to_string(),
-                );
+                return Err(plasm_runtime::ExecutionFailure::new(
+                    plasm_runtime::FailureCause::Program,
+                    "plan_requires_review",
+                    "plan requires review: run `plasm` dry-run first, then pass its `run_ref` to `plasm_run`",
+                ));
             }
             Ok(LiveDryOutcome {
                 dry,
@@ -229,7 +326,13 @@ fn prepare_live_dry(
             })
         }
         McpLiveRunKind::PageContinuation { .. } => {
-            let dry = evaluate_plasm_comp_dry(es, bundle)?;
+            let dry = evaluate_plasm_comp_dry(es, bundle).map_err(|diagnostic| {
+                plasm_runtime::ExecutionFailure::new(
+                    plasm_runtime::FailureCause::Program,
+                    "plan_dry_evaluation_failed",
+                    diagnostic,
+                )
+            })?;
             let compact = build_plan_dry_compact_view(
                 dry.validated_plan(),
                 &dry.topological_order,
@@ -264,7 +367,11 @@ async fn execute_mcp_live_run_inner(
     run: ExecuteMcpLiveRun,
 ) -> Result<PlasmPlanRunResult, plasm_runtime::ExecutionFailure> {
     if !run.wait_live {
-        return Err("plasm_run requires live execute".to_string().into());
+        return Err(plasm_runtime::ExecutionFailure::new(
+            plasm_runtime::FailureCause::Program,
+            "plasm_run_requires_live_execution",
+            "plasm_run requires live execution",
+        ));
     }
 
     let ExecuteMcpLiveRun {
@@ -319,10 +426,12 @@ async fn execute_mcp_live_run_inner(
             )
             .await
             .map_err(|e| match e {
-                LiveRunError::Timeout(d) => {
-                    plasm_runtime::ExecutionFailure::from(format!("live run timed out after {d:?}"))
-                }
-                LiveRunError::Failed(msg) => msg,
+                LiveRunError::Timeout(d) => plasm_runtime::ExecutionFailure::new(
+                    plasm_runtime::FailureCause::Runtime,
+                    "live_run_timeout",
+                    format!("live run timed out after {d:?}"),
+                ),
+                LiveRunError::Failed(failure) => failure,
             })
         })
         .await

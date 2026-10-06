@@ -255,8 +255,7 @@ impl CachedEntity {
         cgs: &plasm_core::CGS,
     ) -> Result<Self, RuntimeError> {
         let value = plasm_core::json_value_to_plasm_value(row);
-        let row = plasm_core::ValueRow::try_from(value)
-            .map_err(|message| RuntimeError::CacheError { message })?;
+        let row = plasm_core::ValueRow::try_from(value)?;
         Self::from_row_values(entity_type, &row, cgs)
     }
     pub fn to_row_values(&self, cgs: Option<&plasm_core::CGS>) -> plasm_core::ValueRow {
@@ -272,8 +271,7 @@ impl CachedEntity {
             semantic.shift_remove(field);
         }
         let record = plasm_core::row_contract::RowCodec::new(Some(cgs))
-            .decode_values(entity_type, &semantic)
-            .map_err(|message| RuntimeError::CacheError { message })?;
+            .decode_values(entity_type, &semantic)?;
         let (reference, fields, relations, unavailable_fields) = record.into_parts();
         let completeness = obj
             .get("_completeness")
@@ -305,12 +303,11 @@ impl CachedEntity {
     /// Merge another entity into this one (keeping the most recent data)
     pub fn merge(&mut self, other: &CachedEntity) -> Result<bool, RuntimeError> {
         if self.reference != other.reference {
-            return Err(RuntimeError::CacheError {
-                message: format!(
-                    "Cannot merge entities with different references: {} vs {}",
-                    self.reference, other.reference
-                ),
-            });
+            return Err(crate::CacheError::MergeReferenceMismatch {
+                expected: self.reference.clone(),
+                actual: other.reference.clone(),
+            }
+            .into());
         }
 
         // Field hydration and relation membership are independent observations.
@@ -828,8 +825,8 @@ impl GraphCache {
     pub fn entity_to_json(&self, reference: &Ref) -> Result<serde_json::Value, RuntimeError> {
         let entity = self
             .get(reference)
-            .ok_or_else(|| RuntimeError::CacheError {
-                message: format!("Entity not found: {}", reference),
+            .ok_or_else(|| crate::CacheError::EntityMissing {
+                reference: reference.clone(),
             })?;
 
         let mut json = serde_json::json!({

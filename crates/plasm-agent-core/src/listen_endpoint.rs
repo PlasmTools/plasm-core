@@ -2,10 +2,26 @@
 
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
+use thiserror::Error;
 
 const ENV_LISTEN_HOST: &str = "PLASM_LISTEN_HOST";
 const LOOPBACK_V4: &str = "127.0.0.1";
 const WILDCARD_V4: &str = "0.0.0.0";
+
+#[derive(Debug, Error)]
+pub enum ListenEndpointError {
+    #[error("listen host must not be empty")]
+    EmptyHost,
+    #[error("listen host must not include a port (use --port for {port}; got {address})")]
+    PortIncluded { port: u16, address: SocketAddr },
+    #[error("invalid listen address {host}:{port}")]
+    InvalidSocketAddress {
+        host: String,
+        port: u16,
+        #[source]
+        source: std::net::AddrParseError,
+    },
+}
 
 /// Resolved HTTP/MCP bind target (`{host}:{port}`).
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -22,19 +38,19 @@ impl TcpListenEndpoint {
         }
     }
 
-    pub fn from_cli(cli_listen_host: Option<&str>, port: u16) -> Result<Self, String> {
+    pub fn from_cli(cli_listen_host: Option<&str>, port: u16) -> Result<Self, ListenEndpointError> {
         let host = resolve_listen_host(cli_listen_host)?;
         Ok(Self { host, port })
     }
 
     /// Read `--listen-host` + `--port` from an MCP server [`clap::ArgMatches`].
-    pub fn from_clap_matches(matches: &clap::ArgMatches) -> Result<Self, String> {
+    pub fn from_clap_matches(matches: &clap::ArgMatches) -> Result<Self, ListenEndpointError> {
         let port = matches.get_one::<u16>("port").copied().unwrap_or(3000);
         let host = matches.get_one::<String>("listen_host").map(|s| s.as_str());
         Self::from_cli(host, port)
     }
 
-    pub fn socket_addr(&self) -> Result<SocketAddr, String> {
+    pub fn socket_addr(&self) -> Result<SocketAddr, ListenEndpointError> {
         parse_socket_addr(&self.host, self.port)
     }
 
@@ -87,22 +103,22 @@ fn default_listen_host() -> &'static str {
     }
 }
 
-fn normalize_host(raw: &str) -> Result<String, String> {
+fn normalize_host(raw: &str) -> Result<String, ListenEndpointError> {
     let t = raw.trim();
     if t.is_empty() {
-        return Err("listen host must not be empty".to_string());
+        return Err(ListenEndpointError::EmptyHost);
     }
     if let Ok(sa) = SocketAddr::from_str(t) {
-        return Err(format!(
-            "listen host must not include a port (use --port for {}; got {sa})",
-            sa.port()
-        ));
+        return Err(ListenEndpointError::PortIncluded {
+            port: sa.port(),
+            address: sa,
+        });
     }
     Ok(t.to_string())
 }
 
 /// Precedence: CLI `--listen-host` → `PLASM_LISTEN_HOST` → default (loopback or wildcard in k8s).
-pub fn resolve_listen_host(cli_override: Option<&str>) -> Result<String, String> {
+pub fn resolve_listen_host(cli_override: Option<&str>) -> Result<String, ListenEndpointError> {
     if let Some(cli) = cli_override {
         return normalize_host(cli);
     }
@@ -136,14 +152,18 @@ pub fn client_http_origin(host: &str, port: u16) -> String {
     format!("http://{client_host}:{port}")
 }
 
-fn parse_socket_addr(host: &str, port: u16) -> Result<SocketAddr, String> {
+fn parse_socket_addr(host: &str, port: u16) -> Result<SocketAddr, ListenEndpointError> {
     let host = host.trim();
     if let Ok(ip) = host.parse::<IpAddr>() {
         return Ok(SocketAddr::new(ip, port));
     }
     format!("{host}:{port}")
         .parse::<SocketAddr>()
-        .map_err(|e| format!("invalid listen address {host}:{port}: {e}"))
+        .map_err(|source| ListenEndpointError::InvalidSocketAddress {
+            host: host.to_string(),
+            port,
+            source,
+        })
 }
 
 #[cfg(test)]
@@ -213,5 +233,25 @@ mod tests {
             ep.socket_addr().unwrap(),
             SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 0)
         );
+    }
+
+    #[test]
+    fn listen_host_validation_uses_semantic_errors() {
+        assert!(matches!(
+            TcpListenEndpoint::from_cli(Some("  "), 3000),
+            Err(ListenEndpointError::EmptyHost)
+        ));
+        assert!(matches!(
+            TcpListenEndpoint::from_cli(Some("127.0.0.1:3000"), 4000),
+            Err(ListenEndpointError::PortIncluded { port: 3000, .. })
+        ));
+        let error = TcpListenEndpoint::new("not-an-ip", 3000)
+            .socket_addr()
+            .expect_err("invalid address rejected");
+        assert!(matches!(
+            error,
+            ListenEndpointError::InvalidSocketAddress { port: 3000, .. }
+        ));
+        assert!(std::error::Error::source(&error).is_some());
     }
 }

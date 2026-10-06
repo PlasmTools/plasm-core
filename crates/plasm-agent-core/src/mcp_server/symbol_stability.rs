@@ -41,16 +41,19 @@ mod tests {
             cgs.clone(),
         )]);
         let engine = ExecutionEngine::new(ExecutionConfig::default()).ok()?;
-        Some(build_plasm_host_state(PlasmHostBootstrap {
-            engine,
-            mode: ExecutionMode::Live,
-            registry: Arc::new(reg),
-            catalog_bootstrap: crate::server_state::CatalogBootstrap::Fixed,
-            incoming_auth: None,
-            run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
-            session_graph_persistence: None,
-            oss_local_filesystem_defaults: false,
-        }))
+        Some(
+            build_plasm_host_state(PlasmHostBootstrap {
+                engine,
+                mode: ExecutionMode::Live,
+                registry: Arc::new(reg),
+                catalog_bootstrap: crate::server_state::CatalogBootstrap::Fixed,
+                incoming_auth: None,
+                run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
+                session_graph_persistence: None,
+                oss_local_filesystem_defaults: false,
+            })
+            .expect("valid catalog fixture"),
+        )
     }
 
     fn item_tag_branch_workflow_seeds() -> Vec<CapabilitySeed> {
@@ -132,25 +135,6 @@ created"#
             text.contains("create LangItem.create("),
             "expected resolved LangItem create in dry plan:\n{text}"
         );
-    }
-
-    fn append_symbol_stability_context_for_test(
-        session: &ExecuteSession,
-        message: &str,
-        source_line: &str,
-    ) -> String {
-        crate::plasm_plan_run::format_session_symbolic_parse_error(
-            session,
-            None,
-            &plasm_core::PromptPipelineConfig::default(),
-            source_line,
-            &plasm_core::expr_parser::ParseError {
-                kind: plasm_core::expr_parser::ParseErrorKind::Other {
-                    message: message.to_string(),
-                },
-                offset: 0,
-            },
-        )
     }
 
     fn compile_dry(
@@ -491,32 +475,34 @@ created"#
         }
 
         let m_create = map.method_sym_for(ENTRY, "LangItem", "langitem_create");
-        let line = langitem_create_program(exp).replace(&m_create, &m_query);
-        let err = compile_plasm_expression(
+        let program = langitem_create_program(exp).replace(&m_create, &m_query);
+        compile_plasm_expression(
             st.engine.prompt_pipeline(),
             Some(st.sessions.symbol_map_cross_cache()),
             &es,
             "query_as_mutator",
-            &line,
+            &program,
         )
-        .expect_err("query m# in mutator invoke position")
-        .to_string();
-        let msg = if err.contains("not a mutator") || err.contains("is query") {
-            append_symbol_stability_context_for_test(&es, &err, &line)
-        } else {
-            format_session_symbolic_parse_error(
-                &es,
-                Some(st.sessions.symbol_map_cross_cache()),
-                st.engine.prompt_pipeline(),
-                &line,
-                &plasm_core::expr_parser::ParseError {
-                    kind: plasm_core::expr_parser::ParseErrorKind::Other {
-                        message: err.clone(),
-                    },
-                    offset: 0,
-                },
-            )
-        };
+        .expect_err("query m# must also be rejected by compilation");
+        let (_, expression) = program.lines().next().unwrap().split_once(" = ").unwrap();
+        let err = crate::plasm_plan_run::parse_parsed_expr_for_session(&es, expression)
+            .expect_err("query m# in mutator invoke position");
+        assert!(
+            matches!(
+                &err.kind,
+                plasm_core::expr_parser::ParseErrorKind::ReadCapabilityInvoked {
+                    method, capability, kind: plasm_core::CapabilityKind::Query, ..
+                } if method == &m_query && capability == "LangItem.langitem_query"
+            ),
+            "expected resolved query rejection, got {err:?}"
+        );
+        let msg = format_session_symbolic_parse_error(
+            &es,
+            Some(st.sessions.symbol_map_cross_cache()),
+            st.engine.prompt_pipeline(),
+            expression,
+            &err,
+        );
         assert!(
             msg.contains(&m_query) && msg.contains("langitem_query"),
             "parse error must name resolved binding: {msg}"

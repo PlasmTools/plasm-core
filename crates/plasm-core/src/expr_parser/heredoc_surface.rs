@@ -1,5 +1,6 @@
 //! Tagged heredoc recognition shared by value parsing, postfix render tails, and multi-line program scans.
 
+use super::program_surface::SurfaceSyntaxError;
 /// How a structured heredoc closing line was recognized (tagged `TAG` line).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HeredocCloseLineKind {
@@ -77,7 +78,10 @@ pub enum HeredocSurfaceStep {
 }
 
 /// Unified tagged-heredoc recognition for Plasm program surface scans (`split_top_level`, statement line scan).
-pub fn heredoc_surface_step_at(s: &str, i: usize) -> Result<HeredocSurfaceStep, String> {
+pub fn heredoc_surface_step_at(
+    s: &str,
+    i: usize,
+) -> Result<HeredocSurfaceStep, SurfaceSyntaxError> {
     let b = s.as_bytes();
     if !is_tagged_heredoc_opener_start(b, i) {
         return Ok(HeredocSurfaceStep::NotAnOpener);
@@ -93,19 +97,18 @@ pub fn heredoc_surface_step_at(s: &str, i: usize) -> Result<HeredocSurfaceStep, 
 
 /// Parse `<<TAG` on the line containing `open_idx` (byte index of first `<`), requiring a newline
 /// after the tag on the same line with only ASCII whitespace between tag and newline.
-pub fn try_parse_tagged_heredoc_opener(s: &str, open_idx: usize) -> Result<HeredocOpener, String> {
+pub fn try_parse_tagged_heredoc_opener(
+    s: &str,
+    open_idx: usize,
+) -> Result<HeredocOpener, SurfaceSyntaxError> {
     let b = s.as_bytes();
     debug_assert!(is_tagged_heredoc_opener_start(b, open_idx));
     let mut p = open_idx + 2;
     if p >= b.len() {
-        return Err(
-            "tagged heredoc `<<` must be immediately followed by a tag (`TAG` = [A-Za-z_][A-Za-z0-9_]*) and a newline after the tag on the same line".into(),
-        );
+        return Err(SurfaceSyntaxError::InvalidHeredocTag);
     }
     if !(b[p].is_ascii_alphabetic() || b[p] == b'_') {
-        return Err(
-            "tagged heredoc `<<` must be immediately followed by a tag (`TAG` = [A-Za-z_][A-Za-z0-9_]*) and a newline after the tag on the same line".into(),
-        );
+        return Err(SurfaceSyntaxError::InvalidHeredocTag);
     }
     let tag_start = p;
     p += 1;
@@ -119,9 +122,7 @@ pub fn try_parse_tagged_heredoc_opener(s: &str, open_idx: usize) -> Result<Hered
     let line_end = open_idx + line_end_rel;
     let tail = s[p..line_end].trim();
     if !tail.is_empty() {
-        return Err(format!(
-            "tagged heredoc `<<{tag}` opener must be only `<<{tag}` then optional ASCII spaces/tabs before the newline; do not put text (or `#` comments) after the tag on the opener line"
-        ));
+        return Err(SurfaceSyntaxError::HeredocOpenerTrailingText { tag });
     }
     Ok(HeredocOpener::Complete {
         tag,
@@ -134,7 +135,7 @@ pub fn skip_tagged_structured_heredoc(
     s: &str,
     body_start: usize,
     tag: &str,
-) -> Result<usize, String> {
+) -> Result<usize, SurfaceSyntaxError> {
     let mut pos = body_start;
     while pos <= s.len() {
         let line_end = s[pos..].find('\n').map(|r| pos + r).unwrap_or(s.len());
@@ -152,25 +153,23 @@ pub fn skip_tagged_structured_heredoc(
             });
         }
         if line_end >= s.len() {
-            return Err(crate::plp::plp2_heredoc(format!(
-                "unterminated tagged heredoc <<{tag}"
-            )));
+            return Err(SurfaceSyntaxError::HeredocUnterminated {
+                tag: tag.to_owned(),
+            });
         }
         pos = line_end + 1;
     }
-    Err(crate::plp::plp2_heredoc(format!(
-        "unterminated tagged heredoc <<{tag}"
-    )))
+    Err(SurfaceSyntaxError::HeredocUnterminated {
+        tag: tag.to_owned(),
+    })
 }
 
 /// Parse a standalone tagged heredoc (`<<TAG` … `TAG`) into its body string (no tag delimiters).
-pub fn parse_tagged_heredoc_literal(s: &str) -> Result<String, String> {
+pub fn parse_tagged_heredoc_literal(s: &str) -> Result<String, SurfaceSyntaxError> {
     let s = s.trim();
     let opener = try_parse_tagged_heredoc_opener(s, 0)?;
     let HeredocOpener::Complete { tag, body_start } = opener else {
-        return Err(crate::plp::plp2_heredoc(
-            "incomplete tagged heredoc opener (missing newline after <<TAG)",
-        ));
+        return Err(SurfaceSyntaxError::HeredocOpenerMissingNewline);
     };
     let mut pos = body_start;
     while pos <= s.len() {
@@ -184,9 +183,7 @@ pub fn parse_tagged_heredoc_literal(s: &str) -> Result<String, String> {
         }
         pos = line_end + 1;
     }
-    Err(crate::plp::plp2_heredoc(format!(
-        "unterminated tagged heredoc <<{tag}"
-    )))
+    Err(SurfaceSyntaxError::HeredocUnterminated { tag })
 }
 
 #[cfg(test)]
@@ -230,8 +227,7 @@ mod tests {
     fn skip_tagged_errors_when_close_missing() {
         let s = "only body\nno sentinel";
         let err = skip_tagged_structured_heredoc(s, 0, "TAG").unwrap_err();
-        assert!(err.contains("PLP-2:"), "{err}");
-        assert!(err.contains("unterminated"), "{err}");
+        assert!(matches!(err, SurfaceSyntaxError::HeredocUnterminated { tag } if tag == "TAG"));
     }
 
     #[test]

@@ -9,8 +9,33 @@ use plasm_core::plasm_monad::{
 };
 use plasm_trace::TraceCompWire;
 use std::collections::{BTreeMap, BTreeSet};
+use thiserror::Error;
 
-pub fn plasm_comp_artifact_from_comp(comp: PlasmComp) -> Result<PlasmCompArtifact, String> {
+#[derive(Debug, Error)]
+pub enum PlasmCompArtifactError {
+    #[error(transparent)]
+    Validation(#[from] plasm_core::plasm_monad::PlasmCompValidationError),
+    #[error(transparent)]
+    InvalidStepId(#[from] plasm_core::plasm_monad::StepIdError),
+}
+
+impl From<PlasmCompArtifactError> for plasm_runtime::ExecutionFailure {
+    fn from(error: PlasmCompArtifactError) -> Self {
+        let code = match &error {
+            PlasmCompArtifactError::Validation(_) => "plasm_comp_invalid",
+            PlasmCompArtifactError::InvalidStepId(_) => "step_id_invalid",
+        };
+        Self::new(
+            plasm_runtime::FailureCause::Program,
+            code,
+            error.to_string(),
+        )
+    }
+}
+
+pub fn plasm_comp_artifact_from_comp(
+    comp: PlasmComp,
+) -> Result<PlasmCompArtifact, PlasmCompArtifactError> {
     comp.validate()?;
     let mut approval_gates = Vec::new();
     for (id, step) in &comp.steps {

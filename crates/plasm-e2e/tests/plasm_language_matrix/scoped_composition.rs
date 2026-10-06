@@ -19,26 +19,29 @@ fn scoped_composition_inventory_links_original_obligations() {
 fn scoped_composition_inventory_rejects_omissions_and_unproved_claims() {
     let mut missing = parse(DOCUMENT).unwrap();
     missing.remove("SC-01");
-    assert!(validate(&missing, "SC", 12)
-        .unwrap_err()
-        .contains("inventory"));
+    assert!(
+        matches!(validate(&missing, "SC", 12), Err(super::literate_contract::ContractError::Inventory { prefix, count: 12 }) if prefix == "SC")
+    );
     let mut dangling = parse(DOCUMENT).unwrap();
     dangling.get_mut("SC-01").unwrap().extends = vec!["invented_row".into()];
-    assert!(validate(&dangling, "SC", 12)
-        .unwrap_err()
-        .contains("unknown"));
+    assert!(
+        matches!(validate(&dangling, "SC", 12), Err(super::literate_contract::ContractError::OriginalLinks { law }) if law == "SC-01")
+    );
     let fabricated = DOCUMENT.replace("scoped_nested_records", "invented_case");
-    assert!(validate(&parse(&fabricated).unwrap(), "SC", 12)
-        .unwrap_err()
-        .contains("unknown matrix witness"));
+    assert!(
+        matches!(validate(&parse(&fabricated).unwrap(), "SC", 12), Err(super::literate_contract::ContractError::UnknownWitness { id }) if id == "invented_case")
+    );
     let missing_gap = DOCUMENT.replace("\"gap\": \"Required law-specific witnesses are not yet registered in this literate ledger.\"", "\"gap\": null");
-    assert!(validate(&parse(&missing_gap).unwrap(), "SC", 12)
-        .unwrap_err()
-        .contains("explicit gap"));
+    assert!(matches!(
+        validate(&parse(&missing_gap).unwrap(), "SC", 12),
+        Err(super::literate_contract::ContractError::Obligation { .. })
+    ));
     let claimed = DOCUMENT.replacen(
         "\"id\": \"SC-01\",",
         "\"id\": \"SC-01\", \"status\": \"covered\",",
         1,
     );
-    assert!(parse(&claimed).unwrap_err().contains("unknown field"));
+    assert!(
+        matches!(parse(&claimed), Err(super::literate_contract::ContractError::Json(source)) if source.classify() == serde_json::error::Category::Data)
+    );
 }

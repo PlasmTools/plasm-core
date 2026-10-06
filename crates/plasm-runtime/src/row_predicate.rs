@@ -2,6 +2,17 @@
 
 use crate::cache::CachedEntity;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum RowPredicateError {
+    #[error("money comparison has incompatible currencies `{left}` and `{right}`")]
+    MoneyCurrencyMismatch { left: String, right: String },
+    #[error("ordered predicate operands are incomparable")]
+    IncomparableOperands,
+    #[error("ordered predicate comparison requires finite numbers")]
+    NonFiniteNumber,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BoundRowPredicate {
@@ -75,6 +86,7 @@ pub fn entity_matches_predicate(
     let lhs = entity_field_path_value(entity, pred.field_path.segments())
         .unwrap_or(plasm_core::Value::Null);
     value_predicate_matches(&lhs, pred.op, pred.value.value())
+        .map_err(crate::RuntimeError::RowPredicate)
 }
 
 pub fn row_matches_predicate(
@@ -84,20 +96,25 @@ pub fn row_matches_predicate(
     let lhs =
         row_value_field_path(value, pred.field_path.segments()).unwrap_or(plasm_core::Value::Null);
     value_predicate_matches(&lhs, pred.op, pred.value.value())
+        .map_err(crate::RuntimeError::RowPredicate)
 }
 
 pub fn value_predicate_matches(
     lhs: &plasm_core::Value,
     op: plasm_core::PlanPredicateOp,
     rhs: &plasm_core::Value,
-) -> Result<bool, crate::RuntimeError> {
+) -> Result<bool, RowPredicateError> {
     let equal = |lhs: &plasm_core::Value,
                  rhs: &plasm_core::Value|
-     -> Result<bool, crate::RuntimeError> {
+     -> Result<bool, RowPredicateError> {
         if matches!(lhs, plasm_core::Value::Money(_)) || matches!(rhs, plasm_core::Value::Money(_))
         {
-            plasm_core::money::values_eq(lhs, rhs)
-                .map_err(|e| crate::RuntimeError::from(plasm_core::TypeError::from(e)))
+            plasm_core::money::values_eq(lhs, rhs).map_err(|error| {
+                RowPredicateError::MoneyCurrencyMismatch {
+                    left: error.left().to_owned(),
+                    right: error.right().to_owned(),
+                }
+            })
         } else {
             Ok(values_eq_loose(lhs, rhs))
         }
@@ -111,8 +128,12 @@ pub fn value_predicate_matches(
                 | plasm_core::PlanPredicateOp::Gte
         )
     {
-        let ordering = plasm_core::money::values_ord(lhs, rhs)
-            .map_err(|e| crate::RuntimeError::from(plasm_core::TypeError::from(e)))?;
+        let ordering = plasm_core::money::values_ord(lhs, rhs).map_err(|error| {
+            RowPredicateError::MoneyCurrencyMismatch {
+                left: error.left().to_owned(),
+                right: error.right().to_owned(),
+            }
+        })?;
         return Ok(ordering.is_some_and(|o| match op {
             plasm_core::PlanPredicateOp::Lt => o.is_lt(),
             plasm_core::PlanPredicateOp::Lte => o.is_le(),
@@ -144,7 +165,7 @@ pub fn value_predicate_matches(
         plasm_core::PlanPredicateOp::Lt
         | plasm_core::PlanPredicateOp::Lte
         | plasm_core::PlanPredicateOp::Gt
-        | plasm_core::PlanPredicateOp::Gte => compare_ordered(lhs, rhs, op),
+        | plasm_core::PlanPredicateOp::Gte => compare_ordered(lhs, rhs, op)?,
     })
 }
 
@@ -172,7 +193,7 @@ fn compare_ordered(
     lhs: &plasm_core::Value,
     rhs: &plasm_core::Value,
     op: plasm_core::PlanPredicateOp,
-) -> bool {
+) -> Result<bool, RowPredicateError> {
     fn number(value: &plasm_core::Value) -> Option<std::borrow::Cow<'_, plasm_core::Value>> {
         use plasm_core::Value;
         if value.is_number() {
@@ -188,9 +209,11 @@ fn compare_ordered(
             .ok()?;
         Some(std::borrow::Cow::Owned(parsed))
     }
-    number(lhs)
-        .zip(number(rhs))
-        .is_some_and(|(l, r)| plasm_core::value_expression::compare(op, &l, &r).unwrap_or(false))
+    let Some((l, r)) = number(lhs).zip(number(rhs)) else {
+        return Err(RowPredicateError::IncomparableOperands);
+    };
+    plasm_core::value_expression::compare(op, &l, &r)
+        .map_err(|_| RowPredicateError::NonFiniteNumber)
 }
 
 #[cfg(test)]
@@ -222,12 +245,15 @@ mod tests {
             &plasm_core::Value::Integer(0),
         )
         .unwrap());
-        assert!(!value_predicate_matches(
-            &plasm_core::Value::String("nope".into()),
-            plasm_core::PlanPredicateOp::Gt,
-            &plasm_core::Value::Integer(0),
-        )
-        .unwrap());
+        assert_eq!(
+            value_predicate_matches(
+                &plasm_core::Value::String("nope".into()),
+                plasm_core::PlanPredicateOp::Gt,
+                &plasm_core::Value::Integer(0),
+            )
+            .unwrap_err(),
+            RowPredicateError::IncomparableOperands
+        );
     }
 
     #[test]
@@ -250,5 +276,24 @@ mod tests {
             &plasm_core::Value::Bool(false),
         )
         .unwrap());
+    }
+
+    #[test]
+    fn malformed_ordered_operands_are_not_silently_treated_as_non_matches() {
+        let error = value_predicate_matches(
+            &plasm_core::Value::String("nope".into()),
+            plasm_core::PlanPredicateOp::Gt,
+            &plasm_core::Value::Integer(0),
+        )
+        .unwrap_err();
+        assert_eq!(error, RowPredicateError::IncomparableOperands);
+
+        let error = value_predicate_matches(
+            &plasm_core::Value::Float(f64::INFINITY),
+            plasm_core::PlanPredicateOp::Gt,
+            &plasm_core::Value::Float(0.0),
+        )
+        .unwrap_err();
+        assert_eq!(error, RowPredicateError::NonFiniteNumber);
     }
 }

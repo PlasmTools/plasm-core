@@ -1,5 +1,5 @@
 //! Explicit semantic serialization: no schema object is serialized wholesale.
-use super::structured::{DomainReference, StructuredCapability};
+use super::structured::{DomainReference, StructuredCapability, StructuredDiscoveryError};
 use crate::schema::{InputFieldSchema, InputFieldWire, InputType, ValueDomainSlot};
 use serde::Serialize;
 
@@ -179,10 +179,12 @@ fn value<'a>(
     view: &'a StructuredCapability<'_>,
     key: &'a crate::ValueDomainKey,
     seen: &mut Vec<&'a str>,
-) -> Result<SemanticValue<'a>, String> {
+) -> Result<SemanticValue<'a>, StructuredDiscoveryError> {
     let (reference, schema) = view.value_by_key(key)?;
     if seen.contains(&reference.key) {
-        return Err("cyclic semantic value items".into());
+        return Err(StructuredDiscoveryError::CyclicValueDomainItems {
+            key: reference.key.to_owned(),
+        });
     }
     seen.push(reference.key);
     let items = schema
@@ -202,7 +204,7 @@ fn value<'a>(
 fn fields<'a>(
     view: &'a StructuredCapability<'_>,
     fields: &'a [InputFieldSchema],
-) -> Result<Vec<SemanticField<'a>>, String> {
+) -> Result<Vec<SemanticField<'a>>, StructuredDiscoveryError> {
     fields
         .iter()
         .map(|field| {
@@ -224,7 +226,7 @@ fn fields<'a>(
 fn shape<'a>(
     view: &'a StructuredCapability<'_>,
     input: &'a InputType,
-) -> Result<Shape<'a>, String> {
+) -> Result<Shape<'a>, StructuredDiscoveryError> {
     Ok(match input {
         InputType::None => Shape::None,
         InputType::Value {
@@ -260,13 +262,13 @@ fn shape<'a>(
                         fields: fields(view, &v.fields)?,
                     })
                 })
-                .collect::<Result<_, String>>()?,
+                .collect::<Result<_, StructuredDiscoveryError>>()?,
         },
     })
 }
 
 impl<'a> SemanticCapability<'a> {
-    pub fn project(view: &'a StructuredCapability<'_>) -> Result<Self, String> {
+    pub fn project(view: &'a StructuredCapability<'_>) -> Result<Self, StructuredDiscoveryError> {
         let cap = view.capability();
         let inputs = view.inputs();
         Ok(Self {
@@ -312,7 +314,7 @@ impl<'a> SemanticCapability<'a> {
                         },
                     })
                 })
-                .collect::<Result<_, String>>()?,
+                .collect::<Result<_, StructuredDiscoveryError>>()?,
         })
     }
 }

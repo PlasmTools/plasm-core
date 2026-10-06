@@ -36,7 +36,8 @@ async fn seeded_host_with_running_op() -> (plasm_agent_core::server_state::Plasm
         run_artifacts: Arc::new(plasm_agent_core::run_artifacts::RunArtifactStore::memory()),
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
-    });
+    })
+    .expect("valid catalog fixture");
 
     let ref_str = "l_AAAAAAAAQACAAAAAAAAAAQ";
     let logical_id = parse_logical_session_wire_ref(ref_str).expect("logical ref");

@@ -130,6 +130,7 @@ fn pokeapi_host_state(
         session_graph_persistence: Some(persistence),
         oss_local_filesystem_defaults: false,
     })
+    .expect("valid catalog fixture")
 }
 
 fn make_engine(base_url: &str) -> ExecutionEngine {

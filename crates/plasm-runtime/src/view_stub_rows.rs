@@ -51,8 +51,8 @@ pub fn stub_query_result(
 ) -> Result<ExecutionResult, RuntimeError> {
     let entity =
         cgs.get_entity(cap.domain.as_str())
-            .ok_or_else(|| RuntimeError::ConfigurationError {
-                message: format!("stub query: unknown entity `{}`", cap.domain),
+            .ok_or_else(|| RuntimeError::EntityUnknown {
+                entity: cap.domain.to_string(),
             })?;
     let mut fields = IndexMap::new();
     for name in field_names_for_stub(cap, entity) {
@@ -119,8 +119,8 @@ pub fn stub_get_result(
 ) -> Result<ExecutionResult, RuntimeError> {
     let entity =
         cgs.get_entity(cap.domain.as_str())
-            .ok_or_else(|| RuntimeError::ConfigurationError {
-                message: format!("stub get: unknown entity `{}`", cap.domain),
+            .ok_or_else(|| RuntimeError::EntityUnknown {
+                entity: cap.domain.to_string(),
             })?;
     let mut fields = IndexMap::new();
     for name in field_names_for_stub(cap, entity) {

@@ -174,7 +174,8 @@ async fn run_source_case(
         run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
-    });
+    })
+    .expect("valid catalog fixture");
     let bundle = match source {
         TestSource::Oracle(program) => {
             crate::compile_plasm_program(&Default::default(), None, &es, "boundary", program)

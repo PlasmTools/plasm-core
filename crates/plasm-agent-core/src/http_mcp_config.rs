@@ -38,9 +38,9 @@ async fn upsert_handler(
     let ps = body.project_slug_resolved().to_string();
     let nm = body.name_resolved().to_string();
     let st_status = body.status_normalized().to_string();
-    let cfg: McpRuntimeConfig = McpRuntimeConfig::try_from(body.clone()).map_err(|e: String| {
+    let cfg: McpRuntimeConfig = McpRuntimeConfig::try_from(body.clone()).map_err(|error| {
         crate::metrics::record_audit_control_plane("mcp.config.upsert", "validation_error");
-        tracing::warn!(message = %e, "mcp config upsert parse");
+        tracing::warn!(error = ?error, "mcp config upsert parse");
         StatusCode::BAD_REQUEST
     })?;
     let config_id = cfg.id;
@@ -84,7 +84,7 @@ async fn upsert_handler(
     .map_err(|e| {
         tracing::warn!(message = %e, "mcp config upsert persist");
         match e {
-            McpConfigRepositoryError::InvalidInput(_) => {
+            McpConfigRepositoryError::EmptyRequiredField { .. } => {
                 crate::metrics::record_audit_control_plane("mcp.config.upsert", "validation_error");
                 StatusCode::BAD_REQUEST
             }

@@ -82,10 +82,10 @@ impl MockServerClient {
 
         if !response.status().is_success() {
             return Err(RuntimeError::RequestError {
-                message: format!(
-                    "Failed to create MockServer expectation: {}",
-                    response.status()
-                ),
+                source: crate::RequestFailure::MockServer {
+                    operation: crate::MockServerOperation::CreateExpectation,
+                    status: response.status().as_u16(),
+                },
                 attempts: 1,
                 status: None,
                 body: None,
@@ -108,10 +108,10 @@ impl MockServerClient {
 
         if !response.status().is_success() {
             return Err(RuntimeError::RequestError {
-                message: format!(
-                    "Failed to clear MockServer expectations: {}",
-                    response.status()
-                ),
+                source: crate::RequestFailure::MockServer {
+                    operation: crate::MockServerOperation::ClearExpectations,
+                    status: response.status().as_u16(),
+                },
                 attempts: 1,
                 status: None,
                 body: None,
@@ -142,7 +142,10 @@ impl MockServerClient {
 
         if !response.status().is_success() {
             return Err(RuntimeError::RequestError {
-                message: format!("Failed to reset MockServer: {}", response.status()),
+                source: crate::RequestFailure::MockServer {
+                    operation: crate::MockServerOperation::Reset,
+                    status: response.status().as_u16(),
+                },
                 attempts: 1,
                 status: None,
                 body: None,

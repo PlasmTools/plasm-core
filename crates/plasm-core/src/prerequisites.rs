@@ -16,6 +16,94 @@ use crate::{CapabilityKind, FieldType, NamedValueSchema, CGS};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+pub enum PrerequisiteError {
+    #[error("prerequisite contract is invalid")]
+    InvalidContract,
+    #[error("prerequisite contract is not declared")]
+    MissingContract,
+    #[error("prerequisite capability is not declared")]
+    MissingCapability,
+    #[error("prerequisite value domain is not declared")]
+    MissingValueDomain,
+    #[error("provider ports do not exactly match the contract")]
+    ProviderPortMismatch,
+    #[error("provider input is duplicated")]
+    DuplicateProviderInput,
+    #[error("provider input conflicts with a requirement binding")]
+    ConflictingProviderInput,
+    #[error("provider omits a required capability input")]
+    MissingRequiredProviderInput,
+    #[error("provider output must be an entity or collection")]
+    InvalidProviderOutputKind,
+    #[error("provider output entity or field is missing")]
+    MissingProviderOutput,
+    #[error("provider output field is not populated by the capability")]
+    ProviderDoesNotPopulateOutput,
+    #[error("requirement identifier is empty or duplicated")]
+    InvalidRequirementId,
+    #[error("requirement arguments do not exactly match contract inputs")]
+    RequirementArgumentMismatch,
+    #[error("requirement input is bound more than once")]
+    DuplicateRequirementInput,
+    #[error("requirement output is bound more than once")]
+    DuplicateRequirementOutput,
+    #[error("contract output is not declared")]
+    MissingContractOutput,
+    #[error("consumer entity or identity field is missing")]
+    MissingConsumerIdentity,
+    #[error("prerequisite identity does not name a valid target identity")]
+    InvalidConsumerIdentity,
+    #[error("requirement output source is not declared")]
+    MissingRequirementOutputSource,
+    #[error("requirement output port is not declared")]
+    MissingRequirementOutputPort,
+    #[error("constant argument does not match its declared scalar type")]
+    ConstantTypeMismatch,
+    #[error("prerequisite argument graph contains a cycle")]
+    ArgumentCycle,
+    #[error("provider input shape is unsupported")]
+    UnsupportedProviderInput,
+    #[error("prerequisite value domains are incompatible")]
+    ValueDomainMismatch,
+    #[error("input lane or path is invalid")]
+    InvalidInputPath,
+    #[error("input field is not declared")]
+    MissingInputField,
+    #[error("consumer catalog is not present")]
+    MissingConsumerCatalog,
+    #[error("prerequisite catalog is not present")]
+    MissingPrerequisiteCatalog,
+    #[error("provider catalog is not present or authorized")]
+    UnauthorizedProviderCatalog,
+    #[error("deployment binding is missing")]
+    MissingDeploymentBinding,
+    #[error("deployment contains a duplicate prerequisite binding")]
+    DuplicateDeploymentBinding,
+    #[error("deployed provider contract is incompatible with the requirement")]
+    IncompatibleProviderContract,
+    #[error("selected input source is not a projected producer")]
+    InvalidInputSource,
+    #[error("input-source provider entity or field is missing")]
+    MissingInputSourceEntity,
+    #[error("prerequisite capability graph contains a cycle")]
+    CapabilityCycle,
+    #[error("prerequisite resolution references an undeclared requirement or output")]
+    MissingResolutionReference,
+    #[error("prerequisite output could not be resolved")]
+    UnresolvedOutput,
+    #[error("RA-17: prerequisite seat value came from catalog `{source_catalog}`, but requires deployed provider `{provider_catalog}:{provider}`")]
+    WrongDeployedProviderSource {
+        source_catalog: String,
+        provider_catalog: String,
+        provider: String,
+    },
+    #[error("one program binding spans seats deployed to different providers")]
+    SharedBindingAcrossProviders,
+    #[error("prerequisite identity could not be serialized")]
+    Serialization,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InputLane {
@@ -242,10 +330,10 @@ impl PrerequisiteCatalog {
         self.contracts.is_empty() && self.providers.is_empty() && self.requirements.is_empty()
     }
 
-    pub fn validate(&self, cgs: &CGS) -> Result<(), String> {
+    pub fn validate(&self, cgs: &CGS) -> Result<(), PrerequisiteError> {
         for (id, contract) in &self.contracts {
             if id.trim().is_empty() || contract.version == 0 || contract.outputs.is_empty() {
-                return Err(format!("invalid prerequisite contract {id}"));
+                return Err(PrerequisiteError::InvalidContract);
             }
             for value in contract.inputs.values().chain(contract.outputs.values()) {
                 value_type(cgs, value)?;
@@ -257,28 +345,24 @@ impl PrerequisiteCatalog {
             if contract.inputs.keys().ne(provider.inputs.keys())
                 || contract.outputs.keys().ne(provider.outputs.keys())
             {
-                return Err(format!(
-                    "provider {id} must map every contract port exactly once"
-                ));
+                return Err(PrerequisiteError::ProviderPortMismatch);
             }
             let mut supplied: BTreeSet<InputPath> = BTreeSet::new();
             for input in provider.inputs.values() {
                 if !supplied.insert(input.clone()) {
-                    return Err(format!("duplicate provider input on {id}"));
+                    return Err(PrerequisiteError::DuplicateProviderInput);
                 }
             }
             if let Some(requirements) = self.requirements.get(&provider.capability) {
                 for binding in requirements.iter().flat_map(|r| &r.bindings) {
                     if !supplied.insert(binding.input.clone()) {
-                        return Err(format!("conflicting provider input on {id}"));
+                        return Err(PrerequisiteError::ConflictingProviderInput);
                     }
                 }
             }
             for required in required_inputs(cap)? {
                 if !supplied.contains(&required) {
-                    return Err(format!(
-                        "provider {id} has unsupplied required input {required:?}"
-                    ));
+                    return Err(PrerequisiteError::MissingRequiredProviderInput);
                 }
             }
             let output_entity = match cap.output_schema.as_ref().map(|o| &o.output_type) {
@@ -286,11 +370,7 @@ impl PrerequisiteCatalog {
                 | Some(crate::schema::OutputType::Collection { entity_type, .. }) => {
                     entity_type.as_str()
                 }
-                _ => {
-                    return Err(format!(
-                        "provider {id} must produce a declared entity or collection"
-                    ))
-                }
+                _ => return Err(PrerequisiteError::InvalidProviderOutputKind),
             };
             for (port, input) in &provider.inputs {
                 same_type(
@@ -303,20 +383,19 @@ impl PrerequisiteCatalog {
                 let entity = cgs
                     .entities
                     .get(output_entity)
-                    .ok_or("provider entity missing")?;
+                    .ok_or(PrerequisiteError::MissingProviderOutput)?;
                 let field = entity
                     .fields
                     .get(output.as_str())
-                    .ok_or_else(|| format!("provider output {output} missing"))?;
+                    .ok_or(PrerequisiteError::MissingProviderOutput)?;
                 if !cap.provides.iter().any(|name| name.as_str() == output) {
-                    return Err(format!(
-                        "provider {} does not populate {output}",
-                        provider.capability
-                    ));
+                    return Err(PrerequisiteError::ProviderDoesNotPopulateOutput);
                 }
                 same_type(
                     value_type(cgs, &contract.outputs[port])?,
-                    field.named_value(cgs).map_err(|e| e.to_string())?,
+                    field
+                        .named_value(cgs)
+                        .map_err(|_| PrerequisiteError::MissingProviderOutput)?,
                     id,
                 )?;
             }
@@ -327,30 +406,24 @@ impl PrerequisiteCatalog {
             let mut bound = BTreeSet::new();
             for requirement in requirements {
                 if requirement.id.is_empty() || !ids.insert(&requirement.id) {
-                    return Err(format!("duplicate or empty requirement on {cap_name}"));
+                    return Err(PrerequisiteError::InvalidRequirementId);
                 }
                 let contract = self.contract(&requirement.contract)?;
                 if contract.inputs.keys().ne(requirement.arguments.keys()) {
-                    return Err(format!(
-                        "requirement {} must supply every contract input",
-                        requirement.id
-                    ));
+                    return Err(PrerequisiteError::RequirementArgumentMismatch);
                 }
                 let mut bound_outputs = BTreeSet::new();
                 for binding in &requirement.bindings {
                     if !bound.insert(&binding.input) {
-                        return Err(format!("duplicate input binding on {cap_name}"));
+                        return Err(PrerequisiteError::DuplicateRequirementInput);
                     }
                     if !bound_outputs.insert(&binding.output) {
-                        return Err(format!(
-                            "requirement {} binds contract output {} to more than one input",
-                            requirement.id, binding.output
-                        ));
+                        return Err(PrerequisiteError::DuplicateRequirementOutput);
                     }
                     let value = contract
                         .outputs
                         .get(&binding.output)
-                        .ok_or("unknown contract output")?;
+                        .ok_or(PrerequisiteError::MissingContractOutput)?;
                     same_type(
                         value_type(cgs, value)?,
                         input_type(cgs, cap, &binding.input)?,
@@ -363,7 +436,7 @@ impl PrerequisiteCatalog {
                         ArgumentSource::ConsumerIdentity { field } => {
                             let entity = cgs
                                 .get_entity(cap.domain.as_str())
-                                .ok_or("missing consumer entity")?;
+                                .ok_or(PrerequisiteError::MissingConsumerIdentity)?;
                             if matches!(
                                 cap.kind,
                                 crate::schema::CapabilityKind::Create
@@ -372,14 +445,14 @@ impl PrerequisiteCatalog {
                             ) || (field.as_str() != entity.id_field.as_str()
                                 && !entity.key_vars.iter().any(|key| key.as_str() == field))
                             {
-                                return Err(format!("{cap_name}: prerequisite identity must name an existing target identity field"));
+                                return Err(PrerequisiteError::InvalidConsumerIdentity);
                             }
                             let value = entity
                                 .fields
                                 .get(field.as_str())
-                                .ok_or("missing consumer identity field")?
+                                .ok_or(PrerequisiteError::MissingConsumerIdentity)?
                                 .named_value(cgs)
-                                .map_err(|e| e.to_string())?;
+                                .map_err(|_| PrerequisiteError::MissingConsumerIdentity)?;
                             // A complete local identity inhabits its entity-reference domain.
                             // A component of a compound key does not.
                             let identity_reference = entity.key_vars.len() <= 1
@@ -402,12 +475,12 @@ impl PrerequisiteCatalog {
                             let other = requirements
                                 .iter()
                                 .find(|r| &r.id == other)
-                                .ok_or("unknown prerequisite output source")?;
+                                .ok_or(PrerequisiteError::MissingRequirementOutputSource)?;
                             let other_contract = self.contract(&other.contract)?;
                             let value = other_contract
                                 .outputs
                                 .get(output)
-                                .ok_or("unknown prerequisite output port")?;
+                                .ok_or(PrerequisiteError::MissingRequirementOutputPort)?;
                             same_type(expected, value_type(cgs, value)?, cap_name)?;
                         }
                         ArgumentSource::Constant { value } => {
@@ -422,13 +495,19 @@ impl PrerequisiteCatalog {
                                 _ => false,
                             };
                             if !compatible {
-                                return Err(format!("constant type mismatch on {cap_name}.{port}"));
+                                return Err(PrerequisiteError::ConstantTypeMismatch);
                             }
                             if let Some(value) = value.as_str() {
-                                expected.domain.validate_string_value(value)?;
+                                expected
+                                    .domain
+                                    .validate_string_value(value)
+                                    .map_err(|_| PrerequisiteError::ConstantTypeMismatch)?;
                             }
                             if let Some(value) = value.as_f64() {
-                                expected.domain.validate_number_value(value)?;
+                                expected
+                                    .domain
+                                    .validate_number_value(value)
+                                    .map_err(|_| PrerequisiteError::ConstantTypeMismatch)?;
                             }
                         }
                     }
@@ -441,10 +520,10 @@ impl PrerequisiteCatalog {
         Ok(())
     }
 
-    fn contract(&self, id: &str) -> Result<&Contract, String> {
+    fn contract(&self, id: &str) -> Result<&Contract, PrerequisiteError> {
         self.contracts
             .get(id)
-            .ok_or_else(|| format!("unknown prerequisite contract {id}"))
+            .ok_or(PrerequisiteError::MissingContract)
     }
 }
 
@@ -452,14 +531,14 @@ fn validate_argument_cycles<'a>(
     requirements: &'a [Requirement],
     id: &'a str,
     visiting: &mut BTreeSet<&'a str>,
-) -> Result<(), String> {
+) -> Result<(), PrerequisiteError> {
     if !visiting.insert(id) {
-        return Err(format!("prerequisite argument cycle at {id}"));
+        return Err(PrerequisiteError::ArgumentCycle);
     }
     let requirement = requirements
         .iter()
         .find(|r| r.id == id)
-        .ok_or("unknown requirement")?;
+        .ok_or(PrerequisiteError::MissingResolutionReference)?;
     for source in requirement.arguments.values() {
         match source {
             ArgumentSource::RequirementOutput { requirement, .. } => {
@@ -480,13 +559,13 @@ fn validate_argument_cycles<'a>(
     Ok(())
 }
 
-fn required_inputs(cap: &CapabilitySchema) -> Result<Vec<InputPath>, String> {
+fn required_inputs(cap: &CapabilitySchema) -> Result<Vec<InputPath>, PrerequisiteError> {
     fn collect(
         fields: &[InputFieldSchema],
         lane: &InputLane,
         prefix: &[String],
         out: &mut Vec<InputPath>,
-    ) -> Result<(), String> {
+    ) -> Result<(), PrerequisiteError> {
         for field in fields.iter().filter(|f| f.required && f.default.is_none()) {
             let mut path = prefix.to_vec();
             path.push(field.name.clone());
@@ -501,7 +580,7 @@ fn required_inputs(cap: &CapabilitySchema) -> Result<Vec<InputPath>, String> {
                         lane: lane.clone(),
                         path,
                     }),
-                    _ => return Err("provider requires an unsupported structured input".into()),
+                    _ => return Err(PrerequisiteError::UnsupportedProviderInput),
                 },
             }
         }
@@ -529,30 +608,30 @@ fn required_inputs(cap: &CapabilitySchema) -> Result<Vec<InputPath>, String> {
             match &schema.input_type {
                 InputType::None => {}
                 InputType::Object { fields, .. } => collect(fields, &lane, &[], &mut out)?,
-                _ => return Err("provider requires an unsupported root input".into()),
+                _ => return Err(PrerequisiteError::UnsupportedProviderInput),
             }
         }
     }
     Ok(out)
 }
 
-fn capability<'a>(cgs: &'a CGS, id: &str) -> Result<&'a CapabilitySchema, String> {
+fn capability<'a>(cgs: &'a CGS, id: &str) -> Result<&'a CapabilitySchema, PrerequisiteError> {
     cgs.capabilities
         .get(id)
-        .ok_or_else(|| format!("unknown prerequisite capability {id}"))
+        .ok_or(PrerequisiteError::MissingCapability)
 }
 
-fn value_type<'a>(cgs: &'a CGS, id: &str) -> Result<&'a NamedValueSchema, String> {
+fn value_type<'a>(cgs: &'a CGS, id: &str) -> Result<&'a NamedValueSchema, PrerequisiteError> {
     cgs.values
         .get(id)
-        .ok_or_else(|| format!("unknown prerequisite value domain {id}"))
+        .ok_or(PrerequisiteError::MissingValueDomain)
 }
 
 fn same_type(
     left: &NamedValueSchema,
     right: &NamedValueSchema,
-    location: &str,
-) -> Result<(), String> {
+    _location: &str,
+) -> Result<(), PrerequisiteError> {
     if left.domain != right.domain
         || left.field_type != right.field_type
         || left.array_items != right.array_items
@@ -560,7 +639,7 @@ fn same_type(
         || left.allowed_values != right.allowed_values
         || left.currency != right.currency
     {
-        return Err(format!("prerequisite value domain mismatch at {location}"));
+        return Err(PrerequisiteError::ValueDomainMismatch);
     }
     Ok(())
 }
@@ -569,7 +648,7 @@ fn input_type<'a>(
     cgs: &'a CGS,
     cap: &'a CapabilitySchema,
     input: &InputPath,
-) -> Result<&'a NamedValueSchema, String> {
+) -> Result<&'a NamedValueSchema, PrerequisiteError> {
     if input.lane == InputLane::Selection {
         if let Some(derived) = &cap.derived {
             if input.path == [derived.identity_field.clone()] {
@@ -577,9 +656,9 @@ fn input_type<'a>(
                     .entities
                     .get(cap.domain.as_str())
                     .and_then(|e| e.fields.get(derived.identity_field.as_str()))
-                    .ok_or("missing derived identity field")?
+                    .ok_or(PrerequisiteError::InvalidInputPath)?
                     .named_value(cgs)
-                    .map_err(|e| e.to_string());
+                    .map_err(|_| PrerequisiteError::InvalidInputPath);
             }
         }
     }
@@ -593,9 +672,13 @@ fn input_type<'a>(
             } else {
                 &cap.inputs.payload
             };
-            match &schema.as_ref().ok_or("missing input lane")?.input_type {
+            match &schema
+                .as_ref()
+                .ok_or(PrerequisiteError::InvalidInputPath)?
+                .input_type
+            {
                 InputType::Object { fields, .. } => fields,
-                _ => return Err("prerequisite input path must address an object field".into()),
+                _ => return Err(PrerequisiteError::InvalidInputPath),
             }
         }
     };
@@ -606,21 +689,25 @@ fn descend_input<'a>(
     cgs: &'a CGS,
     fields: &'a [InputFieldSchema],
     path: &[String],
-) -> Result<&'a NamedValueSchema, String> {
-    let (head, rest) = path.split_first().ok_or("empty prerequisite input path")?;
+) -> Result<&'a NamedValueSchema, PrerequisiteError> {
+    let (head, rest) = path
+        .split_first()
+        .ok_or(PrerequisiteError::InvalidInputPath)?;
     let field = fields
         .iter()
         .find(|f| &f.name == head)
-        .ok_or_else(|| format!("missing input field {head}"))?;
+        .ok_or(PrerequisiteError::MissingInputField)?;
     if rest.is_empty() {
-        return field.named_value(cgs).map_err(|e| e.to_string());
+        return field
+            .named_value(cgs)
+            .map_err(|_| PrerequisiteError::InvalidInputPath);
     }
     match &field.wire {
         InputFieldWire::Inline(ty) => match ty.as_ref() {
             InputType::Object { fields, .. } => descend_input(cgs, fields, rest),
-            _ => Err("prerequisite path traverses non-object input".into()),
+            _ => Err(PrerequisiteError::InvalidInputPath),
         },
-        _ => Err("prerequisite path traverses scalar input".into()),
+        _ => Err(PrerequisiteError::InvalidInputPath),
     }
 }
 
@@ -637,14 +724,6 @@ pub struct SeatWiring {
 /// `provider_catalog:provider` — the identity RA-17 names in rejects.
 pub fn deployed_provider_label(catalog: &str, provider: &str) -> String {
     format!("{catalog}:{provider}")
-}
-
-fn seat_wire_name(input: &InputPath) -> String {
-    input
-        .path
-        .last()
-        .cloned()
-        .unwrap_or_else(|| format!("{:?}", input.lane).to_ascii_lowercase())
 }
 
 fn seat_binds_param(input: &InputPath, param: &str) -> bool {
@@ -717,13 +796,13 @@ pub fn validate_deployed_prerequisite_seats(
     deployments: &DeploymentBindings,
     consumer: &CapabilityRef,
     wirings: &[SeatWiring],
-) -> Result<(), String> {
+) -> Result<(), PrerequisiteError> {
     if wirings.is_empty() {
         return Ok(());
     }
     let cgs = *catalogs
         .get(&consumer.catalog)
-        .ok_or_else(|| format!("missing consumer catalog {}", consumer.catalog))?;
+        .ok_or(PrerequisiteError::MissingConsumerCatalog)?;
     let Some(requirements) = cgs.prerequisites.requirements.get(&consumer.capability) else {
         return Ok(());
     };
@@ -762,11 +841,11 @@ pub fn validate_deployed_prerequisite_seats(
         };
         if let Some(src) = w.source_catalog.as_deref() {
             if src != *pcat {
-                let seat = seat_wire_name(&w.input);
-                return Err(format!(
-                    "RA-17: prerequisite seat `{seat}` requires provider `{}`; bound value comes from catalog `{src}`",
-                    deployed_provider_label(pcat, provider)
-                ));
+                return Err(PrerequisiteError::WrongDeployedProviderSource {
+                    source_catalog: src.to_owned(),
+                    provider_catalog: (*pcat).to_owned(),
+                    provider: (*provider).to_owned(),
+                });
             }
         }
         if let Some(name) = w.binding.as_deref() {
@@ -776,25 +855,13 @@ pub fn validate_deployed_prerequisite_seats(
                 .push((&w.input, *pcat, *provider));
         }
     }
-    for (name, seats) in by_binding {
+    for (_name, seats) in by_binding {
         let mut providers = BTreeSet::new();
         for (_, pcat, provider) in &seats {
             providers.insert((*pcat, *provider));
         }
         if providers.len() > 1 {
-            let labels: Vec<String> = providers
-                .iter()
-                .map(|(c, p)| deployed_provider_label(c, p))
-                .collect();
-            let seat_names: Vec<String> = seats
-                .iter()
-                .map(|(inp, _, _)| seat_wire_name(inp))
-                .collect();
-            return Err(format!(
-                "RA-17: prerequisite seats `{}` require distinct providers (`{}`); they cannot share binding `{name}`",
-                seat_names.join("` and `"),
-                labels.join("` vs `"),
-            ));
+            return Err(PrerequisiteError::SharedBindingAcrossProviders);
         }
     }
     Ok(())
@@ -808,7 +875,7 @@ pub fn prerequisite_closure(
     bindings: &DeploymentBindings,
     capabilities: &[CapabilityRef],
     allowed: &BTreeSet<String>,
-) -> Result<PrerequisiteClosure, String> {
+) -> Result<PrerequisiteClosure, PrerequisiteError> {
     prerequisite_closure_with_input_sources(catalogs, bindings, capabilities, &[], allowed)
 }
 
@@ -823,7 +890,7 @@ pub fn prerequisite_closure_with_selected_sources<F>(
     selected_input_sources: &[CapabilityRef],
     allowed: &BTreeSet<String>,
     source_permitted: F,
-) -> Result<PrerequisiteClosure, String>
+) -> Result<PrerequisiteClosure, PrerequisiteError>
 where
     F: Fn(&CapabilityRef) -> bool,
 {
@@ -834,9 +901,7 @@ where
             .collect();
     for source in selected_input_sources {
         if !projected.contains(source) {
-            return Err(format!(
-                "selected input source is not a projected producer: {source:?}"
-            ));
+            return Err(PrerequisiteError::InvalidInputSource);
         }
     }
     let input_sources: Vec<_> = selected_input_sources
@@ -854,12 +919,12 @@ fn prerequisite_closure_with_input_sources(
     business: &[CapabilityRef],
     input_sources: &[CapabilityRef],
     allowed: &BTreeSet<String>,
-) -> Result<PrerequisiteClosure, String> {
+) -> Result<PrerequisiteClosure, PrerequisiteError> {
     let mut binding_index = BTreeMap::new();
     for binding in &bindings.bindings {
         let key = (binding.consumer.clone(), binding.requirement.clone());
         if binding_index.insert(key, binding).is_some() {
-            return Err("duplicate deployment prerequisite binding".into());
+            return Err(PrerequisiteError::DuplicateDeploymentBinding);
         }
     }
     let mut walker = ClosureWalker {
@@ -905,7 +970,7 @@ pub fn project_input_source_candidates<F>(
     catalogs: &BTreeMap<String, &CGS>,
     business: &[CapabilityRef],
     source_permitted: &F,
-) -> Result<Vec<InputSourceCandidate>, String>
+) -> Result<Vec<InputSourceCandidate>, PrerequisiteError>
 where
     F: Fn(&CapabilityRef) -> bool,
 {
@@ -913,7 +978,7 @@ where
     for consumer in business {
         let consumer_cgs = *catalogs
             .get(&consumer.catalog)
-            .ok_or("missing input-source consumer catalog")?;
+            .ok_or(PrerequisiteError::MissingConsumerCatalog)?;
         let consumer_cap = capability(consumer_cgs, &consumer.capability)?;
         if let Some(receiver) = consumer_cap.receiver_entity() {
             let entity = &consumer_cgs.entities[receiver];
@@ -984,7 +1049,7 @@ where
                     let entity = provider_cgs
                         .entities
                         .get(&provider_cap.domain)
-                        .ok_or("input-source provider entity missing")?;
+                        .ok_or(PrerequisiteError::MissingInputSourceEntity)?;
                     for output_field in readable_fields(
                         provider_cgs,
                         provider_catalog,
@@ -994,8 +1059,9 @@ where
                         let Some(field) = entity.fields.get(output_field.as_str()) else {
                             continue;
                         };
-                        let provider_value =
-                            field.named_value(provider_cgs).map_err(|e| e.to_string())?;
+                        let provider_value = field
+                            .named_value(provider_cgs)
+                            .map_err(|_| PrerequisiteError::MissingInputSourceEntity)?;
                         let Some(collect) = projected_type_compatibility(
                             consumer_cgs,
                             provider_cgs,
@@ -1093,7 +1159,7 @@ fn project_membership_evidence<F>(
     catalogs: &BTreeMap<String, &CGS>,
     sources: &BTreeSet<CapabilityRef>,
     source_permitted: &F,
-) -> Result<BTreeMap<CapabilityRef, BTreeSet<InputSourceMembership>>, String>
+) -> Result<BTreeMap<CapabilityRef, BTreeSet<InputSourceMembership>>, PrerequisiteError>
 where
     F: Fn(&CapabilityRef) -> bool,
 {
@@ -1111,7 +1177,9 @@ where
             let Some(field) = source_entity.fields.get(source_field.as_str()) else {
                 continue;
             };
-            let value = field.named_value(source_cgs).map_err(|e| e.to_string())?;
+            let value = field
+                .named_value(source_cgs)
+                .map_err(|_| PrerequisiteError::MissingInputSourceEntity)?;
             if !matches!(
                 value.domain.profile,
                 Some(crate::value_domain::ProfileId::Email | crate::value_domain::ProfileId::E164)
@@ -1138,7 +1206,9 @@ where
                         let Some(other) = entity.fields.get(output_field.as_str()) else {
                             continue;
                         };
-                        let other_value = other.named_value(cgs).map_err(|e| e.to_string())?;
+                        let other_value = other
+                            .named_value(cgs)
+                            .map_err(|_| PrerequisiteError::MissingInputSourceEntity)?;
                         let references_identity = value.field_type.entity_ref_entry_id()
                             == Some(catalog.as_str())
                             && value.field_type.entity_ref_target() == Some(cap.domain.as_str())
@@ -1320,7 +1390,7 @@ pub(crate) fn semantic_value_type_eq(
 fn input_value_ref<'a>(
     capability: &'a CapabilitySchema,
     input: &InputPath,
-) -> Result<Option<&'a crate::ValueDomainKey>, String> {
+) -> Result<Option<&'a crate::ValueDomainKey>, PrerequisiteError> {
     if capability.derived.as_ref().is_some_and(|derived| {
         input.lane == InputLane::Selection && input.path == [derived.identity_field.clone()]
     }) {
@@ -1336,9 +1406,13 @@ fn input_value_ref<'a>(
             } else {
                 &capability.inputs.payload
             };
-            match &schema.as_ref().ok_or("missing input lane")?.input_type {
+            match &schema
+                .as_ref()
+                .ok_or(PrerequisiteError::InvalidInputPath)?
+                .input_type
+            {
                 InputType::Object { fields, .. } => fields,
-                _ => return Err("input-source path must address an object field".into()),
+                _ => return Err(PrerequisiteError::InvalidInputPath),
             }
         }
     };
@@ -1348,12 +1422,14 @@ fn input_value_ref<'a>(
 fn descend_input_value_ref<'a>(
     fields: &'a [InputFieldSchema],
     path: &[String],
-) -> Result<Option<&'a crate::ValueDomainKey>, String> {
-    let (head, rest) = path.split_first().ok_or("empty input-source path")?;
+) -> Result<Option<&'a crate::ValueDomainKey>, PrerequisiteError> {
+    let (head, rest) = path
+        .split_first()
+        .ok_or(PrerequisiteError::InvalidInputPath)?;
     let field = fields
         .iter()
         .find(|field| &field.name == head)
-        .ok_or_else(|| format!("missing input field {head}"))?;
+        .ok_or(PrerequisiteError::MissingInputField)?;
     if rest.is_empty() {
         return match &field.wire {
             InputFieldWire::Registry(value_ref) => Ok(Some(value_ref)),
@@ -1363,9 +1439,9 @@ fn descend_input_value_ref<'a>(
     match &field.wire {
         InputFieldWire::Inline(input) => match input.as_ref() {
             InputType::Object { fields, .. } => descend_input_value_ref(fields, rest),
-            _ => Err("input-source path traverses non-object input".into()),
+            _ => Err(PrerequisiteError::InvalidInputPath),
         },
-        InputFieldWire::Registry(_) => Err("input-source path traverses scalar input".into()),
+        InputFieldWire::Registry(_) => Err(PrerequisiteError::InvalidInputPath),
     }
 }
 
@@ -1392,20 +1468,17 @@ impl ClosureWalker<'_> {
         consumer: &CapabilityRef,
         instance: Option<&str>,
         inputs: &BTreeMap<InputPath, ResolvedArgument>,
-    ) -> Result<(), String> {
+    ) -> Result<(), PrerequisiteError> {
         if !self.allowed.contains(&consumer.catalog) {
-            return Err(format!(
-                "prerequisite catalog not permitted: {}",
-                consumer.catalog
-            ));
+            return Err(PrerequisiteError::UnauthorizedProviderCatalog);
         }
         if !self.visiting.insert(consumer.clone()) {
-            return Err(format!("prerequisite capability cycle: {consumer:?}"));
+            return Err(PrerequisiteError::CapabilityCycle);
         }
         let cgs = *self
             .catalogs
             .get(&consumer.catalog)
-            .ok_or("missing prerequisite catalog")?;
+            .ok_or(PrerequisiteError::MissingPrerequisiteCatalog)?;
         capability(cgs, &consumer.capability)?;
         cgs.prerequisites.validate(cgs)?;
         let requirements = cgs
@@ -1440,38 +1513,33 @@ impl ClosureWalker<'_> {
         requirements: &[Requirement],
         requirement: &Requirement,
         resolution: &mut RequirementResolutionState,
-    ) -> Result<(String, BTreeMap<String, String>), String> {
+    ) -> Result<(String, BTreeMap<String, String>), PrerequisiteError> {
         if let Some(result) = resolution.resolved.get(&requirement.id) {
             return Ok(result.clone());
         }
         if !resolution.visiting.insert(requirement.id.clone()) {
-            return Err("prerequisite argument cycle".into());
+            return Err(PrerequisiteError::ArgumentCycle);
         }
         let cgs = *self
             .catalogs
             .get(&consumer.catalog)
-            .ok_or("missing consumer catalog")?;
+            .ok_or(PrerequisiteError::MissingConsumerCatalog)?;
         let binding = *self
             .bindings
             .get(&(consumer.clone(), requirement.id.clone()))
-            .ok_or_else(|| {
-                format!(
-                    "missing deployment binding: {consumer:?}/{}",
-                    requirement.id
-                )
-            })?;
+            .ok_or(PrerequisiteError::MissingDeploymentBinding)?;
         if !self.allowed.contains(&binding.provider_catalog) {
-            return Err("provider catalog not permitted".into());
+            return Err(PrerequisiteError::UnauthorizedProviderCatalog);
         }
         let provider_cgs = *self
             .catalogs
             .get(&binding.provider_catalog)
-            .ok_or("missing provider catalog")?;
+            .ok_or(PrerequisiteError::UnauthorizedProviderCatalog)?;
         let provider = provider_cgs
             .prerequisites
             .providers
             .get(&binding.provider)
-            .ok_or("missing declared provider")?
+            .ok_or(PrerequisiteError::MissingCapability)?
             .clone();
         let required = cgs.prerequisites.contract(&requirement.contract)?;
         let supplied = provider_cgs.prerequisites.contract(&provider.contract)?;
@@ -1480,7 +1548,7 @@ impl ClosureWalker<'_> {
             || required.inputs.keys().ne(supplied.inputs.keys())
             || required.outputs.keys().ne(supplied.outputs.keys())
         {
-            return Err("incompatible provider contract".into());
+            return Err(PrerequisiteError::IncompatibleProviderContract);
         }
         for (port, value) in &required.inputs {
             same_type(
@@ -1515,7 +1583,7 @@ impl ClosureWalker<'_> {
                 let other = requirements
                     .iter()
                     .find(|r| r.id == id)
-                    .ok_or("unknown argument requirement")?;
+                    .ok_or(PrerequisiteError::MissingResolutionReference)?;
                 let (instance, outputs) = self.resolve_requirement(
                     consumer,
                     consumer_instance,
@@ -1528,7 +1596,7 @@ impl ClosureWalker<'_> {
                     instance,
                     field: outputs
                         .get(output)
-                        .ok_or("unknown provider output")?
+                        .ok_or(PrerequisiteError::MissingResolutionReference)?
                         .clone(),
                 }
             } else {
@@ -1550,7 +1618,7 @@ impl ClosureWalker<'_> {
                             input: input.clone(),
                         }),
                     ArgumentSource::RequirementOutput { .. } => {
-                        return Err("unresolved prerequisite output".into())
+                        return Err(PrerequisiteError::UnresolvedOutput)
                     }
                 }
             };
@@ -1558,7 +1626,7 @@ impl ClosureWalker<'_> {
         }
         let identity =
             serde_json::to_vec(&(&binding.provider_catalog, &binding.provider, &arguments))
-                .map_err(|e| e.to_string())?;
+                .map_err(|_| PrerequisiteError::Serialization)?;
         let id = crate::catalog_discovery::content_hash(&identity);
         let provider_ref = CapabilityRef {
             catalog: binding.provider_catalog.clone(),
@@ -2427,11 +2495,10 @@ mod tests {
             .unwrap()
             .inputs
             .clear();
-        assert!(cgs
-            .prerequisites
-            .validate(&cgs)
-            .unwrap_err()
-            .contains("unsupplied required input"));
+        assert_eq!(
+            cgs.prerequisites.validate(&cgs).unwrap_err(),
+            PrerequisiteError::MissingRequiredProviderInput
+        );
     }
 
     #[test]
@@ -2509,11 +2576,10 @@ mod tests {
                 input: requirement.bindings[0].input.clone(),
             },
         );
-        assert!(cgs
-            .prerequisites
-            .validate(&cgs)
-            .unwrap_err()
-            .contains("argument cycle"));
+        assert_eq!(
+            cgs.prerequisites.validate(&cgs).unwrap_err(),
+            PrerequisiteError::ArgumentCycle
+        );
     }
 
     fn dual_session_catalogs() -> (CGS, CGS) {
@@ -2538,10 +2604,7 @@ mod tests {
         requirements[0].bindings.push(extra);
         requirements.remove(1);
         let err = consumer.prerequisites.validate(&consumer).unwrap_err();
-        assert!(
-            err.contains("binds contract output token to more than one input"),
-            "collapse must fail validate: {err}"
-        );
+        assert_eq!(err, PrerequisiteError::DuplicateRequirementOutput);
     }
 
     #[test]
@@ -2681,16 +2744,9 @@ mod tests {
         )
         .expect_err("foreign catalog on source seat");
         assert!(
-            err.contains("source:session"),
-            "reject must name required provider:\n{err}"
-        );
-        assert!(
-            err.contains("consumer"),
-            "reject must name the foreign catalog:\n{err}"
-        );
-        assert!(
-            err.contains("source_access_token"),
-            "reject must name the seat:\n{err}"
+            matches!(err, PrerequisiteError::WrongDeployedProviderSource {
+            source_catalog, provider_catalog, provider
+        } if source_catalog == "consumer" && provider_catalog == "source" && provider == "session")
         );
     }
 
@@ -2717,11 +2773,7 @@ mod tests {
             ],
         )
         .expect_err("same binding on two providers");
-        assert!(
-            err.contains("source:session") && err.contains("consumer:session"),
-            "reject must name both providers:\n{err}"
-        );
-        assert!(err.contains("`sw`"), "reject must name the binding:\n{err}");
+        assert_eq!(err, PrerequisiteError::SharedBindingAcrossProviders);
     }
 
     #[test]

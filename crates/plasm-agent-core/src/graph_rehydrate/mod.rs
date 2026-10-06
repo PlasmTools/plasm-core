@@ -22,3 +22,4 @@ pub(crate) use rehydrator::GraphSurfaceRehydrator;
 pub(crate) use relation_embed::{
     collect_all_embedded_relation_targets, wire_rows_for_embed_entities, RelationEmbedSnapshot,
 };
+pub use walk::GraphRehydrateError;

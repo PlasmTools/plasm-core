@@ -45,6 +45,14 @@ use plasm_otel::tower_http_trace_parent_span;
 use reqwest::Client;
 use std::time::Duration;
 
+#[derive(Debug, thiserror::Error)]
+pub enum HostBootstrapError {
+    #[error(transparent)]
+    Catalog(#[from] crate::catalog_runtime::CatalogRuntimeError),
+    #[error(transparent)]
+    WorkflowManifest(#[from] crate::workflow_manifest::WorkflowManifestError),
+}
+
 fn trace_sink_http_client() -> Client {
     let mut builder = Client::builder().timeout(Duration::from_secs(60));
     if std::env::var_os("PLASM_HTTP_NO_SYSTEM_PROXY").is_some_and(|v| {
@@ -72,7 +80,9 @@ pub struct PlasmHostBootstrap {
 }
 
 /// Build shared state for HTTP + MCP (registry, engine, session store).
-pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
+pub fn build_plasm_host_state(
+    bootstrap: PlasmHostBootstrap,
+) -> Result<PlasmHostState, HostBootstrapError> {
     let PlasmHostBootstrap {
         engine,
         mode,
@@ -87,7 +97,7 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
         run_artifacts.clone(),
         session_graph_persistence.clone(),
     ));
-    let catalog = CatalogRuntime::new(registry, catalog_bootstrap);
+    let catalog = CatalogRuntime::new(registry, catalog_bootstrap)?;
     let trace_ingest: Arc<dyn TraceIngestClient> = Arc::new(EnvTraceIngestClient);
     let local_trace_archive =
         match LocalTraceArchive::from_env_or_oss_default(oss_local_filesystem_defaults) {
@@ -112,7 +122,7 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
     let op_progress_hub = OperationProgressHub::new();
     let workflows = Arc::new(crate::workflow_registry::WorkflowRegistry::new());
     for manifest in crate::workflow_registry::demo_workflow_manifests() {
-        workflows.register(manifest);
+        workflows.register(manifest)?;
     }
     let live_plan_pool = Arc::new(crate::live_plan_run_worker::LivePlanRunPool::new());
     let blocking_compute = Arc::new(crate::blocking_compute::BlockingComputePool::new());
@@ -120,7 +130,7 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
         Arc::clone(&blocking_compute),
     ));
     let catalog_reload_lock = Arc::new(tokio::sync::Mutex::new(()));
-    PlasmHostState {
+    Ok(PlasmHostState {
         oss: PlasmOssHostState {
             engine: Arc::new(engine),
             mode,
@@ -161,7 +171,7 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
             mcp_http_user_agents: Arc::new(DashMap::new()),
         },
         saas: None,
-    }
+    })
 }
 
 /// Public liveness, auth status, and Run Explorer progress (capability-scoped by logical session ref).
@@ -267,11 +277,62 @@ fn eprint_http_command_help(port: u16) {
     eprint!("{}", format_http_route_help(port));
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum HostServeError {
+    #[error("host transport preparation failed: {0}")]
+    HostWiring(#[from] crate::mcp_transport_store::HostWiringError),
+    #[error("HTTP listener failed: {0}")]
+    Listener(#[from] std::io::Error),
+    #[error("MCP server bootstrap failed: {0}")]
+    McpBootstrap(#[from] rust_mcp_sdk::error::McpSdkError),
+}
+
+#[cfg(test)]
+mod serve_error_tests {
+    use super::HostServeError;
+    use std::error::Error;
+
+    #[test]
+    fn serve_error_preserves_listener_source_and_cross_task_bounds() {
+        fn assert_send<T: Send>() {}
+        assert_send::<HostServeError>();
+        let error = HostServeError::from(std::io::Error::from(std::io::ErrorKind::AddrInUse));
+        let source = error
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap();
+        assert_eq!(source.kind(), std::io::ErrorKind::AddrInUse);
+    }
+
+    #[test]
+    fn serve_error_preserves_host_wiring_source() {
+        let redis = redis::RedisError::from((redis::ErrorKind::IoError, "test connection failure"));
+        let error = HostServeError::from(
+            crate::mcp_transport_store::HostWiringError::RedisConnect(redis),
+        );
+        let source = error.source().unwrap();
+        assert!(source.is::<crate::mcp_transport_store::HostWiringError>());
+        assert!(source.source().unwrap().is::<redis::RedisError>());
+    }
+
+    #[test]
+    fn serve_error_preserves_mcp_sdk_source() {
+        let error = HostServeError::from(rust_mcp_sdk::error::McpSdkError::SdkError(
+            rust_mcp_sdk::schema::SdkError::invalid_request(),
+        ));
+        assert!(error
+            .source()
+            .unwrap()
+            .is::<rust_mcp_sdk::error::McpSdkError>());
+    }
+}
+
 /// Serve discovery + execute on an already-bound [`tokio::net::TcpListener`] (bind-first readiness).
 pub async fn serve_discovery_execute_on_listener(
     listener: tokio::net::TcpListener,
     state: PlasmHostState,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), HostServeError> {
     serve_discovery_execute_on_listener_opts(listener, state, DiscoveryHttpServeOpts::default())
         .await
 }
@@ -281,16 +342,14 @@ pub async fn serve_discovery_execute_on_listener_opts(
     listener: tokio::net::TcpListener,
     state: PlasmHostState,
     opts: DiscoveryHttpServeOpts,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), HostServeError> {
     let addr = listener.local_addr()?;
     let port = addr.port();
     tracing::info!(%addr, "plasm HTTP listening");
     if opts.emit_stderr_route_help {
         eprint_http_command_help(port);
     }
-    let state = crate::mcp_transport_store::prepare_host_for_serve(state)
-        .await
-        .map_err(|e| format!("Redis wiring failed: {e}"))?;
+    let state = crate::mcp_transport_store::prepare_host_for_serve(state).await?;
     let app = discovery_execute_router(state);
     axum::serve(listener, app).await?;
     Ok(())
@@ -300,7 +359,7 @@ pub async fn serve_discovery_execute_on_listener_opts(
 pub async fn serve_http_listener(
     state: PlasmHostState,
     endpoint: crate::listen_endpoint::TcpListenEndpoint,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), HostServeError> {
     let listener = endpoint.bind_tcp_listener().await?;
     serve_discovery_execute_on_listener(listener, state).await
 }
@@ -313,21 +372,18 @@ pub async fn serve_discovery_execute_and_mcp_unified(
     listener: tokio::net::TcpListener,
     state: PlasmHostState,
     opts: DiscoveryHttpServeOpts,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), HostServeError> {
     let addr = listener.local_addr()?;
     let port = addr.port();
     tracing::info!(%addr, "plasm HTTP+MCP unified listening");
     if opts.emit_stderr_route_help {
         eprint_http_command_help(port);
     }
-    let state = crate::mcp_transport_store::prepare_host_for_serve(state)
-        .await
-        .map_err(|e| format!("Redis wiring failed: {e}"))?;
+    let state = crate::mcp_transport_store::prepare_host_for_serve(state).await?;
     let plasm_arc = std::sync::Arc::new(state.clone());
     let mcp =
         crate::mcp_server::build_mcp_hyper_server_for_merge(std::sync::Arc::clone(&plasm_arc))
-            .await
-            .map_err(|e| format!("MCP server bootstrap failed: {e}"))?;
+            .await?;
     let mcp_router = crate::mcp_server::mcp_hyper_router(mcp, plasm_arc);
     let app = Router::new()
         .merge(discovery_execute_router(state))

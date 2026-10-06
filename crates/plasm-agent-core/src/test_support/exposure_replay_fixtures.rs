@@ -55,7 +55,8 @@ pub fn matrix_federated_host(cgs: Arc<CGS>) -> (PlasmHostState, Arc<CgsRegistry>
         run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
-    });
+    })
+    .expect("valid catalog fixture");
     (host, reg)
 }
 

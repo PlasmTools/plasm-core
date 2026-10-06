@@ -25,6 +25,7 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
+thiserror = { workspace = true }
 baml = { workspace = true, optional = true }
 dotenvy = { workspace = true }
 chrono = { workspace = true }

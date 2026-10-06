@@ -5,6 +5,10 @@
 
 use super::*;
 
+fn materialization_failure(code: &'static str, diagnostic: impl Into<String>) -> ExecutionFailure {
+    ExecutionFailure::new(plasm_runtime::FailureCause::Program, code, diagnostic)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn materialize_synthetic_node(
     st: &PlasmHostState,
@@ -31,7 +35,12 @@ pub(crate) async fn materialize_synthetic_node(
             _ => format!("PlanComputed_{}", node.id().as_str()),
         });
     let full_entities = rows_to_entities(&entity, &rows)?;
-    let request_fingerprints = vec![compute_fingerprint(node, &rows, &value_shapes)?];
+    let request_fingerprints =
+        vec![
+            compute_fingerprint(node, &rows, &value_shapes).map_err(|diagnostic| {
+                materialization_failure("synthetic_fingerprint_invalid", diagnostic.to_string())
+            })?,
+        ];
     let dependencies = node
         .depends_on()
         .iter()
@@ -39,7 +48,12 @@ pub(crate) async fn materialize_synthetic_node(
             materialized
                 .get(id)
                 .map(|input| &input.result.collection)
-                .ok_or_else(|| format!("declared dependency {} is not materialized", id.as_str()))
+                .ok_or_else(|| {
+                    materialization_failure(
+                        "plan_dependency_not_materialized",
+                        format!("declared dependency {} is not materialized", id.as_str()),
+                    )
+                })
         })
         .collect::<Result<Vec<_>, _>>()?;
     let identity = plasm_core::collection_codec::CollectionIdentity::for_expression(
@@ -54,9 +68,12 @@ pub(crate) async fn materialize_synthetic_node(
         let source = &materialized
             .get(&compute.source_node)
             .ok_or_else(|| {
-                format!(
-                    "compute source {} is not materialized",
-                    compute.source_node.as_str()
+                materialization_failure(
+                    "compute_source_not_materialized",
+                    format!(
+                        "compute source {} is not materialized",
+                        compute.source_node.as_str()
+                    ),
                 )
             })?
             .result
@@ -138,7 +155,13 @@ pub(crate) async fn materialize_synthetic_node(
         &full_result,
         trace,
     )
-    .await?;
+    .await
+    .map_err(|diagnostic| {
+        materialization_failure(
+            "synthetic_artifact_persistence_failed",
+            diagnostic.to_string(),
+        )
+    })?;
     let page_size = match node {
         ValidatedPlanNode::Compute(compute) => compute
             .compute
@@ -220,9 +243,12 @@ pub(crate) async fn materialize_validated_relation_traversal(
     plan_shared: Option<Arc<crate::plan_execute_shared::PlanLineExecuteShared>>,
 ) -> Result<MaterializedNode, ExecutionFailure> {
     let source_mat = materialized.get(&relation.relation.source).ok_or_else(|| {
-        format!(
-            "relation source node {:?} has not been materialized",
-            relation.relation.source.as_str()
+        materialization_failure(
+            "relation_source_not_materialized",
+            format!(
+                "relation source node {:?} has not been materialized",
+                relation.relation.source.as_str()
+            ),
         )
     })?;
     let read_cap = crate::plan_read_bounds::effective_relation_read_cap(relation);
@@ -231,23 +257,30 @@ pub(crate) async fn materialize_validated_relation_traversal(
         source_mat.qualified_entity.entry_id.as_str(),
         source_mat.qualified_entity.entity.as_str(),
     )
-    .map_err(|e| format!("relation source catalog: {e}"))?;
+    .map_err(|error| {
+        materialization_failure("relation_source_catalog_unavailable", error.to_string())
+    })?;
     let source_rows =
         crate::graph_rehydrate::GraphSurfaceRehydrator::new(es, st, session_id, source_cgs)
             .resolve_row_source_rows(&source_mat.row_source, read_cap)
-            .await?;
+            .await
+            .map_err(|diagnostic| {
+                materialization_failure(
+                    "relation_source_rehydration_failed",
+                    diagnostic.to_string(),
+                )
+            })?;
     if source_rows.is_empty() {
         if matches!(
             relation.relation.source_cardinality,
             RelationSourceCardinality::RuntimeCheckedSingleton
         ) {
-            return Err(singleton_input_row_count_error(
+            return Err(ExecutionFailure::from(singleton_input_row_count_error(
                 relation.relation.source.as_str(),
                 "source",
                 0,
                 "relation traversal",
-            )
-            .into());
+            )));
         }
         return super::compute_eval::finalize_empty_relation_materialized_node(
             st,
@@ -277,12 +310,12 @@ pub(crate) async fn materialize_validated_relation_traversal(
         ))
         .await?
         .ok_or_else(|| {
-            format!(
+            materialization_failure("relation_parent_rows_unavailable", format!(
                 "relation `{}` could not resolve parent rows on `{}` — ensure the source binding returned at least one row before navigating `.{}`",
                 relation.relation.relation,
                 source_mat.qualified_entity.entity,
                 relation.relation.relation
-            ).into()
+            ))
         }),
         RelationMaterialization::PreferFromParentGet { .. } => {
             Box::pin(materialize_prefer_from_parent_get_relation(
@@ -328,12 +361,12 @@ pub(crate) async fn materialize_validated_relation_traversal(
                     RelationSourceCardinality::RuntimeCheckedSingleton
                 ) && source_rows.len() != 1
                 {
-                    return Err(singleton_input_row_count_error(
+                    return Err(ExecutionFailure::from(singleton_input_row_count_error(
                         relation.relation.source.as_str(),
                         "source",
                         source_rows.len(),
                         "relation traversal",
-                    ).into());
+                    )));
                 }
                 Box::pin(materialize_relation_singleton_chain(
                     st,
@@ -377,12 +410,12 @@ pub(crate) async fn materialize_validated_relation_traversal(
                 RelationSourceCardinality::RuntimeCheckedSingleton
             ) && source_rows.len() != 1
             {
-                return Err(singleton_input_row_count_error(
+                return Err(ExecutionFailure::from(singleton_input_row_count_error(
                     relation.relation.source.as_str(),
                     "source",
                     source_rows.len(),
                     "relation traversal",
-                ).into());
+                )));
             }
             Box::pin(materialize_relation_singleton_chain(
                 st,
@@ -457,10 +490,10 @@ pub(crate) async fn materialize_validated_relation_traversal(
                 ))
                 .await
             } else {
-                Err(format!(
+                Err(materialization_failure("relation_strategy_unavailable", format!(
                     "relation `{}` on `{}` has no materialize strategy (Unavailable)",
                     relation.relation.relation, source_mat.qualified_entity.entity
-                ).into())
+                )))
             }
         }
     }
@@ -482,29 +515,37 @@ pub(crate) async fn try_materialize_from_parent_get_relation(
         source_mat.qualified_entity.entry_id.as_str(),
         source_mat.qualified_entity.entity.as_str(),
     )
-    .map_err(|e| {
-        format!(
-            "relation `{}` FromParentGet source catalog: {e}",
-            relation.relation.relation
+    .map_err(|error| {
+        materialization_failure(
+            "relation_source_catalog_unavailable",
+            format!(
+                "relation `{}` FromParentGet source catalog: {error}",
+                relation.relation.relation,
+            ),
         )
     })?;
     let ent = cgs
         .get_entity(source_mat.qualified_entity.entity.as_str())
         .ok_or_else(|| {
-            format!(
-                "unknown source entity `{}`",
-                source_mat.qualified_entity.entity
+            materialization_failure(
+                "relation_source_entity_missing",
+                format!(
+                    "unknown source entity `{}`",
+                    source_mat.qualified_entity.entity
+                ),
             )
         })?;
     if !ent
         .relations
         .contains_key(relation.relation.relation.as_str())
     {
-        return Err(format!(
-            "entity `{}` has no relation `{}`",
-            source_mat.qualified_entity.entity, relation.relation.relation
-        )
-        .into());
+        return Err(materialization_failure(
+            "relation_not_declared",
+            format!(
+                "entity `{}` has no relation `{}`",
+                source_mat.qualified_entity.entity, relation.relation.relation
+            ),
+        ));
     }
     let path = match &relation.relation.materialize {
         RelationMaterialization::FromParentGet { path, .. }
@@ -512,11 +553,13 @@ pub(crate) async fn try_materialize_from_parent_get_relation(
         _ => return Ok(None),
     };
     if path.is_empty() {
-        return Err(format!(
-            "relation `{}` on `{}` declares from_parent_get with an empty path",
-            relation.relation.relation, source_mat.qualified_entity.entity
-        )
-        .into());
+        return Err(materialization_failure(
+            "relation_path_missing",
+            format!(
+                "relation `{}` on `{}` declares from_parent_get with an empty path",
+                relation.relation.relation, source_mat.qualified_entity.entity
+            ),
+        ));
     }
     if let Some(mat) = try_materialize_from_cached_relation_refs(
         st, es, session_id, node, relation, source_mat, trace,
@@ -526,12 +569,22 @@ pub(crate) async fn try_materialize_from_parent_get_relation(
         return Ok(Some(mat));
     }
     let target = relation.relation.target.entity.as_str();
-    let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
+    let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target)).map_err(
+        |diagnostic| {
+            materialization_failure(
+                "relation_target_catalog_unavailable",
+                diagnostic.to_string(),
+            )
+        },
+    )?;
     let rel_name = relation.relation.relation.as_str();
     let rehydrator = crate::graph_rehydrate::GraphSurfaceRehydrator::new(es, st, session_id, cgs);
     let parents = source_mat
         .resolve_materialized_source_parents(&rehydrator)
-        .await?;
+        .await
+        .map_err(|diagnostic| {
+            materialization_failure("relation_parent_identity_invalid", diagnostic.to_string())
+        })?;
     let wire_fallback = super::compute_eval::parent_get_wire_rows(
         source_rows,
         relation,
@@ -594,15 +647,20 @@ pub(crate) async fn materialized_rows(
     source: &PlanNodeId,
 ) -> Result<Vec<plasm_core::ValueRow>, ExecutionFailure> {
     let mat = materialized.get(source).ok_or_else(|| {
-        format!(
-            "source node {:?} has not been materialized",
-            source.as_str()
+        materialization_failure(
+            "plan_source_not_materialized",
+            format!(
+                "source node {:?} has not been materialized",
+                source.as_str()
+            ),
         )
     })?;
     crate::graph_rehydrate::GraphSurfaceRehydrator::new(es, st, session_id, es.cgs.as_ref())
         .resolve_row_source_rows(&mat.row_source, None)
         .await
-        .map_err(ExecutionFailure::from)
+        .map_err(|diagnostic| {
+            materialization_failure("plan_source_rehydration_failed", diagnostic.to_string())
+        })
 }
 
 pub(crate) fn execution_result_from_fanout_fold(
@@ -700,7 +758,13 @@ pub(crate) async fn archive_materialize_relation(
         &full_result,
         trace,
     )
-    .await?;
+    .await
+    .map_err(|diagnostic| {
+        materialization_failure(
+            "relation_artifact_persistence_failed",
+            diagnostic.to_string(),
+        )
+    })?;
     let mat =
         relation_materialized_node_from_result(scoped_es, relation, full_result, display, artifact);
     let Some((read_cap, plan_shared)) = hydrate else {
@@ -820,7 +884,10 @@ async fn materialize_cached_embed_or_error(
         )
         .await
     } else {
-        Err(on_miss().into())
+        Err(materialization_failure(
+            "relation_parent_rows_missing",
+            on_miss(),
+        ))
     }
 }
 
@@ -877,7 +944,13 @@ pub(crate) async fn archive_materialize_for_each_fanout(
         &result,
         trace,
     )
-    .await?;
+    .await
+    .map_err(|diagnostic| {
+        materialization_failure(
+            "for_each_artifact_persistence_failed",
+            diagnostic.to_string(),
+        )
+    })?;
     let rows: Vec<_> = result
         .entities()
         .iter()
@@ -926,9 +999,10 @@ pub(crate) async fn archive_materialize_iterate_until(
     trace: Option<&PlasmTraceContext>,
 ) -> Result<MaterializedNode, ExecutionFailure> {
     if steps_taken > 0 && operations.is_empty() {
-        return Err(
-            "iterate_until steps completed but fold operations ledger is empty (HTTP-2)".into(),
-        );
+        return Err(materialization_failure(
+            "iterate_until_operations_missing",
+            "iterate_until steps completed but fold operations ledger is empty (HTTP-2)",
+        ));
     }
     // Inline observations already own semantic entities. Only graph-backed
     // observations need rehydration; public value rows cannot restore evidence.
@@ -941,12 +1015,21 @@ pub(crate) async fn archive_materialize_iterate_until(
         );
         observed
             .resolve_materialized_source_parents(&rehydrator)
-            .await?
+            .await
+            .map_err(|diagnostic| {
+                materialization_failure(
+                    "iterate_until_parent_identity_invalid",
+                    diagnostic.to_string(),
+                )
+            })?
     } else {
         observed.result.entities().clone()
     };
     if entities.len() != rows.len() {
-        return Err("iterate_until final observation lost semantic row occurrences".into());
+        return Err(materialization_failure(
+            "iterate_until_row_occurrences_lost",
+            "iterate_until final observation lost semantic row occurrences",
+        ));
     }
     let mut inputs: Vec<_> = dependencies.iter().collect();
     inputs.push(&observed.result.collection);
@@ -983,7 +1066,13 @@ pub(crate) async fn archive_materialize_iterate_until(
         &result,
         trace,
     )
-    .await?;
+    .await
+    .map_err(|diagnostic| {
+        materialization_failure(
+            "iterate_until_artifact_persistence_failed",
+            diagnostic.to_string(),
+        )
+    })?;
     let row_identities =
         row_identities_from_entities(scoped_es, seed_qe.entity.as_str(), result.entities());
     Ok(MaterializedNode {

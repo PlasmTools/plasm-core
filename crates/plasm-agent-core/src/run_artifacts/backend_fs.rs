@@ -15,9 +15,9 @@ pub(crate) struct FsRunArtifactBackend {
 
 fn run_artifact_fs_segment(s: &str) -> Result<&str, RunArtifactError> {
     if s.is_empty() || s.contains("..") || s.contains('/') || s.contains('\\') {
-        return Err(RunArtifactError::Filesystem(format!(
-            "invalid path segment in run artifact key: {s:?}"
-        )));
+        return Err(RunArtifactError::InvalidPathSegment {
+            segment: s.to_string(),
+        });
     }
     Ok(s)
 }
@@ -158,13 +158,9 @@ impl RunArtifactBackend for FsRunArtifactBackend {
         let n = encoded.len();
         let path = self.blob_path(prompt_hash, session_id, run_id)?;
         if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|e| RunArtifactError::Filesystem(e.to_string()))?;
+            tokio::fs::create_dir_all(parent).await?;
         }
-        tokio::fs::write(&path, encoded)
-            .await
-            .map_err(|e| RunArtifactError::Filesystem(e.to_string()))?;
+        tokio::fs::write(&path, encoded).await?;
         Ok(n)
     }
 
@@ -187,14 +183,10 @@ impl RunArtifactBackend for FsRunArtifactBackend {
     ) -> Result<(), RunArtifactError> {
         let path = self.resource_index_path(prompt_hash, session_id, resource_index)?;
         if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|e| RunArtifactError::Filesystem(e.to_string()))?;
+            tokio::fs::create_dir_all(parent).await?;
         }
         let body = run_id.to_wire();
-        tokio::fs::write(&path, body)
-            .await
-            .map_err(|e| RunArtifactError::Filesystem(e.to_string()))?;
+        tokio::fs::write(&path, body).await?;
         Ok(())
     }
 
@@ -223,22 +215,14 @@ impl RunArtifactBackend for FsRunArtifactBackend {
         let n = encoded.len();
         let path = self.plan_blob_path(prompt_hash, session_id, plan_id)?;
         if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|e| RunArtifactError::Filesystem(e.to_string()))?;
+            tokio::fs::create_dir_all(parent).await?;
         }
-        tokio::fs::write(&path, encoded)
-            .await
-            .map_err(|e| RunArtifactError::Filesystem(e.to_string()))?;
+        tokio::fs::write(&path, encoded).await?;
         let index_path = self.plan_index_path(prompt_hash, session_id, plan_index)?;
         if let Some(parent) = index_path.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|e| RunArtifactError::Filesystem(e.to_string()))?;
+            tokio::fs::create_dir_all(parent).await?;
         }
-        tokio::fs::write(&index_path, plan_id.as_hyphenated().to_string())
-            .await
-            .map_err(|e| RunArtifactError::Filesystem(e.to_string()))?;
+        tokio::fs::write(&index_path, plan_id.as_hyphenated().to_string()).await?;
         Ok(n)
     }
 
@@ -276,13 +260,9 @@ impl RunArtifactBackend for FsRunArtifactBackend {
         let n = encoded.len();
         let path = self.evidence_path(prompt_hash, session_id, run_id)?;
         if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|e| RunArtifactError::Filesystem(e.to_string()))?;
+            tokio::fs::create_dir_all(parent).await?;
         }
-        tokio::fs::write(&path, encoded)
-            .await
-            .map_err(|e| RunArtifactError::Filesystem(e.to_string()))?;
+        tokio::fs::write(&path, encoded).await?;
         Ok(n)
     }
 
@@ -296,13 +276,9 @@ impl RunArtifactBackend for FsRunArtifactBackend {
         let n = encoded.len();
         let path = self.evidence_head_path(prompt_hash, session_id, head_hex)?;
         if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|e| RunArtifactError::Filesystem(e.to_string()))?;
+            tokio::fs::create_dir_all(parent).await?;
         }
-        tokio::fs::write(&path, encoded)
-            .await
-            .map_err(|e| RunArtifactError::Filesystem(e.to_string()))?;
+        tokio::fs::write(&path, encoded).await?;
         Ok(n)
     }
 
@@ -315,13 +291,9 @@ impl RunArtifactBackend for FsRunArtifactBackend {
     ) -> Result<(), RunArtifactError> {
         let path = self.evidence_run_head_pointer_path(prompt_hash, session_id, run_id)?;
         if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|e| RunArtifactError::Filesystem(e.to_string()))?;
+            tokio::fs::create_dir_all(parent).await?;
         }
-        tokio::fs::write(&path, head_hex)
-            .await
-            .map_err(|e| RunArtifactError::Filesystem(e.to_string()))?;
+        tokio::fs::write(&path, head_hex).await?;
         Ok(())
     }
 

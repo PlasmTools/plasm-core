@@ -47,7 +47,7 @@ fn compile_wallet(name: &str, source: &str) -> Result<crate::PlasmCompBundle, St
     .map_err(|e| e.to_string())
 }
 
-fn wallet_plan(name: &str, source: &str) -> Result<(ExecuteSession, serde_json::Value), String> {
+fn wallet_plan(name: &str, source: &str) -> Result<(ExecuteSession, serde_json::Value), crate::plasm_dag::error::DagCompilationError> {
     let session = session_token_get_session();
     let plan = compile_plasm_dag_to_plan(
         &PromptPipelineConfig::default(),

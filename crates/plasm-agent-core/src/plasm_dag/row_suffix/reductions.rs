@@ -9,13 +9,33 @@ use super::super::schema_validate::{
 use super::super::types::{CompileState, DagNode, DagNodeSource};
 use plasm_core::plasm_monad::AggregateSpec;
 
+#[derive(Debug, thiserror::Error)]
+pub enum ReductionLoweringError {
+    #[error(transparent)]
+    SchemaCatalog(#[from] super::super::schema_validate::SchemaCatalogError),
+    #[error(transparent)]
+    SchemaPath(#[from] super::super::schema_validate::SchemaPathValidationError),
+    #[error(transparent)]
+    Contract(#[from] plasm_core::row_plan::contracts::RowContractError),
+    #[error("reduction requires at least one named aggregate")]
+    EmptyAggregates,
+    #[error("group_by requires at least one key")]
+    EmptyGroupKeys,
+    #[error("group_by repeats key `{field}`")]
+    DuplicateGroupKey { field: String },
+    #[error("reduction output `{name}` duplicates an existing column")]
+    DuplicateOutput { name: String },
+    #[error("distinct repeats key `{field}`")]
+    DuplicateDistinctKey { field: String },
+}
+
 fn resolve_paths(
     session: &ExecuteSession,
     state: &CompileState<'_>,
     staged: &[DagNode],
     source: &str,
     paths: &mut [FieldPath],
-) -> Result<(), String> {
+) -> Result<(), ReductionLoweringError> {
     let qe = resolve_qualified_entity_for_dag_source(state, staged, source.to_owned());
     let schema = resolve_immediate_compute_schema(state, staged, source);
     for path in paths.iter_mut() {
@@ -27,7 +47,8 @@ fn resolve_paths(
             path,
         )?;
     }
-    validate_compute_paths_for_dag_source(session, state, staged, source, paths, "row reduction")
+    validate_compute_paths_for_dag_source(session, state, staged, source, paths, "row reduction")?;
+    Ok(())
 }
 
 // Shared lowering receives the same explicit compilation context as row suffixes.
@@ -41,26 +62,28 @@ pub(in crate::plasm_dag) fn lower_reduction_compute(
     display: &str,
     keys: Option<Vec<FieldPath>>,
     mut aggregates: Vec<AggregateSpec>,
-) -> Result<DagNode, String> {
+) -> Result<DagNode, ReductionLoweringError> {
     if aggregates.is_empty() {
-        return Err("reduction requires at least one named aggregate".into());
+        return Err(ReductionLoweringError::EmptyAggregates);
     }
     let mut keys = keys;
     if let Some(keys) = &mut keys {
         if keys.is_empty() {
-            return Err("group_by requires at least one key".into());
+            return Err(ReductionLoweringError::EmptyGroupKeys);
         }
         resolve_paths(session, state, staged, source, keys)?;
     }
     let mut names = std::collections::BTreeSet::new();
     for key in keys.iter().flatten() {
-        if !names.insert(key.dotted()) {
-            return Err("duplicate group key".into());
+        let field = key.dotted();
+        if !names.insert(field.clone()) {
+            return Err(ReductionLoweringError::DuplicateGroupKey { field });
         }
     }
     for aggregate in &mut aggregates {
-        if !names.insert(aggregate.name.as_str().to_owned()) {
-            return Err("duplicate reduction output column".into());
+        let name = aggregate.name.as_str().to_owned();
+        if !names.insert(name.clone()) {
+            return Err(ReductionLoweringError::DuplicateOutput { name });
         }
         if let Some(field) = &mut aggregate.field {
             resolve_paths(session, state, staged, source, std::slice::from_mut(field))?;
@@ -130,11 +153,14 @@ pub(in crate::plasm_dag) fn lower_distinct_compute(
     id: &str,
     display: &str,
     mut keys: Vec<FieldPath>,
-) -> Result<DagNode, String> {
+) -> Result<DagNode, ReductionLoweringError> {
     resolve_paths(session, state, staged, source, &mut keys)?;
     let mut seen = std::collections::BTreeSet::new();
-    if keys.iter().any(|key| !seen.insert(key.dotted())) {
-        return Err("duplicate distinct key".into());
+    for key in &keys {
+        let field = key.dotted();
+        if !seen.insert(field.clone()) {
+            return Err(ReductionLoweringError::DuplicateDistinctKey { field });
+        }
     }
     let schema =
         compute_passthrough_or_fallback_schema(session, state, staged, source, "PlanDedupe");

@@ -18,7 +18,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Minted 9 tokens to {}", ANVIL_ADDRESS_2);
 
     let schema_dir = ctx.write_schema_dir(token);
-    let cgs = loader::load_schema_dir(schema_dir.path()).map_err(std::io::Error::other)?;
+    let cgs = loader::load_schema_dir(schema_dir.path())?;
     let engine = make_engine(&ctx.endpoint);
     let mut mat = SessionMaterialization::new();
 

@@ -2,17 +2,50 @@ use super::bind_graph::PlasmBindGraph;
 use super::payload::PlasmStepPayload;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use thiserror::Error;
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum PlasmCompValidationError {
+    #[error("PlasmComp version must be {expected} (got {actual})")]
+    UnsupportedVersion { expected: u32, actual: u32 },
+    #[error("PlasmComp steps must be non-empty")]
+    EmptySteps,
+    #[error("PlasmComp bind.topo must be non-empty")]
+    EmptyTopology,
+    #[error("PlasmComp bind.topo references unknown step `{step}`")]
+    UnknownTopologicalStep { step: String },
+    #[error("iteration step differs from its sealed effect contract")]
+    IterationEffectContractMismatch,
+    #[error("iteration step omits a captured dependency `{step}` -> `{dependency}`")]
+    MissingIterationDependency { step: String, dependency: String },
+    #[error("iteration predicate must be a singleton filter over its seed")]
+    InvalidIterationPredicate,
+    #[error("map body `{step}` omits parent dependency `{dependency}`")]
+    MissingMapBodyParentDependency { step: String, dependency: String },
+    #[error(transparent)]
+    BindGraph(#[from] super::bind_graph::BindGraphError),
+    #[error(transparent)]
+    CorrelatedBody(#[from] super::correlated::CorrelatedBodyError),
+    #[error(transparent)]
+    IterationEffect(#[from] super::correlated::IterationStepEffectError),
+}
 
 /// Program step identifier (binding label / synthetic node id).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct StepId(pub String);
 
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+pub enum StepIdError {
+    #[error("step identifier must not be empty")]
+    Empty,
+}
+
 impl StepId {
-    pub fn new(value: impl Into<String>) -> Result<Self, String> {
+    pub fn new(value: impl Into<String>) -> Result<Self, StepIdError> {
         let value = value.into();
         if value.trim().is_empty() {
-            return Err("StepId must be non-empty".into());
+            return Err(StepIdError::Empty);
         }
         Ok(Self(value))
     }
@@ -66,22 +99,24 @@ pub struct PlasmCompArtifact {
 }
 
 impl PlasmComp {
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), PlasmCompValidationError> {
         if self.version != PLASM_COMP_WIRE_VERSION {
-            return Err(format!(
-                "PlasmComp: version must be {PLASM_COMP_WIRE_VERSION} (got {})",
-                self.version
-            ));
+            return Err(PlasmCompValidationError::UnsupportedVersion {
+                expected: PLASM_COMP_WIRE_VERSION,
+                actual: self.version,
+            });
         }
         if self.steps.is_empty() {
-            return Err("PlasmComp: steps must be non-empty".into());
+            return Err(PlasmCompValidationError::EmptySteps);
         }
         if self.bind.topo.is_empty() {
-            return Err("PlasmComp: bind.topo must be non-empty".into());
+            return Err(PlasmCompValidationError::EmptyTopology);
         }
         for id in &self.bind.topo {
             if !self.steps.contains_key(id.as_str()) {
-                return Err(format!("PlasmComp: bind.topo references unknown step {id}"));
+                return Err(PlasmCompValidationError::UnknownTopologicalStep {
+                    step: id.as_str().to_owned(),
+                });
             }
         }
         self.bind.validate(&self.steps.keys().cloned().collect())?;
@@ -98,14 +133,17 @@ impl PlasmComp {
                         || effect.effect_class != unfold.effect_template.effect_class
                         || effect.result_shape != unfold.effect_template.result_shape
                     {
-                        return Err("iteration step differs from its sealed effect contract".into());
+                        return Err(PlasmCompValidationError::IterationEffectContractMismatch);
                     }
                     let deps = self.bind.deps.get(&StepId(id.clone()));
                     for source in std::iter::once(&body.parent.source)
                         .chain(body.captures.iter().map(|c| &c.source))
                     {
                         if !deps.is_some_and(|deps| deps.contains(source)) {
-                            return Err("iteration step requires all captured dependencies".into());
+                            return Err(PlasmCompValidationError::MissingIterationDependency {
+                                step: id.clone(),
+                                dependency: source.as_str().to_owned(),
+                            });
                         }
                     }
                 }
@@ -116,18 +154,17 @@ impl PlasmComp {
                         || body.max_parents.get() != 1
                         || !unfold.until_predicates.is_empty()
                     {
-                        return Err(
-                            "iteration predicate must be a singleton filter over its seed".into(),
-                        );
+                        return Err(PlasmCompValidationError::InvalidIterationPredicate);
                     }
                     let deps = self.bind.deps.get(&StepId(id.clone()));
                     for source in std::iter::once(&body.parent.source)
                         .chain(body.captures.iter().map(|c| &c.source))
                     {
                         if !deps.is_some_and(|deps| deps.contains(source)) {
-                            return Err(
-                                "iteration predicate requires all captured dependencies".into()
-                            );
+                            return Err(PlasmCompValidationError::MissingIterationDependency {
+                                step: id.clone(),
+                                dependency: source.as_str().to_owned(),
+                            });
                         }
                     }
                 }
@@ -140,7 +177,10 @@ impl PlasmComp {
                     .get(&StepId(id.clone()))
                     .is_some_and(|deps| deps.contains(&body.parent.source))
                 {
-                    return Err(format!("map body {id} requires its parent dependency"));
+                    return Err(PlasmCompValidationError::MissingMapBodyParentDependency {
+                        step: id.clone(),
+                        dependency: body.parent.source.as_str().to_owned(),
+                    });
                 }
             }
         }

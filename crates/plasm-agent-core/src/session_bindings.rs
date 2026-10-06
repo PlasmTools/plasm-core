@@ -18,17 +18,15 @@ pub async fn load_session_binding_map(
     storage: &Arc<dyn AuthStorage>,
     repo: &McpConfigRepository,
     scope: &BindingScope,
-) -> Result<SessionBindingMap, String> {
-    binding_store::load_session_binding_map(storage, repo, scope)
-        .await
-        .map_err(|e| e.to_string())
+) -> Result<SessionBindingMap, BindingLoadError> {
+    binding_store::load_session_binding_map(storage, repo, scope).await
 }
 
 pub async fn tenant_bindings_for_entries(
     st: &PlasmHostState,
     cfg: &crate::mcp_runtime_config::McpRuntimeConfig,
     entry_ids: &[String],
-) -> Result<HashMap<String, SessionBindingMap>, String> {
+) -> Result<HashMap<String, SessionBindingMap>, BindingLoadError> {
     let Some(repo) = st.mcp_config_repository() else {
         return Ok(HashMap::new());
     };
@@ -59,8 +57,8 @@ pub async fn tenant_bindings_for_entries(
                     {
                         Ok(Some((eid, SessionBindingMap::from_values(scope, vals))))
                     }
-                    Some(_) => Err(BindingLoadError::Incomplete(eid)),
-                    None => Err(BindingLoadError::NotConfigured(eid)),
+                    Some(_) => Err(BindingLoadError::Incomplete { entry_id: eid }),
+                    None => Err(BindingLoadError::NotConfigured { entry_id: eid }),
                 }
             }
             .instrument(bind_span),
@@ -74,7 +72,7 @@ pub async fn tenant_bindings_for_entries(
                 out.insert(eid, map);
             }
             Ok(None) => {}
-            Err(e) => return Err(e.to_string()),
+            Err(e) => return Err(e),
         }
     }
     Ok(out)

@@ -100,7 +100,8 @@ async fn relation_species_render_capture_rate_async() {
         run_artifacts: Arc::new(RunArtifactStore::memory()),
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
-    });
+    })
+    .expect("valid catalog fixture");
     let es = pokeapi_session(cgs.clone());
 
     let program = r#"specimen = Pokemon("pikachu")
@@ -183,7 +184,8 @@ async fn render_unicode_markdown_survives_live_async() {
         run_artifacts: Arc::new(RunArtifactStore::memory()),
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
-    });
+    })
+    .expect("valid catalog fixture");
     let es = pokeapi_session(cgs.clone());
 
     let program = r#"specimen = Pokemon("pikachu")

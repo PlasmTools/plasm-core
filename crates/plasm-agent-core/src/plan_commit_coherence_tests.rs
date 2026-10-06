@@ -48,7 +48,8 @@ async fn open_overshow_profile_host() -> (
         run_artifacts: Arc::new(RunArtifactStore::memory()),
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
-    });
+    })
+    .expect("valid catalog fixture");
     host.oss.execute_session_registry = execute_registry;
 
     let created = execute_session_create_response(

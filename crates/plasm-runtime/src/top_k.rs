@@ -58,7 +58,7 @@ pub struct TopKHeap {
 }
 impl TopKHeap {
     pub fn new(spec: TopKSpec, contract: ValueContract) -> Result<Self, crate::RuntimeError> {
-        contract.ordering().map_err(fault)?;
+        contract.ordering()?;
         Ok(Self {
             spec,
             contract: Arc::new(contract),
@@ -77,12 +77,12 @@ impl TopKHeap {
             crate::row_predicate::require_entity_field_available(&entity, field)?;
         }
         let key = entity_field_path_value(&entity, &self.spec.sort_key)
-            .ok_or_else(|| fault("top-k sort field is unobserved (not null)"))?;
-        let ordering = self.contract.ordering().map_err(fault)?;
-        ordering.validate(&key).map_err(fault)?;
+            .ok_or(crate::RuntimeError::TopKFieldUnobserved)?;
+        let ordering = self.contract.ordering()?;
+        ordering.validate(&key)?;
         if !key.is_null() {
             if let Some(prior) = &self.representative {
-                ordering.compare(prior, &key).map_err(fault)?;
+                ordering.compare(prior, &key)?;
             } else {
                 self.representative = Some(key.clone());
             }
@@ -90,7 +90,7 @@ impl TopKHeap {
         let sequence = self.sequence;
         self.sequence = sequence
             .checked_add(1)
-            .ok_or_else(|| fault("top-k sequence overflow"))?;
+            .ok_or(crate::RuntimeError::TopKSequenceOverflow)?;
         let entry = Entry {
             key,
             entity,
@@ -114,12 +114,6 @@ impl TopKHeap {
             .collect()
     }
 }
-fn fault(error: impl std::fmt::Display) -> crate::RuntimeError {
-    crate::RuntimeError::ConfigurationError {
-        message: error.to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

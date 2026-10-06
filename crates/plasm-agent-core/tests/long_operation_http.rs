@@ -55,7 +55,8 @@ fn langmatrix_host_with_registry(
         run_artifacts,
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
-    });
+    })
+    .expect("valid catalog fixture");
     st.oss.execute_session_registry = execute_session_registry;
     st
 }

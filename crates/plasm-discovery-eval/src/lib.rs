@@ -3,6 +3,25 @@
 use plasm_core::prerequisites::CapabilityRef;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum DiscoveryScoreError {
+    #[error("receipt {case_id} is missing selection.status")]
+    MissingSelectionStatus { case_id: String },
+    #[error("receipt has an unsupported routing status")]
+    InvalidRoutingStatus,
+    #[error("ready routing receipt must include a closure")]
+    ReadyWithoutClosure,
+    #[error("routing closure is missing `{field}`")]
+    MissingClosureField { field: &'static str },
+    #[error("routing closure `{field}` has an invalid shape")]
+    InvalidClosureField {
+        field: &'static str,
+        #[source]
+        source: serde_json::Error,
+    },
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -25,29 +44,30 @@ pub struct CaseScore {
     pub false_ready: bool,
 }
 
-pub fn score(case: FrozenCase) -> anyhow::Result<CaseScore> {
+pub fn score(case: FrozenCase) -> Result<CaseScore, DiscoveryScoreError> {
     let status = case
         .receipt
         .pointer("/selection/status")
         .and_then(|value| value.as_str())
-        .ok_or_else(|| anyhow::anyhow!("{}: receipt missing selection status", case.id))?;
-    anyhow::ensure!(
-        ["ready", "insufficient"].contains(&status),
-        "invalid routing status"
-    );
+        .ok_or_else(|| DiscoveryScoreError::MissingSelectionStatus {
+            case_id: case.id.clone(),
+        })?;
+    if !["ready", "insufficient"].contains(&status) {
+        return Err(DiscoveryScoreError::InvalidRoutingStatus);
+    }
     let closure = case.receipt.get("closure").filter(|value| !value.is_null());
-    anyhow::ensure!(
-        status != "ready" || closure.is_some(),
-        "Ready must have a closure"
-    );
-    let read = |field: &str| -> anyhow::Result<BTreeSet<CapabilityRef>> {
+    if status == "ready" && closure.is_none() {
+        return Err(DiscoveryScoreError::ReadyWithoutClosure);
+    }
+    let read = |field: &'static str| -> Result<BTreeSet<CapabilityRef>, DiscoveryScoreError> {
         match closure {
             Some(closure) => Ok(serde_json::from_value(
                 closure
                     .get(field)
                     .cloned()
-                    .ok_or_else(|| anyhow::anyhow!("closure missing {field}"))?,
-            )?),
+                    .ok_or(DiscoveryScoreError::MissingClosureField { field })?,
+            )
+            .map_err(|source| DiscoveryScoreError::InvalidClosureField { field, source })?),
             None => Ok(BTreeSet::new()),
         }
     };

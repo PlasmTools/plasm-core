@@ -4,6 +4,18 @@ use plasm_agent_core::mcp_config_admin::McpConfigCatalogRow;
 
 use crate::appliance_oauth_admin::{appliance_oauth_client_secret_kv_key, ApplianceOauthUpsert};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub(crate) enum OauthWizardError {
+    #[error("No registry API matches the current search")]
+    NoMatchingRegistryApi,
+    #[error("entry_id required")]
+    MissingEntryId,
+    #[error("token_endpoint required")]
+    MissingTokenEndpoint,
+    #[error("client_id required")]
+    MissingClientId,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum OAuthUpsertStep {
     EntryId,
@@ -111,13 +123,13 @@ impl OAuthUpsertWizard {
     pub fn commit_entry_selection(
         &mut self,
         rows: &[McpConfigCatalogRow],
-    ) -> Result<(), &'static str> {
+    ) -> Result<(), OauthWizardError> {
         let matches = self.filtered_entry_indices(rows);
         let Some(row_ix) = matches
             .get(self.entry_sel.min(matches.len().saturating_sub(1)))
             .copied()
         else {
-            return Err("No registry API matches the current search");
+            return Err(OauthWizardError::NoMatchingRegistryApi);
         };
         self.entry_id = rows[row_ix].entry_id.trim().to_string();
         self.buf.clear();
@@ -162,12 +174,12 @@ impl OAuthUpsertWizard {
     }
 
     /// `Enter` on a field step (not `Enabled`, not `Confirm`).
-    pub fn commit_buf_and_advance(&mut self) -> Result<(), &'static str> {
+    pub fn commit_buf_and_advance(&mut self) -> Result<(), OauthWizardError> {
         let t = self.buf.trim();
         match self.step {
             OAuthUpsertStep::EntryId => {
                 if t.is_empty() && self.entry_id.is_empty() {
-                    return Err("entry_id required");
+                    return Err(OauthWizardError::MissingEntryId);
                 }
                 if !t.is_empty() {
                     self.entry_id = t.to_string();
@@ -178,7 +190,7 @@ impl OAuthUpsertWizard {
             }
             OAuthUpsertStep::TokenEndpoint => {
                 if t.is_empty() {
-                    return Err("token_endpoint required");
+                    return Err(OauthWizardError::MissingTokenEndpoint);
                 }
                 self.token_endpoint = t.to_string();
                 self.buf.clear();
@@ -204,7 +216,7 @@ impl OAuthUpsertWizard {
             }
             OAuthUpsertStep::ClientId => {
                 if t.is_empty() {
-                    return Err("client_id required");
+                    return Err(OauthWizardError::MissingClientId);
                 }
                 self.client_id = t.to_string();
                 self.buf.clear();
@@ -240,7 +252,9 @@ impl OAuthUpsertWizard {
         }
     }
 
-    pub fn try_build_upsert(&self) -> Result<ApplianceOauthUpsert, String> {
+    pub fn try_build_upsert(
+        &self,
+    ) -> Result<ApplianceOauthUpsert, crate::appliance_oauth_admin::OauthClientSecretKeyError> {
         let client_secret_key = appliance_oauth_client_secret_kv_key(&self.entry_id)?;
         Ok(ApplianceOauthUpsert {
             entry_id: self.entry_id.clone(),

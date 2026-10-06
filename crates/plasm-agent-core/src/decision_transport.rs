@@ -1,7 +1,37 @@
 //! Bounded transport for repeatable, read-only model judgments. Never retries API effects.
-use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use thiserror::Error;
+
+type Result<T> = std::result::Result<T, DecisionTransportError>;
+
+#[derive(Debug, Error)]
+pub enum DecisionTransportError {
+    #[error("decision transport attempt budget must be positive")]
+    EmptyAttemptBudget,
+    #[error("decision context limit rejected this page")]
+    ContextLimit,
+    #[error("decision provider returned a non-retryable HTTP status {status}")]
+    ProviderRejected { status: reqwest::StatusCode },
+    #[error("decision response body could not be read")]
+    ResponseBody(#[source] reqwest::Error),
+    #[error("decision transport failed")]
+    Request(#[source] reqwest::Error),
+    #[error("decision transport exhausted retries")]
+    RetryExhausted,
+    #[error("decision retry deadline expired")]
+    DeadlineExpired,
+    #[error(transparent)]
+    Record(#[from] DecisionRecordError),
+}
+
+#[derive(Debug, Error)]
+pub enum DecisionRecordError {
+    #[error("decision attempt record JSON encoding failed")]
+    Json(#[from] serde_json::Error),
+    #[error("decision attempt record could not be persisted")]
+    Io(#[from] std::io::Error),
+}
 
 #[derive(Clone, Copy)]
 pub(crate) struct DecisionRetryPolicy {
@@ -37,15 +67,6 @@ pub(crate) enum DecisionAttempt {
 }
 
 /// Provider-authoritative context rejection, distinct from transient transport loss.
-#[derive(Debug)]
-pub(crate) struct DecisionContextLimit;
-impl std::fmt::Display for DecisionContextLimit {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Jev context limit exceeded; repartition the decision page")
-    }
-}
-impl std::error::Error for DecisionContextLimit {}
-
 fn context_limit(status: u16, raw: &str) -> bool {
     #[derive(Deserialize)]
     struct ProviderError {
@@ -102,8 +123,11 @@ pub(crate) async fn request_decision(
     key: &str,
     body: &str,
     policy: DecisionRetryPolicy,
-    mut record: impl FnMut(&DecisionAttempt) -> Result<()>,
+    mut record: impl FnMut(&DecisionAttempt) -> std::result::Result<(), DecisionRecordError>,
 ) -> Result<String> {
+    if policy.attempts == 0 {
+        return Err(DecisionTransportError::EmptyAttemptBudget);
+    }
     let operation = async {
         for attempt in 1..=policy.attempts {
             let response = client
@@ -114,7 +138,7 @@ pub(crate) async fn request_decision(
                 .timeout(policy.attempt_timeout)
                 .send()
                 .await;
-            let (retry, delay, failure) = match response {
+            let (retry, delay, failure, terminal_error) = match response {
                 Ok(response) => {
                     let status = response.status();
                     let delay = retry_after(response.headers());
@@ -129,12 +153,13 @@ pub(crate) async fn request_decision(
                                 return Ok(raw);
                             }
                             if context_limit(status.as_u16(), &raw) {
-                                return Err(DecisionContextLimit.into());
+                                return Err(DecisionTransportError::ContextLimit);
                             }
                             (
                                 transient(status.as_u16()),
                                 delay,
                                 format!("Jev Decisions HTTP {status}"),
+                                DecisionTransportError::ProviderRejected { status },
                             )
                         }
                         Err(error) => {
@@ -146,6 +171,7 @@ pub(crate) async fn request_decision(
                                 transient(status.as_u16()) || status.is_success(),
                                 delay,
                                 error.to_string(),
+                                DecisionTransportError::ResponseBody(error),
                             )
                         }
                     }
@@ -159,11 +185,16 @@ pub(crate) async fn request_decision(
                         error.is_timeout() || error.is_connect() || error.is_body(),
                         None,
                         error.to_string(),
+                        DecisionTransportError::Request(error),
                     )
                 }
             };
             if !retry || attempt == policy.attempts {
-                bail!("{failure}; decision transport stopped after {attempt} attempt(s)");
+                return Err(if retry {
+                    DecisionTransportError::RetryExhausted
+                } else {
+                    terminal_error
+                });
             }
             // Jitter each operation independently; Retry-After remains a lower bound.
             let entropy = uuid::Uuid::new_v4().as_u128() as u64;
@@ -178,11 +209,11 @@ pub(crate) async fn request_decision(
             );
             tokio::time::sleep(wait).await;
         }
-        bail!("decision transport requires a positive attempt budget")
+        Err(DecisionTransportError::EmptyAttemptBudget)
     };
     tokio::time::timeout(policy.deadline, operation)
         .await
-        .context("Jev Decisions total retry deadline exhausted")?
+        .map_err(|_| DecisionTransportError::DeadlineExpired)?
 }
 
 #[cfg(test)]
@@ -245,7 +276,10 @@ mod tests {
         let (result, requests, attempts) = exercise_body(vec![400, 200],
             r#"{"error":{"code":400,"message":"HTTP 400: {\"detail\":{\"error_type\":\"max_tokens_exceeded\"}}"}}"#,
             DecisionRetryPolicy::default()).await;
-        assert!(result.unwrap_err().is::<DecisionContextLimit>());
+        assert!(matches!(
+            result.unwrap_err(),
+            DecisionTransportError::ContextLimit
+        ));
         assert_eq!(requests.len(), 1);
         assert_eq!(attempts.len(), 1);
     }

@@ -309,14 +309,22 @@ pub fn plan_ux_flow_reflection(
 }
 
 /// Reject stale or partial `plan_ux_reflection.flow` wire (exact schema cutover).
-pub fn validate_plan_ux_flow_reflection_wire(v: &serde_json::Value) -> Result<(), String> {
-    let flow: PlanUxFlowReflection = serde_json::from_value(v.clone())
-        .map_err(|e| format!("plan_ux_reflection.flow invalid: {e}"))?;
+pub fn validate_plan_ux_flow_reflection_wire(
+    v: &serde_json::Value,
+) -> Result<(), crate::plan_ux_reflection::PlanUxReflectionWireError> {
+    use crate::plan_ux_reflection::{PlanUxReflectionSurface, PlanUxReflectionWireError};
+    let flow: PlanUxFlowReflection = serde_json::from_value(v.clone()).map_err(|source| {
+        PlanUxReflectionWireError::Deserialize {
+            surface: PlanUxReflectionSurface::Flow,
+            source,
+        }
+    })?;
     if flow.schema_version != PLAN_UX_FLOW_REFLECTION_SCHEMA_VERSION {
-        return Err(format!(
-            "plan_ux_reflection.flow.schema_version must be {} (got {})",
-            PLAN_UX_FLOW_REFLECTION_SCHEMA_VERSION, flow.schema_version
-        ));
+        return Err(PlanUxReflectionWireError::SchemaVersionMismatch {
+            surface: PlanUxReflectionSurface::Flow,
+            expected: PLAN_UX_FLOW_REFLECTION_SCHEMA_VERSION,
+            actual: flow.schema_version,
+        });
     }
     Ok(())
 }
@@ -485,6 +493,13 @@ mod tests {
             "catalog_has_labels": false
         });
         let err = validate_plan_ux_flow_reflection_wire(&stale).unwrap_err();
-        assert!(err.contains("schema_version must be 2"), "{err}");
+        assert!(matches!(
+            err,
+            crate::plan_ux_reflection::PlanUxReflectionWireError::SchemaVersionMismatch {
+                surface: crate::plan_ux_reflection::PlanUxReflectionSurface::Flow,
+                expected: 2,
+                actual: 1,
+            }
+        ));
     }
 }

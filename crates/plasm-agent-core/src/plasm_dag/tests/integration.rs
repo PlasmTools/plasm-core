@@ -76,7 +76,7 @@ async fn search_group_by_checks_fields_and_preserves_observed_relation_types() {
     }).unwrap();
     assert!(schema.fields.iter().any(|field| field.name.as_str() == "summary" && field.value_kind == plasm_core::SyntheticValueKind::EntityRef));
     let error = crate::plasm_compile::compile_python_program(&session, &source.replace("group_by(\"summary\"", "group_by(\"missing_field\"")).await.unwrap_err();
-    assert!(error.contains("missing_field"), "{error}");
+    assert!(error.to_string().contains("missing_field"), "{error}");
 }
 
 #[test]
@@ -94,11 +94,11 @@ comments | select note"#,
     )
     .expect_err("intermediate postfix must be bound");
     assert!(
-        err.contains("binding") || err.contains("Intermediate") || err.contains("bind each step"),
+        err.to_string().contains("binding") || err.to_string().contains("Intermediate") || err.to_string().contains("bind each step"),
         "{err}"
     );
-    assert!(!err.contains("return_1"), "{err}");
-    assert!(!err.contains("offset"), "{err}");
+    assert!(!err.to_string().contains("return_1"), "{err}");
+    assert!(!err.to_string().contains("offset"), "{err}");
 }
 
 #[test]
@@ -114,7 +114,7 @@ rows | select title
 lines = rows.lines"#,
     )
     .expect_err("binding after return");
-    assert!(err.contains("Return must be last"), "{err}");
+    assert!(err.to_string().contains("Return must be last"), "{err}");
 }
 
 #[test]
@@ -217,9 +217,9 @@ fn take_two_field_extract_remains_plural() {
             &program,
         )
         .expect_err("take 2 does not prove scalar extraction");
-        assert!(error.contains("singleton"), "{error}");
-        assert!(!error.contains("take 1"), "diagnostics must not replace identity selection: {error}");
-        assert!(error.contains("identity"), "{error}");
+        assert!(error.to_string().contains("singleton"), "{error}");
+        assert!(!error.to_string().contains("take 1"), "diagnostics must not replace identity selection: {error}");
+        assert!(error.to_string().contains("identity"), "{error}");
     }
 }
 
@@ -260,7 +260,7 @@ fn compile_surface_node_rejects_multi_node_field_dot() {
         super::pipeline::compile_surface_node(&session, &state, "title", r#"LangItem("i1").title"#)
             .expect_err("single-node API must not drop Get");
     assert!(
-        err.contains("compile_surface_nodes") || err.contains("multi-node"),
+        err.to_string().contains("compile_surface_nodes") || err.to_string().contains("multi-node"),
         "{err}"
     );
 }
@@ -276,7 +276,7 @@ fn plural_field_dot_rejects_with_select_steer() {
         "rows = LangItem\ntitle = rows.title\ntitle",
     )
     .expect_err("plural .title must not silently project");
-    assert!(err.contains("PLP-4") || err.contains("select"), "{err}");
+    assert!(err.to_string().contains("PLP-4") || err.to_string().contains("select"), "{err}");
 }
 
 #[test]
@@ -293,13 +293,13 @@ bad"#,
     )
     .expect_err("search text param q is not a row field");
     assert!(
-        err.contains("query/capability input")
-            || err.contains("not a row field")
-            || err.contains("not a row symbol"),
+        err.to_string().contains("query/capability input")
+            || err.to_string().contains("not a row field")
+            || err.to_string().contains("not a row symbol"),
         "{err}"
     );
     assert!(
-        err.contains("not a row field") || err.contains("not a row symbol"),
+        err.to_string().contains("not a row field") || err.to_string().contains("not a row symbol"),
         "{err}"
     );
 }
@@ -316,7 +316,7 @@ fn search_projection_rejects_filter_input_param() {
 rows"#,
     )
     .expect_err("filter params are inputs not row fields for projection");
-    assert!(err.contains("not a row field"), "{err}");
+    assert!(err.to_string().contains("not a row field"), "{err}");
 }
 
 #[test]
@@ -358,7 +358,7 @@ fn derive_map_rejects_bare_relation_arrow_fragment() {
         "pika => e2.r3",
     )
     .expect_err("bare source => relation hop must not compile");
-    assert!(err.contains("relation reads use"), "{err}");
+    assert!(err.to_string().contains("relation reads use"), "{err}");
 }
 
 #[test]
@@ -377,7 +377,7 @@ fn derive_map_rejects_relation_hop_symbol() {
     )
     .expect_err("entity relation hop on => must not compile as derive literal");
     assert!(
-        err.contains("relation reads use") || err.contains("derive map does not accept"),
+        err.to_string().contains("relation reads use") || err.to_string().contains("derive map does not accept"),
         "{err}"
     );
 }
@@ -396,7 +396,7 @@ fn derive_map_rejects_binding_relation_hop() {
         &program,
     )
     .expect_err("binding relation hop on => must not compile as derive");
-    assert!(err.contains("relation reads use"), "{err}");
+    assert!(err.to_string().contains("relation reads use"), "{err}");
 }
 
 #[test]
@@ -413,7 +413,7 @@ bad"#,
     )
     .expect_err("wire relation hop on => must not compile as derive");
     assert!(
-        err.contains("relation reads use") || err.contains("unsupported `=>` applicator"),
+        err.to_string().contains("relation reads use") || err.to_string().contains("unsupported `=>` applicator"),
         "{err}"
     );
 }
@@ -512,8 +512,8 @@ fn apply_rejects_bare_non_applicator_rhs() {
         "rows = LangItem\nbad = rows => tags\nbad",
     )
     .expect_err("bare applicator must fail");
-    assert!(err.contains("unsupported `=>` applicator"), "{err}");
-    assert!(err.contains("_.r#"), "{err}");
+    assert!(err.to_string().contains("unsupported `=>` applicator"), "{err}");
+    assert!(err.to_string().contains("_.r#"), "{err}");
 }
 
 #[test]
@@ -532,7 +532,7 @@ fn pipe_rejects_catalog_and_render_stages() {
         )
         .expect_err(source);
         assert!(
-            err.contains("unknown pipe stage"),
+            err.to_string().contains("unknown pipe stage"),
             "source={source} err={err}"
         );
     }
@@ -586,7 +586,7 @@ fn bare_postfix_render_is_rejected() {
         "items = LangItem\nbad = items <<MD\ntext\nMD\nbad",
     )
     .expect_err("bare postfix render must fail");
-    assert!(err.contains("=>"), "{err}");
+    assert!(err.to_string().contains("=>"), "{err}");
 }
 
 #[test]
@@ -600,7 +600,7 @@ fn json_object_dag_root_is_literal_noop_error() {
         r#"{"foo":"bar"}"#,
     )
     .expect_err("bare JSON DAG root must be rejected");
-    assert!(err.contains("literal no-op"), "{err}");
+    assert!(err.to_string().contains("literal no-op"), "{err}");
 }
 
 #[test]
@@ -614,7 +614,7 @@ fn json_object_root_is_literal_noop_error() {
         r#"{"foo":"bar"}"#,
     )
     .expect_err("bare JSON object root must be rejected");
-    assert!(err.contains("literal no-op"), "{err}");
+    assert!(err.to_string().contains("literal no-op"), "{err}");
 }
 
 #[test]
@@ -646,7 +646,7 @@ fn missing_content_field_has_no_reserved_word_hint() {
 issue.content"#,
     )
     .expect_err("GET row .content must not look like relation");
-    assert!(!err.contains("row-to-text template bindings"), "{err}");
+    assert!(!err.to_string().contains("row-to-text template bindings"), "{err}");
 }
 
 #[test]
@@ -663,7 +663,7 @@ bad"#,
     )
     .expect_err("a non-identity slot must not be accepted as Get identity");
     assert!(
-        err.contains("only accepted when") && err.contains("identity field"),
+        err.to_string().contains("only accepted when") && err.to_string().contains("identity field"),
         "{err}"
     );
 }
@@ -767,11 +767,11 @@ bad"#,
         )
         .expect_err("`title` is a LangItem field, not a LangLine row field — must be rejected against the target");
     assert!(
-        err.contains("not a row field"),
+        err.to_string().contains("not a row field"),
         "expected target-entity rejection, got: {err}"
     );
     assert!(
-        !err.contains("team_key"),
+        !err.to_string().contains("team_key"),
         "diagnostic must not surface unrelated receiver fields: {err}"
     );
 }
@@ -994,11 +994,11 @@ bad"#
     )
     .expect_err("unbound phrase on create param");
     assert!(
-        err.contains("unknown program binding") || err.contains("program binding"),
+        err.to_string().contains("unknown program binding") || err.to_string().contains("program binding"),
         "{err}"
     );
     assert!(
-        !err.contains("unknown capability"),
+        !err.to_string().contains("unknown capability"),
         "must not false-reject capability on wrong catalog: {err}"
     );
 
@@ -1091,7 +1091,7 @@ fn lookup_relation_chain_meta_requires_qe_federated() {
     );
     let err = super::lookup_relation_chain_meta(&session, None, &chain, None).unwrap_err();
     assert!(
-        err.contains("federated relation continuation requires catalog ownership"),
+        err.to_string().contains("federated relation continuation requires catalog ownership"),
         "{err}"
     );
 }
@@ -1173,7 +1173,7 @@ fn rejects_return_prefixed_surface_line() {
         "return LangItem, LangLine",
     )
     .expect_err("return prefix");
-    assert!(err.contains("Remove `return`"), "unexpected: {err}");
+    assert!(err.to_string().contains("Remove `return`"), "unexpected: {err}");
 }
 
 #[test]
@@ -1188,7 +1188,7 @@ fn rejects_return_prefixed_final_roots_in_dag() {
         source,
     )
     .expect_err("return");
-    assert!(err.contains("Remove `return`"), "unexpected: {err}");
+    assert!(err.to_string().contains("Remove `return`"), "unexpected: {err}");
 }
 
 /// Tilde search must plan as `search` (not primary query).
@@ -1364,8 +1364,8 @@ fn flattened_dag_with_multiline_quoted_arg_errors_before_flatten() {
     )
     .expect_err("physical newline in quoted arg should fail before flatten");
     assert!(
-        err.contains("physical newline inside a quoted Plasm string parameter")
-            && err.contains("tagged heredoc"),
+        err.to_string().contains("physical newline inside a quoted Plasm string parameter")
+            && err.to_string().contains("tagged heredoc"),
         "unexpected: {err}"
     );
 }
@@ -1375,8 +1375,8 @@ fn multiline_quoted_arg_gets_heredoc_diagnostic() {
     let err = collect_program_statement_lines("body = LangLine(message=\"long\nbody\")")
         .expect_err("physical newline in quote");
     assert!(
-        err.contains("physical newline inside a quoted Plasm string parameter")
-            && err.contains("tagged heredoc"),
+        err.to_string().contains("physical newline inside a quoted Plasm string parameter")
+            && err.to_string().contains("tagged heredoc"),
         "unexpected: {err}"
     );
 }
@@ -1394,7 +1394,7 @@ fn flattened_dag_diagnostic_does_not_mask_heredoc_newline_errors() {
     )
     .expect_err("bad heredoc should fail");
     assert!(
-        !err.contains("Do not separate bindings or final roots with spaces"),
+        !err.to_string().contains("Do not separate bindings or final roots with spaces"),
         "unexpected: {err}"
     );
 }
@@ -1607,7 +1607,7 @@ bad"#,
     )
     .expect_err("plural binding must not fan out side effects");
     assert!(
-        err.contains("singleton") && err.contains("=>"),
+        err.to_string().contains("singleton") && err.to_string().contains("=>"),
         "expected singleton side-effect gate with apply steering, got: {err}"
     );
 }
@@ -1655,7 +1655,7 @@ bad"#,
     )
     .expect_err("multi-segment continuation on binding-label anchor must fail");
     assert!(
-        err.contains("PLP-4:"),
+        err.to_string().contains("PLP-4:"),
         "expected PLP-4 diagnostic prefix, got: {err}"
     );
 }
@@ -1936,7 +1936,7 @@ fn relation_fanout_projection_accepts_entity_witness_p_symbols() {
         &source,
     )
     .map(|_| String::new())
-    .unwrap_or_else(|e| e);
+    .unwrap_or_else(|e| e.to_string());
     assert!(
         !err_msg.contains("not a row symbol"),
         "entity witness p# must not surface as unknown row symbol: {err_msg}"
@@ -2455,10 +2455,10 @@ fn sort_field_error_recommends_p_symbols_not_projected_columns() {
     )
     .expect_err("unknown sort field");
     assert!(
-        err.contains("wire")
-            || err.contains("teaching")
-            || err.contains("rows:")
-            || err.contains("Intermediate step must be a binding"),
+        err.to_string().contains("wire")
+            || err.to_string().contains("teaching")
+            || err.to_string().contains("rows:")
+            || err.to_string().contains("Intermediate step must be a binding"),
         "expected sort guidance, got: {err}"
     );
 }
@@ -2640,10 +2640,10 @@ fn dag_render_rejects_inference_from_prior_render_output() {
     )
     .expect_err("render from render");
     assert!(
-        err.contains("cannot infer")
-            || err.contains("row-to-text template result")
-            || err.contains("not a current-row field")
-            || err.contains("PLP-12"),
+        err.to_string().contains("cannot infer")
+            || err.to_string().contains("row-to-text template result")
+            || err.to_string().contains("not a current-row field")
+            || err.to_string().contains("PLP-12"),
         "unexpected: {err}"
     );
 }
@@ -2694,9 +2694,9 @@ bad = totals.commits"#;
     )
     .expect_err("aggregate is not a Plasm anchor");
     assert!(
-        err.contains("row-preserving projection bindings")
-            || err.contains("PLP-4")
-            || err.contains("not a Plasm expression anchor"),
+        err.to_string().contains("row-preserving projection bindings")
+            || err.to_string().contains("PLP-4")
+            || err.to_string().contains("not a Plasm expression anchor"),
         "unexpected: {err}"
     );
 }
@@ -2776,7 +2776,7 @@ fn parse_aggregates_shadow_aggregate_count() {
 fn parse_aggregates_rejects_aggregate_sum_without_alias() {
     let err = super::parse_aggregates("aggregate(sum(amount))").unwrap_err();
     assert!(
-        err.contains("total=sum(amount)") || err.contains("explicit"),
+        err.to_string().contains("total=sum(amount)") || err.to_string().contains("explicit"),
         "{err}"
     );
 }
@@ -2853,7 +2853,7 @@ fn sort_unknown_direction_errors() {
         "expr",
     )
     .unwrap_err();
-    assert!(err.contains("newest"), "{err}");
+    assert!(err.to_string().contains("newest"), "{err}");
 }
 
 #[test]
@@ -2927,11 +2927,11 @@ commits"#,
     )
     .expect_err("cross-entity symbols must not compile");
     assert!(
-        (err.contains("open_issues_count") || err.contains("not a row symbol"))
-            && (err.contains("not a row field")
-                || err.contains("null columns")
-                || err.contains("not a row symbol")
-                || err.contains("expected entity field")),
+        (err.to_string().contains("open_issues_count") || err.to_string().contains("not a row symbol"))
+            && (err.to_string().contains("not a row field")
+                || err.to_string().contains("null columns")
+                || err.to_string().contains("not a row symbol")
+                || err.to_string().contains("expected entity field")),
         "{err}"
     );
 }
@@ -2998,7 +2998,7 @@ commits"#
             )
             .expect_err("reject");
             prop_assert!(
-                err.contains("null columns") || err.contains("not a row field"),
+                err.to_string().contains("null columns") || err.to_string().contains("not a row field"),
                 "{err}"
             );
         }
@@ -3239,7 +3239,7 @@ fn legacy_binding_field_call_is_not_projection_alias() {
     }
     let err = compile_node_expr(&session, &state, "bad", "pick(id, title)")
         .expect_err("binding field call must not alias projection");
-    assert!(err.contains("pick") || err.contains("projection"), "{err}");
+    assert!(err.to_string().contains("pick") || err.to_string().contains("projection"), "{err}");
 }
 
 #[test]
@@ -3256,7 +3256,7 @@ bad"#,
     )
     .expect_err("bare query-all `.title` must not fill string param");
     assert!(
-        err.contains("StaticSingleton") || err.contains("scalar") || err.contains("plural"),
+        err.to_string().contains("StaticSingleton") || err.to_string().contains("scalar") || err.to_string().contains("plural"),
         "expected plural→scalar gate, got: {err}"
     );
 }
@@ -3275,7 +3275,7 @@ bad"#,
     )
     .expect_err("filtered plural `.title` must not fill string param");
     assert!(
-        err.contains("StaticSingleton") || err.contains("scalar"),
+        err.to_string().contains("StaticSingleton") || err.to_string().contains("scalar"),
         "expected StaticSingleton field-extract gate, got: {err}"
     );
 }
@@ -3294,13 +3294,13 @@ bad"#,
     )
     .expect_err("whole-entity bind must not fill string param");
     assert!(
-        err.contains("PLP-4") && err.contains("scalar cell"),
+        err.to_string().contains("PLP-4") && err.to_string().contains("scalar cell"),
         "expected PLP-4 entity-row reject, got: {err}"
     );
     assert!(
-        !err.contains("peer.wire")
-            && !err.contains("bind `peer`.wire")
-            && !err.contains("bind `{node}.wire`"),
+        !err.to_string().contains("peer.wire")
+            && !err.to_string().contains("bind `peer`.wire")
+            && !err.to_string().contains("bind `{node}.wire`"),
         "must not teach a literal field named wire on the binding: {err}"
     );
 }
@@ -3408,9 +3408,9 @@ bad = item.update(title=body)
 bad"#,
     )
     .expect_err("unbound `body` must not plan as literal string");
-    assert!(err.contains("body"), "{err}");
+    assert!(err.to_string().contains("body"), "{err}");
     assert!(
-        err.contains("unknown program binding") || err.contains("program binding"),
+        err.to_string().contains("unknown program binding") || err.to_string().contains("program binding"),
         "{err}"
     );
 }
@@ -3513,7 +3513,7 @@ fn cross_catalog_union_cannot_regain_relation_continuation() {
         let source = format!("left = {e1}{{owner=\"alice\"}} | select id, score\nright = {e2}{{owner=\"bob\"}} | select id, score\nboth = left | union right{stage}\nkids = {receiver} => _.{r_sym}\nkids");
         let result = compile_plasm_dag_to_plan(&PromptPipelineConfig::default(), None, &session, "union-continuation", &source);
         let error = result.expect_err("terminal union must remain non-continuable");
-        assert!(error.contains("PLP-4:") && error.contains("entity continuation evidence"), "{suffix}: {error}");
+        assert!(error.to_string().contains("PLP-4:") && error.to_string().contains("entity continuation evidence"), "{suffix}: {error}");
     }
 }
 

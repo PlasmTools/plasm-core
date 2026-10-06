@@ -8,8 +8,27 @@ use plasm_core::schema::CGS;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use thiserror::Error;
 
 use crate::blocking_compute::catalog_materialize_workers;
+
+#[derive(Debug, Error)]
+pub enum CatalogLoadError {
+    #[error(transparent)]
+    Template(#[from] plasm_compile::CatalogTemplateError),
+    #[error(transparent)]
+    CatalogIl(#[from] plasm_core::catalog_il::CatalogIlError),
+    #[error(transparent)]
+    CompiledArtifact(#[from] plasm_compile::CmlError),
+    #[error("catalog set declares multiple revisions for entry {entry_id}")]
+    MultipleRevisions { entry_id: String },
+    #[error("catalog set contains no loadable catalogs")]
+    EmptyCatalogSet,
+    #[error("catalog materialization worker batch is unexpectedly shared")]
+    WorkerBatchShared,
+    #[error("catalog materialization worker failed")]
+    WorkerPanicked,
+}
 
 /// One catalog entry materialized from compiled JSON IL on disk.
 #[derive(Debug, Clone)]
@@ -37,15 +56,13 @@ pub struct LoadedCatalogSet {
 fn ingest_manifest_candidate(
     path: &Path,
     best_by_entry: &mut HashMap<String, (u64, CatalogManifest, PathBuf)>,
-) -> Result<(), String> {
+) -> Result<(), CatalogLoadError> {
     let manifest = read_catalog_manifest(path)?;
     let ver = manifest.version;
     let eid = manifest.entry_id.clone();
 
     if best_by_entry.contains_key(&eid) {
-        return Err(format!(
-            "catalog set declares multiple revisions for entry {eid}"
-        ));
+        return Err(CatalogLoadError::MultipleRevisions { entry_id: eid });
     }
     best_by_entry.insert(eid, (ver, manifest, path.to_path_buf()));
     Ok(())
@@ -53,7 +70,7 @@ fn ingest_manifest_candidate(
 
 /// Scan `dir` for catalog manifests, load the exact declared revision per `entry_id`, validate
 /// capability templates, and build a registry. Fails on the first invalid artifact.
-pub fn load_registry_from_catalog_dir(dir: &Path) -> Result<Arc<CgsRegistry>, String> {
+pub fn load_registry_from_catalog_dir(dir: &Path) -> Result<Arc<CgsRegistry>, CatalogLoadError> {
     let loaded = load_catalog_set_from_dir_with_progress(dir, &mut |_: &str| {})?;
     Ok(loaded.registry)
 }
@@ -62,7 +79,7 @@ pub fn load_registry_from_catalog_dir(dir: &Path) -> Result<Arc<CgsRegistry>, St
 pub fn load_registry_from_catalog_dir_with_progress<P: FnMut(&str)>(
     dir: &Path,
     progress: &mut P,
-) -> Result<Arc<CgsRegistry>, String> {
+) -> Result<Arc<CgsRegistry>, CatalogLoadError> {
     let loaded = load_catalog_set_from_dir_with_progress(dir, progress)?;
     Ok(loaded.registry)
 }
@@ -71,7 +88,7 @@ pub fn load_registry_from_catalog_dir_with_progress<P: FnMut(&str)>(
 pub fn load_catalog_set_from_dir_with_progress<P: FnMut(&str)>(
     dir: &Path,
     progress: &mut P,
-) -> Result<LoadedCatalogSet, String> {
+) -> Result<LoadedCatalogSet, CatalogLoadError> {
     progress(&format!("scanning catalog-dir {}", dir.display()));
     let manifest_paths = read_catalog_set(dir)?;
 
@@ -89,7 +106,7 @@ pub fn load_catalog_set_from_dir_with_progress<P: FnMut(&str)>(
     ));
 
     if best_by_entry.is_empty() {
-        return Err(format!("no loadable catalogs in `{}`", dir.display()));
+        return Err(CatalogLoadError::EmptyCatalogSet);
     }
 
     progress("materializing CGS entries from compiled JSON IL…");
@@ -119,10 +136,12 @@ pub fn load_catalog_set_from_dir_with_progress<P: FnMut(&str)>(
     })
 }
 
-fn materialize_one_entry(dir: &Path, meta: CatalogManifest) -> Result<LoadedCatalogEntry, String> {
+fn materialize_one_entry(
+    dir: &Path,
+    meta: CatalogManifest,
+) -> Result<LoadedCatalogEntry, CatalogLoadError> {
     let cgs: CGS = load_catalog_artifact(dir, &meta)?;
-    let compiled = plasm_compile::load_compiled_catalog_artifact(dir, &meta, &cgs)
-        .map_err(|error| error.to_string())?;
+    let compiled = plasm_compile::load_compiled_catalog_artifact(dir, &meta, &cgs)?;
     let label = if meta.label.is_empty() {
         meta.entry_id.clone()
     } else {
@@ -141,7 +160,7 @@ fn materialize_entries_sequential(
     dir: &Path,
     best_by_entry: &mut HashMap<String, (u64, CatalogManifest, PathBuf)>,
     ids: &[String],
-) -> Result<Vec<LoadedCatalogEntry>, String> {
+) -> Result<Vec<LoadedCatalogEntry>, CatalogLoadError> {
     let mut entries = Vec::with_capacity(ids.len());
     for id in ids {
         let (_ver, meta, _manifest_path) = best_by_entry.remove(id).expect("key exists");
@@ -154,7 +173,7 @@ fn materialize_entries_parallel(
     dir: &Path,
     mut best_by_entry: HashMap<String, (u64, CatalogManifest, PathBuf)>,
     ids: &[String],
-) -> Result<Vec<LoadedCatalogEntry>, String> {
+) -> Result<Vec<LoadedCatalogEntry>, CatalogLoadError> {
     let dir = dir.to_path_buf();
     let workers = catalog_materialize_workers();
     let mut entries = Vec::with_capacity(ids.len());
@@ -162,7 +181,8 @@ fn materialize_entries_parallel(
     for chunk in ids.chunks(workers) {
         let batch: Arc<std::sync::Mutex<Vec<LoadedCatalogEntry>>> =
             Arc::new(std::sync::Mutex::new(Vec::with_capacity(chunk.len())));
-        let err: Arc<std::sync::Mutex<Option<String>>> = Arc::new(std::sync::Mutex::new(None));
+        let err: Arc<std::sync::Mutex<Option<CatalogLoadError>>> =
+            Arc::new(std::sync::Mutex::new(None));
 
         std::thread::scope(|scope| {
             for id in chunk {
@@ -187,7 +207,7 @@ fn materialize_entries_parallel(
         }
         entries.extend(
             Arc::try_unwrap(batch)
-                .map_err(|_| "parallel catalog materialize: batch mutex still shared".to_string())?
+                .map_err(|_| CatalogLoadError::WorkerBatchShared)?
                 .into_inner()
                 .expect("batch lock"),
         );
@@ -241,11 +261,10 @@ mod tests {
             );
             let mut entries = HashMap::new();
             ingest_manifest_candidate(&dir.path().join("a.manifest.json"), &mut entries).unwrap();
-            assert!(
-                ingest_manifest_candidate(&dir.path().join("b.manifest.json"), &mut entries)
-                    .unwrap_err()
-                    .contains("multiple revisions")
-            );
+            assert!(matches!(
+                ingest_manifest_candidate(&dir.path().join("b.manifest.json"), &mut entries),
+                Err(CatalogLoadError::MultipleRevisions { .. })
+            ));
         }
     }
 }

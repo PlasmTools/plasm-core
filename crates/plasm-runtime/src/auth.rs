@@ -65,11 +65,9 @@ pub trait SecretProvider: Send + Sync {
     ) -> BoxFuture<'a, Result<String, RuntimeError>> {
         Box::pin(async move {
             let raw = self.get_hosted_secret(key).await.ok_or_else(|| {
-                RuntimeError::AuthenticationError {
-                    message: format!(
-                        "Hosted credential '{key}' is not available (bearer_token). \
-                         Store it via the control plane or check auth-framework storage."
-                    ),
+                crate::AuthenticationError::HostedCredentialMissing {
+                    key: key.to_owned(),
+                    context: "bearer_token",
                 }
             })?;
             resolve_hosted_bearer_default_no_refresh(&raw)
@@ -221,11 +219,10 @@ impl AuthResolver {
                                 query_params: vec![],
                             });
                         }
-                        return Err(RuntimeError::AuthenticationError {
-                            message: format!(
-                                "Invalid auth schema: missing credential for {scheme_label} (expected env or hosted_kv)."
-                            ),
-                        });
+                        return Err(crate::AuthenticationError::CredentialSlotMissing {
+                            context: scheme_label,
+                        }
+                        .into());
                     }
                 };
                 Ok(ResolvedAuth {
@@ -266,22 +263,16 @@ impl AuthResolver {
     /// Rejects whitespace-only values (avoids sending blank API keys).
     async fn require_secret_trimmed(&self, env_var: &str) -> Result<String, RuntimeError> {
         let raw = self.provider.get_secret(env_var).await.ok_or_else(|| {
-            RuntimeError::AuthenticationError {
-                message: format!(
-                    "Required secret '{}' is not set. \
-                     Set the environment variable before running plasm.",
-                    env_var
-                ),
+            crate::AuthenticationError::SecretMissing {
+                key: env_var.to_owned(),
             }
         })?;
         let trimmed = raw.trim();
         if trimmed.is_empty() {
-            return Err(RuntimeError::AuthenticationError {
-                message: format!(
-                    "Environment variable '{}' is set but empty or whitespace-only.",
-                    env_var
-                ),
-            });
+            return Err(crate::AuthenticationError::SecretEmpty {
+                key: env_var.to_owned(),
+            }
+            .into());
         }
         Ok(trimmed.to_string())
     }
@@ -294,20 +285,18 @@ impl AuthResolver {
         context: &'static str,
     ) -> Result<String, RuntimeError> {
         let raw = self.provider.get_hosted_secret(kv).await.ok_or_else(|| {
-            RuntimeError::AuthenticationError {
-                message: format!(
-                    "Hosted credential '{kv}' is not available ({context}). \
-                     Store it via the control plane or check auth-framework storage."
-                ),
+            crate::AuthenticationError::HostedCredentialMissing {
+                key: kv.to_owned(),
+                context,
             }
         })?;
         let trimmed = raw.trim();
         if trimmed.is_empty() {
-            return Err(RuntimeError::AuthenticationError {
-                message: format!(
-                    "Hosted credential '{kv}' is empty or whitespace-only ({context})."
-                ),
-            });
+            return Err(crate::AuthenticationError::HostedCredentialEmpty {
+                key: kv.to_owned(),
+                context,
+            }
+            .into());
         }
         // OAuth link + outbound `plasm:outbound:v1:*` keys store JSON v1 envelopes; slots may also
         // hold a bare token string (same as env-backed bearer/API keys).
@@ -343,13 +332,14 @@ impl AuthResolver {
                     None => self.require_secret_trimmed(env_name).await,
                 }
             }
-            (_, Some(kv)) => self.resolve_hosted_oauth_envelope_or_bare(kv, context).await,
+            (_, Some(kv)) => {
+                self.resolve_hosted_oauth_envelope_or_bare(kv, context)
+                    .await
+            }
             (Some(name), None) => self.require_secret_trimmed(name).await,
-            (None, None) => Err(RuntimeError::AuthenticationError {
-                message: format!(
-                    "Invalid auth schema: missing credential for {context} (expected env or hosted_kv)."
-                ),
-            }),
+            (None, None) => {
+                Err(crate::AuthenticationError::CredentialSlotMissing { context }.into())
+            }
         }
     }
 
@@ -412,9 +402,7 @@ impl AuthResolver {
         let access_token = body
             .get("access_token")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| RuntimeError::AuthenticationError {
-                message: "OAuth2 response missing 'access_token' field".to_string(),
-            })?
+            .ok_or(crate::AuthenticationError::AccessTokenMissing)?
             .to_string();
 
         let expires_in_secs = body

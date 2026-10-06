@@ -1,16 +1,37 @@
 //! Untaught row-filter repair syntax. No catalog selection or authorization changes.
 use crate::{expr_parser::split_top_level, BooleanExpr};
+use thiserror::Error;
 
-pub fn parse_boolean_filter(body: &str) -> Result<BooleanExpr<String>, String> {
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum BooleanFilterError {
+    #[error("row filter nesting exceeds 64 levels")]
+    NestingLimit,
+    #[error("empty predicate: supply a field comparison after `where`")]
+    EmptyPredicate,
+    #[error("literal membership requires a non-empty scalar list")]
+    EmptyMembership,
+    #[error("membership list entries must be JSON scalar literals; use a one-column rowset for computed values")]
+    MembershipEntryNotJsonScalar,
+    #[error("membership list entries must be non-null scalar literals")]
+    MembershipEntryNotScalar,
+    #[error("unbalanced row-filter delimiters")]
+    UnbalancedDelimiters,
+    #[error("unclosed quote or delimiter in row filter")]
+    UnclosedQuoteOrDelimiter,
+    #[error("row-filter delimiter split failed: {0}")]
+    Delimiter(#[source] crate::expr_parser::SurfaceSyntaxError),
+}
+
+pub fn parse_boolean_filter(body: &str) -> Result<BooleanExpr<String>, BooleanFilterError> {
     parse(body.trim(), 0)
 }
 
-fn parse(body: &str, depth: usize) -> Result<BooleanExpr<String>, String> {
+fn parse(body: &str, depth: usize) -> Result<BooleanExpr<String>, BooleanFilterError> {
     if depth > 64 {
-        return Err("row filter nesting exceeds 64 levels".into());
+        return Err(BooleanFilterError::NestingLimit);
     }
     if body.is_empty() {
-        return Err("empty predicate: supply a field comparison after `where`".into());
+        return Err(BooleanFilterError::EmptyPredicate);
     }
     for (keyword, conjunction) in [("or", false), ("and", true)] {
         let pieces = split_boolean(body, keyword, conjunction)?;
@@ -38,26 +59,28 @@ fn parse(body: &str, depth: usize) -> Result<BooleanExpr<String>, String> {
     if body.starts_with('(') && body.ends_with(')') {
         return parse(&body[1..body.len() - 1], depth + 1);
     }
-    if let Some((field, anti, rhs)) = crate::row_membership::split_membership_op(body)? {
+    if let Some((field, anti, rhs)) = crate::row_membership::split_membership_op(body) {
         let rhs = rhs.trim();
         if rhs.starts_with('(') && rhs.ends_with(')') {
             let inner = &rhs[1..rhs.len() - 1];
             // A pipeline remains a rowset membership expression; literals are compared
             // individually through the existing field-directed scalar coercion path.
-            if split_top_level(inner, '|')?.len() == 1 {
-                let values = split_top_level(inner, ',')?;
+            if split_top_level(inner, '|')
+                .map_err(BooleanFilterError::Delimiter)?
+                .len()
+                == 1
+            {
+                let values = split_top_level(inner, ',').map_err(BooleanFilterError::Delimiter)?;
                 if values.is_empty() || values.iter().any(|v| v.trim().is_empty()) {
-                    return Err("literal membership requires a non-empty scalar list".into());
+                    return Err(BooleanFilterError::EmptyMembership);
                 }
                 let mut args = Vec::new();
                 for value in values {
                     let value = value.trim();
                     let scalar = serde_json::from_str::<serde_json::Value>(value)
-                        .map_err(|_| "membership list entries must be JSON scalar literals; use a one-column rowset for computed values".to_string())?;
+                        .map_err(|_| BooleanFilterError::MembershipEntryNotJsonScalar)?;
                     if scalar.is_array() || scalar.is_object() || scalar.is_null() {
-                        return Err(
-                            "membership list entries must be non-null scalar literals".into()
-                        );
+                        return Err(BooleanFilterError::MembershipEntryNotScalar);
                     }
                     args.push(BooleanExpr::Atom(format!(
                         "{field} {} {value}",
@@ -75,7 +98,11 @@ fn parse(body: &str, depth: usize) -> Result<BooleanExpr<String>, String> {
     Ok(BooleanExpr::Atom(body.to_string()))
 }
 
-fn split_boolean<'a>(body: &'a str, keyword: &str, comma: bool) -> Result<Vec<&'a str>, String> {
+fn split_boolean<'a>(
+    body: &'a str,
+    keyword: &str,
+    comma: bool,
+) -> Result<Vec<&'a str>, BooleanFilterError> {
     let mut quote = None;
     let mut escaped = false;
     let mut stack = Vec::new();
@@ -110,7 +137,7 @@ fn split_boolean<'a>(body: &'a str, keyword: &str, comma: bool) -> Result<Vec<&'
                     _ => '{',
                 };
                 if stack.pop() != Some(expected) {
-                    return Err("unbalanced row-filter delimiters".into());
+                    return Err(BooleanFilterError::UnbalancedDelimiters);
                 }
                 continue;
             }
@@ -136,7 +163,7 @@ fn split_boolean<'a>(body: &'a str, keyword: &str, comma: bool) -> Result<Vec<&'
         }
     }
     if quote.is_some() || !stack.is_empty() {
-        return Err("unclosed quote or delimiter in row filter".into());
+        return Err(BooleanFilterError::UnclosedQuoteOrDelimiter);
     }
     out.push(&body[start..]);
     Ok(out)
@@ -166,11 +193,20 @@ mod tests {
             "x in (foo)",
         ] {
             let err = parse_boolean_filter(s).unwrap_err();
-            assert!(err.contains("membership"), "{s}: {err}");
+            assert!(
+                matches!(
+                    err,
+                    BooleanFilterError::EmptyMembership
+                        | BooleanFilterError::MembershipEntryNotJsonScalar
+                        | BooleanFilterError::MembershipEntryNotScalar
+                ),
+                "{s}: {err}"
+            );
         }
-        assert!(parse_boolean_filter("x = 1 AND")
-            .unwrap_err()
-            .contains("empty predicate"));
+        assert_eq!(
+            parse_boolean_filter("x = 1 AND").unwrap_err(),
+            BooleanFilterError::EmptyPredicate
+        );
         assert!(parse_boolean_filter("(x = 1").is_err());
     }
     proptest::proptest! {

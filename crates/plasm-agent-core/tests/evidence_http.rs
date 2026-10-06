@@ -41,7 +41,8 @@ fn test_app(store: Arc<RunArtifactStore>) -> Router<()> {
         run_artifacts: store,
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
-    });
+    })
+    .expect("valid catalog fixture");
     execute_routes()
         .layer(Extension(st))
         .layer(Extension(IncomingPrincipal(None)))

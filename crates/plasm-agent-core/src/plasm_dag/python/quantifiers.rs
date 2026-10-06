@@ -34,10 +34,15 @@ impl Lower<'_> {
         inputs: &mut BTreeMap<String, PlanDataInput>,
     ) -> Result<PlasmDataValue, PythonLoweringError> {
         let [argument] = call.arguments.args.as_ref() else {
-            return Err(at(site, "quantification requires one iterable"));
+            return Err(at(
+                site,
+                PythonSourceError::QuantifierIterableCount {
+                    actual: call.arguments.args.len(),
+                },
+            ));
         };
         if !call.arguments.keywords.is_empty() {
-            return Err(at(site, "quantification does not accept keywords"));
+            return Err(at(site, PythonSourceError::QuantifierKeywords));
         }
         let PyExpr::Generator(generator) = argument else {
             return self.python_value_expression(site, inputs);
@@ -45,15 +50,17 @@ impl Lower<'_> {
         if generator.generators.is_empty() {
             return Err(at(
                 site,
-                "quantification requires one synchronous generator",
+                PythonSourceError::QuantifierGeneratorShape {
+                    actual: generator.generators.len(),
+                },
             ));
         }
         let clause = &generator.generators[0];
         let PyExpr::Name(parameter) = &clause.target else {
-            return Err(at(site, "generator target must be a row name"));
+            return Err(at(site, PythonSourceError::QuantifierTargetShape));
         };
         if clause.is_async {
-            return Err(at(site, "async generators are not outer DAG expressions"));
+            return Err(at(site, PythonSourceError::AsyncGenerator));
         }
         let root = expression_root(&clause.iter);
         // Value constructors stay in the recursive value algebra. Lifting a
@@ -105,7 +112,9 @@ impl Lower<'_> {
             return self.python_value_expression(site, inputs);
         }
 
-        let source = source.ok_or("quantifier source missing")?;
+        let source = source.ok_or(
+            crate::program_rejection::PythonLoweringInvariantError::QuantifierSourceMissing,
+        )?;
         let lambda = PyExpr::Lambda(ExprLambda {
             node_index: Default::default(),
             range: site.range(),

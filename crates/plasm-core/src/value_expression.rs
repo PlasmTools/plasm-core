@@ -3,10 +3,50 @@
 use crate::Value;
 use crate::{value_contract::ValueContract, ArithOp, FieldType, PlanPredicateOp};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 #[cfg(test)]
 macro_rules! json { ($($tokens:tt)*) => { crate::json_value_to_plasm_value(&serde_json::json!($($tokens)*)) }; }
 mod evaluate;
 pub use evaluate::{arithmetic, compare, evaluate_with, ordering, predicate};
+pub use evaluate::{ArithmeticError, ComparisonError, WithEvaluationError};
+
+#[derive(Debug, Error)]
+pub enum ValueEvaluationError<E: std::fmt::Debug + 'static> {
+    #[error("value operand resolution failed")]
+    Resolve(E),
+    #[error("field access requires a record value")]
+    FieldRequiresRecord,
+    #[error("field `{field}` is unobserved (not null)")]
+    FieldUnobserved { field: String },
+    #[error(transparent)]
+    Arithmetic(#[from] ArithmeticError),
+    #[error("value refinement failed: {0}")]
+    Refinement(#[source] crate::value_contract::ValueContractError),
+    #[error("length requires a string, array or record")]
+    InvalidLengthOperand,
+    #[error("condition requires a boolean value")]
+    ConditionRequiresBoolean,
+    #[error(transparent)]
+    Comparison(#[from] ComparisonError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum InferenceError {
+    #[error("field contract lookup failed")]
+    Field(#[source] crate::value_contract::ValueContractError),
+    #[error(transparent)]
+    Arithmetic(#[from] crate::value_arithmetic::ArithmeticContractError),
+    #[error("condition requires a boolean value")]
+    ConditionRequiresBoolean,
+    #[error("length requires a string, array or record")]
+    InvalidLengthOperand,
+    #[error("comparison is unsupported for these value contracts")]
+    UnsupportedComparison,
+    #[error(transparent)]
+    Refinement(#[from] crate::value_contract::ValueContractError),
+    #[error("unsupported comparison value contracts")]
+    UnsupportedComparisonContracts,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
@@ -104,25 +144,30 @@ impl<T> ValueOperation<T> {
             Not { value } => Not { value: map(value)? },
         })
     }
-    pub fn infer(
+    pub fn infer<E>(
         &self,
-        mut resolve: impl FnMut(&T) -> Result<ValueContract, String>,
-    ) -> Result<ValueContract, String> {
+        mut resolve: impl FnMut(&T) -> Result<ValueContract, E>,
+    ) -> Result<ValueContract, E>
+    where
+        E: From<InferenceError> + From<crate::value_contract::ValueContractError>,
+    {
         use ValueOperation::*;
-        let boolean = |value: &ValueContract| {
+        let boolean = |value: &ValueContract| -> Result<(), E> {
             if value.summary() == crate::SyntheticValueKind::Boolean {
                 Ok(())
             } else {
-                Err("condition requires a boolean value".to_string())
+                Err(InferenceError::ConditionRequiresBoolean.into())
             }
         };
         Ok(match self.try_map(&mut resolve)? {
-            Field { value, name } => value.field(&name)?,
+            Field { value, name } => value.field(&name).map_err(InferenceError::Field)?,
             Arithmetic {
                 operator,
                 left,
                 right,
-            } => ValueContract::arithmetic(operator, &left, &right)?,
+            } => {
+                ValueContract::arithmetic(operator, &left, &right).map_err(InferenceError::from)?
+            }
             Length { value } => {
                 if !matches!(
                     value.summary(),
@@ -130,7 +175,7 @@ impl<T> ValueOperation<T> {
                         | crate::SyntheticValueKind::Array
                         | crate::SyntheticValueKind::Object
                 ) {
-                    return Err("length requires a string, array or record".into());
+                    return Err(InferenceError::InvalidLengthOperand.into());
                 }
                 let mut result = ValueContract::scalar(FieldType::Integer);
                 result.nullable = value.nullable;
@@ -164,63 +209,81 @@ impl<T> ValueOperation<T> {
             }
         })
     }
-    pub fn evaluate(
+    pub fn evaluate<E: std::fmt::Debug + 'static>(
         &self,
-        mut resolve: impl FnMut(&T) -> Result<Value, String>,
-    ) -> Result<Value, String> {
+        mut resolve: impl FnMut(&T) -> Result<Value, E>,
+    ) -> Result<Value, ValueEvaluationError<E>> {
         use ValueOperation::*;
         let boolean = |v: Value| {
             if matches!(v, Value::Null) {
                 Ok(false)
             } else {
                 v.as_bool()
-                    .ok_or_else(|| "condition requires a boolean value".to_string())
+                    .ok_or(ValueEvaluationError::ConditionRequiresBoolean)
             }
         };
         Ok(match self {
-            Field { value, name } => resolve(value)?
+            Field { value, name } => resolve(value)
+                .map_err(ValueEvaluationError::Resolve)?
                 .as_object()
-                .ok_or("field access requires a record value")?
+                .ok_or(ValueEvaluationError::FieldRequiresRecord)?
                 .get(name)
                 .cloned()
-                .ok_or_else(|| format!("field {name} is unobserved (not null)"))?,
+                .ok_or_else(|| ValueEvaluationError::FieldUnobserved {
+                    field: name.clone(),
+                })?,
             Arithmetic {
                 operator,
                 left,
                 right,
-            } => arithmetic(*operator, resolve(left)?, resolve(right)?)?,
+            } => arithmetic(
+                *operator,
+                resolve(left).map_err(ValueEvaluationError::Resolve)?,
+                resolve(right).map_err(ValueEvaluationError::Resolve)?,
+            )?,
             Refine { value, contract } => {
-                let value = resolve(value)?;
-                contract.validate_refinement_value(&value)?;
+                let value = resolve(value).map_err(ValueEvaluationError::Resolve)?;
+                contract
+                    .validate_refinement_value(&value)
+                    .map_err(ValueEvaluationError::Refinement)?;
                 value
             }
-            Length { value } => match resolve(value)? {
+            Length { value } => match resolve(value).map_err(ValueEvaluationError::Resolve)? {
                 Value::Null => Value::Null,
                 Value::String(s) => Value::from(s.chars().count()),
                 Value::Array(a) => Value::from(a.len()),
                 Value::Object(o) => Value::from(o.len()),
-                _ => return Err("length requires a string, array or record".into()),
+                _ => return Err(ValueEvaluationError::InvalidLengthOperand),
             },
             Compare {
                 operator,
                 left,
                 right,
-            } => Value::Bool(predicate(*operator, &resolve(left)?, &resolve(right)?)?),
+            } => Value::Bool(predicate(
+                *operator,
+                &resolve(left).map_err(ValueEvaluationError::Resolve)?,
+                &resolve(right).map_err(ValueEvaluationError::Resolve)?,
+            )?),
             Choose {
                 condition,
                 then,
                 otherwise,
             } => {
-                let branch = boolean(resolve(condition)?)?;
-                resolve(if branch { then } else { otherwise })?
+                let branch = boolean(resolve(condition).map_err(ValueEvaluationError::Resolve)?)?;
+                resolve(if branch { then } else { otherwise })
+                    .map_err(ValueEvaluationError::Resolve)?
             }
-            And { left, right } => {
-                Value::Bool(boolean(resolve(left)?)? && boolean(resolve(right)?)?)
-            }
-            Or { left, right } => {
-                Value::Bool(boolean(resolve(left)?)? || boolean(resolve(right)?)?)
-            }
-            Not { value } => Value::Bool(!boolean(resolve(value)?)?),
+            And { left, right } => Value::Bool(
+                boolean(resolve(left).map_err(ValueEvaluationError::Resolve)?)?
+                    && boolean(resolve(right).map_err(ValueEvaluationError::Resolve)?)?,
+            ),
+            Or { left, right } => Value::Bool(
+                boolean(resolve(left).map_err(ValueEvaluationError::Resolve)?)?
+                    || boolean(resolve(right).map_err(ValueEvaluationError::Resolve)?)?,
+            ),
+            Not { value } => Value::Bool(!boolean(
+                resolve(value).map_err(ValueEvaluationError::Resolve)?,
+            )?),
         })
     }
 }
@@ -273,7 +336,7 @@ fn comparison_contract(
     op: PlanPredicateOp,
     left: &ValueContract,
     right: &ValueContract,
-) -> Result<(), String> {
+) -> Result<(), InferenceError> {
     use crate::{value_contract::ValueShape, SyntheticValueKind as K};
     if let ValueShape::Union { variants } = &left.shape {
         return variants
@@ -302,9 +365,7 @@ fn comparison_contract(
     if valid {
         Ok(())
     } else {
-        Err(format!(
-            "unsupported comparison value contract: {l:?} {op:?} {r:?}"
-        ))
+        Err(InferenceError::UnsupportedComparisonContracts)
     }
 }
 
@@ -330,7 +391,9 @@ mod tests {
             value: union,
             name: "x".into(),
         };
-        let result = field.infer(|t| Ok(t.clone())).unwrap();
+        let result = field
+            .infer::<crate::value_contract::ValueContractError>(|t| Ok(t.clone()))
+            .unwrap();
         assert!(matches!(result.shape, ValueShape::Union { .. }));
         assert_eq!(observed.field("x").unwrap(), integer);
         assert!(observed.field("missing").is_err());
@@ -339,21 +402,24 @@ mod tests {
             name: "x".into(),
         };
         assert_eq!(
-            op.evaluate(|_| Ok(json!({"x": null}))).unwrap(),
+            op.evaluate(|_| Ok::<_, std::io::Error>(json!({"x": null})))
+                .unwrap(),
             Value::Null
         );
-        assert!(op
-            .evaluate(|_| Ok(json!({})))
-            .unwrap_err()
-            .contains("unobserved"));
-        assert!(op
-            .evaluate(|_| Ok(Value::Null))
-            .unwrap_err()
-            .contains("record value"));
+        assert!(matches!(
+            op.evaluate(|_| Ok::<_, std::io::Error>(json!({}))),
+            Err(ValueEvaluationError::FieldUnobserved { field }) if field == "x"
+        ));
+        assert!(matches!(
+            op.evaluate(|_| Ok::<_, std::io::Error>(Value::Null)),
+            Err(ValueEvaluationError::FieldRequiresRecord)
+        ));
         let wire = serde_json::to_vec(&op).unwrap();
         let restored: ValueOperation<()> = serde_json::from_slice(&wire).unwrap();
         assert_eq!(
-            restored.evaluate(|_| Ok(json!({"x": 7}))).unwrap(),
+            restored
+                .evaluate(|_| Ok::<_, std::io::Error>(json!({"x": 7})))
+                .unwrap(),
             json!(7)
         );
     }
@@ -371,12 +437,23 @@ mod tests {
                 match *key {
                     "condition" => Ok(json!(true)),
                     "chosen" => Ok(json!(42)),
-                    _ => Err("unobserved".into()),
+                    _ => Err(std::io::Error::other("unobserved")),
                 }
             })
             .unwrap();
         assert_eq!(result, json!(42));
         assert_eq!(visited, vec!["condition", "chosen"]);
+        let resolver_error = std::io::Error::other("input unavailable");
+        let failed = ValueOperation::Field {
+            value: (),
+            name: "x".into(),
+        }
+        .evaluate(|_| Err::<Value, _>(std::io::Error::other("input unavailable")))
+        .expect_err("resolver errors remain typed");
+        assert!(matches!(
+            failed,
+            ValueEvaluationError::Resolve(error) if error.kind() == resolver_error.kind()
+        ));
         for op in [
             ValueOperation::And {
                 left: false,
@@ -391,7 +468,7 @@ mod tests {
             op.evaluate(|v| {
                 count += 1;
                 if count > 1 {
-                    Err("must not evaluate".into())
+                    Err(std::io::Error::other("must not evaluate"))
                 } else {
                     Ok(json!(v))
                 }
@@ -443,16 +520,28 @@ mod refinement_tests {
             value: (),
             contract: original.clone(),
         };
-        assert_eq!(op.infer(|_| Ok(nullable.clone())).unwrap(), original);
         assert_eq!(
-            op.evaluate(|_| Ok(json!({"items":[1,2]}))).unwrap(),
+            op.infer::<crate::value_contract::ValueContractError>(|_| Ok(nullable.clone()))
+                .unwrap(),
+            original
+        );
+        assert_eq!(
+            op.evaluate(|_| Ok::<_, std::io::Error>(json!({"items":[1,2]})))
+                .unwrap(),
             json!({"items":[1,2]})
         );
-        assert!(op.evaluate(|_| Ok(Value::Null)).is_err());
-        assert!(op.evaluate(|_| Ok(json!({"items":["wrong"]}))).is_err());
-        assert_eq!(op.evaluate(|_| Ok(json!({}))).unwrap(), json!({}));
+        assert!(op
+            .evaluate(|_| Ok::<_, std::io::Error>(Value::Null))
+            .is_err());
+        assert!(op
+            .evaluate(|_| Ok::<_, std::io::Error>(json!({"items":["wrong"]})))
+            .is_err());
         assert_eq!(
-            op.infer(|_| Ok(ValueContract {
+            op.evaluate(|_| Ok::<_, std::io::Error>(json!({}))).unwrap(),
+            json!({})
+        );
+        assert_eq!(
+            op.infer::<crate::value_contract::ValueContractError>(|_| Ok(ValueContract {
                 shape: ValueShape::Null,
                 domain: None,
                 nullable: true

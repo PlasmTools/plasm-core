@@ -28,14 +28,21 @@ pub enum TemplateParseError {
     InvalidSym(String),
 }
 
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Error)]
 pub enum InstantiateError {
     #[error("missing parameter `{0}`")]
     MissingParam(String),
     #[error("unresolved sym `{entry_id}.{entity}`")]
     UnresolvedSym { entry_id: String, entity: String },
-    #[error("parameter cannot be represented as a Python literal: {0}")]
-    InvalidLiteral(String),
+    #[error("parameter cannot be represented as a Python literal: non-finite float")]
+    NonFiniteFloat,
+    #[error("an expression is not a materialized parameter")]
+    UnmaterializedExpression,
+    #[error("parameter cannot be encoded as JSON")]
+    LiteralJson {
+        #[source]
+        source: serde_json::Error,
+    },
     #[error("template parse: {0}")]
     Parse(#[from] TemplateParseError),
 }
@@ -125,23 +132,19 @@ fn render_python_literal(value: &Value) -> Result<String, InstantiateError> {
     }
     fn validate(value: &Value) -> Result<(), InstantiateError> {
         match value {
-            Value::Float(number) if !number.is_finite() => {
-                Err(InstantiateError::InvalidLiteral("non-finite float".into()))
-            }
+            Value::Float(number) if !number.is_finite() => Err(InstantiateError::NonFiniteFloat),
             Value::Array(items) => items.iter().try_for_each(validate),
             Value::Object(fields) => fields.values().try_for_each(validate),
             Value::PlasmInputRef(_)
             | Value::GetScalarExtract(_)
             | Value::StringTemplate(_)
-            | Value::UnionCtor { .. } => Err(InstantiateError::InvalidLiteral(
-                "an expression is not a materialized parameter".into(),
-            )),
+            | Value::UnionCtor { .. } => Err(InstantiateError::UnmaterializedExpression),
             _ => Ok(()),
         }
     }
     validate(value)?;
-    let json = serde_json::to_value(value)
-        .map_err(|error| InstantiateError::InvalidLiteral(error.to_string()))?;
+    let json =
+        serde_json::to_value(value).map_err(|source| InstantiateError::LiteralJson { source })?;
     Ok(render(&json))
 }
 
@@ -190,8 +193,14 @@ mod tests {
             ruff_python_parser::parse_module(&format!("value = {literal}\n"))
                 .expect("substitution must remain a single Python literal");
         }
-        assert!(render_python_literal(&Value::Float(f64::INFINITY)).is_err());
-        assert!(render_python_literal(&Value::Array(vec![Value::Float(f64::NAN)])).is_err());
+        assert!(matches!(
+            render_python_literal(&Value::Float(f64::INFINITY)),
+            Err(InstantiateError::NonFiniteFloat)
+        ));
+        assert!(matches!(
+            render_python_literal(&Value::Array(vec![Value::Float(f64::NAN)])),
+            Err(InstantiateError::NonFiniteFloat)
+        ));
         assert_eq!(
             render_python_literal(&Value::Array(vec![Value::Bool(true), Value::Null])).unwrap(),
             "[True, None]"
@@ -206,5 +215,24 @@ mod tests {
             _ => panic!("expected literal"),
         };
         assert!(lit.contains('é'));
+    }
+
+    #[test]
+    fn literal_json_failure_preserves_its_source() {
+        use std::error::Error;
+        let source = serde_json::from_str::<serde_json::Value>("{").unwrap_err();
+        let error = InstantiateError::LiteralJson { source };
+        assert!(error.source().unwrap().is::<serde_json::Error>());
+    }
+
+    #[test]
+    fn unmaterialized_parameter_is_rejected_without_rendering_its_contents() {
+        let value = Value::UnionCtor {
+            ctor_label: "private-expression".into(),
+            ctor_fields: Default::default(),
+        };
+        let error = render_python_literal(&Value::Array(vec![value])).unwrap_err();
+        assert!(matches!(&error, InstantiateError::UnmaterializedExpression));
+        assert!(!format!("{error:?} {error}").contains("private-expression"));
     }
 }

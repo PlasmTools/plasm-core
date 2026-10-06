@@ -3,8 +3,8 @@
 use indexmap::IndexMap;
 use plasm_core::CgsContext;
 use serde::{Deserialize, Serialize};
-use std::fmt;
 use std::sync::Arc;
+use thiserror::Error;
 
 use crate::execute_session::ExecuteSession;
 
@@ -15,36 +15,18 @@ pub struct CatalogPin {
     pub digest: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum CatalogPinError {
+    #[error("catalog_pins must be non-empty")]
     EmptyPins,
+    #[error("catalog_pins: {field} must be non-empty")]
     EmptyField { field: &'static str },
+    #[error("catalog digest mismatch for `{entry_id}`")]
     DigestMismatch { entry_id: String },
+    #[error("execute session is missing catalog pin for `{entry_id}`")]
     MissingPin { entry_id: String },
+    #[error("catalog `{entry_id}` is pinned but not loaded in execute session")]
     UnloadedPin { entry_id: String },
-}
-
-impl fmt::Display for CatalogPinError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::EmptyPins => write!(f, "catalog_pins must be non-empty"),
-            Self::EmptyField { field } => {
-                write!(f, "catalog_pins: {field} must be non-empty")
-            }
-            Self::DigestMismatch { entry_id } => write!(
-                f,
-                "catalog digest mismatch for `{entry_id}` — run `plasm context --new` to refresh"
-            ),
-            Self::MissingPin { entry_id } => write!(
-                f,
-                "execute session missing catalog pin for `{entry_id}` — re-run `plasm context` then `plasm run`"
-            ),
-            Self::UnloadedPin { entry_id } => write!(
-                f,
-                "catalog `{entry_id}` is pinned but not loaded in execute session — re-run `plasm context`"
-            ),
-        }
-    }
 }
 
 impl ExecuteSession {

@@ -78,7 +78,12 @@ impl HttpTransport for FanoutTransport {
                 if self.reject.as_ref() == Some(&item) {
                     state.calls.push(Call::Rejected(item));
                     return Err(RuntimeError::RequestError {
-                        message: "rejected fanout row".into(),
+                        source: plasm_runtime::RequestFailure::HttpStatus(
+                            plasm_runtime::HttpStatusFailure::without_request(
+                                422,
+                                "rejected fanout row".into(),
+                            ),
+                        ),
                         attempts: 1,
                         status: Some(422),
                         body: None,
@@ -210,7 +215,8 @@ async fn check_one(
         run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
-    });
+    })
+    .expect("valid catalog fixture");
     let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
     let wire = symbols.entity_sym_for("matrix", "Wire");
     let counter = symbols.entity_sym_for("matrix", "Counter");

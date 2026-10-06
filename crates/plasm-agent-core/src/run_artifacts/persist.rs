@@ -17,13 +17,15 @@ use super::{
 #[derive(Debug, thiserror::Error)]
 pub enum PersistExecuteRunError {
     #[error("run artifact id digest failed: {0}")]
-    Mint(String),
+    Mint(#[source] plasm_evidence::CanonicalError),
     #[error(transparent)]
     Collection(#[from] plasm_core::collection_codec::CollectionFault),
     #[error("run artifact JSON: {0}")]
     Serialization(#[from] serde_json::Error),
     #[error("run artifact persist failed: {0}")]
-    Persist(String),
+    Persist(#[source] crate::run_artifacts::RunArtifactError),
+    #[error("run artifact source rows could not be rehydrated: {0}")]
+    SourceRehydration(#[source] crate::graph_rehydrate::GraphRehydrateError),
 }
 
 pub struct PersistExecuteRunInput<'a> {
@@ -53,7 +55,7 @@ pub fn mint_run_artifact_id_for_session(
         parsed,
         fingerprints,
     )
-    .map_err(|e| PersistExecuteRunError::Mint(e.to_string()))
+    .map_err(PersistExecuteRunError::Mint)
 }
 
 fn resolve_run_artifact_uris(
@@ -117,7 +119,7 @@ pub async fn persist_execute_run(
         let rows = rehydrator
             .resolve_source_parents(entity_type, result)
             .await
-            .map_err(PersistExecuteRunError::Persist)?;
+            .map_err(PersistExecuteRunError::SourceRehydration)?;
         archived_result.collection = result.collection.with_materialization(rows)?;
     }
     let result = &archived_result;
@@ -148,7 +150,7 @@ pub async fn persist_execute_run(
             &payload,
         )
         .await
-        .map_err(|e| PersistExecuteRunError::Persist(e.to_string()))?;
+        .map_err(PersistExecuteRunError::Persist)?;
     crate::metrics::record_run_artifact_archive_put_ok();
     let graph_epoch = {
         let cache = sess.lock_graph_cache().await;

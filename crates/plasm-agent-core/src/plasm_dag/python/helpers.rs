@@ -66,14 +66,17 @@ impl Lower<'_> {
             .state
             .sym_map_for(self.es)
             .resolve_session_entity(entity)
-            .map_err(|_| {
+            .map_err(|source| {
                 at(
                     annotation,
-                    "DAG handle annotation requires a visible eN entity",
+                    PythonSourceError::DagHandleEntityMissing {
+                        entity: entity.to_owned(),
+                        source,
+                    },
                 )
             })?;
         let actual = super::super::binding_contract(&self.state, label)
-            .ok_or("DAG handle argument has no binding contract")?;
+            .ok_or(crate::program_rejection::PythonLoweringInvariantError::InputContractMissing)?;
         if actual.value_kind != BindingValueKind::EntityRow
             || actual.row_entity.entry_id.as_str() != expected.entry_id_str()
             || actual.row_entity.entity.as_str() != expected.entity_str()
@@ -81,10 +84,7 @@ impl Lower<'_> {
             || (shape == PythonRowShape::Singleton
                 && !actual.row_cardinality.permits_scalar_field_extract())
         {
-            return Err(at(
-                annotation,
-                "DAG handle annotation does not match the argument's entity authority or cardinality",
-            ));
+            return Err(at(annotation, PythonSourceError::DagHandleContractMismatch));
         }
         Ok(true)
     }
@@ -200,7 +200,11 @@ impl Lower<'_> {
         name: &str,
         id: &str,
     ) -> Result<String, PythonLoweringError> {
-        let def = self.helpers.get(name).ok_or("missing helper")?.clone();
+        let def = self
+            .helpers
+            .get(name)
+            .ok_or(crate::program_rejection::PythonLoweringInvariantError::HelperDefinitionMissing)?
+            .clone();
         if self.pure_helper(&def) && self.materialized_helper(&def) {
             // A helper without Plasm references is a whole Python value
             // function. Keep mutable locals inside Monty; materialize only its
@@ -213,7 +217,12 @@ impl Lower<'_> {
         }
         let identity = format!("method:{name}");
         if self.active_callbacks.contains(&identity) {
-            return Err(at(site, "recursive DAG methods have no bounded expansion"));
+            return Err(at(
+                site,
+                PythonSourceError::RecursiveDagMethod {
+                    method: name.to_owned(),
+                },
+            ));
         }
         let mut args = call
             .arguments
@@ -227,7 +236,7 @@ impl Lower<'_> {
                     keyword
                         .arg
                         .as_ref()
-                        .ok_or("expanded helper arguments have no DAG port")?
+                        .ok_or(crate::program_rejection::PythonLoweringInvariantError::HelperDagPortMissing)?
                         .to_string(),
                 ),
                 &keyword.value,
@@ -236,7 +245,7 @@ impl Lower<'_> {
         let flow_source = flow_source_with_host_annotations(self.program_source, self.helpers);
         let mut bind_def = def.clone();
         let object = *ruff_python_parser::parse_expression("object")
-            .map_err(|error| error.to_string())?
+            .map_err(PythonLoweringError::parse_error)?
             .into_syntax()
             .body;
         for parameter in bind_def
@@ -280,13 +289,16 @@ impl Lower<'_> {
         let mut closure = BTreeMap::new();
         for (binding, (_, expression)) in bindings.iter().zip(&args) {
             if binding.variadic {
-                return Err("variadic helper inputs have no DAG port".into());
+                return Err(
+                    crate::program_rejection::PythonProgramError::VariadicHelperInputs.into(),
+                );
             }
             closure.insert(binding.parameter.clone(), self.expr(expression, None)?);
         }
         for parameter in &parameters {
             if !closure.contains_key(parameter.parameter.name.as_str()) {
-                let default = parameter.default.as_deref().ok_or("missing helper input")?;
+                let default = parameter.default.as_deref()
+                    .ok_or(crate::program_rejection::PythonLoweringInvariantError::HelperDefaultInputMissing)?;
                 closure.insert(
                     parameter.parameter.name.to_string(),
                     self.expr(default, None)?,
@@ -296,13 +308,13 @@ impl Lower<'_> {
         // A method executes once. All authored arguments remain independent
         // captures, including plural rowsets; the unit port is only scheduling.
         let unit = *ruff_python_parser::parse_expression("None")
-            .map_err(|e| e.to_string())?
+            .map_err(PythonLoweringError::parse_error)?
             .into_syntax()
             .body;
         let source = self.expr(&unit, None)?;
         let row = self.fresh_parameter("method");
         let lambda = match *ruff_python_parser::parse_expression(&format!("lambda {row}: None"))
-            .map_err(|e| e.to_string())?
+            .map_err(PythonLoweringError::parse_error)?
             .into_syntax()
             .body
         {
@@ -317,13 +329,13 @@ impl Lower<'_> {
                 }
                 let schema = text::inferred_schema(self.es, &self.state, binding, 0)?;
                 let contract = super::super::binding_contract(&self.state, binding)
-                    .ok_or("helper argument contract missing")?;
+                    .ok_or(crate::program_rejection::PythonLoweringInvariantError::HelperArgumentContractMissing)?;
                 let actual = if contract.value_kind == BindingValueKind::ScalarCell {
                     schema
                         .fields
                         .first()
                         .and_then(|f| f.value_type.clone())
-                        .ok_or("helper scalar contract missing")?
+                        .ok_or(crate::program_rejection::PythonLoweringInvariantError::HelperScalarContractMissing)?
                 } else {
                     schema.row_contract()?
                 };

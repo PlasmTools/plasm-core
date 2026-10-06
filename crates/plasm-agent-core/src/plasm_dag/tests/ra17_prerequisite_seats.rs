@@ -155,8 +155,8 @@ async fn python_writes_keep_qualified_prerequisite_seats() {
     let fanout = code.replace("done = row.", "done = row.flat_map(lambda item: item.").replace("source_access_token=fs.access_token)", "source_access_token=fs.access_token))");
     crate::plasm_compile::compile_python_program(&session, &fanout).await.expect("matching fanout captures");
     let error = crate::plasm_compile::compile_python_program(&session, &fanout.replace("source_access_token=fs.", "source_access_token=sw.")).await.unwrap_err();
-    assert!(error.contains("source:session"), "{error}");
+    assert!(error.to_string().contains("source:session"), "{error}");
 
     let error = crate::plasm_compile::compile_python_program(&session, &code.replace("source_access_token=fs.", "source_access_token=sw.")).await.unwrap_err();
-    assert!(error.contains("source:session"), "{error}");
+    assert!(error.to_string().contains("source:session"), "{error}");
 }

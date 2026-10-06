@@ -20,16 +20,19 @@ fn semantic_contract_rejects_wrong_evidence_roles_and_unknown_properties() {
         "\"kind\": \"property\", \"id\": \"get_identity_spelling\"",
         "\"kind\": \"matrix\", \"id\": \"get\"",
     );
-    assert!(validate(&parse(&wrong_role).unwrap(), "BC", 4)
-        .unwrap_err()
-        .contains("cannot witness"));
+    assert!(
+        matches!(validate(&parse(&wrong_role).unwrap(), "BC", 4), Err(super::literate_contract::ContractError::WitnessRole { id, role: super::literate_contract::Role::Metamorphic }) if id == "get")
+    );
     let unknown = DOCUMENT.replace("get_identity_spelling", "unimplemented_property");
-    assert!(parse(&unknown).unwrap_err().contains("unknown variant"));
+    assert!(
+        matches!(parse(&unknown), Err(super::literate_contract::ContractError::Json(source)) if source.classify() == serde_json::error::Category::Data)
+    );
     let missing_role = DOCUMENT.replace(
         "\"role\": \"metamorphic\"",
         "\"role\": \"runtime_evidence\"",
     );
-    assert!(validate(&parse(&missing_role).unwrap(), "BC", 4)
-        .unwrap_err()
-        .contains("four evidence roles"));
+    assert!(matches!(
+        validate(&parse(&missing_role).unwrap(), "BC", 4),
+        Err(super::literate_contract::ContractError::EvidenceRoles { .. })
+    ));
 }

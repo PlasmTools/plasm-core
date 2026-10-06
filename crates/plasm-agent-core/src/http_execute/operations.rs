@@ -38,8 +38,13 @@ pub async fn handle_cancel_operation(
     trace: Option<&PlasmTraceContext>,
     handle: &plasm_core::OperationHandle,
 ) -> Result<crate::plasm_plan_run::PlasmPlanRunResult, OperationError> {
-    let key = crate::operation::resolve_operation_storage_handle(trace, handle)
-        .map_err(|e| session_unknown_handle(sess, handle.as_str(), e))?;
+    let key =
+        crate::operation::resolve_operation_storage_handle(trace, handle).map_err(|error| {
+            OperationError::HandleNamespaceFailure {
+                handle: handle.as_str().to_string(),
+                error,
+            }
+        })?;
     if !sess.operation_has_live_executor(&key) {
         if let Some(op) = sess.get_operation(&key) {
             if op.phase == crate::operation::OperationPhase::Running {

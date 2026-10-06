@@ -1,6 +1,7 @@
 //! WorkflowViewModel — manifest + tool-model field types for MCP App parameter form.
 
 use std::collections::BTreeMap;
+use thiserror::Error;
 
 use serde::{Deserialize, Serialize};
 
@@ -15,6 +16,18 @@ use plasm_core::ExposedEntitySymbolRow;
 use plasm_core::Value;
 
 pub const WORKFLOW_VIEW_MODEL_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum WorkflowViewModelError {
+    #[error("workflow view_model schema_version must be {expected} (got {actual})")]
+    SchemaVersion { expected: u32, actual: u32 },
+    #[error("workflow view_model id missing")]
+    MissingId,
+    #[error("workflow view_model title missing")]
+    MissingTitle,
+    #[error("workflow view_model seeds must be non-empty")]
+    EmptySeeds,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkflowFieldView {
@@ -81,21 +94,21 @@ pub fn build_workflow_view_model_with_readiness(
 }
 
 /// Reject stale or partial workflow view-model wire (exact schema cutover).
-pub fn validate_workflow_view_model(vm: &WorkflowViewModel) -> Result<(), String> {
+pub fn validate_workflow_view_model(vm: &WorkflowViewModel) -> Result<(), WorkflowViewModelError> {
     if vm.schema_version != WORKFLOW_VIEW_MODEL_SCHEMA_VERSION {
-        return Err(format!(
-            "workflow view_model schema_version must be {WORKFLOW_VIEW_MODEL_SCHEMA_VERSION} (got {})",
-            vm.schema_version
-        ));
+        return Err(WorkflowViewModelError::SchemaVersion {
+            expected: WORKFLOW_VIEW_MODEL_SCHEMA_VERSION,
+            actual: vm.schema_version,
+        });
     }
     if vm.id.trim().is_empty() {
-        return Err("workflow view_model id missing".into());
+        return Err(WorkflowViewModelError::MissingId);
     }
     if vm.title.trim().is_empty() {
-        return Err("workflow view_model title missing".into());
+        return Err(WorkflowViewModelError::MissingTitle);
     }
     if vm.seeds.is_empty() {
-        return Err("workflow view_model seeds must be non-empty".into());
+        return Err(WorkflowViewModelError::EmptySeeds);
     }
     Ok(())
 }
@@ -213,11 +226,31 @@ mod tests {
     }
 
     #[test]
+    fn view_model_validation_reports_a_typed_schema_version_error() {
+        let mut view_model = build_workflow_view_model(&workflow_matrix_manifest());
+        view_model.schema_version = 2;
+
+        assert_eq!(
+            validate_workflow_view_model(&view_model),
+            Err(WorkflowViewModelError::SchemaVersion {
+                expected: WORKFLOW_VIEW_MODEL_SCHEMA_VERSION,
+                actual: 2,
+            })
+        );
+    }
+
+    #[test]
     fn workflow_manifest_validate_rejects_stale_schema() {
         let mut m = workflow_matrix_manifest();
         m.schema_version = 0;
         let err = m.validate().unwrap_err();
-        assert!(err.contains("schema_version must be 1"), "{err}");
+        assert_eq!(
+            err,
+            crate::workflow_manifest::WorkflowManifestError::SchemaVersion {
+                expected: 1,
+                actual: 0,
+            }
+        );
     }
 
     #[test]

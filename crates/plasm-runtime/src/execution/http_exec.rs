@@ -49,9 +49,9 @@ impl ExecutionEngine {
             Some(credential) => {
                 let (store, scope) = credential_scope(&credential.slot, &credential.resource, base_url.as_ref())?;
                 let destination = crate::http_transport::compiled_http_url(base_url.as_ref(), request);
-                let destination = url::Url::parse(&destination).map_err(|_| crate::credentials::credential_error("invalid credential request destination"))?;
+                let destination = url::Url::parse(&destination).map_err(crate::credentials::CredentialError::RequestDestination)?;
                 if destination.origin().ascii_serialization() != scope.origin || !destination.username().is_empty() || destination.password().is_some() {
-                    return Err(crate::credentials::credential_error("credential request destination is outside its scope"));
+                    return Err(crate::credentials::CredentialError::DestinationOutsideScope.into());
                 }
                 let reference = crate::credentials::CredentialReference::parse(&credential.reference)?;
                 match store.resolve(&reference, &scope).await? {
@@ -62,7 +62,7 @@ impl ExecutionEngine {
                                 auth.headers.iter().chain(&auth.query_params).any(|(_, value)| !value.trim().is_empty())
                             })
                         {
-                            return Err(crate::credentials::credential_error("scoped host authentication is not configured"));
+                            return Err(crate::credentials::CredentialError::HostAuthenticationMissing.into());
                         }
                         Ok(auth)
                     }
@@ -93,43 +93,22 @@ impl ExecutionEngine {
     }
 }
 
-fn annotate_http_401_login_tail<T>(result: Result<T, RuntimeError>) -> Result<T, RuntimeError> {
-    let Err(RuntimeError::RequestError {
+fn annotate_http_401_login_tail<T>(mut result: Result<T, RuntimeError>) -> Result<T, RuntimeError> {
+    if let Err(RuntimeError::RequestError {
+        source: crate::RequestFailure::HttpStatus(failure),
         status: Some(401),
-        message,
-        attempts,
-        body,
-    }) = result
-    else {
-        return result;
-    };
-    let Some(material) = super::session::try_current_execute_session_material() else {
-        return Err(RuntimeError::RequestError {
-            message,
-            attempts,
-            status: Some(401),
-            body,
-        });
-    };
-    let login_tail = material
-        .login_access_token_tail
-        .lock()
-        .ok()
-        .and_then(|guard| guard.clone());
-    let Some(login_tail) = login_tail else {
-        return Err(RuntimeError::RequestError {
-            message,
-            attempts,
-            status: Some(401),
-            body,
-        });
-    };
-    Err(RuntimeError::RequestError {
-        message: crate::http_auth_failure::append_login_token_compare(&message, &login_tail),
-        attempts,
-        status: Some(401),
-        body,
-    })
+        ..
+    }) = &mut result
+    {
+        if let Some(material) = super::session::try_current_execute_session_material() {
+            failure.login_token_tail = material
+                .login_access_token_tail
+                .lock()
+                .ok()
+                .and_then(|guard| guard.clone());
+        }
+    }
+    result
 }
 
 pub(super) fn credential_scope(
@@ -143,16 +122,14 @@ pub(super) fn credential_scope(
     ),
     RuntimeError,
 > {
-    let material = super::session::try_current_execute_session_material().ok_or_else(|| {
-        crate::credentials::credential_error("credential effects require an execute session")
-    })?;
-    let store = material.credential_store.clone().ok_or_else(|| {
-        crate::credentials::credential_error(
-            "execute session has no credential persistence adapter",
-        )
-    })?;
+    let material = super::session::try_current_execute_session_material()
+        .ok_or_else(|| crate::credentials::CredentialError::ExecuteSessionMissing)?;
+    let store = material
+        .credential_store
+        .clone()
+        .ok_or_else(|| crate::credentials::CredentialError::PersistenceMissing)?;
     let origin = url::Url::parse(base)
-        .map_err(|_| crate::credentials::credential_error("invalid credential transport origin"))?
+        .map_err(crate::credentials::CredentialError::TransportOrigin)?
         .origin()
         .ascii_serialization();
     Ok((

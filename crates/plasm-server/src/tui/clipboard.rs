@@ -7,20 +7,28 @@ const CLIPBOARD_INIT_ERROR: &str =
 const CLIPBOARD_WRITE_ERROR: &str =
     "Could not write to the system clipboard. Check clipboard access and the desktop session.";
 
-type SystemClipboardInitializer = fn() -> Result<arboard::Clipboard, String>;
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ClipboardError {
+    #[error("{CLIPBOARD_INIT_ERROR}")]
+    Initialize(#[source] arboard::Error),
+    #[error("{CLIPBOARD_WRITE_ERROR}")]
+    Write(#[source] arboard::Error),
+}
+
+type SystemClipboardInitializer = fn() -> Result<arboard::Clipboard, arboard::Error>;
 
 pub(crate) trait ClipboardBackend {
-    fn set_text(&mut self, text: &str) -> Result<(), String>;
+    fn set_text(&mut self, text: &str) -> Result<(), arboard::Error>;
 }
 
 impl ClipboardBackend for arboard::Clipboard {
-    fn set_text(&mut self, text: &str) -> Result<(), String> {
-        arboard::Clipboard::set_text(self, text).map_err(|error| error.to_string())
+    fn set_text(&mut self, text: &str) -> Result<(), arboard::Error> {
+        arboard::Clipboard::set_text(self, text)
     }
 }
 
-fn initialize_system_clipboard() -> Result<arboard::Clipboard, String> {
-    arboard::Clipboard::new().map_err(|error| error.to_string())
+fn initialize_system_clipboard() -> Result<arboard::Clipboard, arboard::Error> {
+    arboard::Clipboard::new()
 }
 
 /// Lazily initializes and retains the clipboard owner for one control-station run.
@@ -44,7 +52,7 @@ impl ClipboardService {
 impl<Backend, Initialize> ClipboardService<Backend, Initialize>
 where
     Backend: ClipboardBackend,
-    Initialize: FnMut() -> Result<Backend, String>,
+    Initialize: FnMut() -> Result<Backend, arboard::Error>,
 {
     #[cfg(test)]
     fn with_initializer(initialize: Initialize) -> Self {
@@ -54,11 +62,11 @@ where
         }
     }
 
-    pub(crate) fn copy_text(&self, text: &str) -> Result<(), String> {
+    pub(crate) fn copy_text(&self, text: &str) -> Result<(), ClipboardError> {
         let mut clipboard = self.clipboard.borrow_mut();
         if clipboard.is_none() {
             let initialized =
-                (self.initialize.borrow_mut())().map_err(|_| CLIPBOARD_INIT_ERROR.to_string())?;
+                (self.initialize.borrow_mut())().map_err(ClipboardError::Initialize)?;
             *clipboard = Some(initialized);
         }
 
@@ -66,7 +74,7 @@ where
             .as_mut()
             .expect("clipboard was initialized above")
             .set_text(text)
-            .map_err(|_| CLIPBOARD_WRITE_ERROR.to_string())
+            .map_err(ClipboardError::Write)
     }
 }
 
@@ -79,13 +87,13 @@ mod tests {
 
     struct RecordingClipboard {
         writes: Rc<RefCell<Vec<String>>>,
-        error: Option<String>,
+        error: Option<arboard::Error>,
     }
 
     impl ClipboardBackend for RecordingClipboard {
-        fn set_text(&mut self, text: &str) -> Result<(), String> {
-            if let Some(error) = &self.error {
-                return Err(error.clone());
+        fn set_text(&mut self, text: &str) -> Result<(), arboard::Error> {
+            if let Some(error) = self.error.take() {
+                return Err(error);
             }
             self.writes.borrow_mut().push(text.to_owned());
             Ok(())
@@ -102,7 +110,9 @@ mod tests {
             move || {
                 *attempts.borrow_mut() += 1;
                 if *attempts.borrow() == 1 {
-                    return Err("temporary initialization failure".into());
+                    return Err(arboard::Error::Unknown {
+                        description: "temporary initialization failure".into(),
+                    });
                 }
                 Ok(RecordingClipboard {
                     writes: Rc::clone(&writes),
@@ -131,12 +141,19 @@ mod tests {
         let service = ClipboardService::with_initializer(|| {
             Ok(RecordingClipboard {
                 writes: Rc::new(RefCell::new(Vec::new())),
-                error: Some(format!("backend rejected {secret}")),
+                error: Some(arboard::Error::Unknown {
+                    description: format!("backend rejected {secret}"),
+                }),
             })
         });
 
         let error = service.copy_text(secret).expect_err("copy must fail");
-        assert!(!error.contains(secret));
+        assert!(!error.to_string().contains(secret));
+        assert!(matches!(&error, ClipboardError::Write(_)));
+        assert!(std::error::Error::source(&error)
+            .unwrap()
+            .downcast_ref::<arboard::Error>()
+            .is_some());
 
         let notice = super::super::copy_notice("copied", "copy failed", Err(error));
         assert!(!notice.title.contains(secret));

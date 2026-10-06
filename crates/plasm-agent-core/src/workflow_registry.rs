@@ -15,15 +15,17 @@ impl WorkflowRegistry {
         Self::default()
     }
 
-    pub fn register(&self, manifest: WorkflowManifest) {
-        manifest
-            .validate()
-            .unwrap_or_else(|e| panic!("invalid workflow manifest `{}`: {e}", manifest.id));
+    pub fn register(
+        &self,
+        manifest: WorkflowManifest,
+    ) -> Result<(), crate::workflow_manifest::WorkflowManifestError> {
+        manifest.validate()?;
         let id = manifest.id.clone();
         self.inner
             .write()
             .expect("workflow registry lock")
             .insert(id, manifest);
+        Ok(())
     }
 
     pub fn get(&self, id: &str) -> Option<WorkflowManifest> {

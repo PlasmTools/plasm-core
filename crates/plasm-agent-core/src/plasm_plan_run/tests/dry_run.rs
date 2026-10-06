@@ -9,17 +9,23 @@ use std::sync::Arc;
 #[test]
 fn singleton_input_zero_row_error_is_actionable() {
     let err = singleton_input_row_count_error("src", "_", 0, "staged expression rendering");
-    assert!(err.contains("zero rows"), "{err}");
-    assert!(err.contains("not a Plasm syntax error"), "{err}");
-    assert!(err.contains("branch around empty results"), "{err}");
+    assert!(err.to_string().contains("zero rows"), "{err}");
+    assert!(
+        err.to_string().contains("not a Plasm syntax error"),
+        "{err}"
+    );
+    assert!(
+        err.to_string().contains("branch around empty results"),
+        "{err}"
+    );
 }
 
 #[test]
 fn singleton_input_multi_row_error_mentions_ambiguity_remedy() {
     let err = singleton_input_row_count_error("src", "_", 2, "staged expression rendering");
-    assert!(err.contains("2 rows"), "{err}");
-    assert!(err.contains("make the source unique"), "{err}");
-    assert!(err.contains(".singleton()"), "{err}");
+    assert!(err.to_string().contains("2 rows"), "{err}");
+    assert!(err.to_string().contains("make the source unique"), "{err}");
+    assert!(err.to_string().contains("checked at runtime"), "{err}");
 }
 
 fn repository_commit_session() -> ExecuteSession {
@@ -58,8 +64,10 @@ fn entry_scoped_surface_parse_preserves_typed_catalog_create() {
         .expect_err("unscoped federated create should be ambiguous")
         .to_string();
     assert!(
-        err.contains("ambiguous entity `Product`")
-            || err.contains("ambiguous capability label `create`"),
+        err.to_string().contains("ambiguous entity `Product`")
+            || err
+                .to_string()
+                .contains("ambiguous capability label `create`"),
         "{err}"
     );
 
@@ -101,8 +109,10 @@ fn federated_bare_entity_mutator_stays_ambiguous() {
         .expect_err("unscoped federated create should stay ambiguous")
         .to_string();
     assert!(
-        err.contains("ambiguous entity `Product`")
-            || err.contains("ambiguous capability label `create`"),
+        err.to_string().contains("ambiguous entity `Product`")
+            || err
+                .to_string()
+                .contains("ambiguous capability label `create`"),
         "{err}"
     );
 }
@@ -193,7 +203,7 @@ created | select {f_status}"#
         &bad,
     )
     .expect_err("status is outside langitem_create.provides and must fail closed");
-    assert!(err.contains("not a row field"), "{err}");
+    assert!(err.to_string().contains("not a row field"), "{err}");
 }
 
 fn for_each_write_plan(source_node: serde_json::Value, source_id: &str) -> serde_json::Value {
@@ -530,10 +540,12 @@ fn dry_run_rejects_query_node_resolving_search_capability() {
         "return": { "kind": "node", "node": "n0" }
     });
     let err = evaluate_plasm_plan_dry(&s, &plan).expect_err("query vs search dispatch");
-    assert!(
-        err.contains("kind query but expression resolved search capability"),
-        "{err}"
-    );
+    assert!(matches!(err, PlanDryTestError::Evaluation(
+        crate::program_diagnostic::ProgramStageError::Dispatch { error }
+    ) if matches!(error.as_ref(), crate::execute_pipeline::DispatchError::PlanKindMismatch {
+        index: 0, plan_kind: crate::plasm_plan::PlanNodeKind::Query,
+        capability, capability_kind: plasm_core::CapabilityKind::Search,
+    } if capability == "langitem_search")));
 }
 
 #[test]
@@ -579,11 +591,11 @@ rows"#;
         Err(err) => {
             let err = err.to_string();
             assert!(
-                err.contains("query/capability input")
-                    || err.contains("not a row field")
-                    || err.contains("not a row symbol")
-                    || err.contains("legacy row projection")
-                    || err.contains("postfix projection"),
+                err.to_string().contains("query/capability input")
+                    || err.to_string().contains("not a row field")
+                    || err.to_string().contains("not a row symbol")
+                    || err.to_string().contains("legacy row projection")
+                    || err.to_string().contains("postfix projection"),
                 "{err}"
             );
         }
@@ -592,10 +604,10 @@ rows"#;
                 .expect_err("dry must reject search input projection");
             let dry_err = dry_err.to_string();
             assert!(
-                dry_err.contains("query/capability input")
-                    || dry_err.contains("not a row field")
-                    || dry_err.contains("not a row symbol")
-                    || dry_err.contains("postfix projection"),
+                dry_err.to_string().contains("query/capability input")
+                    || dry_err.to_string().contains("not a row field")
+                    || dry_err.to_string().contains("not a row symbol")
+                    || dry_err.to_string().contains("postfix projection"),
                 "{dry_err}"
             );
         }
@@ -710,7 +722,11 @@ fn evaluate_plasm_plan_dry_rejects_relation_target_mismatch() {
         "return": { "kind": "node", "node": "bad_relation" }
     });
     let err = evaluate_plasm_plan_dry(&s, &plan).expect_err("relation target mismatch rejected");
-    assert!(err.contains("does not match CGS target"), "{err}");
+    assert!(matches!(err, PlanDryTestError::Evaluation(
+        crate::program_diagnostic::ProgramStageError::Plan { error }
+    ) if matches!(error.as_ref(), crate::program_diagnostic::PlanStageError::DryValidation(
+        DryPlanValidationError::RelationTargetMismatch { index: 1, actual, expected }
+    ) if actual == "Product" && expected == "Category")));
 }
 
 #[test]
@@ -1008,7 +1024,10 @@ fn validation_rejects_ambiguous_auto_cross_node_input() {
         "return": { "kind": "node", "node": "cards" }
     });
     let err = crate::plasm_plan::validate_plan_value(&plan).expect_err("ambiguous input");
-    assert!(err.contains("not statically singleton"), "{err}");
+    assert!(
+        err.to_string().contains("not statically singleton"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -1456,7 +1475,13 @@ fn session_provisions_require_prior_same_catalog_login_and_sealed_dependencies()
     damaged.comp.bind.deps.clear();
     let damaged = crate::PlasmCompBundle::new(damaged).expect("structurally valid");
     let err = evaluate_plasm_comp_dry(&es, &damaged).expect_err("missing semantic edge");
-    assert!(err.to_string().contains("provider dependencies"), "{err}");
+    assert!(matches!(
+        err,
+        crate::program_diagnostic::ProgramStageError::SessionProvision {
+            error:
+                crate::plan_session_provisions::SessionProvisionError::MissingProviderDependencies { .. }
+        }
+    ));
 
     let es = federated_langmatrix_item_session().expect("matrix");
     let mut es = es;

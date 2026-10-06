@@ -187,11 +187,19 @@ fn session_expired(sess: &StoredDeviceSession) -> bool {
 }
 
 /// Mint an HS256 incoming JWT compatible with [`IncomingAuthVerifier`].
+#[derive(Debug, thiserror::Error)]
+pub enum IncomingTokenMintError {
+    #[error("JWT minting not configured (PLASM_AUTH_JWT_SECRET)")]
+    NotConfigured,
+    #[error("incoming token encoding failed: {0}")]
+    Encode(#[source] jsonwebtoken::errors::Error),
+}
+
 pub fn mint_incoming_access_token(
     verifier: &IncomingAuthVerifier,
     sub: &str,
     tenant_id: &str,
-) -> Result<String, String> {
+) -> Result<String, IncomingTokenMintError> {
     use jsonwebtoken::{encode, EncodingKey, Header};
     use serde_json::json;
 
@@ -199,7 +207,7 @@ pub fn mint_incoming_access_token(
     let secret = config
         .jwt_secret
         .as_deref()
-        .ok_or_else(|| "JWT minting not configured (PLASM_AUTH_JWT_SECRET)".to_string())?;
+        .ok_or(IncomingTokenMintError::NotConfigured)?;
 
     let exp = now_unix() + jwt_ttl_secs();
 
@@ -220,7 +228,7 @@ pub fn mint_incoming_access_token(
         &claims,
         &EncodingKey::from_secret(secret.as_bytes()),
     )
-    .map_err(|e| e.to_string())
+    .map_err(IncomingTokenMintError::Encode)
 }
 
 #[derive(Debug, Deserialize)]

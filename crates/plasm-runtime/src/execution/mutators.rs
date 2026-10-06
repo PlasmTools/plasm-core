@@ -47,11 +47,7 @@ impl ExecutionEngine {
             }
         }
         normalize_cml_env_inputs(&mut env, cgs, capability)?;
-        plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
-            RuntimeError::ConfigurationError {
-                message: e.to_string(),
-            }
-        })?;
+        plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability)?;
 
         apply_preflight_steps(self, capability, cgs, mat, mode, &mut env, None, true).await?;
 
@@ -189,11 +185,8 @@ impl ExecutionEngine {
         let mut env = CmlEnv::new();
         let target_ent = cgs
             .get_entity(delete.target.entity_type.as_str())
-            .ok_or_else(|| RuntimeError::ConfigurationError {
-                message: format!(
-                    "unknown entity `{}` for delete identity-env projection",
-                    delete.target.entity_type
-                ),
+            .ok_or_else(|| RuntimeError::EntityUnknown {
+                entity: delete.target.entity_type.to_string(),
             })?;
         let input_for_env = super::compile_preflight::targeted_call_input(delete, capability, cgs);
         let mut overlay_map = mat.capability_params_for(&delete.target);
@@ -212,11 +205,7 @@ impl ExecutionEngine {
             env.insert("input".to_string(), input);
         }
         normalize_cml_env_inputs(&mut env, cgs, capability)?;
-        plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
-            RuntimeError::ConfigurationError {
-                message: e.to_string(),
-            }
-        })?;
+        plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability)?;
 
         merge_plasm_execute_session_env(&mut env);
 
@@ -302,11 +291,8 @@ impl ExecutionEngine {
 
         let target_ent = cgs
             .get_entity(invoke.target.entity_type.as_str())
-            .ok_or_else(|| RuntimeError::ConfigurationError {
-                message: format!(
-                    "unknown entity `{}` for invoke identity-env projection",
-                    invoke.target.entity_type
-                ),
+            .ok_or_else(|| RuntimeError::EntityUnknown {
+                entity: invoke.target.entity_type.to_string(),
             })?;
 
         let input_for_env = super::compile_preflight::targeted_call_input(invoke, capability, cgs);
@@ -336,11 +322,7 @@ impl ExecutionEngine {
             env.insert("input".to_string(), input.clone());
         }
         normalize_cml_env_inputs(&mut env, cgs, capability)?;
-        plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
-            RuntimeError::ConfigurationError {
-                message: e.to_string(),
-            }
-        })?;
+        plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability)?;
         merge_entity_id_from_into_input_env(&mut env, Some(target_ent), capability);
 
         apply_preflight_steps(

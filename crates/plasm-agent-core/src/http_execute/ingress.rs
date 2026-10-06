@@ -1,13 +1,32 @@
 //! Program body parsing and session plugin execute options.
 
 use plasm_core::SymbolSession;
+use thiserror::Error;
 
 use super::*;
+
+#[derive(Debug, Error)]
+pub(crate) enum ExecuteProgramBodyError {
+    #[error("request body contains invalid JSON: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("request body contains invalid UTF-8: {0}")]
+    Utf8(#[from] std::str::Utf8Error),
+    #[error("JSON top-level array of strings is not supported; send one program string or {{\"program\": \"...\"}}")]
+    TopLevelArray,
+    #[error("JSON {{\"lines\": [...]}} is not supported; send one program string or {{\"program\": \"...\"}}")]
+    LinesArray,
+    #[error("program must be a non-empty string")]
+    EmptyJsonProgram,
+    #[error("program must be non-empty")]
+    EmptyTextProgram,
+    #[error("JSON body must be a quoted program string or {{\"program\": \"...\"}}")]
+    UnsupportedJsonShape,
+}
 
 pub(crate) fn parse_execute_program_body(
     content_type: Option<&str>,
     raw: &[u8],
-) -> Result<String, String> {
+) -> Result<String, ExecuteProgramBodyError> {
     let mime = content_type
         .unwrap_or("")
         .split(';')
@@ -17,43 +36,36 @@ pub(crate) fn parse_execute_program_body(
         .to_ascii_lowercase();
 
     if mime == "application/json" || mime.ends_with("+json") {
-        let v: serde_json::Value =
-            serde_json::from_slice(raw).map_err(|e| format!("invalid JSON body: {e}"))?;
+        let v: serde_json::Value = serde_json::from_slice(raw)?;
         if v.is_array() {
-            return Err(
-                "JSON top-level array of strings is not supported; send one program string or {\"program\": \"...\"}"
-                    .into(),
-            );
+            return Err(ExecuteProgramBodyError::TopLevelArray);
         }
         if let Some(s) = v.as_str() {
             let t = s.trim();
             if t.is_empty() {
-                return Err("program must be a non-empty string".into());
+                return Err(ExecuteProgramBodyError::EmptyJsonProgram);
             }
             return Ok(t.to_string());
         }
         if let Some(obj) = v.as_object() {
             if obj.contains_key("lines") {
-                return Err(
-                    "JSON {\"lines\": [...]} is not supported; send one program string or {\"program\": \"...\"}"
-                        .into(),
-                );
+                return Err(ExecuteProgramBodyError::LinesArray);
             }
             if let Some(p) = obj.get("program").and_then(|x| x.as_str()) {
                 let t = p.trim();
                 if t.is_empty() {
-                    return Err("program must be a non-empty string".into());
+                    return Err(ExecuteProgramBodyError::EmptyJsonProgram);
                 }
                 return Ok(t.to_string());
             }
         }
-        return Err("JSON body must be a quoted program string or {\"program\": \"...\"}".into());
+        return Err(ExecuteProgramBodyError::UnsupportedJsonShape);
     }
 
-    let s = std::str::from_utf8(raw).map_err(|e| format!("invalid UTF-8: {e}"))?;
+    let s = std::str::from_utf8(raw)?;
     let program = s.trim();
     if program.is_empty() {
-        return Err("program must be non-empty".into());
+        return Err(ExecuteProgramBodyError::EmptyTextProgram);
     }
     Ok(program.to_string())
 }

@@ -18,6 +18,16 @@ pub(super) struct Case {
     pub(super) existing: Option<&'static str>,
     pub(super) expect_live_error: Option<&'static str>,
 }
+
+pub(super) fn corrupted_bundle_rejected(
+    es: &plasm_agent::execute_session::ExecuteSession,
+    artifact: plasm_core::plasm_monad::PlasmCompArtifact,
+) -> bool {
+    match plasm_agent::plasm_compile::PlasmCompBundle::new(artifact) {
+        Err(_) => true,
+        Ok(bundle) => evaluate_plasm_comp_dry(es, &bundle).is_err(),
+    }
+}
 pub(super) const CASES: &[Case] = &[
     Case { id: "callback_iteration", python: "def step(row):\n    return row.PING()\ndef done(row):\n    return row.title\nreturn E.get('i1').iterate(step, until=done, max_steps=1).select('id')", existing: None, expect_live_error: None },
     Case { id: "static_literal_for_effects", python: "for key in ['i1', 'i2']:\n    E.get(key).PING()\nreturn E.get('i1').select('id')", existing: None, expect_live_error: None },
@@ -50,6 +60,8 @@ pub(super) const CASES: &[Case] = &[
 
 Case { id: "value_closure_scalar_method_format", python: "name = \"hello\"\nreturn f\"{name.upper()}\"", existing: None, expect_live_error: None },
 Case { id: "compute_inferred_callsite_inputs", python: "class Inferred(Program):\n    @compute\n    def titles(self, rows):\n        return [row.title for row in rows]\n    @compute\n    def first(self, row):\n        return row.title\n    def build(self):\n        return {'titles': self.titles(E.query().take(2)), 'first': self.first(E.get('i1'))}\n", existing: None, expect_live_error: None },
+Case { id: "compute_inferred_guarded_empty_list", python: "class Parsed(Program):\n    @compute\n    def names(self, row):\n        text = row.owner\n        if text is None:\n            return []\n        return [part.strip() for part in text.split(',') if part.strip()]\n    def build(self):\n        return self.names(E.get('i1'))\n", existing: None, expect_live_error: None },
+Case { id: "compute_inferred_mutated_set", python: "class Parsed(Program):\n    @compute\n    def names(self, row):\n        names = {'alice', 'bob'}\n        names.discard(row.title)\n        return sorted(names)\n    def build(self):\n        return self.names(E.get('i1'))\n", existing: None, expect_live_error: None },
 Case { id: "value_closure_nullable_collection", python: "class Closure(Program):\n    @compute\n    def calc(self, value: list[Row.score] | None) -> int:\n        return 0 if value is None else sum(item or 0 for item in value)\n    def build(self):\n        return self.calc(E.query().take(2).select(\"score\"))\n", existing: None, expect_live_error: None },
 Case { id: "value_closure_nested_projection", python: "record = E.query().take(2).select(header=lambda row: {\"n\": row.score})\nreturn record.select(n=lambda row: (row.header.n or 0) + 1)", existing: None, expect_live_error: None },
 Case { id: "value_closure_nested_read", python: "record = {\"header\": {\"id\": \"i1\"}}\nreturn E.get(record.header.id).select(\"title\")", existing: None, expect_live_error: None },
@@ -473,7 +485,7 @@ async fn python_record_value_matrix() {
 
 #[tokio::test]
 async fn python_compute_input_inference_live() {
-    run_python_cases(cases().filter(|case| case.id == "compute_inferred_callsite_inputs")).await;
+    run_python_cases(cases().filter(|case| case.id.starts_with("compute_inferred_"))).await;
 }
 
 #[tokio::test]
@@ -536,7 +548,7 @@ pub(super) async fn run_python_cases(selected: impl Iterator<Item = &'static Cas
                                 panic!("{} {} compile: {error}", case.id, "Python")
                             });
                             assert!(
-                                error.contains(expected),
+                                error.to_string().contains(expected),
                                 "{} compile expected {expected:?}: {error}",
                                 case.id
                             );
@@ -1838,16 +1850,8 @@ async fn python_inferred_rows_check_types_and_preserve_plural_cardinality() {
         }
         let mut artifact = compiled.artifact().clone();
         artifact.comp = serde_json::from_value(wire).unwrap();
-        let result =
-            plasm_agent::plasm_compile::PlasmCompBundle::new(artifact).and_then(|bundle| {
-                evaluate_plasm_comp_dry(&es, &bundle)
-                    .map(|_| ())
-                    .map_err(|e| e.to_string())
-            });
-        assert!(
-            result.is_err(),
-            "accepted row contract corruption {corruption}"
-        );
+        let rejected = corrupted_bundle_rejected(&es, artifact);
+        assert!(rejected, "accepted row contract corruption {corruption}");
     }
     let fields = comp["steps"]["text"]["compute"]["op"]["input_schema"]["fields"]
         .as_array()
@@ -2069,7 +2073,7 @@ async fn python_signed_literals_preserve_numeric_domains() {
 pub(super) async fn compile_fixture(
     es: &plasm_agent::execute_session::ExecuteSession,
     body: &str,
-) -> Result<plasm_agent::PlasmCompBundle, String> {
+) -> Result<plasm_agent::PlasmCompBundle, plasm_agent::compilation_error::CompilationError> {
     let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
     let entity = symbols.entity_sym_for(language_matrix::MATRIX_ENTRY_ID, "LangItem");
     compile_python_program(
@@ -2156,12 +2160,10 @@ async fn python_record_values_preserve_domains_and_seal_dependencies() {
         ["nullable"] = serde_json::json!(true);
     let mut artifact = compiled.artifact().clone();
     artifact.comp = serde_json::from_value(corrupted).unwrap();
-    let result = plasm_agent::plasm_compile::PlasmCompBundle::new(artifact).and_then(|bundle| {
-        evaluate_plasm_comp_dry(&es, &bundle)
-            .map(|_| ())
-            .map_err(|e| e.to_string())
-    });
-    assert!(result.is_err(), "accepted forged record input contract");
+    assert!(
+        corrupted_bundle_rejected(&es, artifact),
+        "accepted forged record input contract"
+    );
     let changed = compile_python_program(&es, &source.replace("item.score,", "item.id,")).await;
     assert!(
         changed.is_err()
@@ -2196,7 +2198,7 @@ async fn python_recursive_values_keep_lazy_effect_and_authority_boundaries() {
     ] {
         let error = compile_fixture(&es, body).await.expect_err(body);
         assert!(
-            error.contains(diagnostic),
+            error.to_string().contains(diagnostic),
             "{body}: expected {diagnostic}: {error}"
         );
     }
@@ -2307,7 +2309,9 @@ async fn python_flat_map_effect_collection_rejects_read_values() {
     ] {
         let error = compile_fixture(&es, source).await.unwrap_err();
         assert!(
-            error.contains("a callback result cannot mix effects and values"),
+            error
+                .to_string()
+                .contains("a callback result cannot mix effects and values"),
             "{source}: {error}"
         );
     }
@@ -2354,14 +2358,17 @@ async fn python_static_literal_iteration_rejects_dynamic_or_unbounded_forms() {
             body.replace('\n', "\n        ")
         );
         let error = compile_fixture(&es, &source).await.unwrap_err();
-        assert!(error.contains(diagnostic), "{body}: {error}");
+        assert!(error.to_string().contains(diagnostic), "{body}: {error}");
     }
     let keys = std::iter::repeat_n("'i1'", 257)
         .collect::<Vec<_>>()
         .join(", ");
     let source = format!("class P(Program):\n    def build(self):\n        return [E.get(key).id for key in [{keys}]]\n");
     let error = compile_fixture(&es, &source).await.unwrap_err();
-    assert!(error.contains("expansion exceeds 256"), "{error}");
+    assert!(
+        error.to_string().contains("expansion exceeds 256"),
+        "{error}"
+    );
 }
 
 #[tokio::test]
@@ -2377,7 +2384,10 @@ async fn python_value_closure_rejects_ambiguous_and_forged_inputs() {
     ] {
         let source = format!("class Invalid(Program):\n    @compute\n    def calc(self, value: int) -> int:\n        return value + 1\n    def build(self):\n        return self.calc({argument})\n");
         let error = compile_fixture(&es, &source).await.unwrap_err();
-        assert!(error.contains(diagnostic), "{argument}: {error}");
+        assert!(
+            error.to_string().contains(diagnostic),
+            "{argument}: {error}"
+        );
     }
     for source in [
         "record = {'header': {'n': 1}}\nreturn record.header.absent",
@@ -2408,13 +2418,10 @@ async fn python_value_closure_rejects_ambiguous_and_forged_inputs() {
         op[key] = replacement;
         let mut artifact = compiled.artifact().clone();
         artifact.comp = serde_json::from_value(corrupted).unwrap();
-        let result =
-            plasm_agent::plasm_compile::PlasmCompBundle::new(artifact).and_then(|bundle| {
-                evaluate_plasm_comp_dry(&es, &bundle)
-                    .map(|_| ())
-                    .map_err(|e| e.to_string())
-            });
-        assert!(result.is_err(), "accepted forged {key}");
+        assert!(
+            corrupted_bundle_rejected(&es, artifact),
+            "accepted forged {key}"
+        );
     }
 }
 

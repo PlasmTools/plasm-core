@@ -29,8 +29,12 @@ pub fn build_oauth_token_http_client(
     reqwest::Client::builder()
         .timeout(default_timeout)
         .build()
-        .map_err(|e| RuntimeError::AuthenticationError {
-            message: format!("Failed to build HTTP client for OAuth token: {e}"),
+        .map_err(|source| {
+            crate::AuthenticationError::Http {
+                operation: crate::OAuthHttpOperation::BuildClient,
+                source: source.without_url(),
+            }
+            .into()
         })
 }
 
@@ -49,16 +53,18 @@ pub async fn post_oauth_token_form_json(
         .timeout(per_request_timeout)
         .send()
         .await
-        .map_err(|e| RuntimeError::AuthenticationError {
-            message: format!("{error_context} request failed: {e}"),
+        .map_err(|source| crate::AuthenticationError::Http {
+            operation: crate::OAuthHttpOperation::SendTokenRequest,
+            source: source.without_url(),
         })?;
     let status = response.status();
     let body: serde_json::Value =
         response
             .json()
             .await
-            .map_err(|e| RuntimeError::AuthenticationError {
-                message: format!("{error_context} response is not valid JSON: {e}"),
+            .map_err(|source| crate::AuthenticationError::Http {
+                operation: crate::OAuthHttpOperation::DecodeTokenResponse,
+                source: source.without_url(),
             })?;
     if !status.is_success() {
         return Err(oauth_token_json_error(status, &body, error_context));
@@ -69,7 +75,7 @@ pub async fn post_oauth_token_form_json(
 fn oauth_token_json_error(
     status: reqwest::StatusCode,
     body: &serde_json::Value,
-    context: &str,
+    _context: &str,
 ) -> RuntimeError {
     let err_code = body
         .get("error")
@@ -79,37 +85,32 @@ fn oauth_token_json_error(
         .get("error_description")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    RuntimeError::AuthenticationError {
-        message: format!("{context} (HTTP {status}): {err_code} {err_desc}")
-            .trim()
-            .to_string(),
+    crate::AuthenticationError::TokenEndpoint {
+        status: status.as_u16(),
+        source: OAuthTokenEndpointError {
+            error: err_code.to_owned(),
+            error_description: Some(err_desc.to_owned()).filter(|value| !value.is_empty()),
+        },
     }
+    .into()
 }
 
 /// True when `err` is an OAuth 2.0 token endpoint failure with `error=invalid_grant`
 /// (refresh token revoked, re-authorization required).
 ///
 /// Prefer this over substring checks on [`RuntimeError`] display output: it keys off
-/// [`RuntimeError::AuthenticationError`] messages produced by this module’s token helpers.
+/// structured token endpoint code, never its rendered description.
 pub fn runtime_error_is_oauth_invalid_grant(err: &RuntimeError) -> bool {
     match err {
-        RuntimeError::AuthenticationError { message } => {
-            authentication_error_message_is_oauth_invalid_grant(message)
-        }
+        RuntimeError::AuthenticationError(crate::AuthenticationError::TokenEndpoint {
+            source,
+            ..
+        }) => source.error == "invalid_grant",
+        RuntimeError::AuthenticationError(crate::AuthenticationError::TokenResponse(
+            ApplyTokenError::OAuthTokenEndpoint(source),
+        )) => source.error == "invalid_grant",
         _ => false,
     }
-}
-
-fn authentication_error_message_is_oauth_invalid_grant(message: &str) -> bool {
-    // oauth_token_json_error: "{context} (HTTP {status}): {err_code} {err_desc}"
-    if let Some(idx) = message.rfind("): ") {
-        let tail = message[idx + 3..].trim_start();
-        let code = tail.split_whitespace().next().unwrap_or("");
-        if code == "invalid_grant" {
-            return true;
-        }
-    }
-    message.contains("invalid_grant")
 }
 
 /// OAuth-linked outbound credential blob (v1) stored in KV.
@@ -216,9 +217,7 @@ fn expires_in_seconds(v: &serde_json::Value) -> Option<u64> {
 
 impl From<ApplyTokenError> for RuntimeError {
     fn from(e: ApplyTokenError) -> Self {
-        RuntimeError::AuthenticationError {
-            message: e.to_string(),
-        }
+        crate::AuthenticationError::TokenResponse(e).into()
     }
 }
 
@@ -243,24 +242,16 @@ pub fn classify_hosted_bearer_utf8(
     skew_secs: u64,
 ) -> Result<HostedBearerResolution, RuntimeError> {
     if trimmed.is_empty() {
-        return Err(RuntimeError::AuthenticationError {
-            message: "Hosted bearer credential is empty or whitespace-only.".to_string(),
-        });
+        return Err(crate::AuthenticationError::HostedBearerEmpty.into());
     }
-    let env =
-        parse_outbound_oauth_kv_v1(trimmed).map_err(|e| RuntimeError::AuthenticationError {
-            message: format!("Invalid hosted OAuth credential: {e}"),
-        })?;
+    let env = parse_outbound_oauth_kv_v1(trimmed)
+        .map_err(crate::AuthenticationError::HostedCredential)?;
     let now = unix_secs_now();
     if !env.needs_proactive_refresh(now, skew_secs) {
         return Ok(HostedBearerResolution::Ready(env.access_token.clone()));
     }
     if usable_refresh_token(&env).is_none() {
-        return Err(RuntimeError::AuthenticationError {
-            message:
-                "OAuth access token expired and no refresh_token is stored; re-link the account."
-                    .to_string(),
-        });
+        return Err(crate::AuthenticationError::RefreshTokenMissing.into());
     }
     Ok(HostedBearerResolution::NeedsRefresh(env))
 }
@@ -270,9 +261,9 @@ pub fn resolve_hosted_bearer_default_no_refresh(raw: &str) -> Result<String, Run
     let trimmed = raw.trim();
     match classify_hosted_bearer_utf8(trimmed, HOSTED_OAUTH_EXPIRY_SKEW_SECS)? {
         HostedBearerResolution::Ready(t) => Ok(t),
-        HostedBearerResolution::NeedsRefresh(_) => Err(RuntimeError::AuthenticationError {
-            message: "OAuth access token expired; hosted refresh requires plasm.".to_string(),
-        }),
+        HostedBearerResolution::NeedsRefresh(_) => {
+            Err(crate::AuthenticationError::HostedRefreshUnavailable.into())
+        }
     }
 }
 
@@ -524,9 +515,13 @@ mod tests {
             http_backend: None,
         };
         let err = env.apply_token_response(&body).unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("invalid_grant"), "{msg}");
-        assert!(msg.contains("already redeemed"), "{msg}");
+        assert!(matches!(
+            err,
+            ApplyTokenError::OAuthTokenEndpoint(OAuthTokenEndpointError {
+                error,
+                error_description: Some(description),
+            }) if error == "invalid_grant" && description == "Code was already redeemed"
+        ));
     }
 
     #[test]
@@ -629,8 +624,10 @@ mod tests {
         };
         let j = serde_json::to_string(&env).unwrap();
         let err = classify_hosted_bearer_utf8(&j, HOSTED_OAUTH_EXPIRY_SKEW_SECS).unwrap_err();
-        let msg = format!("{err}");
-        assert!(msg.contains("re-link"), "{msg}");
+        assert!(matches!(
+            err,
+            RuntimeError::AuthenticationError(crate::AuthenticationError::RefreshTokenMissing)
+        ));
     }
 
     #[tokio::test]
@@ -695,8 +692,34 @@ mod tests {
         )
         .await
         .unwrap_err();
-        let msg = format!("{}", err);
-        assert!(msg.contains("invalid_grant"), "{msg}");
-        assert!(runtime_error_is_oauth_invalid_grant(&err), "{msg}");
+        assert!(runtime_error_is_oauth_invalid_grant(&err));
+        assert!(matches!(
+            err,
+            RuntimeError::AuthenticationError(crate::AuthenticationError::TokenEndpoint {
+                status: 400,
+                source: OAuthTokenEndpointError { error, .. },
+            }) if error == "invalid_grant"
+        ));
+    }
+
+    #[test]
+    fn invalid_grant_in_description_does_not_grant_reauthorization_authority() {
+        let err = oauth_token_json_error(
+            reqwest::StatusCode::BAD_REQUEST,
+            &serde_json::json!({
+                "error": "invalid_client",
+                "error_description": "not invalid_grant",
+            }),
+            "refresh",
+        );
+        assert!(!runtime_error_is_oauth_invalid_grant(&err));
+        let source = std::error::Error::source(&err).unwrap();
+        assert!(source
+            .downcast_ref::<crate::AuthenticationError>()
+            .is_some());
+        assert!(std::error::Error::source(source)
+            .unwrap()
+            .downcast_ref::<OAuthTokenEndpointError>()
+            .is_some());
     }
 }

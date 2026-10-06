@@ -1,8 +1,10 @@
 //! Direct, bounded capability discovery: deterministic recall followed by Jev matching.
 
-use anyhow::{bail, ensure, Context, Result};
-use plasm_core::prerequisites::{prerequisite_closure, CapabilityRef, PrerequisiteClosure};
+use plasm_core::prerequisites::{
+    prerequisite_closure, CapabilityRef, PrerequisiteClosure, PrerequisiteError,
+};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 use crate::discovery_matcher::{self as matcher, CapabilityMatchReceipt};
 use crate::discovery_store::{
@@ -10,6 +12,42 @@ use crate::discovery_store::{
 };
 
 pub use crate::discovery_recovery::{CatalogAppDescription, DiscoveryRecovery, RECOVERY_GUIDANCE};
+
+type Result<T> = std::result::Result<T, DiscoveryServiceError>;
+
+#[derive(Debug, Error)]
+pub enum DiscoveryServiceError {
+    #[error("OPENROUTER_API_KEY is required for capability discovery")]
+    MissingApiKey(#[source] std::env::VarError),
+    #[error("discovery selector API key must not be empty")]
+    EmptyApiKey,
+    #[error("an exposed capability is no longer authorized")]
+    ExposedCapabilityUnauthorized,
+    #[error("an exposed capability is absent from the pinned generation")]
+    ExposedCapabilityMissing,
+    #[error("declared prerequisite closure contains an unauthorized capability")]
+    UnauthorizedClosure,
+    #[error(transparent)]
+    Store(#[from] crate::discovery_store::DiscoveryStoreError),
+    #[error(transparent)]
+    Prerequisite(#[from] PrerequisiteError),
+    #[error(transparent)]
+    Retrieval(#[from] crate::discovery_store::RetrievalValidationError),
+    #[error(transparent)]
+    Matcher(#[from] matcher::DiscoveryMatcherError),
+    #[error(transparent)]
+    Support(#[from] crate::discovery_support::DiscoverySupportError),
+    #[error(transparent)]
+    DecisionTransport(#[from] crate::decision_transport::DecisionTransportError),
+    #[error(transparent)]
+    DecisionRecord(#[from] crate::decision_transport::DecisionRecordError),
+    #[error(transparent)]
+    HttpClient(#[from] reqwest::Error),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+    #[error("discovery diagnostic file operation failed")]
+    Io(#[from] std::io::Error),
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -62,10 +100,10 @@ impl DiscoveryService {
         }
     }
     pub fn from_env(store: DiscoveryStore) -> Result<Self> {
-        let api_key = std::env::var("OPENROUTER_API_KEY")
-            .context("discovery selector requires OPENROUTER_API_KEY")?;
+        let api_key =
+            std::env::var("OPENROUTER_API_KEY").map_err(DiscoveryServiceError::MissingApiKey)?;
         if api_key.trim().is_empty() {
-            bail!("empty discovery selector key");
+            return Err(DiscoveryServiceError::EmptyApiKey);
         }
         Ok(Self {
             rejection_dir: std::env::var_os("PLASM_DISCOVERY_REJECTION_DIR")
@@ -134,10 +172,9 @@ impl DiscoveryService {
         allowed: &DiscoveryAuthorization,
         exposed: &[CapabilityRef],
     ) -> Result<RoutingReceipt> {
-        ensure!(
-            exposed.iter().all(|r| allowed.permits(r)),
-            "exposed capability is no longer authorized"
-        );
+        if !exposed.iter().all(|r| allowed.permits(r)) {
+            return Err(DiscoveryServiceError::ExposedCapabilityUnauthorized);
+        }
         let retrieval = self
             .store
             .retrieve(generation, provenance.current(), allowed)
@@ -146,12 +183,13 @@ impl DiscoveryService {
             .store
             .load_discovery_generation(generation, allowed)
             .await?;
-        ensure!(
-            exposed.iter().all(|r| catalogs
+        if !exposed.iter().all(|r| {
+            catalogs
                 .get(&r.catalog)
-                .is_some_and(|cgs| cgs.capabilities.contains_key(r.capability.as_str()))),
-            "exposed capability is absent from pinned generation"
-        );
+                .is_some_and(|cgs| cgs.capabilities.contains_key(r.capability.as_str()))
+        }) {
+            return Err(DiscoveryServiceError::ExposedCapabilityMissing);
+        }
         retrieval.validate(allowed)?;
         let matching = matcher::judge_candidates(
             &self.match_model,
@@ -179,10 +217,12 @@ impl DiscoveryService {
         let business = matching.selected(&retrieval);
         let closure = if !business.is_empty() || !exposed.is_empty() {
             let references = catalogs.iter().map(|(id, cgs)| (id.clone(), cgs)).collect();
-            Some(
-                prerequisite_closure(&references, &bindings, &business, &allowed.catalogs)
-                    .map_err(anyhow::Error::msg)?,
-            )
+            Some(prerequisite_closure(
+                &references,
+                &bindings,
+                &business,
+                &allowed.catalogs,
+            )?)
         } else {
             None
         };
@@ -243,7 +283,11 @@ impl DiscoveryService {
         })
     }
 
-    async fn jev_response(&self, body: &str, contract: &str) -> Result<String> {
+    async fn jev_response(
+        &self,
+        body: &str,
+        contract: &str,
+    ) -> std::result::Result<String, crate::decision_transport::DecisionTransportError> {
         crate::decision_transport::request_decision(
             &self.client,
             "https://openrouter.ai/api/alpha/decisions",
@@ -264,10 +308,13 @@ impl DiscoveryService {
     }
 }
 
-fn save_rejection(directory: &std::path::Path, record: &serde_json::Value) -> Result<()> {
+fn save_rejection(
+    directory: &std::path::Path,
+    record: &serde_json::Value,
+) -> std::result::Result<(), crate::decision_transport::DecisionRecordError> {
     use std::io::Write;
 
-    std::fs::create_dir_all(directory).context("create discovery diagnostic directory")?;
+    std::fs::create_dir_all(directory)?;
     let path = directory.join(format!("jev-rejection-{}.json", uuid::Uuid::new_v4()));
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
@@ -276,7 +323,7 @@ fn save_rejection(directory: &std::path::Path, record: &serde_json::Value) -> Re
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    let mut file = options.open(path).context("create discovery diagnostic")?;
+    let mut file = options.open(path)?;
     file.write_all(&serde_json::to_vec_pretty(record)?)?;
     file.sync_all()?;
     Ok(())
@@ -294,7 +341,7 @@ fn validate_closure_authorization(
             .chain(&closure.prerequisites)
             .any(|capability| !allowed.permits(capability))
         {
-            bail!("declared prerequisite closure contains an unauthorized capability");
+            return Err(DiscoveryServiceError::UnauthorizedClosure);
         }
     }
     Ok(())

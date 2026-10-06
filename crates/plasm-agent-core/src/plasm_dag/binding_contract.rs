@@ -554,7 +554,7 @@ mod tests {
                 page_size: None,
             };
             let binding = binding_contract_for_node(&state, "render", &node);
-            let emitted = super::super::plan_serialize::lower_plan_node(&node).expect("emit");
+            let emitted = super::super::plan_serialize::lower_plan_node(&node);
             assert_eq!(binding.result_shape, emitted.result_shape);
         }
     }

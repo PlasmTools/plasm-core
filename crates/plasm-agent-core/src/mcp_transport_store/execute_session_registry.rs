@@ -19,7 +19,7 @@ pub enum ExecuteSessionPersistOutcome {
     Durable,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum ExecuteSessionPersistError {
     MissingReuseKey,
     /// Hot session `domain_revision` is behind durable; caller must rehydrate before writing.
@@ -31,11 +31,11 @@ pub enum ExecuteSessionPersistError {
     SessionUnavailable,
     /// Durable persist refused: execute row has no serializable symbol ledger.
     MissingSymbolLedger,
-    /// Rematerialize catalog pins + encode ledger (see [`crate::execute_session_materialize`]).
-    ExposureSnapshot(String),
-    Materialize(String),
-    SymbolLedgerEncode(String),
-    LogicalLedgerWriteFailed,
+    Materialize(#[source] Arc<crate::execute_session_materialize::MaterializeError>),
+    SymbolLedgerEncode(#[source] Arc<plasm_core::PersistedSymbolLedgerEncodeError>),
+    LogicalLedgerWriteFailed(
+        #[source] Arc<crate::mcp_transport_store::logical_symbol_ledger::SymbolLedgerUpsertError>,
+    ),
 }
 
 impl std::fmt::Display for ExecuteSessionPersistError {
@@ -60,11 +60,10 @@ impl std::fmt::Display for ExecuteSessionPersistError {
                 f,
                 "execute session persist refused: missing symbol ledger — reopen `plasm_context` with session_mode: \"new\""
             ),
-            Self::ExposureSnapshot(e) => write!(f, "execute session exposure snapshot failed: {e}"),
             Self::Materialize(e) => write!(f, "execute session materialize failed: {e}"),
             Self::SymbolLedgerEncode(e) => write!(f, "symbol ledger encode failed: {e}"),
-            Self::LogicalLedgerWriteFailed => {
-                write!(f, "logical symbol ledger durable write failed")
+            Self::LogicalLedgerWriteFailed(source) => {
+                write!(f, "logical symbol ledger durable write failed: {source}")
             }
         }
     }
@@ -80,11 +79,9 @@ pub enum MergeLiveOutcome {
     NeedsRehydrate,
 }
 
-impl std::error::Error for ExecuteSessionPersistError {}
-
 impl From<crate::execute_session_materialize::MaterializeError> for ExecuteSessionPersistError {
     fn from(e: crate::execute_session_materialize::MaterializeError) -> Self {
-        Self::Materialize(e.to_string())
+        Self::Materialize(Arc::new(e))
     }
 }
 
@@ -94,8 +91,10 @@ impl From<crate::mcp_transport_store::logical_symbol_ledger::SymbolLedgerUpsertE
     fn from(e: crate::mcp_transport_store::logical_symbol_ledger::SymbolLedgerUpsertError) -> Self {
         use crate::mcp_transport_store::logical_symbol_ledger::SymbolLedgerUpsertError;
         match e {
-            SymbolLedgerUpsertError::Encode(err) => Self::SymbolLedgerEncode(err.to_string()),
-            SymbolLedgerUpsertError::RedisWriteFailed { .. } => Self::LogicalLedgerWriteFailed,
+            SymbolLedgerUpsertError::Encode(err) => Self::SymbolLedgerEncode(Arc::new(err)),
+            error @ SymbolLedgerUpsertError::RedisWriteFailed { .. } => {
+                Self::LogicalLedgerWriteFailed(Arc::new(error))
+            }
         }
     }
 }
@@ -322,10 +321,14 @@ impl ExecuteSessionRegistry {
         operation_key: &str,
         reference_key: &str,
         record: &plasm_runtime::credentials::StoredCredential,
-    ) -> Result<plasm_runtime::credentials::StoredCredential, plasm_runtime::RuntimeError> {
-        use plasm_runtime::credentials::{credential_error, StoredCredential};
+    ) -> Result<
+        plasm_runtime::credentials::StoredCredential,
+        crate::session_credentials::CredentialPersistenceError,
+    > {
+        use crate::session_credentials::CredentialPersistenceError;
+        use plasm_runtime::credentials::StoredCredential;
         let payload = serde_json::to_string(record)
-            .map_err(|_| credential_error("cannot serialize credential record"))?;
+            .map_err(|source| CredentialPersistenceError::RecordEncoding { source })?;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -341,7 +344,7 @@ impl ExecuteSessionRegistry {
                     record.expires_at_unix.saturating_sub(now).max(1),
                 )
                 .await
-                .map_err(|_| credential_error("durable credential commit failed"))?
+                .map_err(|source| CredentialPersistenceError::DurableCommit { source })?
         } else {
             let storage = match test.as_ref() {
                 Some(test) => test.as_ref(),
@@ -352,7 +355,7 @@ impl ExecuteSessionRegistry {
                 .get(operation_key)
                 .map(|raw| {
                     serde_json::from_str::<StoredCredential>(raw)
-                        .map_err(|_| credential_error("invalid stored credential operation"))
+                        .map_err(|source| CredentialPersistenceError::StoredOperation { source })
                 })
                 .transpose()?;
             if let Some(previous) = previous.filter(|record| record.expires_at_unix > now) {
@@ -363,22 +366,30 @@ impl ExecuteSessionRegistry {
             payload
         };
         serde_json::from_str(&raw)
-            .map_err(|_| credential_error("invalid credential commit acknowledgement"))
+            .map_err(|source| CredentialPersistenceError::CommitAcknowledgement { source })
     }
 
     pub(crate) async fn load_credential_record(
         &self,
         memory: &crate::session_credentials::CredentialMemory,
         key: &str,
-    ) -> Result<Option<plasm_runtime::credentials::StoredCredential>, plasm_runtime::RuntimeError>
-    {
-        use plasm_runtime::credentials::credential_error;
+    ) -> Result<
+        Option<plasm_runtime::credentials::StoredCredential>,
+        crate::session_credentials::CredentialPersistenceError,
+    > {
+        use crate::session_credentials::CredentialPersistenceError;
         let test = self.test_json().await;
         if let Some(redis) = self.redis().await.filter(|_| test.is_none()) {
-            return redis
-                .get_json_strict(key)
+            let raw = redis
+                .get_string_strict(key)
                 .await
-                .map_err(|_| credential_error("durable credential lookup failed"));
+                .map_err(|source| CredentialPersistenceError::DurableLookup { source })?;
+            return raw
+                .map(|raw| {
+                    serde_json::from_str(&raw)
+                        .map_err(|source| CredentialPersistenceError::StoredRecord { source })
+                })
+                .transpose();
         }
         let storage = match test.as_ref() {
             Some(test) => test.as_ref(),
@@ -390,7 +401,7 @@ impl ExecuteSessionRegistry {
             .get(key)
             .map(|raw| {
                 serde_json::from_str(raw)
-                    .map_err(|_| credential_error("invalid stored credential record"))
+                    .map_err(|source| CredentialPersistenceError::StoredRecord { source })
             })
             .transpose();
         result

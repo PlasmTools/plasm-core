@@ -1,5 +1,6 @@
 //! Per-row render lowering from typed applicator data into DAG compute nodes (PLP-12).
 
+use super::error::DagCompilationError;
 use std::collections::BTreeSet;
 
 use crate::execute_session::ExecuteSession;
@@ -20,13 +21,14 @@ use super::prelude::*;
 use super::schema_validate::{infer_render_columns_for_node, lookup_dag_node};
 use super::types::{CompileState, DagNode, DagNodeSource};
 
-pub(in crate::plasm_dag) fn plan_render_content_schema() -> Result<SyntheticResultSchema, String> {
+pub(in crate::plasm_dag) fn plan_render_content_schema(
+) -> Result<SyntheticResultSchema, DagCompilationError> {
     Ok(SyntheticResultSchema {
         optional_fields: Default::default(),
         entity: Some("PlanRender".to_string()),
         fields: vec![SyntheticFieldSchema {
             value_type: None,
-            name: OutputName::new("content".to_string()).map_err(|e| e.to_string())?,
+            name: OutputName::new("content".to_string())?,
             value_kind: SyntheticValueKind::String,
             source: None,
         }],
@@ -40,17 +42,19 @@ pub(in crate::plasm_dag) fn compile_render_from_applicator(
     rhs_display: &str,
     sources: &[String],
     template: String,
-) -> Result<Vec<DagNode>, String> {
+) -> Result<Vec<DagNode>, DagCompilationError> {
     if sources.len() != 1 {
-        return Err(plasm_core::plp::plp12_per_row_apply(format!(
-            "Plasm program `{id}`: comma-separated render sources are abolished — `=>` applies once per row. Whole-collection text uses a plain template (`report = <<TAG {{% for item in items %}}… TAG`)"
-        )));
+        return Err(DagCompilationError::RenderSourceCount {
+            id: id.to_owned(),
+            actual: sources.len(),
+        });
     }
     for src in sources {
         if !state.contains(src.trim()) {
-            return Err(format!(
-                "Plasm program `{id}`: render source `{src}` is not in scope"
-            ));
+            return Err(DagCompilationError::RenderSourceMissing {
+                id: id.to_owned(),
+                binding: src.clone(),
+            });
         }
     }
     let labels: Vec<String> = sources.iter().map(|s| s.trim().to_string()).collect();
@@ -64,11 +68,13 @@ fn compile_render_chain(
     rhs_display: &str,
     render_sources: &[String],
     template: String,
-) -> Result<Vec<DagNode>, String> {
-    let head = render_sources
-        .first()
-        .map(String::as_str)
-        .ok_or_else(|| format!("Plasm program `{id}`: render requires at least one source"))?;
+) -> Result<Vec<DagNode>, DagCompilationError> {
+    let head = render_sources.first().map(String::as_str).ok_or_else(|| {
+        DagCompilationError::RenderSourceCount {
+            id: id.to_owned(),
+            actual: 0,
+        }
+    })?;
 
     let (head_core, suffixes) = decompose_row_suffix_stream(session, state, head)?;
     let tail_singleton = suffixes.iter().any(|s| matches!(s, RowSuffix::Singleton));
@@ -88,8 +94,7 @@ fn compile_render_chain(
             compile_surface_nodes(session, state, &tmp, head)?
         }
     } else {
-        lower_suffix_stream(session, state, &tmp, head, &head_core, suffixes, None)
-            .map_err(|e| format!("Plasm program `{id}`: {e}"))?
+        lower_suffix_stream(session, state, &tmp, head, &head_core, suffixes, None)?
     };
 
     let chain_tail_id: String = if prefix.is_empty() {
@@ -98,22 +103,23 @@ fn compile_render_chain(
         prefix
             .last()
             .map(|n| n.id.clone())
-            .ok_or_else(|| format!("Plasm program `{id}`: empty render chain"))?
+            .ok_or_else(|| DagCompilationError::EmptyRenderChain { id: id.to_owned() })?
     };
 
     let scratch = compile_state_with_nodes(state, &prefix);
     let tail_node =
         lookup_dag_node(&scratch, &prefix, chain_tail_id.as_str()).ok_or_else(|| {
-            format!("Plasm program `{id}`: render source `{chain_tail_id}` is unknown")
+            DagCompilationError::RenderSourceMissing {
+                id: id.to_owned(),
+                binding: chain_tail_id.clone(),
+            }
         })?;
-    plasm_core::validate_interpolation_syntax(&template, |e| format!("Plasm program `{id}`: {e}"))?;
+    plasm_core::validate_interpolation_syntax(&template)?;
     let source_field_names: BTreeSet<String> =
         match infer_render_columns_for_node(session, &scratch, &prefix, tail_node) {
             Ok(cols) => cols.into_iter().map(|n| n.as_str().to_string()).collect(),
             Err(e) if plasm_core::contains_minijinja_markers(&template) => {
-                return Err(format!(
-                    "Plasm program `{id}`: cannot infer render source fields: {e}"
-                ));
+                return Err(e.into());
             }
             Err(_) => BTreeSet::new(),
         };
@@ -142,7 +148,7 @@ fn compile_render_chain(
 
     let render_bindings: Vec<OutputName> = binding_labels
         .into_iter()
-        .map(|label| OutputName::new(label).map_err(|e| e.to_string()))
+        .map(OutputName::new)
         .collect::<Result<_, _>>()?;
 
     let source_singleton = tail_node.singleton || tail_singleton;

@@ -10,6 +10,7 @@ use crate::plasm_plan::{
     ValidatedPlanNode, ValidatedPlanRelationTraversal, ValidatedPlanReturn,
     ValidatedRelationTraversalNode, ValidatedSurfaceNode,
 };
+use plasm_core::plasm_monad::StepIdError;
 use plasm_core::{
     BindingName as CoreBindingName, DeriveKind, DerivePayload, DeriveTemplate, EffectClass,
     EffectTemplate as CoreEffectTemplate, FlatMapApplyPayload, FlatMapRelationPayload,
@@ -19,18 +20,102 @@ use plasm_core::{
     PlasmStepPayload, PurePayload, ResultShape, StepId, SurfaceKind, UnfoldUntilPayload,
 };
 use std::collections::HashMap;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum StepPayloadLiftError {
+    #[error(transparent)]
+    Correlated(#[from] plasm_core::plasm_monad::CorrelatedBodyError),
+    #[error("invalid plan atom: {0}")]
+    PlanAtom(#[source] crate::plasm_plan::PlanAtomError),
+    #[error(transparent)]
+    StepId(#[from] StepIdError),
+    #[error(transparent)]
+    BindGraph(#[from] plasm_core::plasm_monad::BindGraphError),
+    #[error(transparent)]
+    IterationEffect(#[from] plasm_core::plasm_monad::IterationStepEffectError),
+    #[error("derive step `{step}` is missing its source")]
+    MissingDeriveSource { step: String },
+    #[error("derive step `{step}` is missing its item binding")]
+    MissingDeriveItemBinding { step: String },
+    #[error("derive input `{input}` on `{step}` claims static singleton without proof")]
+    InvalidSingletonProof { step: String, input: String },
+    #[error("acknowledgement input `{input}` on `{step}` is not an acknowledgement source")]
+    InvalidAcknowledgementProof { step: String, input: String },
+    #[error("relation step `{step}` claims a single source without singleton proof")]
+    InvalidRelationSingletonProof { step: String, source_node: String },
+    #[error("scoped body has an invalid return shape")]
+    InvalidScopedReturn,
+    #[error("scoped body output schema is invalid")]
+    InvalidScopedOutput,
+    #[error("predicate scope is missing its parent schema")]
+    MissingScopedParentSchema,
+}
+
+impl StepPayloadLiftError {
+    pub(crate) fn diagnostic(&self) -> String {
+        self.to_string()
+    }
+}
+
+impl From<StepPayloadLiftError> for plasm_runtime::ExecutionFailure {
+    fn from(error: StepPayloadLiftError) -> Self {
+        let code = match &error {
+            StepPayloadLiftError::Correlated(_) => "scope_body_invalid",
+            StepPayloadLiftError::PlanAtom(_) => "plan_identifier_invalid",
+            StepPayloadLiftError::StepId(_) => "step_id_invalid",
+            StepPayloadLiftError::BindGraph(_) => "plan_bind_graph_invalid",
+            StepPayloadLiftError::IterationEffect(_) => "scope_iteration_effect_invalid",
+            StepPayloadLiftError::MissingDeriveSource { .. } => "derive_source_missing",
+            StepPayloadLiftError::MissingDeriveItemBinding { .. } => "derive_item_binding_missing",
+            StepPayloadLiftError::InvalidSingletonProof { .. } => "derive_singleton_proof_invalid",
+            StepPayloadLiftError::InvalidAcknowledgementProof { .. } => {
+                "derive_acknowledgement_proof_invalid"
+            }
+            StepPayloadLiftError::InvalidRelationSingletonProof { .. } => {
+                "relation_singleton_proof_invalid"
+            }
+            StepPayloadLiftError::InvalidScopedReturn => "scope_return_invalid",
+            StepPayloadLiftError::InvalidScopedOutput => "scope_output_invalid",
+            StepPayloadLiftError::MissingScopedParentSchema => "scope_parent_schema_missing",
+        };
+        Self::new(
+            plasm_runtime::FailureCause::Program,
+            code,
+            error.to_string(),
+        )
+    }
+}
+
+impl From<crate::plasm_plan::PlanAtomError> for StepPayloadLiftError {
+    fn from(error: crate::plasm_plan::PlanAtomError) -> Self {
+        Self::PlanAtom(error)
+    }
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub(crate) enum StepPayloadConversionError {
+    #[error("capture node `{node}` cannot be serialized as a root step")]
+    CaptureCannotSerializeRoot { node: String },
+    #[error("validated surface node has non-surface plan kind `{kind:?}`")]
+    ExpectedSurfacePlanKind { kind: PlanNodeKind },
+    #[error("validated plan contains invalid binding name `{name}`")]
+    InvalidBindingName { name: String },
+}
 
 pub(crate) fn validated_node_to_step_payload(
     node: &ValidatedPlanNode,
-) -> Result<PlasmStepPayload, String> {
+) -> Result<PlasmStepPayload, StepPayloadConversionError> {
     match node {
         ValidatedPlanNode::MapBody(n) => Ok(PlasmStepPayload::MapBody(n.body.clone())),
         ValidatedPlanNode::Capture(_) => {
-            Err("capture ports cannot be serialized as root steps".into())
+            Err(StepPayloadConversionError::CaptureCannotSerializeRoot {
+                node: node.id().as_str().to_owned(),
+            })
         }
         ValidatedPlanNode::Surface(n) => Ok(PlasmStepPayload::Invoke(surface_to_invoke(n)?)),
-        ValidatedPlanNode::Data(n) => Ok(PlasmStepPayload::Pure(data_to_pure(n)?)),
-        ValidatedPlanNode::Compute(n) => Ok(PlasmStepPayload::Map(compute_to_map(n)?)),
+        ValidatedPlanNode::Data(n) => Ok(PlasmStepPayload::Pure(data_to_pure(n))),
+        ValidatedPlanNode::Compute(n) => Ok(PlasmStepPayload::Map(compute_to_map(n))),
         ValidatedPlanNode::Derive(n) => Ok(PlasmStepPayload::Derive(derive_to_payload(n)?)),
         ValidatedPlanNode::RelationTraversal(n) => {
             Ok(PlasmStepPayload::FlatMapRelation(relation_to_payload(n)?))
@@ -44,21 +129,19 @@ pub(crate) fn validated_node_to_step_payload(
     }
 }
 
-fn surface_to_invoke(node: &ValidatedSurfaceNode) -> Result<InvokePayload, String> {
+fn surface_to_invoke(
+    node: &ValidatedSurfaceNode,
+) -> Result<InvokePayload, StepPayloadConversionError> {
     Ok(InvokePayload {
         plan_kind: plan_kind_to_surface(node.kind)?,
         qualified_entity: node.qualified_entity.as_ref().map(qualified_entity_key),
-        ir: node
-            .ir
-            .as_ref()
-            .map(validated_expr_ir_to_plan)
-            .transpose()?,
+        ir: node.ir.as_ref().map(validated_expr_ir_to_plan),
         ir_template: node
             .ir_template
             .as_ref()
             .map(validated_expr_template_to_plan),
         projection: node.projection.clone(),
-        predicates: convert_predicates(&node.predicates)?,
+        predicates: convert_predicates(&node.predicates),
         page_size: node.page_size,
         approval: node.approval.clone(),
         display_expr: None,
@@ -67,23 +150,25 @@ fn surface_to_invoke(node: &ValidatedSurfaceNode) -> Result<InvokePayload, Strin
     })
 }
 
-fn data_to_pure(node: &ValidatedDataNode) -> Result<PurePayload, String> {
-    Ok(PurePayload {
-        data: plan_value_to_data(&node.data)?,
+fn data_to_pure(node: &ValidatedDataNode) -> PurePayload {
+    PurePayload {
+        data: plan_value_to_data(&node.data),
         effect_class: effect_class(node.effect_class),
         result_shape: result_shape(node.result_shape),
-    })
+    }
 }
 
-fn compute_to_map(node: &ValidatedComputeNode) -> Result<MapPayload, String> {
-    Ok(MapPayload {
+fn compute_to_map(node: &ValidatedComputeNode) -> MapPayload {
+    MapPayload {
         compute: node.compute.clone(),
         effect_class: effect_class(node.effect_class),
         result_shape: result_shape(node.result_shape),
-    })
+    }
 }
 
-fn derive_to_payload(node: &ValidatedDeriveNode) -> Result<DerivePayload, String> {
+fn derive_to_payload(
+    node: &ValidatedDeriveNode,
+) -> Result<DerivePayload, StepPayloadConversionError> {
     Ok(DerivePayload {
         derive: DeriveTemplate {
             kind: match node.kind {
@@ -98,7 +183,7 @@ fn derive_to_payload(node: &ValidatedDeriveNode) -> Result<DerivePayload, String
                 .iter()
                 .map(validated_data_input_to_plan)
                 .collect(),
-            value: plan_value_to_data(&node.value)?,
+            value: plan_value_to_data(&node.value),
         },
         effect_class: effect_class(node.effect_class),
         result_shape: result_shape(node.result_shape),
@@ -107,7 +192,7 @@ fn derive_to_payload(node: &ValidatedDeriveNode) -> Result<DerivePayload, String
 
 fn relation_to_payload(
     node: &ValidatedRelationTraversalNode,
-) -> Result<FlatMapRelationPayload, String> {
+) -> Result<FlatMapRelationPayload, StepPayloadConversionError> {
     Ok(FlatMapRelationPayload {
         relation: relation_traversal_to_plan(&node.relation)?,
         effect_class: effect_class(node.effect_class),
@@ -115,13 +200,15 @@ fn relation_to_payload(
     })
 }
 
-fn for_each_to_payload(node: &ValidatedForEachNode) -> Result<FlatMapApplyPayload, String> {
+fn for_each_to_payload(
+    node: &ValidatedForEachNode,
+) -> Result<FlatMapApplyPayload, StepPayloadConversionError> {
     Ok(FlatMapApplyPayload {
         source: node.source.as_str().to_string(),
         item_binding: binding_name(&node.item_binding)?,
         effect_template: effect_template_to_core(&node.effect_template)?,
         projection: node.projection.clone(),
-        predicates: convert_predicates(&node.predicates)?,
+        predicates: convert_predicates(&node.predicates),
         approval: node.approval.clone(),
         effect_class: effect_class(node.effect_class),
         result_shape: result_shape(node.result_shape),
@@ -130,20 +217,16 @@ fn for_each_to_payload(node: &ValidatedForEachNode) -> Result<FlatMapApplyPayloa
 
 fn iterate_until_to_payload(
     node: &ValidatedIterateUntilNode,
-) -> Result<UnfoldUntilPayload, String> {
+) -> Result<UnfoldUntilPayload, StepPayloadConversionError> {
     Ok(UnfoldUntilPayload {
         source: node.source.as_str().to_string(),
         item_binding: binding_name(&node.item_binding)?,
         effect_template: effect_template_to_core(&node.effect_template)?,
-        until_predicates: convert_predicates(&node.until_predicates)?,
+        until_predicates: convert_predicates(&node.until_predicates),
         until_scope: node.until_scope.clone(),
         step_scope: node.step_scope.clone(),
         take: node.take,
-        seed_ir: node
-            .seed_ir
-            .as_ref()
-            .map(validated_expr_ir_to_plan)
-            .transpose()?,
+        seed_ir: node.seed_ir.as_ref().map(validated_expr_ir_to_plan),
         approval: node.approval.clone(),
         effect_class: effect_class(node.effect_class),
         result_shape: result_shape(node.result_shape),
@@ -152,7 +235,7 @@ fn iterate_until_to_payload(
 
 fn relation_traversal_to_plan(
     relation: &ValidatedPlanRelationTraversal,
-) -> Result<PlanRelationTraversal, String> {
+) -> Result<PlanRelationTraversal, StepPayloadConversionError> {
     Ok(PlanRelationTraversal {
         source: relation.source.as_str().to_string(),
         relation: relation.relation.as_str().to_string(),
@@ -160,7 +243,7 @@ fn relation_traversal_to_plan(
         cardinality: relation.cardinality,
         source_cardinality: relation.source_cardinality,
         expr: relation_expr(&relation.ir),
-        ir: validated_expr_ir_to_plan(&relation.ir)?,
+        ir: validated_expr_ir_to_plan(&relation.ir),
         binding_proofs: relation.binding_proofs.clone(),
         materialize: Some(relation.materialize.clone()),
         view_embed_proof: relation.view_embed_proof.clone(),
@@ -169,7 +252,7 @@ fn relation_traversal_to_plan(
 
 fn effect_template_to_core(
     template: &ValidatedEffectTemplate,
-) -> Result<CoreEffectTemplate, String> {
+) -> Result<CoreEffectTemplate, StepPayloadConversionError> {
     Ok(CoreEffectTemplate {
         kind: plan_kind_to_surface(template.kind)?,
         qualified_entity: qualified_entity_key(&template.qualified_entity),
@@ -193,12 +276,12 @@ fn effect_template_to_core(
     })
 }
 
-fn validated_expr_ir_to_plan(ir: &ValidatedPlanExprIr) -> Result<PlanExprIr, String> {
-    Ok(PlanExprIr {
+fn validated_expr_ir_to_plan(ir: &ValidatedPlanExprIr) -> PlanExprIr {
+    PlanExprIr {
         expr: ir.expr.clone(),
         projection: ir.projection.clone(),
         display_expr: None,
-    })
+    }
 }
 
 fn validated_expr_template_to_plan(template: &ValidatedPlanExprTemplate) -> PlanExprTemplate {
@@ -237,11 +320,17 @@ fn qualified_entity_key(q: &crate::plasm_plan::QualifiedEntityKey) -> PlanQualif
     }
 }
 
-fn binding_name(name: &crate::plasm_plan::BindingName) -> Result<CoreBindingName, String> {
-    CoreBindingName::new(name.as_str())
+fn binding_name(
+    name: &crate::plasm_plan::BindingName,
+) -> Result<CoreBindingName, StepPayloadConversionError> {
+    CoreBindingName::new(name.as_str()).map_err(|_| {
+        StepPayloadConversionError::InvalidBindingName {
+            name: name.as_str().to_owned(),
+        }
+    })
 }
 
-fn plan_kind_to_surface(kind: PlanNodeKind) -> Result<SurfaceKind, String> {
+fn plan_kind_to_surface(kind: PlanNodeKind) -> Result<SurfaceKind, StepPayloadConversionError> {
     match kind {
         PlanNodeKind::Query => Ok(SurfaceKind::Query),
         PlanNodeKind::Search => Ok(SurfaceKind::Search),
@@ -250,16 +339,16 @@ fn plan_kind_to_surface(kind: PlanNodeKind) -> Result<SurfaceKind, String> {
         PlanNodeKind::Update => Ok(SurfaceKind::Update),
         PlanNodeKind::Delete => Ok(SurfaceKind::Delete),
         PlanNodeKind::Action => Ok(SurfaceKind::Action),
-        other => Err(format!("expected surface plan kind, got {other:?}")),
+        other => Err(StepPayloadConversionError::ExpectedSurfacePlanKind { kind: other }),
     }
 }
 
-fn plan_value_to_data(value: &PlanValue) -> Result<PlasmDataValue, String> {
-    Ok(value.clone())
+fn plan_value_to_data(value: &PlanValue) -> PlasmDataValue {
+    value.clone()
 }
 
-fn convert_predicates(predicates: &[PlanPredicate]) -> Result<Vec<PlanPredicate>, String> {
-    Ok(predicates.to_vec())
+fn convert_predicates(predicates: &[PlanPredicate]) -> Vec<PlanPredicate> {
+    predicates.to_vec()
 }
 
 fn relation_expr(ir: &ValidatedPlanExprIr) -> String {
@@ -281,7 +370,7 @@ fn step_payload_to_validated_node(
     step_id: &StepId,
     payload: &PlasmStepPayload,
     bind: &PlasmBindGraph,
-) -> Result<ValidatedPlanNode, String> {
+) -> Result<ValidatedPlanNode, StepPayloadLiftError> {
     let id = PlanNodeId::new(step_id.as_str().to_string())?;
     let depends_on = step_depends_on(step_id, bind);
     let uses_result = step_uses_result(step_id, bind);
@@ -301,14 +390,14 @@ fn step_payload_to_validated_node(
         }
         PlasmStepPayload::Invoke(p) => Ok(ValidatedPlanNode::Surface(ValidatedSurfaceNode {
             id,
-            kind: surface_kind_to_plan(p.plan_kind)?,
+            kind: surface_kind_to_plan(p.plan_kind),
             qualified_entity: p.qualified_entity.as_ref().map(plan_qualified_entity_key),
-            ir: p.ir.as_ref().map(plan_expr_ir_to_validated).transpose()?,
+            ir: p.ir.as_ref().map(plan_expr_ir_to_validated),
             ir_template: p.ir_template.as_ref().map(plan_expr_template_to_validated),
             effect_class: plan_effect_class(p.effect_class),
             result_shape: plan_result_shape(p.result_shape),
             projection: p.projection.clone(),
-            predicates: convert_predicates_back(&p.predicates)?,
+            predicates: convert_predicates_back(&p.predicates),
             depends_on,
             uses_result,
             approval: p.approval.clone(),
@@ -319,7 +408,7 @@ fn step_payload_to_validated_node(
             id,
             effect_class: plan_effect_class(p.effect_class),
             result_shape: plan_result_shape(p.result_shape),
-            data: data_value_to_plan(&p.data)?,
+            data: data_value_to_plan(&p.data),
             depends_on,
             uses_result,
         })),
@@ -343,17 +432,17 @@ fn step_payload_to_validated_node(
                 id,
                 effect_class: plan_effect_class(p.effect_class),
                 result_shape: plan_result_shape(p.result_shape),
-                source: PlanNodeId::new(
-                    derive.source.as_deref().ok_or_else(|| {
-                        format!("derive step {} missing source", step_id.as_str())
-                    })?,
-                )?,
+                source: PlanNodeId::new(derive.source.as_deref().ok_or_else(|| {
+                    StepPayloadLiftError::MissingDeriveSource {
+                        step: step_id.as_str().to_owned(),
+                    }
+                })?)?,
                 item_binding: BindingName::new(
                     derive
                         .item_binding
                         .as_ref()
-                        .ok_or_else(|| {
-                            format!("derive step {} missing item_binding", step_id.as_str())
+                        .ok_or_else(|| StepPayloadLiftError::MissingDeriveItemBinding {
+                            step: step_id.as_str().to_owned(),
                         })?
                         .as_str(),
                 )?,
@@ -362,7 +451,7 @@ fn step_payload_to_validated_node(
                     .iter()
                     .map(plan_data_input_to_validated)
                     .collect::<Result<_, _>>()?,
-                value: data_value_to_plan(&derive.value)?,
+                value: data_value_to_plan(&derive.value),
                 depends_on,
                 uses_result,
             }))
@@ -384,9 +473,9 @@ fn step_payload_to_validated_node(
             result_shape: plan_result_shape(p.result_shape),
             source: PlanNodeId::new(p.source.clone())?,
             item_binding: BindingName::new(p.item_binding.as_str())?,
-            effect_template: effect_template_to_plan(&p.effect_template)?,
+            effect_template: effect_template_to_plan(&p.effect_template),
             projection: p.projection.clone(),
-            predicates: convert_predicates_back(&p.predicates)?,
+            predicates: convert_predicates_back(&p.predicates),
             depends_on,
             uses_result,
             approval: p.approval.clone(),
@@ -398,8 +487,8 @@ fn step_payload_to_validated_node(
                 result_shape: plan_result_shape(p.result_shape),
                 source: PlanNodeId::new(p.source.clone())?,
                 item_binding: BindingName::new(p.item_binding.as_str())?,
-                effect_template: effect_template_to_plan(&p.effect_template)?,
-                until_predicates: convert_predicates_back(&p.until_predicates)?,
+                effect_template: effect_template_to_plan(&p.effect_template),
+                until_predicates: convert_predicates_back(&p.until_predicates),
                 until_scope: p.until_scope.clone(),
                 step_scope: p.step_scope.clone(),
                 until_plan: p
@@ -415,11 +504,7 @@ fn step_payload_to_validated_node(
                     .transpose()?
                     .map(Box::new),
                 take: p.take,
-                seed_ir: p
-                    .seed_ir
-                    .as_ref()
-                    .map(plan_expr_ir_to_validated)
-                    .transpose()?,
+                seed_ir: p.seed_ir.as_ref().map(plan_expr_ir_to_validated),
                 depends_on,
                 uses_result,
                 approval: p.approval.clone(),
@@ -432,7 +517,7 @@ fn step_payload_to_validated_node(
 pub(crate) fn build_validated_plan_from_executable(
     comp: &PlasmComp,
     executable: &ExecutablePlasmComp,
-) -> Result<ValidatedPlan, String> {
+) -> Result<ValidatedPlan, StepPayloadLiftError> {
     let mut nodes = Vec::with_capacity(executable.steps_topo.len());
     let mut node_indices = HashMap::new();
     for (i, (step_id, payload)) in executable.steps_topo.iter().enumerate() {
@@ -473,7 +558,7 @@ pub(crate) fn build_validated_plan_from_executable(
 /// witness from the closed typed graph before constructing a trusted [`ValidatedPlan`].
 fn validate_rehydrated_cardinality_proofs(
     plan: &Plan<crate::plasm_plan::ValidatedPlanState>,
-) -> Result<(), String> {
+) -> Result<(), StepPayloadLiftError> {
     for node in &plan.nodes {
         if let ValidatedPlanNode::Derive(derive) = node {
             for input in &derive.inputs {
@@ -485,10 +570,10 @@ fn validate_rehydrated_cardinality_proofs(
                         .map(ValidatedPlanNode::result_shape)
                         != Some(PlanResultShape::SideEffectAck)
                 {
-                    return Err(
-                        "acknowledgement input requires a side-effect acknowledgement source"
-                            .into(),
-                    );
+                    return Err(StepPayloadLiftError::InvalidAcknowledgementProof {
+                        step: derive.id.as_str().to_owned(),
+                        input: input.alias.as_str().to_owned(),
+                    });
                 }
                 if input.proof == InputCardinalityProof::StaticSingleton
                     && !crate::plasm_plan::validated_source_is_static_singleton(
@@ -496,12 +581,10 @@ fn validate_rehydrated_cardinality_proofs(
                         input.node.as_str(),
                     )
                 {
-                    return Err(format!(
-                        "derive step {} input {} claims auto cardinality but source {} is not statically singleton",
-                        derive.id.as_str(),
-                        input.alias.as_str(),
-                        input.node.as_str()
-                    ));
+                    return Err(StepPayloadLiftError::InvalidSingletonProof {
+                        step: derive.id.as_str().to_owned(),
+                        input: input.alias.as_str().to_owned(),
+                    });
                 }
             }
         }
@@ -514,11 +597,10 @@ fn validate_rehydrated_cardinality_proofs(
                     relation.relation.source.as_str(),
                 )
             {
-                return Err(format!(
-                    "relation step {} claims a single source but {} is not statically singleton",
-                    relation.id.as_str(),
-                    relation.relation.source.as_str()
-                ));
+                return Err(StepPayloadLiftError::InvalidRelationSingletonProof {
+                    step: relation.id.as_str().to_owned(),
+                    source_node: relation.relation.source.as_str().to_owned(),
+                });
             }
         }
     }
@@ -552,7 +634,9 @@ fn step_uses_result(step_id: &StepId, bind: &PlasmBindGraph) -> Vec<PlanResultUs
         .unwrap_or_default()
 }
 
-fn plasm_return_to_validated(ret: &PlasmReturn) -> Result<ValidatedPlanReturn, String> {
+fn plasm_return_to_validated(
+    ret: &PlasmReturn,
+) -> Result<ValidatedPlanReturn, StepPayloadLiftError> {
     match ret {
         PlasmReturn::Step { step } => Ok(ValidatedPlanReturn::Node(PlanNodeId::new(
             step.as_str().to_string(),
@@ -566,12 +650,12 @@ fn plasm_return_to_validated(ret: &PlasmReturn) -> Result<ValidatedPlanReturn, S
     }
 }
 
-fn plan_expr_ir_to_validated(ir: &PlanExprIr) -> Result<ValidatedPlanExprIr, String> {
+fn plan_expr_ir_to_validated(ir: &PlanExprIr) -> ValidatedPlanExprIr {
     let expr = ir.expr.clone();
-    Ok(ValidatedPlanExprIr {
+    ValidatedPlanExprIr {
         expr,
         projection: ir.projection.clone(),
-    })
+    }
 }
 
 fn plan_expr_template_to_validated(template: &PlanExprTemplate) -> ValidatedPlanExprTemplate {
@@ -589,7 +673,9 @@ fn plan_expr_template_to_validated(template: &PlanExprTemplate) -> ValidatedPlan
     }
 }
 
-fn plan_data_input_to_validated(input: &PlanDataInput) -> Result<ValidatedPlanDataInput, String> {
+fn plan_data_input_to_validated(
+    input: &PlanDataInput,
+) -> Result<ValidatedPlanDataInput, StepPayloadLiftError> {
     Ok(ValidatedPlanDataInput {
         node: PlanNodeId::new(input.node.clone())?,
         alias: InputAlias::new(input.alias.clone())?,
@@ -609,8 +695,8 @@ fn plan_qualified_entity_key(q: &PlanQualifiedEntityKey) -> QualifiedEntityKey {
     }
 }
 
-pub(crate) fn surface_kind_to_plan(kind: SurfaceKind) -> Result<PlanNodeKind, String> {
-    Ok(match kind {
+pub(crate) fn surface_kind_to_plan(kind: SurfaceKind) -> PlanNodeKind {
+    match kind {
         SurfaceKind::Query => PlanNodeKind::Query,
         SurfaceKind::Search => PlanNodeKind::Search,
         SurfaceKind::Get => PlanNodeKind::Get,
@@ -618,19 +704,19 @@ pub(crate) fn surface_kind_to_plan(kind: SurfaceKind) -> Result<PlanNodeKind, St
         SurfaceKind::Update => PlanNodeKind::Update,
         SurfaceKind::Delete => PlanNodeKind::Delete,
         SurfaceKind::Action => PlanNodeKind::Action,
-    })
+    }
 }
 
 fn relation_traversal_to_validated(
     relation: &PlanRelationTraversal,
-) -> Result<ValidatedPlanRelationTraversal, String> {
+) -> Result<ValidatedPlanRelationTraversal, StepPayloadLiftError> {
     Ok(ValidatedPlanRelationTraversal {
         source: PlanNodeId::new(relation.source.clone())?,
         relation: crate::plasm_plan::RelationName::new(relation.relation.clone())?,
         target: plan_qualified_entity_key(&relation.target),
         cardinality: relation.cardinality,
         source_cardinality: relation.source_cardinality,
-        ir: plan_expr_ir_to_validated(&relation.ir)?,
+        ir: plan_expr_ir_to_validated(&relation.ir),
         materialize: relation
             .materialize
             .clone()
@@ -640,11 +726,9 @@ fn relation_traversal_to_validated(
     })
 }
 
-fn effect_template_to_plan(
-    template: &CoreEffectTemplate,
-) -> Result<ValidatedEffectTemplate, String> {
-    Ok(ValidatedEffectTemplate {
-        kind: surface_kind_to_plan(template.kind)?,
+fn effect_template_to_plan(template: &CoreEffectTemplate) -> ValidatedEffectTemplate {
+    ValidatedEffectTemplate {
+        kind: surface_kind_to_plan(template.kind),
         qualified_entity: plan_qualified_entity_key(&template.qualified_entity),
         ir_template: plan_expr_template_to_validated(&template.ir_template),
         effect_class: plan_effect_class(template.effect_class),
@@ -658,15 +742,15 @@ fn effect_template_to_plan(
                 to: b.to.clone(),
             })
             .collect(),
-    })
+    }
 }
 
-fn data_value_to_plan(value: &PlasmDataValue) -> Result<PlanValue, String> {
-    Ok(value.clone())
+fn data_value_to_plan(value: &PlasmDataValue) -> PlanValue {
+    value.clone()
 }
 
-fn convert_predicates_back(predicates: &[PlanPredicate]) -> Result<Vec<PlanPredicate>, String> {
-    Ok(predicates.to_vec())
+fn convert_predicates_back(predicates: &[PlanPredicate]) -> Vec<PlanPredicate> {
+    predicates.to_vec()
 }
 
 fn plan_effect_class(value: EffectClass) -> PlanEffectClass {
@@ -680,7 +764,7 @@ fn plan_result_shape(value: ResultShape) -> PlanResultShape {
 /// Lift a closed body with an explicit input port. No fake read/data step enters its wire plan.
 pub(crate) fn lift_body(
     body: &plasm_core::plasm_monad::CorrelatedBody,
-) -> Result<ValidatedPlan, String> {
+) -> Result<ValidatedPlan, StepPayloadLiftError> {
     let capture = PlanNodeId::new(body.parent.local.as_str())?;
     let mut nodes = vec![ValidatedPlanNode::Capture(
         crate::plasm_plan::ValidatedCaptureNode {
@@ -747,6 +831,16 @@ mod tests {
     };
     use plasm_core::PlasmBindGraph;
     use std::collections::{BTreeMap, BTreeSet};
+
+    #[test]
+    fn non_surface_plan_kind_is_a_typed_conversion_failure() {
+        assert_eq!(
+            plan_kind_to_surface(PlanNodeKind::Capture),
+            Err(StepPayloadConversionError::ExpectedSurfacePlanKind {
+                kind: PlanNodeKind::Capture,
+            })
+        );
+    }
 
     fn sample_render_node() -> ValidatedPlanNode {
         let mut column_aliases = BTreeMap::new();
@@ -884,7 +978,10 @@ mod tests {
         );
         let error = validate_rehydrated_cardinality_proofs(&plan)
             .expect_err("untrusted wire proof must be recomputed");
-        assert!(error.contains("not statically singleton"), "{error}");
+        assert!(
+            matches!(error, StepPayloadLiftError::InvalidSingletonProof { step, input }
+            if step == "mapped" && input == "items")
+        );
 
         let mut forged_ack = plan;
         let ValidatedPlanNode::Derive(derive) = &mut forged_ack.nodes[1] else {
@@ -894,8 +991,8 @@ mod tests {
         let error = validate_rehydrated_cardinality_proofs(&forged_ack)
             .expect_err("a rowset cannot masquerade as an effect acknowledgement");
         assert!(
-            error.contains("side-effect acknowledgement source"),
-            "{error}"
+            matches!(error, StepPayloadLiftError::InvalidAcknowledgementProof { step, input }
+            if step == "mapped" && input == "items")
         );
     }
 }

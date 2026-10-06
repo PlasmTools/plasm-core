@@ -18,10 +18,10 @@ pub(crate) async fn execute_session_create_response_inner(
     restored_teaching_exposure: Option<plasm_core::TeachingExposureSession>,
     symbol_space_reset: bool,
     flow_policy_scope: Option<(&str, &str, &str)>,
-) -> Result<CreateExecuteSessionResponse, String> {
+) -> Result<CreateExecuteSessionResponse, super::SessionMutateError> {
     if body.entities.is_empty() {
         crate::metrics::record_execute_session_outcome("error", "empty_entities");
-        return Err("`entities` must be non-empty".into());
+        return Err(super::SessionMutateError::EmptyEntities);
     }
 
     let mode = auth_resolution_mode_from_env();
@@ -41,8 +41,7 @@ pub(crate) async fn execute_session_create_response_inner(
         crate::execute_session_rehydrate::registry_catalog_pins_from_registry(
             reg.as_ref(),
             std::slice::from_ref(&body.entry_id),
-        )
-        .map_err(|e| e.to_string())?;
+        )?;
 
     let hosted_kv_key = outbound_hosted_kv_by_entry
         .and_then(|map| map.get(&body.entry_id))
@@ -54,8 +53,7 @@ pub(crate) async fn execute_session_create_response_inner(
         hosted_kv_key,
         entry_bindings,
     )
-    .await
-    .map_err(|e| e.to_string())?;
+    .await?;
     let ctx_arc = materialized.ctx;
     let effective_cgs = materialized.effective_cgs;
     let http_backend = materialized.http_backend;
@@ -81,8 +79,7 @@ pub(crate) async fn execute_session_create_response_inner(
         if let Some((session_id_str, sess)) = st.sessions.try_reuse_session(&reuse_key).await {
             if let Some(reused) = st
                 .try_get_execute_session(sess.prompt_hash.as_str(), session_id_str.as_str())
-                .await
-                .map_err(|error| error.to_string())?
+                .await?
             {
                 let _reuse = crate::spans::execute_session_reuse(
                     reuse_key.entry_id.as_str(),
@@ -119,7 +116,10 @@ pub(crate) async fn execute_session_create_response_inner(
             for e in &restored.entities {
                 if cgs.get_entity(e).is_none() {
                     crate::metrics::record_execute_session_outcome("error", "unknown_entity");
-                    return Err(format!("unknown entity `{e}` in restored symbol ledger"));
+                    return Err(super::SessionMutateError::UnknownEntity {
+                        entry_id: body.entry_id.clone(),
+                        entity: e.clone(),
+                    });
                 }
             }
             (restored.entities.clone(), restored)
@@ -127,7 +127,10 @@ pub(crate) async fn execute_session_create_response_inner(
             for e in &names {
                 if cgs.get_entity(e).is_none() {
                     crate::metrics::record_execute_session_outcome("error", "unknown_entity");
-                    return Err(format!("unknown entity `{e}` in this schema"));
+                    return Err(super::SessionMutateError::UnknownEntity {
+                        entry_id: body.entry_id.clone(),
+                        entity: e.clone(),
+                    });
                 }
             }
             let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
@@ -236,8 +239,7 @@ pub(crate) async fn execute_session_create_response_inner(
         session,
     )
     .instrument(create_span)
-    .await
-    .map_err(|e| e.to_string())?;
+    .await?;
 
     crate::metrics::record_execute_session_outcome("create", "");
     Ok(CreateExecuteSessionResponse {
@@ -255,7 +257,7 @@ pub async fn execute_session_create_response(
     st: &PlasmHostState,
     principal: Option<&crate::incoming_auth::TenantPrincipal>,
     body: CreateExecuteSessionBody,
-) -> Result<CreateExecuteSessionResponse, String> {
+) -> Result<CreateExecuteSessionResponse, super::SessionMutateError> {
     execute_session_create_response_inner(st, principal, body, true, None, None, None, false, None)
         .await
 }

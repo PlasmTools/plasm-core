@@ -11,7 +11,11 @@ pub(crate) struct Imports {
     pub source: String,
 }
 impl Imports {
-    pub fn add(&mut self, stmt: &Stmt, source: &str) -> Result<bool, String> {
+    pub fn add(
+        &mut self,
+        stmt: &Stmt,
+        source: &str,
+    ) -> Result<bool, crate::program_rejection::PythonProgramError> {
         let bindings = match stmt {
             Stmt::Import(i) => i
                 .names
@@ -70,7 +74,9 @@ impl Imports {
                     && local.len() > 1
                     && local.as_bytes()[1..].iter().all(u8::is_ascii_digit))
             {
-                return Err("import shadows a reserved Plasm binding".into());
+                return Err(
+                    crate::program_rejection::PythonProgramError::ImportShadowsReservedBinding,
+                );
             }
             self.bindings.insert(local, canonical);
         }
@@ -78,7 +84,10 @@ impl Imports {
         self.source.push('\n');
         Ok(true)
     }
-    pub fn split<'a>(source: &str, suite: &'a [Stmt]) -> Result<(Self, &'a [Stmt]), String> {
+    pub fn split<'a>(
+        source: &str,
+        suite: &'a [Stmt],
+    ) -> Result<(Self, &'a [Stmt]), crate::program_rejection::PythonProgramError> {
         let mut imports = Self::default();
         let mut n = 0;
         for stmt in suite {

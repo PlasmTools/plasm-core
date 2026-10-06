@@ -19,14 +19,22 @@ use uuid::Uuid;
 async fn cep_7_failed_operation_preserves_typed_error() {
     let es = empty_session();
     let handle = begin_plain_operation(es.as_ref());
-    es.finalize_operation_failed(&handle, GRAPH_WRITE_CONFLICT_USER_MESSAGE.into(), None);
+    es.finalize_operation_failed(
+        &handle,
+        plasm_runtime::ExecutionFailure::new(
+            plasm_runtime::FailureCause::Runtime,
+            "graph_write_conflict",
+            GRAPH_WRITE_CONFLICT_USER_MESSAGE,
+        ),
+        None,
+    );
     let err = resolve_terminal_plan_run(es.as_ref(), None, None, &handle)
         .await
         .expect_err("terminal failed");
     assert!(matches!(err, OperationError::OperationFailed { .. }));
     assert_eq!(
         err.detail(),
-        format!("operation `{handle}` failed: unclassified_execution_failure: Stop")
+        format!("operation `{handle}` failed: graph_write_conflict: Stop")
     );
     assert_eq!(err.code(), OperationError::CODE_OPERATION_FAILED);
 }
@@ -52,7 +60,15 @@ async fn cep_8_await_propagates_terminal_failure() {
     let fail_msg_bg = fail_msg.to_string();
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(30)).await;
-        es_bg.finalize_operation_failed(&handle_bg, fail_msg_bg.into(), None);
+        es_bg.finalize_operation_failed(
+            &handle_bg,
+            plasm_runtime::ExecutionFailure::new(
+                plasm_runtime::FailureCause::Runtime,
+                "relation_materialize_failed",
+                fail_msg_bg,
+            ),
+            None,
+        );
     });
     let err = await_operation_terminal(TerminalAwaitContext {
         es,

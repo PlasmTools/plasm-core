@@ -234,7 +234,7 @@ fn occurrence_concurrent_deltas_preserve_sequence_and_queued_python_cancels() {
         }
         let wait = crate::python_compute::await_checked(
             Some(&scope),
-            std::future::pending::<Result<(), String>>(),
+            std::future::pending::<Result<(), plasm_runtime::ExecutionFailure>>(),
         );
         let cancel_wait = async {
             tokio::task::yield_now().await;
@@ -245,7 +245,10 @@ fn occurrence_concurrent_deltas_preserve_sequence_and_queued_python_cancels() {
         })
         .await
         .unwrap();
-        assert!(result.unwrap_err().contains("cancelled"));
+        assert_eq!(
+            result.unwrap_err().cause,
+            plasm_runtime::FailureCause::Cancelled
+        );
     });
 }
 

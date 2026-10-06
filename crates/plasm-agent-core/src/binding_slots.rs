@@ -4,7 +4,28 @@ use indexmap::IndexMap;
 use plasm_runtime::binding_kv::normalize_connect_url;
 use serde::Serialize;
 use std::collections::HashMap;
+use thiserror::Error;
 use uuid::Uuid;
+
+#[derive(Debug, Error)]
+pub enum ConnectBindingError {
+    #[error("catalog `{entry_id}` does not accept binding values")]
+    BindingsNotSupported { entry_id: String },
+    #[error("{label} is required")]
+    MissingRequiredValue { label: &'static str },
+    #[error("binding `{wire}`: {source}")]
+    InvalidUrl {
+        wire: &'static str,
+        #[source]
+        source: plasm_runtime::binding_kv::ConnectUrlError,
+    },
+}
+
+#[derive(Debug, Error)]
+pub enum HttpBackendResolutionError {
+    #[error("Workspace URL not configured — connect `{entry_id}` in MCP settings")]
+    WorkspaceUrlNotConfigured { entry_id: String },
+}
 
 /// Host-controlled slots — plugin authors cannot extend at runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -249,14 +270,14 @@ impl SessionBindingMap {
 pub fn normalize_connect_binding_values(
     entry_id: &str,
     raw: &HashMap<String, String>,
-) -> Result<IndexMap<String, String>, String> {
+) -> Result<IndexMap<String, String>, ConnectBindingError> {
     let Some(req) = connect_requirements_for_entry(entry_id) else {
         if raw.is_empty() {
             return Ok(IndexMap::new());
         }
-        return Err(format!(
-            "catalog `{entry_id}` does not accept binding values"
-        ));
+        return Err(ConnectBindingError::BindingsNotSupported {
+            entry_id: entry_id.to_owned(),
+        });
     };
     let mut out = IndexMap::new();
     for spec in req.bindings {
@@ -265,9 +286,10 @@ pub fn normalize_connect_binding_values(
             .get(wire)
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
-            .ok_or_else(|| format!("{} is required", spec.label))?;
+            .ok_or(ConnectBindingError::MissingRequiredValue { label: spec.label })?;
         let normalized = match spec.kind {
-            ConnectFieldKind::Url => normalize_connect_url(val)?,
+            ConnectFieldKind::Url => normalize_connect_url(val)
+                .map_err(|source| ConnectBindingError::InvalidUrl { wire, source })?,
             ConnectFieldKind::Text => val.to_string(),
         };
         out.insert(wire.to_string(), normalized);
@@ -297,7 +319,7 @@ pub fn resolve_catalog_http_backend(
     catalog_backend: &crate::http_backend::CatalogHttpBackend,
     bindings: Option<&SessionBindingMap>,
     legacy_outbound_http_backend: Option<&crate::http_backend::BindingOriginValue>,
-) -> Result<crate::http_backend::ResolvedHttpOrigin, String> {
+) -> Result<crate::http_backend::ResolvedHttpOrigin, HttpBackendResolutionError> {
     if !catalog_backend.needs_origin_resolution(entry_id) {
         return Ok(crate::http_backend::ResolvedHttpOrigin::from_catalog(
             catalog_backend,
@@ -318,9 +340,9 @@ pub fn resolve_catalog_http_backend(
             ));
         }
     }
-    Err(format!(
-        "Workspace URL not configured — connect {entry_id} in MCP settings"
-    ))
+    Err(HttpBackendResolutionError::WorkspaceUrlNotConfigured {
+        entry_id: entry_id.to_owned(),
+    })
 }
 
 #[cfg(test)]
@@ -352,5 +374,39 @@ mod tests {
         )
         .expect("resolve");
         assert_eq!(origin.as_str(), "https://acme.fibery.io");
+    }
+
+    #[test]
+    fn connect_binding_validation_preserves_failure_kind() {
+        assert!(matches!(
+            normalize_connect_binding_values("fibery", &HashMap::new()),
+            Err(ConnectBindingError::MissingRequiredValue { .. })
+        ));
+        let invalid_url =
+            HashMap::from([("catalog_http_origin".to_string(), "ftp://host".to_string())]);
+        assert!(matches!(
+            normalize_connect_binding_values("fibery", &invalid_url),
+            Err(ConnectBindingError::InvalidUrl {
+                source: plasm_runtime::binding_kv::ConnectUrlError::UnsupportedScheme,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn unresolved_workspace_backend_is_semantic() {
+        let error = resolve_catalog_http_backend(
+            "fibery",
+            &crate::http_backend::CatalogHttpBackend::from_cgs_field(
+                "https://YOUR_ACCOUNT.fibery.io",
+            ),
+            None,
+            None,
+        );
+        assert!(matches!(
+            error,
+            Err(HttpBackendResolutionError::WorkspaceUrlNotConfigured { entry_id })
+                if entry_id == "fibery"
+        ));
     }
 }

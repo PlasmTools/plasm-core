@@ -1,6 +1,6 @@
 //! Close directly called local helpers through the same upstream checker used
 //! for the enclosing compute. No Python expression is typed by this module.
-use super::{body_diagnostics, declarations::Declarations, Decoder, Type};
+use super::{body_diagnostics, declarations::Declarations, Decoder, InferenceError, Type};
 use monty_analysis::{AnalysisLimits, AnalysisOutcome, AnalysisRequest, Graph, Node, Span, TypeId};
 use ruff_python_ast::{
     visitor::{self, Visitor},
@@ -96,10 +96,14 @@ fn checked_type(
     result: monty_analysis::AnalysisResult,
     source: &str,
     declarations: &Declarations,
-) -> Result<Option<CheckedType>, String> {
+) -> Result<Option<CheckedType>, InferenceError> {
     let graph = match result.outcome {
         AnalysisOutcome::Inferred(graph) => graph,
-        AnalysisOutcome::Rejected(errors) => return Err(body_diagnostics(errors, source)),
+        AnalysisOutcome::Rejected(errors) => {
+            return Err(InferenceError::Diagnostics {
+                diagnostics: body_diagnostics(errors, source),
+            })
+        }
     };
     if graph.nodes.contains(&Node::Unknown) {
         return Ok(None);
@@ -123,17 +127,17 @@ fn checked_type(
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
         .reduce(Type::join)
-        .ok_or_else(|| "checker supplied no helper contract".to_owned())?;
+        .ok_or(InferenceError::HelperContractMissing)?;
     Ok(Some(CheckedType {
         contract,
         literal_annotation: exact,
     }))
 }
 
-fn helper_definitions(source: &str) -> Result<BTreeMap<String, StmtFunctionDef>, String> {
-    let parsed = ruff_python_parser::parse_module(source).map_err(|e| e.to_string())?;
+fn helper_definitions(source: &str) -> Result<BTreeMap<String, StmtFunctionDef>, InferenceError> {
+    let parsed = ruff_python_parser::parse_module(source)?;
     let Some(Stmt::FunctionDef(outer)) = parsed.suite().last() else {
-        return Err("missing generated compute function".into());
+        return Err(InferenceError::GeneratedFunctionMissing);
     };
     let mut definitions = BTreeMap::new();
     for stmt in &outer.body {
@@ -142,20 +146,20 @@ fn helper_definitions(source: &str) -> Result<BTreeMap<String, StmtFunctionDef>,
                 .insert(function.name.to_string(), function.clone())
                 .is_some()
             {
-                return Err("local helper names must be unique in one compute".into());
+                return Err(InferenceError::DuplicateLocalHelper);
             }
         }
     }
     Ok(definitions)
 }
 
-pub(super) fn has_local_calls(source: &str) -> Result<bool, String> {
+pub(super) fn has_local_calls(source: &str) -> Result<bool, InferenceError> {
     let definitions = helper_definitions(source)?;
     if definitions.is_empty() {
         return Ok(false);
     }
     let names = definitions.keys().cloned().collect::<BTreeSet<_>>();
-    let parsed = ruff_python_parser::parse_module(source).map_err(|e| e.to_string())?;
+    let parsed = ruff_python_parser::parse_module(source)?;
     let Some(Stmt::FunctionDef(outer)) = parsed.suite().last() else {
         unreachable!()
     };
@@ -171,7 +175,7 @@ fn insert_annotations(
     source: &str,
     helpers: &BTreeMap<String, Helper>,
     declarations: &mut Declarations,
-) -> Result<String, String> {
+) -> Result<String, InferenceError> {
     let mut insertions = Vec::new();
     for helper in helpers.values() {
         let def = &helper.definition;
@@ -215,13 +219,13 @@ fn insert_annotations(
 pub(super) fn close_local_calls(
     source: &str,
     declarations: &mut Declarations,
-) -> Result<String, String> {
+) -> Result<String, InferenceError> {
     let definitions = helper_definitions(source)?;
     if definitions.is_empty() {
         return Ok(source.into());
     }
     if definitions.len() > 32 {
-        return Err("compute local helper limit exceeded".into());
+        return Err(InferenceError::LocalHelperLimitExceeded);
     }
     let mut helpers = definitions
         .into_iter()
@@ -241,7 +245,7 @@ pub(super) fn close_local_calls(
     let mut resolved_defaults = BTreeSet::new();
     for _ in 0..=helpers.len() * 2 {
         let annotated = insert_annotations(source, &helpers, declarations)?;
-        let parsed = ruff_python_parser::parse_module(&annotated).map_err(|e| e.to_string())?;
+        let parsed = ruff_python_parser::parse_module(&annotated)?;
         let Some(Stmt::FunctionDef(outer)) = parsed.suite().last() else {
             unreachable!()
         };
@@ -251,7 +255,7 @@ pub(super) fn close_local_calls(
         };
         calls.visit_body(&outer.body);
         if calls.found.len() > 128 {
-            return Err("compute local helper call limit exceeded".into());
+            return Err(InferenceError::LocalHelperCallLimitExceeded);
         }
         let current = helper_definitions(&annotated)?;
         let mut changed = false;
@@ -274,7 +278,7 @@ pub(super) fn close_local_calls(
                         keyword
                             .arg
                             .as_ref()
-                            .ok_or("expanded helper arguments cannot be inferred")?
+                            .ok_or(InferenceError::ExpandedHelperArgumentsUnsupported)?
                             .to_string(),
                     ),
                     &keyword.value,
@@ -346,7 +350,7 @@ pub(super) fn close_local_calls(
                     continue;
                 }
                 if binding.variadic || matches!(expression, Expr::Starred(_)) {
-                    return Err("variadic local helper calls cannot be inferred".into());
+                    return Err(InferenceError::VariadicLocalHelperCall);
                 }
                 if annotated_names.contains(&binding.parameter) {
                     resolved_arguments.insert(key);
@@ -391,5 +395,5 @@ pub(super) fn close_local_calls(
             return Ok(annotated);
         }
     }
-    Err("compute local helper inference did not converge".into())
+    Err(InferenceError::LocalHelperInferenceDidNotConverge)
 }

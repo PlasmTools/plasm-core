@@ -178,9 +178,7 @@ impl PaginationDriver {
     ) -> Result<Self, RuntimeError> {
         let contract = config
             .validate()
-            .map_err(|e| RuntimeError::ConfigurationError {
-                message: e.to_string(),
-            })?;
+            .map_err(RuntimeError::PaginationContract)?;
         Self::new(contract, user, consume)
     }
 

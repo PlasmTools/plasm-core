@@ -62,8 +62,8 @@ pub(crate) fn build_scoped_query_from_fallback(
             bindings,
         } => {
             let cap = cgs.get_capability(capability.as_str()).ok_or_else(|| {
-                RuntimeError::ConfigurationError {
-                    message: format!("unknown fallback capability '{capability}'"),
+                RuntimeError::CapabilityUnknown {
+                    capability: capability.to_string(),
                 }
             })?;
             let cap_params: Vec<_> = cap.query_surface_fields().cloned().collect();
@@ -86,9 +86,7 @@ pub(crate) fn build_scoped_query_from_fallback(
             Ok(q)
         }
         RelationScopedFallback::HydrateFromEmbedPath { .. } => {
-            Err(RuntimeError::ConfigurationError {
-                message: "hydrate_from_embed_path fallback is plan-materialized only".into(),
-            })
+            Err(RuntimeError::EmbeddedHydrationPlanRequired)
         }
     }
 }
@@ -137,13 +135,12 @@ pub(crate) fn partition_prefer_from_parent_get(
         match resolution {
             RelationRowResolution::EmbeddedRefs(refs) => {
                 let rows = resolve_cached_targets_from_relation_refs(mat, &refs, expected_target)?;
-                let membership =
-                    parent
-                        .relations
-                        .get(relation_key)
-                        .ok_or_else(|| RuntimeError::CacheError {
-                            message: "missing relation membership".into(),
-                        })?;
+                let membership = parent.relations.get(relation_key).ok_or_else(|| {
+                    crate::CacheError::RelationUnobserved {
+                        reference: parent.reference.clone(),
+                        relation: relation_key.to_owned(),
+                    }
+                })?;
                 per_parent[i] = Some(ExecutionCollection::materialized(
                     membership.record().clone(),
                     rows,
@@ -176,17 +173,16 @@ pub(crate) fn resolve_cached_targets_from_relation_refs<'a>(
     let mut out = Vec::new();
     for r in refs {
         if r.entity_type.as_str() != expected_target {
-            return Err(RuntimeError::ConfigurationError {
-                message: format!(
-                    "Decoded relation expected Ref.entity_type {expected_target}, got {}",
-                    r.entity_type
-                ),
+            return Err(RuntimeError::TraversalParentTypeMismatch {
+                expected: expected_target.to_owned(),
+                actual: r.entity_type.to_string(),
             });
         }
         let Some(e) = mat.shared_row(r) else {
-            return Err(RuntimeError::CacheError {
-                message: format!("missing embedded relation target in session graph: {r}"),
-            });
+            return Err(crate::CacheError::EntityMissing {
+                reference: r.clone(),
+            }
+            .into());
         };
         out.push(e);
     }
@@ -201,11 +197,9 @@ pub(crate) fn ref_from_materialize_bindings_for_get_chain(
         let mut parts = BTreeMap::new();
         for kv in &target_ent.key_vars {
             let s = binding_values.get(kv.as_str()).ok_or_else(|| {
-                RuntimeError::ConfigurationError {
-                    message: format!(
-                        "get_scoped_bindings missing bound value for `{}` on entity `{}`",
-                        kv, target_ent.name
-                    ),
+                RuntimeError::MaterializeBindingMissing {
+                    entity: target_ent.name.to_string(),
+                    field: kv.to_string(),
                 }
             })?;
             parts.insert(kv.to_string(), s.clone());
@@ -214,11 +208,9 @@ pub(crate) fn ref_from_materialize_bindings_for_get_chain(
     } else {
         let id = binding_values
             .get(target_ent.id_field.as_str())
-            .ok_or_else(|| RuntimeError::ConfigurationError {
-                message: format!(
-                    "get_scoped_bindings missing bound value for id field `{}` on entity `{}`",
-                    target_ent.id_field, target_ent.name
-                ),
+            .ok_or_else(|| RuntimeError::MaterializeBindingMissing {
+                entity: target_ent.name.to_string(),
+                field: target_ent.id_field.to_string(),
             })?;
         Ok(Ref::new(target_ent.name.clone(), id.clone()))
     }

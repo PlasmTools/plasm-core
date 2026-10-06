@@ -2,7 +2,6 @@
 //!
 //! See `docs/plasm-cgs-remote-terminal.md` in the parent repo.
 
-use anyhow::{anyhow, Context as _, Result};
 use clap::Parser;
 use reqwest::header::{
     HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE,
@@ -11,6 +10,129 @@ use reqwest::{Client, Method, StatusCode};
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use thiserror::Error;
+
+type Result<T> = std::result::Result<T, TerminalError>;
+
+#[derive(Debug, Error)]
+pub enum TerminalError {
+    #[error("profile file read failed")]
+    ProfileRead(#[source] std::io::Error),
+    #[error("profile JSON is malformed")]
+    ProfileDecode(#[source] serde_json::Error),
+    #[error("profile file write failed")]
+    ProfileWrite(#[source] std::io::Error),
+    #[error("profile directory creation failed")]
+    ProfileDirectory(#[source] std::io::Error),
+    #[error("terminal state operation failed")]
+    State(#[from] crate::terminal_state::TerminalStateError),
+    #[error("terminal session mirror operation failed")]
+    Mirror(#[from] crate::terminal_mirror::TerminalMirrorError),
+    #[error("routed terminal session operation failed")]
+    RoutedSession(#[from] crate::terminal_session::RoutedTerminalSessionError),
+    #[error("invalid context command arguments")]
+    ContextArguments(#[from] crate::terminal_cli::ContextArgsError),
+    #[error("terminal I/O failed")]
+    Io(#[from] std::io::Error),
+    #[error("Plasm is not configured; run `plasm init` first")]
+    ServerNotConfigured,
+    #[error("invalid API key or bearer header value")]
+    InvalidAuthHeader(#[source] reqwest::header::InvalidHeaderValue),
+    #[error("invalid HTTP header value")]
+    InvalidHeader(#[source] reqwest::header::InvalidHeaderValue),
+    #[error("init requires a non-empty --server value")]
+    EmptyServer,
+    #[error("device login cannot be used when an API key is configured")]
+    DeviceLoginWithApiKey,
+    #[error("device login requires a managed platform origin")]
+    DeviceLoginRequiresPlatform,
+    #[error("HTTP client construction failed")]
+    HttpClient(#[source] reqwest::Error),
+    #[error("HTTP request failed")]
+    Http(#[from] reqwest::Error),
+    #[error("JSON encoding or decoding failed")]
+    Json(#[from] serde_json::Error),
+    #[error("device login start was rejected: HTTP {status}: {body}")]
+    DeviceLoginStartRejected { status: StatusCode, body: String },
+    #[error("device login response was malformed")]
+    DeviceLoginResponse(#[source] serde_json::Error),
+    #[error("device login timed out")]
+    DeviceLoginTimedOut,
+    #[error("device login authorization expired")]
+    DeviceLoginExpired,
+    #[error("device login polling was rejected: HTTP {status}: {body}")]
+    DeviceLoginPollRejected { status: StatusCode, body: String },
+    #[error("program file read failed: {path}")]
+    ProgramFileRead {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("program stdin read failed")]
+    ProgramStdinRead(#[source] std::io::Error),
+    #[error("no current context; open one with `plasm context --new`")]
+    ContextNotOpen,
+    #[error("context request failed: HTTP {status}: {body}")]
+    ContextRejected { status: StatusCode, body: String },
+    #[error("routing response omitted its recovery receipt")]
+    MissingRecoveryReceipt,
+    #[error("context attached without a capability closure")]
+    MissingCapabilityClosure,
+    #[error("context extension changed the pinned execution session")]
+    PinnedSessionChanged,
+    #[error("artifact request failed: HTTP {0}")]
+    ArtifactRejected(StatusCode),
+    #[error("search intent is required")]
+    SearchIntentRequired,
+    #[error("no current context; open one with `plasm context --new --intent …`")]
+    RunContextNotOpen,
+    #[error("program input must not be empty")]
+    EmptyProgram,
+    #[error("program input must be UTF-8")]
+    ProgramNotUtf8(#[source] std::string::FromUtf8Error),
+    #[error("terminal runtime initialization failed")]
+    RuntimeInitialization(#[source] Box<dyn std::error::Error>),
+    #[error("evidence file open failed: {path}")]
+    EvidenceOpen {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("evidence file read failed: {path}")]
+    EvidenceRead {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("evidence JSON is malformed: {path}")]
+    EvidenceDecode {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("evidence verification failed")]
+    EvidenceVerify(#[from] plasm_evidence::EvidenceError),
+    #[error("run-id verification requires an artifact")]
+    RunIdRequiresArtifact,
+    #[error("run artifact open failed: {path}")]
+    ArtifactOpen {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("run artifact read failed: {path}")]
+    ArtifactRead {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("run artifact JSON is malformed: {path}")]
+    ArtifactDecode {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
+}
 
 use crate::http_discovery::IntentDiscoveryRequest;
 use crate::resolved_plan_http::ResolvedPlanRunMode;
@@ -51,17 +173,17 @@ fn load_profile(name: &str) -> Result<TerminalProfile> {
     if !p.exists() {
         return Ok(TerminalProfile::default());
     }
-    let raw =
-        std::fs::read_to_string(&p).with_context(|| format!("read profile {}", p.display()))?;
-    Ok(serde_json::from_str(&raw).unwrap_or_default())
+    let raw = std::fs::read_to_string(&p).map_err(TerminalError::ProfileRead)?;
+    serde_json::from_str(&raw).map_err(TerminalError::ProfileDecode)
 }
 
 fn save_profile(name: &str, prof: &TerminalProfile) -> Result<()> {
     let p = profile_path(name);
     if let Some(dir) = p.parent() {
-        std::fs::create_dir_all(dir)?;
+        std::fs::create_dir_all(dir).map_err(TerminalError::ProfileDirectory)?;
     }
-    std::fs::write(&p, serde_json::to_string_pretty(prof)?)?;
+    let encoded = serde_json::to_string_pretty(prof)?;
+    std::fs::write(&p, encoded).map_err(TerminalError::ProfileWrite)?;
     Ok(())
 }
 
@@ -75,11 +197,7 @@ fn require_configured_server(profile: &TerminalProfile) -> Result<String> {
         .as_deref()
         .filter(|s| !s.trim().is_empty())
         .map(normalize_http_origin)
-        .ok_or_else(|| {
-            anyhow!(
-                "Plasm is not configured. Run `plasm init` first (e.g. `plasm init --server http://127.0.0.1:3000`)."
-            )
-        })
+        .ok_or(TerminalError::ServerNotConfigured)
 }
 
 fn resolve_api_key(profile: &TerminalProfile) -> Option<String> {
@@ -124,15 +242,14 @@ pub fn apply_auth_headers(headers: &mut HeaderMap, profile: &TerminalProfile) ->
         (Some(k), _) => {
             headers.insert(
                 "x-api-key",
-                HeaderValue::from_str(k.trim())
-                    .map_err(|e| anyhow!("invalid API key header: {e}"))?,
+                HeaderValue::from_str(k.trim()).map_err(TerminalError::InvalidAuthHeader)?,
             );
         }
         (None, Some(tok)) => {
             let v = format!("Bearer {}", tok.trim());
             headers.insert(
                 AUTHORIZATION,
-                HeaderValue::from_str(&v).map_err(|e| anyhow!("invalid bearer header: {e}"))?,
+                HeaderValue::from_str(&v).map_err(TerminalError::InvalidAuthHeader)?,
             );
         }
         (None, None) => {}
@@ -149,7 +266,7 @@ fn run_init(
     if let Some(s) = server {
         let t = s.trim();
         if t.is_empty() {
-            return Err(anyhow!("init: --server must not be empty"));
+            return Err(TerminalError::EmptyServer);
         }
         profile.server = Some(normalize_http_origin(t));
     } else if profile
@@ -216,21 +333,16 @@ struct DevicePollSuccess {
 
 async fn run_device_login(profile_name: &str, profile: &mut TerminalProfile) -> Result<()> {
     if resolve_api_key(profile).is_some() {
-        return Err(anyhow!(
-            "device login is not used when an api_key is set in the profile"
-        ));
+        return Err(TerminalError::DeviceLoginWithApiKey);
     }
     let server = require_configured_server(profile)?;
     if !is_managed_platform_origin(&server) {
-        return Err(anyhow!(
-            "device login applies to managed platform hosts (e.g. {DEFAULT_PLATFORM_HTTP_ORIGIN}); \
-             for local servers use `plasm init --server http://127.0.0.1:3000 --api-key …`"
-        ));
+        return Err(TerminalError::DeviceLoginRequiresPlatform);
     }
 
     let client = Client::builder()
         .build()
-        .map_err(|e| anyhow!("http client: {e}"))?;
+        .map_err(TerminalError::HttpClient)?;
     let start_body = serde_json::json!({ "client_id": "plasm-cli" });
     let (st, _, body) = send_bytes(
         &client,
@@ -245,10 +357,13 @@ async fn run_device_login(profile_name: &str, profile: &mut TerminalProfile) -> 
     .await?;
     if !st.is_success() {
         let msg = String::from_utf8_lossy(&body);
-        return Err(anyhow!("device login start failed HTTP {st}: {msg}"));
+        return Err(TerminalError::DeviceLoginStartRejected {
+            status: st,
+            body: msg.into_owned(),
+        });
     }
     let start: DeviceStartResponse =
-        serde_json::from_slice(&body).context("parse device start response")?;
+        serde_json::from_slice(&body).map_err(TerminalError::DeviceLoginResponse)?;
 
     let open_url = start
         .verification_uri_complete
@@ -267,7 +382,7 @@ async fn run_device_login(profile_name: &str, profile: &mut TerminalProfile) -> 
     let mut interval = start.interval.max(3);
     loop {
         if std::time::Instant::now() >= deadline {
-            return Err(anyhow!("device login timed out"));
+            return Err(TerminalError::DeviceLoginTimedOut);
         }
         tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
         let (pst, _, pbody) = send_bytes(
@@ -300,20 +415,28 @@ async fn run_device_login(profile_name: &str, profile: &mut TerminalProfile) -> 
                 continue;
             }
             if v.get("error").and_then(|e| e.as_str()) == Some("expired_token") {
-                return Err(anyhow!("device login expired; run `plasm login` again"));
+                return Err(TerminalError::DeviceLoginExpired);
             }
         }
         let msg = String::from_utf8_lossy(&pbody);
-        return Err(anyhow!("device login poll failed HTTP {pst}: {msg}"));
+        return Err(TerminalError::DeviceLoginPollRejected {
+            status: pst,
+            body: msg.into_owned(),
+        });
     }
 }
 
 fn read_program_body(path: Option<&PathBuf>) -> Result<Vec<u8>> {
     if let Some(p) = path {
-        std::fs::read(p).with_context(|| format!("read {}", p.display()))
+        std::fs::read(p).map_err(|source| TerminalError::ProgramFileRead {
+            path: p.clone(),
+            source,
+        })
     } else {
         let mut buf = Vec::new();
-        io::stdin().read_to_end(&mut buf)?;
+        io::stdin()
+            .read_to_end(&mut buf)
+            .map_err(TerminalError::ProgramStdinRead)?;
         Ok(buf)
     }
 }
@@ -338,10 +461,16 @@ async fn send_bytes(
     let mut headers = HeaderMap::new();
     apply_auth_headers(&mut headers, profile)?;
     if let Some(a) = accept {
-        headers.insert(ACCEPT, HeaderValue::from_str(a)?);
+        headers.insert(
+            ACCEPT,
+            HeaderValue::from_str(a).map_err(TerminalError::InvalidHeader)?,
+        );
     }
     if let Some(ct) = content_type {
-        headers.insert(CONTENT_TYPE, HeaderValue::from_str(ct)?);
+        headers.insert(
+            CONTENT_TYPE,
+            HeaderValue::from_str(ct).map_err(TerminalError::InvalidHeader)?,
+        );
     }
     if let Some(ref b) = body {
         headers.insert(CONTENT_LENGTH, HeaderValue::from(b.len()));
@@ -406,8 +535,7 @@ async fn run_context_command(
     } else {
         Some(RoutedTerminalSession::load_from_disk(
             server,
-            &read_current_session_pointer(server)?
-                .ok_or_else(|| anyhow!("context: open --new first"))?,
+            &read_current_session_pointer(server)?.ok_or(TerminalError::ContextNotOpen)?,
         )?)
     };
     let intent = args.intent.as_deref().unwrap_or_default().trim();
@@ -437,10 +565,10 @@ async fn run_context_command(
     )
     .await?;
     if !status.is_success() {
-        return Err(anyhow!(
-            "context: HTTP {status}: {}",
-            String::from_utf8_lossy(&body)
-        ));
+        return Err(TerminalError::ContextRejected {
+            status,
+            body: String::from_utf8_lossy(&body).into_owned(),
+        });
     }
     #[derive(Deserialize)]
     struct ContextReply {
@@ -451,26 +579,24 @@ async fn run_context_command(
     }
     let reply: ContextReply = serde_json::from_slice(&body)?;
     let Some(context) = reply.context else {
-        anyhow::ensure!(
-            reply.routing.recovery.is_some(),
-            "matching routing response is missing its execution context"
-        );
+        if reply.routing.recovery.is_none() {
+            return Err(TerminalError::MissingRecoveryReceipt);
+        }
         // Preserve the full insufficiency receipt; no execution binding is opened or replaced.
         std::io::stdout().write_all(&body)?;
         println!();
         return Ok(());
     };
-    anyhow::ensure!(
-        reply.routing.closure.is_some(),
-        "context attached to routing without capability closure"
-    );
+    if reply.routing.closure.is_none() {
+        return Err(TerminalError::MissingCapabilityClosure);
+    }
     if let Some(previous) = &previous {
-        anyhow::ensure!(
-            previous.generation == reply.routing.retrieval.generation
-                && previous.execution.prompt_hash == context.prompt_hash
-                && previous.execution.session == context.session_id,
-            "extension changed the pinned execution session"
-        );
+        if !(previous.generation == reply.routing.retrieval.generation
+            && previous.execution.prompt_hash == context.prompt_hash
+            && previous.execution.session == context.session_id)
+        {
+            return Err(TerminalError::PinnedSessionChanged);
+        }
     }
     let state = RoutedTerminalSession {
         version: 2,
@@ -561,10 +687,10 @@ async fn mirror_run_snapshot(client: &Client, ctx: &MirrorRunSnapshotCtx<'_>) ->
     )
     .await?;
     if !st.is_success() {
-        return Err(anyhow!("artifact GET failed HTTP {st}"));
+        return Err(TerminalError::ArtifactRejected(st));
     }
     let mirror = SessionMirror::open(ctx.client_session_id)?;
-    mirror.write_artifact_pair(ctx.op_dir, &body)
+    Ok(mirror.write_artifact_pair(ctx.op_dir, &body)?)
 }
 
 async fn run_doctor(profile_name: &str, profile: &TerminalProfile) -> Result<()> {
@@ -605,7 +731,7 @@ async fn run_doctor(profile_name: &str, profile: &TerminalProfile) -> Result<()>
     println!();
     let client = Client::builder()
         .build()
-        .map_err(|e| anyhow!("http client: {e}"))?;
+        .map_err(TerminalError::HttpClient)?;
     match send_bytes(
         &client,
         &origin,
@@ -632,7 +758,7 @@ async fn run_doctor(profile_name: &str, profile: &TerminalProfile) -> Result<()>
 
 /// Entry point for the `plasm` binary.
 pub async fn run_terminal() -> Result<()> {
-    crate::init_agent_runtime().map_err(|e| anyhow!("{e}"))?;
+    crate::init_agent_runtime().map_err(TerminalError::RuntimeInitialization)?;
     let cli = Cli::parse();
     let mut profile = load_profile(cli.profile.as_str())?;
 
@@ -658,12 +784,12 @@ pub async fn run_terminal() -> Result<()> {
         Cmd::Search { intent } => {
             let utterance = intent.trim().to_string();
             if utterance.is_empty() {
-                return Err(anyhow!("search: intent text required"));
+                return Err(TerminalError::SearchIntentRequired);
             }
             let server = require_configured_server(&profile)?;
             let client = Client::builder()
                 .build()
-                .map_err(|e| anyhow!("http client: {e}"))?;
+                .map_err(TerminalError::HttpClient)?;
             let payload = serde_json::to_vec(&IntentDiscoveryRequest {
                 principal: None,
                 intent: utterance.clone(),
@@ -703,20 +829,19 @@ pub async fn run_terminal() -> Result<()> {
             let server = require_configured_server(&profile)?;
             let client = Client::builder()
                 .build()
-                .map_err(|e| anyhow!("http client: {e}"))?;
+                .map_err(TerminalError::HttpClient)?;
             run_context_command(&client, &server, &profile, context).await
         }
         Cmd::Run { run } => {
             let server = require_configured_server(&profile)?;
-            let id = read_current_session_pointer(&server)?
-                .ok_or_else(|| anyhow!("run: open context --new --intent first"))?;
+            let id =
+                read_current_session_pointer(&server)?.ok_or(TerminalError::RunContextNotOpen)?;
             let sym = RoutedTerminalSession::load_from_disk(&server, &id)?;
             let body = read_program_body(run.file.as_ref())?;
             if body.is_empty() {
-                return Err(anyhow!("run: empty program (stdin or --file)"));
+                return Err(TerminalError::EmptyProgram);
             }
-            let line =
-                String::from_utf8(body).map_err(|_| anyhow!("run: program must be UTF-8"))?;
+            let line = String::from_utf8(body).map_err(TerminalError::ProgramNotUtf8)?;
             let program = line.trim().to_string();
             let run_mode: ResolvedPlanRunMode = run.mode.into();
             let mode_kind = if run_mode == ResolvedPlanRunMode::Plan {
@@ -729,7 +854,7 @@ pub async fn run_terminal() -> Result<()> {
             session_mirror.write_file(&op_dir, "program.plasm", program.as_bytes())?;
             let client = Client::builder()
                 .build()
-                .map_err(|e| anyhow!("http client: {e}"))?;
+                .map_err(TerminalError::HttpClient)?;
             let binding = &sym.execution;
             let ph = binding.prompt_hash.trim();
             let sid = binding.session.trim();
@@ -789,7 +914,7 @@ pub async fn run_terminal() -> Result<()> {
     }
 }
 
-fn run_evidence_cmd(cmd: crate::terminal_cli::EvidenceCmd) -> Result<(), anyhow::Error> {
+fn run_evidence_cmd(cmd: crate::terminal_cli::EvidenceCmd) -> Result<()> {
     use crate::evidence_chain::trusted_public_keys_from_env;
     use crate::terminal_cli::EvidenceCmd;
     use plasm_evidence::{
@@ -807,11 +932,20 @@ fn run_evidence_cmd(cmd: crate::terminal_cli::EvidenceCmd) -> Result<(), anyhow:
         } => {
             let mut raw = String::new();
             std::fs::File::open(&path)
-                .map_err(|e| anyhow!("evidence verify: open {}: {e}", path.display()))?
+                .map_err(|source| TerminalError::EvidenceOpen {
+                    path: path.clone(),
+                    source,
+                })?
                 .read_to_string(&mut raw)
-                .map_err(|e| anyhow!("evidence verify: read {}: {e}", path.display()))?;
-            let bundle: plasm_evidence::EvidenceBundle = serde_json::from_str(&raw)
-                .map_err(|e| anyhow!("evidence verify: decode {}: {e}", path.display()))?;
+                .map_err(|source| TerminalError::EvidenceRead {
+                    path: path.clone(),
+                    source,
+                })?;
+            let bundle: plasm_evidence::EvidenceBundle =
+                serde_json::from_str(&raw).map_err(|source| TerminalError::EvidenceDecode {
+                    path: path.clone(),
+                    source,
+                })?;
             let mut trusted = trusted_public_keys_from_env();
             trusted.extend(
                 trusted_pubkey
@@ -824,33 +958,26 @@ fn run_evidence_cmd(cmd: crate::terminal_cli::EvidenceCmd) -> Result<(), anyhow:
             let opts = VerifyOptions {
                 trusted_public_keys: trusted,
             };
-            DefaultChainVerifier::verify_bundle_for_serve(&bundle, &opts)
-                .map_err(|e| anyhow!("evidence verify: {e}"))?;
+            DefaultChainVerifier::verify_bundle_for_serve(&bundle, &opts)?;
             if let Some(rid) = run_id.as_deref().filter(|s| !s.trim().is_empty()) {
-                let artifact_path = artifact.as_ref().ok_or_else(|| {
-                    anyhow!("evidence verify: --run-id requires --artifact for digest verification")
-                })?;
+                let artifact_path = artifact
+                    .as_ref()
+                    .ok_or(TerminalError::RunIdRequiresArtifact)?;
                 let mut artifact_raw = String::new();
                 std::fs::File::open(artifact_path)
-                    .map_err(|e| {
-                        anyhow!(
-                            "evidence verify: open artifact {}: {e}",
-                            artifact_path.display()
-                        )
+                    .map_err(|source| TerminalError::ArtifactOpen {
+                        path: artifact_path.clone(),
+                        source,
                     })?
                     .read_to_string(&mut artifact_raw)
-                    .map_err(|e| {
-                        anyhow!(
-                            "evidence verify: read artifact {}: {e}",
-                            artifact_path.display()
-                        )
+                    .map_err(|source| TerminalError::ArtifactRead {
+                        path: artifact_path.clone(),
+                        source,
                     })?;
                 let artifact_doc: RunArtifactForSeal = serde_json::from_str(&artifact_raw)
-                    .map_err(|e| {
-                        anyhow!(
-                            "evidence verify: decode artifact {}: {e}",
-                            artifact_path.display()
-                        )
+                    .map_err(|source| TerminalError::ArtifactDecode {
+                        path: artifact_path.clone(),
+                        source,
                     })?;
                 let source_line = artifact_doc.source_line();
                 let inputs = run_seal_inputs_from_artifact(
@@ -859,8 +986,7 @@ fn run_evidence_cmd(cmd: crate::terminal_cli::EvidenceCmd) -> Result<(), anyhow:
                     &source_line,
                     &artifact_doc.parsed_preimage,
                 );
-                DefaultChainVerifier::verify_run_seal_with_inputs(&bundle, rid, &inputs)
-                    .map_err(|e| anyhow!("evidence verify: run_sealed digest failed: {e}"))?;
+                DefaultChainVerifier::verify_run_seal_with_inputs(&bundle, rid, &inputs)?;
                 println!("ok: chain + topo + run_sealed verified for {rid}");
             } else {
                 println!("ok: chain + step topo verified");

@@ -17,19 +17,193 @@ use plasm_runtime::{
     request_oauth_device_authorization, OAuthDeviceTokenPoll, OutboundOAuthKvV1,
 };
 
+#[derive(Debug, thiserror::Error)]
+pub enum AdminError {
+    #[error("entry_id required")]
+    EmptyEntryId,
+    #[error("token_endpoint required")]
+    EmptyTokenEndpoint,
+    #[error(
+        "device_authorization_endpoint missing for `{entry_id}` (upsert provider with device URL)"
+    )]
+    MissingDeviceEndpoint { entry_id: String },
+    #[error("invalid provider metadata: {source}")]
+    ProviderMetadata {
+        #[source]
+        source: plasm_agent_core::oauth_provider_model::MetaBuildError,
+    },
+    #[error("OAuth provider database operation failed: {source}")]
+    ProviderDatabase {
+        #[source]
+        source: plasm_agent_core::mcp_config_admin::McpConfigAdminError,
+    },
+    #[error("OAuth catalog refresh failed: {source}")]
+    ProviderRefresh {
+        #[source]
+        source: plasm_agent_core::oauth_runtime_source::OauthRuntimeFetchError,
+    },
+    #[error("OAuth provider resolution failed: {source}")]
+    ProviderResolution {
+        #[source]
+        source: plasm_agent_core::oauth_link_catalog::OauthResolveError,
+    },
+    #[error("KV client secret write failed: {source}")]
+    ClientSecretWrite {
+        #[source]
+        source: auth_framework::AuthError,
+    },
+    #[error("OAuth HTTP client initialization failed: {source}")]
+    HttpClient {
+        #[source]
+        source: plasm_runtime::RuntimeError,
+    },
+    #[error("device authorization request failed: {source}")]
+    DeviceAuthorization {
+        #[source]
+        source: plasm_runtime::OAuthConnectError,
+    },
+    #[error("device token poll failed: {source}")]
+    DevicePoll {
+        #[source]
+        source: plasm_runtime::OAuthConnectError,
+    },
+    #[error("device authorization timed out after {wait_secs}s")]
+    DeviceTimedOut { wait_secs: u64 },
+    #[error("device token error: {error} ({error_description:?})")]
+    DeviceRejected {
+        error: String,
+        error_description: Option<String>,
+    },
+    #[error("OAuth token envelope rejected: {source}")]
+    TokenEnvelope {
+        #[source]
+        source: plasm_runtime::ApplyTokenError,
+    },
+    #[error("OAuth token serialization failed: {source}")]
+    TokenSerialization {
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("OAuth token write failed for `{key}`: {source}")]
+    TokenWrite {
+        key: String,
+        #[source]
+        source: auth_framework::AuthError,
+    },
+    #[error("OAuth binding pointer write failed for `{entry_id}`: {source}")]
+    BindingPointerWrite {
+        entry_id: String,
+        #[source]
+        source: plasm_agent_core::oauth_binding_kv::OAuthBindingWriteError,
+    },
+    #[error("OAuth binding KV read failed for `{key}`: {source}")]
+    BindingRead {
+        key: String,
+        #[source]
+        source: auth_framework::AuthError,
+    },
+    #[error("OAuth binding pointer corrupt for `{entry_id}`: {source}")]
+    BindingPointerParse {
+        entry_id: String,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("OAuth binding incomplete for `{entry_id}`: hosted_kv_key missing")]
+    BindingPointerIncomplete { entry_id: String },
+    #[error("OAuth token for `{entry_id}` has invalid UTF-8: {source}")]
+    TokenEncoding {
+        entry_id: String,
+        #[source]
+        source: std::str::Utf8Error,
+    },
+    #[error("OAuth token envelope invalid for `{entry_id}`: {source}")]
+    TokenParse {
+        entry_id: String,
+        #[source]
+        source: plasm_runtime::OutboundOAuthKvParseError,
+    },
+    #[error("auth storage initialization failed: {source}")]
+    AuthInitialization {
+        #[source]
+        source: auth_framework::AuthError,
+    },
+    #[error("appliance database initialization failed: {source}")]
+    RepositoryInitialization {
+        #[source]
+        source: plasm_agent_core::mcp_config_repository::McpConfigRepositoryError,
+    },
+    #[error("client secret stdin read failed: {source}")]
+    SecretInput {
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("client secret key invalid: {source}")]
+    ClientSecretKey {
+        #[from]
+        source: OauthClientSecretKeyError,
+    },
+    #[error("OAuth provider list serialization failed: {source}")]
+    ProviderListSerialization {
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("MCP admin unavailable")]
+    McpAdminUnavailable,
+    #[error("runtime snapshot missing for MCP configuration `{config_id}`")]
+    ConfigSnapshotMissing { config_id: uuid::Uuid },
+    #[error("auth storage unavailable")]
+    AuthStorageUnavailable,
+    #[error("mcp config repo unavailable")]
+    ConfigRepositoryUnavailable,
+    #[error("OAuth catalog unavailable")]
+    OAuthCatalogUnavailable,
+    #[error("MCP administration failed: {source}")]
+    McpAdministration {
+        #[source]
+        source: plasm_agent_core::mcp_config_admin::McpConfigAdminError,
+    },
+    #[error("outbound secret write failed for `{key}`: {source}")]
+    OutboundSecretWrite {
+        key: String,
+        #[source]
+        source: auth_framework::AuthError,
+    },
+    #[error("binding values invalid for `{entry_id}`: {source}")]
+    BindingValues {
+        entry_id: String,
+        #[source]
+        source: plasm_agent_core::binding_slots::ConnectBindingError,
+    },
+    #[error("binding store failed for `{entry_id}`: {source}")]
+    BindingStore {
+        entry_id: String,
+        #[source]
+        source: plasm_agent_core::binding_store::BindingStoreError,
+    },
+}
+
 /// Fixed KV location for this catalog `entry_id` (matches `plasm-server oauth provider upsert`).
-pub fn appliance_oauth_client_secret_kv_key(entry_id: &str) -> Result<String, String> {
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum OauthClientSecretKeyError {
+    #[error("entry_id must be non-empty")]
+    EmptyEntryId,
+    #[error(
+        "OAuth client secret storage key exceeds 255 chars (len={length}); use a shorter entry_id"
+    )]
+    KeyTooLong { length: usize },
+}
+
+pub fn appliance_oauth_client_secret_kv_key(
+    entry_id: &str,
+) -> Result<String, OauthClientSecretKeyError> {
     const PREFIX: &str = "plasm:oauth_app:v1:";
     let e = entry_id.trim();
     if e.is_empty() {
-        return Err("entry_id must be non-empty".into());
+        return Err(OauthClientSecretKeyError::EmptyEntryId);
     }
     let s = format!("{PREFIX}{e}");
     if s.len() > 255 {
-        return Err(format!(
-            "OAuth client secret storage key exceeds 255 chars (len={}); use a shorter entry_id",
-            s.len()
-        ));
+        return Err(OauthClientSecretKeyError::KeyTooLong { length: s.len() });
     }
     Ok(s)
 }
@@ -39,19 +213,24 @@ pub async fn appliance_oauth_provider_disable(
     repo: Option<&McpConfigRepository>,
     catalog: &OauthLinkCatalog,
     entry_id: &str,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), AdminError> {
     let entry_id = entry_id.trim();
     if entry_id.is_empty() {
-        return Err("entry_id required".into());
+        return Err(AdminError::EmptyEntryId);
     }
     if let Some(r) = repo {
         let n = oauth_provider_repository::set_oauth_provider_enabled(r.pool(), entry_id, false)
-            .await?;
+            .await
+            .map_err(|source| AdminError::ProviderDatabase {
+                source: source.into(),
+            })?;
         if n == 0 {
             catalog.remove_runtime(entry_id).await;
         }
         let src = PostgresOauthRuntimeProviderSource::new(r.pool().clone());
-        apply_runtime_source_to_catalog(&src, catalog).await?;
+        apply_runtime_source_to_catalog(&src, catalog)
+            .await
+            .map_err(|source| AdminError::ProviderRefresh { source })?;
     } else {
         catalog.remove_runtime(entry_id).await;
     }
@@ -76,14 +255,14 @@ pub async fn appliance_oauth_upsert_provider(
     catalog: &OauthLinkCatalog,
     storage: &Arc<dyn AuthStorage>,
     u: ApplianceOauthUpsert,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), AdminError> {
     let entry_id = u.entry_id.trim();
     if entry_id.is_empty() {
-        return Err("entry_id required".into());
+        return Err(AdminError::EmptyEntryId);
     }
     let token_ep = u.token_endpoint.trim();
     if token_ep.is_empty() {
-        return Err("token_endpoint required".into());
+        return Err(AdminError::EmptyTokenEndpoint);
     }
 
     RuntimeOauthProviderMeta::try_from_parts(
@@ -94,7 +273,7 @@ pub async fn appliance_oauth_upsert_provider(
         u.client_id.trim(),
         u.client_secret_key.trim(),
     )
-    .map_err(|e| format!("invalid provider metadata: {e}"))?;
+    .map_err(|source| AdminError::ProviderMetadata { source })?;
 
     if let Some(secret) = u
         .client_secret_value
@@ -105,7 +284,7 @@ pub async fn appliance_oauth_upsert_provider(
         storage
             .store_kv(u.client_secret_key.trim(), secret.as_bytes(), None)
             .await
-            .map_err(|e| format!("KV client secret write failed: {e}"))?;
+            .map_err(|source| AdminError::ClientSecretWrite { source })?;
     }
 
     if u.enabled {
@@ -122,9 +301,14 @@ pub async fn appliance_oauth_upsert_provider(
                     enabled: true,
                 },
             )
-            .await?;
+            .await
+            .map_err(|source| AdminError::ProviderDatabase {
+                source: source.into(),
+            })?;
             let src = PostgresOauthRuntimeProviderSource::new(r.pool().clone());
-            apply_runtime_source_to_catalog(&src, catalog).await?;
+            apply_runtime_source_to_catalog(&src, catalog)
+                .await
+                .map_err(|source| AdminError::ProviderRefresh { source })?;
         } else {
             let meta = RuntimeOauthProviderMeta::try_from_parts(
                 u.authorization_endpoint.as_deref(),
@@ -134,17 +318,22 @@ pub async fn appliance_oauth_upsert_provider(
                 u.client_id.trim(),
                 u.client_secret_key.trim(),
             )
-            .map_err(|e| format!("invalid provider metadata: {e}"))?;
+            .map_err(|source| AdminError::ProviderMetadata { source })?;
             catalog.upsert_runtime(entry_id.to_string(), meta).await;
         }
     } else if let Some(r) = repo {
         let n = oauth_provider_repository::set_oauth_provider_enabled(r.pool(), entry_id, false)
-            .await?;
+            .await
+            .map_err(|source| AdminError::ProviderDatabase {
+                source: source.into(),
+            })?;
         if n == 0 {
             catalog.remove_runtime(entry_id).await;
         }
         let src = PostgresOauthRuntimeProviderSource::new(r.pool().clone());
-        apply_runtime_source_to_catalog(&src, catalog).await?;
+        apply_runtime_source_to_catalog(&src, catalog)
+            .await
+            .map_err(|source| AdminError::ProviderRefresh { source })?;
     } else {
         catalog.remove_runtime(entry_id).await;
     }
@@ -152,43 +341,73 @@ pub async fn appliance_oauth_upsert_provider(
     Ok(())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct OAuthBindingStatus {
     pub hint: String,
     pub bound: bool,
+    pub warning: Option<AdminError>,
 }
 
 pub async fn oauth_binding_status(
     storage: &Arc<dyn AuthStorage>,
     entry_id: &str,
-) -> OAuthBindingStatus {
+) -> Result<OAuthBindingStatus, AdminError> {
     let key = oauth_binding_kv_key(entry_id);
-    let Ok(Some(raw)) = storage.get_kv(key.as_str()).await else {
-        return OAuthBindingStatus {
+    let Some(raw) =
+        storage
+            .get_kv(key.as_str())
+            .await
+            .map_err(|source| AdminError::BindingRead {
+                key: key.clone(),
+                source,
+            })?
+    else {
+        return Ok(OAuthBindingStatus {
             hint: "no binding".into(),
             bound: false,
-        };
+            warning: None,
+        });
     };
-    let Ok(ptr) = serde_json::from_slice::<serde_json::Value>(&raw) else {
-        return OAuthBindingStatus {
-            hint: "binding corrupt".into(),
-            bound: false,
-        };
-    };
-    let Some(hkv) = ptr.get("hosted_kv_key").and_then(|v| v.as_str()) else {
-        return OAuthBindingStatus {
-            hint: "binding incomplete".into(),
-            bound: false,
-        };
-    };
-    let Ok(Some(tok)) = storage.get_kv(hkv).await else {
-        return OAuthBindingStatus {
+    let ptr = serde_json::from_slice::<serde_json::Value>(&raw).map_err(|source| {
+        AdminError::BindingPointerParse {
+            entry_id: entry_id.to_owned(),
+            source,
+        }
+    })?;
+    let hkv = ptr
+        .get("hosted_kv_key")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AdminError::BindingPointerIncomplete {
+            entry_id: entry_id.to_owned(),
+        })?;
+    let Some(tok) = storage
+        .get_kv(hkv)
+        .await
+        .map_err(|source| AdminError::BindingRead {
+            key: hkv.to_owned(),
+            source,
+        })?
+    else {
+        return Ok(OAuthBindingStatus {
             hint: "token missing".into(),
             bound: false,
-        };
+            warning: None,
+        });
     };
-    let utf8 = String::from_utf8_lossy(&tok);
-    match parse_outbound_oauth_kv_v1(utf8.as_ref()) {
+    let utf8 = match std::str::from_utf8(&tok) {
+        Ok(value) => value,
+        Err(source) => {
+            return Ok(OAuthBindingStatus {
+                hint: "kv present".into(),
+                bound: true,
+                warning: Some(AdminError::TokenEncoding {
+                    entry_id: entry_id.to_owned(),
+                    source,
+                }),
+            })
+        }
+    };
+    Ok(match parse_outbound_oauth_kv_v1(utf8) {
         Ok(env) => OAuthBindingStatus {
             hint: format!(
                 "kv ok · exp {:?}",
@@ -197,12 +416,17 @@ pub async fn oauth_binding_status(
                     .unwrap_or_else(|| "?".into())
             ),
             bound: true,
+            warning: None,
         },
-        Err(_) => OAuthBindingStatus {
+        Err(source) => OAuthBindingStatus {
             hint: "kv present".into(),
             bound: true,
+            warning: Some(AdminError::TokenParse {
+                entry_id: entry_id.to_owned(),
+                source,
+            }),
         },
-    }
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -231,31 +455,29 @@ pub async fn appliance_oauth_device_bind(
     scopes: &[String],
     max_wait: Duration,
     on_start: impl FnOnce(&DeviceBindPrompt),
-) -> Result<DeviceBindOutcome, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<DeviceBindOutcome, AdminError> {
     let entry_id = entry_id.trim();
     if entry_id.is_empty() {
-        return Err("entry_id required".into());
+        return Err(AdminError::EmptyEntryId);
     }
 
     let cfg = catalog
         .resolve_for_oauth_start(storage, entry_id)
         .await
-        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-            std::io::Error::other(e.refresh_failure_message()).into()
-        })?;
+        .map_err(|source| AdminError::ProviderResolution { source })?;
 
     let device_url = cfg
         .device_authorization_endpoint
         .as_deref()
         .map(str::trim)
         .filter(|s: &&str| !s.is_empty())
-        .ok_or_else(|| {
-            "device_authorization_endpoint missing for this entry (upsert provider with device URL)"
-                .to_string()
+        .ok_or_else(|| AdminError::MissingDeviceEndpoint {
+            entry_id: entry_id.to_owned(),
         })?;
 
     let http_timeout = Duration::from_secs(30);
-    let http = build_oauth_token_http_client(http_timeout).map_err(|e| e.to_string())?;
+    let http = build_oauth_token_http_client(http_timeout)
+        .map_err(|source| AdminError::HttpClient { source })?;
 
     let start = request_oauth_device_authorization(
         &http,
@@ -266,7 +488,7 @@ pub async fn appliance_oauth_device_bind(
         http_timeout,
     )
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|source| AdminError::DeviceAuthorization { source })?;
 
     let mut interval = Duration::from_secs(start.interval.unwrap_or(5).max(1));
     let prompt = DeviceBindPrompt {
@@ -281,7 +503,9 @@ pub async fn appliance_oauth_device_bind(
 
     loop {
         if tokio::time::Instant::now() >= deadline {
-            return Err("device authorization timed out".into());
+            return Err(AdminError::DeviceTimedOut {
+                wait_secs: max_wait.as_secs(),
+            });
         }
 
         match poll_oauth_device_token_once(
@@ -293,19 +517,28 @@ pub async fn appliance_oauth_device_bind(
             http_timeout,
         )
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|source| AdminError::DevicePoll { source })?
         {
             OAuthDeviceTokenPoll::Success(token_json) => {
                 let envelope =
                     OutboundOAuthKvV1::from_token_json_for_entry(entry_id.to_string(), &token_json)
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|source| AdminError::TokenEnvelope { source })?;
                 let hosted_kv_key = format!("plasm:outbound:v1:{}", uuid::Uuid::new_v4());
-                let envelope_bytes = serde_json::to_vec(&envelope)?;
+                let envelope_bytes = serde_json::to_vec(&envelope)
+                    .map_err(|source| AdminError::TokenSerialization { source })?;
                 storage
                     .store_kv(&hosted_kv_key, &envelope_bytes, None)
                     .await
-                    .map_err(|e| e.to_string())?;
-                let _ = write_oauth_binding_pointer(storage, entry_id, &hosted_kv_key).await;
+                    .map_err(|source| AdminError::TokenWrite {
+                        key: hosted_kv_key.clone(),
+                        source,
+                    })?;
+                write_oauth_binding_pointer(storage, entry_id, &hosted_kv_key)
+                    .await
+                    .map_err(|source| AdminError::BindingPointerWrite {
+                        entry_id: entry_id.to_owned(),
+                        source,
+                    })?;
                 return Ok(DeviceBindOutcome {
                     user_code: prompt.user_code.clone(),
                     verification_uri: prompt.verification_uri.clone(),
@@ -321,9 +554,94 @@ pub async fn appliance_oauth_device_bind(
                 interval = Duration::from_secs(interval_secs.max(1));
                 tokio::time::sleep(interval).await;
             }
-            OAuthDeviceTokenPoll::OAuthError { error, .. } => {
-                return Err(format!("device token error: {error}").into());
+            OAuthDeviceTokenPoll::OAuthError {
+                error,
+                error_description,
+            } => {
+                return Err(AdminError::DeviceRejected {
+                    error,
+                    error_description,
+                });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod admin_error_tests {
+    use super::*;
+    use auth_framework::storage::MemoryStorage;
+    use std::error::Error;
+
+    #[test]
+    fn admin_error_preserves_concrete_sources_and_is_channel_safe() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<AdminError>();
+        let error = AdminError::ProviderResolution {
+            source: plasm_agent_core::oauth_link_catalog::OauthResolveError::UnknownEntry,
+        };
+        assert!(matches!(
+            error
+                .source()
+                .unwrap()
+                .downcast_ref::<plasm_agent_core::oauth_link_catalog::OauthResolveError>(),
+            Some(plasm_agent_core::oauth_link_catalog::OauthResolveError::UnknownEntry)
+        ));
+        let error = AdminError::SecretInput {
+            source: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        };
+        assert_eq!(
+            error
+                .source()
+                .unwrap()
+                .downcast_ref::<std::io::Error>()
+                .unwrap()
+                .kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+    }
+
+    #[tokio::test]
+    async fn absent_binding_is_data_but_corrupt_pointer_preserves_parse_cause() {
+        let storage = Arc::new(MemoryStorage::new()) as Arc<dyn AuthStorage>;
+        let status = oauth_binding_status(&storage, "matrix").await.unwrap();
+        assert!(!status.bound);
+        assert!(status.warning.is_none());
+        storage
+            .store_kv(&oauth_binding_kv_key("matrix"), b"{", None)
+            .await
+            .unwrap();
+        let error = oauth_binding_status(&storage, "matrix").await.unwrap_err();
+        assert!(
+            matches!(&error, AdminError::BindingPointerParse { entry_id, .. } if entry_id == "matrix")
+        );
+        assert!(error
+            .source()
+            .unwrap()
+            .downcast_ref::<serde_json::Error>()
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn incomplete_pointer_is_semantic_and_invalid_token_keeps_bound_status() {
+        let storage = Arc::new(MemoryStorage::new()) as Arc<dyn AuthStorage>;
+        storage
+            .store_kv(&oauth_binding_kv_key("matrix"), b"{}", None)
+            .await
+            .unwrap();
+        assert!(
+            matches!(oauth_binding_status(&storage, "matrix").await, Err(AdminError::BindingPointerIncomplete { entry_id }) if entry_id == "matrix")
+        );
+        let key = "plasm:outbound:v1:matrix";
+        storage.store_kv(key, b"not-json", None).await.unwrap();
+        write_oauth_binding_pointer(&storage, "matrix", key)
+            .await
+            .unwrap();
+        let status = oauth_binding_status(&storage, "matrix").await.unwrap();
+        assert!(status.bound);
+        assert!(matches!(
+            status.warning,
+            Some(AdminError::TokenParse { .. })
+        ));
     }
 }

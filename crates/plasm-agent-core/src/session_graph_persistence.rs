@@ -30,6 +30,7 @@ use object_store::{path::Path as StorePath, ObjectStore, ObjectStoreExt};
 use plasm_runtime::{GraphCache, GraphPageDelta};
 use serde::Serialize;
 use std::sync::Arc;
+use thiserror::Error;
 
 use axum::body::Bytes;
 
@@ -38,6 +39,41 @@ use crate::run_artifacts::{
 };
 
 pub const GRAPH_PAGE_DELTA_SCHEMA_VERSION: u32 = 4;
+
+#[derive(Debug, Error)]
+pub enum SessionGraphPersistenceError {
+    #[error("session graph object-store operation failed: {0}")]
+    ObjectStore(#[from] object_store::Error),
+    #[error("session graph JSON serialization failed: {0}")]
+    Serialization(#[from] serde_json::Error),
+    #[error(transparent)]
+    ArtifactMetadata(#[from] crate::run_artifacts::ArtifactPayloadMetadataError),
+    #[error("session graph delta frame is shorter than its header")]
+    FrameTooShort,
+    #[error(
+        "session graph delta metadata is truncated: declared {declared} bytes, found {available}"
+    )]
+    MetadataTruncated { declared: usize, available: usize },
+    #[error("graph page kind must be `graph_page`")]
+    InvalidGraphPageKind,
+    #[error("graph page is missing or has invalid field `{field}`")]
+    InvalidGraphPageField { field: &'static str },
+    #[error("graph page schema version must be {expected}; got {actual}")]
+    GraphPageSchemaVersion { expected: u32, actual: u64 },
+    #[error(
+        "graph page contains entities that do not match its declared entity type `{entity_type}`"
+    )]
+    GraphPageEntityTypeMismatch { entity_type: String },
+    #[error("graph page visitor failed: {source}")]
+    Visitor {
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+    #[error("session graph URL is invalid")]
+    InvalidUrl(#[source] url::ParseError),
+    #[error("session graph object store could not be opened")]
+    ObjectStoreInitialization(#[source] object_store::Error),
+}
 
 const DEFAULT_DELTA_READ_CONCURRENCY: usize = 16;
 
@@ -59,12 +95,14 @@ fn spill_seq_ready_to_read(seq: u64, pending: &BTreeSet<u64>, list_done: bool) -
 }
 
 /// Advance a delta LIST stream to the next `{seq:020}.bin` entry (skips unrelated keys).
-async fn next_delta_seq_from_list<S>(stream: &mut S) -> Result<Option<u64>, String>
+async fn next_delta_seq_from_list<S>(
+    stream: &mut S,
+) -> Result<Option<u64>, SessionGraphPersistenceError>
 where
     S: StreamExt<Item = Result<object_store::ObjectMeta, object_store::Error>> + Unpin,
 {
     while let Some(meta) = stream.next().await {
-        let meta = meta.map_err(|e| e.to_string())?;
+        let meta = meta?;
         if let Some(seq) = parse_delta_seq_filename(meta.location.filename().unwrap_or("")) {
             return Ok(Some(seq));
         }
@@ -72,18 +110,20 @@ where
     Ok(None)
 }
 
-fn decode_framed_delta(bytes: Bytes) -> Result<ArtifactPayload, String> {
+fn decode_framed_delta(bytes: Bytes) -> Result<ArtifactPayload, SessionGraphPersistenceError> {
     if bytes.len() < 4 {
-        return Err("delta frame too short".into());
+        return Err(SessionGraphPersistenceError::FrameTooShort);
     }
     let meta_len = u32::from_be_bytes(bytes[0..4].try_into().unwrap()) as usize;
     let header_end = 4 + meta_len;
     if bytes.len() < header_end {
-        return Err("delta metadata truncated".into());
+        return Err(SessionGraphPersistenceError::MetadataTruncated {
+            declared: meta_len,
+            available: bytes.len().saturating_sub(4),
+        });
     }
-    let metadata: ArtifactPayloadMetadata =
-        serde_json::from_slice(&bytes[4..header_end]).map_err(|e| e.to_string())?;
-    validate_artifact_payload_metadata(&metadata).map_err(|e| e.to_string())?;
+    let metadata: ArtifactPayloadMetadata = serde_json::from_slice(&bytes[4..header_end])?;
+    validate_artifact_payload_metadata(&metadata)?;
     Ok(ArtifactPayload {
         metadata,
         bytes: bytes.slice(header_end..),
@@ -105,44 +145,52 @@ pub struct SnapshotManifest {
 }
 
 /// Exact-match graph page delta wire validation (schema v3 cutover).
-pub fn validate_graph_page_delta(body: &serde_json::Value) -> Result<GraphPageDelta, String> {
+pub fn validate_graph_page_delta(
+    body: &serde_json::Value,
+) -> Result<GraphPageDelta, SessionGraphPersistenceError> {
     parse_graph_page_body(body)
 }
 
-fn parse_graph_page_body(body: &serde_json::Value) -> Result<GraphPageDelta, String> {
+fn parse_graph_page_body(
+    body: &serde_json::Value,
+) -> Result<GraphPageDelta, SessionGraphPersistenceError> {
     if body.get("kind").and_then(|v| v.as_str()) != Some("graph_page") {
-        return Err("graph page delta kind must be graph_page".into());
+        return Err(SessionGraphPersistenceError::InvalidGraphPageKind);
     }
-    let schema_version = body
-        .get("schema_version")
-        .and_then(|v| v.as_u64())
-        .ok_or_else(|| "graph page delta schema_version missing".to_string())?;
+    let schema_version = body.get("schema_version").and_then(|v| v.as_u64()).ok_or(
+        SessionGraphPersistenceError::InvalidGraphPageField {
+            field: "schema_version",
+        },
+    )?;
     if schema_version != GRAPH_PAGE_DELTA_SCHEMA_VERSION as u64 {
-        return Err(format!(
-            "graph page delta schema_version must be {GRAPH_PAGE_DELTA_SCHEMA_VERSION} (got {schema_version})"
-        ));
+        return Err(SessionGraphPersistenceError::GraphPageSchemaVersion {
+            expected: GRAPH_PAGE_DELTA_SCHEMA_VERSION,
+            actual: schema_version,
+        });
     }
-    let page_index =
-        body.get("page_index")
-            .and_then(|v| v.as_u64())
-            .ok_or_else(|| "graph page delta page_index missing".to_string())? as usize;
+    let page_index = body.get("page_index").and_then(|v| v.as_u64()).ok_or(
+        SessionGraphPersistenceError::InvalidGraphPageField {
+            field: "page_index",
+        },
+    )? as usize;
     let entity_type = body
         .get("entity_type")
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| "graph page delta entity_type missing".to_string())?
+        .ok_or(SessionGraphPersistenceError::InvalidGraphPageField {
+            field: "entity_type",
+        })?
         .to_string();
     let entities: Vec<plasm_runtime::CachedEntity> = serde_json::from_value(
         body.get("entities")
             .cloned()
-            .ok_or("graph page delta entities missing")?,
-    )
-    .map_err(|e| format!("graph page delta invalid typed entities: {e}"))?;
+            .ok_or(SessionGraphPersistenceError::InvalidGraphPageField { field: "entities" })?,
+    )?;
     if entities
         .iter()
         .any(|entity| entity.reference.entity_type.as_str() != entity_type)
     {
-        return Err("graph page delta entity type mismatch".into());
+        return Err(SessionGraphPersistenceError::GraphPageEntityTypeMismatch { entity_type });
     }
     Ok(GraphPageDelta {
         page_index,
@@ -174,19 +222,16 @@ impl SessionGraphPersistence {
         session_id: &str,
         seq: u64,
         payload: &ArtifactPayload,
-    ) -> Result<(), String> {
+    ) -> Result<(), SessionGraphPersistenceError> {
         let key = self
             .delta_prefix(prompt_hash, session_id)
             .join(format!("{seq:020}.bin"));
         let mut framed = Vec::with_capacity(256 + payload.bytes.len());
-        let metadata = serde_json::to_vec(&payload.metadata).map_err(|e| e.to_string())?;
+        let metadata = serde_json::to_vec(&payload.metadata)?;
         framed.extend_from_slice(&(metadata.len() as u32).to_be_bytes());
         framed.extend_from_slice(&metadata);
         framed.extend_from_slice(&payload.bytes);
-        self.store
-            .put(&key, framed.into())
-            .await
-            .map_err(|e| e.to_string())?;
+        self.store.put(&key, framed.into()).await?;
         Ok(())
     }
 
@@ -194,7 +239,7 @@ impl SessionGraphPersistence {
         &self,
         prompt_hash: &str,
         session_id: &str,
-    ) -> Result<Vec<u64>, String> {
+    ) -> Result<Vec<u64>, SessionGraphPersistenceError> {
         let prefix = self.delta_prefix(prompt_hash, session_id);
         let mut stream = self.store.list(Some(&prefix));
         let mut seqs = Vec::new();
@@ -210,12 +255,12 @@ impl SessionGraphPersistence {
         prompt_hash: &str,
         session_id: &str,
         seq: u64,
-    ) -> Result<ArtifactPayload, String> {
+    ) -> Result<ArtifactPayload, SessionGraphPersistenceError> {
         let key = self
             .delta_prefix(prompt_hash, session_id)
             .join(format!("{seq:020}.bin"));
-        let got = self.store.get(&key).await.map_err(|e| e.to_string())?;
-        let bytes = got.bytes().await.map_err(|e| e.to_string())?;
+        let got = self.store.get(&key).await?;
+        let bytes = got.bytes().await?;
         decode_framed_delta(bytes)
     }
 
@@ -223,7 +268,7 @@ impl SessionGraphPersistence {
         &self,
         prompt_hash: &str,
         session_id: &str,
-    ) -> Result<Vec<GraphPageDelta>, String> {
+    ) -> Result<Vec<GraphPageDelta>, SessionGraphPersistenceError> {
         self.load_graph_pages_sorted(prompt_hash, session_id).await
     }
 
@@ -232,10 +277,9 @@ impl SessionGraphPersistence {
         prompt_hash: &str,
         session_id: &str,
         seq: u64,
-    ) -> Result<GraphPageDelta, String> {
+    ) -> Result<GraphPageDelta, SessionGraphPersistenceError> {
         let payload = self.read_delta(prompt_hash, session_id, seq).await?;
-        let body: serde_json::Value =
-            serde_json::from_slice(&payload.bytes).map_err(|e| e.to_string())?;
+        let body: serde_json::Value = serde_json::from_slice(&payload.bytes)?;
         parse_graph_page_body(&body)
     }
 
@@ -245,9 +289,11 @@ impl SessionGraphPersistence {
         prompt_hash: &str,
         session_id: &str,
         mut visit: F,
-    ) -> Result<usize, String>
+    ) -> Result<usize, SessionGraphPersistenceError>
     where
-        F: FnMut(GraphPageDelta) -> Result<ControlFlow<()>, String>,
+        F: FnMut(
+            GraphPageDelta,
+        ) -> Result<ControlFlow<()>, Box<dyn std::error::Error + Send + Sync>>,
     {
         let prefix = self.delta_prefix(prompt_hash, session_id);
         let mut stream = self.store.list(Some(&prefix));
@@ -265,7 +311,10 @@ impl SessionGraphPersistence {
                     .read_delta_graph_page(prompt_hash, session_id, seq)
                     .await?;
                 pages_read += 1;
-                if visit(page)?.is_break() {
+                if visit(page)
+                    .map_err(|source| SessionGraphPersistenceError::Visitor { source })?
+                    .is_break()
+                {
                     return Ok(pages_read);
                 }
             }
@@ -289,7 +338,7 @@ impl SessionGraphPersistence {
         &self,
         prompt_hash: &str,
         session_id: &str,
-    ) -> Result<Vec<GraphPageDelta>, String> {
+    ) -> Result<Vec<GraphPageDelta>, SessionGraphPersistenceError> {
         let seqs = self.list_delta_seqs(prompt_hash, session_id).await?;
         if seqs.is_empty() {
             return Ok(Vec::new());
@@ -318,11 +367,8 @@ impl SessionGraphPersistence {
         through_seq: u64,
         content_type: &str,
         cache: &GraphCache,
-    ) -> Result<(), String> {
-        let pages = self
-            .read_graph_pages(prompt_hash, session_id)
-            .await
-            .unwrap_or_default();
+    ) -> Result<(), SessionGraphPersistenceError> {
+        let pages = self.read_graph_pages(prompt_hash, session_id).await?;
         self.write_snapshot_merged(
             prompt_hash,
             session_id,
@@ -342,7 +388,7 @@ impl SessionGraphPersistence {
         content_type: &str,
         cache: &GraphCache,
         pages: &[GraphPageDelta],
-    ) -> Result<(), String> {
+    ) -> Result<(), SessionGraphPersistenceError> {
         let snapshot_key = self
             .sessions_root
             .clone()
@@ -364,11 +410,7 @@ impl SessionGraphPersistence {
             }
         }
 
-        let upload = self
-            .store
-            .put_multipart(&snapshot_key)
-            .await
-            .map_err(|e| e.to_string())?;
+        let upload = self.store.put_multipart(&snapshot_key).await?;
         let mut writer = WriteMultipart::new(upload);
         writer.write(b"[");
         let mut first = true;
@@ -379,11 +421,11 @@ impl SessionGraphPersistence {
             }
             first = false;
             scratch.clear();
-            serde_json::to_writer(&mut scratch, v).map_err(|e| e.to_string())?;
+            serde_json::to_writer(&mut scratch, v)?;
             writer.write(&scratch);
         }
         writer.write(b"]");
-        writer.finish().await.map_err(|e| e.to_string())?;
+        writer.finish().await?;
 
         let manifest = SnapshotManifest {
             schema_version: GRAPH_PAGE_DELTA_SCHEMA_VERSION,
@@ -397,25 +439,22 @@ impl SessionGraphPersistence {
             .join(prompt_hash)
             .join(session_id)
             .join("manifest.json");
-        let bytes = serde_json::to_vec(&manifest).map_err(|e| e.to_string())?;
-        self.store
-            .put(&manifest_key, bytes.into())
-            .await
-            .map_err(|e| e.to_string())?;
+        let bytes = serde_json::to_vec(&manifest)?;
+        self.store.put(&manifest_key, bytes.into()).await?;
         let _ = content_type;
         Ok(())
     }
 }
 
-pub fn init_from_env() -> Result<Option<Arc<SessionGraphPersistence>>, String> {
+pub fn init_from_env() -> Result<Option<Arc<SessionGraphPersistence>>, SessionGraphPersistenceError>
+{
     let url_raw = match std::env::var("PLASM_GRAPH_CACHE_URL") {
         Ok(s) if !s.trim().is_empty() => s,
         _ => return Ok(None),
     };
-    let url =
-        url::Url::parse(&url_raw).map_err(|e| format!("PLASM_GRAPH_CACHE_URL invalid URL: {e}"))?;
+    let url = url::Url::parse(&url_raw).map_err(SessionGraphPersistenceError::InvalidUrl)?;
     let (boxed, prefix) = object_store::parse_url_opts(&url, std::env::vars())
-        .map_err(|e| format!("PLASM_GRAPH_CACHE_URL could not open object store: {e}"))?;
+        .map_err(SessionGraphPersistenceError::ObjectStoreInitialization)?;
     let store: Arc<dyn ObjectStore> = Arc::from(boxed);
     Ok(Some(Arc::new(SessionGraphPersistence::new(store, prefix))))
 }
@@ -568,12 +607,13 @@ mod tests {
             "entities": []
         });
         let err = validate_graph_page_delta(&body).unwrap_err();
-        assert!(
-            err.contains(&format!(
-                "schema_version must be {GRAPH_PAGE_DELTA_SCHEMA_VERSION}"
-            )),
-            "{err}"
-        );
+        assert!(matches!(
+            err,
+            SessionGraphPersistenceError::GraphPageSchemaVersion {
+                expected: GRAPH_PAGE_DELTA_SCHEMA_VERSION,
+                actual: 1,
+            }
+        ));
     }
 
     #[test]

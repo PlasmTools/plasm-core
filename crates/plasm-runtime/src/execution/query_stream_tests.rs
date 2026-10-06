@@ -28,9 +28,7 @@ impl HttpTransport for Pages {
         if let Some(id) = request.path.strip_prefix("/items/indexed/") {
             self.details.fetch_add(1, Ordering::SeqCst);
             if self.unavailable {
-                return Err(RuntimeError::CacheError {
-                    message: "detail unavailable".into(),
-                });
+                return Err(crate::CacheError::DetailUnavailable.into());
             }
             return Ok((serde_json::json!({"id": id, "n": 42}), None));
         }

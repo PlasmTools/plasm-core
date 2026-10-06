@@ -5,12 +5,37 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use thiserror::Error;
 
 use plasm_core::{CapabilityKind, Expr, InputType, PlasmBindGraph, StepId, Value};
 use plasm_runtime::MutexGraphCacheSession;
 
 use crate::execute_session::ExecuteSession;
 use crate::plasm_plan::{ValidatedPlanNode, ValidatedSurfaceNode};
+
+#[derive(Debug, Clone, Error)]
+pub enum SessionProvisionError {
+    #[error("session provisions reference unloaded catalog `{entry}`")]
+    CatalogNotLoaded { entry: String },
+    #[error("session provisions reference unknown capability `{capability}`")]
+    CapabilityNotFound { capability: String },
+    #[error("session provisions reference unknown entity `{entity}`")]
+    EntityNotFound { entity: String },
+    #[error("session provisions reference unknown provided field `{field}`")]
+    ProvidedFieldNotFound { field: String },
+    #[error("provided field value schema is invalid: {0}")]
+    FieldSchema(#[from] plasm_core::SchemaError),
+    #[error("Get capability is missing for entity `{entity}`")]
+    GetCapabilityNotFound { entity: String },
+    #[error("plan bind graph references missing provision step `{step}`")]
+    StepNotFound { step: String },
+    #[error("step `{step}` is missing catalog session provider dependencies")]
+    MissingProviderDependencies { step: String },
+    #[error("session graph is locked during provision preflight")]
+    GraphLockedDuringPreflight,
+    #[error("dry session graph is locked during provision staging")]
+    GraphLockedDuringStaging,
+}
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct ProvisionKey {
@@ -26,17 +51,22 @@ fn surface_expr(surface: &ValidatedSurfaceNode) -> Option<&Expr> {
         .or_else(|| surface.ir_template.as_ref().map(|ir| &ir.expr))
 }
 
-fn catalog<'a>(es: &'a ExecuteSession, entry: &str) -> Result<&'a plasm_core::CGS, String> {
+fn catalog<'a>(
+    es: &'a ExecuteSession,
+    entry: &str,
+) -> Result<&'a plasm_core::CGS, SessionProvisionError> {
     es.contexts_by_entry
         .get(entry)
         .map(|ctx| ctx.cgs.as_ref())
-        .ok_or_else(|| format!("session provisions: unknown catalog `{entry}`"))
+        .ok_or_else(|| SessionProvisionError::CatalogNotLoaded {
+            entry: entry.to_string(),
+        })
 }
 
 fn provider(
     es: &ExecuteSession,
     node: &ValidatedPlanNode,
-) -> Result<Vec<(ProvisionKey, Value)>, String> {
+) -> Result<Vec<(ProvisionKey, Value)>, SessionProvisionError> {
     let Some(surface) = node.as_surface() else {
         return Ok(vec![]);
     };
@@ -51,26 +81,26 @@ fn provider(
     let cgs = catalog(es, entry)?;
     let cap = cgs
         .get_capability(invoke.capability.as_str())
-        .ok_or_else(|| {
-            format!(
-                "session provisions: unknown capability `{}`",
-                invoke.capability
-            )
+        .ok_or_else(|| SessionProvisionError::CapabilityNotFound {
+            capability: invoke.capability.to_string(),
         })?;
     if cap.provides.is_empty() {
         return Ok(vec![]);
     }
-    let entity = cgs
-        .get_entity(cap.domain.as_str())
-        .ok_or_else(|| format!("session provisions: unknown entity `{}`", cap.domain))?;
+    let entity = cgs.get_entity(cap.domain.as_str()).ok_or_else(|| {
+        SessionProvisionError::EntityNotFound {
+            entity: cap.domain.to_string(),
+        }
+    })?;
     cap.provides
         .iter()
         .map(|name| {
-            let field = entity
-                .fields
-                .get(name.as_str())
-                .ok_or_else(|| format!("session provisions: unknown provided field `{name}`"))?;
-            let named = field.named_value(cgs).map_err(|e| e.to_string())?;
+            let field = entity.fields.get(name.as_str()).ok_or_else(|| {
+                SessionProvisionError::ProvidedFieldNotFound {
+                    field: name.to_string(),
+                }
+            })?;
+            let named = field.named_value(cgs)?;
             Ok((
                 ProvisionKey {
                     entry_id: entry.to_string(),
@@ -82,7 +112,11 @@ fn provider(
         .collect()
 }
 
-fn get_inputs(es: &ExecuteSession, entry: &str, expr: &Expr) -> Result<Vec<ProvisionKey>, String> {
+fn get_inputs(
+    es: &ExecuteSession,
+    entry: &str,
+    expr: &Expr,
+) -> Result<Vec<ProvisionKey>, SessionProvisionError> {
     let get = match expr {
         Expr::Get(get) => get,
         Expr::Chain(chain) => {
@@ -109,11 +143,8 @@ fn get_inputs(es: &ExecuteSession, entry: &str, expr: &Expr) -> Result<Vec<Provi
         Some(name) => cgs.get_capability(name),
         None => cgs.find_capability(&get.reference.entity_type, CapabilityKind::Get),
     }
-    .ok_or_else(|| {
-        format!(
-            "session provisions: missing Get for `{}`",
-            get.reference.entity_type
-        )
+    .ok_or_else(|| SessionProvisionError::GetCapabilityNotFound {
+        entity: get.reference.entity_type.to_string(),
     })?;
     let Some(args) = &cap.inputs.arguments else {
         return Ok(vec![]);
@@ -136,7 +167,7 @@ pub(crate) fn dependencies(
     es: &ExecuteSession,
     nodes: &[ValidatedPlanNode],
     bind: &PlasmBindGraph,
-) -> Result<BTreeMap<StepId, BTreeSet<StepId>>, String> {
+) -> Result<BTreeMap<StepId, BTreeSet<StepId>>, SessionProvisionError> {
     let by_id: BTreeMap<_, _> = nodes.iter().map(|n| (n.id().as_str(), n)).collect();
     let mut available: BTreeMap<ProvisionKey, StepId> = BTreeMap::new();
     let mut deps: BTreeMap<StepId, BTreeSet<StepId>> = BTreeMap::new();
@@ -144,7 +175,9 @@ pub(crate) fn dependencies(
     for id in &bind.topo {
         let node = by_id
             .get(id.as_str())
-            .ok_or_else(|| format!("missing provision step `{id}`"))?;
+            .ok_or_else(|| SessionProvisionError::StepNotFound {
+                step: id.to_string(),
+            })?;
         let consumer = match node {
             ValidatedPlanNode::Surface(surface) => surface_expr(surface).map(|expr| {
                 (
@@ -199,7 +232,7 @@ pub(crate) fn seal(
     es: &ExecuteSession,
     nodes: &[ValidatedPlanNode],
     bind: &mut PlasmBindGraph,
-) -> Result<(), String> {
+) -> Result<(), SessionProvisionError> {
     for (target, sources) in dependencies(es, nodes, bind)? {
         bind.deps.entry(target).or_default().extend(sources);
     }
@@ -210,16 +243,16 @@ pub(crate) fn validate(
     es: &ExecuteSession,
     nodes: &[ValidatedPlanNode],
     bind: &PlasmBindGraph,
-) -> Result<(), String> {
+) -> Result<(), SessionProvisionError> {
     for (target, sources) in dependencies(es, nodes, bind)? {
         if !bind
             .deps
             .get(&target)
             .is_some_and(|actual| sources.is_subset(actual))
         {
-            return Err(format!(
-                "step `{target}` is missing catalog session provider dependencies"
-            ));
+            return Err(SessionProvisionError::MissingProviderDependencies {
+                step: target.to_string(),
+            });
         }
     }
     Ok(())
@@ -231,11 +264,11 @@ pub(crate) struct DryProvisionSession {
 }
 
 impl DryProvisionSession {
-    pub(crate) fn new(es: &ExecuteSession) -> Result<Self, String> {
+    pub(crate) fn new(es: &ExecuteSession) -> Result<Self, SessionProvisionError> {
         let mat = es
             .graph_cache
             .try_lock()
-            .map_err(|_| "session graph locked during provision preflight".to_string())?
+            .map_err(|_| SessionProvisionError::GraphLockedDuringPreflight)?
             .clone();
         let mut session = es.clone();
         session.graph_cache = Arc::new(MutexGraphCacheSession::new_materialization(mat));
@@ -246,7 +279,7 @@ impl DryProvisionSession {
         &self.session
     }
 
-    pub(crate) fn stage(&self, node: &ValidatedPlanNode) -> Result<(), String> {
+    pub(crate) fn stage(&self, node: &ValidatedPlanNode) -> Result<(), SessionProvisionError> {
         let values = provider(&self.session, node)?;
         if values.is_empty() {
             return Ok(());
@@ -255,7 +288,7 @@ impl DryProvisionSession {
             .session
             .graph_cache
             .try_lock()
-            .map_err(|_| "dry session graph locked during provision staging".to_string())?;
+            .map_err(|_| SessionProvisionError::GraphLockedDuringStaging)?;
         for (key, value) in values {
             mat.stamp_provided_session_params(
                 key.entry_id,
@@ -263,5 +296,26 @@ impl DryProvisionSession {
             );
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod error_tests {
+    use super::SessionProvisionError;
+
+    #[test]
+    fn field_schema_error_retains_typed_cause() {
+        let error = SessionProvisionError::from(plasm_core::SchemaError::DuplicateEntity {
+            name: "FixtureEntity".into(),
+        });
+        assert!(matches!(error.clone(), SessionProvisionError::FieldSchema(
+            plasm_core::SchemaError::DuplicateEntity { name }
+        ) if name == "FixtureEntity"));
+        assert!(matches!(
+            std::error::Error::source(&error)
+                .unwrap()
+                .downcast_ref::<plasm_core::SchemaError>(),
+            Some(plasm_core::SchemaError::DuplicateEntity { name }) if name == "FixtureEntity"
+        ));
     }
 }

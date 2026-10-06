@@ -6,17 +6,21 @@ use std::{
     hash::{DefaultHasher, Hasher},
 };
 
-fn groups(state: &FrameState<'_>, keys: &[String]) -> Result<Vec<Vec<usize>>, String> {
+fn groups(
+    state: &FrameState<'_>,
+    keys: &[String],
+) -> Result<Vec<Vec<usize>>, plasm_core::RowComputeError> {
     use plasm_core::value_equality::Equatable;
     let contracts = keys
         .iter()
         .map(|name| {
             plasm_core::row_plan::contracts::field_contract(
                 &state.contract,
-                &FieldPath::from_dotted(name).map_err(|e| e.to_string())?,
+                &FieldPath::from_dotted(name)?,
             )
+            .map_err(plasm_core::RowComputeError::Contract)
         })
-        .collect::<Result<Vec<_>, String>>()?;
+        .collect::<Result<Vec<_>, _>>()?;
     let equality = contracts
         .iter()
         .map(Equatable::equality)
@@ -51,7 +55,10 @@ fn groups(state: &FrameState<'_>, keys: &[String]) -> Result<Vec<Vec<usize>>, St
     }
     Ok(groups)
 }
-pub(super) fn distinct(state: &mut FrameState<'_>, keys: &[FieldPath]) -> Result<(), String> {
+pub(super) fn distinct(
+    state: &mut FrameState<'_>,
+    keys: &[FieldPath],
+) -> Result<(), plasm_core::RowComputeError> {
     let names: Vec<_> = if keys.is_empty() {
         state
             .rows
@@ -81,11 +88,15 @@ pub(super) fn aggregate(
     keys: &[FieldPath],
     aggs: &[TypedAggregate],
     grouped: bool,
-) -> Result<(), String> {
+) -> Result<(), plasm_core::RowComputeError> {
     let names: Vec<_> = keys.iter().map(FieldPath::dotted).collect();
     for row in &state.rows {
         for name in &names {
-            row.require(name)?;
+            if row.get(name).is_none() {
+                return Err(plasm_core::RowComputeError::MissingField {
+                    field: name.clone(),
+                });
+            }
         }
     }
     let groups = if grouped {
@@ -109,7 +120,8 @@ pub(super) fn aggregate(
                 TypedAggregate::Count { name } => (
                     name,
                     Cell::computed(Value::Integer(
-                        i64::try_from(group.len()).map_err(|_| "row count overflow")?,
+                        i64::try_from(group.len())
+                            .map_err(|_| plasm_core::RowComputeError::RowCountOverflow)?,
                     )),
                 ),
                 TypedAggregate::Reduction { name, fn_, field } => {
@@ -133,43 +145,54 @@ fn reduce<'a>(
     rows: &[usize],
     op: ReductionFunction,
     money_sum: bool,
-) -> Result<Cell<'a>, String> {
+) -> Result<Cell<'a>, plasm_core::RowComputeError> {
     if matches!(op, ReductionFunction::First | ReductionFunction::Last) {
         return match if op == ReductionFunction::First {
             rows.first()
         } else {
             rows.last()
         } {
-            Some(&row) => state.rows[row]
-                .cell(field)
-                .ok_or_else(|| format!("field `{field}` is unobserved (not null)")),
+            Some(&row) => state.rows[row].cell(field).ok_or_else(|| {
+                plasm_core::RowComputeError::MissingField {
+                    field: field.to_owned(),
+                }
+            }),
             None => Ok(Cell::computed(Value::Null)),
         };
     }
     let contract = plasm_core::row_plan::contracts::field_contract(
         &state.contract,
-        &FieldPath::from_dotted(field).map_err(|e| e.to_string())?,
+        &FieldPath::from_dotted(field)?,
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(plasm_core::RowComputeError::Contract)?;
     let ordering = if matches!(op, ReductionFunction::Min | ReductionFunction::Max) {
-        Some(plasm_core::value_order::Orderable::ordering(&contract).map_err(|e| e.to_string())?)
+        Some(plasm_core::value_order::Orderable::ordering(&contract)?)
     } else {
         None
     };
     if let Some(ordering) = &ordering {
         let mut chosen: Option<usize> = None;
         for &row in rows {
-            let value = state.rows[row].require(field)?;
+            let value = state.rows[row].get(field).ok_or_else(|| {
+                plasm_core::RowComputeError::MissingField {
+                    field: field.to_owned(),
+                }
+            })?;
             if value.is_null() {
                 continue;
             }
-            ordering.validate(value).map_err(|e| e.to_string())?;
+            ordering.validate(value)?;
             let replace = match chosen {
                 None => true,
                 Some(prior) => {
-                    let order = ordering
-                        .compare(state.rows[prior].require(field)?, value)
-                        .map_err(|e| e.to_string())?;
+                    let order = ordering.compare(
+                        state.rows[prior].get(field).ok_or_else(|| {
+                            plasm_core::RowComputeError::MissingField {
+                                field: field.to_owned(),
+                            }
+                        })?,
+                        value,
+                    )?;
                     if op == ReductionFunction::Min {
                         order.is_gt()
                     } else {
@@ -189,18 +212,27 @@ fn reduce<'a>(
         });
     }
     use plasm_core::value_arithmetic::{Arithmetic, ArithmeticDomain};
-    let arithmetic = contract.arithmetic_domain()?;
+    let arithmetic = contract
+        .arithmetic_domain()
+        .map_err(plasm_core::RowComputeError::ArithmeticContract)?;
     if money_sum && arithmetic != ArithmeticDomain::Money {
-        return Err("money sum requires a money contract".into());
+        return Err(plasm_core::RowComputeError::MoneySumRequiresMoney.into());
     }
     let mut result: Option<Value> = None;
     let mut count = 0usize;
     for &row in rows {
-        let value = state.rows[row].require(field)?.clone();
+        let value = state.rows[row]
+            .get(field)
+            .ok_or_else(|| plasm_core::RowComputeError::MissingField {
+                field: field.to_owned(),
+            })?
+            .clone();
         if value.is_null() {
             continue;
         }
-        arithmetic.validate(&value)?;
+        arithmetic
+            .validate(&value)
+            .map_err(plasm_core::RowComputeError::ArithmeticContract)?;
         count += 1;
         result = Some(match result {
             None => {
@@ -211,7 +243,8 @@ fn reduce<'a>(
                 }
             }
             Some(prior) => {
-                plasm_core::value_expression::arithmetic(plasm_core::ArithOp::Add, prior, value)?
+                plasm_core::value_expression::arithmetic(plasm_core::ArithOp::Add, prior, value)
+                    .map_err(plasm_core::RowComputeError::Arithmetic)?
             }
         });
     }
@@ -221,7 +254,7 @@ fn reduce<'a>(
             value,
             Value::Integer(count as i64),
         )
-        .map_err(|e| e.to_string()),
+        .map_err(plasm_core::RowComputeError::Arithmetic),
         (_, Some(value)) => Ok(value),
         (ReductionFunction::Sum, None) => Ok(arithmetic.zero()),
         _ => Ok(Value::Null),
@@ -261,9 +294,10 @@ mod tests {
                 field: None,
             }],
         }];
-        assert!(evaluate_fixture(&ops, &[row!({}), row!({"key":null})])
-            .unwrap_err()
-            .contains("unobserved"));
+        assert!(matches!(
+            evaluate_fixture(&ops, &[row!({}), row!({"key":null})]).unwrap_err(),
+            plasm_core::RowComputeError::MissingField { field } if field == "key"
+        ));
         assert_eq!(
             run(
                 &ops,
@@ -288,8 +322,7 @@ mod tests {
                     .into(),
                     Default::default(),
                 ),
-            )
-            .unwrap();
+            );
             super::aggregate(
                 &mut state,
                 &[],
@@ -301,7 +334,7 @@ mod tests {
                 false,
             )
             .unwrap();
-            let out = super::super::rows::collect_rows(&state).unwrap();
+            let out = super::super::rows::collect_rows(&state);
             assert!(matches!(&out[0]["total"], Value::Money(m) if m.amount().is_zero()));
         }
     }

@@ -59,6 +59,7 @@ capabilities:
     - name: active
       value_ref: nv_product_query_active
       required: false
+      selection_effect: filter
   product_search:
     description: Search products by free text
     kind: search
@@ -67,9 +68,11 @@ capabilities:
     - name: q
       value_ref: nv_product_search_q
       required: true
+      selection_effect: filter
     - name: active
       value_ref: nv_product_search_active
       required: false
+      selection_effect: filter
   product_create:
     description: Create a product
     kind: create

@@ -109,11 +109,9 @@ impl<'a> Parser<'a> {
         let looks_kv = self.peek_compound_key_value_form();
         if ent.key_vars.len() > 1 {
             if !looks_kv {
-                return Err(self.err(ParseErrorKind::Other {
-                    message: format!(
-                        "entity `{}` has compound key {:?}; use `{}(key=value, ...)` with those keys",
-                        entity_canon, ent.key_vars, entity_canon
-                    ),
+                return Err(self.err(ParseErrorKind::CompoundIdentityRequiresNamedKeys {
+                    entity: entity_canon.to_owned(),
+                    keys: ent.key_vars.iter().map(ToString::to_string).collect(),
                 }));
             }
             let parts = self.parse_strict_compound_key_value_map(head, &ent)?;
@@ -134,11 +132,8 @@ impl<'a> Parser<'a> {
             {
                 return self.normalize_identity_constructor_value(id_val);
             }
-            return Err(self.err(ParseErrorKind::Other {
-                message: format!(
-                    "entity `{}` uses a simple id; use `{}(id)` not key=value form",
-                    entity_canon, entity_canon
-                ),
+            return Err(self.err(ParseErrorKind::SimpleIdentityRequiresPositional {
+                entity: entity_canon.to_string(),
             }));
         }
         self.pos = after_paren;
@@ -168,9 +163,6 @@ impl<'a> Parser<'a> {
                 catalogs.push(crate::symbol_tuning::CatalogScope::qualified(entry_id));
             }
         }
-        catalogs.push(crate::symbol_tuning::CatalogScope::SessionReverse);
-
-        let mut last_err: Option<crate::SymbolResolveError> = None;
         for catalog in catalogs {
             match self.sym_map.resolve_compound_key(
                 catalog,
@@ -179,14 +171,23 @@ impl<'a> Parser<'a> {
                 raw_key,
             ) {
                 Ok(w) => return Ok(w),
-                Err(e) => last_err = Some(e),
+                Err(_) => continue,
             }
         }
-        Err(self.err(ParseErrorKind::Other {
-            message: last_err
-                .map(|e| e.to_agent_program_error())
-                .unwrap_or_else(|| format!("invalid compound key `{raw_key}`")),
-        }))
+        self.sym_map
+            .resolve_compound_key(
+                crate::symbol_tuning::CatalogScope::SessionReverse,
+                head.canonical.as_str(),
+                &ent.key_vars,
+                raw_key,
+            )
+            .map_err(|source| {
+                self.err(ParseErrorKind::CompoundKeyResolution {
+                    entity: head.canonical.to_string(),
+                    key: raw_key.to_owned(),
+                    source,
+                })
+            })
     }
 
     /// Normalize binding field-path segments: opaque `p#` → wire when unambiguous in session map.

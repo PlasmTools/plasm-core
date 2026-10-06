@@ -142,20 +142,13 @@ impl ExecutionEngine {
         )?;
         let capability = request.capability;
         if capability.derived.is_some() {
-            return Err(RuntimeError::ConfigurationError {
-                message: format!(
-                    "derived Get '{}' cannot nest as an inner node inside a views: DAG",
-                    capability.name
-                ),
+            return Err(RuntimeError::DerivedGetNestingForbidden {
+                capability: capability.name.to_string(),
             });
         }
         let capability_template = compiled_capability_template(capability)?;
         if matches!(capability_template, CapabilityTemplate::View(_)) {
-            return Err(RuntimeError::ConfigurationError {
-                message:
-                    "composed-view GET transport cannot nest as an inner node inside another views: DAG"
-                        .into(),
-            });
+            return Err(RuntimeError::ViewGetNestingForbidden);
         }
         let (cached, source) = self
             .fetch_http_transport_get_decoded(&request, cgs, mode, &capability_template, true, mat)
@@ -336,19 +329,17 @@ impl ExecutionEngine {
 
         let decoded = decoded_entities
             .first()
-            .ok_or_else(|| RuntimeError::CacheError {
-                message: format!("zero rows — Entity not found: {}", get.reference),
+            .ok_or_else(|| crate::CacheError::EntityMissing {
+                reference: get.reference.clone(),
             })?;
 
         if validate_identity
             && !get.reference.primary_slot_str().is_empty()
             && decoded.reference != get.reference
         {
-            return Err(RuntimeError::ConfigurationError {
-                message: format!(
-                    "view GET identity mismatch: requested {}, returned {}",
-                    get.reference, decoded.reference
-                ),
+            return Err(RuntimeError::GetIdentityMismatch {
+                expected: get.reference.clone(),
+                actual: decoded.reference.clone(),
             });
         }
         let timestamp = current_timestamp();
@@ -408,13 +399,11 @@ impl ExecutionEngine {
                 ambient,
             )
             .await?;
-            let cached =
-                res.entities()
-                    .first()
-                    .cloned()
-                    .ok_or_else(|| RuntimeError::CacheError {
-                        message: format!("composed view `{}` returned no entity row", vt.view),
-                    })?;
+            let cached = res.entities().first().cloned().ok_or_else(|| {
+                crate::CacheError::ViewRowMissing {
+                    view: vt.view.clone(),
+                }
+            })?;
             return Ok((cached, res.source));
         }
 

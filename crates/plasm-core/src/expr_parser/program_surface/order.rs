@@ -1,18 +1,14 @@
 //! Binding / return statement order validation.
 
+use super::SurfaceSyntaxError;
 use std::collections::BTreeSet;
 
-use super::errors::program_invalid_binding_label_error;
-use super::errors::{
-    program_binding_after_return_error, program_intermediate_return_error,
-    program_intermediate_return_must_be_binding_error, program_multiple_return_lines_error,
-};
 use super::flatten::leading_identifier;
 use super::labels::is_valid_program_label;
 use super::split::{classify_top_level_assignment, TopLevelAssignment};
 
 /// ML `let` block: bindings first, one return last. Rejects multiple roots-only lines and bindings after return.
-pub fn validate_program_statement_order(statements: &[String]) -> Result<(), String> {
+pub fn validate_program_statement_order(statements: &[String]) -> Result<(), SurfaceSyntaxError> {
     let stmts: Vec<&str> = statements
         .iter()
         .map(|s| s.trim())
@@ -27,23 +23,27 @@ pub fn validate_program_statement_order(statements: &[String]) -> Result<(), Str
             let label = match assignment {
                 TopLevelAssignment::Binding { label, .. } => label,
                 TopLevelAssignment::InvalidLabel { label } => {
-                    return Err(program_invalid_binding_label_error(label));
+                    return Err(SurfaceSyntaxError::InvalidBindingLabel {
+                        label: label.to_owned(),
+                    });
                 }
             };
             if saw_roots {
-                return Err(program_binding_after_return_error());
+                return Err(SurfaceSyntaxError::BindingAfterRoots);
             }
             bindings.insert(label.to_string());
             continue;
         }
         if saw_roots && !is_last {
             if is_bare_binding_label(stmt, &bindings) {
-                return Err(program_multiple_return_lines_error());
+                return Err(SurfaceSyntaxError::MultipleRootLines);
             }
-            return Err(program_intermediate_return_error(stmt));
+            return Err(SurfaceSyntaxError::IntermediateRoots);
         }
         if !is_last && roots_line_is_postfix_on_binding(stmt, &bindings) {
-            return Err(program_intermediate_return_must_be_binding_error(stmt));
+            return Err(SurfaceSyntaxError::IntermediateStepRequiresBinding {
+                binding: leading_identifier(stmt).to_owned(),
+            });
         }
         saw_roots = true;
     }

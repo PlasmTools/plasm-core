@@ -1,5 +1,6 @@
 //! RA-17: prerequisite seats may only be filled from their deployed provider.
 
+use super::error::DagCompilationError;
 use super::prelude::*;
 use super::types::{CompileState, DagNodeSource};
 use plasm_core::prerequisites::{
@@ -13,7 +14,7 @@ pub(in crate::plasm_dag) fn validate_prerequisite_seat_bind(
     state: &CompileState<'_>,
     node_id: &str,
     expr: &Expr,
-) -> Result<(), String> {
+) -> Result<(), DagCompilationError> {
     match expr {
         Expr::Query(q) => validate_query_selection(session, state, node_id, q),
         Expr::Invoke(inv) => validate_targeted(
@@ -51,7 +52,7 @@ fn validate_query_selection(
     state: &CompileState<'_>,
     node_id: &str,
     query: &QueryExpr,
-) -> Result<(), String> {
+) -> Result<(), DagCompilationError> {
     let catalog = query
         .catalog_entry_id
         .as_deref()
@@ -73,7 +74,7 @@ fn validate_targeted(
     node_id: &str,
     inv: &impl plasm_core::expr::TargetedCall,
     catalog_entry_id: Option<&str>,
-) -> Result<(), String> {
+) -> Result<(), DagCompilationError> {
     let Some(input) = inv.input() else {
         return Ok(());
     };
@@ -92,7 +93,7 @@ fn validate_create(
     state: &CompileState<'_>,
     node_id: &str,
     create: &CreateExpr,
-) -> Result<(), String> {
+) -> Result<(), DagCompilationError> {
     validate_invocation_object(
         session,
         state,
@@ -110,7 +111,7 @@ fn validate_invocation_object(
     capability: &str,
     catalog_entry_id: Option<&str>,
     value: &Value,
-) -> Result<(), String> {
+) -> Result<(), DagCompilationError> {
     let catalog = catalog_entry_id.unwrap_or(session.entry_id.as_str());
     let Some(obj) = value.as_object() else {
         return Ok(());
@@ -132,11 +133,11 @@ fn validate_invocation_object(
 
 fn check_seats(
     session: &ExecuteSession,
-    node_id: &str,
+    _node_id: &str,
     catalog: &str,
     capability: &str,
     wirings: &[SeatWiring],
-) -> Result<(), String> {
+) -> Result<(), DagCompilationError> {
     if wirings.is_empty() || session.prerequisite_deployments.bindings.is_empty() {
         return Ok(());
     }
@@ -154,16 +155,7 @@ fn check_seats(
         },
         wirings,
     )
-    .map_err(|msg| {
-        format!(
-            "RA-17: Plasm program `{node_id}`: {}",
-            strip_ra17_prefix(&msg)
-        )
-    })
-}
-
-fn strip_ra17_prefix(msg: &str) -> &str {
-    msg.strip_prefix("RA-17: ").unwrap_or(msg)
+    .map_err(DagCompilationError::from)
 }
 
 fn collect_predicate_wirings(

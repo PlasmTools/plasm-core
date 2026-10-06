@@ -12,6 +12,41 @@ use crate::cgs_federation::QualifiedEntityKey;
 use crate::identity::{CapabilityName, CapabilityParamName, RelationName};
 use crate::plasm_monad::{AggregateSpec, BindingName, ComputeOp, FieldPath};
 use crate::{CompOp, QueryPagination, RowPredicate, TypedComparisonValue};
+use thiserror::Error;
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum RowsetNormalizeError {
+    #[error(transparent)]
+    Capability(Box<crate::query_resolve::QueryCapabilityResolveError>),
+    #[error(transparent)]
+    FieldPath(#[from] crate::plasm_monad::PlanAtomError),
+    #[error("query predicate form is not a valid source selection")]
+    InvalidPredicate { reason: SourcePredicateError },
+    #[error("RA-1: `{field}` is a capability control, not a query selection argument")]
+    CapabilityControl { field: String },
+    #[error(
+        "RA-2: `{field}` is not a declared selection/scope parameter for capability `{capability}`"
+    )]
+    UndeclaredSelection { field: String, capability: String },
+}
+
+impl From<crate::query_resolve::QueryCapabilityResolveError> for RowsetNormalizeError {
+    fn from(error: crate::query_resolve::QueryCapabilityResolveError) -> Self {
+        Self::Capability(Box::new(error))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum SourcePredicateError {
+    #[error("false predicates cannot be expressed as source selection")]
+    False,
+    #[error("OR predicates cannot be expressed as source selection")]
+    Disjunction,
+    #[error("NOT predicates cannot be expressed as source selection")]
+    Negation,
+    #[error("relation existence predicates belong on materialized rows")]
+    RelationExistence,
+}
 use serde::{Deserialize, Serialize};
 
 /// Parent identity for one external invocation.

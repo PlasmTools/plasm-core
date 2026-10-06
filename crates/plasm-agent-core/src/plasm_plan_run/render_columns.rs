@@ -3,6 +3,31 @@
 use std::collections::BTreeMap;
 
 use crate::plasm_plan::OutputName;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum RenderColumnsError {
+    #[error("render column wire `{wire}` is invalid")]
+    InvalidWire {
+        wire: String,
+        #[source]
+        source: plasm_core::plasm_monad::PlanAtomError,
+    },
+    #[error("render column token `{token}` is invalid")]
+    InvalidToken {
+        token: String,
+        #[source]
+        source: plasm_core::plasm_monad::PlanAtomError,
+    },
+    #[error("render row {row_index} is missing column `{column}`; Available row fields: {}", .available_fields.join(", "))]
+    ColumnMissing {
+        column: String,
+        row_index: usize,
+        available_fields: Vec<String>,
+    },
+    #[error("render input at row {row_index} is not an object")]
+    RowNotObject { row_index: usize },
+}
 
 use super::value_at_dotted;
 
@@ -14,16 +39,24 @@ pub struct RenderColumns {
 }
 
 impl RenderColumns {
-    pub fn from_field_pairs(pairs: &[(String, String)]) -> Result<Self, String> {
+    pub fn from_field_pairs(pairs: &[(String, String)]) -> Result<Self, RenderColumnsError> {
         let mut wires = Vec::with_capacity(pairs.len());
         let mut aliases = BTreeMap::new();
         for (raw, wire) in pairs {
-            let wire_name = OutputName::new(wire.clone())
-                .map_err(|e| format!("invalid render column wire `{wire}`: {e}"))?;
+            let wire_name = OutputName::new(wire.clone()).map_err(|source| {
+                RenderColumnsError::InvalidWire {
+                    wire: wire.clone(),
+                    source,
+                }
+            })?;
             wires.push(wire_name.clone());
             if raw != wire {
-                OutputName::new(raw.clone())
-                    .map_err(|e| format!("invalid render column token `{raw}`: {e}"))?;
+                OutputName::new(raw.clone()).map_err(|source| {
+                    RenderColumnsError::InvalidToken {
+                        token: raw.clone(),
+                        source,
+                    }
+                })?;
                 aliases.insert(raw.clone(), wire_name);
             }
         }
@@ -46,25 +79,20 @@ impl RenderColumns {
         &self,
         row: &plasm_core::Value,
         row_index: usize,
-    ) -> Result<indexmap::IndexMap<String, plasm_core::Value>, String> {
+    ) -> Result<indexmap::IndexMap<String, plasm_core::Value>, RenderColumnsError> {
         let mut obj = indexmap::IndexMap::new();
         for column in &self.wires {
             obj.insert(
                 column.as_str().to_string(),
                 value_at_dotted(row, column.as_str())
                     .cloned()
-                    .ok_or_else(|| {
-                        format!(
-                            "render column {:?} did not resolve at row {row_index}. {}",
-                            column.as_str(),
-                            match row.as_object() {
-                                Some(fields) => format!(
-                                    "Available row fields: {}",
-                                    fields.keys().cloned().collect::<Vec<_>>().join(", ")
-                                ),
-                                None => "Render input is not an object row".into(),
-                            }
-                        )
+                    .ok_or_else(|| match row.as_object() {
+                        Some(fields) => RenderColumnsError::ColumnMissing {
+                            column: column.as_str().to_owned(),
+                            row_index,
+                            available_fields: fields.keys().cloned().collect(),
+                        },
+                        None => RenderColumnsError::RowNotObject { row_index },
                     })?,
             );
         }
@@ -129,8 +157,14 @@ mod diagnostic_tests {
         let error = cols
             .project_row(&crate::fixture_value!({"present":"private-value"}), 0)
             .unwrap_err();
-        assert!(error.contains("Available row fields: present"));
-        assert!(!error.contains("Valid row fields: missing"));
-        assert!(!error.contains("private-value"));
+        assert!(matches!(
+            &error,
+            RenderColumnsError::ColumnMissing { column, row_index: 0, available_fields }
+                if column == "missing" && available_fields == &["present"]
+        ));
+        let diagnostic = error.to_string();
+        assert!(diagnostic.contains("Available row fields: present"));
+        assert!(!diagnostic.contains("Valid row fields: missing"));
+        assert!(!diagnostic.contains("private-value"));
     }
 }

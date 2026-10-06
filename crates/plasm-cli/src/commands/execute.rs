@@ -1,4 +1,4 @@
-use crate::commands::common;
+use crate::commands::{common, CommandError, InputKind};
 use plasm_core::{Expr, Predicate, QueryExpr, CGS};
 use plasm_runtime::{
     ExecuteOptions, ExecutionConfig, ExecutionEngine, ExecutionMode, SessionMaterialization,
@@ -10,7 +10,7 @@ pub async fn execute(
     schema: &str,
     predicate: &str,
     execution_mode: ExecutionMode,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), CommandError> {
     println!(
         "Executing predicate with schema in {:?} mode...",
         execution_mode
@@ -19,11 +19,13 @@ pub async fn execute(
     // Load schema
     if !Path::new(schema).exists() {
         eprintln!("Error: Schema file '{}' does not exist", schema);
-        return Err("Schema file not found".into());
+        return Err(CommandError::InputMissing {
+            kind: InputKind::Schema,
+            path: schema.into(),
+        });
     }
 
-    let cgs: CGS = common::load_cgs(Path::new(schema))
-        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    let cgs: CGS = common::load_cgs(Path::new(schema))?;
 
     // Load predicate
     let predicate_data = if Path::new(predicate).exists() {
@@ -54,7 +56,10 @@ pub async fn execute(
         }
     }
 
-    let entity_name = target_entity_name.ok_or("No compatible entity found")?;
+    let entity_name = target_entity_name.ok_or_else(|| CommandError::NoCompatibleEntity {
+        fields: referenced_fields,
+        relations: referenced_relations,
+    })?;
     println!("Target entity: {}", entity_name);
 
     // Create query expression

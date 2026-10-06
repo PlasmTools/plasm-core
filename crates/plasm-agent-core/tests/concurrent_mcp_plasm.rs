@@ -51,16 +51,19 @@ fn matrix_federated_host() -> Arc<plasm_agent_core::server_state::PlasmHostState
         ),
     ]);
     let engine = ExecutionEngine::new(ExecutionConfig::default()).expect("engine");
-    Arc::new(build_plasm_host_state(PlasmHostBootstrap {
-        engine,
-        mode: ExecutionMode::Live,
-        registry: Arc::new(reg),
-        catalog_bootstrap: CatalogBootstrap::Fixed,
-        incoming_auth: None,
-        run_artifacts: Arc::new(plasm_agent_core::run_artifacts::RunArtifactStore::memory()),
-        session_graph_persistence: None,
-        oss_local_filesystem_defaults: false,
-    }))
+    Arc::new(
+        build_plasm_host_state(PlasmHostBootstrap {
+            engine,
+            mode: ExecutionMode::Live,
+            registry: Arc::new(reg),
+            catalog_bootstrap: CatalogBootstrap::Fixed,
+            incoming_auth: None,
+            run_artifacts: Arc::new(plasm_agent_core::run_artifacts::RunArtifactStore::memory()),
+            session_graph_persistence: None,
+            oss_local_filesystem_defaults: false,
+        })
+        .expect("valid catalog fixture"),
+    )
 }
 
 async fn open_matrix_session(

@@ -1,6 +1,33 @@
 //! One quoted-string lexer for scalar and data-expression syntax.
 use super::{ParseError, ParseErrorKind};
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unicode_failures_preserve_semantic_metadata_and_offset() {
+        let mut offset = 0;
+        let error = parse(r#""\u12z4""#, &mut offset).unwrap_err();
+        assert!(matches!(
+            error.kind,
+            ParseErrorKind::InvalidUnicodeEscape {
+                digit_index: 2,
+                got: Some('z')
+            }
+        ));
+        assert_eq!(error.offset, 6);
+
+        let mut offset = 0;
+        let error = parse(r#""\uD800\u0041""#, &mut offset).unwrap_err();
+        assert!(matches!(
+            error.kind,
+            ParseErrorKind::InvalidLowSurrogate { unit: 0x41 }
+        ));
+        assert_eq!(error.offset, 13);
+    }
+}
+
 pub(super) fn parse(input: &str, offset: &mut usize) -> Result<String, ParseError> {
     fn next(input: &str, offset: &mut usize) -> Option<char> {
         let c = input[*offset..].chars().next()?;
@@ -24,14 +51,12 @@ pub(super) fn parse(input: &str, offset: &mut usize) -> Result<String, ParseErro
                 } else if esc == 'u' {
                     let read_unit = |offset: &mut usize| -> Result<u16, ParseError> {
                         let mut value = 0u16;
-                        for _ in 0..4 {
-                            let digit = next(input, offset).and_then(|c| c.to_digit(16));
+                        for digit_index in 0..4 {
+                            let got = next(input, offset);
+                            let digit = got.and_then(|c| c.to_digit(16));
                             let Some(digit) = digit else {
                                 return Err(error(
-                                    ParseErrorKind::Other {
-                                        message: "invalid unicode escape: need four hex digits"
-                                            .into(),
-                                    },
+                                    ParseErrorKind::InvalidUnicodeEscape { digit_index, got },
                                     *offset,
                                 ));
                             };
@@ -43,20 +68,14 @@ pub(super) fn parse(input: &str, offset: &mut usize) -> Result<String, ParseErro
                     let codepoint = if (0xD800..=0xDBFF).contains(&first) {
                         if next(input, offset) != Some('\\') || next(input, offset) != Some('u') {
                             return Err(error(
-                                ParseErrorKind::Other {
-                                    message:
-                                        "high surrogate requires a low-surrogate unicode escape"
-                                            .into(),
-                                },
+                                ParseErrorKind::MissingLowSurrogate { high: first },
                                 *offset,
                             ));
                         }
                         let second = read_unit(offset)?;
                         if !(0xDC00..=0xDFFF).contains(&second) {
                             return Err(error(
-                                ParseErrorKind::Other {
-                                    message: "invalid low surrogate".into(),
-                                },
+                                ParseErrorKind::InvalidLowSurrogate { unit: second },
                                 *offset,
                             ));
                         }
@@ -66,9 +85,7 @@ pub(super) fn parse(input: &str, offset: &mut usize) -> Result<String, ParseErro
                     };
                     let c = char::from_u32(codepoint).ok_or_else(|| {
                         error(
-                            ParseErrorKind::Other {
-                                message: "invalid unicode code point".into(),
-                            },
+                            ParseErrorKind::InvalidUnicodeCodepoint { codepoint },
                             *offset,
                         )
                     })?;

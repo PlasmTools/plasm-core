@@ -38,6 +38,7 @@ strip-ansi-escapes = { workspace = true }
 crossbeam-channel = { workspace = true }
 scopeguard = { workspace = true }
 serde_json = { workspace = true }
+thiserror = { workspace = true }
 uuid = { workspace = true }
 auth-framework = { workspace = true }
 arboard = { version = "3", features = ["wayland-data-control"] }

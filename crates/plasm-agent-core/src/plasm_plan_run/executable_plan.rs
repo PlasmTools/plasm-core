@@ -11,6 +11,62 @@ use crate::plasm_plan::{
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub(crate) enum PureStepError {
+    #[error(transparent)]
+    Identifier(#[from] crate::plasm_plan::PlanAtomError),
+    #[error(transparent)]
+    InputRows(#[from] super::compute_eval::InputRowsError),
+    #[error(transparent)]
+    BindingRows(#[from] super::compute_eval::BindingRowsError),
+    #[error("pure data evaluation failed: {0}")]
+    DataEvaluation(#[from] super::compute_eval::DataPlanValueError),
+    #[error(transparent)]
+    Fingerprint(#[from] super::compute_eval::ComputeFingerprintError),
+    #[error("pure derive evaluation failed: {0}")]
+    DeriveEvaluation(#[source] super::compute_eval::DataOperandError),
+    #[error(transparent)]
+    TypedComputeEvaluation(#[from] super::compute_eval::ComputeEvaluationError),
+    #[error("compute branch `{branch}` was not materialized")]
+    MissingComputeBranch { branch: String },
+    #[error("compute branch collection is incomplete: {0}")]
+    IncompleteCollection(#[from] plasm_core::collection_codec::CollectionFault),
+    #[error(transparent)]
+    MapBodySchema(#[from] crate::map_body_schema::MapBodySchemaError),
+    #[error(transparent)]
+    SyntheticSchema(#[from] plasm_core::plasm_monad::SyntheticResultSchemaError),
+    #[error(transparent)]
+    RowContract(#[from] plasm_core::row_plan::contracts::RowContractError),
+    #[error("pure result identity propagation failed: {0}")]
+    IdentityPropagation(#[from] super::parse::RowIdentityPropagationError),
+}
+
+impl From<PureStepError> for plasm_runtime::ExecutionFailure {
+    fn from(error: PureStepError) -> Self {
+        let code = match &error {
+            PureStepError::Identifier(_) => "plan_identifier_invalid",
+            PureStepError::InputRows(_) => "plan_input_invalid",
+            PureStepError::BindingRows(_) => "plan_binding_rows_invalid",
+            PureStepError::DataEvaluation(_) => "plan_data_evaluation_failed",
+            PureStepError::Fingerprint(_) => "plan_compute_fingerprint_failed",
+            PureStepError::DeriveEvaluation(_) => "plan_derive_evaluation_failed",
+            PureStepError::TypedComputeEvaluation(_) => "plan_compute_evaluation_failed",
+            PureStepError::MissingComputeBranch { .. } => "plan_compute_branch_missing",
+            PureStepError::IncompleteCollection(_) => "plan_compute_collection_incomplete",
+            PureStepError::MapBodySchema(_)
+            | PureStepError::SyntheticSchema(_)
+            | PureStepError::RowContract(_) => "plan_compute_schema_invalid",
+            PureStepError::IdentityPropagation(_) => "plan_identity_propagation_failed",
+        };
+        Self::new(
+            plasm_runtime::FailureCause::Program,
+            code,
+            error.to_string(),
+        )
+    }
+}
 
 /// The pure fragment of the plan: transformations whose output rows depend only on already
 /// materialized input rows and plan literals. Mode-invariant — evaluated identically in dry and
@@ -105,7 +161,7 @@ impl PureStep {
     }
 
     /// The dependency whose rows feed this step (`None` for literal `Data`).
-    pub(crate) fn source(&self) -> Result<Option<PlanNodeId>, String> {
+    pub(crate) fn source(&self) -> Result<Option<PlanNodeId>, crate::plasm_plan::PlanAtomError> {
         match self {
             PureStep::Data(_) => Ok(None),
             PureStep::Derive(d) => Ok(Some(d.source.clone())),
@@ -136,10 +192,14 @@ impl PureStep {
     pub(crate) fn binding_rows(
         &self,
         materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
-    ) -> Result<BTreeMap<String, Vec<plasm_core::ValueRow>>, String> {
+    ) -> Result<BTreeMap<String, Vec<plasm_core::ValueRow>>, PureStepError> {
         match self {
-            PureStep::Compute(c) => binding_rows_for_compute(&c.compute, materialized),
-            PureStep::Data(d) => binding_rows_for_data_uses(&d.uses_result, materialized),
+            PureStep::Compute(c) => {
+                binding_rows_for_compute(&c.compute, materialized).map_err(Into::into)
+            }
+            PureStep::Data(d) => {
+                binding_rows_for_data_uses(&d.uses_result, materialized).map_err(Into::into)
+            }
             PureStep::Derive(_) => Ok(BTreeMap::new()),
         }
     }
@@ -151,7 +211,7 @@ impl PureStep {
         &self,
         inputs: &PureInputs<'_>,
         materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
-    ) -> Result<PureMaterialization, String> {
+    ) -> Result<PureMaterialization, PureStepError> {
         match self {
             PureStep::Data(d) => {
                 let (rows, value_shapes) = eval_data_plan_value(&d.data, inputs.binding_rows)?;
@@ -172,7 +232,8 @@ impl PureStep {
                         d.item_binding.as_str(),
                         inputs.source_rows.len(),
                         "scalar field extraction",
-                    ));
+                    )
+                    .into());
                 }
                 let (rows, value_shapes) = derive_node_rows(
                     d.kind,
@@ -180,7 +241,8 @@ impl PureStep {
                     &d.value,
                     inputs.source_rows,
                     inputs.input_rows,
-                )?;
+                )
+                .map_err(PureStepError::DeriveEvaluation)?;
                 let row_identities = vec![None; rows.len()];
                 Ok(PureMaterialization {
                     value_shapes,
@@ -192,11 +254,13 @@ impl PureStep {
             PureStep::Compute(c) => {
                 if let ComputeOp::MergeBranches { other } = &c.compute.op {
                     for branch in [c.compute.source.as_str(), other.as_str()] {
-                        let value = materialized
-                            .get(&PlanNodeId::new(branch)?)
-                            .ok_or("conditional branch not materialized")?;
-                        crate::python_compute::require_complete_collection(&value.result)
-                            .map_err(|e| e.to_string())?;
+                        let branch_id = PlanNodeId::new(branch)?;
+                        let value = materialized.get(&branch_id).ok_or_else(|| {
+                            PureStepError::MissingComputeBranch {
+                                branch: branch.to_owned(),
+                            }
+                        })?;
+                        crate::python_compute::require_complete_collection(&value.result)?;
                     }
                 }
                 let contract = crate::map_body_schema::row_operation_contract(
@@ -219,7 +283,8 @@ impl PureStep {
                     materialized,
                     &computed.occurrences,
                     computed.rows.len(),
-                )?;
+                )
+                .map_err(PureStepError::IdentityPropagation)?;
                 Ok(PureMaterialization {
                     // Row computation is record-in/record-out. Pure scalar binding
                     // witnesses do not implicitly unwrap the resulting records.
