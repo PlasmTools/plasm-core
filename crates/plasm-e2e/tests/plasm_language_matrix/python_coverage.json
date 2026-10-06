@@ -2185,6 +2185,8 @@
     "callback_iteration",
     "callback_projection",
     "compute_inferred_callsite_inputs",
+    "compute_inferred_guarded_empty_list",
+    "compute_inferred_mutated_set",
     "root_build_statements",
     "static_literal_for_effects",
     "static_literal_comprehension",
