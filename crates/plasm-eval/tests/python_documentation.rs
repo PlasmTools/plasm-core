@@ -14,16 +14,20 @@ async fn published_language_definition_compiles_against_the_semantic_matrix() {
         "retired grammar must not be taught"
     );
     let mut count = 0;
+    let mut failures = Vec::new();
     for section in doc.split("```python\n").skip(1) {
         let source = section.split_once("```").expect("closed Python fence").0;
-        session
-            .compile(source)
-            .await
-            .unwrap_or_else(|error| panic!("{}\n{source}", error.agent_markdown()));
         count += 1;
+        if let Err(error) = session.compile(source).await {
+            failures.push(format!(
+                "Python example {count}:\n{}\n{source}",
+                error.agent_markdown()
+            ));
+        }
     }
     assert!(
         count > 0,
         "the definition must teach an executable Python Program"
     );
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }

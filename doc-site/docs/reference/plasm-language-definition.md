@@ -34,7 +34,7 @@ class Report(Program):
     def build(self):
         rows = e1.query().where(lambda row: row.owner == "alice")
         selected = rows.select("title")
-        rendered = self.line(selected)
+        rendered = selected.map(lambda row: {"line": self.line(row)}, max_parents=256)
         return rendered
 ```
 
@@ -242,7 +242,9 @@ class Recent(Program):
     def build(self):
         end = datetime.now(timezone.utc)
         start = end - timedelta(days=7)
-        return e1.query().where(lambda row: start <= row.created_at < end)
+        return e1.query().where(
+            lambda row: row.recorded_at is not None and start <= row.recorded_at < end
+        )
 ```
 
 Temporal expressions lower to ordinary typed Monty compute nodes with explicit
