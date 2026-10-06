@@ -173,6 +173,10 @@ pub enum ReplayStoreOperation {
 
 #[derive(Error, Debug)]
 pub enum RuntimeError {
+    #[error("request-owned identity requires observable resolved authentication")]
+    RequestIdentityAuthOpaque,
+    #[error("request-owned identity for {entity} requires one response row, got {rows}")]
+    RequestIdentityCardinality { entity: String, rows: usize },
     #[error("response narrowing failed: {0}")]
     ResponseNarrowing(#[from] ResponseNarrowError),
     #[error("host transport failed: {source}")]

@@ -10,6 +10,13 @@ export type HostTransportOptions = {
   bearer?: string;
   /** Disable unscoped environment bearer injection for isolated evaluation hosts. */
   allowGlobalBearer?: boolean;
+  /**
+   * Trusted fetch implementation: preserve supplied credentials. When
+   * Authorization is supplied, MUST NOT add/replace any auth material,
+   * including cookie-jar cookies, API-key headers or query credentials.
+   * A hidden-credential fetch cannot use this adapter's engine-visible contract;
+   * use an Opaque runtime transport (typed RequestIdentityAuthOpaque) instead.
+   */
   fetchImpl?: typeof fetch;
   /** When true (default), resolve Vercel Connect tokens after env bearer misses. */
   useConnect?: boolean;

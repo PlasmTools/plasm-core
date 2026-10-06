@@ -63,6 +63,13 @@ export interface JsTransportRequest {
   requireHostAuth: boolean
   method: string
   url: string
+  /**
+   * Callback and underlying fetch MUST preserve supplied credentials. With
+   * Authorization supplied, do not add/replace ANY auth material, including
+   * Cookie, API-key headers or query auth. Inject host bearer only when absent.
+   * Hidden-credential adapters must not use this engine-visible contract; use
+   * an Opaque runtime transport (typed RequestIdentityAuthOpaque).
+   */
   headers?: Record<string, string>
   body?: string
   entryId?: string

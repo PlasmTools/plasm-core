@@ -44,6 +44,13 @@ impl ExecutionEngine {
         &self,
         request: &CompiledRequest,
     ) -> Result<Option<crate::auth::ResolvedAuth>, RuntimeError> {
+        match super::request_identity::pinned_auth() {
+            super::request_identity::DispatchAuthScope::Authenticated(auth) => {
+                return Ok(Some(auth))
+            }
+            super::request_identity::DispatchAuthScope::Anonymous => return Ok(None),
+            super::request_identity::DispatchAuthScope::Unpinned => {}
+        }
         let base_url = self.effective_http_base_for_request();
         match &request.credential {
             Some(credential) => {

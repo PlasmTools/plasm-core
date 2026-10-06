@@ -298,6 +298,14 @@ impl HttpTransport for ResilientHttpTransport {
         self.inner.injects_host_auth()
     }
 
+    fn auth_scope(
+        &self,
+        request: &CompiledRequest,
+        auth: Option<&ResolvedAuth>,
+    ) -> Result<crate::http_transport::TransportAuthScope, RuntimeError> {
+        self.inner.auth_scope(request, auth)
+    }
+
     async fn send_compiled_http(
         &self,
         base_url: &str,

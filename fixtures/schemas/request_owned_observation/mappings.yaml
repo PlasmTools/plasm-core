@@ -1,0 +1,16 @@
+observation_query:
+  method: GET
+  path: [{type: literal, value: observation}]
+  query:
+    type: object
+    fields:
+    - [selector, {type: var, name: selector}]
+  response: single
+observation_quote:
+  method: POST
+  path: [{type: literal, value: quote}]
+  body:
+    type: object
+    fields:
+    - [selector, {type: var, name: selector}]
+  response: single

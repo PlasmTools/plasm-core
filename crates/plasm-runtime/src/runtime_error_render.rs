@@ -9,6 +9,12 @@ use crate::RuntimeError;
 /// Convert a runtime failure into a structured [`StepError`].
 pub fn step_error_from_runtime(err: &RuntimeError, cgs: &CGS) -> StepError {
     match err {
+        RuntimeError::RequestIdentityAuthOpaque => {
+            StepError::new(StepErrorCategory::Config, err.to_string(), None)
+        }
+        RuntimeError::RequestIdentityCardinality { .. } => {
+            StepError::new(StepErrorCategory::Runtime, err.to_string(), None)
+        }
         RuntimeError::Evm(_) => StepError::new(StepErrorCategory::Runtime, err.to_string(), None),
         RuntimeError::CatalogTemplate(source) => {
             StepError::new(StepErrorCategory::Config, source.to_string(), None)

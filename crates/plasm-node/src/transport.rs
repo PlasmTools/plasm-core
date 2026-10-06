@@ -219,6 +219,13 @@ impl HttpTransport for JsCallbackHttpTransport {
     fn injects_host_auth(&self) -> bool {
         true
     }
+    fn auth_scope(
+        &self,
+        request: &CompiledRequest,
+        auth: Option<&ResolvedAuth>,
+    ) -> std::result::Result<plasm_runtime::http_transport::TransportAuthScope, RuntimeError> {
+        callback_auth_scope(request, auth)
+    }
     async fn send_compiled_http(
         &self,
         base_url: &str,
@@ -277,6 +284,40 @@ impl HttpTransport for JsCallbackHttpTransport {
     }
 }
 
+fn callback_auth_scope(
+    request: &CompiledRequest,
+    auth: Option<&ResolvedAuth>,
+) -> std::result::Result<plasm_runtime::http_transport::TransportAuthScope, RuntimeError> {
+    use plasm_runtime::http_transport::TransportAuthScope;
+    // The callback contract preserves explicit Authorization; the default host injects
+    // only when absent. Query auth is not carried by this bridge, so cannot be attested.
+    if auth.is_some_and(|auth| !auth.query_params.is_empty()) {
+        return Ok(TransportAuthScope::Opaque);
+    }
+    let mut headers: std::collections::HashMap<_, _> = compiled_template_headers(request, auth)?
+        .into_iter()
+        .filter(|(name, value)| !name.trim().is_empty() && !value.trim().is_empty())
+        .collect();
+    if let Some(auth) = auth {
+        for (name, value) in &auth.headers {
+            if !name.trim().is_empty() && !value.trim().is_empty() {
+                headers.insert(name.clone(), value.clone());
+            }
+        }
+    }
+    let authorization: Vec<_> = headers
+        .iter()
+        .filter(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+        .collect();
+    Ok(
+        if authorization.len() == 1 && !authorization[0].1.trim().is_empty() {
+            TransportAuthScope::EngineVisible
+        } else {
+            TransportAuthScope::Opaque
+        },
+    )
+}
+
 impl JsCallbackHttpTransport {
     async fn invoke_and_parse(
         &self,
@@ -313,6 +354,35 @@ mod tests {
             multipart: None,
             headers: None,
         }
+    }
+
+    #[test]
+    fn callback_identity_requires_final_visible_authorization() {
+        use plasm_runtime::auth::ResolvedAuth;
+        use plasm_runtime::http_transport::TransportAuthScope;
+        let request = base_request(HttpBodyFormat::Json, None);
+        assert!(matches!(
+            super::callback_auth_scope(&request, None).unwrap(),
+            TransportAuthScope::Opaque
+        ));
+        let mut auth = ResolvedAuth {
+            headers: vec![("Authorization".into(), "Bearer visible".into())],
+            query_params: vec![],
+        };
+        assert!(matches!(
+            super::callback_auth_scope(&request, Some(&auth)).unwrap(),
+            TransportAuthScope::EngineVisible
+        ));
+        auth.headers = vec![("X-Api-Key".into(), "visible".into())];
+        assert!(matches!(
+            super::callback_auth_scope(&request, Some(&auth)).unwrap(),
+            TransportAuthScope::Opaque
+        ));
+        auth.query_params.push(("token".into(), "visible".into()));
+        assert!(matches!(
+            super::callback_auth_scope(&request, Some(&auth)).unwrap(),
+            TransportAuthScope::Opaque
+        ));
     }
 
     #[test]

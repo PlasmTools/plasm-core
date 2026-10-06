@@ -381,7 +381,8 @@ impl ExecutionEngine {
                 }
             }
         }
-        let fingerprint = crate::RequestFingerprint::from_operation(compiled);
+        let fingerprint = super::request_identity::response_fingerprint()
+            .unwrap_or_else(|| crate::RequestFingerprint::from_operation(compiled));
         let mut consult = CacheTelemetry::default();
         let reuse_recorded = mat
             .as_ref()

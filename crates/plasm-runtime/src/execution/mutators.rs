@@ -355,7 +355,19 @@ impl ExecutionEngine {
         match mode {
             ExecutionMode::Live => {
                 ensure_mutating_operation(&compiled, "invoke")?;
-                let http_res = with_dispatch_entity(
+                let request_identity = if !capability.requires_receiver() {
+                    self.request_identity_for(
+                        cgs,
+                        invoke.target.entity_type.as_str(),
+                        &capability_template,
+                        &compiled,
+                    )
+                    .await?
+                } else {
+                    None
+                };
+                let request_key = request_identity.as_ref().map(|identity| identity.key());
+                let dispatch = with_dispatch_entity(
                     Some(invoke.target.entity_type.as_str()),
                     super::mutation_evidence::with_mutation_identity(
                         OperationIdentity {
@@ -364,8 +376,11 @@ impl ExecutionEngine {
                         },
                         self.execute_operation_full(&compiled),
                     ),
-                )
-                .await;
+                );
+                let http_res = match &request_identity {
+                    Some(identity) => identity.scope(dispatch).await,
+                    None => dispatch.await,
+                };
                 let (response, _) = match http_res {
                     Ok(v) => v,
                     Err(e) => {
@@ -393,7 +408,9 @@ impl ExecutionEngine {
                 // the decoder extracts only the fields present in the response, and
                 // the cache's additive merge preserves existing fields from other
                 // projections (e.g. url, timestamps from page_get).
-                let rid = invoke.target.simple_id().map(|s| s.as_str());
+                let rid = request_key
+                    .as_deref()
+                    .or_else(|| invoke.target.simple_id().map(|s| s.as_str()));
                 let identity_ambient = cml_env_to_identity_strings(&env);
                 let decoder = mutating_capability_response_decoder(
                     invoke.target.entity_type.as_str(),
@@ -410,6 +427,9 @@ impl ExecutionEngine {
                     // access_token) for downstream hole fill / CML env — never swallow decode failure.
                     decode_entities_with_cgs(&decoder, &response, Some(cgs))?
                 };
+                if let Some(identity) = &request_identity {
+                    identity.validate_rows(invoke.target.entity_type.as_str(), decoded.len())?;
+                }
 
                 let timestamp = current_timestamp();
                 let entities: Vec<CachedEntity> = decoded

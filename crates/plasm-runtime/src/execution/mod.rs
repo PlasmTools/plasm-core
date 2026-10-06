@@ -70,6 +70,7 @@ mod pagination_state;
 mod predicates;
 mod projection;
 mod query_stream;
+mod request_identity;
 mod response_prep;
 mod resume;
 mod scoped_fanout;
@@ -83,6 +84,8 @@ mod types;
 mod credential_tests;
 #[cfg(test)]
 mod observation_honesty;
+#[cfg(test)]
+mod paginated_preprocess_tests;
 #[cfg(test)]
 mod tests;
 

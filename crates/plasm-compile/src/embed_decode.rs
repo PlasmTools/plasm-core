@@ -213,7 +213,17 @@ fn decode_entity_fields_and_ref(
         return Err(DecodeError::EntitySourceShape);
     }
 
-    if decoder.id_path.is_some() || decoder.request_identity_override.is_some() {
+    let absent_request_key = entity_def.is_some_and(|entity| {
+        entity.implicit_request_identity
+            && decoder.request_identity_override.is_some()
+            && decoder
+                .id_field
+                .as_ref()
+                .is_some_and(|name| !entity.fields.contains_key(name.as_str()))
+    });
+    if !absent_request_key
+        && (decoder.id_path.is_some() || decoder.request_identity_override.is_some())
+    {
         if let Some(ref name) = decoder.id_field {
             if fields
                 .get(name)

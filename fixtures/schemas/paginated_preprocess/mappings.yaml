@@ -1,0 +1,23 @@
+user_get:
+  method: GET
+  path:
+  - {type: literal, value: users}
+  - {type: var, name: id}
+  response: single
+membership_query:
+  method: GET
+  path: [{type: literal, value: memberships}]
+  response:
+    items: members
+    response_preprocess:
+      kind: string_ids_to_field_objects
+      path: [members]
+      field: id
+  pagination:
+    strategy: cursor
+    location: query
+    response_prefix: [response_metadata]
+    params:
+      cursor: {from_response: next_cursor}
+      limit: {fixed: 1, role: page_size}
+    stop_when: {field: next_cursor, absent: true}

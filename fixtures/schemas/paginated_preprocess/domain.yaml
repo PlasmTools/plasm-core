@@ -1,0 +1,32 @@
+version: 1
+auth:
+  scheme: none
+http_backend: http://fixture.invalid
+entities:
+  User:
+    id_field: id
+    fields:
+      id: {required: true, value_ref: user_id}
+  Membership:
+    id_field: id
+    primary_query: membership_query
+    fields:
+      id: {required: true, value_ref: user_id}
+      user: {required: true, path: id, value_ref: membership_user}
+capabilities:
+  user_get:
+    kind: get
+    entity: User
+    provides: [id]
+  membership_query:
+    kind: query
+    entity: Membership
+    provides: [id, user]
+values:
+  user_id:
+    type: string
+    description: Stable user identity.
+  membership_user:
+    type: entity_ref
+    target: User
+    description: User represented by a membership row.

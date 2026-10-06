@@ -39,6 +39,11 @@ export type HostTransportRequest = {
   requireHostAuth: boolean;
   method: string;
   url: string;
+  /**
+   * Preserve supplied credentials. With Authorization supplied, callback and fetch
+   * MUST NOT add or replace any authentication material, including Cookie,
+   * API-key headers or query credentials. Inject host bearer only when absent.
+   */
   headers?: Record<string, string>;
   body?: string;
   entryId?: string;
@@ -50,6 +55,13 @@ export type HostTransportResponse = {
   nextUrl?: string;
 };
 
+/**
+ * Trusted credential-preserving adapter, including its underlying HTTP client.
+ * Supplied Authorization forbids adding/replacing ANY auth material (Cookie,
+ * API-key headers, query auth included). Hidden-credential adapters must not use
+ * this engine-visible contract; their runtime transport must attest Opaque so
+ * request-owned identity fails with typed RequestIdentityAuthOpaque.
+ */
 export type HostTransportFn = (request: HostTransportRequest) => Promise<HostTransportResponse>;
 
 export interface PlasmEngine {

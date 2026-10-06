@@ -98,11 +98,30 @@ fn append_compiled_query_pairs(url: &mut String, query: Option<&Value>) {
 }
 
 /// Outbound HTTP: compile CML to request, then send and return JSON + optional `Link: rel=next` URL.
+pub enum TransportAuthScope {
+    EngineVisible,
+    Opaque,
+}
+
 #[async_trait]
 pub trait HttpTransport: Send + Sync {
     /// The transport resolves configured host credentials and rejects missing required injection.
     fn injects_host_auth(&self) -> bool {
         false
+    }
+
+    /// Attest that dispatch uses only the supplied auth and compiled request credentials.
+    /// Delegated transports must not claim visibility if they may replace or add credentials.
+    fn auth_scope(
+        &self,
+        _request: &CompiledRequest,
+        _auth: Option<&ResolvedAuth>,
+    ) -> Result<TransportAuthScope, RuntimeError> {
+        Ok(if self.injects_host_auth() {
+            TransportAuthScope::Opaque
+        } else {
+            TransportAuthScope::EngineVisible
+        })
     }
 
     /// Send a compiled HTTP operation against `base_url` (no trailing slash).

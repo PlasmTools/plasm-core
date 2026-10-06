@@ -53,6 +53,33 @@ pub struct MemoryReplayStore {
 }
 
 impl RequestFingerprint {
+    /// Identity for a request-owned observation, including its concrete dispatch scope.
+    /// Unlike replay's transport recipe, this must distinguish origins and credentials.
+    pub(crate) fn for_request_owned_identity(
+        operation: &CompiledOperation,
+        origin: &str,
+        auth: Option<&crate::auth::ResolvedAuth>,
+    ) -> Self {
+        let mut headers = auth.map(|a| a.headers.clone()).unwrap_or_default();
+        for (name, _) in &mut headers {
+            name.make_ascii_lowercase();
+        }
+        headers.sort();
+        let mut query = auth.map(|a| a.query_params.clone()).unwrap_or_default();
+        query.sort();
+        let request_headers = match operation {
+            CompiledOperation::Http(r) | CompiledOperation::GraphQl(r) => &r.headers,
+            _ => &None,
+        };
+        let scope = serde_json::json!({
+            "request": Self::from_operation(operation).to_hex(),
+            "origin": origin,
+            "headers": request_headers,
+            "auth_headers": headers,
+            "auth_query": query,
+        });
+        Self(*blake3::hash(normalize_serde_for_fingerprint(&scope).as_bytes()).as_bytes())
+    }
     /// Create a fingerprint from a compiled HTTP request.
     pub fn from_request(request: &CompiledRequest) -> Self {
         Self::from_operation(&CompiledOperation::Http(request.clone()))

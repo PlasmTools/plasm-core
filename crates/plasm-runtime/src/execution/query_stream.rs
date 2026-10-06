@@ -163,10 +163,15 @@ impl ExecutionEngine {
         let query = query.clone();
         let capability = capability.clone();
         let stream = Box::pin(async_stream::try_stream! {
+            let request_identity = self.request_identity_for(
+                cgs, query.entity.as_str(), &capability_template, &compiled,
+            ).await?;
+            let request_key = request_identity.as_ref().map(|identity| identity.key());
             let cap_name = capability.name.as_str();
             let snapshot = mat.snapshot();
             let mut consult = CacheTelemetry::default();
-            if let Some((membership, cached_entities)) = ExecutionCacheConsult::decide_query(
+            let cached_query = if request_identity.is_none() {
+                ExecutionCacheConsult::decide_query(
                 &query,
                 cap_name,
                 &snapshot,
@@ -174,7 +179,11 @@ impl ExecutionEngine {
                 cgs,
                 &env,
                 &mut consult,
-            ) {
+                )
+            } else {
+                None
+            };
+            if let Some((membership, cached_entities)) = cached_query {
                 let count = cached_entities.len();
                 let mut stats = ExecutionStats::from_telemetry(consult, 0);
                 stats.record_rows_materialized(count);
@@ -188,11 +197,14 @@ impl ExecutionEngine {
             }
             ExecutionCacheConsult::record_query_network(&mut consult);
 
-            let (response, source) = with_dispatch_entity(
+            let dispatch = with_dispatch_entity(
                 Some(query.entity.as_str()),
                 self.execute_with_replay(&compiled, mode, Some(mat)),
-            )
-            .await?;
+            );
+            let (response, source) = match &request_identity {
+                Some(identity) => identity.scope(dispatch).await?,
+                None => dispatch.await?,
+            };
             let (normalized, decoder) = match &capability_template {
                 CapabilityTemplate::Http(cml) | CapabilityTemplate::GraphQl(cml) => Ok((
                     prepare_http_query_response(response, cml, &env),
@@ -201,7 +213,7 @@ impl ExecutionEngine {
                         cgs,
                         Some(capability.name.as_str()),
                         Some(http_collection_source(cml)),
-                        None,
+                        request_key.as_deref(),
                         Some(&cml_env_to_identity_strings(&env)),
                     ),
                 )),
@@ -211,6 +223,9 @@ impl ExecutionEngine {
                 }
             }?;
             let decoded_entities = decode_entities_with_cgs(&decoder, &normalized, Some(cgs))?;
+            if let Some(identity) = &request_identity {
+                identity.validate_rows(query.entity.as_str(), decoded_entities.len())?;
+            }
 
             let response_coverage = QueryResponseCoverage::new(cgs, &capability);
             let hydrate_run = query.hydrate.unwrap_or(self.config.hydrate);
@@ -396,7 +411,14 @@ impl ExecutionEngine {
 
 
                 let normalized = normalize_collection_response(response, wrap_key.as_str());
-                let decoded = decode_entities_with_cgs(&decoder, &normalized, Some(cgs))?;
+                // Decode the catalog's semantic projection, but retain the native
+                // page envelope for the pagination driver's cursor observations.
+                let decode_response = match &capability_template {
+                    CapabilityTemplate::Http(cml) | CapabilityTemplate::GraphQl(cml) =>
+                        prepare_http_query_response(normalized.clone(), cml, &env),
+                    _ => normalized.clone(),
+                };
+                let decoded = decode_entities_with_cgs(&decoder, &decode_response, Some(cgs))?;
                 let full_page_len = decoded.len();
                 let last_id = decoded.last().map(|row| row.reference.primary_slot_str());
                 let timestamp = current_timestamp();

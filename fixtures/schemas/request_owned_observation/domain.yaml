@@ -1,0 +1,41 @@
+version: 1
+http_backend: https://fixture.test
+auth:
+  scheme: none
+entities:
+  Observation:
+    abstract: true
+    implicit_request_identity: true
+    id_field: request_key
+    fields:
+      amount:
+        required: true
+        value_ref: amount
+capabilities:
+  observation_query:
+    kind: query
+    entity: Observation
+    provides: [amount]
+    selection:
+    - name: selector
+      value_ref: selector
+      required: true
+      selection_effect: filter
+  observation_quote:
+    kind: action
+    receiver: {kind: none}
+    entity: Observation
+    provides: [amount]
+    payload:
+      input_type:
+        type: object
+        fields:
+        - name: selector
+          value_ref: selector
+          required: true
+values:
+  amount:
+    type: money
+    currency: USD
+  selector:
+    type: string
