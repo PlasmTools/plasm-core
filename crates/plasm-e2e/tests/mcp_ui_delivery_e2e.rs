@@ -1,33 +1,65 @@
 //! SEP-1865 MCP UI delivery: triple-lane tool results survive Cursor-like `_meta` strip.
 
-#[path = "common/hermit_workflow_matrix.rs"]
-mod hermit_workflow_matrix;
+#[path = "common/hermit_lang_matrix.rs"]
+mod hermit_lang_matrix;
 
 #[path = "common/mcp_sse.rs"]
 mod mcp_sse;
 
-#[path = "common/workflow_matrix.rs"]
-mod workflow_matrix;
+#[path = "common/language_matrix.rs"]
+mod language_matrix;
 
+use language_matrix::{load_language_matrix_cgs, matrix_host_state, MATRIX_ENTRY_ID};
 use plasm_agent::http::{serve_discovery_execute_and_mcp_unified, DiscoveryHttpServeOpts};
+use plasm_agent::http_execute::{apply_capability_seeds, CapabilitySeed};
+use plasm_agent::mcp_logical_ref::format_logical_session_wire_ref;
 use plasm_runtime::{ExecutionConfig, ExecutionEngine};
 use reqwest::StatusCode;
 use serde_json::{json, Value};
 use std::time::Duration;
 use tokio::sync::OnceCell;
-use workflow_matrix::{load_workflow_matrix_cgs, workflow_federated_host_state, CATALOG_A};
 
-async fn spawn_server() -> (String, tokio::task::JoinHandle<()>) {
-    let hermit = hermit_workflow_matrix::workflow_matrix_hermit_base_url()
+async fn spawn_server() -> (String, String, tokio::task::JoinHandle<()>) {
+    let hermit = hermit_lang_matrix::language_matrix_hermit_base_url()
         .await
         .clone();
-    let cgs = load_workflow_matrix_cgs();
+    let cgs = load_language_matrix_cgs();
     let engine = ExecutionEngine::new(ExecutionConfig {
         base_url: Some(hermit),
         ..Default::default()
     })
     .expect("engine");
-    let st = workflow_federated_host_state(engine, cgs);
+    let st = matrix_host_state(engine, cgs);
+    // This fixture exercises UI delivery, not semantic intent discovery.
+    // Mint and bind a real anonymous host session before using the MCP transport.
+    let logical = st
+        .logical_sessions
+        .mint_session("", "list matrix items")
+        .await
+        .expect("mint UI fixture logical session");
+    let opened = Box::pin(apply_capability_seeds(
+        &st,
+        None,
+        None,
+        vec![CapabilitySeed {
+            entry_id: MATRIX_ENTRY_ID.into(),
+            entity: "LangItem".into(),
+        }],
+        None,
+        None,
+        Some(logical.logical_session_id.as_uuid()),
+        &logical.accumulated_intent,
+    ))
+    .await
+    .expect("open UI fixture execute session");
+    st.logical_execute_bindings
+        .insert(
+            logical.logical_session_id.as_uuid(),
+            opened.prompt_hash,
+            opened.session_id,
+        )
+        .await;
+    let logical_session_ref = format_logical_session_wire_ref(logical.logical_session_id);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind");
@@ -44,16 +76,16 @@ async fn spawn_server() -> (String, tokio::task::JoinHandle<()>) {
         .ok();
     });
     tokio::time::sleep(Duration::from_millis(80)).await;
-    (base, handle)
+    (base, logical_session_ref, handle)
 }
 
-static SERVER: OnceCell<String> = OnceCell::const_new();
+static SERVER: OnceCell<(String, String)> = OnceCell::const_new();
 
-async fn base_url() -> String {
+async fn server_context() -> (String, String) {
     SERVER
         .get_or_init(|| async {
-            let (base, _handle) = spawn_server().await;
-            base
+            let (base, logical_session_ref, _handle) = Box::pin(spawn_server()).await;
+            (base, logical_session_ref)
         })
         .await
         .clone()
@@ -63,6 +95,19 @@ fn strip_meta_like_cursor(body: &mut Value) {
     if let Some(obj) = body.as_object_mut() {
         obj.remove("_meta");
     }
+}
+
+fn receipt_token<'a>(body: &'a Value, key: &str) -> &'a str {
+    let text = body
+        .pointer("/mcp_result/content/0/text")
+        .and_then(Value::as_str)
+        .expect("agent content receipt");
+    text.lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once('\t')?;
+            (name == key).then_some(value)
+        })
+        .unwrap_or_else(|| panic!("missing receipt token {key}: {text}"))
 }
 
 fn assert_triple_lane_plan(body: &Value) {
@@ -106,7 +151,7 @@ fn mcp_ui_delivery_e2e() {
 }
 
 async fn mcp_ui_delivery_e2e_async() {
-    let base = base_url().await;
+    let (base, ls_ref) = server_context().await;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()
@@ -121,8 +166,10 @@ async fn mcp_ui_delivery_e2e_async() {
             "id": 1,
             "method": "initialize",
             "params": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
+                "protocolVersion": "2025-11-25",
+                "capabilities": {"extensions": {"io.modelcontextprotocol/ui": {
+                    "mimeTypes": ["text/html;profile=mcp-app"]
+                }}},
                 "clientInfo": { "name": "mcp-ui-delivery-e2e", "version": "0.1.0" }
             }
         }))
@@ -137,25 +184,6 @@ async fn mcp_ui_delivery_e2e_async() {
         .expect("mcp session")
         .to_string();
 
-    let ctx = mcp_sse::mcp_tool_meta(
-        &client,
-        &base,
-        &mcp_session,
-        "plasm_context",
-        json!({
-            "session_mode": "new",
-            "intent": "list work items",
-            "seeds": [{ "api": CATALOG_A, "entity": "WorkItem" }]
-        }),
-        10,
-    )
-    .await;
-    let ls_ref = ctx
-        .pointer("/structuredContent/plasm/logical_session_ref")
-        .or_else(|| ctx.pointer("/_meta/plasm/logical_session_ref"))
-        .and_then(|v| v.as_str())
-        .expect("logical_session_ref");
-
     let plan = mcp_sse::mcp_tool_meta(
         &client,
         &base,
@@ -163,7 +191,7 @@ async fn mcp_ui_delivery_e2e_async() {
         "plasm",
         json!({
             "logical_session_ref": ls_ref,
-            "program": "items = e1\nitems"
+            "program": "class ReadItems(Program):\n    def build(self):\n        return e1.query().take(2)\n"
         }),
         11,
     )
@@ -209,10 +237,7 @@ async fn mcp_ui_delivery_e2e_async() {
         assert!(archive.get("comp").is_some(), "plan archive comp");
     }
 
-    let run_ref = plan
-        .pointer("/structuredContent/plasm/run_ref")
-        .and_then(|v| v.as_str())
-        .expect("run_ref");
+    let run_ref = receipt_token(&plan, "run_ref");
     let run = mcp_sse::mcp_tool_meta(
         &client,
         &base,

@@ -4,6 +4,8 @@
 use std::time::Duration;
 
 use plasm_agent::http::{serve_discovery_execute_and_mcp_unified, DiscoveryHttpServeOpts};
+use plasm_agent::http_execute::{apply_capability_seeds, CapabilitySeed};
+use plasm_agent::server_state::PlasmHostState;
 use plasm_runtime::{ExecutionConfig, ExecutionEngine};
 use reqwest::header::{HeaderMap, LOCATION};
 use reqwest::StatusCode;
@@ -16,23 +18,31 @@ use super::language_matrix::{self, MATRIX_ENTRY_ID};
 
 const MCP_PROTOCOL: &str = "2025-11-25";
 /// Bare list queries are host-page-bounded (`ok`); aggregate still requires plan review.
-pub const REVIEW_GATE_LANG_ITEM: &str = "LangItem.aggregate(n=count)";
+pub const REVIEW_GATE_LANG_ITEM: &str = "class CountItems(Program):\n    def build(self):\n        return e1.query().aggregate(n=agg.count())\n";
 pub const UNBOUNDED_LANG_ITEM: &str = REVIEW_GATE_LANG_ITEM;
-pub const BOUNDED_LANG_ITEM: &str = "LangItem.limit(2)";
+pub const BOUNDED_LANG_ITEM: &str =
+    "class ReadItems(Program):\n    def build(self):\n        return e1.query().take(2)\n";
 /// Paginated list — slow enough to observe Running/cancel without unbounded review fanout.
-pub const SLOW_LANG_ITEM: &str = "LangItem.page_size(1).limit(10)";
+pub const SLOW_LANG_ITEM: &str = "class ReadPagedItems(Program):\n    def build(self):\n        return e1.query().page_size(1).take(10)\n";
 
-async fn spawn_unified_server() -> (String, JoinHandle<()>) {
+async fn spawn_unified_server() -> (String, JoinHandle<()>, PlasmHostState) {
     let hermit = hermit_lang_matrix::language_matrix_hermit_base_url()
         .await
         .clone();
+    spawn_unified_server_with_backend(hermit).await
+}
+
+async fn spawn_unified_server_with_backend(
+    backend: String,
+) -> (String, JoinHandle<()>, PlasmHostState) {
     let cgs = language_matrix::load_language_matrix_cgs();
     let engine = ExecutionEngine::new(ExecutionConfig {
-        base_url: Some(hermit),
+        base_url: Some(backend),
         ..Default::default()
     })
     .expect("execution engine");
     let st = language_matrix::matrix_host_state(engine, cgs);
+    let fixture_host = st.clone();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind unified server");
@@ -49,25 +59,27 @@ async fn spawn_unified_server() -> (String, JoinHandle<()>) {
         .ok();
     });
     tokio::time::sleep(Duration::from_millis(80)).await;
-    (base, handle)
+    (base, handle, fixture_host)
 }
 
-static SHARED_SERVER: OnceCell<tokio::sync::Mutex<Option<(String, JoinHandle<()>)>>> =
-    OnceCell::const_new();
+static SHARED_SERVER: OnceCell<
+    tokio::sync::Mutex<Option<(String, JoinHandle<()>, PlasmHostState)>>,
+> = OnceCell::const_new();
 
-async fn shared_server_base_url() -> String {
+async fn shared_server() -> (String, PlasmHostState) {
     let lock = SHARED_SERVER
         .get_or_init(|| async { tokio::sync::Mutex::new(None) })
         .await;
     let mut guard = lock.lock().await;
     let needs_spawn = match guard.as_ref() {
         None => true,
-        Some((_, handle)) => handle.is_finished(),
+        Some((_, handle, _)) => handle.is_finished(),
     };
     if needs_spawn {
         *guard = Some(spawn_unified_server().await);
     }
-    guard.as_ref().expect("shared server slot").0.clone()
+    let (base, _, host) = guard.as_ref().expect("shared server slot");
+    (base.clone(), host.clone())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -107,7 +119,16 @@ pub struct LongOpFixture {
 
 impl LongOpFixture {
     pub async fn setup() -> Self {
-        let base_url = shared_server_base_url().await;
+        let (base_url, host) = shared_server().await;
+        Self::setup_on_host(base_url, host).await
+    }
+
+    pub async fn setup_with_backend(backend: String) -> Self {
+        let (base_url, _handle, host) = spawn_unified_server_with_backend(backend).await;
+        Box::pin(Self::setup_on_host(base_url, host)).await
+    }
+
+    async fn setup_on_host(base_url: String, host: PlasmHostState) -> Self {
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .build()
@@ -116,7 +137,7 @@ impl LongOpFixture {
             .await
             .expect("http open session");
         let mcp_transport_id = mcp_initialize(&client, &base_url).await;
-        let logical_session_ref = mcp_plasm_context(&client, &base_url, &mcp_transport_id).await;
+        let logical_session_ref = Box::pin(fixture_logical_session(&host)).await;
         Self {
             base_url,
             client,
@@ -188,27 +209,6 @@ impl LongOpFixture {
                 .await
             }
             Surface::Mcp => {
-                if program.starts_with("wait(") || program.starts_with("cancel(") {
-                    return Ok(mcp_tool_call(
-                        &self.client,
-                        &self.base_url,
-                        &self.mcp_transport_id,
-                        self.next_rpc_id(),
-                        "plasm",
-                        json!({
-                            "logical_session_ref": self.logical_session_ref,
-                            "program": program,
-                        }),
-                    )
-                    .await)
-                    .and_then(|body| {
-                        if let Some(err) = body.get("_run_error").and_then(|v| v.as_str()) {
-                            Err(err.to_string())
-                        } else {
-                            Ok(body)
-                        }
-                    });
-                }
                 let run_ref = if let Some(pc) = opts.run_ref {
                     pc
                 } else if opts.force {
@@ -227,8 +227,7 @@ impl LongOpFixture {
                     if let Some(err) = dry.get("_run_error").and_then(|v| v.as_str()) {
                         return Err(err.to_string());
                     }
-                    run_ref_from_meta(&dry)
-                        .ok_or_else(|| "missing run_ref from MCP plasm dry-run".to_string())?
+                    mcp_receipt_token(&dry, "run_ref").to_string()
                 } else {
                     return Ok(mcp_tool_call(
                         &self.client,
@@ -276,10 +275,6 @@ impl LongOpFixture {
     pub async fn cleanup(&self) {
         let _ = self
             .run_program(Surface::Http, "cancel(o1)", RunOpts::default())
-            .await;
-        let mcp_cancel = format!("cancel({}_o1)", self.logical_session_ref);
-        let _ = self
-            .run_program(Surface::Mcp, &mcp_cancel, RunOpts::default())
             .await;
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
@@ -422,29 +417,35 @@ pub async fn mcp_initialize(client: &reqwest::Client, base_url: &str) -> String 
     sid
 }
 
-pub async fn mcp_plasm_context(
-    client: &reqwest::Client,
-    base_url: &str,
-    mcp_session_id: &str,
-) -> String {
-    let body = mcp_tool_call(
-        client,
-        base_url,
-        mcp_session_id,
-        4,
-        "plasm_context",
-        json!({
-            "session_mode": "new",
-            "intent": "long-operation e2e LangItem reads",
-            "seeds": [{ "api": MATRIX_ENTRY_ID, "entity": "LangItem" }],
-        }),
-    )
+async fn fixture_logical_session(host: &PlasmHostState) -> String {
+    // Discovery is not under test: seed the abstract fixture through the normal
+    // host session APIs, then exercise admission and execution over real MCP.
+    let scope = plasm_agent::incoming_auth::tenant_scope(None);
+    let record = host
+        .logical_sessions
+        .mint_session(&scope, "long-operation e2e LangItem reads")
+        .await
+        .expect("mint fixture logical session");
+    let logical_id = record.logical_session_id.as_uuid();
+    let opened = Box::pin(apply_capability_seeds(
+        host,
+        None,
+        None,
+        vec![CapabilitySeed {
+            entry_id: MATRIX_ENTRY_ID.into(),
+            entity: "LangItem".into(),
+        }],
+        None,
+        None,
+        Some(logical_id),
+        &record.accumulated_intent,
+    ))
     .await;
-    let meta = plasm_meta(&body);
-    meta.get("logical_session_ref")
-        .and_then(|v| v.as_str())
-        .expect("logical_session_ref from plasm_context")
-        .to_string()
+    let opened = opened.expect("seed fixture execute session");
+    host.logical_execute_bindings
+        .insert(logical_id, opened.prompt_hash, opened.session_id)
+        .await;
+    plasm_agent::mcp_logical_ref::format_logical_session_wire_ref(record.logical_session_id)
 }
 
 async fn mcp_tool_call(
@@ -546,6 +547,19 @@ fn normalize_mcp_tool_result(result: Value) -> Value {
         "_meta": meta,
         "mcp_result": result,
     })
+}
+
+pub fn mcp_receipt_token<'a>(body: &'a Value, key: &str) -> &'a str {
+    let text = body
+        .pointer("/mcp_result/content/0/text")
+        .and_then(Value::as_str)
+        .expect("MCP content receipt");
+    text.lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once('\t')?;
+            (name == key).then_some(value)
+        })
+        .unwrap_or_else(|| panic!("missing {key} in MCP receipt: {text}"))
 }
 
 pub fn plasm_meta(body: &Value) -> &Value {
@@ -813,28 +827,49 @@ pub async fn mcp_collect_op_notifications(
 }
 
 pub fn assert_mcp_op_notification_params(params: &Value) {
-    assert!(
-        params.get("line").and_then(|v| v.as_str()).is_some(),
-        "notification params.line required: {params}"
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ProgressNotification {
+        line: String,
+        n: u64,
+        c: Option<plasm_core::PlanCommitRef>,
+        occurrence_snapshot: bool,
+        #[serde(default)]
+        occurrences: Vec<plasm_agent::occurrence_progress::OccurrenceProgress>,
+        calls: Option<u64>,
+        last_ms: Option<u64>,
+        elapsed_ms: Option<u64>,
+        rows: Option<u64>,
+    }
+    let ProgressNotification {
+        line,
+        n,
+        c,
+        occurrence_snapshot,
+        occurrences,
+        calls,
+        last_ms,
+        elapsed_ms,
+        rows,
+    } = serde_json::from_value(params.clone()).expect("typed MCP operation progress notification");
+    assert!(n > 0, "notification sequence must be positive");
+    if let Some(commit) = c {
+        assert!(
+            commit.as_str().starts_with("pc"),
+            "typed plan commit reference"
+        );
+    }
+    // Deserialization checks the current occurrence and telemetry contracts,
+    // including integer counters and concrete occurrence phases/addresses.
+    let _ = (
+        occurrence_snapshot,
+        occurrences,
+        calls,
+        last_ms,
+        elapsed_ms,
+        rows,
     );
-    assert!(
-        params.get("n").is_some(),
-        "notification params.n required: {params}"
-    );
-    let extra: Vec<_> = params
-        .as_object()
-        .map(|m| {
-            m.keys()
-                .filter(|k| *k != "line" && *k != "n" && *k != "c")
-                .cloned()
-                .collect()
-        })
-        .unwrap_or_default();
-    assert!(
-        extra.is_empty(),
-        "notification params should be line+n (+ optional c): {params}"
-    );
-    assert_plain_op_wire_line(params.get("line").and_then(|v| v.as_str()).unwrap());
+    assert_plain_op_wire_line(&line);
 }
 
 pub fn assert_terminal_success(body: &Value) {
@@ -876,9 +911,7 @@ pub fn assert_cancelled(body: &Value) {
 
 pub fn assert_review_gate_error(err: &str) {
     assert!(
-        err.contains("plan_requires_review")
-            || err.contains("run_ref")
-            || err.contains("call `plasm` first"),
+        err.contains("plan_requires_review"),
         "expected plan review gate error, got: {err}"
     );
 }

@@ -15,14 +15,31 @@ use std::time::Duration;
 
 use long_operation::{
     assert_async_accept, assert_cancelled, assert_review_gate_error, assert_running_wait,
-    assert_terminal_success, cancel_program, continuity_phase, dry_verdict,
+    assert_terminal_success, cancel_program, continuity_phase, dry_verdict, mcp_receipt_token,
     operation_handle_from_accept, run_ref_from_meta, wait_program, LongOpFixture, RunOpts, Surface,
-    BOUNDED_LANG_ITEM, SLOW_LANG_ITEM, UNBOUNDED_LANG_ITEM,
 };
+
+const UNBOUNDED_LANG_ITEM: &str = "class CountItems(Program):\n    def build(self):\n        return e1.query().aggregate(n=agg.count())\n";
+const BOUNDED_LANG_ITEM: &str =
+    "class ReadItems(Program):\n    def build(self):\n        return e1.query().take(2)\n";
+const SLOW_LANG_ITEM: &str = "class ReadPagedItems(Program):\n    def build(self):\n        return e1.query().page_size(1).take(10)\n";
 
 /// HTTP execute owns async `+ oN` accept; MCP `plasm_run` awaits inline after `plasm` + `run_ref`.
 const DUAL_SURFACES: [Surface; 2] = [Surface::Http, Surface::Mcp];
 const HTTP_ASYNC_SURFACES: [Surface; 1] = [Surface::Http];
+
+fn plan_receipt(body: &serde_json::Value, surface: Surface) -> (String, String) {
+    match surface {
+        Surface::Http => (
+            run_ref_from_meta(body).expect("HTTP run_ref"),
+            dry_verdict(body).expect("HTTP dry verdict").to_string(),
+        ),
+        Surface::Mcp => (
+            mcp_receipt_token(body, "run_ref").to_string(),
+            mcp_receipt_token(body, "dry_verdict").to_string(),
+        ),
+    }
+}
 
 async fn accept_async(
     fixture: &LongOpFixture,
@@ -77,9 +94,9 @@ async fn long_operation_dual_surface_e2e_async() {
 
     for surface in DUAL_SURFACES {
         let body = fixture.plan_dry(surface, UNBOUNDED_LANG_ITEM).await;
-        let pc = run_ref_from_meta(&body).expect("run_ref minted");
+        let (pc, verdict) = plan_receipt(&body, surface);
         assert!(pc.starts_with("pc"), "expected pcN ref, got {pc}");
-        assert_eq!(dry_verdict(&body), Some("review"));
+        assert_eq!(verdict, "review");
     }
 
     for surface in DUAL_SURFACES {
@@ -93,7 +110,13 @@ async fn long_operation_dual_surface_e2e_async() {
             Ok(Ok(_)) => panic!("expected review gate error on {surface:?}"),
             Err(_) => panic!("review gate should return quickly"),
         };
-        assert_review_gate_error(&err);
+        match surface {
+            Surface::Mcp => assert!(
+                err.contains("run_ref"),
+                "MCP must reject execution without a reviewed receipt: {err}"
+            ),
+            _ => assert_review_gate_error(&err),
+        }
     }
 
     for surface in HTTP_ASYNC_SURFACES {
@@ -243,19 +266,14 @@ async fn long_operation_dual_surface_e2e_async() {
         fixture.cleanup().await;
     }
 
-    for surface in DUAL_SURFACES {
-        let stale = match surface {
-            Surface::Http => "wait(o999)".to_string(),
-            Surface::Mcp => format!("wait({}_o999)", fixture.logical_session_ref),
-        };
+    for surface in HTTP_ASYNC_SURFACES {
+        let stale = "wait(o999)";
         let err = fixture
-            .run_program(surface, &stale, RunOpts::default())
+            .run_program(surface, stale, RunOpts::default())
             .await
             .expect_err("stale handle");
         assert!(
-            err.contains("unknown operation handle")
-                || err.contains("stale")
-                || err.contains("run_ref"),
+            err.contains("unknown_operation_handle"),
             "expected stale handle error, got: {err}"
         );
     }
