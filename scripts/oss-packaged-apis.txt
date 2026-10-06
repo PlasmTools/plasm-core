@@ -4,7 +4,6 @@
 
 clickup
 cloudflare
-discord
 fibery
 github
 gitlab

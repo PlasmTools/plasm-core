@@ -1,4 +1,4 @@
-version: 9
+version: 10
 http_backend: https://discord.com/api/v10
 data_classes:
   untrusted:
@@ -224,6 +224,9 @@ entities:
           param: channel_id
   Message:
     id_field: id
+    key_vars:
+    - channel_id
+    - id
     description: A Discord message for get, post, or update.
     discovery:
       names:
@@ -234,8 +237,8 @@ entities:
         required: true
         value_ref: nv_wire_str_short
       channel_id:
-        required: false
-        value_ref: nv_message_channel_id
+        required: true
+        value_ref: nv_wire_str_short
       author_id:
         required: false
         value_ref: nv_message_author_id
@@ -289,10 +292,11 @@ entities:
     fields:
       guild_id:
         required: true
-        value_ref: nv_guild_member_guild_id
+        value_ref: nv_wire_str_short
       user_id:
         required: true
-        value_ref: nv_guild_member_user_id
+        path: user.id
+        value_ref: nv_wire_str_short
       nick:
         required: false
         value_ref: nv_wire_str_short
@@ -322,7 +326,7 @@ entities:
         value_ref: nv_wire_str_short
       guild_id:
         required: true
-        value_ref: nv_role_guild_id
+        value_ref: nv_wire_str_short
       name:
         required: false
         value_ref: nv_wire_str_short
@@ -351,10 +355,11 @@ entities:
     fields:
       guild_id:
         required: true
-        value_ref: nv_ban_guild_id
+        value_ref: nv_wire_str_short
       user_id:
         required: true
-        value_ref: nv_ban_user_id
+        path: user.id
+        value_ref: nv_wire_str_short
       reason:
         required: false
         value_ref: nv_wire_str_short
@@ -372,7 +377,7 @@ entities:
         value_ref: nv_wire_str_short
       channel_id:
         required: true
-        value_ref: nv_channel_permission_overwrite_channel_id
+        value_ref: nv_wire_str_short
       type:
         required: false
         value_ref: nv_wire_int
@@ -437,7 +442,7 @@ entities:
         value_ref: nv_wire_str_short
       application_id:
         required: true
-        value_ref: nv_application_command_application_id
+        value_ref: nv_wire_str_short
       name:
         required: false
         value_ref: nv_wire_str_short
@@ -465,10 +470,10 @@ entities:
         value_ref: nv_wire_str_short
       application_id:
         required: true
-        value_ref: nv_guild_application_command_application_id
+        value_ref: nv_wire_str_short
       guild_id:
         required: true
-        value_ref: nv_guild_application_command_guild_id
+        value_ref: nv_wire_str_short
       name:
         required: false
         value_ref: nv_wire_str_short
@@ -495,7 +500,7 @@ entities:
         value_ref: nv_wire_str_short
       application_id:
         required: true
-        value_ref: nv_entitlement_application_id
+        value_ref: nv_wire_str_short
       sku_id:
         required: false
         value_ref: nv_wire_str_short
@@ -667,7 +672,7 @@ entities:
         value_ref: nv_wire_str_short
       guild_id:
         required: true
-        value_ref: nv_scheduled_event_guild_id
+        value_ref: nv_wire_str_short
       channel_id:
         required: false
         value_ref: nv_scheduled_event_channel_id
@@ -703,10 +708,11 @@ entities:
     fields:
       id:
         required: true
+        path: sound_id
         value_ref: nv_wire_str_short
       guild_id:
         required: true
-        value_ref: nv_soundboard_sound_guild_id
+        value_ref: nv_wire_str_short
       name:
         required: false
         value_ref: nv_wire_str_short
@@ -751,7 +757,8 @@ entities:
         value_ref: nv_wire_str_short
       guild_id:
         required: true
-        value_ref: nv_guild_template_guild_id
+        path: source_guild_id
+        value_ref: nv_wire_str_short
       name:
         required: false
         value_ref: nv_wire_str_short
@@ -778,7 +785,7 @@ entities:
         value_ref: nv_wire_str_short
       guild_id:
         required: true
-        value_ref: nv_auto_moderation_rule_guild_id
+        value_ref: nv_wire_str_short
       name:
         required: false
         value_ref: nv_wire_str_short
@@ -804,7 +811,7 @@ entities:
         value_ref: nv_wire_str_short
       guild_id:
         required: true
-        value_ref: nv_guild_integration_guild_id
+        value_ref: nv_wire_str_short
       name:
         required: false
         value_ref: nv_wire_str_short
@@ -1076,6 +1083,10 @@ capabilities:
   message_create:
     kind: create
     entity: Message
+    scope:
+    - name: channel_id
+      value_ref: nv_message_in_channel_channel_id
+      required: true
     description: Send a message to a Discord channel.
     discovery:
       operation_terms:
@@ -1186,10 +1197,6 @@ capabilities:
       selection_effect: other
       value_ref: nv_wire_str_short
       required: true
-    - name: content
-      selection_effect: filter
-      value_ref: nv_wire_str_short
-      required: false
     - name: author_id
       selection_effect: filter
       value_ref: nv_message_search_in_guild_author_id
@@ -1349,6 +1356,10 @@ capabilities:
         type: object
         additional_fields: true
         fields: []
+    scope:
+    - name: guild_id
+      value_ref: nv_role_create_guild_id
+      required: true
   role_update:
     kind: update
     entity: Role
@@ -1479,6 +1490,10 @@ capabilities:
         type: object
         additional_fields: true
         fields: []
+    scope:
+    - name: application_id
+      value_ref: nv_application_command_create_application_id
+      required: true
   application_command_update:
     kind: update
     entity: ApplicationCommand
@@ -1532,6 +1547,13 @@ capabilities:
         type: object
         additional_fields: true
         fields: []
+    scope:
+    - name: application_id
+      value_ref: nv_guild_application_command_create_application_id
+      required: true
+    - name: guild_id
+      value_ref: nv_guild_application_command_create_guild_id
+      required: true
   guild_application_command_update:
     kind: update
     entity: GuildApplicationCommand
@@ -1596,6 +1618,10 @@ capabilities:
         type: object
         additional_fields: true
         fields: []
+    scope:
+    - name: application_id
+      value_ref: nv_entitlement_create_application_id
+      required: true
   entitlement_delete:
     kind: delete
     entity: Entitlement
@@ -1641,6 +1667,10 @@ capabilities:
   channel_webhook_create:
     kind: create
     entity: Webhook
+    scope:
+    - name: channel_id
+      value_ref: nv_channel_webhook_create_channel_id
+      required: true
     payload:
       input_type:
         type: object
@@ -1663,6 +1693,10 @@ capabilities:
   channel_invite_create:
     kind: create
     entity: Invite
+    scope:
+    - name: channel_id
+      value_ref: nv_channel_invite_list_channel_id
+      required: true
     payload:
       input_type:
         type: object
@@ -1680,7 +1714,7 @@ capabilities:
     - name: channel_id
       selection_effect: filter
       value_ref: nv_channel_invite_list_channel_id
-      required: true
+      required: false
     - name: guild_id
       selection_effect: filter
       value_ref: nv_guild_invite_list_guild_id
@@ -1746,6 +1780,10 @@ capabilities:
         type: object
         additional_fields: true
         fields: []
+    scope:
+    - name: guild_id
+      value_ref: nv_scheduled_event_create_guild_id
+      required: true
   scheduled_event_update:
     kind: update
     entity: ScheduledEvent
@@ -1783,6 +1821,10 @@ capabilities:
         type: object
         additional_fields: true
         fields: []
+    scope:
+    - name: guild_id
+      value_ref: nv_soundboard_sound_create_guild_id
+      required: true
   soundboard_sound_update:
     kind: update
     entity: SoundboardSound
@@ -1829,6 +1871,10 @@ capabilities:
         type: object
         additional_fields: true
         fields: []
+    scope:
+    - name: guild_id
+      value_ref: nv_guild_template_create_guild_id
+      required: true
   template_fetch_by_code:
     kind: action
     entity: PublicGuildTemplate
@@ -1852,11 +1898,6 @@ capabilities:
   guild_template_sync:
     kind: update
     entity: GuildTemplate
-    payload:
-      input_type:
-        type: object
-        additional_fields: true
-        fields: []
   guild_from_template_create:
     kind: create
     entity: Guild
@@ -1865,6 +1906,10 @@ capabilities:
         type: object
         additional_fields: true
         fields: []
+    scope:
+    - name: code
+      value_ref: nv_guild_from_template_create_code
+      required: true
   auto_moderation_rule_list:
     kind: query
     entity: AutoModerationRule
@@ -1884,6 +1929,10 @@ capabilities:
         type: object
         additional_fields: true
         fields: []
+    scope:
+    - name: guild_id
+      value_ref: nv_auto_moderation_rule_create_guild_id
+      required: true
   auto_moderation_rule_update:
     kind: update
     entity: AutoModerationRule
@@ -1975,6 +2024,10 @@ capabilities:
         type: object
         additional_fields: true
         fields: []
+    scope:
+    - name: channel_id
+      value_ref: nv_channel_thread_create_channel_id
+      required: true
   guild_emoji_list:
     kind: query
     entity: CustomEmoji
@@ -2011,6 +2064,10 @@ capabilities:
         type: object
         additional_fields: true
         fields: []
+    scope:
+    - name: guild_id
+      value_ref: nv_guild_emoji_create_guild_id
+      required: true
   guild_emoji_update:
     kind: update
     entity: CustomEmoji
@@ -2019,6 +2076,10 @@ capabilities:
         type: object
         additional_fields: true
         fields: []
+    scope:
+    - name: guild_id
+      value_ref: nv_guild_emoji_update_guild_id
+      required: true
   guild_emoji_delete:
     kind: delete
     entity: CustomEmoji
@@ -2045,16 +2106,33 @@ capabilities:
     payload:
       input_type:
         type: object
-        additional_fields: true
-        fields: []
+        additional_fields: false
+        fields:
+        - name: name
+          required: true
+          value_ref: nv_application_emoji_create_body_name
+        - name: image
+          required: true
+          value_ref: nv_application_emoji_create_body_image
+    scope:
+    - name: application_id
+      value_ref: nv_application_emoji_create_application_id
+      required: true
   application_emoji_update:
     kind: update
     entity: CustomEmoji
     payload:
       input_type:
         type: object
-        additional_fields: true
-        fields: []
+        additional_fields: false
+        fields:
+        - name: name
+          required: false
+          value_ref: nv_application_emoji_update_body_name
+    scope:
+    - name: application_id
+      value_ref: nv_application_emoji_update_application_id
+      required: true
   application_emoji_delete:
     kind: delete
     entity: CustomEmoji
@@ -2142,6 +2220,10 @@ capabilities:
         type: object
         additional_fields: true
         fields: []
+    scope:
+    - name: guild_id
+      value_ref: nv_guild_sticker_create_guild_id
+      required: true
   guild_sticker_update:
     kind: update
     entity: Sticker
@@ -2150,6 +2232,10 @@ capabilities:
         type: object
         additional_fields: true
         fields: []
+    scope:
+    - name: guild_id
+      value_ref: nv_guild_sticker_update_guild_id
+      required: true
   guild_sticker_delete:
     kind: delete
     entity: Sticker
@@ -2237,6 +2323,21 @@ auth:
   env: DISCORD_BOT_TOKEN
   hosted_kv: plasm:outbound:v1:catalog:discord
 values:
+  nv_guild_from_template_create_code:
+    type: entity_ref
+    target: PublicGuildTemplate
+  nv_application_emoji_create_body_name:
+    type: string
+    constraints:
+      min_length: 2
+      max_length: 32
+  nv_application_emoji_create_body_image:
+    type: string
+  nv_application_emoji_update_body_name:
+    type: string
+    constraints:
+      min_length: 2
+      max_length: 32
   nv_application_command_application_id:
     type: entity_ref
     target: Application
