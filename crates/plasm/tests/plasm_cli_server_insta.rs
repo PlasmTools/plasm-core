@@ -1,10 +1,45 @@
 //! Subprocess contract for the routed terminal. Abstract server responses; no model calls.
 use axum::{extract::OriginalUri, routing::post, Json, Router};
+use plasm_agent_core::{
+    discovery_matcher::CapabilityMatchReceipt,
+    discovery_service::RoutingReceipt,
+    discovery_store::{DiscoveryAuthorization, RetrievalReceipt},
+    intent_provenance::IntentProvenance,
+};
+use plasm_core::prerequisites::{CapabilityRef, PrerequisiteClosure};
 use serde_json::{json, Value};
 use std::{
     process::Command,
     sync::{Arc, Mutex},
 };
+
+fn routing(intent: String) -> RoutingReceipt {
+    RoutingReceipt {
+        environment_support: None,
+        intent_provenance: IntentProvenance::from_turns([intent.clone()]).unwrap(),
+        authorization: DiscoveryAuthorization::catalogs(["matrix".into()].into()),
+        intent_analysis: String::new(),
+        intent,
+        pin_id: "pin".into(),
+        retrieval: RetrievalReceipt {
+            generation: "generation-one".into(),
+            candidates: vec![],
+            lexical_count: 0,
+            vector_count: 0,
+            lexical_truncated: false,
+            vector_truncated: false,
+        },
+        matching: CapabilityMatchReceipt { matches: vec![] },
+        closure: Some(PrerequisiteClosure {
+            acquisitions: vec![],
+            business: vec![CapabilityRef { catalog: "matrix".into(), capability: "read".into() }],
+            input_sources: vec![],
+            prerequisites: vec![],
+            edges: vec![],
+        }),
+        recovery: None,
+    }
+}
 
 #[test]
 fn cli_routed_context_and_plan_protocol() {
@@ -19,13 +54,7 @@ fn cli_routed_context_and_plan_protocol() {
                 requests.lock().unwrap().push((uri.to_string(), payload.clone()));
                 if uri.path() == "/execute/ph/sid" { return Json(json!({"planned":true})); }
                 Json(json!({
-                    "routing": {
-                        "authorization":{"catalogs":["matrix"],"capabilities":{}},
-                        "intent":payload["intent"],"pin_id":"pin","routing_ref":null,
-                        "retrieval":{"generation":"generation-one","candidates":[],"lexical_count":0,"vector_count":0,"lexical_truncated":false,"vector_truncated":false},
-                        "selection":{"status":"ready","requirements":[{"requirement":"inspect records","resolution":{"status":"supported","candidate_ids":["read"]}}]},
-                        "closure":{"acquisitions":[],"business":[{"catalog":"matrix","capability":"read"}],"prerequisites":[],"edges":[]}
-                    },
+                    "routing": routing(payload["intent"].as_str().unwrap().to_owned()),
                     "context":{"prompt_hash":"ph","session_id":"sid","primary_entry_id":"matrix","principal":null,"waves":[{"mode":"new","entry_id":"matrix","entities":["Record"],"markdown_delta":"canonical teaching","reused_session":false,"teaching_prompt_chars_added":18}],"binding_updated":true,"new_symbol_space":true,"stale_execute_binding_recovered":false,"stale_binding_previous":null,"symbol_space_reset":false},
                     "prerequisite_guidance":"explicit provider binding"
                 }))
@@ -65,8 +94,9 @@ fn cli_routed_context_and_plan_protocol() {
     assert!(command(&["context", "--intent", "read more"])
         .status
         .success());
-    let program = workspace.path().join("program.plasm");
-    std::fs::write(&program, "e1{}").unwrap();
+    let program = workspace.path().join("program.py");
+    let source = "class Inspect(Program):\n    def build(self):\n        return e1.query()\n";
+    std::fs::write(&program, source).unwrap();
     let plan = command(&["run", "--mode", "plan", "--file", program.to_str().unwrap()]);
     assert!(
         plan.status.success(),
@@ -87,7 +117,7 @@ fn cli_routed_context_and_plan_protocol() {
     assert_eq!(seen[0].0, "/v1/context");
     assert_eq!(seen[1].0, "/execute/ph/sid/context");
     assert!(seen[2].0.contains("mode=plan"));
-    assert_eq!(seen[2].1, "e1{}");
+    assert_eq!(seen[2].1, source.trim_end());
     assert_eq!(seen[3].0, "/v1/discover");
     assert!(seen.iter().all(|(_, body)| body.get("seeds").is_none()));
     task.abort();

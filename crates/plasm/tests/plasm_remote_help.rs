@@ -57,8 +57,8 @@ fn plasm_remote_help_ok() {
         ctx_help.contains("--new")
             && ctx_help.contains("--verbose")
             && ctx_help.contains("--intent")
-            && ctx_help.contains("CATALOG:ENTITY"),
-        "context should expose structured flags and seeds: {ctx_help}"
+            && !ctx_help.contains("CATALOG:ENTITY"),
+        "context should expose routed flags without explicit seeds: {ctx_help}"
     );
 
     let run = std::process::Command::new(&exe)
@@ -250,7 +250,9 @@ fn plasm_run_without_active_context_fails_actionably() {
         String::from_utf8_lossy(&out.stdout)
     );
     assert!(
-        combined.contains("No active plasm context") && combined.contains("plasm context"),
+        !out.status.success()
+            && combined.contains("no current context")
+            && combined.contains("plasm context --new --intent"),
         "expected actionable missing-context error: {combined}"
     );
 }
