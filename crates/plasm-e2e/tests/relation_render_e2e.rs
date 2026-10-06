@@ -143,6 +143,105 @@ line"#;
     );
     // Hermit mock species payloads may not match real pikachu lore; the invariant is
     // that taught CGS columns resolve on typed relation rows (dry + live isomorphic).
+
+    // Cardinality and successful hydration cannot replace declared membership evidence.
+    // Use a fresh host/session so the complete catalog's cached proof cannot be reused.
+    let mut undeclared = (*cgs).clone();
+    let materialize = undeclared
+        .entities
+        .get_mut("Pokemon")
+        .expect("Pokemon catalog entity")
+        .relations
+        .get_mut("species")
+        .expect("species catalog relation")
+        .materialize
+        .as_mut()
+        .expect("species materialization");
+    let plasm_core::RelationMaterialization::FromParentGet {
+        collection_coverage,
+        ..
+    } = materialize
+    else {
+        panic!("species must materialize from its parent GET");
+    };
+    assert_eq!(
+        *collection_coverage,
+        plasm_core::EmbeddedCollectionCoverage::Complete,
+    );
+    *collection_coverage = plasm_core::EmbeddedCollectionCoverage::Unknown;
+    let undeclared = Arc::new(undeclared);
+    let registry = Arc::new(CgsRegistry::from_pairs(vec![(
+        ENTRY.into(),
+        "PokeAPI".into(),
+        vec!["test".into()],
+        undeclared.clone(),
+    )]));
+    let engine = plasm_runtime::ExecutionEngine::new(plasm_runtime::ExecutionConfig {
+        base_url: Some(base),
+        ..Default::default()
+    })
+    .expect("undeclared catalog engine");
+    let st = build_plasm_host_state(PlasmHostBootstrap {
+        engine,
+        mode: plasm_runtime::ExecutionMode::Live,
+        registry,
+        catalog_bootstrap: CatalogBootstrap::Fixed,
+        incoming_auth: None,
+        run_artifacts: Arc::new(RunArtifactStore::memory()),
+        session_graph_persistence: None,
+        oss_local_filesystem_defaults: false,
+    })
+    .expect("undeclared membership catalog remains valid");
+    let es = pokeapi_session(undeclared);
+    let relation_bundle = compile_plasm_program(
+        &PromptPipelineConfig::default(),
+        None,
+        &es,
+        "relation_source_undeclared",
+        "specimen = Pokemon(\"pikachu\")\nspecies = specimen.species\nspecies",
+    )
+    .expect("compile relation-only source");
+    let relation_live = run_plasm_comp(
+        &es,
+        &st,
+        PH,
+        SESS,
+        &relation_bundle,
+        true,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("relation-only source permits unknown membership");
+    let species_step = relation_live
+        .return_steps
+        .iter()
+        .find(|step| step.node_id.as_deref() == Some("species"))
+        .expect("species return step");
+    assert_eq!(
+        species_step.result.coverage(),
+        plasm_core::collection_codec::ResultCoverage::Unknown,
+    );
+    let bundle = compile_plasm_program(
+        &PromptPipelineConfig::default(),
+        None,
+        &es,
+        "relation_render_undeclared",
+        program,
+    )
+    .expect("compile the same whole-collection consumer");
+    evaluate_plasm_comp_dry(&es, &bundle).expect("undeclared catalog render preflight");
+    let failure =
+        match run_plasm_comp(&es, &st, PH, SESS, &bundle, true, None, None, None, None).await {
+            Err(failure) => failure,
+            Ok(_) => panic!("whole-collection render must reject undeclared species membership"),
+        };
+    assert_eq!(failure.cause, plasm_runtime::FailureCause::ResponseContract);
+    assert_eq!(failure.recovery, plasm_runtime::RecoveryDisposition::Stop);
+    assert_eq!(failure.code, "collection_incomplete");
+    assert_eq!(failure.node.as_deref(), Some("line"));
 }
 
 #[test]

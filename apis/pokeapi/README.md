@@ -18,6 +18,27 @@ Pokemon(name=pikachu)
 
 No API key is required for the public service.
 
+## Species membership evidence
+
+The [official Pokémon response contract](https://pokeapi.co/docs/v2/#pokemon)
+defines `species` as a single `NamedAPIResource` targeting `PokemonSpecies`,
+representing the species to which the Pokémon belongs. This supports the
+`Pokemon.species` declaration of `cardinality: one` and
+`materialize.collection_coverage: complete` at the parent GET's `species` path.
+Runtime completeness still requires an observed valid path and conserved decoded
+membership; hydration of species fields alone supplies no membership proof.
+
+The `relation_render_e2e::relation_species_render_capture_rate_dry_and_live`
+catalog smoke uses Hermit with the local PokeAPI OpenAPI fixture. It checks the
+same whole-collection render with the complete catalog and with a cloned catalog
+whose species completeness assertion is omitted. The cloned catalog's relation-only
+source must report `ResultCoverage::Unknown`; its whole-collection render must
+fail with `ResponseContract`, `Stop`, and `collection_incomplete` at node `line`.
+Here “live” means runtime
+execution against the mock, not a request to the public PokeAPI service. These
+assertions have not been rerun for this change; no live-provider verification is
+claimed.
+
 ## HTTP execute (`plasm-mcp --http`)
 
 Multi-entry catalogs: **`just build-catalogs`** then **`--catalog-dir target/plasm-catalogs`** (each packed catalog corresponds to an `apis/<name>/` tree). PokéAPI’s default HTTP origin is **`http_backend`** in [`domain.yaml`](domain.yaml).

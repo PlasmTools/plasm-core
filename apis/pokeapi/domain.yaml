@@ -1,4 +1,4 @@
-version: 2
+version: 3
 auth:
   scheme: none
 http_backend: https://pokeapi.co
@@ -749,6 +749,7 @@ entities:
         discovery: null
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path:
           - key: species
       forms:
