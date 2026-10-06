@@ -584,7 +584,7 @@ fn native_paging_and_preprocess_contracts_are_separate() {
     ] {
         let paging = template(api, capability).pagination.unwrap();
         assert_eq!(
-            serde_json::to_value(&paging.location).unwrap(),
+            serde_json::to_value(paging.location).unwrap(),
             json!("query")
         );
         assert_eq!(paging.response_prefix.unwrap_or_default(), prefix);

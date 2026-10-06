@@ -49,7 +49,7 @@ fn matrix_host() -> plasm_agent_core::server_state::PlasmHostState {
 }
 
 async fn taught_delete_program(st: &plasm_agent_core::server_state::PlasmHostState) -> String {
-    let context = plasm_agent_core::http_execute::apply_capability_seeds(
+    let context = Box::pin(plasm_agent_core::http_execute::apply_capability_seeds(
         st,
         None,
         None,
@@ -61,7 +61,7 @@ async fn taught_delete_program(st: &plasm_agent_core::server_state::PlasmHostSta
         None,
         None,
         "http contract happy",
-    )
+    ))
     .await
     .expect("serve matrix symbols");
     let session = st
