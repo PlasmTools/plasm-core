@@ -13,7 +13,7 @@ fn run_expr(capability: &str) -> Expr {
     };
     if capability == "datasource_run" {
         input.insert(
-            "from".to_string(),
+            "start_time".to_string(),
             Value::String("2026-08-03T03:50:00Z".to_string()),
         );
         input.insert(
@@ -55,5 +55,12 @@ fn static_compile_hydrates_declared_entity_fields_and_honors_prefix() {
         &mat,
     )
     .expect_err("ds_typo must remain an unknown CML variable");
-    assert!(error.to_string().contains("ds_typo"), "{error}");
+    assert!(
+        matches!(error,
+            plasm_runtime::RuntimeError::CmlError {
+                source: plasm_compile::CmlError::VariableNotFound { ref name }, ..
+            } if name == "ds_typo"
+        ),
+        "{error:?}"
+    );
 }

@@ -26,7 +26,7 @@ datasource_run:
             [expr, { type: var, name: expr }]
           ]}
         ]}]
-      - [from, { type: var, name: from }]
+      - [from, { type: var, name: start_time }]
       - [to, { type: var, name: to }]
   response:
     single: true

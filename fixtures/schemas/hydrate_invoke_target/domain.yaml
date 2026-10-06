@@ -1,4 +1,4 @@
-version: 1
+version: 2
 http_backend: http://localhost:1080
 values:
   nv_datasource_uid:
@@ -34,6 +34,7 @@ capabilities:
   datasource_run:
     kind: action
     entity: Datasource
+    receiver: {kind: entity, entity: Datasource}
     payload:
       input_type:
         type: object
@@ -41,7 +42,7 @@ capabilities:
         - name: expr
           value_ref: nv_query_expr
           required: true
-        - name: from
+        - name: start_time
           value_ref: nv_query_time
           required: true
         - name: to
@@ -57,6 +58,7 @@ capabilities:
   datasource_run_typo:
     kind: action
     entity: Datasource
+    receiver: {kind: entity, entity: Datasource}
     payload:
       input_type:
         type: object
@@ -74,6 +76,7 @@ capabilities:
   datasource_run_source_prefix:
     kind: action
     entity: Datasource
+    receiver: {kind: entity, entity: Datasource}
     payload:
       input_type:
         type: object

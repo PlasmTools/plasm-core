@@ -210,45 +210,7 @@ pub fn schema_path() -> PathBuf {
 }
 
 pub fn bin_path() -> PathBuf {
-    if let Some(p) = option_env!("CARGO_BIN_EXE_plasm_server") {
-        return PathBuf::from(p);
-    }
-    if let Some(p) = std::env::var_os("CARGO_BIN_EXE_plasm_server") {
-        return PathBuf::from(p);
-    }
-    let profile = std::env::var("CARGO_PROFILE")
-        .or_else(|_| std::env::var("PROFILE"))
-        .unwrap_or_else(|_| "debug".into());
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut candidates = Vec::new();
-    if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
-        candidates.push(
-            PathBuf::from(target_dir)
-                .join(&profile)
-                .join("plasm-server"),
-        );
-    }
-    candidates.push(
-        manifest
-            .join("../../target")
-            .join(&profile)
-            .join("plasm-server"),
-    );
-    candidates.push(
-        manifest
-            .join("../../../target")
-            .join(&profile)
-            .join("plasm-server"),
-    );
-    for p in candidates {
-        if p.is_file() {
-            return p;
-        }
-    }
-    panic!(
-        "plasm-server binary not found (profile={profile}); \
-         run `cargo build -p plasm-server` or set CARGO_BIN_EXE_plasm_server"
-    );
+    PathBuf::from(env!("CARGO_BIN_EXE_plasm-server"))
 }
 
 pub fn embedded_pg_temp_parent() -> PathBuf {
