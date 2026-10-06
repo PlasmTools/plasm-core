@@ -154,7 +154,7 @@ async fn run_native_hydration() {
     let envelope: serde_json::Value =
         serde_json::from_str(result.rows_json.as_deref().unwrap()).unwrap();
     assert_eq!(
-        envelope[0]["rows"][0]["content"],
+        envelope[0]["rows"][0]["value"],
         json!((1..=18)
             .map(|i| format!("note-{i}:owner-{i}"))
             .collect::<Vec<_>>()
@@ -179,7 +179,7 @@ async fn run_native_hydration() {
     assert!(result.ok, "{}", result.message);
     let envelope: serde_json::Value =
         serde_json::from_str(result.rows_json.as_deref().unwrap()).unwrap();
-    assert_eq!(envelope[0]["rows"][0]["content"], json!("18"));
+    assert_eq!(envelope[0]["rows"][0]["value"], json!("18"));
     let derived_program = compute_program
         .replace(&format!("list[Value[{note}]]"), "list[Row]")
         .replace("return self.size(notes.select(\"note_id\"))", "ids = notes.select(\"note_id\")\n        members = notes.where(lambda row: row.note_id in ids).select(\"note_id\")\n        combined = members.union(ids).distinct(\"note_id\")\n        return self.size(combined)");
@@ -191,7 +191,7 @@ async fn run_native_hydration() {
     assert!(result.ok, "{}", result.message);
     let envelope: serde_json::Value =
         serde_json::from_str(result.rows_json.as_deref().unwrap()).unwrap();
-    assert_eq!(envelope[0]["rows"][0]["content"], json!("18"));
+    assert_eq!(envelope[0]["rows"][0]["value"], json!("18"));
 
     for (identity, edge, expected) in [
         ("empty", "notes", Some("0")),
@@ -209,7 +209,7 @@ async fn run_native_hydration() {
             assert!(result.ok, "{}", result.message);
             let envelope: serde_json::Value =
                 serde_json::from_str(result.rows_json.as_deref().unwrap()).unwrap();
-            assert_eq!(envelope[0]["rows"][0]["content"], json!(expected));
+            assert_eq!(envelope[0]["rows"][0]["value"], json!(expected));
         } else {
             let result = result.unwrap();
             assert!(
@@ -245,6 +245,13 @@ async fn run_native_hydration() {
         let envelope: serde_json::Value =
             serde_json::from_str(result.rows_json.as_deref().unwrap()).unwrap();
         // The explicit return is followed by the provider's operation receipt.
+        assert!(envelope[1]["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|operation| {
+                operation["capability"] == "login" && operation["completed"] == 1
+            }));
         let ids: Vec<_> = envelope[0]["rows"]
             .as_array()
             .expect("owners rows")

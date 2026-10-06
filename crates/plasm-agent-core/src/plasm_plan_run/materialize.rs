@@ -5,6 +5,12 @@
 
 use super::*;
 
+// Construct relation child futures outside the dispatcher's poll frame. Boxing
+// an already-constructed future still reserves its stack temporary in that frame.
+fn pin_relation_future<F: std::future::Future>(make: impl FnOnce() -> F) -> std::pin::Pin<Box<F>> {
+    Box::pin(make())
+}
+
 fn materialization_failure(code: &'static str, diagnostic: impl Into<String>) -> ExecutionFailure {
     ExecutionFailure::new(plasm_runtime::FailureCause::Program, code, diagnostic)
 }
@@ -282,23 +288,25 @@ pub(crate) async fn materialize_validated_relation_traversal(
                 "relation traversal",
             )));
         }
-        return super::compute_eval::finalize_empty_relation_materialized_node(
-            st,
-            es,
-            session_id,
-            node,
-            relation,
-            trace,
-            read_cap,
-            source_mat
-                .result
-                .collection
-                .flat_map(&"empty_relation", &[])?,
+        return Box::pin(
+            super::compute_eval::finalize_empty_relation_materialized_node(
+                st,
+                es,
+                session_id,
+                node,
+                relation,
+                trace,
+                read_cap,
+                source_mat
+                    .result
+                    .collection
+                    .flat_map(&"empty_relation", &[])?,
+            ),
         )
         .await;
     }
     match &relation.relation.materialize {
-        RelationMaterialization::FromParentGet { .. } => Box::pin(try_materialize_from_parent_get_relation(
+        RelationMaterialization::FromParentGet { .. } => pin_relation_future(|| try_materialize_from_parent_get_relation(
             st,
             es,
             session_id,
@@ -318,7 +326,7 @@ pub(crate) async fn materialize_validated_relation_traversal(
             ))
         }),
         RelationMaterialization::PreferFromParentGet { .. } => {
-            Box::pin(materialize_prefer_from_parent_get_relation(
+            pin_relation_future(|| materialize_prefer_from_parent_get_relation(
                 st,
                 es,
                 session_id,
@@ -340,7 +348,7 @@ pub(crate) async fn materialize_validated_relation_traversal(
                 relation.relation.source_cardinality,
                 RelationSourceCardinality::Many
             ) {
-                Box::pin(materialize_relation_scoped_fanout(
+                pin_relation_future(|| materialize_relation_scoped_fanout(
                     st,
                     es,
                     session_id,
@@ -368,7 +376,7 @@ pub(crate) async fn materialize_validated_relation_traversal(
                         "relation traversal",
                     )));
                 }
-                Box::pin(materialize_relation_singleton_chain(
+                pin_relation_future(|| materialize_relation_singleton_chain(
                     st,
                     es,
                     session_id,
@@ -389,7 +397,7 @@ pub(crate) async fn materialize_validated_relation_traversal(
                 relation.relation.source_cardinality,
                 RelationSourceCardinality::Many
             ) {
-                return Box::pin(materialize_relation_scoped_fanout(
+                return pin_relation_future(|| materialize_relation_scoped_fanout(
                     st,
                     es,
                     session_id,
@@ -417,7 +425,7 @@ pub(crate) async fn materialize_validated_relation_traversal(
                     "relation traversal",
                 )));
             }
-            Box::pin(materialize_relation_singleton_chain(
+            pin_relation_future(|| materialize_relation_singleton_chain(
                 st,
                 es,
                 session_id,
@@ -431,7 +439,7 @@ pub(crate) async fn materialize_validated_relation_traversal(
             .await
         }
         RelationMaterialization::ViewEmbed { .. } => {
-            materialize_cached_embed_or_error(
+            pin_relation_future(|| materialize_cached_embed_or_error(
                 st,
                 es,
                 session_id,
@@ -449,7 +457,7 @@ pub(crate) async fn materialize_validated_relation_traversal(
                         relation.relation.relation
                     )
                 },
-            )
+            ))
             .await
         }
         RelationMaterialization::Unavailable => {
@@ -458,7 +466,7 @@ pub(crate) async fn materialize_validated_relation_traversal(
                 RelationSourceCardinality::Many
             ) {
                 // Plural source → per-row fanout (covers one-from-many and many-from-many).
-                Box::pin(materialize_relation_scoped_fanout(
+                pin_relation_future(|| materialize_relation_scoped_fanout(
                     st,
                     es,
                     session_id,
@@ -477,7 +485,7 @@ pub(crate) async fn materialize_validated_relation_traversal(
                 relation.relation.cardinality,
                 crate::plasm_plan::RelationCardinality::One
             ) {
-                Box::pin(materialize_relation_singleton_chain(
+                pin_relation_future(|| materialize_relation_singleton_chain(
                     st,
                     es,
                     session_id,
