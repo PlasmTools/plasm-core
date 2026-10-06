@@ -422,11 +422,11 @@ impl ValueContract {
                 let value = contract
                     .value_type
                     .observed_value(value, &self.cgs, self.owner.entry_id.as_str())
-                    .map_err(PythonComputeError::ValueContractDefinition)?;
+                    .map_err(PythonComputeError::ComputeInputValueContract)?;
                 contract
                     .value_type
                     .validate(&value, &self.cgs, self.owner.entry_id.as_str(), field)
-                    .map_err(PythonComputeError::ValueContractDefinition)?;
+                    .map_err(PythonComputeError::ComputeInputValueContract)?;
                 attrs.insert(field.clone(), value);
             }
             values.push(attrs);
@@ -860,12 +860,18 @@ impl PreparedCompute {
                     )
                 })?
                 .materialize(owner, membership, rows)
-                .map_err(|diagnostic| {
-                    plasm_runtime::ExecutionFailure::new(
-                        plasm_runtime::FailureCause::Program,
-                        "compute_input_contract_invalid",
-                        diagnostic.to_string(),
-                    )
+                .map_err(|error| {
+                    let (cause, code) = match &error {
+                        PythonComputeError::ComputeInputValueContract(_) => (
+                            plasm_runtime::FailureCause::Runtime,
+                            "compute_input_value_contract_invalid",
+                        ),
+                        _ => (
+                            plasm_runtime::FailureCause::Program,
+                            "compute_input_contract_invalid",
+                        ),
+                    };
+                    plasm_runtime::ExecutionFailure::new(cause, code, error.to_string())
                 })?
         };
         if self.independent_inputs {

@@ -133,6 +133,8 @@ pub enum PythonComputeError {
     ValueContractFieldMissing { field: String },
     #[error("compute value contract definition is invalid: {0}")]
     ValueContractDefinition(#[from] plasm_core::value_contract::ValueContractError),
+    #[error("compute input violates its materialized type contract: {0}")]
+    ComputeInputValueContract(#[source] plasm_core::value_contract::ValueContractError),
     #[error("compute value contract declaration could not encode a literal")]
     ValueContractLiteralEncoding(#[source] std::sync::Arc<serde_json::Error>),
     #[error("compute value contract has no allocated value symbol for `{field}`")]

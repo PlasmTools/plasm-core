@@ -141,6 +141,24 @@ async fn boundary_rejects_partial_unknown_missing_and_wrong_typed_values() {
             plasm_runtime::RecoveryDisposition::Stop,
         ),
     ] {
+        if recovery == plasm_runtime::RecoveryDisposition::Stop {
+            let error = compute
+                .contract
+                .as_ref()
+                .unwrap()
+                .materialize(
+                    &owner,
+                    &membership(1, ResultCoverage::Complete),
+                    std::slice::from_ref(&row),
+                )
+                .unwrap_err();
+            assert!(matches!(
+                error,
+                plasm_agent_core::program_rejection::PythonComputeError::ComputeInputValueContract(
+                    plasm_core::value_contract::ValueContractError::MaterializedValueMismatch { ref path }
+                ) if path == "label"
+            ));
+        }
         let failure = compute
             .run(
                 &pool,
@@ -152,6 +170,10 @@ async fn boundary_rejects_partial_unknown_missing_and_wrong_typed_values() {
             .unwrap_err();
         assert!(failure.diagnostic().contains(expected), "{failure:?}");
         assert_eq!(failure.recovery, recovery);
+        if recovery == plasm_runtime::RecoveryDisposition::Stop {
+            assert_eq!(failure.cause, plasm_runtime::FailureCause::Runtime);
+            assert_eq!(failure.code, "compute_input_value_contract_invalid");
+        }
     }
     assert!(compute
         .run(
@@ -244,17 +266,38 @@ async fn cgs_enumeration_is_both_taught_and_enforced() {
             .unwrap(),
         plasm_core::Value::String("open".into())
     );
-    assert!(compute
+    let invalid = json!({"id":"i1", "title":"Alpha", "state":"invented"});
+    let error = compute
+        .contract
+        .as_ref()
+        .unwrap()
+        .materialize(
+            &owner,
+            &membership(1, ResultCoverage::Complete),
+            std::slice::from_ref(&invalid),
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        plasm_agent_core::program_rejection::PythonComputeError::ComputeInputValueContract(
+            plasm_core::value_contract::ValueContractError::Domain {
+                ref path,
+                source: plasm_core::ValueDomainViolation::UnknownEnumMember,
+            }
+        ) if path == "state"
+    ));
+    let failure = compute
         .run(
             &pool,
             &owner,
             &membership(1, ResultCoverage::Complete),
-            &[json!({"id":"i1", "title":"Alpha", "state":"invented"})]
+            &[invalid],
         )
         .await
-        .unwrap_err()
-        .diagnostic()
-        .contains("not in enum"));
+        .unwrap_err();
+    assert_eq!(failure.cause, plasm_runtime::FailureCause::Runtime);
+    assert_eq!(failure.recovery, plasm_runtime::RecoveryDisposition::Stop);
+    assert_eq!(failure.code, "compute_input_value_contract_invalid");
 }
 
 #[tokio::test]
