@@ -1219,7 +1219,7 @@ capabilities:
     - deleted
     - created_at
   expense_create:
-    description: "Record an obligation: payer paid; each debtor owes payer. For 'I owe Alex', payer=Alex and debtor=me. Not a money transfer. Omit debt_amounts for equal shares."
+    description: "Record an obligation: payer paid; each debtor owes payer. For 'I owe Alex', payer=Alex and debtor=me. Not a money transfer. Supply debt_amounts when the owed amounts are specified; omit only for equal shares."
     kind: create
     entity: Expense
     payload:
@@ -1252,7 +1252,7 @@ capabilities:
         - name: debt_amounts
           value_ref: nv_number_list
           required: false
-          description: Omit for equal division among debtor_emails; explicit amounts define an unequal split.
+          description: debt_amounts[i] is owed by debtor_emails[i]. Supply one amount per debtor when shares are specified or unequal; omit only for equal division.
         - name: group_id
           value_ref: nv_group_ref
           required: false
@@ -1285,6 +1285,7 @@ capabilities:
         - name: debt_amounts
           value_ref: nv_number_list
           required: false
+          description: debt_amounts[i] is owed by debtor_emails[i]. Supply one amount per debtor when shares are specified or unequal; omit only for equal division.
     provides:
     - expense_id
   expense_delete:
