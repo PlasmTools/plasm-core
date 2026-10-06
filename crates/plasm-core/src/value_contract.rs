@@ -353,9 +353,7 @@ impl ValueContract {
 
     pub fn data_value<E>(
         value: &crate::PlasmDataValue,
-        // Quantifier scopes wrap the resolver recursively. Erase its concrete
-        // closure type so each scope does not create another monomorphization.
-        resolve: &mut dyn FnMut(&str, &[String]) -> Result<ValueContract, E>,
+        resolve: &mut (impl FnMut(&str, &[String]) -> Result<ValueContract, E> + ?Sized),
     ) -> Result<Self, E>
     where
         E: From<ValueContractError> + From<crate::value_expression::InferenceError>,
@@ -378,7 +376,7 @@ impl ValueContract {
                 if matches!(element.shape, ValueShape::Never) {
                     return Ok(Self::scalar(FieldType::Boolean));
                 }
-                let result = Self::data_value(predicate, &mut |name, path| {
+                let mut scoped_resolve = |name: &str, path: &[String]| {
                     if name != binding {
                         return resolve(name, path);
                     }
@@ -387,7 +385,12 @@ impl ValueContract {
                         value = value.field(field)?;
                     }
                     Ok(value)
-                })?;
+                };
+                // Erase the recursive scope wrapper to keep monomorphization bounded.
+                let result = Self::data_value(
+                    predicate,
+                    &mut scoped_resolve as &mut dyn FnMut(&str, &[String]) -> Result<Self, E>,
+                )?;
                 if result.nullable || result.summary() != crate::SyntheticValueKind::Boolean {
                     return Err(ValueContractError::QuantifiedPredicateRequiresBoolean.into());
                 }

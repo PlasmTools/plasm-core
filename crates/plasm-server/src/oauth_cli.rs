@@ -96,7 +96,9 @@ async fn standalone_oauth_context() -> Result<
 > {
     let storage = plasm_agent_core::auth_framework_host::init_standalone_auth_storage()
         .await
-        .map_err(|source| AdminError::AuthInitialization { source })?;
+        .map_err(|source| AdminError::AuthInitialization {
+            source: Box::new(source),
+        })?;
     let catalog = Arc::new(OauthLinkCatalog::from_env());
     let repo = match plasm_agent_core::mcp_config_repository::mcp_config_database_url() {
         Some(url) => Some(Arc::new(
@@ -139,7 +141,7 @@ async fn run_oauth_provider(cmd: OauthProviderCmd) -> Result<(), AdminError> {
                 plasm_agent_core::oauth_provider_repository::list_oauth_provider_apps(r.pool())
                     .await
                     .map_err(|source| AdminError::ProviderDatabase {
-                        source: source.into(),
+                        source: Box::new(source.into()),
                     })?;
             if json {
                 println!(
@@ -223,7 +225,9 @@ async fn run_oauth_device(cmd: OauthDeviceCmd) -> Result<(), AdminError> {
             let cfg = catalog
                 .resolve_for_oauth_start(&storage, entry_id.trim())
                 .await
-                .map_err(|source| AdminError::ProviderResolution { source })?;
+                .map_err(|source| AdminError::ProviderResolution {
+                    source: Box::new(source),
+                })?;
             let device_url = cfg
                 .device_authorization_endpoint
                 .as_deref()
@@ -276,7 +280,9 @@ async fn run_oauth_device(cmd: OauthDeviceCmd) -> Result<(), AdminError> {
             let cfg = catalog
                 .resolve_for_oauth_start(&storage, entry_id.trim())
                 .await
-                .map_err(|source| AdminError::ProviderResolution { source })?;
+                .map_err(|source| AdminError::ProviderResolution {
+                    source: Box::new(source),
+                })?;
             let http = plasm_runtime::build_oauth_token_http_client(Duration::from_secs(30))
                 .map_err(|source| AdminError::HttpClient { source })?;
             let http_timeout = Duration::from_secs(30);
@@ -314,7 +320,7 @@ async fn run_oauth_device(cmd: OauthDeviceCmd) -> Result<(), AdminError> {
                             .await
                             .map_err(|source| AdminError::TokenWrite {
                                 key: hosted_kv_key.clone(),
-                                source,
+                                source: Box::new(source),
                             })?;
                         plasm_agent_core::oauth_binding_kv::write_oauth_binding_pointer(
                             &storage,
@@ -325,7 +331,7 @@ async fn run_oauth_device(cmd: OauthDeviceCmd) -> Result<(), AdminError> {
                         .map_err(|source| {
                             AdminError::BindingPointerWrite {
                                 entry_id: entry_id.trim().to_owned(),
-                                source,
+                                source: Box::new(source),
                             }
                         })?;
                         if json {

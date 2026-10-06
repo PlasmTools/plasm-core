@@ -193,7 +193,7 @@ impl ReqwestHttpTransport {
         let client = if request.credential.is_some() {
             self.scoped_client
                 .as_ref()
-                .ok_or_else(|| crate::credentials::CredentialError::RedirectFreeClientMissing)?
+                .ok_or(crate::credentials::CredentialError::RedirectFreeClientMissing)?
         } else {
             &self.client
         };
@@ -994,10 +994,10 @@ pub fn evaluate_parsed_response(parsed: HttpParsedResponse) -> HttpAttemptResult
         }
     } else {
         HttpAttemptResult::Failed(RuntimeError::RequestError {
-            source: crate::RequestFailure::HttpStatus(failure),
+            source: crate::RequestFailure::HttpStatus(Box::new(failure)),
             attempts: 1,
             status: Some(status),
-            body,
+            body: body.map(Box::new),
         })
     }
 }
@@ -1018,7 +1018,7 @@ pub fn classify_inner_transport_error(err: RuntimeError) -> HttpAttemptResult {
             HttpAttemptResult::Retryable {
                 status,
                 retry_after: None,
-                failure,
+                failure: *failure,
             }
         }
         RuntimeError::RateLimited {
@@ -1029,7 +1029,7 @@ pub fn classify_inner_transport_error(err: RuntimeError) -> HttpAttemptResult {
         } => HttpAttemptResult::Retryable {
             status,
             retry_after,
-            failure,
+            failure: *failure,
         },
         other => HttpAttemptResult::Failed(other),
     }
@@ -1053,11 +1053,11 @@ pub fn attempt_result_into_result(
                     host: String::new(),
                     retry_after,
                     attempts,
-                    source: crate::RateLimitCause::Upstream(failure),
+                    source: crate::RateLimitCause::Upstream(Box::new(failure)),
                 })
             } else {
                 Err(RuntimeError::RequestError {
-                    source: crate::RequestFailure::HttpStatus(failure),
+                    source: crate::RequestFailure::HttpStatus(Box::new(failure)),
                     attempts,
                     status: Some(status),
                     body: None,

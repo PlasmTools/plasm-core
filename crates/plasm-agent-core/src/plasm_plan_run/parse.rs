@@ -10,7 +10,7 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum ProgramSurfaceParseError {
     #[error("invalid program surface: {0}")]
-    Parse(#[from] ParseError),
+    Parse(#[from] Box<ParseError>),
     #[error(transparent)]
     PhraseIdent(#[from] plasm_core::phrase_ident::PhraseIdentError),
 }
@@ -22,9 +22,21 @@ pub enum WireFieldTokenError {
     #[error("entity `{entity}` is not defined in catalog `{entry_id}`")]
     EntityNotFound { entity: String, entry_id: String },
     #[error("{0}")]
-    Symbol(#[source] plasm_core::symbol_tuning::SymbolResolveError),
+    Symbol(#[source] Box<plasm_core::symbol_tuning::SymbolResolveError>),
     #[error("field token `{token}` requires a row binding context")]
     MissingBindingContext { token: String },
+}
+
+impl From<ParseError> for ProgramSurfaceParseError {
+    fn from(error: ParseError) -> Self {
+        Self::Parse(Box::new(error))
+    }
+}
+
+impl From<plasm_core::symbol_tuning::SymbolResolveError> for WireFieldTokenError {
+    fn from(error: plasm_core::symbol_tuning::SymbolResolveError) -> Self {
+        Self::Symbol(Box::new(error))
+    }
 }
 
 pub fn session_cgs_layer_stack(session: &ExecuteSession) -> Vec<CgsLayer<'_>> {
@@ -78,7 +90,7 @@ pub fn resolve_wire_field_token(
                 ent,
                 t,
             )
-            .map_err(WireFieldTokenError::Symbol);
+            .map_err(WireFieldTokenError::from);
     }
     if plasm_core::symbol_tuning::SymbolMap::is_opaque_p_sym(t) {
         return Err(WireFieldTokenError::MissingBindingContext {
@@ -445,7 +457,7 @@ pub(crate) fn propagate_row_identities(
             Some(index) => identities
                 .get(*index)
                 .map(|identity| (*identity).clone())
-                .ok_or_else(|| RowIdentityPropagationError::MissingIdentitySlot {
+                .ok_or(RowIdentityPropagationError::MissingIdentitySlot {
                     index: *index,
                     slots: identities.len(),
                 }),
@@ -537,10 +549,57 @@ pub fn format_session_symbolic_parse_error(
             map: sym_map.as_ref(),
         },
     );
-    let base = if step.correction.is_empty() {
+    if step.correction.is_empty() {
         err.to_string()
     } else {
         step.correction
-    };
-    base
+    }
+}
+
+#[cfg(test)]
+mod footprint_tests {
+    use super::*;
+    use std::error::Error;
+
+    #[test]
+    fn boxed_parse_source_preserves_position_and_concrete_cause() {
+        assert!(std::mem::size_of::<ProgramSurfaceParseError>() < 128);
+        let source = ParseError {
+            kind: plasm_core::expr_parser::ParseErrorKind::ExpectedIdentifier,
+            offset: 7,
+        };
+        let expected_display = format!("invalid program surface: {source}");
+        let error = ProgramSurfaceParseError::from(source);
+        assert_eq!(error.to_string(), expected_display);
+        let cause = error
+            .source()
+            .unwrap()
+            .downcast_ref::<Box<ParseError>>()
+            .unwrap()
+            .as_ref();
+        assert_eq!(cause.offset, 7);
+        assert!(matches!(
+            cause.kind,
+            plasm_core::expr_parser::ParseErrorKind::ExpectedIdentifier
+        ));
+    }
+
+    #[test]
+    fn boxed_symbol_source_preserves_metadata_and_display() {
+        use plasm_core::symbol_tuning::SymbolResolveError;
+        assert!(std::mem::size_of::<WireFieldTokenError>() < 128);
+        let source = SymbolResolveError::UnknownEntityPSym {
+            catalog_entry_id: "fixture".into(),
+            entity: "FixtureEntity".into(),
+            token: "p1".into(),
+        };
+        let expected_display = source.to_string();
+        let error = WireFieldTokenError::from(source);
+        assert_eq!(error.to_string(), expected_display);
+        assert!(matches!(
+            error.source().unwrap().downcast_ref::<Box<SymbolResolveError>>().map(Box::as_ref),
+            Some(SymbolResolveError::UnknownEntityPSym { catalog_entry_id, entity, token })
+                if catalog_entry_id == "fixture" && entity == "FixtureEntity" && token == "p1"
+        ));
+    }
 }

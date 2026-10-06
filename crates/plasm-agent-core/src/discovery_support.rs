@@ -23,11 +23,17 @@ pub enum DiscoverySupportError {
     #[error("environment support response omits the issued answer")]
     MissingAnswer,
     #[error(transparent)]
-    CatalogDiscovery(#[from] plasm_core::catalog_discovery::CatalogDiscoveryError),
+    CatalogDiscovery(#[from] Box<plasm_core::catalog_discovery::CatalogDiscoveryError>),
     #[error(transparent)]
     DecisionResponse(#[from] crate::decision_codec::DecisionResponseError),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+}
+
+impl From<plasm_core::catalog_discovery::CatalogDiscoveryError> for DiscoverySupportError {
+    fn from(error: plasm_core::catalog_discovery::CatalogDiscoveryError) -> Self {
+        Self::CatalogDiscovery(Box::new(error))
+    }
 }
 
 const RULE: &str = "Judge the current intent jointly with the supplied available operation contracts. Earlier intent turns provide context; the last turn is current. Do the supplied contracts establish that these operations can fulfil the intent for the requested target, without assuming any unspecified identity association? Assess established support, not whether success might be possible. Missing identity evidence means support is not established; it does not prove execution impossible. Derive intermediate needs from this environment, not a fixed workflow. Do not infer identity from matching scalar types or neighboring fields. Judge capability-level support, not runtime data existence, execution permission or guaranteed success. This judgment does not remove relevant capabilities.";

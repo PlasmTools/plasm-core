@@ -257,11 +257,11 @@ fn finalize_retryable_failure(
             host: host.to_string(),
             retry_after,
             attempts,
-            source: crate::RateLimitCause::Upstream(failure),
+            source: crate::RateLimitCause::Upstream(Box::new(failure)),
         }
     } else {
         RuntimeError::RequestError {
-            source: crate::RequestFailure::HttpStatus(failure),
+            source: crate::RequestFailure::HttpStatus(Box::new(failure)),
             attempts,
             status: Some(status),
             body: None,

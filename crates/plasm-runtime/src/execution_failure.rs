@@ -405,7 +405,7 @@ mod tests {
                 source: crate::HttpStatusFailure::without_request(422, message.into()).into(),
                 attempts: 1,
                 status: Some(422),
-                body: Some(serde_json::json!({"message": message})),
+                body: Some(Box::new(serde_json::json!({"message": message}))),
             });
             let wire = serde_json::to_value(&failure).unwrap();
             assert!(wire["diagnostic"].as_str().unwrap().contains(message));

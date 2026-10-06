@@ -20,23 +20,23 @@ enum PartialWriteCheckError {
     #[error("execution setup failed: {source}")]
     Setup {
         #[source]
-        source: crate::RuntimeError,
+        source: Box<crate::RuntimeError>,
     },
     #[error("create execution failed at index {index}: {source}")]
     Create {
         index: usize,
         #[source]
-        source: crate::RuntimeError,
+        source: Box<crate::RuntimeError>,
     },
     #[error("relation read after partial writes failed: {source}")]
     RelationRead {
         #[source]
-        source: crate::RuntimeError,
+        source: Box<crate::RuntimeError>,
     },
     #[error("expense query after partial writes failed: {source}")]
     QueryRead {
         #[source]
-        source: crate::RuntimeError,
+        source: Box<crate::RuntimeError>,
     },
     #[error(transparent)]
     Observation(#[from] ObservationHonestyError),
@@ -127,8 +127,10 @@ fn run_individual_create_sequence(
         None,
     );
     let mut mat = SessionMaterialization::new();
-    let opts = ExecuteOptions::for_catalog(&cgs)
-        .map_err(|source| PartialWriteCheckError::Setup { source })?;
+    let opts =
+        ExecuteOptions::for_catalog(&cgs).map_err(|source| PartialWriteCheckError::Setup {
+            source: Box::new(source),
+        })?;
 
     let mut plan_failed = false;
     let mut first_fail_seen = false;
@@ -183,7 +185,7 @@ fn run_individual_create_sequence(
             (false, Err(e)) => {
                 return Err(PartialWriteCheckError::Create {
                     index: i,
-                    source: e,
+                    source: Box::new(e),
                 });
             }
         }
@@ -207,7 +209,9 @@ fn run_individual_create_sequence(
         StreamConsumeOpts::default(),
         opts.clone(),
     ))
-    .map_err(|source| PartialWriteCheckError::RelationRead { source })?;
+    .map_err(|source| PartialWriteCheckError::RelationRead {
+        source: Box::new(source),
+    })?;
 
     let rel_ids = expense_ids_from_result(&rel);
     harness.with_model(|m| {
@@ -226,7 +230,9 @@ fn run_individual_create_sequence(
         StreamConsumeOpts::default(),
         opts,
     ))
-    .map_err(|source| PartialWriteCheckError::QueryRead { source })?;
+    .map_err(|source| PartialWriteCheckError::QueryRead {
+        source: Box::new(source),
+    })?;
 
     let q_ids = expense_ids_from_result(&listed);
     harness.with_model(|m| {
@@ -235,6 +241,45 @@ fn run_individual_create_sequence(
     })?;
 
     Ok(())
+}
+
+#[test]
+fn partial_write_errors_are_bounded_and_preserve_runtime_sources() {
+    use std::error::Error;
+
+    assert!(std::mem::size_of::<PartialWriteCheckError>() < 128);
+    let source = || Box::new(crate::RuntimeError::Cancelled);
+    for (error, diagnostic) in [
+        (
+            PartialWriteCheckError::Setup { source: source() },
+            "execution setup failed: Execution cancelled",
+        ),
+        (
+            PartialWriteCheckError::Create {
+                index: 3,
+                source: source(),
+            },
+            "create execution failed at index 3: Execution cancelled",
+        ),
+        (
+            PartialWriteCheckError::RelationRead { source: source() },
+            "relation read after partial writes failed: Execution cancelled",
+        ),
+        (
+            PartialWriteCheckError::QueryRead { source: source() },
+            "expense query after partial writes failed: Execution cancelled",
+        ),
+    ] {
+        assert_eq!(error.to_string(), diagnostic);
+        assert!(matches!(
+            error
+                .source()
+                .unwrap()
+                .downcast_ref::<Box<crate::RuntimeError>>()
+                .map(Box::as_ref),
+            Some(crate::RuntimeError::Cancelled)
+        ));
+    }
 }
 
 proptest! {

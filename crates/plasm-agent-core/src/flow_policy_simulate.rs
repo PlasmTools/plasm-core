@@ -33,7 +33,7 @@ pub enum SimulateError {
     #[error("no published policy — publish a revision before simulating published arm")]
     PublishedInactive,
     #[error("execute-session setup failed: {0}")]
-    SessionOpen(#[source] crate::http_execute::SessionMutateError),
+    SessionOpen(#[source] Box<crate::http_execute::SessionMutateError>),
     #[error("simulate session is missing after {phase}")]
     SessionMissing { phase: SimulateSessionPhase },
     #[error("invalid prompt hash returned by session setup: {0}")]
@@ -130,7 +130,7 @@ pub async fn simulate_flow_policy_with_options(
     let snapshot = policy_snapshot_for_arm(row, arm, opts.ephemeral_policy.as_ref())?;
     let out = apply_capability_seeds(st, None, None, seeds, None, None, None, intent)
         .await
-        .map_err(SimulateError::SessionOpen)?;
+        .map_err(|error| SimulateError::SessionOpen(Box::new(error)))?;
 
     let ph = out.prompt_hash.clone();
     let sid = out.session_id.clone();
@@ -224,6 +224,30 @@ mod tests {
     use super::*;
     use crate::plan_dry_display::PlanDryVerdict;
     use crate::plan_flow_policy::FlowPolicy;
+
+    #[test]
+    fn boxed_session_error_preserves_source_and_code() {
+        use std::error::Error;
+        let bytes = std::mem::size_of::<SimulateError>();
+        assert!(bytes < 128, "SimulateError is {bytes} bytes; expected <128");
+        let error = SimulateError::SessionOpen(Box::new(
+            crate::http_execute::SessionMutateError::UnknownOrExpiredSession,
+        ));
+        assert!(matches!(
+            error
+                .source()
+                .unwrap()
+                .downcast_ref::<Box<crate::http_execute::SessionMutateError>>()
+                .unwrap()
+                .as_ref(),
+            crate::http_execute::SessionMutateError::UnknownOrExpiredSession
+        ));
+        assert_eq!(error.code(), "session_error");
+        assert_eq!(
+            error.message(),
+            crate::http_execute::SessionMutateError::UnknownOrExpiredSession.to_string()
+        );
+    }
 
     fn empty_row() -> FlowPolicyRow {
         FlowPolicyRow {

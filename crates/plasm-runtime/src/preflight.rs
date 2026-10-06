@@ -459,7 +459,7 @@ fn value_at_preflight_path(env: &CmlEnv, path: &PreflightFieldPath) -> Result<Va
     let mut cur = env
         .get(&top_key)
         .cloned()
-        .ok_or_else(|| crate::PreflightError::PathKeyMissing { key: top_key })?;
+        .ok_or(crate::PreflightError::PathKeyMissing { key: top_key })?;
     for seg in path.path.iter().skip(1) {
         cur = match cur {
             Value::Object(mut map) => map

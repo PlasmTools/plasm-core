@@ -51,7 +51,7 @@ pub enum AgentError {
     #[error(transparent)]
     CatalogTemplate(#[from] plasm_compile::CatalogTemplateError),
     #[error(transparent)]
-    SchemaLoad(#[from] plasm_core::loader::SchemaLoadError),
+    SchemaLoad(#[from] Box<plasm_core::loader::SchemaLoadError>),
 
     #[error("--schema and --catalog-dir cannot be used together")]
     SchemaAndCatalogDir,
@@ -84,7 +84,7 @@ pub enum AgentError {
     Argument(#[from] AgentArgumentError),
 
     #[error("Execution error: {0}")]
-    Execution(#[from] plasm_runtime::RuntimeError),
+    Execution(#[from] Box<plasm_runtime::RuntimeError>),
 
     #[error("Compilation error: {0}")]
     Compilation(#[from] plasm_compile::CompileError),
@@ -97,6 +97,18 @@ pub enum AgentError {
 
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
+}
+
+impl From<plasm_core::loader::SchemaLoadError> for AgentError {
+    fn from(error: plasm_core::loader::SchemaLoadError) -> Self {
+        Self::SchemaLoad(Box::new(error))
+    }
+}
+
+impl From<plasm_runtime::RuntimeError> for AgentError {
+    fn from(error: plasm_runtime::RuntimeError) -> Self {
+        Self::Execution(Box::new(error))
+    }
 }
 
 #[derive(Debug, Error)]
@@ -142,4 +154,91 @@ pub enum AgentArgumentError {
     CatalogCliArguments(#[source] clap::Error),
     #[error("full CLI arguments are invalid")]
     FullCliArguments(#[source] clap::Error),
+}
+
+#[cfg(test)]
+mod footprint_tests {
+    use super::*;
+    use std::error::Error;
+
+    #[test]
+    fn catalog_and_discovery_error_owners_have_bounded_footprints() {
+        assert!(std::mem::size_of::<AgentError>() < 128);
+        assert!(std::mem::size_of::<plasm_core::expr_parser::ParseError>() < 128);
+        assert!(std::mem::size_of::<crate::compilation_error::CompilationError>() < 128);
+        assert!(std::mem::size_of::<crate::plasm_render_compile::RenderFieldListError>() < 128);
+        assert!(std::mem::size_of::<crate::map_body::MapBodyValidationError>() < 128);
+        assert!(std::mem::size_of::<crate::plan_session_provisions::SessionProvisionError>() < 128);
+        assert!(std::mem::size_of::<crate::catalog_data::CatalogLoadError>() < 128);
+        assert!(std::mem::size_of::<crate::catalog_runtime::CatalogRuntimeError>() < 128);
+        assert!(std::mem::size_of::<crate::discovery_store::DiscoveryStoreError>() < 128);
+        assert!(std::mem::size_of::<crate::discovery_support::DiscoverySupportError>() < 128);
+        assert!(std::mem::size_of::<crate::discovery_service::DiscoveryServiceError>() < 128);
+        assert!(std::mem::size_of::<crate::execute_pipeline::DispatchError>() < 128);
+    }
+
+    #[test]
+    fn boxed_catalog_imports_preserve_schema_source_chain() {
+        let source = || {
+            plasm_core::catalog_il::CatalogIlError::from(plasm_core::SchemaError::DuplicateEntity {
+                name: "FixtureEntity".into(),
+            })
+        };
+        let errors: [Box<dyn Error>; 3] = [
+            Box::new(crate::catalog_data::CatalogLoadError::from(source())),
+            Box::new(crate::catalog_runtime::CatalogRuntimeError::from(source())),
+            Box::new(crate::discovery_store::DiscoveryStoreError::from(source())),
+        ];
+        for error in errors {
+            assert_eq!(error.to_string(), "catalog schema validation failed");
+            assert!(matches!(
+                error.source().unwrap().downcast_ref::<plasm_core::SchemaError>(),
+                Some(plasm_core::SchemaError::DuplicateEntity { name })
+                    if name == "FixtureEntity"
+            ));
+        }
+    }
+
+    #[test]
+    fn boxed_agent_imports_preserve_concrete_sources() {
+        let schema = AgentError::from(plasm_core::loader::SchemaLoadError::from(
+            plasm_core::SchemaError::DuplicateEntity {
+                name: "FixtureEntity".into(),
+            },
+        ));
+        assert!(matches!(
+            schema.source().unwrap().downcast_ref::<plasm_core::SchemaError>(),
+            Some(plasm_core::SchemaError::DuplicateEntity { name }) if name == "FixtureEntity"
+        ));
+        let runtime = AgentError::from(plasm_runtime::RuntimeError::Cancelled);
+        assert!(matches!(
+            runtime
+                .source()
+                .unwrap()
+                .downcast_ref::<Box<plasm_runtime::RuntimeError>>()
+                .map(Box::as_ref),
+            Some(plasm_runtime::RuntimeError::Cancelled)
+        ));
+    }
+
+    #[test]
+    fn boxed_render_token_preserves_metadata_and_concrete_source() {
+        let error = RenderFieldListError::TokenResolution {
+            token: "binding.field".into(),
+            source: Box::new(
+                crate::plasm_plan_run::WireFieldTokenError::MissingBindingContext {
+                    token: "binding.field".into(),
+                },
+            ),
+        };
+        assert!(matches!(
+            error
+                .source()
+                .unwrap()
+                .downcast_ref::<Box<crate::plasm_plan_run::WireFieldTokenError>>()
+                .map(Box::as_ref),
+            Some(crate::plasm_plan_run::WireFieldTokenError::MissingBindingContext { token })
+                if token == "binding.field"
+        ));
+    }
 }

@@ -3,6 +3,30 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, thiserror::Error)]
+#[error("view `{view}` relation `{relation}` expects {expected}, node `{node}` produces {actual}")]
+pub struct ViewRelationEntityMismatch {
+    pub view: String,
+    pub relation: String,
+    pub node: String,
+    pub expected: String,
+    pub actual: String,
+}
+
+#[derive(Debug, Clone, thiserror::Error)]
+#[error(
+    "{parent}.{relation}: inherited identity slot {field} has incompatible parent and child types"
+)]
+pub struct InheritedIdentityTypeMismatch {
+    pub parent: String,
+    pub relation: String,
+    pub field: String,
+    pub parent_type: plasm_core::FieldType,
+    pub child_type: plasm_core::FieldType,
+    pub parent_format: Option<plasm_core::ValueWireFormat>,
+    pub child_format: Option<plasm_core::ValueWireFormat>,
+}
+
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum CatalogTemplateError {
     #[error(transparent)]
     Cml(#[from] crate::CmlError),
@@ -139,15 +163,9 @@ pub enum CatalogTemplateError {
         relation: String,
         node: String,
     },
-    #[error(
-        "view `{view}` relation `{relation}` expects {expected}, node `{node}` produces {actual}"
-    )]
+    #[error("{details}")]
     ViewRelationEntityMismatch {
-        view: String,
-        relation: String,
-        node: String,
-        expected: String,
-        actual: String,
+        details: Box<ViewRelationEntityMismatch>,
     },
     #[error("view `{view}` relation `{relation}` targets unknown entity `{entity}`")]
     ViewRelationEntityMissing {
@@ -184,15 +202,9 @@ pub enum CatalogTemplateError {
         entity: String,
         field: String,
     },
-    #[error("{parent}.{relation}: inherited identity slot {field} has incompatible parent and child types")]
+    #[error("{details}")]
     InheritedIdentityTypeMismatch {
-        parent: String,
-        relation: String,
-        field: String,
-        parent_type: plasm_core::FieldType,
-        child_type: plasm_core::FieldType,
-        parent_format: Option<plasm_core::ValueWireFormat>,
-        child_format: Option<plasm_core::ValueWireFormat>,
+        details: Box<InheritedIdentityTypeMismatch>,
     },
     #[error("capability `{capability}`: OpenAPI GET {path} declares pagination but CML omits `pagination:`")]
     OpenApiPaginationMissing { capability: String, path: String },
@@ -208,4 +220,81 @@ pub enum CatalogTemplateError {
         #[source]
         source: Arc<serde_json::Error>,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::error::Error;
+
+    #[test]
+    fn catalog_template_error_has_bounded_stack_footprint() {
+        assert!(std::mem::size_of::<CatalogTemplateError>() < 128);
+    }
+
+    #[test]
+    fn catalog_template_preserves_concrete_cml_source_chain() {
+        let source = serde_json::from_str::<serde_json::Value>("{").unwrap_err();
+        let error = CatalogTemplateError::CapabilityTemplate {
+            capability: "fixture_get".into(),
+            source: crate::CmlError::InvalidTransportTemplate {
+                transport: plasm_cml::error::TransportKind::Http,
+                source: Arc::new(source),
+            },
+        };
+        let source = error.source().unwrap();
+        assert!(source.is::<crate::CmlError>());
+        assert!(source.source().unwrap().is::<Arc<serde_json::Error>>());
+    }
+
+    #[test]
+    fn boxed_mismatch_metadata_and_display_survive_clone() {
+        let error = CatalogTemplateError::InheritedIdentityTypeMismatch {
+            details: Box::new(InheritedIdentityTypeMismatch {
+                parent: "Parent".into(),
+                relation: "children".into(),
+                field: "parent_id".into(),
+                parent_type: plasm_core::FieldType::String,
+                child_type: plasm_core::FieldType::Integer,
+                parent_format: None,
+                child_format: None,
+            }),
+        };
+        assert_eq!(
+            error.to_string(),
+            "Parent.children: inherited identity slot parent_id has incompatible parent and child types"
+        );
+        let CatalogTemplateError::InheritedIdentityTypeMismatch { details } = error.clone() else {
+            panic!("expected inherited identity mismatch");
+        };
+        assert_eq!(details.parent, "Parent");
+        assert_eq!(details.relation, "children");
+        assert_eq!(details.field, "parent_id");
+        assert_eq!(details.parent_type, plasm_core::FieldType::String);
+        assert_eq!(details.child_type, plasm_core::FieldType::Integer);
+        assert_eq!(details.parent_format, None);
+        assert_eq!(details.child_format, None);
+
+        let error = CatalogTemplateError::ViewRelationEntityMismatch {
+            details: Box::new(ViewRelationEntityMismatch {
+                view: "summary".into(),
+                relation: "children".into(),
+                node: "items".into(),
+                expected: "Child".into(),
+                actual: "Other".into(),
+            }),
+        };
+        assert_eq!(
+            error.to_string(),
+            "view `summary` relation `children` expects Child, node `items` produces Other"
+        );
+        let CatalogTemplateError::ViewRelationEntityMismatch { details } = error.clone() else {
+            panic!("expected view relation entity mismatch");
+        };
+        assert_eq!(details.view, "summary");
+        assert_eq!(details.relation, "children");
+        assert_eq!(details.node, "items");
+        assert_eq!(details.expected, "Child");
+        assert_eq!(details.actual, "Other");
+    }
 }

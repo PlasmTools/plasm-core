@@ -185,7 +185,7 @@ impl<'a> Parser<'a> {
                 self.err(ParseErrorKind::CompoundKeyResolution {
                     entity: head.canonical.to_string(),
                     key: raw_key.to_owned(),
-                    source,
+                    source: Box::new(source),
                 })
             })
     }

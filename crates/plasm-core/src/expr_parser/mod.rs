@@ -140,7 +140,7 @@ pub enum ParseErrorKind {
         field: String,
         field_type: FieldType,
         #[source]
-        source: crate::wire_coercion::CoercionError,
+        source: Box<crate::wire_coercion::CoercionError>,
     },
     ExpectedChar {
         expected: char,
@@ -292,7 +292,7 @@ pub enum ParseErrorKind {
     },
     SymbolResolution {
         #[source]
-        source: crate::SymbolResolveError,
+        source: Box<crate::SymbolResolveError>,
     },
     InvokeCatalogOwnership {
         #[source]
@@ -302,7 +302,7 @@ pub enum ParseErrorKind {
         capability: String,
         hint: String,
         #[source]
-        source: crate::SymbolResolveError,
+        source: Box<crate::SymbolResolveError>,
     },
     UnknownInvokeArgument {
         argument: String,
@@ -409,7 +409,7 @@ pub enum ParseErrorKind {
         entity: String,
         key: String,
         #[source]
-        source: crate::SymbolResolveError,
+        source: Box<crate::SymbolResolveError>,
     },
     InvalidUnicodeEscape {
         digit_index: usize,
@@ -1251,9 +1251,9 @@ impl<'a> Parser<'a> {
                     let binding = match self.sym_map.resolve_session_method(raw) {
                         Ok(b) => b,
                         Err(e) => {
-                            return Some(Err(
-                                self.err(ParseErrorKind::SymbolResolution { source: e })
-                            ));
+                            return Some(Err(self.err(ParseErrorKind::SymbolResolution {
+                                source: Box::new(e),
+                            })));
                         }
                     };
                     let anchor = source.primary_entity();
@@ -1276,14 +1276,16 @@ impl<'a> Parser<'a> {
                         }
                     }
                     Err(self.err(ParseErrorKind::SymbolResolution {
-                        source: SymbolResolveError::MethodAnchorMismatch {
+                        source: Box::new(SymbolResolveError::MethodAnchorMismatch {
                             token: raw.trim().to_string(),
                             bound_domain: binding.domain.to_string(),
                             anchor_entity: anchor.to_string(),
-                        },
+                        }),
                     }))
                 }
-                Err(e) => Err(self.err(ParseErrorKind::SymbolResolution { source: e })),
+                Err(e) => Err(self.err(ParseErrorKind::SymbolResolution {
+                    source: Box::new(e),
+                })),
             },
         )
     }
@@ -1474,7 +1476,7 @@ impl<'a> Parser<'a> {
                         self.err(ParseErrorKind::InvokeArgumentResolution {
                             capability: cap_label.to_string(),
                             hint: hint.to_string(),
-                            source: e,
+                            source: Box::new(e),
                         })
                     })?
             } else {
@@ -1730,7 +1732,7 @@ impl<'a> Parser<'a> {
                         self.err(ParseErrorKind::InvokeArgumentResolution {
                             capability: cap_label.to_string(),
                             hint: hint.to_string(),
-                            source: e,
+                            source: Box::new(e),
                         })
                     })?
             } else {
@@ -2421,7 +2423,7 @@ impl<'a> Parser<'a> {
                     self.err(ParseErrorKind::ValueCoercion {
                         field: f.name.to_string(),
                         field_type: nv.field_type.clone(),
-                        source: m,
+                        source: Box::new(m),
                     })
                 })?;
             }
@@ -2946,7 +2948,7 @@ impl<'a> Parser<'a> {
                         self.err(ParseErrorKind::ValueCoercion {
                             field: field.clone(),
                             field_type: ft.clone(),
-                            source: m,
+                            source: Box::new(m),
                         })
                     })?;
                 }
@@ -2976,7 +2978,11 @@ impl<'a> Parser<'a> {
                     ec,
                     pred_field.as_str(),
                 )
-                .map_err(|e| self.err(ParseErrorKind::SymbolResolution { source: e }))?
+                .map_err(|e| {
+                    self.err(ParseErrorKind::SymbolResolution {
+                        source: Box::new(e),
+                    })
+                })?
         } else {
             pred_field.clone()
         };
@@ -2998,7 +3004,7 @@ impl<'a> Parser<'a> {
                     self.err(ParseErrorKind::ValueCoercion {
                         field: pred_wire.clone(),
                         field_type: ft.clone(),
-                        source: m,
+                        source: Box::new(m),
                     })
                 })?;
             }
@@ -4054,6 +4060,76 @@ mod tests {
     //! means X” end-to-end should have a counterpart row in `plasm-e2e` `plasm_language_matrix`
     //! — cite the matrix row id on semantic parallels (e.g. `lang_query_all`).
     use super::*;
+    #[test]
+    fn boxed_symbol_causes_preserve_source_and_parser_footprint() {
+        use std::error::Error;
+        assert!(
+            std::mem::size_of::<ParseError>() < 128,
+            "ParseError occupies {} bytes",
+            std::mem::size_of::<ParseError>()
+        );
+        let source = || {
+            Box::new(SymbolResolveError::UnknownEntityPSym {
+                catalog_entry_id: "fixture".into(),
+                entity: "FixtureEntity".into(),
+                token: "p1".into(),
+            })
+        };
+        let kinds = [
+            ParseErrorKind::SymbolResolution { source: source() },
+            ParseErrorKind::InvokeArgumentResolution {
+                capability: "create".into(),
+                hint: "hint".into(),
+                source: source(),
+            },
+            ParseErrorKind::CompoundKeyResolution {
+                entity: "FixtureEntity".into(),
+                key: "id".into(),
+                source: source(),
+            },
+        ];
+        for kind in kinds {
+            let error = ParseError { kind, offset: 7 };
+            assert_eq!(error.offset, 7);
+            assert!(matches!(
+                error.source().unwrap().downcast_ref::<Box<SymbolResolveError>>().map(Box::as_ref),
+                Some(SymbolResolveError::UnknownEntityPSym { token, .. }) if token == "p1"
+            ));
+        }
+    }
+
+    #[test]
+    fn boxed_value_coercion_preserves_field_metadata_and_source_chain() {
+        use std::error::Error;
+        let integer = "notanint".parse::<i64>().unwrap_err();
+        let error = ParseError {
+            offset: 7,
+            kind: ParseErrorKind::ValueCoercion {
+                field: "score".into(),
+                field_type: FieldType::Integer,
+                source: Box::new(crate::CoercionError::InvalidIntegerLiteral {
+                    raw: "notanint".into(),
+                    source: integer,
+                }),
+            },
+        };
+        assert!(matches!(&error.kind,
+            ParseErrorKind::ValueCoercion { field, field_type: FieldType::Integer, .. }
+                if field == "score"));
+        assert_eq!(error.offset, 7);
+        let source = error
+            .source()
+            .unwrap()
+            .downcast_ref::<Box<crate::CoercionError>>()
+            .unwrap()
+            .as_ref();
+        assert!(
+            matches!(source, crate::CoercionError::InvalidIntegerLiteral { raw, .. }
+            if raw == "notanint")
+        );
+        assert!(source.source().unwrap().is::<std::num::ParseIntError>());
+    }
+
     #[test]
     fn semantic_parse_errors_preserve_typed_sources() {
         use std::error::Error;
@@ -5476,9 +5552,9 @@ mod tests {
                 error.kind,
                 ParseErrorKind::ValueCoercion {
                     field_type: FieldType::Date,
-                    source: crate::wire_coercion::CoercionError::Temporal(_),
+                    source,
                     ..
-                }
+                } if matches!(source.as_ref(), crate::wire_coercion::CoercionError::Temporal(_))
             ));
         }
     }
@@ -6513,8 +6589,10 @@ mod tests {
             ParseErrorKind::ValueCoercion {
                 field,
                 field_type: FieldType::Integer,
-                source: crate::wire_coercion::CoercionError::InvalidIntegerLiteral { raw, .. },
-            } if field == "score" && raw == "notanint"
+                source,
+            } if field == "score" && matches!(source.as_ref(),
+                crate::wire_coercion::CoercionError::InvalidIntegerLiteral { raw, .. }
+                    if raw == "notanint")
         ));
     }
 

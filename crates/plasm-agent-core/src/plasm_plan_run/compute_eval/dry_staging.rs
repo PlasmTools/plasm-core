@@ -11,7 +11,7 @@ enum DryStagingError {
     #[error("dry staging could not construct catalog-typed rows: {source}")]
     StubRows {
         #[source]
-        source: plasm_core::SchemaError,
+        source: Box<plasm_core::SchemaError>,
     },
     #[error("dry staging relation `{relation_id}` has unstaged source `{source_id}`")]
     RelationSourceMissing {
@@ -59,8 +59,11 @@ fn dry_stub_entity_rows(
     ),
     DryStagingError,
 > {
-    let rows = plasm_core::dry_stub_entity_rows(cgs, ent, count)
-        .map_err(|source| DryStagingError::StubRows { source })?;
+    let rows = plasm_core::dry_stub_entity_rows(cgs, ent, count).map_err(|source| {
+        DryStagingError::StubRows {
+            source: Box::new(source),
+        }
+    })?;
     Ok((rows, vec![None; count]))
 }
 

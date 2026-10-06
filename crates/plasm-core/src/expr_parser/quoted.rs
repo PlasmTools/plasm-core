@@ -1,33 +1,6 @@
 //! One quoted-string lexer for scalar and data-expression syntax.
 use super::{ParseError, ParseErrorKind};
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn unicode_failures_preserve_semantic_metadata_and_offset() {
-        let mut offset = 0;
-        let error = parse(r#""\u12z4""#, &mut offset).unwrap_err();
-        assert!(matches!(
-            error.kind,
-            ParseErrorKind::InvalidUnicodeEscape {
-                digit_index: 2,
-                got: Some('z')
-            }
-        ));
-        assert_eq!(error.offset, 6);
-
-        let mut offset = 0;
-        let error = parse(r#""\uD800\u0041""#, &mut offset).unwrap_err();
-        assert!(matches!(
-            error.kind,
-            ParseErrorKind::InvalidLowSurrogate { unit: 0x41 }
-        ));
-        assert_eq!(error.offset, 13);
-    }
-}
-
 pub(super) fn parse(input: &str, offset: &mut usize) -> Result<String, ParseError> {
     fn next(input: &str, offset: &mut usize) -> Option<char> {
         let c = input[*offset..].chars().next()?;
@@ -99,5 +72,32 @@ pub(super) fn parse(input: &str, offset: &mut usize) -> Result<String, ParseErro
             }
             Some(c) => out.push(c),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unicode_failures_preserve_semantic_metadata_and_offset() {
+        let mut offset = 0;
+        let error = parse(r#""\u12z4""#, &mut offset).unwrap_err();
+        assert!(matches!(
+            error.kind,
+            ParseErrorKind::InvalidUnicodeEscape {
+                digit_index: 2,
+                got: Some('z')
+            }
+        ));
+        assert_eq!(error.offset, 6);
+
+        let mut offset = 0;
+        let error = parse(r#""\uD800\u0041""#, &mut offset).unwrap_err();
+        assert!(matches!(
+            error.kind,
+            ParseErrorKind::InvalidLowSurrogate { unit: 0x41 }
+        ));
+        assert_eq!(error.offset, 13);
     }
 }

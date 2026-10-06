@@ -124,8 +124,7 @@ pub(crate) fn check_callback_return(
     let annotation = returns::prepare(
         annotation,
         input,
-        &domains.types,
-        &domains.catalogs,
+        &domains,
         &context.cgs,
         &session.entry_id,
         symbols.as_ref(),
@@ -153,8 +152,7 @@ pub(crate) fn check_callback_closed_return(
     let annotation = returns::prepare(
         annotation,
         input,
-        &domains.types,
-        &domains.catalogs,
+        &domains,
         &context.cgs,
         &session.entry_id,
         symbols.as_ref(),
@@ -189,8 +187,7 @@ pub(crate) fn check_callback_record_return(
     let annotation = returns::prepare(
         annotation,
         input,
-        &domains.types,
-        &domains.catalogs,
+        &domains,
         &context.cgs,
         &session.entry_id,
         symbols.as_ref(),
@@ -561,7 +558,6 @@ impl PreparedCompute {
             &ReturnDomains::default(),
             mode,
         )
-        .map_err(Into::into)
     }
 
     pub(crate) fn prepare_typed(
@@ -595,7 +591,16 @@ impl PreparedCompute {
                 return Err(PythonComputeError::DependencyPacketNotSingleton.into());
             }
             return Self::prepare_multiple(
-                source, def, &imports, cgs, entry, symbols, rows, domains,
+                source,
+                def,
+                rows,
+                &multiple::MultipleContext {
+                    imports: &imports,
+                    cgs,
+                    entry,
+                    symbols,
+                    domains,
+                },
             );
         }
         let p = &def.parameters;
@@ -688,11 +693,13 @@ impl PreparedCompute {
             ann,
             &input,
             &fields,
-            domains,
-            cgs,
-            entry,
-            symbols,
-            &imports.source,
+            &arguments::ArgumentContext {
+                domains,
+                cgs,
+                entry,
+                symbols,
+                imports: &imports.source,
+            },
             mode,
         )
         .map_err(PythonComputeRejection::from)?;
@@ -701,18 +708,7 @@ impl PreparedCompute {
         let annotation = def
             .returns
             .as_deref()
-            .map(|a| {
-                returns::prepare(
-                    a,
-                    &input,
-                    &domains.types,
-                    &domains.catalogs,
-                    cgs,
-                    entry,
-                    symbols,
-                    &body_imports,
-                )
-            })
+            .map(|a| returns::prepare(a, &input, domains, cgs, entry, symbols, &body_imports))
             .transpose()
             .map_err(PythonComputeRejection::from)?;
         let declared_output = annotation
@@ -768,16 +764,12 @@ impl PreparedCompute {
             }
             _ => return Err(PythonComputeError::OutputContractMissing.into()),
         };
-        let mut stubs = upstream::stubs_in(&fields, cgs, &domains.catalogs)
-            .map_err(PythonComputeRejection::from)?;
-        upstream::domain_aliases(&domains.types, cgs, &domains.catalogs, &mut stubs)
-            .map_err(PythonComputeRejection::from)?;
-        let output_type = upstream::output_type(&output, cgs, &domains.catalogs, &mut stubs)
-            .map_err(PythonComputeRejection::from)?;
+        let mut stubs = upstream::stubs_in(&fields, cgs, &domains.catalogs)?;
+        upstream::domain_aliases(&domains.types, cgs, &domains.catalogs, &mut stubs)?;
+        let output_type = upstream::output_type(&output, cgs, &domains.catalogs, &mut stubs)?;
         let body = definition_body(source, def)?;
         let argument_type = if argument.field.is_some() || argument.mapping.is_some() {
-            upstream::input_type(&argument.value_type, cgs, &domains.catalogs, &mut stubs)
-                .map_err(PythonComputeRejection::from)?
+            upstream::input_type(&argument.value_type, cgs, &domains.catalogs, &mut stubs)?
         } else if per_row {
             "PlasmInput".into()
         } else {

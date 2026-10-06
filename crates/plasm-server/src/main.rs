@@ -302,7 +302,7 @@ enum LocalAuthBootstrapError {
     InvalidStorageKey {
         path: PathBuf,
         #[source]
-        source: AuthStorageKeyValidationError,
+        source: Box<AuthStorageKeyValidationError>,
     },
 }
 
@@ -517,7 +517,10 @@ fn ensure_local_auth_storage_encryption_key(
     };
     std::env::set_var("AUTH_STORAGE_ENCRYPTION_KEY", &key);
     if let Err(err) = validate_auth_storage_encryption_key() {
-        return Err(LocalAuthBootstrapError::InvalidStorageKey { path, source: err });
+        return Err(LocalAuthBootstrapError::InvalidStorageKey {
+            path,
+            source: Box::new(err),
+        });
     }
     Ok(if existed {
         LocalAuthStorageKeyBootstrap::LoadedFromFile { path }
@@ -1964,6 +1967,8 @@ mod tests {
 
     #[test]
     fn local_auth_storage_key_bootstrap_reports_corrupt_key_file() {
+        let size = std::mem::size_of::<LocalAuthBootstrapError>();
+        assert!(size < 128, "LocalAuthBootstrapError occupies {size} bytes");
         let _guard = env_lock().lock().expect("env lock");
         let _env = EnvGuard::new(&[
             "AUTH_STORAGE_ENCRYPTION_KEY",
@@ -1991,6 +1996,14 @@ mod tests {
             panic!("expected invalid storage key: {err}");
         };
         assert_eq!(error_path, &path);
+        assert!(std::ptr::eq(
+            source.as_ref(),
+            err.source()
+                .unwrap()
+                .downcast_ref::<Box<AuthStorageKeyValidationError>>()
+                .unwrap()
+                .as_ref()
+        ));
         assert!(source
             .source()
             .unwrap()

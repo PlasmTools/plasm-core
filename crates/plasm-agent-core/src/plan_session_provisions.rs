@@ -24,7 +24,7 @@ pub enum SessionProvisionError {
     #[error("session provisions reference unknown provided field `{field}`")]
     ProvidedFieldNotFound { field: String },
     #[error("provided field value schema is invalid: {0}")]
-    FieldSchema(#[from] plasm_core::SchemaError),
+    FieldSchema(#[from] Box<plasm_core::SchemaError>),
     #[error("Get capability is missing for entity `{entity}`")]
     GetCapabilityNotFound { entity: String },
     #[error("plan bind graph references missing provision step `{step}`")]
@@ -35,6 +35,12 @@ pub enum SessionProvisionError {
     GraphLockedDuringPreflight,
     #[error("dry session graph is locked during provision staging")]
     GraphLockedDuringStaging,
+}
+
+impl From<plasm_core::SchemaError> for SessionProvisionError {
+    fn from(error: plasm_core::SchemaError) -> Self {
+        Self::FieldSchema(Box::new(error))
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -305,16 +311,21 @@ mod error_tests {
 
     #[test]
     fn field_schema_error_retains_typed_cause() {
+        assert!(std::mem::size_of::<SessionProvisionError>() < 128);
         let error = SessionProvisionError::from(plasm_core::SchemaError::DuplicateEntity {
             name: "FixtureEntity".into(),
         });
-        assert!(matches!(error.clone(), SessionProvisionError::FieldSchema(
-            plasm_core::SchemaError::DuplicateEntity { name }
-        ) if name == "FixtureEntity"));
+        assert!(matches!(
+            error.clone(),
+            SessionProvisionError::FieldSchema(source)
+                if matches!(source.as_ref(), plasm_core::SchemaError::DuplicateEntity { name }
+                    if name == "FixtureEntity")
+        ));
         assert!(matches!(
             std::error::Error::source(&error)
                 .unwrap()
-                .downcast_ref::<plasm_core::SchemaError>(),
+                .downcast_ref::<Box<plasm_core::SchemaError>>()
+                .map(Box::as_ref),
             Some(plasm_core::SchemaError::DuplicateEntity { name }) if name == "FixtureEntity"
         ));
     }

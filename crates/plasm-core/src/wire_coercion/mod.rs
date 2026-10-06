@@ -306,17 +306,19 @@ pub fn coerce_value_for_field_type_with_policy(
                 }),
             },
         },
-        FieldType::Json => match val {
-            Value::String(ref s) if s.as_str() == "$" => Ok(val),
-            Value::String(s) => crate::value::parse_json_subtree_str(&s)
-                .ok_or_else(|| CoercionError::InvalidJsonLiteral),
-            Value::PhraseIdent(s) => crate::value::parse_json_subtree_str(&s)
-                .ok_or_else(|| CoercionError::InvalidJsonLiteral),
-            Value::Object(_) | Value::Array(_) => Ok(val),
-            other => Err(CoercionError::InvalidJsonValue {
-                actual: other.type_name(),
-            }),
-        },
+        FieldType::Json => {
+            match val {
+                Value::String(ref s) if s.as_str() == "$" => Ok(val),
+                Value::String(s) => crate::value::parse_json_subtree_str(&s)
+                    .ok_or(CoercionError::InvalidJsonLiteral),
+                Value::PhraseIdent(s) => crate::value::parse_json_subtree_str(&s)
+                    .ok_or(CoercionError::InvalidJsonLiteral),
+                Value::Object(_) | Value::Array(_) => Ok(val),
+                other => Err(CoercionError::InvalidJsonValue {
+                    actual: other.type_name(),
+                }),
+            }
+        }
         FieldType::Money => {
             // Doctrine: money wire is decimal string only.
             let fmt = crate::money::MoneyWireFormat::DecimalString;

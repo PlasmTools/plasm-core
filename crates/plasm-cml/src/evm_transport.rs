@@ -419,12 +419,22 @@ mod tests {
     fn solidity_failure_retains_type_value_and_alloy_source() {
         let ty = DynSolType::Uint(256);
         let error = coerce_dyn_value(&Value::String("not-a-number".into()), &ty).unwrap_err();
+        let CmlError::Evm(source) = &error else {
+            panic!("expected EVM coercion failure: {error}");
+        };
         assert!(
-            matches!(&error, CmlError::Evm(EvmCompileError::SolidityCoercion {
-            solidity_type: DynSolType::Uint(256), value: Value::String(value), ..
-        }) if value == "not-a-number")
+            matches!(source.as_ref(), EvmCompileError::SolidityCoercion {
+                solidity_type: DynSolType::Uint(256), value: Value::String(value), ..
+            } if value == "not-a-number")
         );
         assert!(error
+            .source()
+            .unwrap()
+            .downcast_ref::<alloy_dyn_abi::Error>()
+            .is_some());
+        let cloned = error.clone();
+        assert_eq!(cloned.to_string(), error.to_string());
+        assert!(cloned
             .source()
             .unwrap()
             .downcast_ref::<alloy_dyn_abi::Error>()
@@ -435,8 +445,11 @@ mod tests {
     fn evm_address_and_block_rejections_are_semantic() {
         let env = CmlEnv::new();
         let error = eval_address(&CmlExpr::const_("not-an-address"), &env).unwrap_err();
+        let CmlError::Evm(source) = &error else {
+            panic!("expected EVM address failure: {error}");
+        };
         assert!(
-            matches!(&error, CmlError::Evm(EvmCompileError::Address { address, .. }) if address == "not-an-address")
+            matches!(source.as_ref(), EvmCompileError::Address { address, .. } if address == "not-an-address")
         );
         assert!(error
             .source()
@@ -444,9 +457,12 @@ mod tests {
             .downcast_ref::<<Address as FromStr>::Err>()
             .is_some());
         let error = eval_block(&CmlExpr::const_(-1_i64), &env).unwrap_err();
+        let CmlError::Evm(source) = &error else {
+            panic!("expected EVM block failure: {error}");
+        };
         assert!(matches!(
-            error,
-            CmlError::Evm(EvmCompileError::NegativeBlockNumber { number: -1 })
+            source.as_ref(),
+            EvmCompileError::NegativeBlockNumber { number: -1 }
         ));
     }
 }

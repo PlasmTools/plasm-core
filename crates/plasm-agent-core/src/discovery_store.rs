@@ -36,7 +36,7 @@ pub enum DiscoveryStoreError {
     #[error(transparent)]
     Json(#[from] serde_json::Error),
     #[error(transparent)]
-    CatalogIl(#[from] plasm_core::catalog_il::CatalogIlError),
+    CatalogIl(#[from] Box<plasm_core::catalog_il::CatalogIlError>),
     #[error(transparent)]
     CompiledCatalog(#[from] plasm_compile::CmlError),
     #[error(transparent)]
@@ -86,9 +86,21 @@ pub enum DiscoveryStoreError {
     #[error("embedding provider returned no vector for the requested intent")]
     MissingIntentEmbedding,
     #[error("embedding vector does not satisfy the discovery profile")]
-    InvalidEmbedding(#[source] plasm_core::catalog_discovery::CatalogDiscoveryError),
+    InvalidEmbedding(#[source] Box<plasm_core::catalog_discovery::CatalogDiscoveryError>),
     #[error("catalog artifact map does not contain the requested entry")]
     MissingCatalogEntry,
+}
+
+impl From<plasm_core::catalog_il::CatalogIlError> for DiscoveryStoreError {
+    fn from(error: plasm_core::catalog_il::CatalogIlError) -> Self {
+        Self::CatalogIl(Box::new(error))
+    }
+}
+
+impl From<plasm_core::catalog_discovery::CatalogDiscoveryError> for DiscoveryStoreError {
+    fn from(error: plasm_core::catalog_discovery::CatalogDiscoveryError) -> Self {
+        Self::InvalidEmbedding(Box::new(error))
+    }
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -387,7 +399,7 @@ impl DiscoveryStore {
             catalog
                 .discovery
                 .validate(&catalog.cgs)
-                .map_err(|error| DiscoveryStoreError::InvalidEmbedding(error))?;
+                .map_err(DiscoveryStoreError::from)?;
         }
         let allowed = refs.keys().cloned().collect();
         let capabilities: Vec<_> = refs
@@ -697,7 +709,7 @@ impl DiscoveryStore {
 }
 
 fn vector_literal(vector: &[f32]) -> Result<String> {
-    validate_embedding(vector, 1536).map_err(DiscoveryStoreError::InvalidEmbedding)?;
+    validate_embedding(vector, 1536).map_err(DiscoveryStoreError::from)?;
     Ok(serde_json::to_string(vector)?)
 }
 

@@ -127,8 +127,8 @@ impl ExecutionEngine {
                                     .await?;
                                 if row.reference != get.reference {
                                     return Err(RuntimeError::GetIdentityMismatch {
-                                        expected: get.reference.clone(),
-                                        actual: row.reference.clone(),
+                                        expected: Box::new(get.reference.clone()),
+                                        actual: Box::new(row.reference.clone()),
                                     });
                                 }
                                 branch.insert(row.clone())?;

@@ -87,8 +87,7 @@ impl ExecutePipeline {
         ),
         RunLineError,
     > {
-        PlasmPreflight::preflight_parsed_line(sess, line, &parsed)
-            .map_err(RunLineError::Admission)?;
+        PlasmPreflight::preflight_parsed_line(sess, line, &parsed).map_err(RunLineError::from)?;
         crate::http_execute::run_parsed_plasm_line(
             line,
             sess,

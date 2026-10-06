@@ -20,7 +20,7 @@ pub enum ProgramSessionError {
 
 #[derive(Debug)]
 pub enum ProgramCompileFailure {
-    Program(ProgramDiagnostic),
+    Program(Box<ProgramDiagnostic>),
     Host(plasm_agent_core::compilation_error::ExecutionFailure),
 }
 impl std::fmt::Display for ProgramCompileFailure {
@@ -47,7 +47,7 @@ impl ProgramCompileFailure {
         self,
     ) -> Result<ProgramDiagnostic, plasm_agent_core::compilation_error::ExecutionFailure> {
         match self {
-            Self::Program(diagnostic) => Ok(diagnostic),
+            Self::Program(diagnostic) => Ok(*diagnostic),
             Self::Host(failure) => Err(failure),
         }
     }
@@ -149,21 +149,19 @@ impl ProgramSession {
         &self.execute.prompt_text
     }
 
-    // Preserve the shared structured diagnostic at this cold public boundary.
-    #[allow(clippy::result_large_err)]
     pub async fn compile(&self, source: &str) -> Result<PlasmCompBundle, ProgramCompileFailure> {
         let pipeline = Default::default();
         plasm_agent_core::compile_program(&pipeline, None, &self.execute, "program", source)
             .await
             .map_err(|error| match error {
                 plasm_agent_core::compilation_error::CompilationError::Program(error) => {
-                    ProgramCompileFailure::Program(ProgramDiagnostic::from_stage(
+                    ProgramCompileFailure::Program(Box::new(ProgramDiagnostic::from_stage(
                         &pipeline,
                         None,
                         &self.execute,
                         source,
-                        error,
-                    ))
+                        *error,
+                    )))
                 }
                 plasm_agent_core::compilation_error::CompilationError::Host(failure) => {
                     ProgramCompileFailure::Host(failure)
@@ -178,6 +176,76 @@ impl ProgramSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn program_error_footprints_are_bounded() {
+        let session_bytes = std::mem::size_of::<ProgramSessionError>();
+        let compile_bytes = std::mem::size_of::<ProgramCompileFailure>();
+        let reference_bytes = std::mem::size_of::<crate::ProgramReferenceError>();
+        assert!(
+            session_bytes < 128,
+            "ProgramSessionError is {session_bytes} bytes; expected <128"
+        );
+        assert!(
+            compile_bytes < 128,
+            "ProgramCompileFailure is {compile_bytes} bytes; expected <128"
+        );
+        assert!(
+            reference_bytes < 128,
+            "ProgramReferenceError is {reference_bytes} bytes; expected <128"
+        );
+    }
+
+    #[test]
+    fn boxed_diagnostic_preserves_display_source_and_owned_metadata() {
+        use plasm_agent_core::program_diagnostic::{
+            ProgramScore, ProgramStageError, UnderstoodSketch,
+        };
+        use std::error::Error;
+        let diagnostic = ProgramDiagnostic {
+            stage: ProgramStageError::CoreType {
+                error: plasm_core::TypeError::FieldNotFound {
+                    field: "score".into(),
+                    entity: "Item".into(),
+                },
+            },
+            score: ProgramScore {
+                overall: 0.4,
+                parse: 1.0,
+                type_check: 0.0,
+                plan: 0.0,
+            },
+            understood: Some(UnderstoodSketch {
+                bindings: vec!["items".into()],
+                failed_at: Some("score".into()),
+                sketch: None,
+                ok_count: 1,
+                total: 2,
+            }),
+            replay: None,
+        };
+        let display = diagnostic.agent_markdown();
+        let failure = ProgramCompileFailure::Program(Box::new(diagnostic));
+        assert_eq!(failure.to_string(), display);
+        let stage = failure
+            .source()
+            .unwrap()
+            .downcast_ref::<ProgramStageError>()
+            .unwrap();
+        assert!(
+            matches!(stage.source().unwrap().downcast_ref::<plasm_core::TypeError>(),
+                Some(plasm_core::TypeError::FieldNotFound { field, entity })
+                    if field == "score" && entity == "Item"
+            )
+        );
+        let owned = failure.into_program().unwrap();
+        assert_eq!(owned.score.overall, 0.4);
+        let understood = owned.understood.unwrap();
+        assert_eq!(understood.bindings, ["items"]);
+        assert_eq!(understood.failed_at.as_deref(), Some("score"));
+        assert_eq!((understood.ok_count, understood.total), (1, 2));
+    }
+
     fn session() -> ProgramSession {
         let cgs = plasm_core::load_schema(
             &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

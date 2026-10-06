@@ -275,7 +275,7 @@ pub(crate) fn unwrap_single_inner_payload(
             let first = a
                 .get_mut(0)
                 .map(std::mem::take)
-                .ok_or_else(|| crate::ResponseNarrowError::EmptyArray)?;
+                .ok_or(crate::ResponseNarrowError::EmptyArray)?;
             match first {
                 serde_json::Value::Object(m) => m.get(inner).cloned().ok_or_else(|| {
                     crate::ResponseNarrowError::ArrayInnerMissing {

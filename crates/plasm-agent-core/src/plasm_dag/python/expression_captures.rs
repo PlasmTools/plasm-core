@@ -327,21 +327,18 @@ impl Transformer for Capture<'_, '_> {
         if self.state.borrow().error.is_some() {
             return;
         }
-        match expression {
-            PyExpr::Compare(compare) => {
-                for (index, op) in compare.ops.iter().enumerate() {
-                    if matches!(
-                        op,
-                        ruff_python_ast::CmpOp::In | ruff_python_ast::CmpOp::NotIn
-                    ) {
-                        if let Err(error) = self.membership(&mut compare.operands[index + 1]) {
-                            self.state.borrow_mut().error = Some(error);
-                            return;
-                        }
+        if let PyExpr::Compare(compare) = expression {
+            for (index, op) in compare.ops.iter().enumerate() {
+                if matches!(
+                    op,
+                    ruff_python_ast::CmpOp::In | ruff_python_ast::CmpOp::NotIn
+                ) {
+                    if let Err(error) = self.membership(&mut compare.operands[index + 1]) {
+                        self.state.borrow_mut().error = Some(error);
+                        return;
                     }
                 }
             }
-            _ => {}
         }
         match self.capture(expression) {
             Ok(true) => {}

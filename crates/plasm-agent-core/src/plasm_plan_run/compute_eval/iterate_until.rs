@@ -11,7 +11,7 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 enum IterateUntilError {
     #[error("iteration row predicate could not be evaluated: {0}")]
-    Predicate(#[from] plasm_runtime::RuntimeError),
+    Predicate(#[from] Box<plasm_runtime::RuntimeError>),
     #[error("iteration seed produced no rows")]
     EmptySeed,
     #[error("iteration source {0} has not been materialized")]
@@ -38,6 +38,12 @@ enum IterateUntilError {
     Operand(#[from] super::eval::RuntimeOperandError),
     #[error(transparent)]
     WireCoercion(#[from] super::eval::WireCoercionContextError),
+}
+
+impl From<plasm_runtime::RuntimeError> for IterateUntilError {
+    fn from(error: plasm_runtime::RuntimeError) -> Self {
+        Self::Predicate(Box::new(error))
+    }
 }
 
 impl From<IterateUntilError> for ExecutionFailure {

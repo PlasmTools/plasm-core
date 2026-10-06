@@ -185,12 +185,11 @@ pub fn graphql_mutation_envelope_failure(
                     detail: Value::String(s.trim().to_owned()),
                 });
             }
-            Some(v @ (Value::Array(_) | Value::Object(_))) => {
+            Some(v @ (Value::Array(_) | Value::Object(_)))
                 if v.as_array().is_some_and(|values| !values.is_empty())
-                    || v.as_object().is_some_and(|values| !values.is_empty())
-                {
-                    return Some(GraphQlMutationFailure::Envelope { detail: v.clone() });
-                }
+                    || v.as_object().is_some_and(|values| !values.is_empty()) =>
+            {
+                return Some(GraphQlMutationFailure::Envelope { detail: v.clone() });
             }
             _ => {}
         }

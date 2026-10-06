@@ -197,8 +197,7 @@ pub(crate) fn source_field_kind(
                 .into_iter()
                 .find(|f| f.name.as_str() == field)
                 .and_then(|f| f.value_type)
-                .ok_or(PythonSchemaError::SourceFieldMissing)
-                .map_err(Into::into);
+                .ok_or(PythonSchemaError::SourceFieldMissing);
         }
         Node::Data(_) | Node::Derive(_) => {
             let t =

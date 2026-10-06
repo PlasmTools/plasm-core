@@ -28,7 +28,7 @@ pub enum CatalogRuntimeError {
     #[error(transparent)]
     CatalogLoad(#[from] crate::catalog_data::CatalogLoadError),
     #[error(transparent)]
-    CatalogIl(#[from] plasm_core::catalog_il::CatalogIlError),
+    CatalogIl(#[from] Box<plasm_core::catalog_il::CatalogIlError>),
     #[error(transparent)]
     CompiledCatalog(#[from] plasm_compile::CmlError),
     #[error(transparent)]
@@ -55,6 +55,12 @@ pub enum CatalogRuntimeError {
         #[source]
         source: serde_json::Error,
     },
+}
+
+impl From<plasm_core::catalog_il::CatalogIlError> for CatalogRuntimeError {
+    fn from(error: plasm_core::catalog_il::CatalogIlError) -> Self {
+        Self::CatalogIl(Box::new(error))
+    }
 }
 
 /// How the catalog was bootstrapped — drives whether control-plane hot reload is allowed.

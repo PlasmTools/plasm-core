@@ -204,47 +204,6 @@ fn commit_verify_failure(error: PlanCommitVerifyError) -> ExecutionFailure {
     ExecutionFailure::new(cause, code, error.to_string())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use indexmap::IndexMap;
-    use plasm_core::{CgsContext, CGS};
-    use plasm_runtime::{FailureCause, RecoveryDisposition};
-
-    #[test]
-    fn unavailable_page_handle_is_a_repairable_read_only_error() {
-        let cgs = Arc::new(CGS::new());
-        let mut contexts = IndexMap::new();
-        contexts.insert(
-            "default".into(),
-            Arc::new(CgsContext::entry("default", Arc::clone(&cgs))),
-        );
-        let session = ExecuteSession::new(
-            "ph".into(),
-            "p".into(),
-            Arc::clone(&cgs),
-            contexts,
-            "default".into(),
-            String::new(),
-            String::new(),
-            None,
-            vec!["Pet".into()],
-            None,
-            None,
-            cgs.catalog_cgs_hash_hex(),
-            None,
-        );
-        let handle = PagingHandle::parse("pg1").unwrap();
-        let failure = compile_page_continuation(&session, &handle, 1).unwrap_err();
-        assert_eq!(failure.cause, FailureCause::Program);
-        assert_eq!(failure.code, "page_handle_unavailable");
-        assert_eq!(failure.recovery, RecoveryDisposition::RepairProgram);
-        assert!(!failure.effects_unresolved);
-        assert!(failure.effects.is_empty());
-        assert!(failure.dispatches.is_empty());
-    }
-}
-
 /// Ingress for MCP `plasm_run` live execute.
 pub struct ExecuteMcpLiveRun {
     pub es: Arc<ExecuteSession>,
@@ -452,4 +411,45 @@ async fn execute_mcp_live_run_inner(
         Ok(await_out)
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use indexmap::IndexMap;
+    use plasm_core::{CgsContext, CGS};
+    use plasm_runtime::{FailureCause, RecoveryDisposition};
+
+    #[test]
+    fn unavailable_page_handle_is_a_repairable_read_only_error() {
+        let cgs = Arc::new(CGS::new());
+        let mut contexts = IndexMap::new();
+        contexts.insert(
+            "default".into(),
+            Arc::new(CgsContext::entry("default", Arc::clone(&cgs))),
+        );
+        let session = ExecuteSession::new(
+            "ph".into(),
+            "p".into(),
+            Arc::clone(&cgs),
+            contexts,
+            "default".into(),
+            String::new(),
+            String::new(),
+            None,
+            vec!["Pet".into()],
+            None,
+            None,
+            cgs.catalog_cgs_hash_hex(),
+            None,
+        );
+        let handle = PagingHandle::parse("pg1").unwrap();
+        let failure = compile_page_continuation(&session, &handle, 1).unwrap_err();
+        assert_eq!(failure.cause, FailureCause::Program);
+        assert_eq!(failure.code, "page_handle_unavailable");
+        assert_eq!(failure.recovery, RecoveryDisposition::RepairProgram);
+        assert!(!failure.effects_unresolved);
+        assert!(failure.effects.is_empty());
+        assert!(failure.dispatches.is_empty());
+    }
 }

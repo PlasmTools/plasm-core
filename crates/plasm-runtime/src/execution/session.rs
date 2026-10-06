@@ -71,7 +71,7 @@ pub const CML_ENV_PLASM_EXECUTE_SESSION_ID: &str = "plasm_execute_session_id";
 
 /// teaching prompts use bare `$` as a fill-in cue; it must not reach HTTP/EVM transport.
 pub(crate) fn reject_domain_placeholder_in_executable(expr: &Expr) -> Result<(), RuntimeError> {
-    reject_domain_placeholder_core(expr).map_err(|source| RuntimeError::TypeError { source })
+    reject_domain_placeholder_core(expr).map_err(RuntimeError::from)
 }
 
 /// Drain a [`QueryStream`] into a single [`ExecutionResult`].

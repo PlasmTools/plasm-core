@@ -101,7 +101,7 @@ async fn execute_plasm_tool_dry_run_inner(
             Err(crate::compilation_error::CompilationError::Program(stage)) => {
                 record_mcp_plasm_dry_run_phase("compile", phase.elapsed());
                 record_mcp_plasm_dry_run_phase("total", total_started.elapsed());
-                return Ok(plan_result_from_stage(&ctx, program, stage));
+                return Ok(plan_result_from_stage(&ctx, program, *stage));
             }
         };
     record_mcp_plasm_dry_run_phase("compile", phase.elapsed());

@@ -35,7 +35,7 @@ pub enum AdminError {
     #[error("OAuth provider database operation failed: {source}")]
     ProviderDatabase {
         #[source]
-        source: plasm_agent_core::mcp_config_admin::McpConfigAdminError,
+        source: Box<plasm_agent_core::mcp_config_admin::McpConfigAdminError>,
     },
     #[error("OAuth catalog refresh failed: {source}")]
     ProviderRefresh {
@@ -45,12 +45,12 @@ pub enum AdminError {
     #[error("OAuth provider resolution failed: {source}")]
     ProviderResolution {
         #[source]
-        source: plasm_agent_core::oauth_link_catalog::OauthResolveError,
+        source: Box<plasm_agent_core::oauth_link_catalog::OauthResolveError>,
     },
     #[error("KV client secret write failed: {source}")]
     ClientSecretWrite {
         #[source]
-        source: auth_framework::AuthError,
+        source: Box<auth_framework::AuthError>,
     },
     #[error("OAuth HTTP client initialization failed: {source}")]
     HttpClient {
@@ -88,19 +88,19 @@ pub enum AdminError {
     TokenWrite {
         key: String,
         #[source]
-        source: auth_framework::AuthError,
+        source: Box<auth_framework::AuthError>,
     },
     #[error("OAuth binding pointer write failed for `{entry_id}`: {source}")]
     BindingPointerWrite {
         entry_id: String,
         #[source]
-        source: plasm_agent_core::oauth_binding_kv::OAuthBindingWriteError,
+        source: Box<plasm_agent_core::oauth_binding_kv::OAuthBindingWriteError>,
     },
     #[error("OAuth binding KV read failed for `{key}`: {source}")]
     BindingRead {
         key: String,
         #[source]
-        source: auth_framework::AuthError,
+        source: Box<auth_framework::AuthError>,
     },
     #[error("OAuth binding pointer corrupt for `{entry_id}`: {source}")]
     BindingPointerParse {
@@ -125,7 +125,7 @@ pub enum AdminError {
     #[error("auth storage initialization failed: {source}")]
     AuthInitialization {
         #[source]
-        source: auth_framework::AuthError,
+        source: Box<auth_framework::AuthError>,
     },
     #[error("appliance database initialization failed: {source}")]
     RepositoryInitialization {
@@ -160,13 +160,13 @@ pub enum AdminError {
     #[error("MCP administration failed: {source}")]
     McpAdministration {
         #[source]
-        source: plasm_agent_core::mcp_config_admin::McpConfigAdminError,
+        source: Box<plasm_agent_core::mcp_config_admin::McpConfigAdminError>,
     },
     #[error("outbound secret write failed for `{key}`: {source}")]
     OutboundSecretWrite {
         key: String,
         #[source]
-        source: auth_framework::AuthError,
+        source: Box<auth_framework::AuthError>,
     },
     #[error("binding values invalid for `{entry_id}`: {source}")]
     BindingValues {
@@ -178,7 +178,7 @@ pub enum AdminError {
     BindingStore {
         entry_id: String,
         #[source]
-        source: plasm_agent_core::binding_store::BindingStoreError,
+        source: Box<plasm_agent_core::binding_store::BindingStoreError>,
     },
 }
 
@@ -222,7 +222,7 @@ pub async fn appliance_oauth_provider_disable(
         let n = oauth_provider_repository::set_oauth_provider_enabled(r.pool(), entry_id, false)
             .await
             .map_err(|source| AdminError::ProviderDatabase {
-                source: source.into(),
+                source: Box::new(source.into()),
             })?;
         if n == 0 {
             catalog.remove_runtime(entry_id).await;
@@ -284,7 +284,9 @@ pub async fn appliance_oauth_upsert_provider(
         storage
             .store_kv(u.client_secret_key.trim(), secret.as_bytes(), None)
             .await
-            .map_err(|source| AdminError::ClientSecretWrite { source })?;
+            .map_err(|source| AdminError::ClientSecretWrite {
+                source: Box::new(source),
+            })?;
     }
 
     if u.enabled {
@@ -303,7 +305,7 @@ pub async fn appliance_oauth_upsert_provider(
             )
             .await
             .map_err(|source| AdminError::ProviderDatabase {
-                source: source.into(),
+                source: Box::new(source.into()),
             })?;
             let src = PostgresOauthRuntimeProviderSource::new(r.pool().clone());
             apply_runtime_source_to_catalog(&src, catalog)
@@ -325,7 +327,7 @@ pub async fn appliance_oauth_upsert_provider(
         let n = oauth_provider_repository::set_oauth_provider_enabled(r.pool(), entry_id, false)
             .await
             .map_err(|source| AdminError::ProviderDatabase {
-                source: source.into(),
+                source: Box::new(source.into()),
             })?;
         if n == 0 {
             catalog.remove_runtime(entry_id).await;
@@ -359,7 +361,7 @@ pub async fn oauth_binding_status(
             .await
             .map_err(|source| AdminError::BindingRead {
                 key: key.clone(),
-                source,
+                source: Box::new(source),
             })?
     else {
         return Ok(OAuthBindingStatus {
@@ -385,7 +387,7 @@ pub async fn oauth_binding_status(
         .await
         .map_err(|source| AdminError::BindingRead {
             key: hkv.to_owned(),
-            source,
+            source: Box::new(source),
         })?
     else {
         return Ok(OAuthBindingStatus {
@@ -464,7 +466,9 @@ pub async fn appliance_oauth_device_bind(
     let cfg = catalog
         .resolve_for_oauth_start(storage, entry_id)
         .await
-        .map_err(|source| AdminError::ProviderResolution { source })?;
+        .map_err(|source| AdminError::ProviderResolution {
+            source: Box::new(source),
+        })?;
 
     let device_url = cfg
         .device_authorization_endpoint
@@ -531,13 +535,13 @@ pub async fn appliance_oauth_device_bind(
                     .await
                     .map_err(|source| AdminError::TokenWrite {
                         key: hosted_kv_key.clone(),
-                        source,
+                        source: Box::new(source),
                     })?;
                 write_oauth_binding_pointer(storage, entry_id, &hosted_kv_key)
                     .await
                     .map_err(|source| AdminError::BindingPointerWrite {
                         entry_id: entry_id.to_owned(),
-                        source,
+                        source: Box::new(source),
                     })?;
                 return Ok(DeviceBindOutcome {
                     user_code: prompt.user_code.clone(),
@@ -577,14 +581,17 @@ mod admin_error_tests {
     fn admin_error_preserves_concrete_sources_and_is_channel_safe() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<AdminError>();
+        let size = std::mem::size_of::<AdminError>();
+        assert!(size < 128, "AdminError occupies {size} bytes");
         let error = AdminError::ProviderResolution {
-            source: plasm_agent_core::oauth_link_catalog::OauthResolveError::UnknownEntry,
+            source: Box::new(plasm_agent_core::oauth_link_catalog::OauthResolveError::UnknownEntry),
         };
         assert!(matches!(
             error
                 .source()
                 .unwrap()
-                .downcast_ref::<plasm_agent_core::oauth_link_catalog::OauthResolveError>(),
+                .downcast_ref::<Box<plasm_agent_core::oauth_link_catalog::OauthResolveError>>()
+                .map(Box::as_ref),
             Some(plasm_agent_core::oauth_link_catalog::OauthResolveError::UnknownEntry)
         ));
         let error = AdminError::SecretInput {
@@ -599,6 +606,76 @@ mod admin_error_tests {
                 .kind(),
             std::io::ErrorKind::PermissionDenied
         );
+    }
+
+    #[test]
+    fn boxed_auth_write_preserves_key_display_and_nested_storage_source() {
+        let source = auth_framework::AuthError::Storage(
+            auth_framework::errors::StorageError::BackendUnavailable,
+        );
+        let display = format!("OAuth token write failed for `fixture-key`: {source}");
+        let error = AdminError::TokenWrite {
+            key: "fixture-key".into(),
+            source: Box::new(source),
+        };
+        assert_eq!(error.to_string(), display);
+        let source = error
+            .source()
+            .unwrap()
+            .downcast_ref::<Box<auth_framework::AuthError>>()
+            .unwrap()
+            .as_ref();
+        assert!(matches!(
+            source,
+            auth_framework::AuthError::Storage(
+                auth_framework::errors::StorageError::BackendUnavailable
+            )
+        ));
+        assert!(source
+            .source()
+            .unwrap()
+            .is::<auth_framework::errors::StorageError>());
+        let AdminError::TokenWrite { key, source } = error else {
+            panic!("expected token write error");
+        };
+        assert_eq!(key, "fixture-key");
+        assert!(matches!(*source, auth_framework::AuthError::Storage(_)));
+    }
+
+    #[test]
+    fn boxed_binding_store_preserves_entry_and_concrete_cause_chain() {
+        use plasm_agent_core::binding_store::BindingStoreError;
+        let source = BindingStoreError::KvStore {
+            source: auth_framework::AuthError::Storage(
+                auth_framework::errors::StorageError::BackendUnavailable,
+            ),
+        };
+        let display = format!("binding store failed for `fixture`: {source}");
+        let error = AdminError::BindingStore {
+            entry_id: "fixture".into(),
+            source: Box::new(source),
+        };
+        assert_eq!(error.to_string(), display);
+        let source = error
+            .source()
+            .unwrap()
+            .downcast_ref::<Box<BindingStoreError>>()
+            .unwrap()
+            .as_ref();
+        let auth = source
+            .source()
+            .unwrap()
+            .downcast_ref::<auth_framework::AuthError>()
+            .unwrap();
+        assert!(auth
+            .source()
+            .unwrap()
+            .is::<auth_framework::errors::StorageError>());
+        let AdminError::BindingStore { entry_id, source } = error else {
+            panic!("expected binding store error");
+        };
+        assert_eq!(entry_id, "fixture");
+        assert!(matches!(*source, BindingStoreError::KvStore { .. }));
     }
 
     #[tokio::test]

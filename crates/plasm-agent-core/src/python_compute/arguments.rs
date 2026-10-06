@@ -34,17 +34,29 @@ pub(crate) fn is_row(expr: &Expr) -> bool {
         || matches!(expr, Expr::Subscript(s) if name(&s.value).is_some_and(is_entity_record_type))
 }
 
+/// Borrowed catalog and annotation environment shared by argument admission.
+pub(super) struct ArgumentContext<'a> {
+    pub domains: &'a ReturnDomains,
+    pub cgs: &'a CGS,
+    pub entry: &'a str,
+    pub symbols: &'a dyn SymbolResolve,
+    pub imports: &'a str,
+}
+
 pub(super) fn resolve(
     annotation: &Expr,
     input: &Type,
     fields: &BTreeMap<String, Type>,
-    domains: &ReturnDomains,
-    cgs: &CGS,
-    entry: &str,
-    symbols: &dyn SymbolResolve,
-    imports: &str,
+    context: &ArgumentContext<'_>,
     mode: ComputeInputMode,
 ) -> Result<Argument, PythonArgumentError> {
+    let &ArgumentContext {
+        domains,
+        cgs,
+        entry,
+        symbols,
+        imports,
+    } = context;
     if is_row(annotation) {
         if mode != ComputeInputMode::Singleton {
             return Err(PythonArgumentError::PluralSourceRequiresMapCallback);
@@ -68,16 +80,7 @@ pub(super) fn resolve(
             value_type: input.clone(),
         });
     }
-    let expected = returns::prepare(
-        annotation,
-        input,
-        &domains.types,
-        &domains.catalogs,
-        cgs,
-        entry,
-        symbols,
-        imports,
-    )?;
+    let expected = returns::prepare(annotation, input, domains, cgs, entry, symbols, imports)?;
     // Preserve a declared value column when it already satisfies the input.
     // A mapping view is an adaptation of a record, not a wrapper around an
     // existing dictionary-valued column.

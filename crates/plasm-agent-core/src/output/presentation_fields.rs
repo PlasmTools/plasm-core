@@ -1,8 +1,12 @@
 //! Field sets for execute summaries: which columns are reference-only vs lossy-capped in MCP/TSV/table output.
 
+#[cfg(test)]
 use super::field_presentation;
+#[cfg(test)]
 use plasm_core::{AgentPresentation, CGS};
+#[cfg(test)]
 use plasm_runtime::ExecutionResult;
+#[cfg(test)]
 use std::collections::BTreeSet;
 
 /// Sorted unique field names rendered with a **lossy** summary cap (full string only in run snapshot JSON).
@@ -32,6 +36,7 @@ impl AsRef<[String]> for LossySummaryFieldNames {
 }
 
 /// Field names whose schema uses [`AgentPresentation::Lossy`] for in-band summaries.
+#[cfg(test)]
 pub(crate) fn lossy_summary_field_names(
     result: &ExecutionResult,
     cgs: Option<&CGS>,

@@ -12,7 +12,7 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum DagCompilationError {
     #[error(transparent)]
-    MembershipRhs(#[from] plasm_core::RowMembershipParseError),
+    MembershipRhs(Box<plasm_core::RowMembershipParseError>),
     #[error(transparent)]
     BooleanFilter(#[from] plasm_core::BooleanFilterError),
     #[error(transparent)]
@@ -60,7 +60,7 @@ pub enum DagCompilationError {
     #[error(transparent)]
     FixtureSerialization(#[from] serde_json::Error),
     #[error(transparent)]
-    RowPredicate(#[from] plasm_core::RowPredicateError),
+    RowPredicate(Box<plasm_core::RowPredicateError>),
     #[error(transparent)]
     RowPredicateLowering(#[from] crate::row_predicate_lower::RowPredicateLoweringError),
     #[error(transparent)]
@@ -222,10 +222,109 @@ pub enum DagCompilationError {
     },
 }
 
+impl From<plasm_core::RowMembershipParseError> for DagCompilationError {
+    fn from(error: plasm_core::RowMembershipParseError) -> Self {
+        Self::MembershipRhs(Box::new(error))
+    }
+}
+
+impl From<plasm_core::RowPredicateError> for DagCompilationError {
+    fn from(error: plasm_core::RowPredicateError) -> Self {
+        Self::RowPredicate(Box::new(error))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::DagCompilationError;
     use plasm_core::expr_parser::SurfaceSyntaxError;
+
+    #[test]
+    fn compilation_error_footprints_stay_below_clippy_limit() {
+        let dag_bytes = std::mem::size_of::<DagCompilationError>();
+        assert!(
+            dag_bytes < 128,
+            "DagCompilationError is {dag_bytes} bytes; expected <128"
+        );
+        let suffix_bytes = std::mem::size_of::<super::super::RowSuffixLoweringError>();
+        assert!(
+            suffix_bytes < 128,
+            "RowSuffixLoweringError is {suffix_bytes} bytes; expected <128"
+        );
+        let value_bytes =
+            std::mem::size_of::<super::super::plan_serialize::PlanValueExpressionError>();
+        assert!(
+            value_bytes < 128,
+            "PlanValueExpressionError is {value_bytes} bytes; expected <128"
+        );
+    }
+
+    #[test]
+    fn boxed_predicate_preserves_concrete_parser_cause() {
+        use plasm_core::expr_parser::{ParseError, ParseErrorKind};
+        use std::error::Error;
+        let error = DagCompilationError::from(plasm_core::RowPredicateError::Parse(ParseError {
+            offset: 7,
+            kind: ParseErrorKind::QueryResolution {
+                source: plasm_core::QueryCapabilityResolveError::CapabilityNotFound {
+                    capability: "missing".into(),
+                    entity: "item".into(),
+                },
+            },
+        }));
+        assert!(error
+            .source()
+            .unwrap()
+            .is::<plasm_core::QueryCapabilityResolveError>());
+        assert!(matches!(
+            error,
+            DagCompilationError::RowPredicate(error)
+                if matches!(*error, plasm_core::RowPredicateError::Parse(ParseError { offset: 7, .. }))
+        ));
+    }
+
+    #[test]
+    fn nested_boxed_sources_survive_dag_row_suffix_and_plan_value_wrappers() {
+        use plasm_core::expr_parser::{ParseError, ParseErrorKind};
+        use plasm_core::SymbolResolveError;
+        use std::error::Error;
+        let parse = || ParseError {
+            offset: 7,
+            kind: ParseErrorKind::SymbolResolution {
+                source: Box::new(SymbolResolveError::UnknownEntityPSym {
+                    catalog_entry_id: "fixture".into(),
+                    entity: "Item".into(),
+                    token: "p1".into(),
+                }),
+            },
+        };
+        let errors: [Box<dyn Error>; 3] = [
+            Box::new(DagCompilationError::from(
+                plasm_core::RowPredicateError::Parse(parse()),
+            )),
+            Box::new(super::super::RowSuffixLoweringError::from(
+                plasm_core::RowPredicateError::Parse(parse()),
+            )),
+            Box::new(
+                super::super::plan_serialize::PlanValueExpressionError::from(
+                    plasm_core::expr_parser::data::DataExpressionError::QuotedString(parse()),
+                ),
+            ),
+        ];
+        for error in errors {
+            assert_eq!(error.to_string(), parse().to_string());
+            let source = error
+                .source()
+                .unwrap()
+                .downcast_ref::<Box<SymbolResolveError>>()
+                .unwrap()
+                .as_ref();
+            assert!(matches!(source,
+                SymbolResolveError::UnknownEntityPSym { catalog_entry_id, entity, token }
+                    if catalog_entry_id == "fixture" && entity == "Item" && token == "p1"
+            ));
+        }
+    }
 
     #[test]
     fn syntax_fault_keeps_its_semantic_variant() {

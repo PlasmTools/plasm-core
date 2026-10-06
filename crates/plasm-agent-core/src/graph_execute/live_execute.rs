@@ -115,7 +115,7 @@ async fn execute_on_branch(
             parsed_expression = %log_expr,
             "execute failed (expression detail)"
         );
-        RunLineError::Runtime(e)
+        RunLineError::from(e)
     })?;
 
     crate::graph_rehydrate::GraphSurfaceRehydrator::sync_result_from_materialization(
@@ -128,7 +128,7 @@ async fn execute_on_branch(
         &mut result,
     )
     .await
-    .map_err(RunLineError::Runtime)?;
+    .map_err(RunLineError::from)?;
 
     if let Some(ref fields) = parsed.projection {
         if !result.entities().is_empty() {
@@ -167,7 +167,7 @@ async fn execute_on_branch(
                     result.collection = result
                         .collection
                         .with_materialization(enriched)
-                        .map_err(|e| RunLineError::Runtime(e.into()))?;
+                        .map_err(|e| RunLineError::from(plasm_runtime::RuntimeError::from(e)))?;
                 }
                 Err(e) => {
                     tracing::error!(
@@ -182,7 +182,7 @@ async fn execute_on_branch(
                         parsed_expression = %log_expr,
                         "projection enrichment failed (expression detail)"
                     );
-                    return Err(RunLineError::Projection(e));
+                    return Err(RunLineError::Projection(Box::new(e)));
                 }
             }
             apply_projection(&mut result, fields);

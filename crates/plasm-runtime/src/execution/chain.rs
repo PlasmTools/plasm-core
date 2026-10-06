@@ -96,7 +96,7 @@ impl ExecutionEngine {
             if let Some(field_schema) = source_entity.fields.get(chain.selector.as_str()) {
                 let nv = cgs
                     .named_value_for_slot(field_schema)
-                    .map_err(|e| RuntimeError::SchemaContract(e))?;
+                    .map_err(RuntimeError::from)?;
                 match &nv.field_type {
                     FieldType::EntityRef { target, .. } => target.to_string(),
                     _ => {
@@ -1138,8 +1138,8 @@ impl ExecutionEngine {
                         .and_then(|(entity, source)| {
                             if entity.reference != reference {
                                 return Err(RuntimeError::GetIdentityMismatch {
-                                    expected: reference.clone(),
-                                    actual: entity.reference.clone(),
+                                    expected: Box::new(reference.clone()),
+                                    actual: Box::new(entity.reference.clone()),
                                 });
                             }
                             Ok((entity, source, branch))

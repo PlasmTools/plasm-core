@@ -287,47 +287,6 @@ pub enum HostServeError {
     McpBootstrap(#[from] rust_mcp_sdk::error::McpSdkError),
 }
 
-#[cfg(test)]
-mod serve_error_tests {
-    use super::HostServeError;
-    use std::error::Error;
-
-    #[test]
-    fn serve_error_preserves_listener_source_and_cross_task_bounds() {
-        fn assert_send<T: Send>() {}
-        assert_send::<HostServeError>();
-        let error = HostServeError::from(std::io::Error::from(std::io::ErrorKind::AddrInUse));
-        let source = error
-            .source()
-            .unwrap()
-            .downcast_ref::<std::io::Error>()
-            .unwrap();
-        assert_eq!(source.kind(), std::io::ErrorKind::AddrInUse);
-    }
-
-    #[test]
-    fn serve_error_preserves_host_wiring_source() {
-        let redis = redis::RedisError::from((redis::ErrorKind::IoError, "test connection failure"));
-        let error = HostServeError::from(
-            crate::mcp_transport_store::HostWiringError::RedisConnect(redis),
-        );
-        let source = error.source().unwrap();
-        assert!(source.is::<crate::mcp_transport_store::HostWiringError>());
-        assert!(source.source().unwrap().is::<redis::RedisError>());
-    }
-
-    #[test]
-    fn serve_error_preserves_mcp_sdk_source() {
-        let error = HostServeError::from(rust_mcp_sdk::error::McpSdkError::SdkError(
-            rust_mcp_sdk::schema::SdkError::invalid_request(),
-        ));
-        assert!(error
-            .source()
-            .unwrap()
-            .is::<rust_mcp_sdk::error::McpSdkError>());
-    }
-}
-
 /// Serve discovery + execute on an already-bound [`tokio::net::TcpListener`] (bind-first readiness).
 pub async fn serve_discovery_execute_on_listener(
     listener: tokio::net::TcpListener,
@@ -390,4 +349,45 @@ pub async fn serve_discovery_execute_and_mcp_unified(
         .merge(mcp_router);
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod serve_error_tests {
+    use super::HostServeError;
+    use std::error::Error;
+
+    #[test]
+    fn serve_error_preserves_listener_source_and_cross_task_bounds() {
+        fn assert_send<T: Send>() {}
+        assert_send::<HostServeError>();
+        let error = HostServeError::from(std::io::Error::from(std::io::ErrorKind::AddrInUse));
+        let source = error
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap();
+        assert_eq!(source.kind(), std::io::ErrorKind::AddrInUse);
+    }
+
+    #[test]
+    fn serve_error_preserves_host_wiring_source() {
+        let redis = redis::RedisError::from((redis::ErrorKind::IoError, "test connection failure"));
+        let error = HostServeError::from(
+            crate::mcp_transport_store::HostWiringError::RedisConnect(redis),
+        );
+        let source = error.source().unwrap();
+        assert!(source.is::<crate::mcp_transport_store::HostWiringError>());
+        assert!(source.source().unwrap().is::<redis::RedisError>());
+    }
+
+    #[test]
+    fn serve_error_preserves_mcp_sdk_source() {
+        let error = HostServeError::from(rust_mcp_sdk::error::McpSdkError::SdkError(
+            rust_mcp_sdk::schema::SdkError::invalid_request(),
+        ));
+        assert!(error
+            .source()
+            .unwrap()
+            .is::<rust_mcp_sdk::error::McpSdkError>());
+    }
 }

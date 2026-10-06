@@ -160,8 +160,8 @@ pub enum PlanValidationError {
         consumer: String,
         alias: String,
         node: String,
-        expected: QualifiedEntityKey,
-        actual: QualifiedEntityKey,
+        expected: Box<QualifiedEntityKey>,
+        actual: Box<QualifiedEntityKey>,
     },
     #[error("capture ports require a scoped body")]
     UnscopedCapture,
@@ -697,8 +697,8 @@ pub fn enrich_uses_result_provenance(
                     consumer: consumer_id.to_owned(),
                     alias: u.r#as.to_string(),
                     node: u.node.to_string(),
-                    expected: resolved.clone(),
-                    actual: existing.clone(),
+                    expected: Box::new(resolved),
+                    actual: Box::new(existing.clone()),
                 });
             }
             (_, Some(resolved)) => {
@@ -1190,4 +1190,48 @@ fn topological_order(
 pub fn validate_plan_value(plan: &serde_json::Value) -> Result<(), PlanValidationError> {
     let plan = parse_plan_value(plan)?;
     validate_plan(&plan)
+}
+
+#[cfg(test)]
+mod error_footprint_tests {
+    use super::*;
+
+    #[test]
+    fn provenance_metadata_remains_owned_and_error_stays_small() {
+        let bytes = std::mem::size_of::<PlanValidationError>();
+        assert!(
+            bytes < 128,
+            "PlanValidationError is {bytes} bytes; expected <128"
+        );
+        let expected = QualifiedEntityKey {
+            entry_id: "catalog-a".into(),
+            entity: "item".into(),
+        };
+        let actual = QualifiedEntityKey {
+            entry_id: "catalog-b".into(),
+            entity: "item".into(),
+        };
+        let error = PlanValidationError::ContradictoryProvenance {
+            consumer: "consumer".into(),
+            alias: "input".into(),
+            node: "source".into(),
+            expected: Box::new(expected.clone()),
+            actual: Box::new(actual.clone()),
+        };
+        assert_eq!(
+            error.to_string(),
+            "plan node `consumer` alias `input` has contradictory provenance for source `source`"
+        );
+        match error {
+            PlanValidationError::ContradictoryProvenance {
+                expected: stored_expected,
+                actual: stored_actual,
+                ..
+            } => {
+                assert_eq!(*stored_expected, expected);
+                assert_eq!(*stored_actual, actual);
+            }
+            _ => panic!("expected contradictory provenance"),
+        }
+    }
 }

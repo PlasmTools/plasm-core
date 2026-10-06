@@ -134,8 +134,7 @@ async fn commit_federate_and_expand_waves(
                 outbound_ref,
                 bindings_ref,
             )
-            .await
-            .map_err(super::SessionMutateError::from)?;
+            .await?;
             prepared_federates.insert(eid.clone(), prepared);
         }
     }

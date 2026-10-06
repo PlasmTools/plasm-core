@@ -47,14 +47,13 @@ pub(super) fn inferred_row_binding(
 pub(super) fn resolve(
     expr: &Expr,
     input: &Type,
-    domains: &BTreeMap<String, Type>,
-    catalogs: &BTreeMap<String, std::sync::Arc<CGS>>,
+    domains: &ReturnDomains,
     cgs: &CGS,
     entry: &str,
     symbols: &dyn SymbolResolve,
     imports: &str,
 ) -> Result<Type, inference::InferenceError> {
-    prepare(expr, input, domains, catalogs, cgs, entry, symbols, imports)?
+    prepare(expr, input, domains, cgs, entry, symbols, imports)?
         .contract()?
         .ok_or(inference::InferenceError::Return(
             inference::ReturnContractError::UnresolvedAnnotation,
@@ -96,8 +95,7 @@ impl Annotation {
 pub(super) fn prepare(
     expr: &Expr,
     input: &Type,
-    domains: &BTreeMap<String, Type>,
-    catalogs: &BTreeMap<String, std::sync::Arc<CGS>>,
+    domains: &ReturnDomains,
     cgs: &CGS,
     entry: &str,
     symbols: &dyn SymbolResolve,
@@ -119,7 +117,7 @@ pub(super) fn prepare(
             }
         }
     }
-    let mut aliases = domains.clone();
+    let mut aliases = domains.types.clone();
     aliases.insert("Row".into(), input.clone());
     let mut leaves = Leaves { values: vec![] };
     leaves.visit_expr(expr);
@@ -135,7 +133,8 @@ pub(super) fn prepare(
                     (cgs, entry)
                 } else {
                     (
-                        catalogs
+                        domains
+                            .catalogs
                             .get(owner.entry_id.as_str())
                             .map(AsRef::as_ref)
                             .ok_or_else(|| inference::InferenceError::ReturnCatalogMissing {
@@ -162,9 +161,7 @@ pub(super) fn prepare(
                 if !root.is_some_and(|n| aliases.contains_key(n) || is_entity_record_type(n)) {
                     continue;
                 }
-                let base = resolve(
-                    &a.value, input, domains, catalogs, cgs, entry, symbols, imports,
-                )?;
+                let base = resolve(&a.value, input, domains, cgs, entry, symbols, imports)?;
                 base.field(a.attr.as_str())?
             }
             _ => unreachable!(),

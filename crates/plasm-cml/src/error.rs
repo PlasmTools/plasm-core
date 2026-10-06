@@ -115,5 +115,27 @@ pub enum CmlError {
 
     #[cfg(feature = "evm")]
     #[error(transparent)]
-    Evm(#[from] crate::evm_transport::EvmCompileError),
+    // EVM coercion retains a full typed value and Alloy cause on the failure heap.
+    Evm(#[from] Box<crate::evm_transport::EvmCompileError>),
+}
+
+#[cfg(feature = "evm")]
+impl From<crate::evm_transport::EvmCompileError> for CmlError {
+    fn from(source: crate::evm_transport::EvmCompileError) -> Self {
+        Self::Evm(Box::new(source))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cml_error_has_bounded_stack_footprint() {
+        assert!(
+            std::mem::size_of::<CmlError>() < 128,
+            "CmlError occupies {} bytes; box large owned causes at the error boundary",
+            std::mem::size_of::<CmlError>()
+        );
+    }
 }

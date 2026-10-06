@@ -127,8 +127,8 @@ impl FlowPolicyRepository {
         project_slug: &str,
         policy: &FlowPolicy,
     ) -> Result<(), FlowPolicyRepositoryError> {
-        let json = serde_json::to_value(policy)
-            .map_err(|e| FlowPolicyRepositoryError::Serialization(e))?;
+        let json =
+            serde_json::to_value(policy).map_err(FlowPolicyRepositoryError::Serialization)?;
         let now = Utc::now();
         sqlx::query(
             r#"INSERT INTO project_flow_policies (
@@ -194,8 +194,8 @@ impl FlowPolicyRepository {
             return Err(FlowPolicyRepositoryError::ValidateRequired);
         }
         let next_rev = row.published_revision.saturating_add(1).max(1);
-        let json = serde_json::to_value(&draft)
-            .map_err(|e| FlowPolicyRepositoryError::Serialization(e))?;
+        let json =
+            serde_json::to_value(&draft).map_err(FlowPolicyRepositoryError::Serialization)?;
         let now = Utc::now();
         sqlx::query(
             r#"INSERT INTO project_flow_policies (
@@ -309,5 +309,5 @@ fn parse_policy_value(v: Value) -> Result<Option<FlowPolicy>, FlowPolicyReposito
     }
     serde_json::from_value(v)
         .map(Some)
-        .map_err(|e| FlowPolicyRepositoryError::StoredPolicyInvalid(e))
+        .map_err(FlowPolicyRepositoryError::StoredPolicyInvalid)
 }

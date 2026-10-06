@@ -255,7 +255,7 @@ pub fn request_error_from_host_http(
     let detail = host_body_detail(body);
     let authorization = OutboundAuthorizationFact::from_header(authorization_header);
     RuntimeError::RequestError {
-        source: crate::RequestFailure::HttpStatus(crate::HttpStatusFailure {
+        source: crate::RequestFailure::HttpStatus(Box::new(crate::HttpStatusFailure {
             method: method.to_owned(),
             url: url.to_owned(),
             status,
@@ -264,10 +264,10 @@ pub fn request_error_from_host_http(
             authorization,
             login_token_tail: None,
             retry_budget_exhausted: false,
-        }),
+        })),
         attempts: 1,
         status: Some(status),
-        body: serde_json::from_str(body).ok(),
+        body: serde_json::from_str(body).ok().map(Box::new),
     }
 }
 

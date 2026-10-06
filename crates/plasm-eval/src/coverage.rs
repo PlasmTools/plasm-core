@@ -25,7 +25,7 @@ pub enum CoverageError {
     CaseReference {
         case_id: String,
         #[source]
-        source: crate::ProgramReferenceError,
+        source: Box<crate::ProgramReferenceError>,
     },
 }
 
@@ -399,7 +399,7 @@ pub async fn union_case_entities(
                         let derived = crate::entities_from_reference_expr(re, cgs).await.map_err(
                             |source| CoverageError::CaseReference {
                                 case_id: c.id.clone(),
-                                source,
+                                source: Box::new(source),
                             },
                         )?;
                         if matches!(source, CoversSource::Reference) {
@@ -575,7 +575,7 @@ pub async fn cases_with_effective_covers(
                         let derived = derive_eval_form_ids_from_reference(re, cgs).await.map_err(
                             |source| CoverageError::CaseReference {
                                 case_id: c.id.clone(),
-                                source,
+                                source: Box::new(source),
                             },
                         )?;
                         if matches!(source, CoversSource::Reference) {
@@ -628,7 +628,7 @@ pub async fn compare_case_covers_to_derived(
             .await
             .map_err(|source| CoverageError::CaseReference {
                 case_id: c.id.clone(),
-                source,
+                source: Box::new(source),
             })?;
         let claimed: HashSet<EvalFormId> = c
             .covers
@@ -1020,6 +1020,42 @@ mod tests {
     use super::*;
     use plasm_core::loader::load_schema_dir;
     use std::path::Path;
+
+    #[test]
+    fn boxed_case_reference_preserves_source_and_case_metadata() {
+        use std::error::Error;
+        let bytes = std::mem::size_of::<CoverageError>();
+        assert!(bytes < 128, "CoverageError is {bytes} bytes; expected <128");
+        let source = crate::ProgramReferenceError::Session(
+            crate::program_session::ProgramSessionError::UnknownEntity {
+                entity: "MissingItem".into(),
+            },
+        );
+        let display = format!("case `case-1` reference expression failed: {source}");
+        let error = CoverageError::CaseReference {
+            case_id: "case-1".into(),
+            source: Box::new(source),
+        };
+        assert_eq!(error.to_string(), display);
+        let source = error
+            .source()
+            .unwrap()
+            .downcast_ref::<Box<crate::ProgramReferenceError>>()
+            .unwrap()
+            .as_ref();
+        assert!(matches!(source,
+            crate::ProgramReferenceError::Session(
+                crate::program_session::ProgramSessionError::UnknownEntity { entity }
+            ) if entity == "MissingItem"
+        ));
+        match error {
+            CoverageError::CaseReference { case_id, source } => {
+                assert_eq!(case_id, "case-1");
+                assert!(matches!(*source, crate::ProgramReferenceError::Session(_)));
+            }
+            _ => panic!("expected case reference"),
+        }
+    }
 
     #[test]
     fn petstore_derives_query_filtered_and_get() {

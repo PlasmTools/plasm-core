@@ -70,7 +70,7 @@ pub enum AgentEngineError {
     #[error("dry evaluation of committed plan failed: {0}")]
     CommittedPlanDry(#[source] plasm_agent_core::plan_commit_store::PlanCommitVerifyError),
     #[error("dry evaluation of paging plan failed: {0}")]
-    PagingPlanDry(#[source] plasm_agent_core::program_diagnostic::ProgramStageError),
+    PagingPlanDry(#[source] Box<ProgramStageError>),
     #[error("paging continuation compilation failed")]
     PagingContinuation(#[source] plasm_runtime::ExecutionFailure),
     #[error("run reference `{value}` is neither a commit reference nor a paging handle")]
@@ -92,7 +92,7 @@ pub enum AgentEngineError {
     #[error("serialization failed")]
     Json(#[from] serde_json::Error),
     #[error("catalog interchange failed")]
-    CatalogIl(#[from] plasm_core::catalog_il::CatalogIlError),
+    CatalogIl(#[from] Box<plasm_core::catalog_il::CatalogIlError>),
     #[error("catalog compilation failed")]
     Compile(#[from] plasm_compile::CmlError),
     #[error("teaching surface construction failed")]
@@ -105,6 +105,18 @@ pub enum AgentEngineError {
         "plan commit flow policy rejected the plan ({verdict}) with {violations} violation(s)"
     )]
     FlowDenial { verdict: String, violations: usize },
+}
+
+impl From<plasm_core::catalog_il::CatalogIlError> for AgentEngineError {
+    fn from(source: plasm_core::catalog_il::CatalogIlError) -> Self {
+        Self::CatalogIl(Box::new(source))
+    }
+}
+
+impl From<ProgramStageError> for AgentEngineError {
+    fn from(source: ProgramStageError) -> Self {
+        Self::PagingPlanDry(Box::new(source))
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -669,7 +681,7 @@ impl AgentEngine {
         {
             Ok(b) => b,
             Err(plasm_agent_core::compilation_error::CompilationError::Program(stage)) => {
-                return Ok(self.reject_from_stage(&es, trimmed, stage))
+                return Ok(self.reject_from_stage(&es, trimmed, *stage))
             }
             Err(
                 error @ (plasm_agent_core::compilation_error::CompilationError::Host(_)
@@ -769,8 +781,7 @@ impl AgentEngine {
         } else if let Ok(handle) = PagingHandle::parse(trimmed) {
             let bundle = plasm_agent_core::mcp_server::compile_page_continuation(&es, &handle, 0)
                 .map_err(AgentEngineError::PagingContinuation)?;
-            let dry =
-                evaluate_plasm_comp_dry(&es, &bundle).map_err(AgentEngineError::PagingPlanDry)?;
+            let dry = evaluate_plasm_comp_dry(&es, &bundle).map_err(AgentEngineError::from)?;
             (bundle, dry)
         } else {
             return Err(AgentEngineError::InvalidRunReference {
@@ -1039,6 +1050,69 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
+    #[test]
+    fn agent_engine_error_has_bounded_footprint() {
+        let size = std::mem::size_of::<AgentEngineError>();
+        assert!(size < 128, "AgentEngineError occupies {size} bytes");
+    }
+
+    #[test]
+    fn boxed_catalog_import_retains_concrete_source_chain() {
+        use plasm_core::catalog_il::CatalogIlError;
+        use std::error::Error;
+
+        let error = AgentEngineError::from(CatalogIlError::Io(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "catalog fixture denied",
+        )));
+        assert_eq!(error.to_string(), "catalog interchange failed");
+        let source = error
+            .source()
+            .unwrap()
+            .downcast_ref::<Box<CatalogIlError>>()
+            .unwrap()
+            .as_ref();
+        assert!(matches!(source, CatalogIlError::Io(_)));
+        let io = source
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap();
+        assert_eq!(io.kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(io.to_string(), "catalog fixture denied");
+    }
+
+    #[test]
+    fn boxed_paging_import_retains_stage_metadata_and_source() {
+        use std::error::Error;
+
+        let stage = ProgramStageError::CoreType {
+            error: plasm_core::TypeError::FieldNotFound {
+                field: "missing".into(),
+                entity: "Product".into(),
+            },
+        };
+        let expected_display = format!("dry evaluation of paging plan failed: {stage}");
+        let error = AgentEngineError::from(stage);
+        assert_eq!(error.to_string(), expected_display);
+        let source = error
+            .source()
+            .unwrap()
+            .downcast_ref::<Box<ProgramStageError>>()
+            .unwrap()
+            .as_ref();
+        assert!(matches!(source, ProgramStageError::CoreType { .. }));
+        let cause = source
+            .source()
+            .unwrap()
+            .downcast_ref::<plasm_core::TypeError>()
+            .unwrap();
+        assert!(
+            matches!(cause, plasm_core::TypeError::FieldNotFound { field, entity }
+            if field == "missing" && entity == "Product")
+        );
+    }
+
     fn execute_tiny_dir() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../plasm-agent-core/tests/fixtures/execute_tiny")
@@ -1245,7 +1319,14 @@ mod tests {
                 "/nonexistent-plasm-conformance-worker",
             )),
         ));
-        let result = engine.dry_run("class Read(Program):\n    @compute\n    def count(self, rows: list[Row]) -> int:\n        return len(rows)\n    def build(self):\n        return self.count(e1.query())\n").await.unwrap();
+        let dry = engine.dry_run("class Read(Program):\n    @compute\n    def count(self, rows: list[Row]) -> int:\n        return len(rows)\n    def build(self):\n        return self.count(e1.query())\n").await.unwrap();
+        assert!(dry.failure_json.is_none());
+        assert!(!dry.plan_commit_ref.is_empty());
+        let result = engine
+            .run_plan_live(&dry.plan_commit_ref, Arc::new(MockProductListTransport))
+            .await
+            .unwrap();
+        assert!(!result.ok);
         let failure: plasm_runtime::ExecutionFailure = serde_json::from_str(
             result
                 .failure_json
@@ -1255,9 +1336,9 @@ mod tests {
         .unwrap();
         assert_eq!(failure.cause, plasm_runtime::FailureCause::Runtime);
         assert_eq!(failure.recovery, plasm_runtime::RecoveryDisposition::Stop);
-        assert!(result.plan_commit_ref.is_empty());
-        assert!(!result.summary.contains("/nonexistent"));
-        assert!(!result.summary.contains("class Read"));
+        assert_eq!(failure.code, "python_pool_failure");
+        assert!(!result.message.contains("/nonexistent"));
+        assert!(!result.message.contains("class Read"));
         engine.python_pool.close().await;
     }
 

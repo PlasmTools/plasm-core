@@ -80,6 +80,7 @@ enum PythonMoneyCallError {
 
 #[derive(Debug, Error)]
 pub(crate) enum PythonReturnValueError {
+    #[cfg(test)]
     #[error("Python output must be a string")]
     ExpectedString,
     #[error(transparent)]

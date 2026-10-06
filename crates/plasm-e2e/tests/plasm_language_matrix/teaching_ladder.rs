@@ -279,7 +279,7 @@ async fn execute(request: Value) -> Value {
             }
             Err(plasm_agent::compilation_error::CompilationError::Program(error)) => {
                 let diagnostic = plasm_agent::program_diagnostic::ProgramDiagnostic::from_stage(
-                    &pipeline, None, &session, source, error,
+                    &pipeline, None, &session, source, *error,
                 );
                 result["stage"] = json!("admission");
                 result["diagnostic"] = json!(diagnostic.agent_markdown());

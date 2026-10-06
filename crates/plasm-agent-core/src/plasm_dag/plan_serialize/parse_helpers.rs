@@ -12,7 +12,7 @@ pub enum PlanValueExpressionError {
     #[error(transparent)]
     ProgramString(#[from] plasm_core::program_string_template::ProgramStringError),
     #[error(transparent)]
-    DataExpression(#[from] plasm_core::expr_parser::data::DataExpressionError),
+    DataExpression(Box<plasm_core::expr_parser::data::DataExpressionError>),
     #[error(transparent)]
     DataValue(#[from] plasm_core::PlasmDataValueError),
     #[error("plain template binding `{binding}` is not in scope")]
@@ -21,6 +21,12 @@ pub enum PlanValueExpressionError {
     RowReferenceOutOfScope,
     #[error("data binding `{binding}` is unknown")]
     UnknownBinding { binding: String },
+}
+
+impl From<plasm_core::expr_parser::data::DataExpressionError> for PlanValueExpressionError {
+    fn from(error: plasm_core::expr_parser::data::DataExpressionError) -> Self {
+        Self::DataExpression(Box::new(error))
+    }
 }
 
 #[derive(Debug, Error)]

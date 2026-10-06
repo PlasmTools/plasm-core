@@ -71,7 +71,7 @@ impl std::error::Error for HttpStatusFailure {}
 #[derive(Debug, Error)]
 pub enum RequestFailure {
     #[error(transparent)]
-    HttpStatus(#[from] HttpStatusFailure),
+    HttpStatus(#[from] Box<HttpStatusFailure>),
     #[error("{method} — HTTP {status}: response body is not valid JSON: {source}")]
     ResponseJson {
         method: String,
@@ -110,7 +110,7 @@ pub enum MockServerOperation {
 #[derive(Debug, Error)]
 pub enum RateLimitCause {
     #[error(transparent)]
-    Upstream(#[from] HttpStatusFailure),
+    Upstream(#[from] Box<HttpStatusFailure>),
     #[error("HTTP concurrency queue timeout waiting for {scope}")]
     QueueTimeout {
         scope: String,
@@ -119,10 +119,88 @@ pub enum RateLimitCause {
     },
 }
 
+impl From<HttpStatusFailure> for RequestFailure {
+    fn from(failure: HttpStatusFailure) -> Self {
+        Self::HttpStatus(Box::new(failure))
+    }
+}
+
+impl From<HttpStatusFailure> for RateLimitCause {
+    fn from(failure: HttpStatusFailure) -> Self {
+        Self::Upstream(Box::new(failure))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::error::Error;
+
+    #[test]
+    fn request_error_owners_have_bounded_footprints() {
+        assert!(std::mem::size_of::<RequestFailure>() < 128);
+        assert!(std::mem::size_of::<RateLimitCause>() < 128);
+    }
+
+    #[test]
+    fn boxed_status_preserves_evidence_sources_and_upstream_category() {
+        let evidence = HttpStatusFailure {
+            method: "POST".into(),
+            url: "https://example.test/records".into(),
+            status: 429,
+            detail: "request quota exhausted".into(),
+            empty_body: false,
+            authorization: OutboundAuthorizationFact::from_header(Some("Bearer fixture-TAIL")),
+            login_token_tail: Some("TAIL".into()),
+            retry_budget_exhausted: true,
+        };
+        let diagnostic = evidence.to_string();
+        for error in [
+            crate::RuntimeError::RequestError {
+                source: evidence.clone().into(),
+                attempts: 3,
+                status: Some(429),
+                body: Some(Box::new(serde_json::json!({"retry": true}))),
+            },
+            crate::RuntimeError::RateLimited {
+                status: 429,
+                host: "example.test".into(),
+                retry_after: Some(std::time::Duration::from_secs(2)),
+                attempts: 3,
+                source: evidence.clone().into(),
+            },
+        ] {
+            let source = error.source().expect("typed runtime source");
+            assert_eq!(source.to_string(), diagnostic);
+            let status = if let Some(RequestFailure::HttpStatus(status)) =
+                source.downcast_ref::<RequestFailure>()
+            {
+                status.as_ref()
+            } else if let Some(RateLimitCause::Upstream(status)) =
+                source.downcast_ref::<RateLimitCause>()
+            {
+                status.as_ref()
+            } else {
+                panic!("expected concrete HTTP status source");
+            };
+            let concrete: &dyn Error = status;
+            assert!(concrete.is::<HttpStatusFailure>());
+            assert_eq!(status.method, evidence.method);
+            assert_eq!(status.url, evidence.url);
+            assert_eq!(status.status, evidence.status);
+            assert_eq!(status.detail, evidence.detail);
+            assert_eq!(status.empty_body, evidence.empty_body);
+            assert_eq!(status.authorization, evidence.authorization);
+            assert_eq!(status.login_token_tail, evidence.login_token_tail);
+            assert_eq!(
+                status.retry_budget_exhausted,
+                evidence.retry_budget_exhausted
+            );
+            let failure = crate::ExecutionFailure::from(error);
+            assert_eq!(failure.cause, crate::FailureCause::Upstream);
+            assert_eq!(failure.code, "upstream_rejection");
+        }
+    }
 
     #[test]
     fn invalid_response_preserves_json_source() {

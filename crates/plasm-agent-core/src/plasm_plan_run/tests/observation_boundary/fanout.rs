@@ -78,12 +78,12 @@ impl HttpTransport for FanoutTransport {
                 if self.reject.as_ref() == Some(&item) {
                     state.calls.push(Call::Rejected(item));
                     return Err(RuntimeError::RequestError {
-                        source: plasm_runtime::RequestFailure::HttpStatus(
+                        source: plasm_runtime::RequestFailure::HttpStatus(Box::new(
                             plasm_runtime::HttpStatusFailure::without_request(
                                 422,
                                 "rejected fanout row".into(),
                             ),
-                        ),
+                        )),
                         attempts: 1,
                         status: Some(422),
                         body: None,

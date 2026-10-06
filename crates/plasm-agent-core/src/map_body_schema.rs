@@ -115,7 +115,6 @@ pub(crate) fn body_result_schema(
                 &path.join("."),
                 0,
             )
-            .map_err(crate::python_compute::schema::PythonSchemaError::from)
             .map_err(MapBodySchemaError::from);
         }
         let row = row_contract(es, plan.nodes(), source)?;
@@ -196,8 +195,7 @@ fn record_contract_at(
                 Err(MapBodySchemaError::ValueContract(
                     plasm_core::value_contract::ValueContractError::UnresolvedSymbol,
                 ))
-            })
-            .map_err(Into::into);
+            });
         }
         N::Derive(d) => {
             return ValueContract::data_value(&d.value, &mut |binding, path| {
@@ -214,7 +212,6 @@ fn record_contract_at(
                         &path.join("."),
                         depth + 1,
                     )
-                    .map_err(crate::python_compute::schema::PythonSchemaError::from)
                     .map_err(MapBodySchemaError::from);
                 }
                 let value = row_contract_at(es, nodes, source, depth + 1)?;
@@ -235,7 +232,6 @@ fn record_contract_at(
                     },
                 )
             })
-            .map_err(Into::into)
         }
         // Iteration re-observes the seed receiver; it does not create a new domain.
         N::IterateUntil(iteration) => {

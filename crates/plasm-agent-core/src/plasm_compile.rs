@@ -71,7 +71,7 @@ fn compile_to_bundle(
                 correction,
                 span_offset: Some(error.offset),
                 error: std::sync::Arc::new(crate::program_diagnostic::ProgramParseError::Surface(
-                    error,
+                    *error,
                 )),
             })
         }
@@ -136,4 +136,16 @@ pub async fn compile_program(
     let bundle = crate::python_program_diagnostic::compile(session, source)?;
     Box::pin(crate::python_compute::admit_bundle(session, &bundle)).await?;
     Ok(bundle)
+}
+
+#[cfg(test)]
+mod error_footprint_tests {
+    #[test]
+    fn repaired_owners_keep_compile_envelope_small_without_more_boxes() {
+        let bytes = std::mem::size_of::<super::CompileSourceError>();
+        assert!(
+            bytes < 128,
+            "CompileSourceError is {bytes} bytes; expected <128"
+        );
+    }
 }

@@ -84,8 +84,6 @@ pub(crate) enum FilterBindingError {
     UnresolvedOperandValue,
     #[error("identity is not a scalar predicate operand")]
     IdentityOperandUnsupported,
-    #[error("template input `{binding}` is unavailable")]
-    TemplateBindingUnavailable { binding: String },
     #[error(transparent)]
     Template(#[from] plasm_core::program_string_template::ProgramStringError),
 }

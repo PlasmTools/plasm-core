@@ -32,8 +32,6 @@ pub(crate) enum InputRowsError {
         actual: usize,
         context: String,
     },
-    #[error("materialized row is missing projected field `{field}`")]
-    ProjectedFieldMissing { field: String },
 }
 
 fn cardinality_rows(actual: usize) -> String {
@@ -52,12 +50,6 @@ fn cardinality_remedy(actual: usize) -> &'static str {
     }
 }
 
-impl InputRowsError {
-    pub(crate) fn diagnostic(&self) -> String {
-        self.to_string()
-    }
-}
-
 impl From<InputRowsError> for plasm_runtime::ExecutionFailure {
     fn from(error: InputRowsError) -> Self {
         let code = match &error {
@@ -69,7 +61,6 @@ impl From<InputRowsError> for plasm_runtime::ExecutionFailure {
             InputRowsError::ValueShapeInvalid(_) => "plan_input_shape_invalid",
             InputRowsError::IncompleteCollection(_) => "plan_input_collection_incomplete",
             InputRowsError::Cardinality { .. } => "plan_input_cardinality_invalid",
-            InputRowsError::ProjectedFieldMissing { .. } => "plan_projection_field_missing",
         };
         Self::new(
             plasm_runtime::FailureCause::Program,

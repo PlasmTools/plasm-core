@@ -342,9 +342,12 @@ pub(super) fn check_annotated_body(
     let mut source =
         format!("{imports}\ndef __plasm_return({parameters}) -> {annotation}:{body}\n");
     if helpers::has_local_calls(&source)? {
-        let mut evidence = declarations::Declarations::default();
-        evidence.source =
-            format!("from typing import NewType, Protocol, TypedDict, NotRequired\n{stubs}");
+        let mut evidence = declarations::Declarations {
+            source: format!(
+                "from typing import NewType, Protocol, TypedDict, NotRequired\n{stubs}"
+            ),
+            ..Default::default()
+        };
         source = helpers::close_local_calls(&source, &mut evidence)?;
         stubs = evidence.source;
         let inferred = monty_analysis::analyze_function(

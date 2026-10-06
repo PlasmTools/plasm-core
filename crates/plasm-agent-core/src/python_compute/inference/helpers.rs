@@ -205,7 +205,7 @@ fn insert_annotations(
             }
         }
     }
-    insertions.sort_by(|a, b| b.0.cmp(&a.0));
+    insertions.sort_by_key(|insertion| std::cmp::Reverse(insertion.0));
     let mut annotated = source.to_owned();
     for (offset, text) in insertions {
         annotated.insert_str(offset, &text);

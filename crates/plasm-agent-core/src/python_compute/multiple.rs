@@ -3,17 +3,29 @@
 use super::*;
 use plasm_core::value_contract::ValueShape;
 
+/// Borrowed admission environment; source and dependency packet stay explicit.
+pub(super) struct MultipleContext<'a> {
+    pub imports: &'a crate::python_datetime::Imports,
+    pub cgs: &'a CGS,
+    pub entry: &'a str,
+    pub symbols: &'a dyn SymbolResolve,
+    pub domains: &'a ReturnDomains,
+}
+
 impl PreparedCompute {
     pub(super) fn prepare_multiple(
         source: &str,
         def: &ruff_python_ast::StmtFunctionDef,
-        imports: &crate::python_datetime::Imports,
-        cgs: &CGS,
-        entry: &str,
-        symbols: &dyn SymbolResolve,
         rows: Option<(&SyntheticResultSchema, &str)>,
-        domains: &ReturnDomains,
+        context: &MultipleContext<'_>,
     ) -> Result<Self, PythonComputeRejection> {
+        let &MultipleContext {
+            imports,
+            cgs,
+            entry,
+            symbols,
+            domains,
+        } = context;
         let p = &def.parameters;
         if !p.posonlyargs.is_empty()
             || !p.kwonlyargs.is_empty()
@@ -36,10 +48,8 @@ impl PreparedCompute {
         if fields.len() != p.args.len() {
             return Err(PythonComputeError::DependencyCountMismatch.into());
         }
-        let mut stubs = upstream::stubs_in(fields, cgs, &domains.catalogs)
-            .map_err(PythonComputeRejection::from)?;
-        upstream::domain_aliases(&domains.types, cgs, &domains.catalogs, &mut stubs)
-            .map_err(PythonComputeRejection::from)?;
+        let mut stubs = upstream::stubs_in(fields, cgs, &domains.catalogs)?;
+        upstream::domain_aliases(&domains.types, cgs, &domains.catalogs, &mut stubs)?;
         let mut typed_inputs = fields.clone();
         let mut parameters = Vec::new();
         let mut arguments = Vec::new();
@@ -75,8 +85,7 @@ impl PreparedCompute {
                     let expected = returns::resolve(
                         row_annotation,
                         row_type,
-                        &domains.types,
-                        &domains.catalogs,
+                        domains,
                         cgs,
                         entry,
                         symbols,
@@ -93,8 +102,7 @@ impl PreparedCompute {
                 let expected = returns::prepare(
                     annotation,
                     actual,
-                    &domains.types,
-                    &domains.catalogs,
+                    domains,
                     cgs,
                     entry,
                     symbols,
@@ -115,11 +123,13 @@ impl PreparedCompute {
                         annotation,
                         record,
                         record_fields,
-                        domains,
-                        cgs,
-                        entry,
-                        symbols,
-                        &imports.source,
+                        &arguments::ArgumentContext {
+                            domains,
+                            cgs,
+                            entry,
+                            symbols,
+                            imports: &imports.source,
+                        },
                         if collection {
                             ComputeInputMode::Collection
                         } else {
@@ -147,8 +157,7 @@ impl PreparedCompute {
                     cgs,
                     &domains.catalogs,
                     &mut stubs
-                )
-                .map_err(PythonComputeRejection::from)?
+                )?
             ));
             arguments.push(expression);
         }
@@ -180,8 +189,7 @@ impl PreparedCompute {
                 returns::prepare(
                     a,
                     inferred_return_row.as_ref().unwrap_or(&input),
-                    &domains.types,
-                    &domains.catalogs,
+                    domains,
                     cgs,
                     entry,
                     symbols,
@@ -235,8 +243,7 @@ impl PreparedCompute {
             }
             output
         };
-        let output_type = upstream::output_type(&output, cgs, &domains.catalogs, &mut stubs)
-            .map_err(PythonComputeRejection::from)?;
+        let output_type = upstream::output_type(&output, cgs, &domains.catalogs, &mut stubs)?;
         let body = definition_body(source, def)?;
         let definition = format!(
             "import datetime as PlasmDatetime\n{}\ndef {}({}) -> {}:{}\n",

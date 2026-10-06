@@ -474,7 +474,6 @@ pub(super) fn derive_contract(
         }
         Ok(value)
     })
-    .map_err(PythonLoweringError::from)
 }
 
 /// Shared recursive input admission for root and scoped row computations.

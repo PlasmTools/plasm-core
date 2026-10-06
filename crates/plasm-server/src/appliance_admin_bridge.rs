@@ -338,7 +338,9 @@ async fn refresh_oauth_into(state: &PlasmHostState, data: &mut RefreshedUiData) 
             Ok(rows) => rows,
             Err(e) => {
                 data.oauth_surface = OAuthSurfaceState::ProviderListUnavailable(Arc::new(
-                    AdminError::ProviderDatabase { source: e.into() },
+                    AdminError::ProviderDatabase {
+                        source: Box::new(e.into()),
+                    },
                 ));
                 return;
             }
@@ -377,26 +379,36 @@ pub async fn refresh_full_snapshot(state: &PlasmHostState) -> RefreshedUiData {
         let id = admin
             .ensure_singleton_config(&scope, pref, "Your MCP")
             .await
-            .map_err(|source| AdminError::McpAdministration { source })?;
-        let summary = admin
-            .admin_summary(id)
-            .await
-            .map_err(|source| AdminError::McpAdministration { source })?;
+            .map_err(|source| AdminError::McpAdministration {
+                source: Box::new(source),
+            })?;
+        let summary =
+            admin
+                .admin_summary(id)
+                .await
+                .map_err(|source| AdminError::McpAdministration {
+                    source: Box::new(source),
+                })?;
         let runtime = admin
             .load_runtime_snapshot(id)
             .await
-            .map_err(|source| AdminError::McpAdministration { source })?
+            .map_err(|source| AdminError::McpAdministration {
+                source: Box::new(source),
+            })?
             .ok_or(AdminError::ConfigSnapshotMissing { config_id: id })?;
-        let optional = admin
-            .load_auth_optional_set(id)
-            .await
-            .map_err(|source| AdminError::McpAdministration { source })?;
+        let optional = admin.load_auth_optional_set(id).await.map_err(|source| {
+            AdminError::McpAdministration {
+                source: Box::new(source),
+            }
+        })?;
         let catalog_rows = McpConfigAdminService::catalog_rows(reg.as_ref(), &runtime, &optional);
         let (keys, key_load_warning) = match admin.list_api_key_rows(id).await {
             Ok(keys) => (keys, None),
             Err(source) => (
                 Vec::new(),
-                Some(Arc::new(AdminError::McpAdministration { source })),
+                Some(Arc::new(AdminError::McpAdministration {
+                    source: Box::new(source),
+                })),
             ),
         };
         Ok::<_, AdminError>((id, summary, runtime, catalog_rows, keys, key_load_warning))
@@ -465,7 +477,9 @@ async fn run_admin_job(
                 admin
                     .provision_api_key(config_id, label)
                     .await
-                    .map_err(|source| AdminError::McpAdministration { source })
+                    .map_err(|source| AdminError::McpAdministration {
+                        source: Box::new(source),
+                    })
             } else {
                 Err(AdminError::McpAdminUnavailable)
             };
@@ -480,7 +494,9 @@ async fn run_admin_job(
                 admin
                     .set_allowed_apis_exact(config_id, entry_ids)
                     .await
-                    .map_err(|source| AdminError::McpAdministration { source })
+                    .map_err(|source| AdminError::McpAdministration {
+                        source: Box::new(source),
+                    })
             } else {
                 Err(AdminError::McpAdminUnavailable)
             };
@@ -496,7 +512,7 @@ async fn run_admin_job(
                     .await
                     .map_err(|source| AdminError::OutboundSecretWrite {
                         key: key.clone(),
-                        source,
+                        source: Box::new(source),
                     })
             } else {
                 Err(AdminError::AuthStorageUnavailable)
@@ -539,7 +555,7 @@ async fn run_admin_job(
                 .await
                 .map_err(|source| AdminError::BindingStore {
                     entry_id: entry_id.clone(),
-                    source,
+                    source: Box::new(source),
                 })?;
                 Ok(())
             }
@@ -571,7 +587,9 @@ async fn run_admin_job(
                             &comp_tx,
                             AdminCompletion::OAuthDeviceBind {
                                 corr,
-                                result: Err(AdminError::ProviderResolution { source }),
+                                result: Err(AdminError::ProviderResolution {
+                                    source: Box::new(source),
+                                }),
                             },
                         );
                         return;
@@ -658,7 +676,9 @@ async fn run_admin_job(
                             &comp_tx,
                             AdminCompletion::RotateApiKey {
                                 corr,
-                                result: Err(AdminError::McpAdministration { source: e }),
+                                result: Err(AdminError::McpAdministration {
+                                    source: Box::new(e),
+                                }),
                             },
                         );
                         return;
@@ -667,7 +687,9 @@ async fn run_admin_job(
                 admin
                     .rotate_one_api_key(config_id, key_id, new_label)
                     .await
-                    .map_err(|source| AdminError::McpAdministration { source })
+                    .map_err(|source| AdminError::McpAdministration {
+                        source: Box::new(source),
+                    })
             } else {
                 Err(AdminError::McpAdminUnavailable)
             };
@@ -682,7 +704,9 @@ async fn run_admin_job(
                 admin
                     .revoke_one_api_key(config_id, key_id)
                     .await
-                    .map_err(|source| AdminError::McpAdministration { source })
+                    .map_err(|source| AdminError::McpAdministration {
+                        source: Box::new(source),
+                    })
             } else {
                 Err(AdminError::McpAdminUnavailable)
             };
@@ -697,7 +721,9 @@ async fn run_admin_job(
                 admin
                     .reveal_api_key(config_id, key_id)
                     .await
-                    .map_err(|source| AdminError::McpAdministration { source })
+                    .map_err(|source| AdminError::McpAdministration {
+                        source: Box::new(source),
+                    })
             } else {
                 Err(AdminError::McpAdminUnavailable)
             };
@@ -742,7 +768,9 @@ mod tests {
             AdminCompletion::OAuthDeviceBind {
                 corr: 19,
                 result: Err(AdminError::ProviderResolution {
-                    source: plasm_agent_core::oauth_link_catalog::OauthResolveError::UnknownEntry,
+                    source: Box::new(
+                        plasm_agent_core::oauth_link_catalog::OauthResolveError::UnknownEntry,
+                    ),
                 }),
             },
         );
@@ -758,7 +786,8 @@ mod tests {
             error
                 .source()
                 .unwrap()
-                .downcast_ref::<plasm_agent_core::oauth_link_catalog::OauthResolveError>(),
+                .downcast_ref::<Box<plasm_agent_core::oauth_link_catalog::OauthResolveError>>()
+                .map(Box::as_ref),
             Some(plasm_agent_core::oauth_link_catalog::OauthResolveError::UnknownEntry)
         ));
     }

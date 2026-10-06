@@ -304,8 +304,8 @@ impl CachedEntity {
     pub fn merge(&mut self, other: &CachedEntity) -> Result<bool, RuntimeError> {
         if self.reference != other.reference {
             return Err(crate::CacheError::MergeReferenceMismatch {
-                expected: self.reference.clone(),
-                actual: other.reference.clone(),
+                expected: Box::new(self.reference.clone()),
+                actual: Box::new(other.reference.clone()),
             }
             .into());
         }

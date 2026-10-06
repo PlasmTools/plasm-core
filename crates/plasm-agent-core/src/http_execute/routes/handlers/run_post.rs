@@ -131,7 +131,7 @@ pub(crate) async fn post_run_execute_session_inner(
                     Some(cross),
                     &sess,
                     &program,
-                    stage,
+                    *stage,
                 );
                 return (
                     StatusCode::OK,
@@ -149,7 +149,7 @@ pub(crate) async fn post_run_execute_session_inner(
                 )
                 .with_title("Bad Request")
                 .with_detail(stage.to_string())
-                .with_extension("failure", plasm_runtime::ExecutionFailure::from(stage)),
+                .with_extension("failure", plasm_runtime::ExecutionFailure::from(*stage)),
             );
         }
     };

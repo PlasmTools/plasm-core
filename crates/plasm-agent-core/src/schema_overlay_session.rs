@@ -24,15 +24,27 @@ pub enum SchemaOverlaySessionError {
     #[error(transparent)]
     Template(#[from] plasm_compile::CatalogTemplateError),
     #[error(transparent)]
-    Runtime(#[from] RuntimeError),
+    Runtime(#[from] Box<RuntimeError>),
     #[error(transparent)]
     Projection(#[from] plasm_core::SchemaOverlayError),
     #[error("overlay pipeline references missing collect {name}")]
     MissingCollect { name: String },
     #[error(transparent)]
-    Schema(#[from] plasm_core::SchemaError),
+    Schema(#[from] Box<plasm_core::SchemaError>),
     #[error(transparent)]
     Compilation(#[from] plasm_compile::CmlError),
+}
+
+impl From<RuntimeError> for SchemaOverlaySessionError {
+    fn from(error: RuntimeError) -> Self {
+        Self::Runtime(Box::new(error))
+    }
+}
+
+impl From<plasm_core::SchemaError> for SchemaOverlaySessionError {
+    fn from(error: plasm_core::SchemaError) -> Self {
+        Self::Schema(Box::new(error))
+    }
 }
 
 const ENV_SCHEMA_OVERLAY_TTL_SECS: &str = "PLASM_SCHEMA_OVERLAY_TTL_SECS";
@@ -66,7 +78,7 @@ async fn fetch_overlay_source_response(
     engine
         .fetch_overlay_source_response(base, compiled, capability, http_base, options)
         .await
-        .map_err(SchemaOverlaySessionError::Runtime)
+        .map_err(SchemaOverlaySessionError::from)
 }
 
 async fn fetch_overlay_merged_response(

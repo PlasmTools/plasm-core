@@ -603,11 +603,13 @@ pub fn validate_cgs_views(cgs: &plasm_core::CGS) -> Result<(), CatalogTemplateEr
                     .map_err(CmlError::ViewNodeResolution)?;
                 if entity != spec.target {
                     return Err(CatalogTemplateError::ViewRelationEntityMismatch {
-                        view: view_key.to_string(),
-                        relation: spec.relation.to_string(),
-                        node: node.to_string(),
-                        expected: spec.target.to_string(),
-                        actual: entity.to_string(),
+                        details: Box::new(crate::ViewRelationEntityMismatch {
+                            view: view_key.to_string(),
+                            relation: spec.relation.to_string(),
+                            node: node.to_string(),
+                            expected: spec.target.to_string(),
+                            actual: entity.to_string(),
+                        }),
                     });
                 }
             }

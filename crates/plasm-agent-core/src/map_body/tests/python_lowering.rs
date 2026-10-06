@@ -1263,11 +1263,14 @@ fn python_compute_rejects_implicit_input_shape_adaptation() {
             let error = compile_python_program(&es, &source)
                 .await
                 .expect_err("input annotations cannot implicitly adapt source shape");
-            let CompilationError::Program(ProgramStageError::PythonLowering {
+            let CompilationError::Program(stage) = error else {
+                panic!("expected a typed program rejection, got {error:?}");
+            };
+            let ProgramStageError::PythonLowering {
                 error: PythonLoweringError::Compute(PythonComputeRejection::Argument(error)),
-            }) = error
+            } = *stage
             else {
-                panic!("expected a typed argument rejection, got {error:?}");
+                panic!("expected a typed argument rejection, got {stage:?}");
             };
             assert!(
                 matches!(

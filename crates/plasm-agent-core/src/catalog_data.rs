@@ -17,7 +17,7 @@ pub enum CatalogLoadError {
     #[error(transparent)]
     Template(#[from] plasm_compile::CatalogTemplateError),
     #[error(transparent)]
-    CatalogIl(#[from] plasm_core::catalog_il::CatalogIlError),
+    CatalogIl(#[from] Box<plasm_core::catalog_il::CatalogIlError>),
     #[error(transparent)]
     CompiledArtifact(#[from] plasm_compile::CmlError),
     #[error("catalog set declares multiple revisions for entry {entry_id}")]
@@ -28,6 +28,12 @@ pub enum CatalogLoadError {
     WorkerBatchShared,
     #[error("catalog materialization worker failed")]
     WorkerPanicked,
+}
+
+impl From<plasm_core::catalog_il::CatalogIlError> for CatalogLoadError {
+    fn from(error: plasm_core::catalog_il::CatalogIlError) -> Self {
+        Self::CatalogIl(Box::new(error))
+    }
 }
 
 /// One catalog entry materialized from compiled JSON IL on disk.

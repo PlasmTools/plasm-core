@@ -230,7 +230,7 @@ fn decode_entity_fields_and_ref(
                         .named_value(cgs)
                         .map_err(|source| DecodeError::IdentityFieldContract {
                             field: name.clone(),
-                            source,
+                            source: Box::new(source),
                         })?;
                     plasm_core::decode_coerce_and_validate_field(name, schema, raw)
                         .map_err(field_decode_error)?
@@ -273,7 +273,7 @@ fn decode_entity_fields_and_ref(
                 .named_value(cgs)
                 .map_err(|source| DecodeError::IdentityFieldContract {
                     field: key.clone(),
-                    source,
+                    source: Box::new(source),
                 })?;
             plasm_core::decode_coerce_and_validate_field(key, schema, raw)
                 .map_err(field_decode_error)?
@@ -398,7 +398,9 @@ fn observed_membership(
     exhaustive_count: Option<usize>,
 ) -> Result<plasm_core::row_contract::RelationMembership, DecodeError> {
     plasm_core::row_contract::RelationMembership::observe(cgs, context, refs, exhaustive_count)
-        .map_err(|source| DecodeError::RelationMembership { source })
+        .map_err(|source| DecodeError::RelationMembership {
+            source: Box::new(source),
+        })
 }
 
 fn expand_transitive_from_parent_get_embeds(
@@ -564,13 +566,18 @@ mod tests {
         assert!(matches!(
             &error,
             DecodeError::RelationMembership {
-                source: plasm_core::collection_codec::CollectionFault::Conservation,
-            }
+                source,
+            } if matches!(source.as_ref(), plasm_core::collection_codec::CollectionFault::Conservation)
         ));
-        assert!(error
-            .source()
-            .unwrap()
-            .is::<plasm_core::collection_codec::CollectionFault>());
+        assert!(matches!(
+            error
+                .source()
+                .unwrap()
+                .downcast_ref::<Box<plasm_core::collection_codec::CollectionFault>>()
+                .unwrap()
+                .as_ref(),
+            plasm_core::collection_codec::CollectionFault::Conservation
+        ));
     }
 
     #[test]

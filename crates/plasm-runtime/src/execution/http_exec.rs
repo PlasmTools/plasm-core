@@ -123,11 +123,11 @@ pub(super) fn credential_scope(
     RuntimeError,
 > {
     let material = super::session::try_current_execute_session_material()
-        .ok_or_else(|| crate::credentials::CredentialError::ExecuteSessionMissing)?;
+        .ok_or(crate::credentials::CredentialError::ExecuteSessionMissing)?;
     let store = material
         .credential_store
         .clone()
-        .ok_or_else(|| crate::credentials::CredentialError::PersistenceMissing)?;
+        .ok_or(crate::credentials::CredentialError::PersistenceMissing)?;
     let origin = url::Url::parse(base)
         .map_err(crate::credentials::CredentialError::TransportOrigin)?
         .origin()

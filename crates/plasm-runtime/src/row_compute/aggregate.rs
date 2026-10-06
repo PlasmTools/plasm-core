@@ -216,7 +216,7 @@ fn reduce<'a>(
         .arithmetic_domain()
         .map_err(plasm_core::RowComputeError::ArithmeticContract)?;
     if money_sum && arithmetic != ArithmeticDomain::Money {
-        return Err(plasm_core::RowComputeError::MoneySumRequiresMoney.into());
+        return Err(plasm_core::RowComputeError::MoneySumRequiresMoney);
     }
     let mut result: Option<Value> = None;
     let mut count = 0usize;

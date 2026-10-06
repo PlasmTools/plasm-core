@@ -107,8 +107,8 @@ pub enum CacheError {
     EntityMissing { reference: plasm_core::Ref },
     #[error("cannot merge different references: {expected} vs {actual}")]
     MergeReferenceMismatch {
-        expected: plasm_core::Ref,
-        actual: plasm_core::Ref,
+        expected: Box<plasm_core::Ref>,
+        actual: Box<plasm_core::Ref>,
     },
     #[error("unobserved relation {reference}.{relation}")]
     RelationUnobserved {
@@ -189,7 +189,7 @@ pub enum RuntimeError {
     #[error("preflight failed: {0}")]
     Preflight(#[from] PreflightError),
     #[error("EVM execution failed: {0}")]
-    Evm(#[from] crate::evm::EvmError),
+    Evm(#[from] Box<crate::evm::EvmError>),
     #[error("HTTP limiter failed: {0}")]
     HttpLimiter(#[from] HttpLimiterError),
     #[error("pagination configuration failed: {0}")]
@@ -229,8 +229,8 @@ pub enum RuntimeError {
     ViewGetNestingForbidden,
     #[error("Get identity mismatch: requested {expected}, returned {actual}")]
     GetIdentityMismatch {
-        expected: plasm_core::Ref,
-        actual: plasm_core::Ref,
+        expected: Box<plasm_core::Ref>,
+        actual: Box<plasm_core::Ref>,
     },
     #[error("query/search capabilities must use HTTP CML templates")]
     HttpQueryTemplateRequired,
@@ -283,7 +283,7 @@ pub enum RuntimeError {
     #[error("query resolution failed: {0}")]
     QueryResolution(#[from] plasm_core::QueryCapabilityResolveError),
     #[error("schema contract failed: {0}")]
-    SchemaContract(#[from] plasm_core::SchemaError),
+    SchemaContract(#[from] Box<plasm_core::SchemaError>),
     #[error("operand resolution failed: {0}")]
     OperandResolution(#[from] plasm_core::operand_binding::ResolvedValueError),
     #[error("computed view template {phase:?} failed: {source}")]
@@ -330,7 +330,7 @@ pub enum RuntimeError {
     #[error("Type error: {source}")]
     TypeError {
         #[from]
-        source: plasm_core::TypeError,
+        source: Box<plasm_core::TypeError>,
     },
 
     #[error("Decode error: {source}")]
@@ -351,7 +351,7 @@ pub enum RuntimeError {
         source: RequestFailure,
         attempts: u32,
         status: Option<u16>,
-        body: Option<serde_json::Value>,
+        body: Option<Box<serde_json::Value>>,
     },
 
     #[error("Workflow conflict: {kind} on `{entity}`", kind = .conflict.kind.as_str(), entity = .conflict.entity)]
@@ -377,7 +377,7 @@ pub enum RuntimeError {
     #[error("cached value is not a row")]
     CacheValueRow(#[from] plasm_core::ValueRowError),
     #[error("cached row is invalid")]
-    CacheRowDecode(#[from] plasm_core::row_contract::RowDecodeError),
+    CacheRowDecode(#[from] Box<plasm_core::row_contract::RowDecodeError>),
 
     #[error("Execution mode '{mode}' not supported")]
     UnsupportedExecutionMode { mode: String },
@@ -504,5 +504,204 @@ impl From<serde_json::Error> for RuntimeError {
 impl From<std::io::Error> for RuntimeError {
     fn from(err: std::io::Error) -> Self {
         RuntimeError::ReplayStoreError(ReplayStoreError::Io(err))
+    }
+}
+
+impl From<plasm_core::SchemaError> for RuntimeError {
+    fn from(error: plasm_core::SchemaError) -> Self {
+        Self::SchemaContract(Box::new(error))
+    }
+}
+
+impl From<plasm_core::TypeError> for RuntimeError {
+    fn from(source: plasm_core::TypeError) -> Self {
+        Self::TypeError {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<crate::evm::EvmError> for RuntimeError {
+    fn from(source: crate::evm::EvmError) -> Self {
+        Self::Evm(Box::new(source))
+    }
+}
+
+impl From<plasm_core::row_contract::RowDecodeError> for RuntimeError {
+    fn from(source: plasm_core::row_contract::RowDecodeError) -> Self {
+        Self::CacheRowDecode(Box::new(source))
+    }
+}
+
+#[cfg(test)]
+mod footprint_tests {
+    use super::*;
+
+    #[test]
+    fn runtime_and_cache_errors_have_bounded_footprints() {
+        // Cross-crate Clippy sees this external enum opaquely: keep the complete
+        // enum, including its discriminant, below the 128-byte threshold.
+        assert!(
+            std::mem::size_of::<RuntimeError>() < 128,
+            "RuntimeError occupies {} bytes",
+            std::mem::size_of::<RuntimeError>()
+        );
+        assert!(std::mem::size_of::<CacheError>() < 128);
+    }
+
+    #[test]
+    fn boxed_type_import_preserves_metadata_chain_and_classification() {
+        use std::error::Error;
+        let source = plasm_core::TypeError::EntityRefCoercionFailure {
+            field: "parent".into(),
+            target: "Item".into(),
+            source: plasm_core::CoercionError::MissingTemporalFormat,
+        };
+        let expected_display = format!("Type error: {source}");
+        let error = RuntimeError::from(source);
+        assert_eq!(error.to_string(), expected_display);
+        let source = error
+            .source()
+            .unwrap()
+            .downcast_ref::<Box<plasm_core::TypeError>>()
+            .unwrap()
+            .as_ref();
+        assert!(matches!(source,
+            plasm_core::TypeError::EntityRefCoercionFailure { field, target, .. }
+                if field == "parent" && target == "Item"));
+        assert!(matches!(
+            source
+                .source()
+                .unwrap()
+                .downcast_ref::<plasm_core::CoercionError>(),
+            Some(plasm_core::CoercionError::MissingTemporalFormat)
+        ));
+        let failure = crate::ExecutionFailure::from(error);
+        assert_eq!(failure.cause, crate::FailureCause::Runtime);
+        assert_eq!(failure.code, "runtime_type_violation");
+    }
+
+    #[test]
+    fn boxed_evm_import_preserves_source_chain_display_and_classification() {
+        use std::error::Error;
+        let source = crate::evm::EvmError::RpcUrl(url::Url::parse(":").unwrap_err());
+        let expected_display = format!("EVM execution failed: {source}");
+        let error = RuntimeError::from(source);
+        assert_eq!(error.to_string(), expected_display);
+        let source = error
+            .source()
+            .unwrap()
+            .downcast_ref::<Box<crate::evm::EvmError>>()
+            .unwrap()
+            .as_ref();
+        assert!(matches!(source, crate::evm::EvmError::RpcUrl(_)));
+        assert!(matches!(
+            source.source().unwrap().downcast_ref::<url::ParseError>(),
+            Some(url::ParseError::RelativeUrlWithoutBase)
+        ));
+        let failure = crate::ExecutionFailure::from(error);
+        assert_eq!(failure.cause, crate::FailureCause::Unclassified);
+        assert_eq!(failure.code, "unclassified_execution_failure");
+    }
+
+    #[test]
+    fn boxed_row_decode_import_preserves_metadata_and_classification() {
+        use std::error::Error;
+        let error = RuntimeError::from(
+            plasm_core::row_contract::RowDecodeError::RelationTargetMismatch {
+                relation: "items".into(),
+                expected: "Item".into(),
+                actual: "Other".into(),
+            },
+        );
+        assert_eq!(error.to_string(), "cached row is invalid");
+        let source = error
+            .source()
+            .unwrap()
+            .downcast_ref::<Box<plasm_core::row_contract::RowDecodeError>>()
+            .unwrap()
+            .as_ref();
+        assert!(matches!(source,
+            plasm_core::row_contract::RowDecodeError::RelationTargetMismatch { relation, expected, actual }
+                if relation == "items" && expected == "Item" && actual == "Other"));
+        let failure = crate::ExecutionFailure::from(error);
+        assert_eq!(failure.cause, crate::FailureCause::Unclassified);
+        assert_eq!(failure.code, "unclassified_execution_failure");
+    }
+
+    #[test]
+    fn schema_contract_preserves_concrete_source_and_metadata() {
+        use std::error::Error;
+
+        let source = plasm_core::SchemaError::UnknownValueDomain {
+            key: "missing".into(),
+            context: "named_value_for_slot".into(),
+        };
+        let diagnostic = source.to_string();
+        let error = RuntimeError::from(source);
+        assert_eq!(
+            error.to_string(),
+            format!("schema contract failed: {diagnostic}")
+        );
+        assert!(matches!(
+            error.source().unwrap().downcast_ref::<Box<plasm_core::SchemaError>>().map(Box::as_ref),
+            Some(plasm_core::SchemaError::UnknownValueDomain { key, context })
+                if key == "missing" && context == "named_value_for_slot"
+        ));
+    }
+
+    #[test]
+    fn cache_mismatch_preserves_concrete_source_and_references() {
+        use std::error::Error;
+
+        let expected = plasm_core::Ref::new("Record", "expected");
+        let actual = plasm_core::Ref::new("Record", "actual");
+        let error = RuntimeError::from(CacheError::MergeReferenceMismatch {
+            expected: Box::new(expected.clone()),
+            actual: Box::new(actual.clone()),
+        });
+        let source = error
+            .source()
+            .unwrap()
+            .downcast_ref::<CacheError>()
+            .unwrap();
+        assert_eq!(
+            source.to_string(),
+            format!("cannot merge different references: {expected} vs {actual}")
+        );
+        assert!(matches!(
+            source,
+            CacheError::MergeReferenceMismatch {
+                expected: boxed_expected,
+                actual: boxed_actual,
+            } if boxed_expected.as_ref() == &expected && boxed_actual.as_ref() == &actual
+        ));
+    }
+
+    #[test]
+    fn identity_mismatch_boxes_and_preserves_both_references() {
+        let expected = plasm_core::Ref::new("Record", "expected");
+        let actual = plasm_core::Ref::new("Record", "actual");
+        let error = RuntimeError::GetIdentityMismatch {
+            expected: Box::new(expected.clone()),
+            actual: Box::new(actual.clone()),
+        };
+        assert_eq!(
+            error.to_string(),
+            format!("Get identity mismatch: requested {expected}, returned {actual}")
+        );
+        let RuntimeError::GetIdentityMismatch {
+            expected: boxed_expected,
+            actual: boxed_actual,
+        } = error
+        else {
+            panic!("expected identity mismatch");
+        };
+        assert_eq!(*boxed_expected, expected);
+        assert_eq!(*boxed_actual, actual);
+        assert_eq!(
+            std::mem::size_of_val(&boxed_expected) + std::mem::size_of_val(&boxed_actual),
+            2 * std::mem::size_of::<usize>()
+        );
     }
 }

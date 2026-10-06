@@ -241,7 +241,7 @@ impl Config {
             Ok(v)
                 if v == "0" || v.eq_ignore_ascii_case("false") || v.eq_ignore_ascii_case("no") =>
             {
-                return Err(TraceSinkConfigError::IcebergDisabled { value: v });
+                Err(TraceSinkConfigError::IcebergDisabled { value: v })
             }
             _ => Ok(()),
         }

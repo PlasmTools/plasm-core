@@ -250,7 +250,7 @@ pub async fn execute_plasm_parsed_expr(
 ) -> Result<(ParsedExpr, ExecutionResult, Option<RunArtifactHandle>), plasm_runtime::ExecutionFailure>
 {
     crate::execute_pipeline::PlasmPreflight::preflight_parsed_line(sess, source_label, &parsed)
-        .map_err(|e| run_line_failure(RunLineError::Admission(e), sess))?;
+        .map_err(|e| run_line_failure(RunLineError::from(e), sess))?;
     run_parsed_plasm_line(
         source_label,
         sess,

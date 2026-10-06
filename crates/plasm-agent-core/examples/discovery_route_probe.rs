@@ -41,9 +41,9 @@ enum ProbeError {
     #[error(transparent)]
     Json(#[from] serde_json::Error),
     #[error(transparent)]
-    Catalog(#[from] plasm_core::catalog_il::CatalogIlError),
+    Catalog(#[from] Box<plasm_core::catalog_il::CatalogIlError>),
     #[error(transparent)]
-    Discovery(#[from] plasm_core::catalog_discovery::CatalogDiscoveryError),
+    Discovery(#[from] Box<plasm_core::catalog_discovery::CatalogDiscoveryError>),
     #[error(transparent)]
     Templates(#[from] plasm_compile::CatalogTemplateError),
     #[error(transparent)]
@@ -55,6 +55,92 @@ enum ProbeError {
     #[error("frozen vector for `{capability}` is missing")]
     FrozenVectorMissing { capability: String },
 }
+
+impl From<plasm_core::catalog_il::CatalogIlError> for ProbeError {
+    fn from(error: plasm_core::catalog_il::CatalogIlError) -> Self {
+        Self::Catalog(Box::new(error))
+    }
+}
+
+impl From<plasm_core::catalog_discovery::CatalogDiscoveryError> for ProbeError {
+    fn from(error: plasm_core::catalog_discovery::CatalogDiscoveryError) -> Self {
+        Self::Discovery(Box::new(error))
+    }
+}
+
+#[cfg(test)]
+mod error_tests {
+    use super::*;
+    use std::error::Error;
+
+    #[test]
+    fn probe_error_is_bounded_and_catalog_source_survives() {
+        let bytes = std::mem::size_of::<ProbeError>();
+        assert!(bytes < 128, "ProbeError is {bytes} bytes; expected <128");
+        let error = ProbeError::from(plasm_core::catalog_il::CatalogIlError::from(
+            plasm_core::SchemaError::DuplicateEntity {
+                name: "FixtureItem".into(),
+            },
+        ));
+        assert_eq!(error.to_string(), "catalog schema validation failed");
+        assert!(
+            matches!(error.source().unwrap().downcast_ref::<plasm_core::SchemaError>(),
+                Some(plasm_core::SchemaError::DuplicateEntity { name }) if name == "FixtureItem"
+            )
+        );
+        match error {
+            ProbeError::Catalog(source) => assert!(matches!(*source,
+                plasm_core::catalog_il::CatalogIlError::Schema(
+                    plasm_core::SchemaError::DuplicateEntity { name }
+                ) if name == "FixtureItem"
+            )),
+            _ => panic!("expected catalog error"),
+        }
+    }
+
+    #[test]
+    fn boxed_discovery_preserves_owned_capability_metadata() {
+        let error = ProbeError::from(
+            plasm_core::catalog_discovery::CatalogDiscoveryError::CapabilityEntityMissing {
+                capability: "query_items".into(),
+                entity: "MissingItem".into(),
+            },
+        );
+        assert_eq!(
+            error.to_string(),
+            "capability `query_items` references missing entity `MissingItem`"
+        );
+        match error {
+            ProbeError::Discovery(source) => assert!(matches!(*source,
+                plasm_core::catalog_discovery::CatalogDiscoveryError::CapabilityEntityMissing {
+                    capability, entity
+                } if capability == "query_items" && entity == "MissingItem"
+            )),
+            _ => panic!("expected discovery error"),
+        }
+    }
+
+    #[test]
+    fn boxed_discovery_preserves_nested_schema_source() {
+        use plasm_core::catalog_discovery::{CatalogDiscoveryError, RetrievalTextError};
+        let error = ProbeError::from(CatalogDiscoveryError::from(RetrievalTextError::from(
+            plasm_core::SchemaError::IdentityFieldTypeResolution {
+                entity: "Item".into(),
+                field: "id".into(),
+                source: plasm_core::ParentFieldTypeError::UnknownParentField {
+                    entity: "Parent".into(),
+                    field: "id".into(),
+                },
+            },
+        )));
+        assert!(matches!(
+            error.source().unwrap().downcast_ref::<plasm_core::ParentFieldTypeError>(),
+            Some(plasm_core::ParentFieldTypeError::UnknownParentField { entity, field })
+                if entity == "Parent" && field == "id"
+        ));
+    }
+}
+
 fn read<T: serde::de::DeserializeOwned>(p: impl AsRef<Path>) -> std::result::Result<T, ProbeError> {
     Ok(serde_json::from_slice(&std::fs::read(p)?)?)
 }

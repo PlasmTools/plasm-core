@@ -36,12 +36,12 @@ impl HttpTransport for Transport {
             store.attempts += 1;
             if attempt == self.fail_at {
                 return Err(RuntimeError::RequestError {
-                    source: plasm_runtime::RequestFailure::HttpStatus(
+                    source: plasm_runtime::RequestFailure::HttpStatus(Box::new(
                         plasm_runtime::HttpStatusFailure::without_request(
                             422,
                             "fixture 422".into(),
                         ),
-                    ),
+                    )),
                     attempts: 1,
                     status: Some(422),
                     body: None,

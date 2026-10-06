@@ -33,7 +33,7 @@ pub enum RenderFieldListError {
     TokenResolution {
         token: String,
         #[source]
-        source: crate::plasm_plan_run::WireFieldTokenError,
+        source: Box<crate::plasm_plan_run::WireFieldTokenError>,
     },
     #[error("render field list must contain at least one field")]
     Empty,
@@ -312,7 +312,7 @@ pub(crate) fn parse_field_list_with_tokens(
             )
             .map_err(|source| RenderFieldListError::TokenResolution {
                 token: raw.clone(),
-                source,
+                source: Box::new(source),
             })?;
             Ok::<(String, String), RenderFieldListError>((raw, wire))
         })

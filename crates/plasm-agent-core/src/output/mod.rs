@@ -11,10 +11,13 @@ mod presentation_fields;
 mod summary;
 
 pub use in_band_fidelity::{InBandSummaryReport, SummaryFidelityLoss};
-pub(crate) use presentation_fields::{lossy_summary_field_names, LossySummaryFieldNames};
+#[cfg(test)]
+use presentation_fields::lossy_summary_field_names;
+pub(crate) use presentation_fields::LossySummaryFieldNames;
 mod observation;
 pub(crate) use observation::{render_observation, RowObservation};
-pub(crate) use summary::format_result_tsv_with_cgs;
+#[cfg(test)]
+use summary::format_result_tsv_with_cgs;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OutputFormat {
@@ -646,7 +649,7 @@ fn format_table_with_cgs(
     format_result_table_with_cgs(result, cgs, None)
 }
 
-/// ASCII table with optional in-band entity row cap (same omission rules as [`format_result_tsv_with_cgs`]).
+/// ASCII table with optional in-band entity row cap and schema-directed omission rules.
 pub(crate) fn format_result_table_with_cgs(
     result: &ExecutionResult,
     cgs: Option<&CGS>,

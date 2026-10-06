@@ -216,6 +216,6 @@ pub(super) fn callable_signature(
     let Stmt::FunctionDef(def) = &mut statement else {
         unreachable!()
     };
-    def.parameters = parameters.clone().into();
+    def.parameters = parameters.clone();
     Ok(monty::statement_source(&statement))
 }

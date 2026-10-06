@@ -43,14 +43,14 @@ pub enum RehydrateError {
     #[error(transparent)]
     Discovery(#[from] DiscoveryError),
     #[error("catalog/session materialization failed: {0}")]
-    Materialize(#[source] MaterializeError),
+    Materialize(#[source] Box<MaterializeError>),
 }
 
 impl From<MaterializeError> for RehydrateError {
     fn from(e: MaterializeError) -> Self {
         match e {
             MaterializeError::UnknownEntry(id) => Self::UnknownEntry(id),
-            other => Self::Materialize(other),
+            other => Self::Materialize(Box::new(other)),
         }
     }
 }
@@ -218,7 +218,10 @@ pub fn should_discard_persisted_execute_on_rehydrate_error(err: &RehydrateError)
             | RehydrateError::SymbolSpaceResetRequired
             | RehydrateError::SymbolLedgerDecode(_)
             | RehydrateError::CatalogRecipes(_)
-            | RehydrateError::Materialize(MaterializeError::UnknownEntry(_))
+    ) || matches!(
+        err,
+        RehydrateError::Materialize(source)
+            if matches!(source.as_ref(), MaterializeError::UnknownEntry(_))
     )
 }
 
@@ -335,6 +338,33 @@ mod tests {
         matrix_federated_host,
     };
     use indexmap::IndexMap;
+
+    #[test]
+    fn boxed_materialization_preserves_source_and_discard_policy() {
+        use std::error::Error;
+        assert!(std::mem::size_of::<RehydrateError>() < 128);
+        let source = MaterializeError::PrimaryEntryMissing {
+            entry_id: "fixture".into(),
+        };
+        let expected_display = format!("catalog/session materialization failed: {source}");
+        let error = RehydrateError::from(source);
+        assert_eq!(error.to_string(), expected_display);
+        assert!(matches!(
+            error.source().unwrap().downcast_ref::<Box<MaterializeError>>().map(Box::as_ref),
+            Some(MaterializeError::PrimaryEntryMissing { entry_id }) if entry_id == "fixture"
+        ));
+        assert!(!should_discard_persisted_execute_on_rehydrate_error(&error));
+        let unknown = RehydrateError::from(MaterializeError::UnknownEntry("fixture".into()));
+        assert!(matches!(&unknown, RehydrateError::UnknownEntry(id) if id == "fixture"));
+        assert!(should_discard_persisted_execute_on_rehydrate_error(
+            &unknown
+        ));
+        let wrapped_unknown =
+            RehydrateError::Materialize(Box::new(MaterializeError::UnknownEntry("fixture".into())));
+        assert!(should_discard_persisted_execute_on_rehydrate_error(
+            &wrapped_unknown
+        ));
+    }
 
     fn compiled_for(
         contexts: &IndexMap<String, Arc<plasm_core::CgsContext>>,

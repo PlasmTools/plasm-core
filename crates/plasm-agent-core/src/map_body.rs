@@ -13,7 +13,7 @@ pub enum MapBodyValidationError {
     #[error(transparent)]
     BindGraph(#[from] plasm_core::plasm_monad::BindGraphError),
     #[error(transparent)]
-    PlanValidation(#[from] crate::plasm_plan::PlanValidationError),
+    PlanValidation(#[from] Box<crate::plasm_plan::PlanValidationError>),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
     #[error(transparent)]
@@ -25,9 +25,21 @@ pub enum MapBodyValidationError {
     #[error(transparent)]
     Schema(#[from] MapSchemaError),
     #[error(transparent)]
-    SessionProvision(#[from] crate::plan_session_provisions::SessionProvisionError),
+    SessionProvision(#[from] Box<crate::plan_session_provisions::SessionProvisionError>),
     #[error("scope contract violation: {0}")]
     Contract(#[from] ScopeContractError),
+}
+
+impl From<crate::plasm_plan::PlanValidationError> for MapBodyValidationError {
+    fn from(error: crate::plasm_plan::PlanValidationError) -> Self {
+        Self::PlanValidation(Box::new(error))
+    }
+}
+
+impl From<crate::plan_session_provisions::SessionProvisionError> for MapBodyValidationError {
+    fn from(error: crate::plan_session_provisions::SessionProvisionError) -> Self {
+        Self::SessionProvision(Box::new(error))
+    }
 }
 
 impl From<MapBodyValidationError> for plasm_runtime::ExecutionFailure {

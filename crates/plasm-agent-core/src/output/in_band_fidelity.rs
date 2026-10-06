@@ -1,7 +1,7 @@
 //! Evidence of what the tabular / TSV summary withheld relative to full run snapshot JSON.
 //!
-//! Schema-tagged [`plasm_core::AgentPresentation::Lossy`] is tracked separately via
-//! [`super::lossy_summary_field_names`]; this ledger records **observed** clamps (default table
+//! Schema-tagged [`plasm_core::AgentPresentation::Lossy`] field names are tracked separately;
+//! this ledger records **observed** clamps (default table
 //! budget, TSV transport cap, reference-only placeholders).
 
 use std::collections::BTreeMap;

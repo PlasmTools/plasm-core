@@ -71,13 +71,15 @@ pub(crate) fn validate_embedded_identity_contracts(
                             || source_type.value_format != child_type.value_format
                         {
                             return Err(CatalogTemplateError::InheritedIdentityTypeMismatch {
-                                parent: parent.name.to_string(),
-                                relation: name.to_string(),
-                                field: key.to_string(),
-                                parent_type: source_type.field_type.clone(),
-                                child_type: child_type.field_type.clone(),
-                                parent_format: source_type.value_format,
-                                child_format: child_type.value_format,
+                                details: Box::new(crate::InheritedIdentityTypeMismatch {
+                                    parent: parent.name.to_string(),
+                                    relation: name.to_string(),
+                                    field: key.to_string(),
+                                    parent_type: source_type.field_type.clone(),
+                                    child_type: child_type.field_type.clone(),
+                                    parent_format: source_type.value_format,
+                                    child_format: child_type.value_format,
+                                }),
                             });
                         }
                     }
@@ -258,8 +260,8 @@ mod tests {
         let error = validate_embedded_identity_contracts(&cgs).unwrap_err();
         assert!(
             matches!(error, CatalogTemplateError::InheritedIdentityTypeMismatch {
-            field, child_type: plasm_core::FieldType::Integer, ..
-        } if field == "item_id")
+                details,
+            } if details.field == "item_id" && details.child_type == plasm_core::FieldType::Integer)
         );
         assert!(crate::compile_cgs_capability_templates(&cgs).is_err());
     }

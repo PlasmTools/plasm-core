@@ -11,7 +11,9 @@ impl From<PersistExecuteRunError> for RunLineError {
     fn from(e: PersistExecuteRunError) -> Self {
         match e {
             PersistExecuteRunError::Mint(d) => RunLineError::ArtifactDigest(d),
-            PersistExecuteRunError::Collection(e) => RunLineError::Runtime(e.into()),
+            PersistExecuteRunError::Collection(e) => {
+                RunLineError::from(plasm_runtime::RuntimeError::from(e))
+            }
             PersistExecuteRunError::Serialization(e) => RunLineError::ArtifactSerialization(e),
             PersistExecuteRunError::Persist(d) => RunLineError::ArtifactPersist(d),
             PersistExecuteRunError::SourceRehydration(e) => RunLineError::ArtifactRehydration(e),
@@ -83,7 +85,7 @@ pub(crate) fn parse_plasm_line_for_session(
         let correction =
             execute_session_parse_error_message(&e, line, sess.cgs.as_ref(), sym_map.as_ref());
         RunLineError::Parse {
-            source: e,
+            source: Box::new(e),
             correction,
         }
     })?;
@@ -166,7 +168,7 @@ pub(crate) async fn run_parsed_plasm_line(
         Some(token) => token,
         None => {
             crate::execute_pipeline::PlasmPreflight::preflight_parsed_line(sess, line, &parsed)
-                .map_err(RunLineError::Admission)?;
+                .map_err(RunLineError::from)?;
             plasm_core::PreflightToken::VERIFIED
         }
     };
@@ -219,7 +221,7 @@ pub(crate) async fn run_parsed_plasm_line(
         if let Some(cursor) = sess.peek_synthetic_paging_resume(key) {
             let entry_id = cursor.qualified_entity.entry_id.clone();
             let result =
-                synthetic_page_result(sess, key, cursor, trace).map_err(RunLineError::Runtime)?;
+                synthetic_page_result(sess, key, cursor, trace).map_err(RunLineError::from)?;
             let artifact = persist_execute_run(PersistExecuteRunInput {
                 st,
                 sess,
@@ -274,7 +276,7 @@ pub(crate) async fn run_parsed_plasm_line(
         sess, sess, &parsed, line, exec_cgs,
     )
     .map_err(|error| {
-        RunLineError::Admission(crate::program_diagnostic::ProgramStageError::from(error))
+        RunLineError::from(crate::program_diagnostic::ProgramStageError::from(error))
     })?;
     let fp_sink = Arc::new(Mutex::new(Vec::<String>::new()));
     let (_, operation) = trace_expr_api_meta(&parsed.expr);

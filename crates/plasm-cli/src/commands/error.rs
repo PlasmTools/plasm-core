@@ -26,9 +26,9 @@ pub enum CommandError {
     #[error(transparent)]
     CatalogLoad(#[from] super::common::CgsCommandLoadError),
     #[error(transparent)]
-    Schema(#[from] plasm_core::SchemaError),
+    Schema(#[from] Box<plasm_core::SchemaError>),
     #[error(transparent)]
-    PredicateType(#[from] plasm_core::TypeError),
+    PredicateType(#[from] Box<plasm_core::TypeError>),
     #[error(transparent)]
     Compile(#[from] plasm_compile::CompileError),
     #[error(transparent)]
@@ -43,6 +43,18 @@ pub enum CommandError {
     Yaml(#[from] serde_yaml::Error),
 }
 
+impl From<plasm_core::SchemaError> for CommandError {
+    fn from(source: plasm_core::SchemaError) -> Self {
+        Self::Schema(Box::new(source))
+    }
+}
+
+impl From<plasm_core::TypeError> for CommandError {
+    fn from(source: plasm_core::TypeError) -> Self {
+        Self::PredicateType(Box::new(source))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -55,7 +67,7 @@ mod tests {
         };
         assert!(
             matches!(error, CommandError::InputMissing { kind: InputKind::Schema, path }
-            if path == PathBuf::from("missing/domain.yaml"))
+            if path == std::path::Path::new("missing/domain.yaml"))
         );
         assert!(matches!(CommandError::NoCompatibleEntity {
             fields: vec!["score".into()], relations: vec!["children".into()],
@@ -84,5 +96,54 @@ mod tests {
         assert!(
             matches!(boxed.downcast_ref::<CommandError>(), Some(CommandError::Json(source)) if source.is_eof())
         );
+    }
+
+    #[test]
+    fn command_error_has_bounded_footprint_and_preserves_schema_source() {
+        use std::error::Error;
+        let bytes = std::mem::size_of::<CommandError>();
+        assert!(bytes < 128, "CommandError is {bytes} bytes; expected <128");
+        let error = CommandError::from(plasm_core::SchemaError::IdentityFieldTypeResolution {
+            entity: "Fixture".into(),
+            field: "id".into(),
+            source: plasm_core::ParentFieldTypeError::UnknownParentField {
+                entity: "Fixture".into(),
+                field: "id".into(),
+            },
+        });
+        assert!(matches!(
+            &error,
+            CommandError::Schema(source)
+                if matches!(source.as_ref(), plasm_core::SchemaError::IdentityFieldTypeResolution { .. })
+        ));
+        assert!(error
+            .source()
+            .unwrap()
+            .is::<plasm_core::ParentFieldTypeError>());
+    }
+
+    #[test]
+    fn boxed_predicate_type_preserves_metadata_and_concrete_source() {
+        use std::error::Error;
+        let error = CommandError::from(plasm_core::TypeError::CoercionFailure {
+            field: "score".into(),
+            source: plasm_core::CoercionError::InvalidNumberLiteral {
+                raw: "not-a-number".into(),
+                source: "not-a-number".parse::<f64>().unwrap_err(),
+            },
+        });
+        assert!(matches!(
+            &error,
+            CommandError::PredicateType(source)
+                if matches!(source.as_ref(), plasm_core::TypeError::CoercionFailure { field, .. }
+                    if field == "score")
+        ));
+        let source = error.source().unwrap();
+        assert!(matches!(
+            source.downcast_ref::<plasm_core::CoercionError>(),
+            Some(plasm_core::CoercionError::InvalidNumberLiteral { raw, .. })
+                if raw == "not-a-number"
+        ));
+        assert!(source.source().unwrap().is::<std::num::ParseFloatError>());
     }
 }

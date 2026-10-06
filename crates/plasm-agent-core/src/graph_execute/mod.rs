@@ -33,7 +33,13 @@ pub struct GraphExecuteBranch {
 #[derive(Debug)]
 pub enum GraphCommitError {
     WriteConflict(WriteConflictDetails),
-    Merge(plasm_runtime::RuntimeError),
+    Merge(Box<plasm_runtime::RuntimeError>),
+}
+
+impl From<plasm_runtime::RuntimeError> for GraphCommitError {
+    fn from(error: plasm_runtime::RuntimeError) -> Self {
+        Self::Merge(Box::new(error))
+    }
 }
 
 impl GraphExecuteBranch {

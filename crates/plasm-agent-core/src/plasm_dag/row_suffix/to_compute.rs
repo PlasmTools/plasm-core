@@ -34,7 +34,7 @@ pub enum RowSuffixLoweringError {
     #[error(transparent)]
     BooleanFilter(#[from] plasm_core::BooleanFilterError),
     #[error(transparent)]
-    RowPredicate(#[from] plasm_core::RowPredicateError),
+    RowPredicate(Box<plasm_core::RowPredicateError>),
     #[error(transparent)]
     Type(#[from] plasm_core::TypeError),
     #[error(transparent)]
@@ -82,8 +82,14 @@ pub enum RowSuffixLoweringError {
     MembershipRhsColumnCount { binding: String },
     #[error(transparent)]
     MembershipParse {
-        source: plasm_core::RowMembershipParseError,
+        source: Box<plasm_core::RowMembershipParseError>,
     },
+}
+
+impl From<plasm_core::RowPredicateError> for RowSuffixLoweringError {
+    fn from(error: plasm_core::RowPredicateError) -> Self {
+        Self::RowPredicate(Box::new(error))
+    }
 }
 
 /// Shared typed sort lowering for surface and Python programs.
@@ -270,9 +276,11 @@ pub(in crate::plasm_dag) fn row_suffix_to_compute(
                 let mut membership_preds = Vec::new();
                 let mut scalar_clauses = Vec::new();
                 for clause in clauses {
-                    match plasm_core::parse_membership_clause(clause)
-                        .map_err(|source| RowSuffixLoweringError::MembershipParse { source })?
-                    {
+                    match plasm_core::parse_membership_clause(clause).map_err(|source| {
+                        RowSuffixLoweringError::MembershipParse {
+                            source: Box::new(source),
+                        }
+                    })? {
                         Some(m) => {
                             let rhs = match m.rhs {
                                 plasm_core::MembershipRhs::Binding(name) => name,

@@ -52,12 +52,6 @@ pub enum StepPayloadLiftError {
     MissingScopedParentSchema,
 }
 
-impl StepPayloadLiftError {
-    pub(crate) fn diagnostic(&self) -> String {
-        self.to_string()
-    }
-}
-
 impl From<StepPayloadLiftError> for plasm_runtime::ExecutionFailure {
     fn from(error: StepPayloadLiftError) -> Self {
         let code = match &error {

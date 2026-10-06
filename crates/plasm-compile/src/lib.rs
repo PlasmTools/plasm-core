@@ -40,7 +40,9 @@ pub use embed_target_decoder::entity_decoder_for_from_parent_get_target;
 pub use embed_tree::flatten_decoded_embed_descendants;
 pub use error::{CompileError, DecodeError};
 mod catalog_template_error;
-pub use catalog_template_error::CatalogTemplateError;
+pub use catalog_template_error::{
+    CatalogTemplateError, InheritedIdentityTypeMismatch, ViewRelationEntityMismatch,
+};
 pub use json_path::{path_expr_from_json_segments, JsonPathError};
 pub use plasm_cml::CmlError;
 pub use predicate_compiler::*;

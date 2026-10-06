@@ -330,6 +330,7 @@ mod tests {
     fn binding_load_preserves_typed_scope_mismatch_source() {
         use std::error::Error;
 
+        assert!(std::mem::size_of::<BindingKvParseError>() < 128);
         let raw = r#"{"version":1,"scope":{"tenant_id":"t1","mcp_config_id":"c1","entry_id":"fibery"},"values":{}}"#;
         let error = BindingLoadError::from(
             parse_binding_kv_v1_scoped(raw, "t2", "c1", "fibery").unwrap_err(),

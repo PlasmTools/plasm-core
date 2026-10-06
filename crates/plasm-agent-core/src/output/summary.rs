@@ -1,10 +1,11 @@
-//! MCP-oriented tabular summaries (`tsv` fences) over [`ExecutionResult`].
+//! MCP-oriented tabular summaries (`tsv` fences) over [`plasm_runtime::ExecutionResult`].
 //!
 //! Policy (encoded cell width, reversible string encoding) is explicit via [`TsvCellPolicy`] so this stays distinct from
 //! generic table formatting in the parent module.
 
 use super::in_band_fidelity::{InBandSummaryReport, SummaryFidelityLoss};
 use plasm_core::CGS;
+#[cfg(test)]
 use plasm_runtime::ExecutionResult;
 use std::collections::BTreeSet;
 
@@ -15,6 +16,7 @@ pub(crate) struct TsvCellPolicy {
     pub preview: bool,
 }
 
+#[cfg(test)]
 impl TsvCellPolicy {
     pub(crate) const fn mcp_default() -> Self {
         Self {
@@ -61,6 +63,7 @@ fn bounded_encoded_cell(encoded: String, policy: &TsvCellPolicy) -> (String, boo
 /// Tab-separated rows (header + data) with the same reference-only rules as
 /// [`super::format_result_with_cgs`] table mode. Intended for MCP when omissions are empty so the
 /// fence is fully summarisable without `(in artifact)` placeholders.
+#[cfg(test)]
 pub(crate) fn format_result_tsv_with_cgs(
     result: &ExecutionResult,
     cgs: Option<&CGS>,

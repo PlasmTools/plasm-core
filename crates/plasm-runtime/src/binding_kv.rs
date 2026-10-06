@@ -54,8 +54,8 @@ pub enum BindingKvParseError {
         .actual.tenant_id, .actual.mcp_config_id, .actual.entry_id
     )]
     ScopeMismatch {
-        expected: BindingScopeV1,
-        actual: BindingScopeV1,
+        expected: Box<BindingScopeV1>,
+        actual: Box<BindingScopeV1>,
     },
 }
 
@@ -90,12 +90,12 @@ pub fn parse_binding_kv_v1_scoped(
         || env.scope.entry_id != entry_id
     {
         return Err(BindingKvParseError::ScopeMismatch {
-            expected: BindingScopeV1 {
+            expected: Box::new(BindingScopeV1 {
                 tenant_id: tenant_id.to_owned(),
                 mcp_config_id: mcp_config_id.to_owned(),
                 entry_id: entry_id.to_owned(),
-            },
-            actual: env.scope,
+            }),
+            actual: Box::new(env.scope),
         });
     }
     Ok(env)
@@ -143,6 +143,7 @@ mod tests {
 
     #[test]
     fn scoped_binding_parser_preserves_each_mismatched_scope() {
+        assert!(std::mem::size_of::<BindingKvParseError>() < 128);
         let scope = BindingScopeV1 {
             tenant_id: "t1".into(),
             mcp_config_id: "c1".into(),
@@ -176,14 +177,14 @@ mod tests {
                 panic!("expected a scope mismatch");
             };
             assert_eq!(
-                expected,
+                *expected,
                 BindingScopeV1 {
                     tenant_id: tenant.into(),
                     mcp_config_id: config.into(),
                     entry_id: entry.into(),
                 }
             );
-            assert_eq!(actual, scope);
+            assert_eq!(*actual, scope);
         }
     }
 

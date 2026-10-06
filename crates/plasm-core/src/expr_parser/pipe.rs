@@ -264,8 +264,8 @@ fn parse_select(body: &str) -> Result<PipeStage, SurfaceSyntaxError> {
 fn parse_summarize(body: &str) -> Result<PipeStage, SurfaceSyntaxError> {
     require_nonempty(body, "summarize aggregates")?;
     let (keys, aggregates) = if let Some(rest) = body.strip_prefix("by ") {
-        let aggregate_start = find_named_aggregate_start(rest)
-            .ok_or_else(|| SurfaceSyntaxError::UnnamedAggregates)?;
+        let aggregate_start =
+            find_named_aggregate_start(rest).ok_or(SurfaceSyntaxError::UnnamedAggregates)?;
         let keys = split_top_level(rest[..aggregate_start].trim_end_matches([',', ' ']), ',')?
             .iter()
             .map(|part| part.trim().to_string())

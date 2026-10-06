@@ -338,8 +338,8 @@ impl ExecutionEngine {
             && decoded.reference != get.reference
         {
             return Err(RuntimeError::GetIdentityMismatch {
-                expected: get.reference.clone(),
-                actual: decoded.reference.clone(),
+                expected: Box::new(get.reference.clone()),
+                actual: Box::new(decoded.reference.clone()),
             });
         }
         let timestamp = current_timestamp();

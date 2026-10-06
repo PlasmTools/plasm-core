@@ -5,7 +5,7 @@ pub enum CompileError {
     #[error("Type error during compilation: {source}")]
     TypeError {
         #[from]
-        source: plasm_core::TypeError,
+        source: Box<plasm_core::TypeError>,
     },
 
     #[error("Normalization error: {source}")]
@@ -32,7 +32,7 @@ pub enum CompileError {
     },
 
     #[error(transparent)]
-    Schema(#[from] plasm_core::SchemaError),
+    Schema(#[from] Box<plasm_core::SchemaError>),
     #[error(transparent)]
     QueryResolution(#[from] plasm_core::QueryCapabilityResolveError),
 }
@@ -101,7 +101,7 @@ pub enum DecodeError {
     IdentityFieldContract {
         field: String,
         #[source]
-        source: plasm_core::SchemaError,
+        source: Box<plasm_core::SchemaError>,
     },
     #[error("compound key part `{part}` missing for entity `{entity}`")]
     CompoundKeyPartMissing { entity: String, part: String },
@@ -112,8 +112,88 @@ pub enum DecodeError {
     #[error("embedded relation membership could not be recorded")]
     RelationMembership {
         #[source]
-        source: plasm_core::collection_codec::CollectionFault,
+        source: Box<plasm_core::collection_codec::CollectionFault>,
     },
     #[error("No valid ID field found in source object")]
     IdentityMissing,
+}
+
+impl From<plasm_core::TypeError> for CompileError {
+    fn from(source: plasm_core::TypeError) -> Self {
+        Self::TypeError {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl From<plasm_core::SchemaError> for CompileError {
+    fn from(source: plasm_core::SchemaError) -> Self {
+        Self::Schema(Box::new(source))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::error::Error;
+
+    #[test]
+    fn compiler_errors_have_bounded_stack_footprints() {
+        assert!(std::mem::size_of::<CompileError>() < 128);
+        assert!(std::mem::size_of::<DecodeError>() < 128);
+    }
+
+    #[test]
+    fn boxed_compile_and_decode_causes_remain_concrete() {
+        let error = CompileError::from(plasm_core::TypeError::EntityNotFound {
+            entity: "Fixture".into(),
+        });
+        assert!(matches!(
+            error.source().unwrap().downcast_ref::<Box<plasm_core::TypeError>>().map(Box::as_ref),
+            Some(plasm_core::TypeError::EntityNotFound { entity }) if entity == "Fixture"
+        ));
+        let error = DecodeError::IdentityFieldContract {
+            field: "id".into(),
+            source: Box::new(plasm_core::SchemaError::UnknownValueDomain {
+                key: "missing".into(),
+                context: "Fixture.id".into(),
+            }),
+        };
+        for error in [error.clone(), error] {
+            let source = error
+                .source()
+                .unwrap()
+                .downcast_ref::<Box<plasm_core::SchemaError>>()
+                .unwrap()
+                .as_ref();
+            assert!(matches!(source,
+                plasm_core::SchemaError::UnknownValueDomain { key, context }
+                    if key == "missing" && context == "Fixture.id"
+            ));
+        }
+    }
+
+    #[test]
+    fn boxed_compile_cause_preserves_nested_error_chain() {
+        let error = CompileError::from(plasm_core::TypeError::CoercionFailure {
+            field: "count".into(),
+            source: plasm_core::CoercionError::MissingTemporalFormat,
+        });
+        let source = error
+            .source()
+            .unwrap()
+            .downcast_ref::<Box<plasm_core::TypeError>>()
+            .unwrap()
+            .as_ref();
+        assert!(
+            matches!(source, plasm_core::TypeError::CoercionFailure { field, .. } if field == "count")
+        );
+        assert!(matches!(
+            source
+                .source()
+                .unwrap()
+                .downcast_ref::<plasm_core::CoercionError>(),
+            Some(plasm_core::CoercionError::MissingTemporalFormat)
+        ));
+    }
 }

@@ -96,7 +96,7 @@ fn compile_comparison(
         return Ok(BackendFilter::True);
     }
     if let Some(schema) = entity.fields.get(field) {
-        let domain = schema.named_value(cgs).map_err(CompileError::Schema)?;
+        let domain = schema.named_value(cgs).map_err(CompileError::from)?;
         plasm_core::temporal_input::encode_domain_temporals(&mut wire, domain, cgs)?;
         return Ok(BackendFilter::field(field, BackendOp::from(op), wire));
     }

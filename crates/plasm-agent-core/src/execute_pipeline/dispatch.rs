@@ -35,14 +35,14 @@ pub enum DispatchError {
     #[error("CML preflight failed: {0}")]
     Cml(#[source] plasm_compile::CmlError),
     #[error("runtime compile preflight failed: {0}")]
-    RuntimePreflight(#[source] plasm_runtime::RuntimeError),
+    RuntimePreflight(#[source] Box<plasm_runtime::RuntimeError>),
 }
 
 impl From<plasm_runtime::RuntimeError> for DispatchError {
     fn from(error: plasm_runtime::RuntimeError) -> Self {
         match error {
             plasm_runtime::RuntimeError::CmlError { source } => Self::Cml(source),
-            error => Self::RuntimePreflight(error),
+            error => Self::RuntimePreflight(Box::new(error)),
         }
     }
 }

@@ -209,11 +209,8 @@ pub(crate) fn compile_python_program_checked(
             span_offset: Some(u32::from(error.location.start()) as usize),
             error: std::sync::Arc::new(crate::program_diagnostic::ProgramParseError::Python(error)),
         })?;
-    let bundle = lower_python_program(es, source, ast.suite()).map_err(|error| {
-        ProgramStageError::PythonLowering {
-            error: error.into(),
-        }
-    })?;
+    let bundle = lower_python_program(es, source, ast.suite())
+        .map_err(|error| ProgramStageError::PythonLowering { error })?;
     crate::plasm_plan_run::evaluate_plasm_comp_dry(es, &bundle)?;
     Ok(bundle)
 }

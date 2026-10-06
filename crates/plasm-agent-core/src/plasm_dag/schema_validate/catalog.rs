@@ -103,7 +103,7 @@ pub(in crate::plasm_dag) fn infer_entity_row_columns(
         .into_iter()
         .map(|segs| OutputName::new(segs.join(".")))
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| SchemaCatalogError::InvalidFieldPath(e.into()))
+        .map_err(SchemaCatalogError::InvalidFieldPath)
 }
 pub(in crate::plasm_dag) fn single_segment_teaching_field_hint(
     session: &ExecuteSession,

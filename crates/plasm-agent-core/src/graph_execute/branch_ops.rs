@@ -25,6 +25,6 @@ pub(crate) fn commit_materialization(
     }
     session
         .absorb_branch(branch)
-        .map_err(GraphCommitError::Merge)?;
+        .map_err(GraphCommitError::from)?;
     Ok(())
 }
