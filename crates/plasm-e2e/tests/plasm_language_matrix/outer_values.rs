@@ -1,6 +1,11 @@
 //! Finite branch-type product plus arithmetic/effect boundaries, through Python admission.
 use plasm_agent::plasm_compile::compile_python_program;
+use plasm_runtime::{FailureCause, RecoveryDisposition};
 use serde_json::{json, Value};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 
 struct Server(tokio::task::JoinHandle<()>);
 impl Drop for Server {
@@ -10,10 +15,15 @@ impl Drop for Server {
 }
 
 pub(super) async fn run() -> usize {
-    use std::sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    };
+    let (base, _server, writes) = fixture().await;
+    branch_product(base.clone()).await
+        + arithmetic(base.clone()).await
+        + operator_rejections(base.clone()).await
+        + mixed_structures(base.clone()).await
+        + effect_rejections(base, &writes).await
+}
+
+async fn fixture() -> (String, Server, Arc<AtomicUsize>) {
     let writes = Arc::new(AtomicUsize::new(0));
     let observed = writes.clone();
     let app = axum::Router::new().route(
@@ -35,9 +45,13 @@ pub(super) async fn run() -> usize {
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
-    let _server = Server(tokio::spawn(async move {
+    let server = Server(tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     }));
+    (base, server, writes)
+}
+
+async fn branch_product(base: String) -> usize {
     let record = super::python::value_contract_matrix::record();
     let leaves = [
         ("row.count", json!(9007199254740993_i64)),
@@ -81,6 +95,12 @@ pub(super) async fn run() -> usize {
             }
         }
     }
+    assert_eq!(count, 72);
+    count
+}
+
+async fn arithmetic(base: String) -> usize {
+    let mut count = 0;
     for (expression, expected) in [
         ("row.count + 1", json!(9007199254740994_i64)),
         (
@@ -126,6 +146,12 @@ pub(super) async fn run() -> usize {
         );
         count += 1;
     }
+    assert_eq!(count, 9);
+    count
+}
+
+async fn operator_rejections(base: String) -> usize {
+    let mut count = 0;
     for expression in [
         "row.document + row.count",
         "row.price * row.price",
@@ -140,6 +166,13 @@ pub(super) async fn run() -> usize {
         assert!(error.contains("unsupported-operator"), "{source}\n{error}");
         count += 1;
     }
+    assert_eq!(count, 3);
+    count
+}
+
+async fn mixed_structures(base: String) -> usize {
+    let record = super::python::value_contract_matrix::record();
+    let mut count = 0;
     for (expression, suffix, expected) in [
         (
             "row.count if row.flag == True else row.ratio",
@@ -225,12 +258,29 @@ pub(super) async fn run() -> usize {
         );
         count += 1;
     }
-    for expression in [
-        "row.count / 0",
-        "row.count + 9223372036854775807",
-        "row.text + '!'",
+    assert_eq!(count, 6);
+    count
+}
+
+async fn effect_rejections(base: String, writes: &AtomicUsize) -> usize {
+    let mut count = 0;
+    let mut mismatches: Vec<(&str, &str, &str, plasm_runtime::ExecutionFailure, usize)> =
+        Vec::new();
+    // Codes are pinned per argument shape, not inferred from diagnostic prose.
+    // Text is a valid compute return in each context; binding it to UPDATE.count
+    // fails later at program admission, before any mutation is dispatched.
+    for (expression, expected_codes) in [
+        ("row.count / 0", ["python_exception"; 3]),
+        (
+            "row.count + 9223372036854775807",
+            ["python_return_contract"; 3],
+        ),
+        ("row.text + '!'", ["program_admission"; 3]),
     ] {
-        for context in ["projection", "record", "argument"] {
+        for (context, expected_code) in ["projection", "record", "argument"]
+            .into_iter()
+            .zip(expected_codes)
+        {
             use plasm_core::symbol_tuning::SymbolRender;
             let (es, host, token) = super::recursive_values::fixture_context(base.clone());
             let method = es
@@ -263,21 +313,44 @@ pub(super) async fn run() -> usize {
             )
             .await;
             let error = result.unwrap_err();
-            assert!(
-                error.diagnostic().contains("division by zero")
-                    || error.diagnostic().contains("outside i64")
-                    || error.diagnostic().contains("type")
-                    || error.diagnostic().contains("integer"),
-                "{error}"
-            );
-            assert_eq!(writes.load(Ordering::SeqCst), 0);
+            let observed_writes = writes.load(Ordering::SeqCst);
+            if error.cause != FailureCause::Program
+                || error.code != expected_code
+                || error.recovery != RecoveryDisposition::RepairProgram
+                || !error.effects.is_empty()
+                || !error.dispatches.is_empty()
+                || error.effects_unresolved
+                || observed_writes != 0
+            {
+                mismatches.push((context, expression, expected_code, error, observed_writes));
+            }
             count += 1;
         }
     }
+    assert_eq!(count, 9);
+    assert!(
+        mismatches.is_empty(),
+        "effect rejection mismatches (context, expression, expected code, typed failure, writes): {mismatches:#?}"
+    );
+    assert_eq!(writes.load(Ordering::SeqCst), 0);
     count
 }
 
 #[tokio::test]
 async fn outer_value_transfer_boundary() {
     assert_eq!(run().await, 99);
+}
+
+#[tokio::test]
+async fn outer_value_operator_rejections() {
+    let (base, _server, writes) = fixture().await;
+    assert_eq!(operator_rejections(base).await, 3);
+    assert_eq!(writes.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn outer_value_effect_rejections() {
+    let (base, _server, writes) = fixture().await;
+    assert_eq!(effect_rejections(base, &writes).await, 9);
+    assert_eq!(writes.load(Ordering::SeqCst), 0);
 }
