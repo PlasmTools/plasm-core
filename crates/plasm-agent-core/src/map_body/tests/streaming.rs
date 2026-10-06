@@ -1,5 +1,9 @@
 use super::*;
 
+// Includes cold typed admission under suite load; the host gate, not elapsed
+// time, proves streaming order and cancellation before completion.
+const LIVE_EXECUTION_WATCHDOG: std::time::Duration = std::time::Duration::from_secs(60);
+
 #[test]
 fn map_body_streams_occurrences_before_host_read_completes() {
     on_runtime(async {
@@ -50,8 +54,12 @@ fn map_body_streams_occurrences_before_host_read_completes() {
             );
             gate.1.notify_one();
         };
-        let (run, ()) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-            tokio::join!(execution, inspect)
+        let (run, ()) = tokio::time::timeout(LIVE_EXECUTION_WATCHDOG, async {
+            tokio::pin!(execution);
+            tokio::select! {
+                run = &mut execution => panic!("execution ended before host inspection: {run:?}"),
+                () = inspect => (execution.await, ()),
+            }
         })
         .await
         .expect("live host interaction must complete or cancel");
@@ -109,8 +117,12 @@ fn map_body_stream_retains_cancelled_occurrence_and_completed_parent() {
             es.cancel_operation(&handle, None);
             gate.1.notify_one();
         };
-        let (run, ()) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-            tokio::join!(execution, inspect)
+        let (run, ()) = tokio::time::timeout(LIVE_EXECUTION_WATCHDOG, async {
+            tokio::pin!(execution);
+            tokio::select! {
+                run = &mut execution => panic!("execution ended before host inspection: {run:?}"),
+                () = inspect => (execution.await, ()),
+            }
         })
         .await
         .expect("live host interaction must complete or cancel");
