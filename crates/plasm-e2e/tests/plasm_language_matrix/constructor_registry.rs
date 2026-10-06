@@ -58,12 +58,102 @@ fn row_operations(comp: &plasm_core::plasm_monad::PlasmComp) -> BTreeSet<String>
 
 pub(super) mod build {
     use super::*;
+    use plasm_agent::compilation_error::CompilationError;
     use plasm_agent::plasm_compile::PythonBuildStatement;
+    use plasm_agent::program_diagnostic::ProgramStageError;
+    use plasm_agent::program_rejection::{
+        PythonLoweringError, PythonProgramError, PythonSourceError,
+    };
+
+    #[derive(Clone, Copy, Debug, Deserialize)]
+    enum BuildRejection {
+        BuildExpression,
+        UnusedNonWriteExpression,
+        ReservedBindingName,
+        MutableLocalAssignment,
+        BuildAssignmentTargets,
+        BuildAugmentedAssignment,
+        StaticIterationRequiresLiteralIds,
+        StaticIterationReturn,
+        CallbackDeclarationShape,
+        BranchingReturnUnsupported,
+        EmptyReturn,
+    }
+
+    impl BuildRejection {
+        fn matches(self, error: &CompilationError) -> bool {
+            let CompilationError::Program(stage) = error else {
+                return false;
+            };
+            let ProgramStageError::PythonLowering { error } = stage.as_ref() else {
+                return false;
+            };
+            let mut cause = error;
+            while let PythonLoweringError::Located { error, .. } = cause {
+                cause = error.as_ref();
+            }
+            match cause {
+                PythonLoweringError::Source { error, .. } => {
+                    if let (
+                        Self::ReservedBindingName,
+                        PythonSourceError::ReservedBindingName { name },
+                    ) = (self, error.as_ref())
+                    {
+                        return name == "Program";
+                    }
+                    matches!(
+                        (self, error.as_ref()),
+                        (Self::BuildExpression, PythonSourceError::BuildExpression)
+                            | (
+                                Self::UnusedNonWriteExpression,
+                                PythonSourceError::UnusedNonWriteExpression
+                            )
+                            | (
+                                Self::MutableLocalAssignment,
+                                PythonSourceError::MutableLocalAssignment
+                            )
+                            | (
+                                Self::BuildAssignmentTargets,
+                                PythonSourceError::BuildAssignmentTargets { actual: 2 }
+                            )
+                            | (
+                                Self::BuildAugmentedAssignment,
+                                PythonSourceError::BuildAugmentedAssignment
+                            )
+                            | (
+                                Self::StaticIterationRequiresLiteralIds,
+                                PythonSourceError::StaticIterationRequiresLiteralIds
+                            )
+                            | (
+                                Self::StaticIterationReturn,
+                                PythonSourceError::StaticIterationReturn
+                            )
+                            | (
+                                Self::CallbackDeclarationShape,
+                                PythonSourceError::CallbackDeclarationShape {
+                                    is_async: true,
+                                    decorators: 0,
+                                    has_type_parameters: false,
+                                }
+                            )
+                    )
+                }
+                PythonLoweringError::Program(error) => matches!(
+                    (self, error),
+                    (
+                        Self::BranchingReturnUnsupported,
+                        PythonProgramError::BranchingReturnUnsupported
+                    ) | (Self::EmptyReturn, PythonProgramError::EmptyReturn)
+                ),
+                _ => false,
+            }
+        }
+    }
     #[derive(Clone, Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Rejection {
         body: String,
-        error: String,
+        error: BuildRejection,
     }
     #[derive(Clone, Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -158,10 +248,7 @@ pub(super) mod build {
                 || rule.transfer.trim().is_empty()
                 || rule.witnesses.is_empty()
                 || rule.invalid.is_empty()
-                || rule
-                    .invalid
-                    .iter()
-                    .any(|n| n.body.trim().is_empty() || n.error.trim().is_empty())
+                || rule.invalid.iter().any(|n| n.body.trim().is_empty())
                 || !laws.contains_key(&rule.law)
             {
                 return Err(RegistryError::MissingObligation {
@@ -208,8 +295,8 @@ pub(super) mod build {
                     .await
                     .expect_err("invalid build admitted");
                 assert!(
-                    error.to_string().contains(&rejection.error),
-                    "{} expected {:?}: {error}",
+                    rejection.error.matches(&error),
+                    "{} expected {:?}, got {error:?}",
                     rule.operation,
                     rejection.error
                 );
@@ -239,6 +326,12 @@ pub(super) mod build {
     fn build_inventory_rejects_missing_rules_and_false_witnesses() {
         let all = rules();
         validate(&all).unwrap();
+        let mut without_finite_for = all.clone();
+        without_finite_for.retain(|rule| rule.operation != "finite_for");
+        assert!(matches!(
+            validate(&without_finite_for),
+            Err(RegistryError::InventoryMismatch)
+        ));
         for index in 0..all.len() {
             let mut changed = all.clone();
             changed.remove(index);

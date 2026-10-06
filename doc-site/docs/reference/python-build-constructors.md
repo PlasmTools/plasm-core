@@ -6,7 +6,9 @@ is syntactic: compilation still validates every premise and the complete Program
 root. A new variant requires an exhaustive lowering arm and a rule here.
 
 Each rule links positive live matrix programs and negative programs with expected
-diagnostics. The gate checks the witness AST using production classification,
+semantic error variants. Each `invalid.error` is a closed serde enum label matched
+against the public typed compilation/lowering cause, never diagnostic prose.
+The gate checks the witness AST using production classification,
 not a substring. Sequence constraints apply across constructors. These are outer
 DAG-building rules, not restrictions on Monty's inner Python statements.
 
@@ -27,7 +29,7 @@ finite premise witnesses, not exhaustive invalid Python generation.
     "invalid": [
       {
         "body": "42\nreturn E.get(\"i1\")",
-        "error": "unsupported build statement"
+        "error": "BuildExpression"
       }
     ]
   },
@@ -42,11 +44,11 @@ finite premise witnesses, not exhaustive invalid Python generation.
     "invalid": [
       {
         "body": "E.get(\"i1\")\nreturn E.get(\"i2\")",
-        "error": "unused expression statements must be writes"
+        "error": "UnusedNonWriteExpression"
       },
       {
         "body": "E.query().take(1)\nreturn E.get(\"i1\")",
-        "error": "unused expression statements must be writes"
+        "error": "UnusedNonWriteExpression"
       }
     ]
   },
@@ -61,19 +63,38 @@ finite premise witnesses, not exhaustive invalid Python generation.
     "invalid": [
       {
         "body": "Program = E.get(\"i1\")\nreturn Program",
-        "error": "reserved binding"
+        "error": "ReservedBindingName"
       },
       {
         "body": "a, b = E.get(\"i1\")\nreturn a",
-        "error": "immutable local assignments"
+        "error": "MutableLocalAssignment"
       },
       {
         "body": "a = b = E.get(\"i1\")\nreturn a",
-        "error": "unsupported build statement"
+        "error": "BuildAssignmentTargets"
       },
       {
         "body": "a = E.get(\"i1\")\na += E.get(\"i2\")\nreturn a",
-        "error": "unsupported build statement"
+        "error": "BuildAugmentedAssignment"
+      }
+    ]
+  },
+  {
+    "operation": "finite_for",
+    "premise": "Synchronous for without else; one non-reserved local target; literal list or tuple of string/integer IDs, directly supplied or remembered through a local binding; at most 256 total static expansions across the build",
+    "transfer": "Elaborate each literal item in order into fresh immutable DAG bindings; retain body effects and causal order without executing user Python during build; reject return inside iteration and dynamic iterables",
+    "law": "BC-04",
+    "witnesses": [
+      "static_literal_for_effects"
+    ],
+    "invalid": [
+      {
+        "body": "keys = E.query()\nfor key in keys:\n    E.get(key).PING()\nreturn keys",
+        "error": "StaticIterationRequiresLiteralIds"
+      },
+      {
+        "body": "for key in ['i1']:\n    return E.get(key)",
+        "error": "StaticIterationReturn"
       }
     ]
   },
@@ -88,7 +109,7 @@ finite premise witnesses, not exhaustive invalid Python generation.
     "invalid": [
       {
         "body": "async def act(row):\n    return row\nreturn E.get('i1')",
-        "error": "synchronous"
+        "error": "CallbackDeclarationShape"
       }
     ]
   },
@@ -104,15 +125,15 @@ finite premise witnesses, not exhaustive invalid Python generation.
     "invalid": [
       {
         "body": "return",
-        "error": "build requires materialized return roots"
+        "error": "BranchingReturnUnsupported"
       },
       {
         "body": "return ()",
-        "error": "at least one rowset"
+        "error": "EmptyReturn"
       },
       {
         "body": "a = E.get(\"i1\")",
-        "error": "build requires materialized return roots"
+        "error": "BranchingReturnUnsupported"
       }
     ]
   }
@@ -122,3 +143,10 @@ finite premise witnesses, not exhaustive invalid Python generation.
 `python_compute_dictionary_and_multiple_inputs_live` additionally executes local
 reassignment and an unreachable statement after return. These change local
 bindings, not the immutable DAG nodes already captured by earlier expressions.
+
+`static_literal_for_effects`, executed by `python_static_literal_iteration_live`,
+uses the abstract language matrix to expand two literal IDs. Its independent live
+expectations require the returned `i1` row, two retained effect envelopes, exactly
+two completed logical invocations and no failed invocations. The companion
+`python_static_literal_iteration_rejects_dynamic_or_unbounded_forms` also checks
+the shared 256-expansion limit; these witnesses exercise existing lowering rules.
