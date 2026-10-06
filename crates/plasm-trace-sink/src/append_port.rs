@@ -1,21 +1,29 @@
-//! Storage ports: append vs query are separate traits; [`AuditSpanStore`] is their intersection (implemented by [`crate::iceberg_writer::IcebergSink`]).
+//! Storage ports: append vs query are separate traits; [`AuditSpanStore`] is their intersection.
 
 use std::collections::HashSet;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use thiserror::Error;
 use uuid::Uuid;
 
 use crate::model::{AuditEvent, DurableTraceDetail, TraceHeadRow, TraceSpanRow, TraceSummary};
+pub use crate::storage_error::TraceSinkStorageError;
 
 #[derive(Clone, Debug)]
 pub struct TenantId(String);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum TenantIdError {
+    #[error("tenant identifier must be non-empty")]
+    Empty,
+}
+
 impl TenantId {
-    pub fn parse(raw: &str) -> anyhow::Result<Self> {
+    pub fn parse(raw: &str) -> Result<Self, TenantIdError> {
         let v = raw.trim();
         if v.is_empty() {
-            anyhow::bail!("tenant_id must be non-empty");
+            return Err(TenantIdError::Empty);
         }
         Ok(Self(v.to_string()))
     }
@@ -31,10 +39,16 @@ pub struct TimeWindow {
     pub to: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum TimeWindowError {
+    #[error("time window start must not be after its end")]
+    Reversed,
+}
+
 impl TimeWindow {
-    pub fn new(from: DateTime<Utc>, to: DateTime<Utc>) -> anyhow::Result<Self> {
+    pub fn new(from: DateTime<Utc>, to: DateTime<Utc>) -> Result<Self, TimeWindowError> {
         if from > to {
-            anyhow::bail!("from must be <= to");
+            return Err(TimeWindowError::Reversed);
         }
         Ok(Self { from, to })
     }
@@ -47,13 +61,21 @@ pub enum TraceListStatusFilter {
     Completed,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum TraceListStatusFilterError {
+    #[error("unsupported trace status filter `{value}`")]
+    Unsupported { value: String },
+}
+
 impl TraceListStatusFilter {
-    pub fn parse(raw: Option<&str>) -> anyhow::Result<Self> {
+    pub fn parse(raw: Option<&str>) -> Result<Self, TraceListStatusFilterError> {
         match raw.unwrap_or("all").to_ascii_lowercase().as_str() {
             "all" | "" => Ok(Self::All),
             "live" => Ok(Self::Live),
             "completed" => Ok(Self::Completed),
-            other => anyhow::bail!("invalid status filter: {other}"),
+            other => Err(TraceListStatusFilterError::Unsupported {
+                value: other.to_owned(),
+            }),
         }
     }
 }
@@ -70,15 +92,16 @@ pub struct TraceListFilter<'a> {
 /// Append-only: Parquet/Iceberg writes for `audit_events` and `trace_spans`.
 #[async_trait]
 pub trait AuditSpanWriter: Send + Sync {
-    async fn append_audit_events(&self, events: &[AuditEvent]) -> anyhow::Result<()>;
-    async fn append_trace_spans(&self, rows: &[TraceSpanRow]) -> anyhow::Result<()>;
+    async fn append_audit_events(&self, events: &[AuditEvent])
+        -> Result<(), TraceSinkStorageError>;
+    async fn append_trace_spans(&self, rows: &[TraceSpanRow]) -> Result<(), TraceSinkStorageError>;
     /// Append `audit_events` then `trace_spans` under one storage lock so readers never see audit-only gaps.
     async fn append_audit_events_with_trace_spans(
         &self,
         events: &[AuditEvent],
         spans: &[TraceSpanRow],
-    ) -> anyhow::Result<()>;
-    async fn append_trace_heads(&self, rows: &[TraceHeadRow]) -> anyhow::Result<()>;
+    ) -> Result<(), TraceSinkStorageError>;
+    async fn append_trace_heads(&self, rows: &[TraceHeadRow]) -> Result<(), TraceSinkStorageError>;
 }
 
 /// Read path: idempotency checks and HTTP GET backends.
@@ -93,47 +116,50 @@ pub trait AuditSpanReader: Send + Sync {
         &self,
         ids: &[Uuid],
         tenant_partitions: Option<&[String]>,
-    ) -> anyhow::Result<HashSet<Uuid>>;
+    ) -> Result<HashSet<Uuid>, TraceSinkStorageError>;
 
     /// Audit rows for `trace_id`, ordered by `emitted_at`, `call_index`, `line_index`.
-    async fn load_trace_events(&self, trace_id: Uuid) -> anyhow::Result<Vec<AuditEvent>>;
+    async fn load_trace_events(
+        &self,
+        trace_id: Uuid,
+    ) -> Result<Vec<AuditEvent>, TraceSinkStorageError>;
 
     /// Tenant-scoped segment events for `trace_id` (head-guided month pruning when supported).
     async fn load_trace_events_for_tenant(
         &self,
         tenant: &TenantId,
         trace_id: Uuid,
-    ) -> anyhow::Result<Vec<AuditEvent>>;
+    ) -> Result<Vec<AuditEvent>, TraceSinkStorageError>;
     async fn load_latest_trace_heads(
         &self,
         trace_ids: &[Uuid],
-    ) -> anyhow::Result<Vec<TraceHeadRow>>;
+    ) -> Result<Vec<TraceHeadRow>, TraceSinkStorageError>;
 
     /// Billing-eligible spans in `[from, to]` scoped to one tenant.
     async fn load_billing_usage_scoped(
         &self,
         tenant: &TenantId,
         window: TimeWindow,
-    ) -> anyhow::Result<Vec<TraceSpanRow>>;
+    ) -> Result<Vec<TraceSpanRow>, TraceSinkStorageError>;
 
     /// Privileged global billing usage in `[from, to]` across all tenants.
     async fn load_billing_usage_global(
         &self,
         window: TimeWindow,
-    ) -> anyhow::Result<Vec<TraceSpanRow>>;
+    ) -> Result<Vec<TraceSpanRow>, TraceSinkStorageError>;
 
     /// Durable trace summaries by tenant and optional project filter.
     async fn list_trace_summaries(
         &self,
         filter: TraceListFilter<'_>,
-    ) -> anyhow::Result<Vec<TraceSummary>>;
+    ) -> Result<Vec<TraceSummary>, TraceSinkStorageError>;
 
     /// Durable trace detail for one trace in tenant scope.
     async fn load_trace_detail(
         &self,
         tenant: &TenantId,
         trace_id: Uuid,
-    ) -> anyhow::Result<Option<DurableTraceDetail>>;
+    ) -> Result<Option<DurableTraceDetail>, TraceSinkStorageError>;
 }
 
 /// Full sink capability for [`crate::state::AppState`] (`Arc<dyn AuditSpanStore>`).

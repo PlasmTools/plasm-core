@@ -162,7 +162,7 @@ docker buildx build -f docker/plasm-stack.Dockerfile --target plasm-trace-sink-r
 
 | Module | Responsibility |
 |--------|----------------|
-| `config` | Env-based `Config`; `iceberg_connect_params()` → [`IcebergConnectParams`](src/config.rs); `resolved_catalog_url()` → `Result<String, anyhow::Error>`; [`S3WarehouseUri`](src/config.rs); `ensure_iceberg_not_disabled()` |
+| `config` | Env-based `Config`; `iceberg_connect_params()` → [`IcebergConnectParams`](src/config.rs); `resolved_catalog_url()` → `Result<String, TraceSinkConfigError>`; [`S3WarehouseUri`](src/config.rs); `ensure_iceberg_not_disabled()` |
 | `http` | Axum router, CORS, request handlers |
 | `state` | `AppState`, strict Iceberg-backed `ingest_batch` |
 | `model` | `AuditEvent`, `TraceSpanRow`, request/response DTOs |

@@ -23,6 +23,8 @@ use crate::model::{
 };
 use crate::trace_totals::trace_totals_from_head_or_records;
 
+pub use crate::storage_error::ProjectionError;
+
 /// Connection to projection tables (same Postgres as JanKaul SqlCatalog).
 pub struct ProjectionStore {
     pool: PgPool,
@@ -37,13 +39,10 @@ impl ProjectionStore {
         catalog_url: &str,
         segment_ttl_secs: u64,
         segment_gc_interval_secs: u64,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self, ProjectionError> {
         let url = catalog_url.trim();
         if !(url.starts_with("postgres://") || url.starts_with("postgresql://")) {
-            anyhow::bail!(
-                "trace projections require a Postgres SqlCatalog URL (postgresql:// or postgres://); sqlite metadata is not supported (got {}).",
-                url.chars().take(48).collect::<String>()
-            );
+            return Err(ProjectionError::UnsupportedCatalogScheme);
         }
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(8)
@@ -96,11 +95,11 @@ impl ProjectionStore {
         });
     }
 
-    pub async fn migrate(&self) -> anyhow::Result<()> {
+    pub async fn migrate(&self) -> Result<(), ProjectionError> {
         migrate_postgres(&self.pool).await
     }
 
-    pub async fn count_trace_heads(&self) -> anyhow::Result<i64> {
+    pub async fn count_trace_heads(&self) -> Result<i64, ProjectionError> {
         let v: i64 =
             sqlx::query_scalar("SELECT COUNT(*)::bigint FROM plasm_trace_sink.trace_heads")
                 .fetch_one(&self.pool)
@@ -108,7 +107,10 @@ impl ProjectionStore {
         Ok(v)
     }
 
-    pub async fn bulk_upsert_trace_heads(&self, rows: &[TraceHeadRow]) -> anyhow::Result<()> {
+    pub async fn bulk_upsert_trace_heads(
+        &self,
+        rows: &[TraceHeadRow],
+    ) -> Result<(), ProjectionError> {
         if rows.is_empty() {
             return Ok(());
         }
@@ -121,7 +123,7 @@ impl ProjectionStore {
     pub async fn insert_ingested_events(
         &self,
         events: &[crate::model::AuditEvent],
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), ProjectionError> {
         if events.is_empty() {
             return Ok(());
         }
@@ -146,7 +148,7 @@ impl ProjectionStore {
         &self,
         ids: &[Uuid],
         tenant_partitions: Option<&[String]>,
-    ) -> anyhow::Result<HashSet<Uuid>> {
+    ) -> Result<HashSet<Uuid>, ProjectionError> {
         if ids.is_empty() {
             return Ok(HashSet::new());
         }
@@ -181,7 +183,7 @@ impl ProjectionStore {
         Ok(out)
     }
 
-    pub async fn upsert_trace_heads(&self, rows: &[TraceHeadRow]) -> anyhow::Result<()> {
+    pub async fn upsert_trace_heads(&self, rows: &[TraceHeadRow]) -> Result<(), ProjectionError> {
         if rows.is_empty() {
             return Ok(());
         }
@@ -230,7 +232,7 @@ impl ProjectionStore {
     pub async fn load_latest_trace_heads(
         &self,
         trace_ids: &[Uuid],
-    ) -> anyhow::Result<Vec<TraceHeadRow>> {
+    ) -> Result<Vec<TraceHeadRow>, ProjectionError> {
         if trace_ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -254,7 +256,7 @@ impl ProjectionStore {
     pub async fn list_trace_summaries(
         &self,
         filter: TraceListFilter<'_>,
-    ) -> anyhow::Result<Vec<TraceSummary>> {
+    ) -> Result<Vec<TraceSummary>, ProjectionError> {
         let tenant = filter.tenant.as_str();
         let limit = filter.limit.clamp(1, 500) as i64;
         let offset = filter.offset as i64;
@@ -330,7 +332,7 @@ impl ProjectionStore {
         &self,
         tenant_partition: &str,
         trace_id: Uuid,
-    ) -> anyhow::Result<Option<DurableTraceDetail>> {
+    ) -> Result<Option<DurableTraceDetail>, ProjectionError> {
         let head = self.load_trace_head(tenant_partition, trace_id).await?;
         let Some(head) = head else {
             return Ok(None);
@@ -362,7 +364,10 @@ impl ProjectionStore {
         }))
     }
 
-    pub async fn insert_trace_segments(&self, events: &[AuditEvent]) -> anyhow::Result<()> {
+    pub async fn insert_trace_segments(
+        &self,
+        events: &[AuditEvent],
+    ) -> Result<(), ProjectionError> {
         let segment_events: Vec<&AuditEvent> = events
             .iter()
             .filter(|e| e.event_kind == AUDIT_EVENT_KIND_MCP_TRACE_SEGMENT)
@@ -405,7 +410,7 @@ impl ProjectionStore {
         tenant_partition: &str,
         trace_id: Uuid,
         records: &[TraceDetailRecord],
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), ProjectionError> {
         if records.is_empty() {
             return Ok(());
         }
@@ -456,7 +461,7 @@ impl ProjectionStore {
         summary_within_segment_ttl(self.segment_ttl_secs, summary)
     }
 
-    pub async fn purge_expired_trace_segments(&self) -> anyhow::Result<u64> {
+    pub async fn purge_expired_trace_segments(&self) -> Result<u64, ProjectionError> {
         let Some(cutoff) = segment_ttl_cutoff(self.segment_ttl_secs) else {
             return Ok(0);
         };
@@ -475,7 +480,7 @@ impl ProjectionStore {
         &self,
         tenant_partition: &str,
         trace_id: Uuid,
-    ) -> anyhow::Result<Option<TraceHeadRow>> {
+    ) -> Result<Option<TraceHeadRow>, ProjectionError> {
         let row = sqlx::query(
             "SELECT trace_id, tenant_partition, tenant_id, project_slug, mcp_session_id, \
              status, started_at_ms, ended_at_ms, updated_at_ms, expression_lines, \
@@ -494,7 +499,7 @@ impl ProjectionStore {
         &self,
         tenant_partition: &str,
         trace_ids: &[Uuid],
-    ) -> anyhow::Result<HashMap<Uuid, Vec<serde_json::Value>>> {
+    ) -> Result<HashMap<Uuid, Vec<serde_json::Value>>, ProjectionError> {
         if trace_ids.is_empty() {
             return Ok(HashMap::new());
         }
@@ -521,7 +526,7 @@ impl ProjectionStore {
         &self,
         trace_id: Uuid,
         tenant_partition: &str,
-    ) -> anyhow::Result<Vec<TraceDetailRecord>> {
+    ) -> Result<Vec<TraceDetailRecord>, ProjectionError> {
         let rows = sqlx::query(
             r#"SELECT record_kind, record_json FROM plasm_trace_sink.trace_segments
                WHERE trace_id = $1 AND tenant_partition = $2
@@ -542,7 +547,7 @@ impl ProjectionStore {
     }
 }
 
-fn row_to_head_pg(r: &sqlx::postgres::PgRow) -> anyhow::Result<TraceHeadRow> {
+fn row_to_head_pg(r: &sqlx::postgres::PgRow) -> Result<TraceHeadRow, ProjectionError> {
     Ok(TraceHeadRow {
         trace_id: r.try_get::<Uuid, _>("trace_id")?,
         tenant_partition: r.try_get::<String, _>("tenant_partition")?,
@@ -564,7 +569,7 @@ fn row_to_head_pg(r: &sqlx::postgres::PgRow) -> anyhow::Result<TraceHeadRow> {
     })
 }
 
-async fn migrate_postgres(pool: &sqlx::PgPool) -> anyhow::Result<()> {
+async fn migrate_postgres(pool: &sqlx::PgPool) -> Result<(), ProjectionError> {
     sqlx::query("CREATE SCHEMA IF NOT EXISTS plasm_trace_sink")
         .execute(pool)
         .await?;

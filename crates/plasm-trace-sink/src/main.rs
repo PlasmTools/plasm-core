@@ -8,7 +8,6 @@ use std::net::SocketAddr;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use anyhow::Context;
 use clap::error::ErrorKind;
 use clap::Parser;
 use plasm_trace_sink::append_port::AuditSpanStore;
@@ -17,6 +16,7 @@ use plasm_trace_sink::http::router;
 use plasm_trace_sink::iceberg_writer::IcebergSink;
 use plasm_trace_sink::persisted::PersistedTraceSink;
 use plasm_trace_sink::state::AppState;
+use thiserror::Error;
 
 #[derive(Parser, Debug)]
 #[command(name = "plasm-trace-sink")]
@@ -24,6 +24,39 @@ struct Args {
     /// Override listen address (else `PLASM_TRACE_SINK_LISTEN` or default).
     #[arg(long)]
     listen: Option<String>,
+}
+
+#[derive(Debug, Error)]
+enum TraceSinkRunError {
+    #[error("command-line parsing failed")]
+    Arguments(#[source] clap::Error),
+    #[error(transparent)]
+    Configuration(#[from] plasm_trace_sink::config::TraceSinkConfigError),
+    #[error("could not create {operation} at {path}")]
+    CreateDirectory {
+        operation: TraceSinkDirectory,
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("Iceberg sink connection failed")]
+    Iceberg(#[source] plasm_trace_sink::storage_error::IcebergWriterError),
+    #[error("persisted trace sink connection failed")]
+    Persisted(#[source] plasm_trace_sink::storage_error::TraceSinkStorageError),
+    #[error("listen address is invalid")]
+    ListenAddress(#[source] std::net::AddrParseError),
+    #[error("binding the HTTP listener failed")]
+    Bind(#[source] std::io::Error),
+    #[error("HTTP server terminated with an error")]
+    Serve(#[source] std::io::Error),
+}
+
+#[derive(Debug, Clone, Copy, Error)]
+enum TraceSinkDirectory {
+    #[error("data directory")]
+    Data,
+    #[error("warehouse directory")]
+    Warehouse,
 }
 
 fn install_panic_hook() {
@@ -46,12 +79,27 @@ fn init_tracing() {
     }
 }
 
-fn log_fatal_and_exit(err: &anyhow::Error) -> ! {
+fn log_fatal_and_exit(err: &TraceSinkRunError) -> ! {
     // tracing first (structured), then a single guaranteed line for log collectors / systemd.
     tracing::error!(error = %err, error_debug = ?err, "plasm-trace-sink fatal startup or runtime error");
-    let _ = writeln!(std::io::stderr(), "plasm-trace-sink FATAL: {err:#}",);
+    let _ = writeln!(
+        std::io::stderr(),
+        "plasm-trace-sink FATAL: {}",
+        render_error_chain(err)
+    );
     let _ = std::io::stderr().flush();
     std::process::exit(1);
+}
+
+fn render_error_chain(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut rendered = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        rendered.push_str(": ");
+        rendered.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    rendered
 }
 
 #[tokio::main]
@@ -68,16 +116,16 @@ async fn main() -> ExitCode {
     }
 }
 
-async fn run() -> anyhow::Result<()> {
+async fn run() -> Result<(), TraceSinkRunError> {
     let args = match Args::try_parse() {
         Ok(a) => a,
         Err(e) if matches!(e.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion) => {
             e.exit()
         }
-        Err(e) => return Err(e).context("parse CLI arguments"),
+        Err(e) => return Err(TraceSinkRunError::Arguments(e)),
     };
 
-    Config::ensure_iceberg_not_disabled().context("PLASM_TRACE_SINK_ICEBERG")?;
+    Config::ensure_iceberg_not_disabled()?;
 
     let mut config = Config::from_env();
     if let Some(l) = args.listen {
@@ -94,16 +142,22 @@ async fn run() -> anyhow::Result<()> {
 
     tokio::fs::create_dir_all(&config.data_dir)
         .await
-        .with_context(|| format!("create data_dir {}", config.data_dir.display()))?;
+        .map_err(|source| TraceSinkRunError::CreateDirectory {
+            operation: TraceSinkDirectory::Data,
+            path: config.data_dir.clone(),
+            source,
+        })?;
 
-    let connect = config
-        .iceberg_connect_params()
-        .context("build Iceberg catalog URL + warehouse params")?;
+    let connect = config.iceberg_connect_params()?;
 
     if let WarehouseLocation::Filesystem(root) = &connect.warehouse {
-        tokio::fs::create_dir_all(root)
-            .await
-            .with_context(|| format!("create warehouse dir {}", root.display()))?;
+        tokio::fs::create_dir_all(root).await.map_err(|source| {
+            TraceSinkRunError::CreateDirectory {
+                operation: TraceSinkDirectory::Warehouse,
+                path: root.clone(),
+                source,
+            }
+        })?;
     }
 
     tracing::info!(
@@ -114,7 +168,7 @@ async fn run() -> anyhow::Result<()> {
     let iceberg = Arc::new(
         IcebergSink::connect(&connect)
             .await
-            .context("Iceberg SqlCatalog::connect / namespace / table init")?,
+            .map_err(TraceSinkRunError::Iceberg)?,
     );
 
     tracing::info!(
@@ -130,7 +184,7 @@ async fn run() -> anyhow::Result<()> {
         config.segment_projection_gc_interval_secs,
     )
     .await
-    .context("SQL trace projections (same catalog DB as Iceberg)")?;
+    .map_err(TraceSinkRunError::Persisted)?;
 
     persisted.start_background_tasks();
 
@@ -149,17 +203,17 @@ async fn run() -> anyhow::Result<()> {
     let addr: SocketAddr = config
         .listen
         .parse()
-        .with_context(|| format!("parse listen address {:?}", config.listen))?;
+        .map_err(TraceSinkRunError::ListenAddress)?;
 
     tracing::info!(%addr, "binding HTTP listener");
     let listener = tokio::net::TcpListener::bind(addr)
         .await
-        .with_context(|| format!("TcpListener::bind({addr})"))?;
+        .map_err(TraceSinkRunError::Bind)?;
 
     tracing::info!(%addr, "serving HTTP (health GET /v1/health)");
     axum::serve(listener, app)
         .await
-        .context("axum::serve ended (listener closed or protocol error)")?;
+        .map_err(TraceSinkRunError::Serve)?;
 
     tracing::warn!("axum::serve returned Ok — this is unexpected for a long-running server");
     Ok(())

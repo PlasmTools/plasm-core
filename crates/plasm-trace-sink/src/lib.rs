@@ -13,6 +13,7 @@ pub(crate) mod projection;
 pub mod projector;
 mod spans;
 pub mod state;
+pub mod storage_error;
 mod trace_event_decode;
 mod trace_totals;
 
@@ -27,3 +28,4 @@ pub use config::{
 pub use model::{BillingUsageResponse, TraceGetResponse};
 pub use persisted::PersistedTraceSink;
 pub use state::AppState;
+pub use storage_error::ProjectionError;

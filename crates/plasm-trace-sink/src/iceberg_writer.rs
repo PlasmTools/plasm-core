@@ -17,6 +17,8 @@ use crate::model::{
     TraceDetailRecord, TraceHeadRow, TraceSpanRow, TraceSummary, TraceTotals,
     AUDIT_EVENT_KIND_MCP_TRACE_SEGMENT,
 };
+use crate::storage_error::TraceSinkStorageError;
+pub use crate::storage_error::{IcebergRowDecodeError, IcebergWriterError};
 use crate::trace_event_decode::decode_mcp_trace_segment;
 use crate::trace_totals::{head_needs_segment_recompute, trace_totals_from_head_or_records};
 use async_trait::async_trait;
@@ -550,7 +552,7 @@ fn trace_heads_arrow_schema() -> Arc<Schema> {
     ]))
 }
 
-fn audit_batch(events: &[AuditEvent]) -> anyhow::Result<RecordBatch> {
+fn audit_batch(events: &[AuditEvent]) -> Result<RecordBatch, IcebergWriterError> {
     let n = events.len();
     let mut event_id = Vec::with_capacity(n);
     let mut schema_version = Vec::with_capacity(n);
@@ -640,10 +642,10 @@ fn audit_batch(events: &[AuditEvent]) -> anyhow::Result<RecordBatch> {
         Arc::new(Int32Array::from(year_month_bucket)),
     ];
 
-    RecordBatch::try_new(audit_arrow_schema(), cols).map_err(|e| anyhow::anyhow!("{e}"))
+    Ok(RecordBatch::try_new(audit_arrow_schema(), cols)?)
 }
 
-fn trace_batch(rows: &[TraceSpanRow]) -> anyhow::Result<RecordBatch> {
+fn trace_batch(rows: &[TraceSpanRow]) -> Result<RecordBatch, IcebergWriterError> {
     let n = rows.len();
     let mut span_id = Vec::with_capacity(n);
     let mut event_id = Vec::with_capacity(n);
@@ -725,10 +727,10 @@ fn trace_batch(rows: &[TraceSpanRow]) -> anyhow::Result<RecordBatch> {
         Arc::new(Int32Array::from(year_month_bucket)),
     ];
 
-    RecordBatch::try_new(trace_arrow_schema(), cols).map_err(|e| anyhow::anyhow!("{e}"))
+    Ok(RecordBatch::try_new(trace_arrow_schema(), cols)?)
 }
 
-fn trace_heads_batch(rows: &[TraceHeadRow]) -> anyhow::Result<RecordBatch> {
+fn trace_heads_batch(rows: &[TraceHeadRow]) -> Result<RecordBatch, IcebergWriterError> {
     let n = rows.len();
     let mut trace_id = Vec::with_capacity(n);
     let mut tenant_partition = Vec::with_capacity(n);
@@ -780,7 +782,7 @@ fn trace_heads_batch(rows: &[TraceHeadRow]) -> anyhow::Result<RecordBatch> {
             workspace_slug.iter().map(|s| s.as_deref()),
         )),
     ];
-    RecordBatch::try_new(trace_heads_arrow_schema(), cols).map_err(|e| anyhow::anyhow!("{e}"))
+    Ok(RecordBatch::try_new(trace_heads_arrow_schema(), cols)?)
 }
 
 async fn ensure_table(
@@ -789,7 +791,7 @@ async fn ensure_table(
     name: &str,
     schema: IcebergSchema,
     partition_spec: PartitionSpec,
-) -> anyhow::Result<()> {
+) -> Result<(), IcebergWriterError> {
     let ident = Identifier::new(&[NS.to_string()], name);
     if catalog.tabular_exists(&ident).await? {
         return Ok(());
@@ -838,7 +840,7 @@ impl IcebergSink {
     /// warehouse or JDBC catalog row disagrees (mixed Parquet generations), clear object storage
     /// and reset catalog metadata, then redeploy—there is no in-place additive migration path.
     /// Adding `logical_session_id` on `audit_events` is such a cutover: reset the lake before deploy.
-    pub async fn connect(params: &IcebergConnectParams) -> anyhow::Result<Self> {
+    pub async fn connect(params: &IcebergConnectParams) -> Result<Self, IcebergWriterError> {
         let catalog_url = params.catalog.as_str();
         let warehouse = &params.warehouse;
         let object_store = match warehouse {
@@ -847,22 +849,13 @@ impl IcebergSink {
             }
             WarehouseLocation::S3 { .. } => ObjectStoreBuilder::s3(),
         };
-        let catalog: Arc<dyn Catalog> = Arc::new(
-            SqlCatalog::new(catalog_url, "warehouse", object_store)
-                .await
-                .map_err(|e| anyhow::anyhow!("{e}"))?,
-        );
+        let catalog: Arc<dyn Catalog> =
+            Arc::new(SqlCatalog::new(catalog_url, "warehouse", object_store).await?);
 
         let ns = Namespace::try_new(&[NS.to_string()])?;
-        let namespaces = catalog
-            .list_namespaces(None)
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let namespaces = catalog.list_namespaces(None).await?;
         if !namespaces.iter().any(|n| n == &ns) {
-            catalog
-                .create_namespace(&ns, None)
-                .await
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            catalog.create_namespace(&ns, None).await?;
         }
 
         let audit_schema = audit_iceberg_schema();
@@ -894,9 +887,7 @@ impl IcebergSink {
         .await?;
 
         let ctx = SessionContext::new();
-        let df_cat = IcebergCatalog::new(catalog.clone(), None)
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let df_cat = IcebergCatalog::new(catalog.clone(), None).await?;
         ctx.register_catalog(DF_CATALOG, Arc::new(df_cat));
 
         let audit_fqn = format!("{DF_CATALOG}.{NS}.{AUDIT}");
@@ -911,7 +902,10 @@ impl IcebergSink {
         })
     }
 
-    pub async fn append_audit_events(&self, events: &[AuditEvent]) -> anyhow::Result<()> {
+    pub async fn append_audit_events(
+        &self,
+        events: &[AuditEvent],
+    ) -> Result<(), IcebergWriterError> {
         if events.is_empty() {
             return Ok(());
         }
@@ -923,7 +917,10 @@ impl IcebergSink {
         Ok(())
     }
 
-    pub async fn append_trace_spans(&self, rows: &[TraceSpanRow]) -> anyhow::Result<()> {
+    pub async fn append_trace_spans(
+        &self,
+        rows: &[TraceSpanRow],
+    ) -> Result<(), IcebergWriterError> {
         if rows.is_empty() {
             return Ok(());
         }
@@ -939,7 +936,7 @@ impl IcebergSink {
         &self,
         events: &[AuditEvent],
         spans: &[TraceSpanRow],
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), IcebergWriterError> {
         if events.is_empty() {
             return Ok(());
         }
@@ -957,7 +954,10 @@ impl IcebergSink {
         Ok(())
     }
 
-    pub async fn append_trace_heads(&self, rows: &[TraceHeadRow]) -> anyhow::Result<()> {
+    pub async fn append_trace_heads(
+        &self,
+        rows: &[TraceHeadRow],
+    ) -> Result<(), IcebergWriterError> {
         if rows.is_empty() {
             return Ok(());
         }
@@ -969,15 +969,15 @@ impl IcebergSink {
         Ok(())
     }
 
-    pub async fn scan_audit_row_count(&self) -> anyhow::Result<usize> {
+    pub async fn scan_audit_row_count(&self) -> Result<usize, IcebergWriterError> {
         self.count_star(&self.audit_fqn).await
     }
 
-    pub async fn scan_trace_row_count(&self) -> anyhow::Result<usize> {
+    pub async fn scan_trace_row_count(&self) -> Result<usize, IcebergWriterError> {
         self.count_star(&self.trace_fqn).await
     }
 
-    async fn count_star(&self, fqn: &str) -> anyhow::Result<usize> {
+    async fn count_star(&self, fqn: &str) -> Result<usize, IcebergWriterError> {
         let sql = format!("SELECT COUNT(*) AS c FROM {fqn}");
         let ctx = self.ctx.lock().await;
         let df = ctx.sql(&sql).await?;
@@ -997,17 +997,17 @@ impl IcebergSink {
                 {
                     n += arr.value(0) as usize;
                 } else {
-                    anyhow::bail!("unexpected count column type");
+                    return Err(IcebergWriterError::UnsupportedCountColumnType);
                 }
             }
         }
         Ok(n)
     }
 
-    async fn sql_batches(&self, sql: &str) -> anyhow::Result<Vec<RecordBatch>> {
+    async fn sql_batches(&self, sql: &str) -> Result<Vec<RecordBatch>, IcebergWriterError> {
         let ctx = self.ctx.lock().await;
         let df = ctx.sql(sql).await?;
-        df.collect().await.map_err(|e| anyhow::anyhow!("{e}"))
+        Ok(df.collect().await?)
     }
 
     /// Max distinct `tenant_partition` literals in the idempotency SQL `IN` list; above this, omit the filter.
@@ -1018,7 +1018,7 @@ impl IcebergSink {
         &self,
         ids: &[Uuid],
         tenant_partitions: Option<&[String]>,
-    ) -> anyhow::Result<HashSet<Uuid>> {
+    ) -> Result<HashSet<Uuid>, IcebergWriterError> {
         if ids.is_empty() {
             return Ok(HashSet::new());
         }
@@ -1059,20 +1059,23 @@ impl IcebergSink {
         for b in batches {
             let col = b
                 .column_by_name("event_id")
-                .ok_or_else(|| anyhow::anyhow!("missing event_id column"))?;
+                .ok_or(IcebergWriterError::MissingEventIdColumn)?;
             let sa = col
                 .as_any()
                 .downcast_ref::<StringArray>()
-                .ok_or_else(|| anyhow::anyhow!("event_id not Utf8"))?;
+                .ok_or(IcebergWriterError::EventIdColumnNotUtf8)?;
             for i in 0..b.num_rows() {
                 let s = sa.value(i);
-                out.insert(Uuid::parse_str(s).map_err(|e| anyhow::anyhow!("{e}"))?);
+                out.insert(Uuid::parse_str(s).map_err(IcebergWriterError::InvalidEventId)?);
             }
         }
         Ok(out)
     }
 
-    pub async fn load_trace_events(&self, trace_id: Uuid) -> anyhow::Result<Vec<AuditEvent>> {
+    pub async fn load_trace_events(
+        &self,
+        trace_id: Uuid,
+    ) -> Result<Vec<AuditEvent>, IcebergWriterError> {
         self.load_trace_events_with_where(&format!("trace_id = '{trace_id}'"))
             .await
     }
@@ -1081,7 +1084,7 @@ impl IcebergSink {
         &self,
         tenant_partition: &str,
         trace_id: Uuid,
-    ) -> anyhow::Result<Vec<AuditEvent>> {
+    ) -> Result<Vec<AuditEvent>, IcebergWriterError> {
         self.load_trace_events_for_tenant_with_head(tenant_partition, trace_id, None)
             .await
     }
@@ -1091,7 +1094,7 @@ impl IcebergSink {
         tenant_partition: &str,
         trace_id: Uuid,
         head_hint: Option<&TraceHeadRow>,
-    ) -> anyhow::Result<Vec<AuditEvent>> {
+    ) -> Result<Vec<AuditEvent>, IcebergWriterError> {
         let head = match head_hint {
             Some(h) => Some(h.clone()),
             None => {
@@ -1123,7 +1126,7 @@ impl IcebergSink {
         trace_id: Uuid,
         year_month_buckets: Option<&[i32]>,
         retry_on_empty: bool,
-    ) -> anyhow::Result<(Vec<AuditEvent>, IcebergDetailLoadMeta)> {
+    ) -> Result<(Vec<AuditEvent>, IcebergDetailLoadMeta), IcebergWriterError> {
         let pruned_buckets = year_month_buckets.filter(|b| !b.is_empty());
         let where_clause =
             audit_trace_detail_where(tenant_partition, trace_id, pruned_buckets, true);
@@ -1154,7 +1157,7 @@ impl IcebergSink {
         &self,
         tenant_partition: &str,
         trace_id: Uuid,
-    ) -> anyhow::Result<Option<TraceHeadRow>> {
+    ) -> Result<Option<TraceHeadRow>, IcebergWriterError> {
         let heads = self.load_latest_trace_heads(&[trace_id]).await?;
         Ok(heads
             .into_iter()
@@ -1164,7 +1167,7 @@ impl IcebergSink {
     async fn load_trace_events_with_where(
         &self,
         where_clause: &str,
-    ) -> anyhow::Result<Vec<AuditEvent>> {
+    ) -> Result<Vec<AuditEvent>, IcebergWriterError> {
         let sql = format!(
             "SELECT event_id, schema_version, emitted_at, ingested_at, trace_id, mcp_session_id, \
              logical_session_id, plasm_prompt_hash, plasm_execute_session, run_id, call_index, \
@@ -1188,7 +1191,8 @@ impl IcebergSink {
         &self,
         tenant_partition: &str,
         trace_ids: &[uuid::Uuid],
-    ) -> anyhow::Result<std::collections::HashMap<uuid::Uuid, Vec<serde_json::Value>>> {
+    ) -> Result<std::collections::HashMap<uuid::Uuid, Vec<serde_json::Value>>, IcebergWriterError>
+    {
         use std::collections::HashMap;
         if trace_ids.is_empty() {
             return Ok(HashMap::new());
@@ -1214,7 +1218,7 @@ impl IcebergSink {
     }
 
     /// Full scan of `trace_heads` (used to seed SQL projections on first deploy).
-    pub async fn scan_all_trace_heads(&self) -> anyhow::Result<Vec<TraceHeadRow>> {
+    pub async fn scan_all_trace_heads(&self) -> Result<Vec<TraceHeadRow>, IcebergWriterError> {
         let sql = format!(
             "SELECT trace_id, tenant_partition, tenant_id, project_slug, mcp_session_id, status, \
              started_at_ms, ended_at_ms, updated_at_ms, expression_lines, max_call_index, totals_json, \
@@ -1235,7 +1239,7 @@ impl IcebergSink {
     pub async fn load_latest_trace_heads(
         &self,
         trace_ids: &[Uuid],
-    ) -> anyhow::Result<Vec<TraceHeadRow>> {
+    ) -> Result<Vec<TraceHeadRow>, IcebergWriterError> {
         if trace_ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -1267,7 +1271,7 @@ impl IcebergSink {
         &self,
         tenant: &TenantId,
         window: TimeWindow,
-    ) -> anyhow::Result<Vec<TraceSpanRow>> {
+    ) -> Result<Vec<TraceSpanRow>, IcebergWriterError> {
         // Scan billing spans without `tenant_partition = ...` in SQL: partition-pruned scans on
         // identity-partitioned Iceberg tables have been observed to flake empty under DataFusion
         // while `COUNT(*)` still sees rows. Filter tenant + window in Rust (tables stay small).
@@ -1300,7 +1304,7 @@ impl IcebergSink {
     pub async fn load_billing_usage_global(
         &self,
         window: TimeWindow,
-    ) -> anyhow::Result<Vec<TraceSpanRow>> {
+    ) -> Result<Vec<TraceSpanRow>, IcebergWriterError> {
         let sql = format!(
             "SELECT span_id, event_id, trace_id, emitted_at, tenant_partition, mcp_session_id, \
              plasm_prompt_hash, plasm_execute_session, run_id, call_index, line_index, span_name, \
@@ -1326,7 +1330,7 @@ impl IcebergSink {
     pub async fn list_trace_summaries(
         &self,
         filter: TraceListFilter<'_>,
-    ) -> anyhow::Result<Vec<TraceSummary>> {
+    ) -> Result<Vec<TraceSummary>, IcebergWriterError> {
         let tenant_q = Self::sql_quote(filter.tenant.as_str());
         let project_clause = match filter.project_slug {
             Some(ps) if !ps.is_empty() => format!(" AND project_slug = '{}'", Self::sql_quote(ps)),
@@ -1404,7 +1408,7 @@ impl IcebergSink {
         &self,
         tenant: &TenantId,
         trace_id: Uuid,
-    ) -> anyhow::Result<Option<DurableTraceDetail>> {
+    ) -> Result<Option<DurableTraceDetail>, IcebergWriterError> {
         self.load_trace_detail_with_head(tenant, trace_id, None)
             .await
     }
@@ -1415,7 +1419,7 @@ impl IcebergSink {
         tenant: &TenantId,
         trace_id: Uuid,
         head_hint: Option<&TraceHeadRow>,
-    ) -> anyhow::Result<Option<DurableTraceDetail>> {
+    ) -> Result<Option<DurableTraceDetail>, IcebergWriterError> {
         let tenant_partition = tenant.as_str();
         let events = self
             .load_trace_events_for_tenant_with_head(tenant_partition, trace_id, head_hint)
@@ -1599,7 +1603,7 @@ pub fn sort_audit_events(events: &mut [AuditEvent]) {
     });
 }
 
-fn decode_audit_row(batch: &RecordBatch, row: usize) -> anyhow::Result<AuditEvent> {
+fn decode_audit_row(batch: &RecordBatch, row: usize) -> Result<AuditEvent, IcebergRowDecodeError> {
     let event_id = uuid_col(batch, "event_id", row)?;
     let schema_version = i32_col(batch, "schema_version", row)?;
     let emitted_at = ts_col(batch, "emitted_at", row)?;
@@ -1647,7 +1651,10 @@ fn decode_audit_row(batch: &RecordBatch, row: usize) -> anyhow::Result<AuditEven
     })
 }
 
-fn decode_trace_row(batch: &RecordBatch, row: usize) -> anyhow::Result<TraceSpanRow> {
+fn decode_trace_row(
+    batch: &RecordBatch,
+    row: usize,
+) -> Result<TraceSpanRow, IcebergRowDecodeError> {
     let span_id = uuid_col(batch, "span_id", row)?;
     let event_id = uuid_col(batch, "event_id", row)?;
     let trace_id = uuid_col(batch, "trace_id", row)?;
@@ -1694,7 +1701,10 @@ fn decode_trace_row(batch: &RecordBatch, row: usize) -> anyhow::Result<TraceSpan
     })
 }
 
-fn decode_trace_head_row(batch: &RecordBatch, row: usize) -> anyhow::Result<TraceHeadRow> {
+fn decode_trace_head_row(
+    batch: &RecordBatch,
+    row: usize,
+) -> Result<TraceHeadRow, IcebergRowDecodeError> {
     let totals_json = if batch.column_by_name("totals_json").is_some() {
         opt_string_col(batch, "totals_json", row).unwrap_or_default()
     } else {
@@ -1722,10 +1732,15 @@ fn decode_trace_head_row(batch: &RecordBatch, row: usize) -> anyhow::Result<Trac
     })
 }
 
-fn col_named<'a>(batch: &'a RecordBatch, name: &str) -> anyhow::Result<&'a ArrayRef> {
+fn col_named<'a>(
+    batch: &'a RecordBatch,
+    name: &str,
+) -> Result<&'a ArrayRef, IcebergRowDecodeError> {
     batch
         .column_by_name(name)
-        .ok_or_else(|| anyhow::anyhow!("missing column {name}"))
+        .ok_or_else(|| IcebergRowDecodeError::MissingColumn {
+            column: name.to_owned(),
+        })
 }
 
 fn opt_string_col(batch: &RecordBatch, name: &str, row: usize) -> Option<String> {
@@ -1738,30 +1753,47 @@ fn opt_string_col(batch: &RecordBatch, name: &str, row: usize) -> Option<String>
     }
 }
 
-fn string_col(batch: &RecordBatch, name: &str, row: usize) -> anyhow::Result<String> {
-    opt_string_col(batch, name, row).ok_or_else(|| anyhow::anyhow!("null or missing {name}"))
+fn string_col(
+    batch: &RecordBatch,
+    name: &str,
+    row: usize,
+) -> Result<String, IcebergRowDecodeError> {
+    opt_string_col(batch, name, row).ok_or_else(|| IcebergRowDecodeError::NullColumn {
+        column: name.to_owned(),
+        row,
+    })
 }
 
-fn i32_col(batch: &RecordBatch, name: &str, row: usize) -> anyhow::Result<i32> {
+fn i32_col(batch: &RecordBatch, name: &str, row: usize) -> Result<i32, IcebergRowDecodeError> {
     let col = col_named(batch, name)?;
-    let a = col
-        .as_any()
-        .downcast_ref::<Int32Array>()
-        .ok_or_else(|| anyhow::anyhow!("{name} not Int32"))?;
+    let a = col.as_any().downcast_ref::<Int32Array>().ok_or_else(|| {
+        IcebergRowDecodeError::UnexpectedColumnType {
+            column: name.to_owned(),
+            expected: "Int32",
+        }
+    })?;
     if a.is_null(row) {
-        anyhow::bail!("null {name}");
+        return Err(IcebergRowDecodeError::NullColumn {
+            column: name.to_owned(),
+            row,
+        });
     }
     Ok(a.value(row))
 }
 
-fn i64_col(batch: &RecordBatch, name: &str, row: usize) -> anyhow::Result<i64> {
+fn i64_col(batch: &RecordBatch, name: &str, row: usize) -> Result<i64, IcebergRowDecodeError> {
     let col = col_named(batch, name)?;
-    let a = col
-        .as_any()
-        .downcast_ref::<Int64Array>()
-        .ok_or_else(|| anyhow::anyhow!("{name} not Int64"))?;
+    let a = col.as_any().downcast_ref::<Int64Array>().ok_or_else(|| {
+        IcebergRowDecodeError::UnexpectedColumnType {
+            column: name.to_owned(),
+            expected: "Int64",
+        }
+    })?;
     if a.is_null(row) {
-        anyhow::bail!("null {name}");
+        return Err(IcebergRowDecodeError::NullColumn {
+            column: name.to_owned(),
+            row,
+        });
     }
     Ok(a.value(row))
 }
@@ -1776,56 +1808,87 @@ fn opt_i64_col(batch: &RecordBatch, name: &str, row: usize) -> Option<i64> {
     }
 }
 
-fn bool_col(batch: &RecordBatch, name: &str, row: usize) -> anyhow::Result<bool> {
+fn bool_col(batch: &RecordBatch, name: &str, row: usize) -> Result<bool, IcebergRowDecodeError> {
     let col = col_named(batch, name)?;
-    let a = col
-        .as_any()
-        .downcast_ref::<BooleanArray>()
-        .ok_or_else(|| anyhow::anyhow!("{name} not Boolean"))?;
+    let a = col.as_any().downcast_ref::<BooleanArray>().ok_or_else(|| {
+        IcebergRowDecodeError::UnexpectedColumnType {
+            column: name.to_owned(),
+            expected: "Boolean",
+        }
+    })?;
     if a.is_null(row) {
-        anyhow::bail!("null {name}");
+        return Err(IcebergRowDecodeError::NullColumn {
+            column: name.to_owned(),
+            row,
+        });
     }
     Ok(a.value(row))
 }
 
-fn ts_col(batch: &RecordBatch, name: &str, row: usize) -> anyhow::Result<DateTime<Utc>> {
+fn ts_col(
+    batch: &RecordBatch,
+    name: &str,
+    row: usize,
+) -> Result<DateTime<Utc>, IcebergRowDecodeError> {
     let col = col_named(batch, name)?;
     let a = col
         .as_any()
         .downcast_ref::<TimestampMicrosecondArray>()
-        .ok_or_else(|| anyhow::anyhow!("{name} not TimestampMicrosecond"))?;
+        .ok_or_else(|| IcebergRowDecodeError::UnexpectedColumnType {
+            column: name.to_owned(),
+            expected: "TimestampMicrosecond",
+        })?;
     if a.is_null(row) {
-        anyhow::bail!("null {name}");
+        return Err(IcebergRowDecodeError::NullColumn {
+            column: name.to_owned(),
+            row,
+        });
     }
     let micros = a.value(row);
-    DateTime::from_timestamp_micros(micros).ok_or_else(|| anyhow::anyhow!("timestamp out of range"))
+    DateTime::from_timestamp_micros(micros).ok_or_else(|| {
+        IcebergRowDecodeError::TimestampOutOfRange {
+            column: name.to_owned(),
+            row,
+        }
+    })
 }
 
-fn uuid_col(batch: &RecordBatch, name: &str, row: usize) -> anyhow::Result<Uuid> {
+fn uuid_col(batch: &RecordBatch, name: &str, row: usize) -> Result<Uuid, IcebergRowDecodeError> {
     let s = string_col(batch, name, row)?;
-    Uuid::parse_str(&s).map_err(|e| anyhow::anyhow!("{e}"))
+    Uuid::parse_str(&s).map_err(|source| IcebergRowDecodeError::InvalidUuid {
+        column: name.to_owned(),
+        row,
+        source,
+    })
 }
 
 #[async_trait]
 impl AuditSpanWriter for IcebergSink {
-    async fn append_audit_events(&self, events: &[AuditEvent]) -> anyhow::Result<()> {
-        IcebergSink::append_audit_events(self, events).await
+    async fn append_audit_events(
+        &self,
+        events: &[AuditEvent],
+    ) -> Result<(), TraceSinkStorageError> {
+        IcebergSink::append_audit_events(self, events).await?;
+        Ok(())
     }
 
-    async fn append_trace_spans(&self, rows: &[TraceSpanRow]) -> anyhow::Result<()> {
-        IcebergSink::append_trace_spans(self, rows).await
+    async fn append_trace_spans(&self, rows: &[TraceSpanRow]) -> Result<(), TraceSinkStorageError> {
+        IcebergSink::append_trace_spans(self, rows).await?;
+        Ok(())
     }
 
     async fn append_audit_events_with_trace_spans(
         &self,
         events: &[AuditEvent],
         spans: &[TraceSpanRow],
-    ) -> anyhow::Result<()> {
-        IcebergSink::append_audit_events_with_trace_spans(self, events, spans).await
+    ) -> Result<(), TraceSinkStorageError> {
+        IcebergSink::append_audit_events_with_trace_spans(self, events, spans).await?;
+        Ok(())
     }
 
-    async fn append_trace_heads(&self, rows: &[TraceHeadRow]) -> anyhow::Result<()> {
-        IcebergSink::append_trace_heads(self, rows).await
+    async fn append_trace_heads(&self, rows: &[TraceHeadRow]) -> Result<(), TraceSinkStorageError> {
+        IcebergSink::append_trace_heads(self, rows).await?;
+        Ok(())
     }
 }
 
@@ -1835,57 +1898,60 @@ impl AuditSpanReader for IcebergSink {
         &self,
         ids: &[Uuid],
         tenant_partitions: Option<&[String]>,
-    ) -> anyhow::Result<HashSet<Uuid>> {
-        IcebergSink::existing_event_ids(self, ids, tenant_partitions).await
+    ) -> Result<HashSet<Uuid>, TraceSinkStorageError> {
+        Ok(IcebergSink::existing_event_ids(self, ids, tenant_partitions).await?)
     }
 
-    async fn load_trace_events(&self, trace_id: Uuid) -> anyhow::Result<Vec<AuditEvent>> {
-        IcebergSink::load_trace_events(self, trace_id).await
+    async fn load_trace_events(
+        &self,
+        trace_id: Uuid,
+    ) -> Result<Vec<AuditEvent>, TraceSinkStorageError> {
+        Ok(IcebergSink::load_trace_events(self, trace_id).await?)
     }
 
     async fn load_trace_events_for_tenant(
         &self,
         tenant: &TenantId,
         trace_id: Uuid,
-    ) -> anyhow::Result<Vec<AuditEvent>> {
-        IcebergSink::load_trace_events_for_tenant(self, tenant.as_str(), trace_id).await
+    ) -> Result<Vec<AuditEvent>, TraceSinkStorageError> {
+        Ok(IcebergSink::load_trace_events_for_tenant(self, tenant.as_str(), trace_id).await?)
     }
 
     async fn load_latest_trace_heads(
         &self,
         trace_ids: &[Uuid],
-    ) -> anyhow::Result<Vec<TraceHeadRow>> {
-        IcebergSink::load_latest_trace_heads(self, trace_ids).await
+    ) -> Result<Vec<TraceHeadRow>, TraceSinkStorageError> {
+        Ok(IcebergSink::load_latest_trace_heads(self, trace_ids).await?)
     }
 
     async fn load_billing_usage_scoped(
         &self,
         tenant: &TenantId,
         window: TimeWindow,
-    ) -> anyhow::Result<Vec<TraceSpanRow>> {
-        IcebergSink::load_billing_usage_scoped(self, tenant, window).await
+    ) -> Result<Vec<TraceSpanRow>, TraceSinkStorageError> {
+        Ok(IcebergSink::load_billing_usage_scoped(self, tenant, window).await?)
     }
 
     async fn load_billing_usage_global(
         &self,
         window: TimeWindow,
-    ) -> anyhow::Result<Vec<TraceSpanRow>> {
-        IcebergSink::load_billing_usage_global(self, window).await
+    ) -> Result<Vec<TraceSpanRow>, TraceSinkStorageError> {
+        Ok(IcebergSink::load_billing_usage_global(self, window).await?)
     }
 
     async fn list_trace_summaries(
         &self,
         filter: TraceListFilter<'_>,
-    ) -> anyhow::Result<Vec<TraceSummary>> {
-        IcebergSink::list_trace_summaries(self, filter).await
+    ) -> Result<Vec<TraceSummary>, TraceSinkStorageError> {
+        Ok(IcebergSink::list_trace_summaries(self, filter).await?)
     }
 
     async fn load_trace_detail(
         &self,
         tenant: &TenantId,
         trace_id: Uuid,
-    ) -> anyhow::Result<Option<DurableTraceDetail>> {
-        IcebergSink::load_trace_detail(self, tenant, trace_id).await
+    ) -> Result<Option<DurableTraceDetail>, TraceSinkStorageError> {
+        Ok(IcebergSink::load_trace_detail(self, tenant, trace_id).await?)
     }
 }
 

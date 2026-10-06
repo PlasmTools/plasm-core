@@ -19,6 +19,7 @@ use crate::model::{
 };
 use crate::spans;
 use crate::state::AppState;
+use crate::storage_error::TraceSinkStorageError;
 use chrono::{DateTime, Utc};
 use plasm_otel::tower_http_trace_parent_span;
 use tracing::Instrument;
@@ -169,7 +170,7 @@ async fn get_billing_usage(
     Ok(Json(BillingUsageResponse { usage }))
 }
 
-fn iceberg_500(ctx: &'static str) -> impl Fn(anyhow::Error) -> StatusCode {
+fn iceberg_500(ctx: &'static str) -> impl Fn(TraceSinkStorageError) -> StatusCode {
     move |e| {
         tracing::error!(error = %e, context = ctx, "Iceberg handler error");
         StatusCode::INTERNAL_SERVER_ERROR

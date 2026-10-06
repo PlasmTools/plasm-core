@@ -13,6 +13,7 @@ use crate::model::{
     AUDIT_EVENT_KIND_MCP_TRACE_SEGMENT,
 };
 use crate::projector::project_trace_spans;
+use crate::storage_error::TraceSinkStorageError;
 use plasm_trace::{SessionTraceCountersSnapshot, SessionTraceData};
 
 /// Shared state: all durable data lives in Iceberg via [`AuditSpanStore`].
@@ -143,7 +144,10 @@ impl AppState {
         (accepted.len(), duplicate_skipped)
     }
 
-    pub async fn trace_events(&self, trace_id: Uuid) -> anyhow::Result<Vec<AuditEvent>> {
+    pub async fn trace_events(
+        &self,
+        trace_id: Uuid,
+    ) -> Result<Vec<AuditEvent>, TraceSinkStorageError> {
         self.store.load_trace_events(trace_id).await
     }
 
@@ -151,7 +155,7 @@ impl AppState {
         &self,
         tenant: &TenantId,
         trace_id: Uuid,
-    ) -> anyhow::Result<Vec<AuditEvent>> {
+    ) -> Result<Vec<AuditEvent>, TraceSinkStorageError> {
         self.store
             .load_trace_events_for_tenant(tenant, trace_id)
             .await
@@ -161,7 +165,7 @@ impl AppState {
         &self,
         tenant: Option<&TenantId>,
         window: TimeWindow,
-    ) -> anyhow::Result<Vec<TraceSpanRow>> {
+    ) -> Result<Vec<TraceSpanRow>, TraceSinkStorageError> {
         match tenant {
             Some(t) => self.store.load_billing_usage_scoped(t, window).await,
             None => self.store.load_billing_usage_global(window).await,
@@ -171,7 +175,7 @@ impl AppState {
     pub async fn list_traces(
         &self,
         filter: TraceListFilter<'_>,
-    ) -> anyhow::Result<Vec<TraceSummary>> {
+    ) -> Result<Vec<TraceSummary>, TraceSinkStorageError> {
         self.store.list_trace_summaries(filter).await
     }
 
@@ -179,11 +183,14 @@ impl AppState {
         &self,
         tenant: &TenantId,
         trace_id: Uuid,
-    ) -> anyhow::Result<Option<DurableTraceDetail>> {
+    ) -> Result<Option<DurableTraceDetail>, TraceSinkStorageError> {
         self.store.load_trace_detail(tenant, trace_id).await
     }
 
-    async fn update_trace_heads(&self, accepted: &[AuditEvent]) -> anyhow::Result<()> {
+    async fn update_trace_heads(
+        &self,
+        accepted: &[AuditEvent],
+    ) -> Result<(), TraceSinkStorageError> {
         use std::collections::HashMap;
         if accepted.is_empty() {
             return Ok(());

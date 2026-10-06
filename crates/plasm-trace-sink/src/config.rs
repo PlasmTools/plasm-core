@@ -2,38 +2,56 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::Context;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum TraceSinkConfigError {
+    #[error("PLASM_TRACE_SINK_CATALOG_URL is required")]
+    CatalogUrlRequired,
+    #[error("catalog connection URL must be non-empty")]
+    EmptyCatalogUrl,
+    #[error("Iceberg SqlCatalog metadata requires Postgres, not SQLite")]
+    SqliteCatalogUnsupported,
+    #[error("catalog URL must use postgres:// or postgresql://")]
+    UnsupportedCatalogScheme,
+    #[error("S3 warehouse URI must start with s3:// or s3a://")]
+    UnsupportedWarehouseScheme,
+    #[error("S3 warehouse URI must include a bucket name")]
+    MissingWarehouseBucket,
+    #[error("PLASM_TRACE_SINK_WAREHOUSE_URL is invalid; filesystem path {ignored_path} is ignored while it is set")]
+    InvalidWarehouseUrl {
+        #[source]
+        source: S3WarehouseUriError,
+        ignored_path: PathBuf,
+    },
+    #[error("PLASM_TRACE_SINK_ICEBERG={value} is not supported; Iceberg is required")]
+    IcebergDisabled { value: String },
+}
 
 /// Validated non-empty SqlCatalog JDBC URL (**Postgres only**; Iceberg metadata does not use SQLite).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CatalogConnectionString(String);
 
 impl CatalogConnectionString {
-    fn new(raw: String) -> anyhow::Result<Self> {
+    fn new(raw: String) -> Result<Self, TraceSinkConfigError> {
         if raw.trim().is_empty() {
-            anyhow::bail!("catalog connection URL must be non-empty");
+            return Err(TraceSinkConfigError::EmptyCatalogUrl);
         }
         let t = raw.trim();
         let lower = t.to_ascii_lowercase();
         if lower.starts_with("sqlite:") {
-            anyhow::bail!(
-                "PLASM_TRACE_SINK_CATALOG_URL cannot use sqlite: — Iceberg SqlCatalog metadata requires Postgres (postgresql:// or postgres://)"
-            );
+            return Err(TraceSinkConfigError::SqliteCatalogUnsupported);
         }
         if !(lower.starts_with("postgres://") || lower.starts_with("postgresql://")) {
-            anyhow::bail!(
-                "PLASM_TRACE_SINK_CATALOG_URL must be postgres:// or postgresql:// (got non-Postgres URL)"
-            );
+            return Err(TraceSinkConfigError::UnsupportedCatalogScheme);
         }
         Ok(Self(raw))
     }
 
     /// Resolve from `PLASM_TRACE_SINK_CATALOG_URL` (`explicit`); **no default** sqlite file.
-    pub fn resolve(_data_dir: &Path, explicit: Option<&str>) -> anyhow::Result<Self> {
+    pub fn resolve(_data_dir: &Path, explicit: Option<&str>) -> Result<Self, TraceSinkConfigError> {
         let Some(u) = explicit.map(str::trim).filter(|s| !s.is_empty()) else {
-            anyhow::bail!(
-                "PLASM_TRACE_SINK_CATALOG_URL is required: Iceberg SqlCatalog metadata uses Postgres only (set a postgresql:// or postgres:// JDBC URL)"
-            );
+            return Err(TraceSinkConfigError::CatalogUrlRequired);
         };
         Self::new(u.to_string())
     }
@@ -65,25 +83,28 @@ fn redact_jdbc_userinfo(url: &str) -> String {
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct S3WarehouseUri(String);
 
+#[derive(Debug, Error)]
+pub enum S3WarehouseUriError {
+    #[error("warehouse URI scheme is not S3-compatible")]
+    UnsupportedScheme,
+    #[error("warehouse URI has no bucket")]
+    MissingBucket,
+}
+
 impl S3WarehouseUri {
     /// Normalize a raw URI to stable `s3://…` (accepts `s3a://` input).
     ///
     /// Errors are **not** tied to a specific environment variable; callers attach context
     /// (e.g. `PLASM_TRACE_SINK_WAREHOUSE_URL`) when appropriate.
-    pub fn parse(raw: &str) -> anyhow::Result<Self> {
+    pub fn parse(raw: &str) -> Result<Self, S3WarehouseUriError> {
         let s = raw.trim();
         let host_and_path = s
             .strip_prefix("s3://")
             .or_else(|| s.strip_prefix("s3a://"))
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "S3 warehouse URI must start with s3:// or s3a:// (got {:?})",
-                    s.chars().take(32).collect::<String>()
-                )
-            })?;
+            .ok_or(S3WarehouseUriError::UnsupportedScheme)?;
         let host_and_path = host_and_path.trim_end_matches('/');
         if host_and_path.is_empty() {
-            anyhow::bail!("S3 warehouse URI must include a bucket name");
+            return Err(S3WarehouseUriError::MissingBucket);
         }
         Ok(Self(format!("s3://{host_and_path}")))
     }
@@ -187,13 +208,13 @@ impl Config {
     }
 
     /// Resolved catalog URL + warehouse for Iceberg startup.
-    pub fn iceberg_connect_params(&self) -> anyhow::Result<IcebergConnectParams> {
+    pub fn iceberg_connect_params(&self) -> Result<IcebergConnectParams, TraceSinkConfigError> {
         let warehouse = if let Some(raw) = &self.warehouse_s3_url {
-            let uri = S3WarehouseUri::parse(raw).with_context(|| {
-                format!(
-                    "invalid PLASM_TRACE_SINK_WAREHOUSE_URL (filesystem path PLASM_TRACE_SINK_WAREHOUSE_PATH={} ignored for Iceberg data files while this URL is set)",
-                    self.warehouse_fs_path.display()
-                )
+            let uri = S3WarehouseUri::parse(raw).map_err(|source| {
+                TraceSinkConfigError::InvalidWarehouseUrl {
+                    source,
+                    ignored_path: self.warehouse_fs_path.clone(),
+                }
             })?;
             WarehouseLocation::S3 {
                 base_url: uri.as_str().to_string(),
@@ -210,19 +231,17 @@ impl Config {
     /// Resolved SqlCatalog JDBC URL string (same as [`IcebergConnectParams::catalog`]).
     ///
     /// Returns an error if [`Self::iceberg_connect_params`] fails (e.g. missing catalog URL, invalid warehouse URL).
-    pub fn resolved_catalog_url(&self) -> anyhow::Result<String> {
+    pub fn resolved_catalog_url(&self) -> Result<String, TraceSinkConfigError> {
         Ok(self.iceberg_connect_params()?.catalog.as_str().to_string())
     }
 
     /// Rejects deprecated in-memory-only mode (`PLASM_TRACE_SINK_ICEBERG=0`).
-    pub fn ensure_iceberg_not_disabled() -> anyhow::Result<()> {
+    pub fn ensure_iceberg_not_disabled() -> Result<(), TraceSinkConfigError> {
         match std::env::var("PLASM_TRACE_SINK_ICEBERG") {
             Ok(v)
                 if v == "0" || v.eq_ignore_ascii_case("false") || v.eq_ignore_ascii_case("no") =>
             {
-                anyhow::bail!(
-                    "PLASM_TRACE_SINK_ICEBERG={v} is no longer supported; plasm-trace-sink requires Iceberg (no in-memory mode)."
-                );
+                return Err(TraceSinkConfigError::IcebergDisabled { value: v });
             }
             _ => Ok(()),
         }

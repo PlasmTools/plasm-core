@@ -15,6 +15,7 @@ use crate::metrics::{
 };
 use crate::model::{AuditEvent, DurableTraceDetail, TraceHeadRow, TraceSpanRow, TraceSummary};
 use crate::projection::ProjectionStore;
+use crate::storage_error::TraceSinkStorageError;
 
 /// Iceberg durability + Postgres projections (idempotency index, trace heads, list).
 pub struct PersistedTraceSink {
@@ -30,7 +31,7 @@ impl PersistedTraceSink {
         iceberg: Arc<IcebergSink>,
         segment_ttl_secs: u64,
         segment_gc_interval_secs: u64,
-    ) -> anyhow::Result<Arc<Self>> {
+    ) -> Result<Arc<Self>, TraceSinkStorageError> {
         let projection = Arc::new(
             ProjectionStore::connect(
                 params.catalog.as_str(),
@@ -67,22 +68,25 @@ impl PersistedTraceSink {
 
 #[async_trait]
 impl AuditSpanWriter for PersistedTraceSink {
-    async fn append_audit_events(&self, events: &[AuditEvent]) -> anyhow::Result<()> {
+    async fn append_audit_events(
+        &self,
+        events: &[AuditEvent],
+    ) -> Result<(), TraceSinkStorageError> {
         self.iceberg.append_audit_events(events).await?;
         self.projection.insert_ingested_events(events).await?;
         self.projection.insert_trace_segments(events).await?;
         Ok(())
     }
 
-    async fn append_trace_spans(&self, rows: &[TraceSpanRow]) -> anyhow::Result<()> {
-        self.iceberg.append_trace_spans(rows).await
+    async fn append_trace_spans(&self, rows: &[TraceSpanRow]) -> Result<(), TraceSinkStorageError> {
+        Ok(self.iceberg.append_trace_spans(rows).await?)
     }
 
     async fn append_audit_events_with_trace_spans(
         &self,
         events: &[AuditEvent],
         spans: &[TraceSpanRow],
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), TraceSinkStorageError> {
         self.iceberg
             .append_audit_events_with_trace_spans(events, spans)
             .await?;
@@ -91,7 +95,7 @@ impl AuditSpanWriter for PersistedTraceSink {
         Ok(())
     }
 
-    async fn append_trace_heads(&self, rows: &[TraceHeadRow]) -> anyhow::Result<()> {
+    async fn append_trace_heads(&self, rows: &[TraceHeadRow]) -> Result<(), TraceSinkStorageError> {
         self.iceberg.append_trace_heads(rows).await?;
         self.projection.upsert_trace_heads(rows).await?;
         Ok(())
@@ -104,7 +108,7 @@ impl AuditSpanReader for PersistedTraceSink {
         &self,
         ids: &[uuid::Uuid],
         tenant_partitions: Option<&[String]>,
-    ) -> anyhow::Result<HashSet<uuid::Uuid>> {
+    ) -> Result<HashSet<uuid::Uuid>, TraceSinkStorageError> {
         let mut set = self
             .projection
             .existing_event_ids(ids, tenant_partitions)
@@ -131,15 +135,18 @@ impl AuditSpanReader for PersistedTraceSink {
         Ok(set)
     }
 
-    async fn load_trace_events(&self, trace_id: uuid::Uuid) -> anyhow::Result<Vec<AuditEvent>> {
-        self.iceberg.load_trace_events(trace_id).await
+    async fn load_trace_events(
+        &self,
+        trace_id: uuid::Uuid,
+    ) -> Result<Vec<AuditEvent>, TraceSinkStorageError> {
+        Ok(self.iceberg.load_trace_events(trace_id).await?)
     }
 
     async fn load_trace_events_for_tenant(
         &self,
         tenant: &TenantId,
         trace_id: uuid::Uuid,
-    ) -> anyhow::Result<Vec<AuditEvent>> {
+    ) -> Result<Vec<AuditEvent>, TraceSinkStorageError> {
         let tenant_part = tenant.as_str();
         let sql_head = self
             .projection
@@ -150,12 +157,13 @@ impl AuditSpanReader for PersistedTraceSink {
         self.iceberg
             .load_trace_events_for_tenant_with_head(tenant_part, trace_id, sql_head.as_ref())
             .await
+            .map_err(Into::into)
     }
 
     async fn load_latest_trace_heads(
         &self,
         trace_ids: &[uuid::Uuid],
-    ) -> anyhow::Result<Vec<TraceHeadRow>> {
+    ) -> Result<Vec<TraceHeadRow>, TraceSinkStorageError> {
         let mut from_sql = self.projection.load_latest_trace_heads(trace_ids).await?;
         let sql_rows = from_sql.len() as u64;
         let have: HashSet<uuid::Uuid> = from_sql.iter().map(|h| h.trace_id).collect();
@@ -181,21 +189,24 @@ impl AuditSpanReader for PersistedTraceSink {
         &self,
         tenant: &TenantId,
         window: TimeWindow,
-    ) -> anyhow::Result<Vec<TraceSpanRow>> {
-        self.iceberg.load_billing_usage_scoped(tenant, window).await
+    ) -> Result<Vec<TraceSpanRow>, TraceSinkStorageError> {
+        Ok(self
+            .iceberg
+            .load_billing_usage_scoped(tenant, window)
+            .await?)
     }
 
     async fn load_billing_usage_global(
         &self,
         window: TimeWindow,
-    ) -> anyhow::Result<Vec<TraceSpanRow>> {
-        self.iceberg.load_billing_usage_global(window).await
+    ) -> Result<Vec<TraceSpanRow>, TraceSinkStorageError> {
+        Ok(self.iceberg.load_billing_usage_global(window).await?)
     }
 
     async fn list_trace_summaries(
         &self,
         filter: TraceListFilter<'_>,
-    ) -> anyhow::Result<Vec<TraceSummary>> {
+    ) -> Result<Vec<TraceSummary>, TraceSinkStorageError> {
         match self.projection.list_trace_summaries(filter).await {
             Ok(rows) => {
                 record_list_summaries(ListSummariesSource::Projection);
@@ -208,7 +219,7 @@ impl AuditSpanReader for PersistedTraceSink {
                     "list_trace_summaries: projection query failed; falling back to Iceberg scan"
                 );
                 record_list_summaries(ListSummariesSource::IcebergFallback);
-                self.iceberg.list_trace_summaries(filter).await
+                Ok(self.iceberg.list_trace_summaries(filter).await?)
             }
         }
     }
@@ -217,7 +228,7 @@ impl AuditSpanReader for PersistedTraceSink {
         &self,
         tenant: &TenantId,
         trace_id: uuid::Uuid,
-    ) -> anyhow::Result<Option<DurableTraceDetail>> {
+    ) -> Result<Option<DurableTraceDetail>, TraceSinkStorageError> {
         let tenant_part = tenant.as_str();
         match self
             .projection
