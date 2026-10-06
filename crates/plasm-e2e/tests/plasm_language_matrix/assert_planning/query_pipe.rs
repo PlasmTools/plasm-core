@@ -346,7 +346,10 @@ pub(crate) fn assert_planning_query_pipe(
             require_python_filter(comp)?;
         }
         "lang_with_mul" | "lang_with_div" | "lang_with_concat" | "lang_with_when_len" => {
-            if !comp_steps_values(comp).iter().any(|step| step.get("derive").is_some_and(|derive| derive.get("value").is_some())) {
+            if !comp_steps_values(comp).iter().any(|step| {
+                step.get("derive")
+                    .is_some_and(|derive| derive.get("value").is_some())
+            }) {
                 return Err("expected recursive value derivation".into());
             }
         }
@@ -416,7 +419,10 @@ pub(crate) fn assert_planning_query_pipe(
             }
         }
         "lang_select_alias_where" => {
-            if !comp_steps_values(comp).iter().any(|step| step.get("derive").is_some_and(|derive| derive.get("value").is_some())) {
+            if !comp_steps_values(comp).iter().any(|step| {
+                step.get("derive")
+                    .is_some_and(|derive| derive.get("value").is_some())
+            }) {
                 return Err("expected recursive value derivation".into());
             }
             require_python_filter(comp)?;
@@ -584,8 +590,13 @@ pub(crate) fn assert_planning_query_pipe(
         | "lang_render_split_part"
         | "lang_per_row_render_zero"
         | "lang_per_row_render_many" => {
-            if !computes.iter().any(|c| matches!(c.op, ComputeOp::Python { per_row: true, .. })) {
-                return Err(format!("expected per-row rendering compute, got {computes:?}"));
+            if !computes
+                .iter()
+                .any(|c| matches!(c.op, ComputeOp::Python { per_row: true, .. }))
+            {
+                return Err(format!(
+                    "expected per-row rendering compute, got {computes:?}"
+                ));
             }
         }
         "lang_plain_template_foreach" => {
@@ -593,10 +604,7 @@ pub(crate) fn assert_planning_query_pipe(
                 .iter()
                 .any(|c| matches!(c.op, ComputeOp::Python { per_row: false, .. }))
             {
-                return Err(
-                    "collection rendering must execute one Python reduction"
-                        .into(),
-                );
+                return Err("collection rendering must execute one Python reduction".into());
             }
             if !json_value_contains_substring(comp, "items") {
                 return Err("plain template must depend on named binding `items`".into());
@@ -604,11 +612,111 @@ pub(crate) fn assert_planning_query_pipe(
         }
         "lang_render_relation_shape" => {
             let explicit = computes.iter().any(|c| matches!(&c.op, ComputeOp::Python { per_row: true, source, .. } if c.source == "items" && source.contains("len(row.lines)") && source.contains("relation_count=")));
-            if !explicit { return Err("expected relation-dependent per-row render".into()); }
+            if !explicit {
+                return Err("expected relation-dependent per-row render".into());
+            }
         }
         "lang_render_name_collision" => {
-            if !computes.iter().any(|c| matches!(&c.op, ComputeOp::Python { per_row: true, source, .. } if c.source == "items" && source.contains("row.title"))) {
-                return Err("Python qualification must render items.row.title without capturing the outer title binding".into());
+            use plasm_core::plasm_monad::{
+                DeriveKind, InputCardinality, PlasmComp, PlasmDataValue, PlasmReturn,
+                PlasmStepPayload, ScopedOutput, SyntheticValueKind,
+            };
+            let typed: PlasmComp = serde_json::from_value(comp.clone())
+                .map_err(|error| format!("qualification comp decode: {error}"))?;
+            let scopes = typed
+                .steps
+                .values()
+                .filter_map(|step| match step {
+                    PlasmStepPayload::MapBody(body) => Some(body.as_ref()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let [scope] = scopes.as_slice() else {
+                return Err("qualification requires one bounded row scope".into());
+            };
+            if scope.parent.source.as_str() != "items"
+                || scope.max_parents.get() != 2
+                || !matches!(scope.output, ScopedOutput::Record)
+                || !scope.captures.is_empty()
+            {
+                return Err(
+                    "qualification scope must own items rows without outer captures".into(),
+                );
+            }
+            scope
+                .execution_layers()
+                .map_err(|error| format!("qualification scope: {error}"))?;
+            let renderers = scope
+                .body
+                .steps
+                .iter()
+                .filter_map(|(id, step)| match step {
+                    PlasmStepPayload::Map(map)
+                        if matches!(map.compute.op, ComputeOp::Python { .. }) =>
+                    {
+                        Some((id, &map.compute))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let [(renderer_id, renderer)] = renderers.as_slice() else {
+                return Err("qualification requires exactly one scoped renderer".into());
+            };
+            let ComputeOp::Python {
+                per_row: true,
+                input_schema: Some(input),
+                source,
+                ..
+            } = &renderer.op
+            else {
+                return Err("qualification renderer must consume a typed singleton row".into());
+            };
+            let parent = scope
+                .parent_schema
+                .as_ref()
+                .ok_or("qualification parent schema missing")?;
+            if renderer.source != scope.parent.local.as_str()
+                || input.fields != parent.fields
+                || input.fields.len() != 1
+                || input.fields[0].name.as_str() != "title"
+                || input.fields[0].value_kind != SyntheticValueKind::String
+                || !source.contains("row.title")
+            {
+                return Err(
+                    "qualification renderer must read its parent row title, not outer title".into(),
+                );
+            }
+            let PlasmReturn::Step { step } = &scope.body.return_ else {
+                return Err("qualification requires one scoped record return".into());
+            };
+            let Some(PlasmStepPayload::Derive(record)) = scope.body.steps.get(step.as_str()) else {
+                return Err("qualification scoped return must assemble a record".into());
+            };
+            if record.derive.kind != DeriveKind::Map
+                || record.derive.source.as_deref() != Some(scope.parent.local.as_str())
+            {
+                return Err("qualification record must derive from its scoped parent row".into());
+            }
+            let [renderer_input] = record.derive.inputs.as_slice() else {
+                return Err("qualification record requires exactly one renderer input".into());
+            };
+            if renderer_input.node.as_str() != renderer_id.as_str()
+                || renderer_input.alias != renderer_input.node
+                || renderer_input.cardinality != InputCardinality::Singleton
+            {
+                return Err(
+                    "qualification record must consume its scoped singleton renderer".into(),
+                );
+            }
+            let PlasmDataValue::Object { fields } = &record.derive.value else {
+                return Err("qualification scoped return must be an object".into());
+            };
+            if fields.len() != 1
+                || !matches!(fields.get("value"),
+                Some(PlasmDataValue::NodeSymbol { node, alias, path })
+                    if node == *renderer_id && alias == node && path.is_empty())
+            {
+                return Err("qualification output must use the scoped renderer value".into());
             }
         }
         "lang_cross_binding_render" => {
@@ -616,7 +724,12 @@ pub(crate) fn assert_planning_query_pipe(
                 ComputeOp::Python { per_row: true, .. } => c.source == "a",
                 _ => false,
             });
-            if !valid { return Err("per-row render must read its explicit a source without collection capture".into()); }
+            if !valid {
+                return Err(
+                    "per-row render must read its explicit a source without collection capture"
+                        .into(),
+                );
+            }
         }
         "lang_render_content_into_create" | "lang_render_content_plural_reject" => {
             let has_create_node = comp_has_invoke_plan_kind(comp, "create");

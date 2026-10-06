@@ -24,7 +24,10 @@ pub(super) fn assert_supplemental(id: &str, run: &PlasmPlanRunResult) {
         "{id}: explicit returns and retained effects"
     );
     let result = &run.return_steps[0].result;
-    if matches!(id, "iterate_expression_zero" | "iterate_expression_exact") {
+    if matches!(
+        id,
+        "iterate_expression_zero" | "iterate_expression_exact" | "iterate_bound_identity"
+    ) {
         let invocations: usize = result
             .operations
             .entries()
@@ -43,6 +46,27 @@ pub(super) fn assert_supplemental(id: &str, run: &PlasmPlanRunResult) {
                 2
             },
             "{id}: stop before effects or after exactly two reobserved steps"
+        );
+    }
+    if matches!(id, "cert_effect_delete" | "cert_for_each_empty_ping") {
+        assert!(
+            result.entities().is_empty(),
+            "{id}: effect receipts are not data rows"
+        );
+        let completed: usize = result
+            .operations
+            .entries()
+            .iter()
+            .map(|ack| {
+                assert_eq!(ack.failed, 0, "{id}: effect failure");
+                assert_eq!(ack.completed, ack.logical_invocations);
+                ack.completed
+            })
+            .sum();
+        assert_eq!(
+            completed,
+            usize::from(id == "cert_effect_delete"),
+            "{id}: exact dispatch count"
         );
     }
     if returns > 1 && id != "parallel" {
@@ -101,6 +125,7 @@ pub(super) fn assert_supplemental(id: &str, run: &PlasmPlanRunResult) {
         .collect();
     let titles = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon"];
     let expected = match id {
+        "complete_search_then_group_by_team_key" => json!([{"team_key":"eng", "count":1}]),
         "static_literal_comprehension" | "static_literal_local_comprehension" => {
             json!([{"ids": ["i1", "i2"]}])
         }

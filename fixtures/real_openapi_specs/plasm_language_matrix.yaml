@@ -70,6 +70,7 @@ paths:
                   code: "AAA"
                   score: 10
                   owner: "alice"
+                  team_key: "eng"
                   lines:
                     - id: "l1"
                       item_id: "i1"
@@ -149,6 +150,7 @@ paths:
                   code: "AAA"
                   score: 10
                   owner: "alice"
+                  team_key: "eng"
   /language/v1/viewer:
     get:
       summary: Current viewer (dashboard seed)
@@ -199,6 +201,7 @@ paths:
                 recorded_at: "2026-01-01T00:00:00Z"
                 score: 10
                 owner: "alice"
+                team_key: "eng"
                 summary:
                   id: "sum-i1"
                   headline: "Alpha summary"
@@ -626,6 +629,7 @@ components:
         code: "AAA"
         score: 10
         owner: "alice"
+        team_key: "eng"
         lines:
           - id: "l1"
             item_id: "i1"
@@ -646,6 +650,9 @@ components:
         owner:
           type: string
           example: "alice"
+        team_key:
+          type: string
+          example: "eng"
         code:
           type: string
           example: "AAA"

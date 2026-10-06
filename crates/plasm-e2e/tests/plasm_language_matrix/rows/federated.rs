@@ -141,7 +141,7 @@ pub(crate) const ROWS: &[MatrixRow] = &[
         federated: false,
         features: &["effect_delete"],
         min_node_results: 1,
-        expect_markdown_substrings: &["(no results)", "/langitem_delete`", "1 action completed"],
+        expect_markdown_substrings: &["/langitem_delete`", "1 completed."],
         expect_live_error: None,
     },
     MatrixRow {
@@ -149,7 +149,7 @@ pub(crate) const ROWS: &[MatrixRow] = &[
         federated: false,
         features: &["for_each_effect", "effect_action", "pipe_where"],
         min_node_results: 2,
-        expect_markdown_substrings: &["(no results)", "/langitem_ping`", "No actions invoked"],
+        expect_markdown_substrings: &["No actions dispatched."],
         expect_live_error: None,
     },
     MatrixRow {

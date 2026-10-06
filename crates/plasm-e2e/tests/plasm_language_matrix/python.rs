@@ -543,6 +543,26 @@ async fn python_lowering_matrix_live_semantic_contract() {
 }
 
 #[tokio::test]
+async fn python_effect_receipts_relation_coverage_and_render_boundaries() {
+    run_python_cases(cases().filter(|case| {
+        matches!(
+            case.id,
+            "cert_effect_delete"
+                | "cert_for_each_empty_ping"
+                | "relation_bind_filter_continuation"
+                | "iterate_bound_identity"
+                | "iterate_exhausted"
+                | "iterate_expression_exhausted"
+                | "complete_search_then_group_by_team_key"
+                | "cert_federated_bound_render"
+                | "render_parity_lang_render_content_plural_reject"
+                | "render_parity_lang_render_name_collision"
+        )
+    }))
+    .await;
+}
+
+#[tokio::test]
 async fn python_record_value_matrix() {
     run_python_cases(cases().filter(|case| case.id.starts_with("record_value_"))).await;
 }

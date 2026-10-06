@@ -13,7 +13,7 @@ pub(super) const CASES: &[Case] = &[
     Case { id: "cert_federated_parallel_roots", python: "return e1.query(owner=\"alice\"), e2.search(q=\"Alpha\")", existing: Some("lang_federated_parallel_roots"), expect_live_error: None },
     Case { id: "cert_federated_group_by", python: "by = e1.query(owner=\"alice\").group_by(\"owner\", n=agg.count())\nreturn by", existing: Some("lang_federated_group_by_on_e1"), expect_live_error: None },
     Case { id: "cert_federated_target_entry", python: "item = FED_ITEM_B.get(\"i1\")\nsummary = item.summary\nreturn summary", existing: Some("lang_federated_relation_target_entry"), expect_live_error: None },
-    Case { id: "cert_federated_bound_render", python: "class MatrixProgram(Program):\n    @compute\n    def text(self, row: Row) -> str:\n        return f\"# {row.title}\"\n    def build(self):\n        rows = e1.query(owner=\"alice\").select(\"title\")\n        report = self.text(rows)\n        return report\n", existing: Some("lang_bind_template_inline_on_e1"), expect_live_error: None },
+    Case { id: "cert_federated_bound_render", python: "class MatrixProgram(Program):\n    @compute\n    def text(self, rows: list[Row]) -> str:\n        return \"\".join(f\"# {row.title}\" for row in rows)\n    def build(self):\n        rows = e1.query(owner=\"alice\").select(\"title\")\n        report = self.text(rows)\n        return report\n", existing: Some("lang_bind_template_inline_on_e1"), expect_live_error: None },
 ];
 
 pub(super) fn source(case: &Case, es: &plasm_agent::execute_session::ExecuteSession) -> String {

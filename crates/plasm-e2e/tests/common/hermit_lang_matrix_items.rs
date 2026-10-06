@@ -138,6 +138,9 @@ async fn search(
                 row["title"]
                     .as_str()
                     .is_some_and(|title| title.contains(text))
+                    && query
+                        .get("team_key")
+                        .is_none_or(|team| row["team_key"].as_str() == Some(team.as_str()))
             })
             .cloned()
             .collect(),
