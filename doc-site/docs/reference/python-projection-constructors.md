@@ -7,6 +7,10 @@ and live execution against independent expected results, plus genuine rejection
 boundaries. Equivalent Python spellings need equivalent values and effects; they
 do not need identical generated compute source or identical IL nodes.
 
+Rejection labels below identify typed compilation causes, not rendered prose.
+Checker diagnostics match exact semantic codes; host failures, unknown labels,
+and unrelated compiler causes do not satisfy a rejection obligation.
+
 ```plasm-projection-constructors
 [
   {
@@ -20,7 +24,7 @@ do not need identical generated compute source or identical IL nodes.
     "invalid": [
       {
         "body": "return E.query().select(x=lambda self: self.score)",
-        "error": "reserved projection parameter"
+        "error": "ReservedProjectionParameter"
       }
     ]
   },
@@ -35,7 +39,7 @@ do not need identical generated compute source or identical IL nodes.
     "invalid": [
       {
         "body": "return E.query().select(x=lambda row: {1: 2})",
-        "error": "materialized dictionaries require string keys"
+        "error": "DictionaryKeyNotString"
       }
     ]
   },
@@ -52,7 +56,7 @@ do not need identical generated compute source or identical IL nodes.
     "invalid": [
       {
         "body": "return E.query().select(x=lambda row: row.title - 2)",
-        "error": "unsupported-operator"
+        "error": "UnsupportedOperator"
       }
     ]
   },
@@ -67,7 +71,7 @@ do not need identical generated compute source or identical IL nodes.
     "invalid": [
       {
         "body": "return E.query().select(x=lambda row: len(7))",
-        "error": "invalid-argument-type"
+        "error": "InvalidArgumentType"
       }
     ]
   },
@@ -82,7 +86,7 @@ do not need identical generated compute source or identical IL nodes.
     "invalid": [
       {
         "body": "return E.query().select(x=lambda row: row.title if missing else row.owner)",
-        "error": "missing"
+        "error": "UnresolvedReference"
       }
     ]
   }

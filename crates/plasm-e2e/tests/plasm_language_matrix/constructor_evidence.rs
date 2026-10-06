@@ -78,6 +78,19 @@ pub(super) async fn assert_registry(
     inventory: &[&str],
     observe: impl Fn(&PlasmComp, &str) -> BTreeSet<String>,
 ) {
+    assert_registry_with_rejections(document, fence, inventory, observe, |expected, error| {
+        error.to_string().contains(expected)
+    })
+    .await;
+}
+
+pub(super) async fn assert_registry_with_rejections(
+    document: &str,
+    fence: &str,
+    inventory: &[&str],
+    observe: impl Fn(&PlasmComp, &str) -> BTreeSet<String>,
+    rejects: impl Fn(&str, &plasm_agent::compilation_error::CompilationError) -> bool,
+) {
     use super::{language_matrix as matrix, python};
     let marker = format!("```{fence}\n");
     let rules: Vec<Rule> = serde_json::from_str(
@@ -113,7 +126,7 @@ pub(super) async fn assert_registry(
         }
     }
     assert_complete(&rules, &evidence, inventory);
-    assert_invalid(rules).await;
+    assert_invalid(rules, rejects).await;
 }
 
 fn assert_complete(
@@ -148,7 +161,10 @@ fn assert_complete(
     }
 }
 
-async fn assert_invalid(rules: Vec<Rule>) {
+async fn assert_invalid(
+    rules: Vec<Rule>,
+    rejects: impl Fn(&str, &plasm_agent::compilation_error::CompilationError) -> bool,
+) {
     use super::{language_matrix as matrix, python};
     let mut failures = Vec::new();
     for rule in rules {
@@ -171,9 +187,10 @@ async fn assert_invalid(rules: Vec<Rule>) {
                     "{} admitted invalid program: {source}",
                     rule.operation
                 )),
-                Err(error) if !error.to_string().contains(&invalid.error) => failures.push(
-                    format!("{} expected {:?}: {error}", rule.operation, invalid.error),
-                ),
+                Err(error) if !rejects(&invalid.error, &error) => failures.push(format!(
+                    "{} expected {:?}: {error:?}",
+                    rule.operation, invalid.error
+                )),
                 Err(_) => {}
             }
         }
@@ -187,6 +204,18 @@ pub(super) async fn assert_expression_contracts(
     document: &str,
     fence: &str,
     obligations: &[(&str, &[&str])],
+) {
+    assert_expression_contracts_with_rejections(document, fence, obligations, |expected, error| {
+        error.to_string().contains(expected)
+    })
+    .await;
+}
+
+pub(super) async fn assert_expression_contracts_with_rejections(
+    document: &str,
+    fence: &str,
+    obligations: &[(&str, &[&str])],
+    rejects: impl Fn(&str, &plasm_agent::compilation_error::CompilationError) -> bool,
 ) {
     let rules: Vec<Rule> = serde_json::from_str(
         document
@@ -216,5 +245,5 @@ pub(super) async fn assert_expression_contracts(
         super::python::cases().filter(|case| evidence.contains_key(case.id)),
     )
     .await;
-    assert_invalid(rules).await;
+    assert_invalid(rules, rejects).await;
 }

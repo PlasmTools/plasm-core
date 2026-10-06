@@ -9,6 +9,8 @@ Neither the Python module, class body nor decorator is executed.
 The gate compiles existing live matrix witnesses, then inventories their outer
 declarations. Compute bodies are not classified as class declarations. Full-module
 negative examples exercise the module boundary directly, without a test wrapper.
+Negative error labels are closed semantic expectations matched against concrete
+compilation causes or retained checker diagnostic codes, not rendered prose.
 All four canonical row compute input annotations have live witnesses. A separate
 metamorphic check proves that class documentation leaves the semantic plan unchanged.
 
@@ -29,47 +31,47 @@ annotation/domain combinations; those remain separate semantic obligations.
     "invalid": [
       {
         "body": "class Example(Program):\n    def build(self):\n        return E.get(\"i1\")\nclass Other(Program):\n    def build(self):\n        return E.get(\"i1\")\n",
-        "error": "expected exactly one Program subclass",
+        "error": "ProgramDeclarationCount",
         "module": true
       },
       {
         "body": "class Example(object):\n    def build(self):\n        return E.get(\"i1\")\n",
-        "error": "root must derive directly and only from Program",
+        "error": "ProgramBaseShape",
         "module": true
       },
       {
         "body": "class Example(Program, object):\n    def build(self):\n        return E.get(\"i1\")\n",
-        "error": "root must derive directly and only from Program",
+        "error": "ProgramBaseShape",
         "module": true
       },
       {
         "body": "@arbitrary\nclass Example(Program):\n    def build(self):\n        return E.get(\"i1\")\n",
-        "error": "root must derive directly and only from Program",
+        "error": "ProgramBaseShape",
         "module": true
       },
       {
         "body": "class Program(Program):\n    def build(self):\n        return E.get(\"i1\")\n",
-        "error": "reserved root name",
+        "error": "ReservedRootName",
         "module": true
       },
       {
         "body": "class ENTITY(Program):\n    def build(self):\n        return E.get(\"i1\")\n",
-        "error": "root cannot shadow a session entity",
+        "error": "RootShadowsEntity",
         "module": true
       },
       {
         "body": "class Example[T](Program):\n    def build(self):\n        return E.get(\"i1\")\n",
-        "error": "root must derive directly and only from Program",
+        "error": "ProgramBaseShape",
         "module": true
       },
       {
         "body": "class Example(Program, metaclass=type):\n    def build(self):\n        return E.get(\"i1\")\n",
-        "error": "root must derive directly and only from Program",
+        "error": "ProgramBaseShape",
         "module": true
       },
       {
         "body": "class Example:\n    def build(self):\n        return E.get(\"i1\")\n",
-        "error": "root must derive directly from Program",
+        "error": "ProgramBaseInvalid",
         "module": true
       }
     ]
@@ -85,17 +87,17 @@ annotation/domain combinations; those remain separate semantic obligations.
     "invalid": [
       {
         "body": "class Example(Program):\n    value = 1\n    def build(self):\n        return E.get(\"i1\")\n",
-        "error": "class state and executable class bodies are not admitted",
+        "error": "ClassExecutableState",
         "module": true
       },
       {
         "body": "class Example(Program):\n    print(\"executed\")\n    def build(self):\n        return E.get(\"i1\")\n",
-        "error": "class state and executable class bodies are not admitted",
+        "error": "ClassExecutableState",
         "module": true
       },
       {
         "body": "class Example(Program):\n    class Nested:\n        pass\n    def build(self):\n        return E.get(\"i1\")\n",
-        "error": "class state and executable class bodies are not admitted",
+        "error": "ClassExecutableState",
         "module": true
       }
     ]
@@ -112,63 +114,64 @@ annotation/domain combinations; those remain separate semantic obligations.
     "invalid": [
       {
         "body": "class Example(Program):\n    \"documentation\"\n",
-        "error": "Program requires build(self)",
+        "error": "ProgramBuildMissing",
         "module": true
       },
       {
         "body": "class Example(Program):\n    def build(self):\n        return E.get(\"i1\")\n    def build(self):\n        return E.get(\"i1\")\n",
-        "error": "duplicate build method",
+        "error": "DuplicateBuildMethod",
         "module": true
       },
       {
         "body": "class Example(Program):\n    async def build(self):\n        return E.get(\"i1\")\n",
-        "error": "expected a synchronous method",
+        "error": "MethodDeclarationShape",
         "module": true
       },
       {
         "body": "class Example(Program):\n    @compute\n    def build(self):\n        return E.get(\"i1\")\n",
-        "error": "build decorators and return annotations",
+        "error": "BuildInterfaceShape",
         "module": true
       },
       {
         "body": "class Example(Program):\n    def build(self) -> str:\n        return E.get(\"i1\")\n",
-        "error": "build decorators and return annotations",
+        "error": "BuildInterfaceShape",
         "module": true
       },
       {
         "body": "class Example(Program):\n    def build(this):\n        return E.get(\"i1\")\n",
-        "error": "build requires the Program receiver",
+        "error": "BuildReceiverShape",
         "module": true
       },
       {
         "body": "class Example(Program):\n    def build(self, *args):\n        return E.get(\"i1\")\n",
-        "error": "variadic build inputs",
+        "error": "VariadicBuildInputs",
         "module": true
       },
       {
         "body": "class Example(Program):\n    def build(self, **kwargs):\n        return E.get(\"i1\")\n",
-        "error": "variadic build inputs",
+        "error": "VariadicBuildInputs",
         "module": true
       },
       {
         "body": "class Example(Program):\n    def build(self, *, flag):\n        return E.get(\"i1\")\n",
-        "error": "Python arguments do not match",
+        "error": "ArgumentBinding",
         "module": true
       },
       {
         "body": "class Example(Program):\n    def build[T](self):\n        return E.get(\"i1\")\n",
-        "error": "expected a synchronous method without type parameters",
+        "error": "MethodDeclarationShape",
         "module": true
       }
     ]
   },
   {
     "operation": "compute",
-    "premise": "A public synchronous @compute method has a bound self receiver and typed materialization inputs. Upstream Python binding resolves positional-only, keyword-only and scalar constant defaults. Whole-body checking validates annotated or inferred return contracts against actual callsite inputs.",
+    "premise": "A public synchronous @compute method has a bound self receiver and annotated or callsite-inferred materialization inputs. Upstream Python binding resolves positional-only, keyword-only and scalar constant defaults. Whole-body checking validates annotated or inferred return contracts against actual callsite inputs.",
     "transfer": "Extract source without evaluating decorators; resolve catalog-qualified annotations and prepare the sealed compute contract. Row contracts resolve at typed callsites.",
     "law": "BC-03",
     "witnesses": [
       "type_projected_integer",
+      "compute_inferred_callsite_inputs",
       "text_bindings_row",
       "text_synthetic_count",
       "text_collection_report"
@@ -176,52 +179,52 @@ annotation/domain combinations; those remain separate semantic obligations.
     "invalid": [
       {
         "body": "class Example(Program):\n    @compute()\n    def text(self, row: Row) -> str:\n        return row.title\n    def build(self):\n        return self.text(E.get(\"i1\"))\n",
-        "error": "method decorators require exactly @compute",
+        "error": "ComputeDecoratorShape",
         "module": true
       },
       {
         "body": "class Example(Program):\n    @staticmethod\n    @compute\n    def text(self, row: Row) -> str:\n        return row.title\n    def build(self):\n        return self.text(E.get(\"i1\"))\n",
-        "error": "method decorators require exactly @compute",
+        "error": "ComputeDecoratorShape",
         "module": true
       },
       {
         "body": "class Example(Program):\n    @compute\n    async def text(self, row: Row) -> str:\n        return row.title\n    def build(self):\n        return self.text(E.get(\"i1\"))\n",
-        "error": "expected a synchronous method",
+        "error": "MethodDeclarationShape",
         "module": true
       },
       {
-        "body": "class Example(Program):\n    @compute\n    def text(self, row) -> str:\n        return row.title\n    def build(self):\n        return self.text(E.get(\"i1\"))\n",
-        "error": "every compute input requires an annotation",
+        "body": "class Example(Program):\n    @compute\n    def text(self, row: Rows) -> str:\n        return row.title\n    def build(self):\n        return self.text(E.get(\"i1\"))\n",
+        "error": "ComputeRowsHandleAnnotation",
         "module": true
       },
       {
         "body": "class Example(Program):\n    @compute\n    def text(self, row: Row) -> int:\n        return row.title\n    def build(self):\n        return self.text(E.get(\"i1\"))\n",
-        "error": "Return type does not match returned value",
+        "error": "InvalidReturnType",
         "module": true
       },
       {
         "body": "class Example(Program):\n    @compute\n    def text(self, row: dict) -> str:\n        return row.title\n    def build(self):\n        return self.text(E.get(\"i1\"))\n",
-        "error": "title",
+        "error": "UnresolvedAttribute",
         "module": true
       },
       {
         "body": "class Example(Program):\n    @compute\n    def _text(self, row: Row) -> str:\n        return row.title\n    def build(self):\n        return self.text(E.get(\"i1\"))\n",
-        "error": "method decorators require exactly @compute",
+        "error": "ComputeDecoratorShape",
         "module": true
       },
       {
         "body": "class Example(Program):\n    @compute\n    def text(self, row: Row = None) -> str:\n        return row.title\n    def build(self):\n        return self.text(E.get(\"i1\"))\n",
-        "error": "Return type does not match returned value",
+        "error": "InvalidReturnType",
         "module": true
       },
       {
         "body": "class Example(Program):\n    @compute\n    def text(self, row: Row) -> str:\n        return row.title\n    @compute\n    def text(self, row: Row) -> str:\n        return row.title\n    def build(self):\n        return self.text(E.get(\"i1\"))\n",
-        "error": "duplicate compute method",
+        "error": "DuplicateComputeMethod",
         "module": true
       },
       {
         "body": "class Example(Program):\n    @compute\n    def text[T](self, row: Row) -> str:\n        return row.title\n    def build(self):\n        return self.text(E.get(\"i1\"))\n",
-        "error": "expected a synchronous method without type parameters",
+        "error": "MethodDeclarationShape",
         "module": true
       }
     ]
@@ -237,7 +240,7 @@ annotation/domain combinations; those remain separate semantic obligations.
     "invalid": [
       {
         "body": "class Example(Program):\n    def _loop(self, row):\n        return self._loop(row)\n    def build(self):\n        return self._loop(E.get(\"i1\"))\n",
-        "error": "recursive DAG methods",
+        "error": "RecursiveDagMethod",
         "module": true
       }
     ]
