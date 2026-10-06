@@ -29,12 +29,17 @@ pub(super) async fn render(
         expression.into()
     };
     let parameter = if collection { "rows" } else { variable };
+    let source = if collection {
+        "LangItem.query().where(lambda row: row.id == \"i1\")"
+    } else {
+        "LangItem.get(\"i1\")"
+    };
     let fields = fields
         .split(", ")
         .map(|field| format!("\"{field}\""))
         .collect::<Vec<_>>()
         .join(", ");
-    compile(es, format!("class Views(Program):\n    @compute\n    def text(self, {parameter}: {annotation}) -> str:\n        return {expression}\n    def build(self):\n        items = LangItem.get(\"i1\").select({fields})\n        report = self.text(items)\n        return report\n")).await
+    compile(es, format!("class Views(Program):\n    @compute\n    def text(self, {parameter}: {annotation}) -> str:\n        return {expression}\n    def build(self):\n        items = {source}.select({fields})\n        report = self.text(items)\n        return report\n")).await
 }
 
 async fn compile(es: &ExecuteSession, mut source: String) -> Result<PlasmCompBundle, String> {

@@ -785,9 +785,9 @@ fn matrix_views_relation_collection_compute_coverage() {
                 "LangWorkSnapshot",
                 concat!(
                     ".where(lambda r: r.score is not None and r.score >= 2)",
-                    ".order_by(\"score\", descending=True).take(1).select(\"title\")",
+                    ".order_by(\"score\", descending=True).take(2).select(\"title\")",
                 ),
-                "i1",
+                "i1|i3",
             ),
             (
                 "LangWorkSnapshot",
