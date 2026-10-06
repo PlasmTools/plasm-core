@@ -31,8 +31,12 @@ pub(super) fn python_outcome(id: &str) -> super::python::PythonOutcome {
     use super::python::PythonOutcome::*;
     match id {
         "render_parity_lang_render_value_error_at_execution" => LiveError("IndexError"),
-        "render_parity_lang_render_undefined_field" => CompileError("unresolved-attribute"),
-        "render_parity_lang_render_content_plural_reject" => CompileError("proven singleton"),
+        "render_parity_lang_render_undefined_field" => {
+            CompileError(super::python::PythonCompileRejection::UnresolvedAttribute)
+        }
+        "render_parity_lang_render_content_plural_reject" => {
+            CompileError(super::python::PythonCompileRejection::PluralSourceRequiresMapCallback)
+        }
         "render_parity_lang_render_name_collision" => ExplicitQualification,
         _ => Equivalent,
     }

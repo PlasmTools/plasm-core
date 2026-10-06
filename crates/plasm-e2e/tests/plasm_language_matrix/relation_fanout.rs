@@ -93,15 +93,39 @@ fn scoped_relation_composition_preserves_parent_scope_across_wire() {
                 comp: serde_json::from_slice(&wire).unwrap(),
                 approval_gates: bundle.artifact().approval_gates.clone(),
             }).unwrap();
+            let projection_nodes: Vec<_> = bundle.artifact().comp.steps.iter()
+                .filter_map(|(id, payload)| matches!(payload, plasm_core::plasm_monad::PlasmStepPayload::Derive(_)).then_some(id.clone()))
+                .collect();
+            assert_eq!(projection_nodes.len(), 1, "one serialized field projection");
             let outcome = Box::pin(plasm_agent::plasm_plan_run::run_plasm_comp(
                 &es, &st, &es.prompt_hash, "null_input", &bundle, true, None, None, None, None,
             )).await;
             assert_eq!(writes.load(std::sync::atomic::Ordering::SeqCst), 0);
-            let diagnostic = match outcome {
-                Err(error) => error.diagnostic().to_owned(),
-                Ok(out) => out.run_markdown.unwrap_or_default(),
-            };
-            assert!(diagnostic.contains("field `owner` is unobserved (not null)"), "{diagnostic}");
+            let failure = outcome.expect_err("missing owner must reject before dispatch");
+            assert_eq!(failure.cause, plasm_runtime::FailureCause::Program);
+            assert_eq!(failure.recovery, plasm_runtime::RecoveryDisposition::RepairProgram);
+            assert_eq!(failure.code, "plan_derive_evaluation_failed");
+            assert_eq!(failure.node.as_deref(), Some(projection_nodes[0].as_str()));
+            assert!(failure.occurrence_path.is_empty(), "top-level projection failure");
+            assert_eq!(failure.catalog_digest.as_deref(), Some(es.catalog_cgs_hash.as_str()));
+            assert!(failure.effects.is_empty());
+            assert!(failure.dispatches.is_empty());
+            assert!(!failure.effects_unresolved);
+
+            // The public wire envelope does not expose the private operand error.
+            // Lock missing-versus-null at the public typed row projection owner.
+            let schema = plasm_core::plasm_monad::SyntheticResultSchema::for_value(
+                plasm_core::value_contract::ValueContract::record(std::collections::BTreeMap::from([
+                    ("owner".into(), plasm_core::value_contract::ValueContract::scalar(plasm_core::FieldType::String)),
+                ]), std::collections::BTreeSet::new()),
+            ).unwrap();
+            let projection = plasm_core::row_contract::PublicRowSchema::new(&schema);
+            assert_eq!(
+                projection.project(&plasm_core::ValueRow::new()),
+                Err(plasm_core::row_contract::RowProjectionError::MissingDeclaredColumn { field: "owner".into() }),
+            );
+            let explicit_null: plasm_core::ValueRow = [("owner".into(), plasm_core::Value::Null)].into_iter().collect();
+            assert_eq!(projection.project(&explicit_null).unwrap(), explicit_null);
             server.abort();
         });
     }).unwrap().join().unwrap();

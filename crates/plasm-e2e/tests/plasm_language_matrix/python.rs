@@ -8,9 +8,73 @@ use std::sync::Arc;
 #[derive(Clone, Copy)]
 pub(super) enum PythonOutcome {
     Equivalent,
-    CompileError(&'static str),
+    CompileError(PythonCompileRejection),
     LiveError(&'static str),
     ExplicitQualification,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) enum PythonCompileRejection {
+    UnresolvedAttribute,
+    PluralSourceRequiresMapCallback,
+}
+
+impl PythonCompileRejection {
+    fn matches(self, error: &plasm_agent::compilation_error::CompilationError) -> bool {
+        use plasm_agent::compilation_error::CompilationError;
+        use plasm_agent::program_diagnostic::ProgramStageError;
+        let CompilationError::Program(stage) = error else {
+            return false;
+        };
+        match stage.as_ref() {
+            ProgramStageError::PythonLowering { error } => self.lowering(error),
+            ProgramStageError::PythonCompute { error } => self.compute(error),
+            ProgramStageError::PythonAnalysis { diagnostics, .. } => {
+                matches!(self, Self::UnresolvedAttribute)
+                    && diagnostics.iter().any(|d| d.code == "unresolved-attribute")
+            }
+            _ => false,
+        }
+    }
+
+    fn lowering(self, error: &plasm_agent::program_rejection::PythonLoweringError) -> bool {
+        use plasm_agent::program_rejection::{PythonComputeError, PythonLoweringError};
+        match error {
+            PythonLoweringError::Located { error, .. } => self.lowering(error),
+            PythonLoweringError::Compute(error) => self.compute(error),
+            PythonLoweringError::ComputeTyped(PythonComputeError::Inference(error)) => {
+                self.inference(error)
+            }
+            _ => false,
+        }
+    }
+
+    fn compute(self, error: &plasm_agent::program_rejection::PythonComputeRejection) -> bool {
+        use plasm_agent::program_rejection::{PythonComputeError, PythonComputeRejection};
+        use plasm_agent::python_compute::PythonArgumentError;
+        match error {
+            PythonComputeRejection::Argument(error) => matches!(
+                (self, error.as_ref()),
+                (
+                    Self::PluralSourceRequiresMapCallback,
+                    PythonArgumentError::PluralSourceRequiresMapCallback
+                )
+            ),
+            PythonComputeRejection::Inference(error)
+            | PythonComputeRejection::Typed(PythonComputeError::Inference(error)) => {
+                self.inference(error)
+            }
+            PythonComputeRejection::Lowering(error) => self.lowering(error),
+            _ => false,
+        }
+    }
+
+    fn inference(self, error: &plasm_agent::python_compute::InferenceError) -> bool {
+        use plasm_agent::python_compute::InferenceError;
+        matches!(self, Self::UnresolvedAttribute)
+            && matches!(error, InferenceError::Diagnostics { diagnostics }
+                if diagnostics.entries.iter().any(|d| d.diagnostic.code == "unresolved-attribute"))
+    }
 }
 pub(super) struct Case {
     pub(super) id: &'static str,
@@ -540,7 +604,7 @@ pub(super) async fn run_python_cases(selected: impl Iterator<Item = &'static Cas
                         )
                         .await;
                         let compile_error = match outcome {
-                            PythonOutcome::CompileError(message) => Some(message),
+                            PythonOutcome::CompileError(expected) => Some(expected),
                             _ => None,
                         };
                         if let Err(error) = &compiled {
@@ -548,8 +612,8 @@ pub(super) async fn run_python_cases(selected: impl Iterator<Item = &'static Cas
                                 panic!("{} {} compile: {error}", case.id, "Python")
                             });
                             assert!(
-                                error.to_string().contains(expected),
-                                "{} compile expected {expected:?}: {error}",
+                                expected.matches(error),
+                                "{} compile expected {expected:?}: {error:?}",
                                 case.id
                             );
                             return;
@@ -596,12 +660,16 @@ pub(super) async fn run_python_cases(selected: impl Iterator<Item = &'static Cas
                                 "expected execution failure after successful compilation",
                             );
                             super::python_expectations::assert_failure(case.id, &error);
-                            assert!(
-                                error.diagnostic().contains(expected),
-                                "{}: {}",
-                                case.id,
-                                error.diagnostic()
-                            );
+                            if expected == "iterate_bound_exhausted" {
+                                assert_eq!(error.code, expected, "{}: {error}", case.id);
+                            } else {
+                                assert!(
+                                    error.diagnostic().contains(expected),
+                                    "{}: {}",
+                                    case.id,
+                                    error.diagnostic()
+                                );
+                            }
                             return;
                         }
                         let run =
@@ -1733,7 +1801,7 @@ async fn python_text_compute_seals_code_inputs_and_rejects_hidden_dependencies()
     let entity = symbols.entity_sym_for(language_matrix::MATRIX_ENTRY_ID, "LangItem");
     let source = |expression: &str, input: &str| {
         format!(
-        "class Text(Program):\n    @compute\n    def report(self, rows: list[Value[{entity}]]) -> str:\n        return {expression}\n    def build(self):\n        one = {input}\n        text = self.report(one)\n        return text\n"
+        "class Text(Program):\n    @compute\n    def report(self, row: Row) -> str:\n        return {expression}\n    def build(self):\n        one = {input}\n        text = self.report(one)\n        return text\n"
     )
     };
     let input = format!("{entity}.get(\"i1\")");
@@ -1742,8 +1810,8 @@ async fn python_text_compute_seals_code_inputs_and_rejects_hidden_dependencies()
             .await
             .unwrap()
     };
-    let first = compile("f'item={rows[0].title}'").await;
-    let changed = compile("f'changed={rows[0].title}'").await;
+    let first = compile("f'item={row.title}'").await;
+    let changed = compile("f'changed={row.title}'").await;
     assert!(!plasm_core::plasm_monad::comp_semantic_eq(
         &first.artifact().comp,
         &changed.artifact().comp
@@ -1757,10 +1825,10 @@ async fn python_text_compute_seals_code_inputs_and_rejects_hidden_dependencies()
         .iter()
         .any(|dep| dep == "one"));
     for expression in [
-        "f'{rows[0].absent}'",
+        "f'{row.absent}'",
         "f'{hidden.title}'",
         "f'{open(\"secret\")}'",
-        "f'{rows[0].title:{hidden}}'",
+        "f'{row.title:{hidden}}'",
     ] {
         assert!(
             compile_python_program(&es, &source(expression, &input))
@@ -1769,24 +1837,20 @@ async fn python_text_compute_seals_code_inputs_and_rejects_hidden_dependencies()
             "accepted {expression}"
         );
     }
-    for expression in [
-        "f'{rows}'",
-        "'{}'.format(rows[0])",
-        "f'{rows[0].__class__}'",
-    ] {
+    for expression in ["f'{row}'", "'{}'.format(row)", "f'{row.__class__}'"] {
         assert!(compile_python_program(&es, &source(expression, &input))
             .await
             .is_ok());
     }
     let projected = format!("{entity}.get(\"i1\").select(\"id\")");
     assert!(
-        compile_python_program(&es, &source("f'{rows[0].title}'", &projected))
+        compile_python_program(&es, &source("f'{row.title}'", &projected))
             .await
             .is_err()
     );
     let projected = format!("{entity}.get(\"i1\").select(\"title\")");
     assert!(
-        compile_python_program(&es, &source("f'{rows[0].title}'", &projected))
+        compile_python_program(&es, &source("f'{row.title}'", &projected))
             .await
             .is_ok()
     );

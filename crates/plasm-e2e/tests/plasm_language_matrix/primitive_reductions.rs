@@ -283,7 +283,14 @@ async fn temporal_ordering_contract_end_to_end() {
         } else {
             "aggregate("
         };
-        let source = format!("class Ordered(Program):\n    @compute\n    def check(self, row: Row) -> bool:\n        return row.lo is not None and row.hi is not None and row.lo == row.first and row.hi == row.last and row.lo < row.hi\n    def build(self):\n        rows = {token}.get('000124').union({token}.get('000123')).select(value='timestamp', flag='flag').order_by('value')\n        result = rows.{reduction}lo=agg.min('value'), hi=agg.max('value'), first=agg.first('value'), last=agg.last('value'))\n        return self.check(result)\n");
+        let check = if grouped {
+            // Grouped reductions retain plural cardinality even when this fixture
+            // happens to contain one group. Admit compute through a row callback.
+            "result.map(lambda row: {'value': self.check(row)}, max_parents=2)"
+        } else {
+            "self.check(result)"
+        };
+        let source = format!("class Ordered(Program):\n    @compute\n    def check(self, row: Row) -> bool:\n        return row.lo is not None and row.hi is not None and row.lo == row.first and row.hi == row.last and row.lo < row.hi\n    def build(self):\n        rows = {token}.get('000124').union({token}.get('000123')).select(value='timestamp', flag='flag').order_by('value')\n        result = rows.{reduction}lo=agg.min('value'), hi=agg.max('value'), first=agg.first('value'), last=agg.last('value'))\n        return {check}\n");
         let bundle = compile_python_program(&es, &source).await.unwrap();
         let dry = super::evaluate_plasm_comp_dry(&es, &bundle).unwrap();
         let run = plasm_agent::plasm_plan_run::run_plasm_comp_python(
@@ -300,6 +307,7 @@ async fn temporal_ordering_contract_end_to_end() {
         )
         .await
         .unwrap();
+        assert_eq!(run.return_steps[0].result.entities().len(), 1);
         assert_eq!(
             serde_json::to_value(&run.return_steps[0].result.entities()[0].fields).unwrap(),
             json!({"value":true})
