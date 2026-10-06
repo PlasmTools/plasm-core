@@ -2971,17 +2971,9 @@ repo_branch_create:
       - type: var
         name: sha
   response: single
-  conflict_rules:
-  - when:
-      status: 422
-      body_json_path: message
-      contains: Reference already exists
-    kind: resource_exists
-    extract:
-      entity: Repository
-      fields:
-        name: $.ref
-    hint: Branch ref already exists
+  # A failed POST is opaque: status/message do not prove branch creation or reuse.
+  # Observe the branch explicitly through branch_get; no automatic reconciliation
+  # is declared because the requested sha is not aligned with readback commit_sha.
 repo_content_delete:
   method: DELETE
   path:

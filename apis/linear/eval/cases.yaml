@@ -280,4 +280,4 @@
             return e6.m13(team="ENG", title="WF identity demo")
   expect:
     entities_any: [Issue]
-  notes: "Reference eval for issue_create identity_key + conflict_rules."
+  notes: "Reference eval for the existing issue_create identity_key. GraphQL status/error messages do not establish write effects or successful reuse; failed writes remain opaque without a declared authoritative reconciliation contract."

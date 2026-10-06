@@ -697,7 +697,7 @@
             return repo.m64(repository=repo.full_name, name="feature/wf-identity", sha="abc123")
   expect:
     entities_any: [Repository]
-  notes: "Reference eval for identity_key + conflict_rules on repo_branch_create."
+  notes: "Reference eval for the existing identity_key on non-idempotent repo_branch_create. A failed write remains opaque; branch_get supports explicit observation, not automatic successful reuse or requested-SHA reconciliation."
 
 - id: gh-78
   schema: github
