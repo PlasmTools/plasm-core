@@ -1,5 +1,7 @@
 //! Source-owned Python compiler rejections carried intact to program diagnostics.
 
+pub use monty_analysis::AnalysisError;
+
 /// Semantic failures recognized while preparing the restricted Python compute contract.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum PythonComputeError {
