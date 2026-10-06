@@ -194,11 +194,17 @@ fn spawn_live_plan_run(
         accept,
         spawn.dry,
     )
-    .map_err(|diagnostic| {
+    .map_err(|error| {
+        let cause = match &error {
+            crate::operation::AsyncOperationStartError::Session(
+                crate::execute_session::SessionOperationError::CapacityExceeded { .. },
+            ) => plasm_runtime::FailureCause::Program,
+            _ => plasm_runtime::FailureCause::Runtime,
+        };
         LiveRunError::Failed(plasm_runtime::ExecutionFailure::new(
-            plasm_runtime::FailureCause::Runtime,
+            cause,
             "async_plan_run_start_failed",
-            diagnostic.to_string(),
+            error.to_string(),
         ))
     })?;
     Ok(handle)

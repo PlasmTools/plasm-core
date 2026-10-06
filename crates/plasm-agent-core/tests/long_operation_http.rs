@@ -23,7 +23,9 @@ use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 use tower::ServiceExt;
 
 /// Bare list queries are host-page-bounded (`ok`); aggregate still requires plan review.
-const REVIEW_GATE_LANG_ITEM: &str = "LangItem.aggregate(n=count)";
+fn matrix_program(entity: &str, operations: &str) -> String {
+    format!("class MatrixOperation(Program):\n    def build(self):\n        return {entity}.query(){operations}\n")
+}
 
 fn langmatrix_host_state() -> plasm_agent_core::server_state::PlasmHostState {
     langmatrix_host_with_registry(
@@ -67,7 +69,10 @@ fn test_app(st: plasm_agent_core::server_state::PlasmHostState) -> Router<()> {
         .layer(Extension(IncomingPrincipal(None)))
 }
 
-async fn open_langitem_session(app: &Router<()>) -> (String, String) {
+async fn open_langitem_session(
+    app: &Router<()>,
+    st: &plasm_agent_core::server_state::PlasmHostState,
+) -> (String, String, String) {
     let create = Request::builder()
         .method("POST")
         .uri("/execute")
@@ -99,20 +104,29 @@ async fn open_langitem_session(app: &Router<()>) -> (String, String) {
     let created: CreateExecuteSessionResponse = serde_json::from_slice(&body).unwrap();
     let expected_hash = PromptHashHex::from_prompt_sha256(&created.prompt);
     assert_eq!(created.prompt_hash, expected_hash.to_string());
-    (created.prompt_hash, created.session)
+    let session = st
+        .get_execute_session(&created.prompt_hash, &created.session)
+        .await
+        .expect("opened matrix session");
+    let symbols =
+        plasm_agent_core::plasm_plan_run::symbol_map_for_plasm_surface_parse(&session, None);
+    let entity = symbols.entity_sym_for("langmatrix", "LangItem");
+    assert!(entity.starts_with('e'), "use served opaque symbol: {entity}");
+    (created.prompt_hash, created.session, entity)
 }
 
 #[tokio::test]
 async fn plan_dry_run_mints_plan_commit_ref() {
-    let app = test_app(langmatrix_host_state());
-    let (ph, sid) = open_langitem_session(&app).await;
+    let st = langmatrix_host_state();
+    let app = test_app(st.clone());
+    let (ph, sid, entity) = open_langitem_session(&app, &st).await;
     let uri = format!("/execute/{ph}/{sid}?mode=plan");
     let run = Request::builder()
         .method("POST")
         .uri(&uri)
         .header("accept", "application/json")
         .header("content-type", "text/plain; charset=utf-8")
-        .body(Body::from(REVIEW_GATE_LANG_ITEM))
+        .body(Body::from(matrix_program(&entity, ".aggregate(n=agg.count())")))
         .unwrap();
     let res = app.oneshot(run).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
@@ -138,14 +152,15 @@ async fn plan_dry_run_mints_plan_commit_ref() {
 
 #[tokio::test]
 async fn live_blocked_without_force_returns_plan_requires_review() {
-    let app = test_app(langmatrix_host_state());
-    let (ph, sid) = open_langitem_session(&app).await;
+    let st = langmatrix_host_state();
+    let app = test_app(st.clone());
+    let (ph, sid, entity) = open_langitem_session(&app, &st).await;
     let uri = format!("/execute/{ph}/{sid}");
     let run = Request::builder()
         .method("POST")
         .uri(&uri)
         .header("accept", "application/json")
-        .body(Body::from(REVIEW_GATE_LANG_ITEM))
+        .body(Body::from(matrix_program(&entity, ".aggregate(n=agg.count())")))
         .unwrap();
     let res = app.oneshot(run).await.unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
@@ -159,8 +174,9 @@ async fn live_blocked_without_force_returns_plan_requires_review() {
 
 #[tokio::test]
 async fn wait_unknown_handle_is_400() {
-    let app = test_app(langmatrix_host_state());
-    let (ph, sid) = open_langitem_session(&app).await;
+    let st = langmatrix_host_state();
+    let app = test_app(st.clone());
+    let (ph, sid, _entity) = open_langitem_session(&app, &st).await;
     let uri = format!("/execute/{ph}/{sid}");
     let run = Request::builder()
         .method("POST")
@@ -169,29 +185,32 @@ async fn wait_unknown_handle_is_400() {
         .body(Body::from("wait(o999)"))
         .unwrap();
     let res = app.oneshot(run).await.unwrap();
-    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let status = res.status();
     let body = axum::body::to_bytes(res.into_body(), usize::MAX)
         .await
         .unwrap();
     let doc: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    let detail = doc.get("detail").and_then(|d| d.as_str()).unwrap_or("");
-    assert!(
-        detail.contains("unknown operation handle"),
-        "detail: {detail}"
-    );
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body={doc}");
+    let failure: plasm_runtime::ExecutionFailure =
+        serde_json::from_value(doc["failure"].clone()).expect("typed operation failure");
+    assert_eq!(failure.cause, plasm_runtime::FailureCause::Program);
+    assert_eq!(failure.recovery, plasm_runtime::RecoveryDisposition::RepairProgram);
+    assert_eq!(failure.code, plasm_agent_core::operation_error::OperationError::CODE_UNKNOWN);
+    assert!(failure.diagnostic().contains("unknown operation handle `o999`"));
 }
 
 #[tokio::test]
 async fn review_plan_auto_async_without_wait_false() {
-    let app = test_app(langmatrix_host_state());
-    let (ph, sid) = open_langitem_session(&app).await;
+    let st = langmatrix_host_state();
+    let app = test_app(st.clone());
+    let (ph, sid, entity) = open_langitem_session(&app, &st).await;
     let plan_uri = format!("/execute/{ph}/{sid}?mode=plan");
     let plan_req = Request::builder()
         .method("POST")
         .uri(&plan_uri)
         .header("accept", "application/json")
         .header("content-type", "text/plain; charset=utf-8")
-        .body(Body::from(REVIEW_GATE_LANG_ITEM))
+        .body(Body::from(matrix_program(&entity, ".aggregate(n=agg.count())")))
         .unwrap();
     let plan_res = app.clone().oneshot(plan_req).await.unwrap();
     assert_eq!(plan_res.status(), StatusCode::OK);
@@ -218,7 +237,7 @@ async fn review_plan_auto_async_without_wait_false() {
         .method("POST")
         .uri(&live_uri)
         .header("accept", "application/json")
-        .body(Body::from(REVIEW_GATE_LANG_ITEM))
+        .body(Body::from(matrix_program(&entity, ".aggregate(n=agg.count())")))
         .unwrap();
     let live_res = app.oneshot(live_req).await.unwrap();
     assert_eq!(live_res.status(), StatusCode::OK);
@@ -239,14 +258,15 @@ async fn review_plan_auto_async_without_wait_false() {
 
 #[tokio::test]
 async fn parallel_async_live_runs_accept_distinct_handles() {
-    let app = test_app(langmatrix_host_state());
-    let (ph, sid) = open_langitem_session(&app).await;
+    let st = langmatrix_host_state();
+    let app = test_app(st.clone());
+    let (ph, sid, entity) = open_langitem_session(&app, &st).await;
     let start_uri = format!("/execute/{ph}/{sid}?wait=false&force=true");
     let first_req = Request::builder()
         .method("POST")
         .uri(&start_uri)
         .header("accept", "application/json")
-        .body(Body::from("LangItem.page_size(1).limit(10)"))
+        .body(Body::from(matrix_program(&entity, ".page_size(1).take(10)")))
         .unwrap();
     let first_res = app.clone().oneshot(first_req).await.unwrap();
     assert_eq!(first_res.status(), StatusCode::OK);
@@ -266,7 +286,7 @@ async fn parallel_async_live_runs_accept_distinct_handles() {
         .method("POST")
         .uri(&start_uri)
         .header("accept", "application/json")
-        .body(Body::from("LangItem.limit(2)"))
+        .body(Body::from(matrix_program(&entity, ".take(2)")))
         .unwrap();
     let second_res = app.oneshot(second_req).await.unwrap();
     assert_eq!(second_res.status(), StatusCode::OK, "parallel async accept");
@@ -286,14 +306,15 @@ async fn parallel_async_live_runs_accept_distinct_handles() {
 
 #[tokio::test]
 async fn wait_false_async_accept_returns_operation_json() {
-    let app = test_app(langmatrix_host_state());
-    let (ph, sid) = open_langitem_session(&app).await;
+    let st = langmatrix_host_state();
+    let app = test_app(st.clone());
+    let (ph, sid, entity) = open_langitem_session(&app, &st).await;
     let uri = format!("/execute/{ph}/{sid}?wait=false&force=true");
     let run = Request::builder()
         .method("POST")
         .uri(&uri)
         .header("accept", "application/json")
-        .body(Body::from("LangItem.limit(2)"))
+        .body(Body::from(matrix_program(&entity, ".take(2)")))
         .unwrap();
     let res = app.oneshot(run).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
@@ -322,14 +343,15 @@ async fn wait_false_async_accept_returns_operation_json() {
 
 #[tokio::test]
 async fn wait_poll_unchanged_returns_compact_equals_line() {
-    let app = test_app(langmatrix_host_state());
-    let (ph, sid) = open_langitem_session(&app).await;
+    let st = langmatrix_host_state();
+    let app = test_app(st.clone());
+    let (ph, sid, entity) = open_langitem_session(&app, &st).await;
     let start_uri = format!("/execute/{ph}/{sid}?wait=false&force=true");
     let start_req = Request::builder()
         .method("POST")
         .uri(&start_uri)
         .header("accept", "application/json")
-        .body(Body::from("LangItem.limit(2)"))
+        .body(Body::from(matrix_program(&entity, ".take(2)")))
         .unwrap();
     let start_res = app.clone().oneshot(start_req).await.unwrap();
     assert_eq!(start_res.status(), StatusCode::OK);
@@ -381,15 +403,16 @@ async fn running_ops_cap_rejects_when_exceeded_http() {
     unsafe {
         std::env::set_var("PLASM_MAX_RUNNING_OPS_PER_SESSION", "2");
     }
-    let app = test_app(langmatrix_host_state());
-    let (ph, sid) = open_langitem_session(&app).await;
+    let st = langmatrix_host_state();
+    let app = test_app(st.clone());
+    let (ph, sid, entity) = open_langitem_session(&app, &st).await;
     for _ in 0..2 {
         let uri = format!("/execute/{ph}/{sid}?wait=false&force=true");
         let req = Request::builder()
             .method("POST")
             .uri(&uri)
             .header("accept", "application/json")
-            .body(Body::from("LangItem.limit(2)"))
+            .body(Body::from(matrix_program(&entity, ".take(2)")))
             .unwrap();
         let res = app.clone().oneshot(req).await.unwrap();
         assert_eq!(res.status(), StatusCode::OK, "async accept under cap");
@@ -399,7 +422,7 @@ async fn running_ops_cap_rejects_when_exceeded_http() {
         .method("POST")
         .uri(&uri)
         .header("accept", "application/json")
-        .body(Body::from("LangItem.limit(2)"))
+        .body(Body::from(matrix_program(&entity, ".take(2)")))
         .unwrap();
     let res = app.oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
@@ -429,14 +452,14 @@ async fn cross_pod_wait_from_shared_session_registry() {
     let host_b = langmatrix_host_with_registry(execute_registry, artifacts);
     let app_a = test_app(host_a.clone());
     let app_b = test_app(host_b);
-    let (ph, sid) = open_langitem_session(&app_a).await;
+    let (ph, sid, entity) = open_langitem_session(&app_a, &host_a).await;
 
     let start_uri = format!("/execute/{ph}/{sid}?wait=false&force=true");
     let start_req = Request::builder()
         .method("POST")
         .uri(&start_uri)
         .header("accept", "application/json")
-        .body(Body::from("LangItem.limit(2)"))
+        .body(Body::from(matrix_program(&entity, ".take(2)")))
         .unwrap();
     let start_res = app_a.clone().oneshot(start_req).await.unwrap();
     assert_eq!(start_res.status(), StatusCode::OK);

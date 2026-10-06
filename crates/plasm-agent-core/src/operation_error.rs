@@ -108,6 +108,12 @@ impl From<OperationError> for plasm_runtime::ExecutionFailure {
     fn from(error: OperationError) -> Self {
         match error {
             OperationError::OperationFailed { error, .. } => error,
+            other @ (OperationError::UnknownHandle { .. }
+            | OperationError::HandleNamespaceFailure { .. }) => Self::new(
+                plasm_runtime::FailureCause::Program,
+                other.code(),
+                other.detail(),
+            ),
             other => Self::new(
                 plasm_runtime::FailureCause::Runtime,
                 other.code(),
@@ -120,6 +126,21 @@ impl From<OperationError> for plasm_runtime::ExecutionFailure {
 #[cfg(test)]
 mod operation_error_tests {
     use super::*;
+
+    #[test]
+    fn unknown_handle_is_a_program_fault_not_an_internal_runtime_failure() {
+        let error = OperationError::UnknownHandle {
+            handle: "o999".into(),
+            hint: "wait(o1)".into(),
+            open_handles: vec!["o1".into()],
+        };
+        let diagnostic = error.detail();
+        let failure = plasm_runtime::ExecutionFailure::from(error);
+        assert_eq!(failure.cause, plasm_runtime::FailureCause::Program);
+        assert_eq!(failure.recovery, plasm_runtime::RecoveryDisposition::RepairProgram);
+        assert_eq!(failure.code, OperationError::CODE_UNKNOWN);
+        assert_eq!(failure.diagnostic(), diagnostic);
+    }
 
     #[test]
     fn operation_failed_detail_omits_private_diagnostic() {
