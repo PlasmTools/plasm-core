@@ -11,7 +11,6 @@ pub use tui_capture::{layer as tui_capture_layer, TuiCaptureLayer, TuiLogCallbac
 
 use std::borrow::Cow;
 
-use anyhow::Context;
 use opentelemetry::global;
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_otlp::{LogExporter, MetricExporter, SpanExporter};
@@ -24,6 +23,18 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::Layer;
+
+#[derive(Debug, thiserror::Error)]
+pub enum TelemetryInitError {
+    #[error("failed to build OTLP log exporter: {0}")]
+    LogExporter(#[source] opentelemetry_otlp::ExporterBuildError),
+    #[error("failed to build OTLP trace exporter: {0}")]
+    TraceExporter(#[source] opentelemetry_otlp::ExporterBuildError),
+    #[error("failed to build OTLP metrics exporter: {0}")]
+    MetricsExporter(#[source] opentelemetry_otlp::ExporterBuildError),
+    #[error("failed to initialize tracing subscriber: {0}")]
+    SubscriberInit(#[source] tracing_subscriber::util::TryInitError),
+}
 
 /// `OTEL_EXPORTER_OTLP_PROTOCOL` selects gRPC vs HTTP when set to `grpc` (case-insensitive).
 fn use_grpc_transport() -> bool {
@@ -133,25 +144,25 @@ fn build_resource(default_service_name: &str) -> Resource {
     Resource::builder().with_service_name(name).build()
 }
 
-fn init_logs(resource: &Resource) -> anyhow::Result<SdkLoggerProvider> {
-    let exporter = build_log_exporter().context("LogExporter::build")?;
+fn init_logs(resource: &Resource) -> Result<SdkLoggerProvider, TelemetryInitError> {
+    let exporter = build_log_exporter().map_err(TelemetryInitError::LogExporter)?;
     Ok(SdkLoggerProvider::builder()
         .with_batch_exporter(exporter)
         .with_resource(resource.clone())
         .build())
 }
 
-fn init_traces(resource: &Resource) -> anyhow::Result<SdkTracerProvider> {
-    let exporter = build_span_exporter().context("SpanExporter::build")?;
+fn init_traces(resource: &Resource) -> Result<SdkTracerProvider, TelemetryInitError> {
+    let exporter = build_span_exporter().map_err(TelemetryInitError::TraceExporter)?;
     Ok(SdkTracerProvider::builder()
         .with_batch_exporter(exporter)
         .with_resource(resource.clone())
         .build())
 }
 
-fn init_metrics(resource: &Resource) -> anyhow::Result<SdkMeterProvider> {
-    let exporter =
-        build_metric_exporter(OTLP_METRICS_TEMPORALITY).context("MetricExporter::build")?;
+fn init_metrics(resource: &Resource) -> Result<SdkMeterProvider, TelemetryInitError> {
+    let exporter = build_metric_exporter(OTLP_METRICS_TEMPORALITY)
+        .map_err(TelemetryInitError::MetricsExporter)?;
     Ok(SdkMeterProvider::builder()
         .with_periodic_exporter(exporter)
         .with_resource(resource.clone())
@@ -161,7 +172,7 @@ fn init_metrics(resource: &Resource) -> anyhow::Result<SdkMeterProvider> {
 fn init_console_only_with_writer<W>(
     make_writer: W,
     tui_capture: Option<TuiLogCallback>,
-) -> anyhow::Result<()>
+) -> Result<(), TelemetryInitError>
 where
     W: for<'a> tracing_subscriber::fmt::MakeWriter<'a> + Send + Sync + 'static,
 {
@@ -174,7 +185,7 @@ where
         .with(fmt)
         .with(tui)
         .try_init()
-        .map_err(|e| anyhow::anyhow!("tracing subscriber init: {e}"))?;
+        .map_err(TelemetryInitError::SubscriberInit)?;
     Ok(())
 }
 
@@ -207,7 +218,7 @@ fn try_init_otlp_with_writer<W>(
     default_service_name: &str,
     make_writer: W,
     tui_capture: Option<TuiLogCallback>,
-) -> anyhow::Result<()>
+) -> Result<(), TelemetryInitError>
 where
     W: for<'a> tracing_subscriber::fmt::MakeWriter<'a> + Send + Sync + 'static,
 {
@@ -217,17 +228,17 @@ where
     let logs = logs_enabled();
 
     let tracer_provider = if traces {
-        Some(init_traces(&resource).context("init traces")?)
+        Some(init_traces(&resource)?)
     } else {
         None
     };
     let meter_provider = if metrics {
-        Some(init_metrics(&resource).context("init metrics")?)
+        Some(init_metrics(&resource)?)
     } else {
         None
     };
     let logger_provider = if logs {
-        Some(init_logs(&resource).context("init logs")?)
+        Some(init_logs(&resource)?)
     } else {
         None
     };
@@ -333,7 +344,7 @@ where
 /// Install `tracing` + OTLP when collector endpoints are configured (see crate README).
 ///
 /// On failure, falls back to stderr `tracing` only so servers can still start.
-pub fn init(default_service_name: &str) -> anyhow::Result<()> {
+pub fn init(default_service_name: &str) -> Result<(), TelemetryInitError> {
     init_with_fmt_make_writer(default_service_name, std::io::stderr, None)
 }
 
@@ -345,7 +356,7 @@ pub fn init_with_fmt_make_writer<W>(
     default_service_name: &str,
     make_writer: W,
     tui_capture: Option<TuiLogCallback>,
-) -> anyhow::Result<()>
+) -> Result<(), TelemetryInitError>
 where
     W: for<'a> tracing_subscriber::fmt::MakeWriter<'a> + Send + Sync + Clone + 'static,
 {

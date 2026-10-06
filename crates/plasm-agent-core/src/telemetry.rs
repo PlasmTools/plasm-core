@@ -9,12 +9,12 @@
 /// Install `tracing` + OTLP when collector endpoints are configured; otherwise stderr `tracing` only.
 ///
 /// Misconfiguration falls back to console logging inside [`plasm_otel::init`].
-pub fn init() -> anyhow::Result<()> {
+pub fn init() -> Result<(), plasm_otel::TelemetryInitError> {
     plasm_otel::init("plasm-agent")
 }
 
 /// Like [`init`], but sends the human-readable **fmt** layer through `make_writer` (for example a TUI log sink).
-pub fn init_with_fmt_make_writer<W>(make_writer: W) -> anyhow::Result<()>
+pub fn init_with_fmt_make_writer<W>(make_writer: W) -> Result<(), plasm_otel::TelemetryInitError>
 where
     W: for<'a> tracing_subscriber::fmt::MakeWriter<'a> + Send + Sync + Clone + 'static,
 {
@@ -25,7 +25,7 @@ where
 pub fn init_with_fmt_make_writer_and_tui<W>(
     make_writer: W,
     tui_capture: Option<plasm_otel::TuiLogCallback>,
-) -> anyhow::Result<()>
+) -> Result<(), plasm_otel::TelemetryInitError>
 where
     W: for<'a> tracing_subscriber::fmt::MakeWriter<'a> + Send + Sync + Clone + 'static,
 {
