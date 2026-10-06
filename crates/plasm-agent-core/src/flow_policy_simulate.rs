@@ -8,7 +8,7 @@ use crate::http_execute::{apply_capability_seeds, CapabilitySeed};
 use crate::plan_flow_policy::{FlowPolicy, FlowPolicySnapshot, PolicyRevision};
 use crate::plan_ux_reflection::{plan_ux_reflection_value, PlanUxBuildContext};
 use crate::plasm_compile::compile_program;
-use crate::plasm_plan_run::evaluate_plasm_comp_dry;
+use crate::plasm_plan_run::evaluate_plasm_comp_dry_snapshot;
 use crate::server_state::PlasmHostState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
@@ -170,7 +170,8 @@ pub async fn simulate_flow_policy_with_options(
     )
     .await
     .map_err(SimulateError::CompileFailed)?;
-    let dry = evaluate_plasm_comp_dry(es.as_ref(), &bundle)
+    let dry = evaluate_plasm_comp_dry_snapshot(es.as_ref(), &bundle)
+        .await
         .map_err(SimulateError::DryEvaluationFailed)?;
     let gate = dry.evaluate_gate();
     let ux_ctx = PlanUxBuildContext {

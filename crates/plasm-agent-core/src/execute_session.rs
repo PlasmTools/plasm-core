@@ -554,6 +554,16 @@ pub struct ExecuteSession {
 }
 
 impl ExecuteSession {
+    /// Pin a coherent materialization for synchronous admission without competing
+    /// with live execution for the session mutex. This view is never committed.
+    pub(crate) async fn preflight_snapshot(&self) -> Self {
+        let materialization = self.graph_cache.snapshot().await;
+        let mut snapshot = self.clone();
+        snapshot.graph_cache =
+            Arc::new(MutexGraphCacheSession::new_materialization(materialization));
+        snapshot
+    }
+
     /// Test/support constructor for in-memory CGS fixtures. Product session paths
     /// use [`Self::new_with_bindings`] with recipes from the active generation.
     #[doc(hidden)]

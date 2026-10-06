@@ -107,6 +107,16 @@ pub fn evaluate_plasm_comp_dry(
     evaluate_executable_comp_dry(es, bundle.executable(), bundle.artifact())
 }
 
+/// Production async admission waits for a coherent graph snapshot instead of
+/// interpreting transient session mutex contention as a program rejection.
+pub async fn evaluate_plasm_comp_dry_snapshot(
+    es: &ExecuteSession,
+    bundle: &crate::plasm_comp_bundle::PlasmCompBundle,
+) -> Result<DryPlasmPlanEvaluation, crate::program_diagnostic::ProgramStageError> {
+    let preflight = es.preflight_snapshot().await;
+    evaluate_plasm_comp_dry(&preflight, bundle)
+}
+
 pub fn evaluate_executable_comp_dry(
     es: &ExecuteSession,
     executable: &ExecutablePlasmComp,

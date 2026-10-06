@@ -155,26 +155,27 @@ pub(crate) async fn post_run_execute_session_inner(
     };
 
     if plan_only {
-        let dry = match crate::plasm_plan_run::evaluate_plasm_comp_dry(&sess, &bundle) {
-            Ok(d) => d,
-            Err(stage) => {
-                let diag = crate::program_diagnostic::ProgramDiagnostic::from_stage(
-                    pipeline,
-                    Some(cross),
-                    &sess,
-                    &program,
-                    stage,
-                );
-                return (
-                    StatusCode::OK,
-                    [(CONTENT_TYPE, "application/json; charset=utf-8")],
-                    Json(crate::program_diagnostic::needs_fix_http_payload(
-                        &diag, None,
-                    )),
-                )
-                    .into_response();
-            }
-        };
+        let dry =
+            match crate::plasm_plan_run::evaluate_plasm_comp_dry_snapshot(&sess, &bundle).await {
+                Ok(d) => d,
+                Err(stage) => {
+                    let diag = crate::program_diagnostic::ProgramDiagnostic::from_stage(
+                        pipeline,
+                        Some(cross),
+                        &sess,
+                        &program,
+                        stage,
+                    );
+                    return (
+                        StatusCode::OK,
+                        [(CONTENT_TYPE, "application/json; charset=utf-8")],
+                        Json(crate::program_diagnostic::needs_fix_http_payload(
+                            &diag, None,
+                        )),
+                    )
+                        .into_response();
+                }
+            };
         let comp_json = crate::plasm_comp_wire::trace_comp_wire_from_dry(&dry).to_json_value();
         let compact = crate::plan_dry_display::build_plan_dry_compact_view(
             dry.validated_plan(),
@@ -299,19 +300,20 @@ pub(crate) async fn post_run_execute_session_inner(
     let ph_str = prompt_hash.to_string();
     let sid_str = session_id.to_string();
 
-    let dry_gate = match crate::plasm_plan_run::evaluate_plasm_comp_dry(&sess, &bundle) {
-        Ok(d) => d,
-        Err(e) => {
-            return problem_response(
-                Problem::custom(
-                    ProblemStatus::BAD_REQUEST,
-                    Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
-                )
-                .with_title("Bad Request")
-                .with_detail(e.to_string()),
-            );
-        }
-    };
+    let dry_gate =
+        match crate::plasm_plan_run::evaluate_plasm_comp_dry_snapshot(&sess, &bundle).await {
+            Ok(d) => d,
+            Err(e) => {
+                return problem_response(
+                    Problem::custom(
+                        ProblemStatus::BAD_REQUEST,
+                        Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
+                    )
+                    .with_title("Bad Request")
+                    .with_detail(e.to_string()),
+                );
+            }
+        };
     let compact = crate::plan_dry_display::build_plan_dry_compact_view(
         dry_gate.validated_plan(),
         &dry_gate.topological_order,

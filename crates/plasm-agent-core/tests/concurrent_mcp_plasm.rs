@@ -86,6 +86,39 @@ async fn open_matrix_session(
 }
 
 #[tokio::test]
+async fn python_admission_waits_for_graph_snapshot_instead_of_rejecting_contention() {
+    let st = matrix_federated_host();
+    let opened = open_matrix_session(
+        st.as_ref(),
+        Uuid::new_v4(),
+        vec![CapabilitySeed {
+            entry_id: "langmatrix_a".into(),
+            entity: "LangItem".into(),
+        }],
+    )
+    .await;
+    let es = st
+        .get_execute_session(&opened.prompt_hash, &opened.session_id)
+        .await
+        .expect("execute session");
+    let source = "class Read(Program):\n    def build(self):\n        return e1.query()\n";
+    let guard = es.graph_cache.lock().await;
+    let pending = tokio::time::timeout(
+        std::time::Duration::from_millis(20),
+        plasm_agent_core::plasm_compile::compile_python_program(&es, source),
+    )
+    .await;
+    assert!(
+        pending.is_err(),
+        "admission must await the held graph lock, not reject the program"
+    );
+    drop(guard);
+    plasm_agent_core::plasm_compile::compile_python_program(&es, source)
+        .await
+        .expect("admission after graph snapshot becomes available");
+}
+
+#[tokio::test]
 async fn parallel_context_open_single_flight() {
     let st = matrix_federated_host();
     let logical_id = Uuid::new_v4();
@@ -241,20 +274,17 @@ async fn concurrent_disjoint_plasm_run() {
         st: Arc<plasm_agent_core::server_state::PlasmHostState>,
         es: Arc<ExecuteSession>,
         out: plasm_agent_core::http_execute::ApplyCapabilitySeedsOutcome,
-        program: &'static str,
+        entity: &'static str,
     ) -> Result<
         plasm_agent_core::plasm_plan_run::PlasmPlanRunResult,
         plasm_agent_core::run_delivery::LiveRunError,
     > {
-        let cross = st.sessions.symbol_map_cross_cache();
-        let bundle = compile_plasm_expression(
-            st.engine.prompt_pipeline(),
-            Some(cross),
-            &es,
-            program,
-            program,
-        )
-        .expect("compile");
+        let program = format!(
+            "class ConcurrentRead(Program):\n    def build(self):\n        return {entity}.query()\n"
+        );
+        let bundle = plasm_agent_core::plasm_compile::compile_python_program(&es, &program)
+            .await
+            .expect("compile");
         let dry = evaluate_plasm_comp_dry(&es, &bundle).expect("dry");
         let accept_payload = build_run_explorer_accept_payload(&dry, Some(es.as_ref()));
         deliver_live_run_await(
@@ -295,14 +325,16 @@ async fn concurrent_disjoint_plasm_run() {
         let err = r
             .as_ref()
             .expect_err("dead-port backend terminates the live run in a transport failure");
-        let msg = err.to_string();
-        assert!(
-            !msg.contains("unknown operation handle"),
-            "CEP-13: concurrent legs must resolve their namespaced handles, got: {msg}"
+        let plasm_agent_core::run_delivery::LiveRunError::Failed(failure) = err else {
+            panic!("expected a terminal transport fault, got: {err:?}");
+        };
+        // A namespace fault is a Program failure, not a Transport failure.
+        assert_eq!(
+            failure.cause,
+            plasm_runtime::FailureCause::Transport,
+            "{failure:?}"
         );
-        assert!(
-            msg.contains("HTTP request failed"),
-            "expected a clean transport failure against the dead matrix backend, got: {msg}"
-        );
+        assert_eq!(failure.code, "transport_failure");
+        assert_eq!(failure.recovery, plasm_runtime::RecoveryDisposition::Stop);
     }
 }

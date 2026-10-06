@@ -10,9 +10,7 @@ use crate::operation::{compute_plan_commit_id_from_dry, PlanCommitRecord, PLAN_C
 use crate::plan_dry_display::build_plan_dry_compact_view;
 use crate::plan_gate::{plan_gate, PlanGateContext};
 use crate::plasm_comp_wire::trace_comp_wire_from_dry;
-use crate::plasm_plan_run::{
-    evaluate_plasm_comp_dry, render_plasm_plan_dry_text_for_session, PlasmPlanRunResult,
-};
+use crate::plasm_plan_run::{render_plasm_plan_dry_text_for_session, PlasmPlanRunResult};
 use crate::program_diagnostic::{plan_run_from_stage, ProgramDiagnostic, ProgramStageError};
 use crate::server_state::PlasmHostState;
 use crate::trace_hub::PlanRunTraceHooks;
@@ -108,14 +106,17 @@ async fn execute_plasm_tool_dry_run_inner(
 
     phase = Instant::now();
     let program_for_trace = program.to_string();
-    let dry = match evaluate_plasm_comp_dry(ctx.es.as_ref(), &bundle) {
-        Ok(d) => d,
-        Err(stage) => {
-            record_mcp_plasm_dry_run_phase("dry_eval", phase.elapsed());
-            record_mcp_plasm_dry_run_phase("total", total_started.elapsed());
-            return Ok(plan_result_from_stage(&ctx, program, stage));
-        }
-    };
+    let dry =
+        match crate::plasm_plan_run::evaluate_plasm_comp_dry_snapshot(ctx.es.as_ref(), &bundle)
+            .await
+        {
+            Ok(d) => d,
+            Err(stage) => {
+                record_mcp_plasm_dry_run_phase("dry_eval", phase.elapsed());
+                record_mcp_plasm_dry_run_phase("total", total_started.elapsed());
+                return Ok(plan_result_from_stage(&ctx, program, stage));
+            }
+        };
     record_mcp_plasm_dry_run_phase("dry_eval", phase.elapsed());
 
     if !dry.probe_preflight_passed() {

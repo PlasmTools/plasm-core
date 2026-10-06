@@ -359,7 +359,8 @@ async fn http_code_plan_trace_context(
     session_id: &str,
     bundle: &crate::plasm_comp_bundle::PlasmCompBundle,
 ) -> Option<HttpCodePlanTraceContext> {
-    let Ok(dry) = crate::plasm_plan_run::evaluate_plasm_comp_dry(sess, bundle) else {
+    let Ok(dry) = crate::plasm_plan_run::evaluate_plasm_comp_dry_snapshot(sess, bundle).await
+    else {
         return None;
     };
     let Some(logical_uuid) = st

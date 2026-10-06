@@ -10,7 +10,7 @@ use crate::plan_commit_store::{dry_for_committed_plasm_run, CommittedPlan, PlanC
 use crate::plan_dry_display::{build_plan_dry_compact_view, PlanDryVerdict};
 use crate::plan_gate::{plan_requires_review_gate, PlanGateContext};
 use crate::plasm_comp_bundle::PlasmCompBundle;
-use crate::plasm_plan_run::{evaluate_plasm_comp_dry, DryPlasmPlanEvaluation, PlasmPlanRunResult};
+use crate::plasm_plan_run::{DryPlasmPlanEvaluation, PlasmPlanRunResult};
 use crate::run_artifacts::RunArtifactStore;
 use crate::run_delivery::{
     deliver_live_run_await, LiveRunAwaitContext, LiveRunError, LiveRunSpawnOpts,
@@ -245,7 +245,7 @@ struct LiveDryOutcome {
     plan_commit_ref: Option<PlanCommitRef>,
 }
 
-fn prepare_live_dry(
+async fn prepare_live_dry(
     kind: McpLiveRunKind,
     es: &ExecuteSession,
     bundle: &PlasmCompBundle,
@@ -256,14 +256,18 @@ fn prepare_live_dry(
             committed,
             plan_commit_ref,
         } => {
-            let dry =
-                dry_for_committed_plasm_run(es, bundle, committed.as_ref()).map_err(|error| {
-                    plasm_runtime::ExecutionFailure::new(
-                        plasm_runtime::FailureCause::Program,
-                        "committed_plan_dry_evaluation_failed",
-                        error.detail(),
-                    )
-                })?;
+            let dry = dry_for_committed_plasm_run(
+                &es.preflight_snapshot().await,
+                bundle,
+                committed.as_ref(),
+            )
+            .map_err(|error| {
+                plasm_runtime::ExecutionFailure::new(
+                    plasm_runtime::FailureCause::Program,
+                    "committed_plan_dry_evaluation_failed",
+                    error.detail(),
+                )
+            })?;
             let gate = dry.evaluate_gate();
             if plan_requires_review_gate(
                 &gate,
@@ -285,13 +289,15 @@ fn prepare_live_dry(
             })
         }
         McpLiveRunKind::PageContinuation { .. } => {
-            let dry = evaluate_plasm_comp_dry(es, bundle).map_err(|diagnostic| {
-                plasm_runtime::ExecutionFailure::new(
-                    plasm_runtime::FailureCause::Program,
-                    "plan_dry_evaluation_failed",
-                    diagnostic,
-                )
-            })?;
+            let dry = crate::plasm_plan_run::evaluate_plasm_comp_dry_snapshot(es, bundle)
+                .await
+                .map_err(|diagnostic| {
+                    plasm_runtime::ExecutionFailure::new(
+                        plasm_runtime::FailureCause::Program,
+                        "plan_dry_evaluation_failed",
+                        diagnostic,
+                    )
+                })?;
             let compact = build_plan_dry_compact_view(
                 dry.validated_plan(),
                 &dry.topological_order,
@@ -346,7 +352,7 @@ async fn execute_mcp_live_run_inner(
         force_run,
         wait_live: _,
     } = run;
-    let live = prepare_live_dry(kind, es.as_ref(), &bundle, force_run)?;
+    let live = prepare_live_dry(kind, es.as_ref(), &bundle, force_run).await?;
     let comp_wire = Arc::new(crate::plasm_comp_wire::trace_comp_wire_from_dry(&live.dry));
     let plan_ux_reflection = Some(crate::plan_ux_reflection::plan_ux_reflection_value(
         &live.dry,

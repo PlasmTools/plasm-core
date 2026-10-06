@@ -272,8 +272,9 @@ pub(crate) async fn run_parsed_plasm_line(
         &qualified_entity.entity,
     )
     .map_err(RunLineError::CatalogOwnership)?;
+    let preflight = sess.preflight_snapshot().await;
     let parsed = crate::execute_pipeline::preflight_line_compile_dispatch(
-        sess, sess, &parsed, line, exec_cgs,
+        &preflight, &preflight, &parsed, line, exec_cgs,
     )
     .map_err(|error| {
         RunLineError::from(crate::program_diagnostic::ProgramStageError::from(error))

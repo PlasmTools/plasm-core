@@ -96,7 +96,10 @@ pub(crate) async fn run_plasm_comp_with_dispatch(
     .await?;
     let dry = match dry {
         Some(d) => d,
-        None => evaluate_plasm_comp_dry(es, bundle)?,
+        None => {
+            let preflight = es.preflight_snapshot().await;
+            evaluate_plasm_comp_dry(&preflight, bundle)?
+        }
     };
     if !run {
         let comp_wire = crate::plasm_comp_wire::trace_comp_wire_from_dry(&dry);

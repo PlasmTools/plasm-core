@@ -78,8 +78,9 @@ pub(crate) use relation_hydrate::finalize_typed_relation_materialized_node;
 pub(crate) use render_columns::{RenderColumns, RenderColumnsError};
 
 pub use dry::{
-    evaluate_plasm_comp_dry, node_dependencies, plan_dry_compact_view, render_node_operation,
-    render_plasm_plan_dry_text, render_plasm_plan_dry_text_for_session,
+    evaluate_plasm_comp_dry, evaluate_plasm_comp_dry_snapshot, node_dependencies,
+    plan_dry_compact_view, render_node_operation, render_plasm_plan_dry_text,
+    render_plasm_plan_dry_text_for_session,
 };
 pub use orchestrator::{run_plasm_comp, run_plasm_comp_python};
 pub use parse::{
