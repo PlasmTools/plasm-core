@@ -1,6 +1,77 @@
 //! Typed output composition and effect rejection, over abstract CGS fixtures.
+use plasm_agent::compilation_error::CompilationError;
 use plasm_agent::plasm_compile::compile_python_program;
+use plasm_agent::program_diagnostic::ProgramStageError;
+use plasm_agent::program_rejection::{
+    PythonComputeError, PythonComputeRejection, PythonLoweringError,
+};
+use plasm_agent::python_compute::{InferenceError, InferenceGraphError, PythonArgumentError};
 use serde_json::{json, Value};
+
+#[derive(Clone, Copy, Debug)]
+enum ReturnRejection {
+    Diagnostic(&'static str),
+    DictionaryKeyNotString,
+}
+
+impl ReturnRejection {
+    fn matches(self, error: &CompilationError) -> bool {
+        let CompilationError::Program(stage) = error else {
+            return false;
+        };
+        match stage.as_ref() {
+            ProgramStageError::PythonLowering { error } => self.lowering(error),
+            ProgramStageError::PythonCompute { error } => self.compute(error),
+            _ => false,
+        }
+    }
+
+    fn lowering(self, error: &PythonLoweringError) -> bool {
+        match error {
+            PythonLoweringError::Located { error, .. } => self.lowering(error),
+            PythonLoweringError::Compute(error) => self.compute(error),
+            PythonLoweringError::ComputeTyped(PythonComputeError::Inference(error)) => {
+                self.inference(error)
+            }
+            _ => false,
+        }
+    }
+
+    fn compute(self, error: &PythonComputeRejection) -> bool {
+        match error {
+            PythonComputeRejection::Lowering(error) => self.lowering(error),
+            PythonComputeRejection::Typed(PythonComputeError::Inference(error))
+            | PythonComputeRejection::Inference(error) => self.inference(error),
+            PythonComputeRejection::Argument(error) => match error.as_ref() {
+                PythonArgumentError::AnnotationMismatch(error) => self.inference(error),
+                PythonArgumentError::Inference(error) => self.inference(error),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    fn inference(self, error: &InferenceError) -> bool {
+        match (self, error) {
+            (Self::Diagnostic(code), InferenceError::Diagnostics { diagnostics }) => {
+                diagnostics
+                    .entries
+                    .iter()
+                    .any(|entry| entry.diagnostic.code == code)
+            }
+            (
+                Self::DictionaryKeyNotString,
+                InferenceError::Graph(InferenceGraphError::DictionaryKeyNotString),
+            ) => true,
+            _ => false,
+        }
+    }
+}
+
+fn assert_return_failure(error: &plasm_runtime::ExecutionFailure, code: &str) {
+    assert_eq!(error.cause, plasm_runtime::FailureCause::Program, "{error:?}");
+    assert_eq!(error.code, code, "{error:?}");
+}
 struct Server(tokio::task::JoinHandle<()>);
 impl Drop for Server {
     fn drop(&mut self) {
@@ -57,6 +128,7 @@ async fn typed_return_structures_and_effect_gate() {
             json!({"total":9007199254740993_i64,"mean":{"__plasm_money":"12345678901234567890.12345678","currency":"USD"}}),
         ),
         ("None", "None", "root.select('id')", Value::Null),
+        ("tuple[int]", "(1,)", "root.select('id')", json!([1])),
         (
             "float",
             "row.ratio / 2",
@@ -134,8 +206,8 @@ async fn typed_return_structures_and_effect_gate() {
         (
             "list[Row]",
             "rows",
-            "result = self.produce(root.select('id'))\n        return result",
-            json!({"value":[{"id":"000123"}]}),
+            "result = self.produce(root.union(ENTITY.get('000124')).select('id'))\n        return result",
+            json!({"value":[{"id":"000123"},{"id":"000124"}]}),
         ),
         (
             "Row",
@@ -151,6 +223,7 @@ async fn typed_return_structures_and_effect_gate() {
             "list[Row]"
         };
         let source = format!("class Composed(Program):\n    @compute\n    def produce(self, rows: {input}) -> {annotation}:\n        return {expression}\n    def build(self):\n        root = {token}.get('000123')\n        {build}\n");
+        let source = source.replace("ENTITY", &token);
         let bundle = compile_python_program(&es, &source)
             .await
             .unwrap_or_else(|e| panic!("{source}\n{e}"));
@@ -269,7 +342,7 @@ async fn typed_return_structures_and_effect_gate() {
                 json!({"value":[7]})
             );
         } else {
-            assert!(result.unwrap_err().diagnostic().contains("compute return"));
+            assert_return_failure(&result.unwrap_err(), "python_return_contract");
         }
     }
     {
@@ -287,23 +360,23 @@ async fn typed_return_structures_and_effect_gate() {
         );
     }
     // Both static type errors and unknown boundary types fail before review.
-    for (annotation, expression, diagnostic) in [
-        ("int", "row.text", "Return type does not match"),
-        ("Row.date", "'2026-02-31'", "Return type does not match"),
+    for (annotation, expression, rejection) in [
+        ("int", "row.text", ReturnRejection::Diagnostic("invalid-return-type")),
+        ("Row.date", "'2026-02-31'", ReturnRejection::Diagnostic("invalid-return-type")),
         (
             "Row.timestamp",
             "'not-a-time'",
-            "Return type does not match",
+            ReturnRejection::Diagnostic("invalid-return-type"),
         ),
-        ("Row.state", "'invalid'", "Return type does not match"),
-        ("Any", "row.text", "unresolved-reference"),
-        ("tuple[int]", "(1,)", "not a closed materialized contract"),
-        ("v99999", "row.text", "unresolved-reference"),
+        ("Row.state", "'invalid'", ReturnRejection::Diagnostic("invalid-return-type")),
+        ("Any", "row.text", ReturnRejection::Diagnostic("unresolved-reference")),
+        ("dict[int, int]", "{1: 2}", ReturnRejection::DictionaryKeyNotString),
+        ("v99999", "row.text", ReturnRejection::Diagnostic("unresolved-reference")),
     ] {
         let (es, _, token) = super::recursive_values::fixture_context(base.clone());
         let source = format!("class Invalid(Program):\n    @compute\n    def produce(self, row: Row) -> {annotation}:\n        return {expression}\n    def build(self):\n        return self.produce({token}.get('000123'))\n");
         let error = compile_python_program(&es, &source).await.unwrap_err();
-        assert!(error.to_string().contains(diagnostic), "{error}");
+        assert!(rejection.matches(&error), "{source}\nexpected {rejection:?}: {error:?}");
     }
     for (annotation, expression) in [
         ("Row.uuid", "row.text"),
@@ -329,9 +402,13 @@ async fn typed_return_structures_and_effect_gate() {
         )
         .await
         .unwrap_err();
-        assert!(error.diagnostic().contains("compute return"), "{error}");
+        assert_return_failure(&error, "python_return_contract");
     }
-    for (expression, accepted) in [("row.count + 1", true), ("2 ** 63", false)] {
+    for (expression, failure_code) in [
+        ("row.count + 1", None),
+        ("2 ** 63", Some("python_return_contract")),
+        ("2 ** 64", Some("python_output_invalid")),
+    ] {
         let (es, host, token) = super::recursive_values::fixture_context(base.clone());
         let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
         let update = symbols.method_sym_for("types", "Sample", "sample_update");
@@ -353,18 +430,18 @@ async fn typed_return_structures_and_effect_gate() {
             None,
         )
         .await;
-        if accepted {
-            result.unwrap();
-            assert_eq!(
-                writes.lock().unwrap()[before],
-                json!({"count":9007199254740994_i64})
-            );
-        } else {
-            assert!(result.unwrap_err().diagnostic().contains("compute return"));
+        if let Some(code) = failure_code {
+            assert_return_failure(&result.unwrap_err(), code);
             assert_eq!(
                 writes.lock().unwrap().len(),
                 before,
                 "invalid return reached write IO"
+            );
+        } else {
+            result.unwrap();
+            assert_eq!(
+                writes.lock().unwrap()[before],
+                json!({"count":9007199254740994_i64})
             );
         }
     }
