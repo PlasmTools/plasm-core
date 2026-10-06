@@ -334,11 +334,7 @@ impl Lower<'_> {
 
         if let PyExpr::Attribute(field) = e {
             let source = self.expr(&field.value, None)?;
-            let qe = super::schema_validate::resolve_qualified_entity_for_dag_source(
-                &self.state,
-                &[],
-                source.clone(),
-            );
+            let qe = self.binding_relation_owner(&source);
             if let Some(qe) = &qe {
                 if super::relation::resolve_relation_wire_on_entity(
                     self.es,

@@ -621,7 +621,11 @@ impl Lower<'_> {
         Ok(match e {
             PyExpr::Attribute(_) => {
                 if let PyExpr::Attribute(attr) = e {
-                    if let Some(owner) = self.expression_owner(&attr.value) {
+                    let owner = match name(&attr.value) {
+                        Some(binding) => self.binding_relation_owner(self.scoped_binding(binding)),
+                        None => self.expression_owner(&attr.value),
+                    };
+                    if let Some(owner) = owner {
                         if super::super::relation::resolve_relation_wire_on_entity(
                             self.es,
                             self.state.cross_cache,

@@ -11,6 +11,19 @@ pub(super) struct CapturedExpression {
 }
 
 impl Lower<'_> {
+    /// Catalog provenance alone does not authorize continuation of synthetic rows.
+    pub(super) fn binding_relation_owner(&self, binding: &str) -> Option<QualifiedEntityKey> {
+        let contract = super::super::binding_contract(&self.state, binding)?;
+        if !contract.supports_relation_dot() || !contract.anchor.is_present() {
+            return None;
+        }
+        super::super::schema_validate::resolve_qualified_entity_for_dag_source(
+            &self.state,
+            &[],
+            binding.to_owned(),
+        )
+    }
+
     pub(super) fn expression_owner(&self, expression: &PyExpr) -> Option<QualifiedEntityKey> {
         match expression {
             PyExpr::Name(n) => {

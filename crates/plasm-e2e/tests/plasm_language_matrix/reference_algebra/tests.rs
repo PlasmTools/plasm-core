@@ -2,6 +2,50 @@ use super::*;
 use model::Error;
 
 #[test]
+fn nested_captured_records_keep_structural_children_without_relation_authority() {
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    for size in [0, 1, 3] {
+                        let source = source_rows(size);
+                        let backend = server(&source).await;
+                        for bounded in [false, true] {
+                            let parents = if bounded {
+                                Expr::Take(Box::new(Expr::Source), 1)
+                            } else {
+                                Expr::Source
+                            };
+                            let expr = Expr::Nest {
+                                parents: Box::new(parents.clone()),
+                                children: Box::new(Expr::Nest {
+                                    parents: Box::new(Expr::Source),
+                                    children: Box::new(parents),
+                                    bound: 8,
+                                    capture: true,
+                                }),
+                                bound: 8,
+                                capture: true,
+                            };
+                            Box::pin(compare(&expr, &source, &backend.base))
+                                .await
+                                .unwrap_or_else(|failure| {
+                                    panic!("source-size={size} bounded={bounded}: {failure:?}")
+                                });
+                        }
+                    }
+                });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
 fn reference_boundary_preserves_missing_null_empty_and_continuations() {
     for size in [0, 1, 3] {
         for coverage in [Coverage::Complete, Coverage::Partial, Coverage::Unknown] {
