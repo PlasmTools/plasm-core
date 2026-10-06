@@ -51,7 +51,7 @@ fn map_body_relation_materialization_canonical_contract() {
 
         assert!(matches!(
             super::validate_relation_materialization(relation.materialize.as_ref(), &different),
-            Err(super::ScopeContractError::RelationMaterializationMismatch)
+            Err(super::ScopeContractError::RelationMaterializationMismatch { .. })
         ));
         assert!(calls.lock().unwrap().is_empty());
     });

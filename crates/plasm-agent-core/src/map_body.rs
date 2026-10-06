@@ -114,8 +114,11 @@ pub enum ScopeContractError {
     RelationIdentityOmitted { field: String },
     #[error("body relation is missing from source catalog")]
     RelationCatalogEntryMissing,
-    #[error("body relation materialization differs from catalog")]
-    RelationMaterializationMismatch,
+    #[error("body relation materialization differs from catalog: declared {declared:?}, lowered {lowered:?}")]
+    RelationMaterializationMismatch {
+        declared: Box<plasm_core::RelationMaterialization>,
+        lowered: Box<plasm_core::RelationMaterialization>,
+    },
     #[error("scope capture source depth exceeded")]
     CaptureDepthExceeded,
     #[error("map parent source is missing")]
@@ -430,7 +433,10 @@ fn validate_relation_materialization(
 ) -> Result<(), ScopeContractError> {
     let declared = declared.unwrap_or(&plasm_core::RelationMaterialization::Unavailable);
     if declared != lowered {
-        return Err(ScopeContractError::RelationMaterializationMismatch);
+        return Err(ScopeContractError::RelationMaterializationMismatch {
+            declared: Box::new(declared.clone()),
+            lowered: Box::new(lowered.clone()),
+        });
     }
     Ok(())
 }
