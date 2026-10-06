@@ -6,6 +6,7 @@ pub(crate) mod arguments;
 mod multiple;
 pub(crate) use arguments::is_row as is_row_annotation;
 pub(crate) mod inference;
+pub mod predicate_facts;
 mod returns;
 mod upstream;
 pub(crate) use upstream::admit_bundle;

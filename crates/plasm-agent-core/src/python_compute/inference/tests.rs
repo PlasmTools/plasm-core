@@ -55,6 +55,62 @@ fn unannotated_nested_helper_infers_materialized_return() {
 }
 
 #[test]
+fn guarded_optional_text_infers_list_comprehension_and_accumulator_returns() {
+    let mut content = Type::scalar(FieldType::String);
+    content.nullable = true;
+    let note = fields(&[("content", content)]);
+    let expected = array(Type::scalar(FieldType::String));
+    for body in [
+        "\n    text = note.content\n    if text is None:\n        return []\n    return [line.strip() for line in text.split('\\n') if line.strip()]\n",
+        "\n    text = note.content\n    if text is None:\n        return []\n    out = []\n    for line in text.split('\\n'):\n        stripped = line.strip()\n        if stripped:\n            out.append(stripped)\n    return out\n",
+    ] {
+        assert_eq!(infer_body(body, &[("note", &note)], "").unwrap(), expected);
+    }
+}
+
+#[test]
+fn unannotated_structured_summary_keeps_loop_accumulator_contract() {
+    let principal = fields(&[("email", Type::scalar(FieldType::String))]);
+    let mut timestamp = plasm_core::temporal_value::TemporalKind::Datetime.contract();
+    timestamp.nullable = true;
+    let request = fields(&[
+        ("payment_request_id", Type::scalar(FieldType::Integer)),
+        ("amount", Type::scalar(FieldType::Number)),
+        ("sender_email", Type::scalar(FieldType::String)),
+        ("created_at", timestamp),
+    ]);
+    let body = "\n    import datetime\n    today = datetime.date.today()\n    month_start = today.replace(day=1)\n    roomies = {'one@example.com', 'two@example.com'}\n    roomies.discard(principal.email)\n    out = []\n    for row in requests:\n        created = row.created_at\n        if created is None:\n            continue\n        if created.date() >= month_start and row.sender_email in roomies:\n            out.append({'id': row.payment_request_id, 'amount': row.amount, 'sender_email': row.sender_email, 'created_at': created.isoformat()})\n    return {'principal_email': principal.email, 'roomies': list(roomies), 'matches': out}\n";
+    let inputs = [("principal", &principal), ("requests", &array(request))];
+    let actual = infer_body(body, &inputs, "").unwrap();
+    assert!(matches!(actual.shape, ValueShape::Dictionary { .. }));
+    assert_eq!(
+        infer_body(
+            "\n    roomies = {'one@example.com', 'two@example.com'}\n    roomies.discard(principal.email)\n    return list(roomies)\n",
+            &inputs,
+            "",
+        )
+        .unwrap(),
+        array(Type::scalar(FieldType::String))
+    );
+    assert!(infer_body(
+        "\n    roomies = {'one@example.com'}\n    roomies.add(42)\n    return [email.lower() for email in roomies]\n",
+        &inputs,
+        "",
+    )
+    .is_err());
+    assert!(matches!(
+        infer_body(
+            "\n    values = [1]\n    values.append('two')\n    roomies = {'one@example.com'}\n    roomies.discard(principal.email)\n    return {'values': values, 'roomies': list(roomies)}\n",
+            &inputs,
+            "",
+        )
+        .unwrap()
+        .shape,
+        ValueShape::Dictionary { .. }
+    ));
+}
+
+#[test]
 fn local_helper_inference_covers_loops_chains_closures_and_multiple_calls() {
     let row = fields(&[("number", Type::scalar(FieldType::Integer))]);
     let rows = array(row);

@@ -271,7 +271,7 @@ mod tests {
         let session = session();
         assert!(session
             .prompt()
-            .contains("Program.build declares a typed DAG"));
+            .starts_with(plasm_core::prompt_render::python::LANGUAGE));
         assert!(session.prompt().contains("e1:"));
         assert!(session.compile("e1").await.is_err());
         let source = "class Read(Program):\n    def build(self):\n        return e1.query()\n";

@@ -200,6 +200,10 @@ pub struct CaseScore {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub correction: Option<CorrectionMetrics>,
     pub notes: Vec<String>,
+    /// Retain concrete extraction causes in memory; report rendering uses notes.
+    #[serde(skip)]
+    pub semantic_faults:
+        Vec<std::sync::Arc<plasm_agent_core::python_compute::predicate_facts::PredicateFactsError>>,
 }
 
 pub fn load_cases_file(path: &Path) -> Result<Vec<EvalCase>, EvalCaseLoadError> {
@@ -259,6 +263,20 @@ pub fn score_case(
     let mut facts = program_facts::ProgramFacts::default();
     for program in programs {
         facts.visit(&program.artifact().comp);
+    }
+    if !facts.predicate_faults.is_empty() {
+        let mut score = failed_semantic_case_score();
+        // Compilation succeeded; this is an evidence-extraction fault, not a
+        // Python parse/type failure or an ordinary semantic mismatch.
+        score.parse_ok = true;
+        score.typecheck_ok = true;
+        score.notes = facts
+            .predicate_faults
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        score.semantic_faults = facts.predicate_faults;
+        return score;
     }
     let n = facts.steps;
     let step_count_ok = expect.min_steps.map(|m| n >= m).unwrap_or(true)
@@ -372,6 +390,7 @@ pub fn score_case(
         correction_pipeline_score: None,
         correction: None,
         notes,
+        semantic_faults: vec![],
     }
 }
 
@@ -396,6 +415,7 @@ pub fn failed_semantic_case_score() -> CaseScore {
         correction_pipeline_score: None,
         correction: None,
         notes: vec![],
+        semantic_faults: vec![],
     }
 }
 
@@ -621,12 +641,84 @@ mod tests {
             ..Default::default()
         };
         let score = score_case(&expect, &[program], Some(source));
+        assert!(score.entity_match, "missing Item entity fact: {score:?}");
         assert!(
-            score.entity_match
-                && score.pred_fields_match
-                && score.pred_values_match
-                && score.projection_match
+            score.pred_fields_match,
+            "missing title predicate-field fact: {score:?}"
         );
+        assert!(
+            score.pred_values_match,
+            "missing chosen predicate-value fact: {score:?}"
+        );
+        assert!(
+            score.projection_match,
+            "missing title projection fact: {score:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn python_filter_facts_exclude_unrelated_record_fields_and_literals() {
+        let session = matrix_session();
+        let source = "class Read(Program):\n    def build(self):\n        rows = e1.query().where(lambda row: row.title == \"chosen\")\n        return rows.map(lambda row: {\"id\": row.id, \"unrelated\": row.state == \"distractor\"}, max_parents=8)\n";
+        let program = session.compile(source).await.unwrap();
+        let mut facts = program_facts::ProgramFacts::default();
+        facts.visit(&program.artifact().comp);
+        assert!(
+            facts.predicate_faults.is_empty(),
+            "{:?}",
+            facts.predicate_faults
+        );
+        assert_eq!(facts.fields, HashSet::from(["title".into()]));
+        assert_eq!(facts.values, HashSet::from(["\"chosen\"".into()]));
+        let expect = ExpectBlock {
+            pred_fields_any: vec!["state".into()],
+            pred_values_any: vec!["distractor".into()],
+            ..Default::default()
+        };
+        let score = score_case(&expect, &[program], Some(source));
+        assert!(
+            !score.pred_fields_match,
+            "unrelated record field counted: {score:?}"
+        );
+        assert!(
+            !score.pred_values_match,
+            "unrelated record literal counted: {score:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn helper_predicate_scoring_retains_unsupported_evidence_fault() {
+        let session = matrix_session();
+        let source = "class Read(Program):\n    @compute\n    def chosen(self, title: str) -> bool:\n        expected = 'chosen'\n        return title == expected\n    def build(self):\n        return e1.query().where(lambda row: self.chosen(row.title))\n";
+        let program = session.compile(source).await.unwrap();
+        let score = score_case(
+            &ExpectBlock {
+                pred_fields_any: vec!["title".into()],
+                pred_values_any: vec!["chosen".into()],
+                ..Default::default()
+            },
+            &[program],
+            Some(source),
+        );
+        assert!(score.parse_ok && score.typecheck_ok, "{score:?}");
+        assert!(!score.semantic_faults.is_empty(), "{score:?}");
+        assert!(score.semantic_faults.iter().all(|fault| matches!(fault.as_ref(), plasm_agent_core::python_compute::predicate_facts::PredicateFactsError::UnsupportedKernel { .. })), "{score:?}");
+    }
+
+    #[tokio::test]
+    async fn field_to_field_predicate_scoring_preserves_both_fields() {
+        let session = matrix_session();
+        let source = "class Read(Program):\n    def build(self):\n        return e1.query().where(lambda row: row.id == row.title)\n";
+        let program = session.compile(source).await.unwrap();
+        let mut facts = program_facts::ProgramFacts::default();
+        facts.visit(&program.artifact().comp);
+        assert!(
+            facts.predicate_faults.is_empty(),
+            "{:?}",
+            facts.predicate_faults
+        );
+        assert_eq!(facts.fields, HashSet::from(["id".into(), "title".into()]));
+        assert!(facts.values.is_empty(), "{:?}", facts.values);
     }
 
     #[tokio::test]
@@ -663,6 +755,7 @@ mod tests {
             correction_pipeline_score: None,
             correction: None,
             notes: vec![],
+            semantic_faults: vec![],
         };
         let cm = crate::build_correction_metrics(2, Some(1), true, None);
         let pipe = cm.pipeline_score;

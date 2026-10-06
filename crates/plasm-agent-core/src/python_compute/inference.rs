@@ -9,6 +9,7 @@ use ruff_python_ast::Expr;
 use ruff_text_size::Ranged;
 use std::collections::BTreeMap;
 
+mod collections;
 mod declarations;
 mod helpers;
 #[cfg(test)]
@@ -236,7 +237,7 @@ pub(super) fn infer_body(
         }
     }
     let mut source = source;
-    for pass in 0..2 {
+    for pass in 0..3 {
         let result = monty_analysis::analyze_function(
             &AnalysisRequest {
                 source: source.clone(),
@@ -254,8 +255,17 @@ pub(super) fn infer_body(
                 diagnostics: body_diagnostics(errors, &source),
             });
         };
-        if pass == 0 && graph.nodes.contains(&Node::Unknown) {
-            let specialized = helpers::close_local_calls(&source, &mut declarations)?;
+        if pass < 2 && graph.nodes.contains(&Node::Unknown) {
+            let specialized = collections::close_collection_initializers(
+                &source,
+                &mut declarations,
+                graph
+                    .nodes
+                    .iter()
+                    .filter(|node| **node == Node::Unknown)
+                    .count(),
+            )?;
+            let specialized = helpers::close_local_calls(&specialized, &mut declarations)?;
             if specialized != source {
                 source = specialized;
                 continue;
@@ -274,7 +284,7 @@ pub(super) fn infer_body(
             .reduce(Type::join)
             .ok_or(ReturnContractError::ReturnContractMissing.into());
     }
-    unreachable!("local helper inference uses at most two whole-body passes")
+    unreachable!("local closure uses at most three whole-body passes")
 }
 
 /// Check the original annotation before materialization widens Python literals.

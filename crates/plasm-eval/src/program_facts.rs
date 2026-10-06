@@ -1,6 +1,8 @@
 //! Semantic scoring traverses the compiled DAG, including nested bodies and effects.
+use plasm_agent_core::python_compute::predicate_facts::{sealed_filter_facts, PredicateFactsError};
 use plasm_core::plasm_monad::*;
 use std::collections::HashSet;
+use std::sync::Arc;
 
 #[derive(Default)]
 pub(crate) struct ProgramFacts {
@@ -11,6 +13,7 @@ pub(crate) struct ProgramFacts {
     pub relations: HashSet<String>,
     pub projections: Vec<Vec<String>>,
     pub steps: usize,
+    pub predicate_faults: Vec<Arc<PredicateFactsError>>,
 }
 impl ProgramFacts {
     fn predicates<'a>(&mut self, predicates: impl IntoIterator<Item = &'a PlanPredicate>) {
@@ -75,6 +78,22 @@ impl ProgramFacts {
                 },
                 PlasmStepPayload::MapBody(p) => {
                     self.entities.insert(p.parent.entity.entity.clone());
+                    if matches!(p.output, ScopedOutput::Filter) {
+                        match sealed_filter_facts(p) {
+                            Ok(facts) => {
+                                for path in facts.fields {
+                                    self.fields.insert(path.join("."));
+                                }
+                                for (path, value) in facts.comparisons {
+                                    self.fields.insert(path.join("."));
+                                    self.values.insert(
+                                        serde_json::to_string(&value).expect("validated scalar"),
+                                    );
+                                }
+                            }
+                            Err(error) => self.predicate_faults.push(Arc::new(error)),
+                        }
+                    }
                     self.visit(&p.body);
                 }
                 PlasmStepPayload::Pure(_) | PlasmStepPayload::Derive(_) => {}
