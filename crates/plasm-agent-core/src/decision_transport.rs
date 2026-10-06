@@ -101,7 +101,7 @@ fn context_limit(status: u16, raw: &str) -> bool {
 }
 
 fn transient(status: u16) -> bool {
-    matches!(status, 408 | 425 | 429 | 500 | 502..=504 | 529)
+    matches!(status, 408 | 425 | 429 | 500 | 502..=504 | 520..=524 | 529)
 }
 
 fn retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
@@ -324,6 +324,20 @@ mod tests {
         assert_eq!(result.unwrap(), "judgment");
         assert_eq!(requests, vec!["exact request"; 3]);
         assert_eq!(attempts.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn edge_gateway_failures_retry_the_same_read_only_judgment() {
+        let policy = DecisionRetryPolicy {
+            backoff: Duration::ZERO,
+            ..Default::default()
+        };
+        for status in 520..=524 {
+            let (result, requests, attempts) = exercise(vec![status, 200], policy).await;
+            assert_eq!(result.unwrap(), "judgment", "HTTP {status}");
+            assert_eq!(requests, vec!["exact request"; 2], "HTTP {status}");
+            assert_eq!(attempts.len(), 2, "HTTP {status}");
+        }
     }
 
     #[tokio::test]
